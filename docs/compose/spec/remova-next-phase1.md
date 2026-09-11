@@ -1,14 +1,20 @@
 ---
 feature: remova-next-phase1
-status: in-progress
+status: delivered
 updated: 2026-09-11
 branch: main
-commits: # filled at delivery
+commits: 246029b
 ---
 
 # Remova-next Phase 1 — 只读关联分析
 
 ## Report
+
+**What was built** — Rust `scanner`/`regscan` 关联只读扫描与证据链；`analyze_associations` IPC；React 深度分析预览。
+
+**Verification** — cargo test 14/14；npm build OK。
+
+**Journey log** — `RegQueryValueExW` 使用 `REG_VALUE_TYPE`；App Paths 无安装目录不产出。
 
 ## [S1] Problem
 
@@ -32,7 +38,7 @@ Phase 0 只有已安装软件列表。需要与 Python 版对齐的 **只读** �
 
 ## Tasks
 
-- [ ] T1: scanner 特征与证据评分 (covers: S2.1)
-- [ ] T2: 文件系统/注册表扫描 (covers: S2.1)
-- [ ] T3: command + React 预览 (covers: S2.2–S2.3)
-- [ ] T4: cargo/npm 验收 (covers: S2.4)
+- [x] T1: scanner 特征与证据评分 (covers: S2.1)
+- [x] T2: 文件系统/注册表扫描 (covers: S2.1)
+- [x] T3: command + React 预览 (covers: S2.2–S2.3)
+- [x] T4: cargo/npm 验收 (covers: S2.4)
