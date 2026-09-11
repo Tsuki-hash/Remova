@@ -74,17 +74,20 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
 }
 
 /// Relaunch current exe elevated via ShellExecuteW "runas".
+///
+/// On failure returns a stable `elevate:<kind>:<code>` string for UI localization:
+/// denied / cancelled / not_found / failed.
 pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = args;
-        Err("not windows".into())
+        Err("elevate:failed:0".into())
     }
     #[cfg(windows)]
     {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = std::env::current_exe().map_err(|_| "elevate:not_found:2".to_string())?;
         let exe_w: Vec<u16> = exe
             .to_string_lossy()
             .encode_utf16()
@@ -111,10 +114,23 @@ pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
             if (rc.0 as isize) > 32 {
                 Ok(())
             } else {
-                Err(format!("ShellExecuteW runas failed code={}", rc.0 as isize))
+                Err(elevate_error_token(rc.0 as isize))
             }
         }
     }
+}
+
+/// Map ShellExecuteW failure codes to stable tokens for the UI.
+#[cfg(windows)]
+fn elevate_error_token(code: isize) -> String {
+    // ShellExecute SE_ERR_* values (and ERROR_CANCELLED from UAC).
+    let kind = match code {
+        2 | 3 => "not_found",
+        5 => "denied",
+        1223 => "cancelled",
+        _ => "failed",
+    };
+    format!("elevate:{kind}:{code}")
 }
 
 #[cfg(test)]
@@ -127,5 +143,14 @@ mod tests {
     #[test]
     fn restore_point_nonfatal() {
         let _ = super::create_restore_point("Remova test");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn elevate_error_tokens() {
+        assert_eq!(super::elevate_error_token(5), "elevate:denied:5");
+        assert_eq!(super::elevate_error_token(1223), "elevate:cancelled:1223");
+        assert_eq!(super::elevate_error_token(2), "elevate:not_found:2");
+        assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
     }
 }
