@@ -44,6 +44,20 @@ const dict = {
     restoreConfirm: "将从最近备份还原文件与注册表。继续？",
     noHistory: "暂无记录",
     historyTitle: "清理历史",
+    errorDismiss: "知道了",
+    adminHint: "当前不是管理员，清理系统软件可能失败。点击以管理员身份重启。",
+    adminAlready: "已是管理员。",
+    errElevateDenied:
+      "提权失败：访问被拒绝。请在 UAC 弹窗中选择「是」；若仍失败，请右键 Remova 选择「以管理员身份运行」。",
+    errElevateCancelled: "已取消管理员提权，当前仍以普通权限运行。",
+    errElevateNotFound: "找不到 Remova 可执行文件，无法提权重启。请重新安装或从安装目录启动。",
+    errElevateFailed: (code: number) =>
+      `提权失败（代码 ${code}）。可尝试右键以管理员身份运行 Remova。`,
+    errAnalyzeFailed: (detail: string) => `深度分析失败：${detail}`,
+    errCleanupFailed: (detail: string) => `清理失败：${detail}`,
+    errInvokeFailed: (detail: string) => `操作失败：${detail}`,
+    stopEstimate: "停止估算",
+    estimatingSizes: "估算占用中…",
   },
   en: {
     title: "Remova",
@@ -86,6 +100,20 @@ const dict = {
     restoreConfirm: "Restore files and registry from latest backup?",
     noHistory: "No records",
     historyTitle: "Cleanup history",
+    errorDismiss: "Dismiss",
+    adminHint: "Not running as administrator. Cleaning system software may fail. Click to restart as admin.",
+    adminAlready: "Running as administrator.",
+    errElevateDenied:
+      "Elevation failed: access denied. Click Yes on the UAC prompt; if it still fails, right-click Remova and run as administrator.",
+    errElevateCancelled: "Admin elevation cancelled. Still running with standard privileges.",
+    errElevateNotFound: "Remova executable not found; cannot restart elevated. Reinstall or launch from the install folder.",
+    errElevateFailed: (code: number) =>
+      `Elevation failed (code ${code}). Try running Remova as administrator.`,
+    errAnalyzeFailed: (detail: string) => `Deep analyze failed: ${detail}`,
+    errCleanupFailed: (detail: string) => `Cleanup failed: ${detail}`,
+    errInvokeFailed: (detail: string) => `Operation failed: ${detail}`,
+    stopEstimate: "Stop estimating",
+    estimatingSizes: "Estimating sizes…",
   },
 } as const;
 
@@ -106,9 +134,16 @@ export function currentLang() {
   return lang;
 }
 
-export type Strings = Omit<(typeof dict)["zh"], "batchConfirm" | "cleanupConfirm"> & {
+export type Strings = Omit<
+  (typeof dict)["zh"],
+  "batchConfirm" | "cleanupConfirm" | "errElevateFailed" | "errAnalyzeFailed" | "errCleanupFailed" | "errInvokeFailed"
+> & {
   batchConfirm: (n: number) => string;
   cleanupConfirm: (n: number, official: boolean) => string;
+  errElevateFailed: (code: number) => string;
+  errAnalyzeFailed: (detail: string) => string;
+  errCleanupFailed: (detail: string) => string;
+  errInvokeFailed: (detail: string) => string;
 };
 
 export function formatSize(kb: number): string {

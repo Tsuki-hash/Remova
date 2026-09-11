@@ -109,6 +109,28 @@ function applyTheme(theme: Theme) {
   localStorage.setItem("remova_theme", theme);
 }
 
+type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
+
+/** Map backend error tokens / raw exceptions to user-actionable copy. */
+function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
+  const L = t();
+  const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+  const elev = raw.match(/^elevate:(denied|cancelled|not_found|failed):(\d+)/);
+  if (elev) {
+    const kind = elev[1];
+    const code = Number(elev[2]);
+    if (kind === "denied") return L.errElevateDenied;
+    if (kind === "cancelled") return L.errElevateCancelled;
+    if (kind === "not_found") return L.errElevateNotFound;
+    return L.errElevateFailed(code);
+  }
+  const detail = raw.replace(/^Error:\s*/i, "").trim() || raw;
+  if (ctx === "analyze") return L.errAnalyzeFailed(detail);
+  if (ctx === "cleanup") return L.errCleanupFailed(detail);
+  if (ctx === "elevate") return L.errElevateFailed(0);
+  return L.errInvokeFailed(detail);
+}
+
 export default function App() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,6 +162,25 @@ export default function App() {
   const [evidence, setEvidence] = useState<string | null>(null);
   const [histQ, setHistQ] = useState("");
   const busyRef = useRef(false);
+  const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
+  const [estimating, setEstimating] = useState(false);
+  const sizeCache = useRef<Map<string, number>>(new Map());
+  const sizeCancelRef = useRef(false);
+
+  const sizeOf = useCallback((a: InstalledApp): number => {
+    if (a.estimated_size_kb > 0) return a.estimated_size_kb;
+    return sizeCache.current.get(a.install_location) ?? 0;
+  }, []);
+
+  const formatAppSize = useCallback(
+    (a: InstalledApp): string => {
+      if (a.estimated_size_kb > 0) return formatSize(a.estimated_size_kb);
+      const est = sizeCache.current.get(a.install_location) ?? 0;
+      if (est > 0) return `~${formatSize(est)}`;
+      return "—";
+    },
+    [],
+  );
 
   useEffect(() => {
     loadLang();
@@ -178,7 +219,7 @@ export default function App() {
       setError(null);
       setNotice(`analyze ${((performance.now() - t0) / 1000).toFixed(1)}s · ${r.items.length} items`);
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e, "analyze"));
     } finally {
       setScanning(false);
     }
@@ -191,7 +232,7 @@ export default function App() {
         const list = await invoke<InstalledApp[]>("list_installed_apps");
         if (!cancelled) setApps(list);
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) setError(formatError(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -234,6 +275,59 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-estimate missing sizes after list load (P0-2).
+  useEffect(() => {
+    if (loading || apps.length === 0) return;
+    const pending = [
+      ...new Set(
+        apps
+          .filter((a) => !(a.estimated_size_kb > 0) && a.install_location?.trim())
+          .map((a) => a.install_location.trim()),
+      ),
+    ].filter((p) => !sizeCache.current.has(p));
+    if (pending.length === 0) return;
+
+    let disposed = false;
+    sizeCancelRef.current = false;
+    setEstimating(true);
+    void invoke("begin_size_estimate").catch(() => {});
+
+    (async () => {
+      const workers = Array.from({ length: 2 }, async () => {
+        while (pending.length > 0 && !disposed && !sizeCancelRef.current) {
+          const path = pending.shift();
+          if (!path) break;
+          try {
+            const kb = await invoke<number>("estimate_dir_size_kb", { path });
+            if (disposed || sizeCancelRef.current) break;
+            sizeCache.current.set(path, kb > 0 ? kb : 0);
+            setSizeMap((m) => ({ ...m, [path]: kb > 0 ? kb : 0 }));
+          } catch {
+            if (disposed || sizeCancelRef.current) break;
+            sizeCache.current.set(path, 0);
+            setSizeMap((m) => ({ ...m, [path]: 0 }));
+          }
+        }
+      });
+      await Promise.all(workers);
+      if (!disposed) setEstimating(false);
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [apps, loading]);
+
+  const stopSizeEstimate = useCallback(async () => {
+    sizeCancelRef.current = true;
+    setEstimating(false);
+    try {
+      await invoke("cancel_size_estimate");
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const L = useMemo(() => t(), [langVer]);
 
   const filtered = useMemo(() => {
@@ -250,12 +344,12 @@ export default function App() {
     if (!sortCol) return list;
     const s = [...list].sort((a, b) => {
       if (sortCol === "size") {
-        return (a.estimated_size_kb || 0) - (b.estimated_size_kb || 0);
+        return sizeOf(a) - sizeOf(b);
       }
       return (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, q, sortCol, sortDesc]);
+  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap]);
 
   const sortBy = (col: "name" | "publisher" | "install_location" | "size" | "install_date") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -295,7 +389,7 @@ export default function App() {
       });
       setReport(r);
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e, "cleanup"));
     } finally {
       setDryRunning(false);
     }
@@ -318,7 +412,7 @@ export default function App() {
       });
       setReport(r);
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e, "cleanup"));
     } finally {
       busyRef.current = false;
       setDryRunning(false);
@@ -354,7 +448,7 @@ export default function App() {
       setNotice("Batch finished");
       setMulti(new Set());
     } catch (e) {
-      setError(String(e));
+      setError(formatError(e, "cleanup"));
     } finally {
       busyRef.current = false;
       setBatching(false);
@@ -468,7 +562,10 @@ export default function App() {
         </div>
       )}
       {notice && (
-        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>{notice}</div>
+        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>
+          {notice}
+          {estimating ? ` · ${L.estimatingSizes}` : ""}
+        </div>
       )}
 
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
@@ -523,7 +620,7 @@ export default function App() {
               const msgs = await invoke<string[]>("restore_session_by_name", { name: pick });
               alert(msgs.slice(0, 8).join("\n") || "ok");
             } catch (e) {
-              setError(String(e));
+              setError(formatError(e));
             }
           }}
         >
@@ -539,11 +636,12 @@ export default function App() {
         <button
           style={css.btnGhost}
           disabled={admin === true || admin === null}
+          title={admin === true ? L.adminAlready : L.adminHint}
           onClick={async () => {
             try {
               await invoke("elevate_restart");
             } catch (e) {
-              setError(String(e));
+              setError(formatError(e, "elevate"));
             }
           }}
         >
@@ -561,6 +659,11 @@ export default function App() {
         >
           {scanning ? L.analyzing : L.analyze}
         </button>
+        {estimating && (
+          <button style={css.btnGhost} onClick={() => void stopSizeEstimate()}>
+            {L.stopEstimate}
+          </button>
+        )}
         {scan && (
           <>
             <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
@@ -628,7 +731,32 @@ export default function App() {
         </div>
       )}
 
-      {error && <div style={{ color: "#b91c1c", marginBottom: 12 }}>{error}</div>}
+      {error && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+            marginBottom: 12,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid #fca5a5",
+            background: "var(--surface)",
+            color: "#b91c1c",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+          role="alert"
+        >
+          <span style={{ flex: 1 }}>{error}</span>
+          <button
+            style={{ ...css.btnGhost, height: 28, padding: "0 10px", color: "#b91c1c", flexShrink: 0 }}
+            onClick={() => setError(null)}
+          >
+            {L.errorDismiss}
+          </button>
+        </div>
+      )}
 
       {scan ? (
         <div style={css.card}>
@@ -804,7 +932,7 @@ export default function App() {
                       <td style={css.td}>{a.version || "—"}</td>
                       <td style={css.td}>{a.publisher || "—"}</td>
                       <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap" }}>
-                        {formatSize(a.estimated_size_kb)}
+                        {formatAppSize(a)}
                       </td>
                       <td style={{ ...css.td, whiteSpace: "nowrap" }}>{a.install_date || "—"}</td>
                       <td style={css.td}>{a.source}</td>

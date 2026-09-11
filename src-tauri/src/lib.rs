@@ -2,6 +2,7 @@
 
 pub mod apps;
 pub mod backup;
+pub mod dirsize;
 pub mod executor;
 pub mod history;
 pub mod icon;
@@ -20,6 +21,31 @@ use scanner::{CleanupItem, ScanResult};
 #[tauri::command]
 fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
     Ok(apps::scan_installed_apps())
+}
+
+/// Clear cancel flag before a new estimate batch.
+#[tauri::command]
+fn begin_size_estimate() {
+    dirsize::clear_cancel();
+}
+
+/// Estimate on-disk size of an install location (KB).
+/// Runs on the blocking pool so large trees do not freeze the webview.
+#[tauri::command]
+async fn estimate_dir_size_kb(path: String) -> Result<i64, String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Ok(0);
+    }
+    tauri::async_runtime::spawn_blocking(move || dirsize::walk_size_kb(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Cancel in-flight directory size walks (they return 0).
+#[tauri::command]
+fn cancel_size_estimate() {
+    dirsize::request_cancel();
 }
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
@@ -239,6 +265,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
             app_icon_data,
+            estimate_dir_size_kb,
+            cancel_size_estimate,
+            begin_size_estimate,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,
