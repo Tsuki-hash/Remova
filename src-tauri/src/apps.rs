@@ -24,6 +24,10 @@ pub struct InstalledApp {
     pub source: String,
     pub registry_key: String,
     pub estimated_size_kb: i64,
+    /// `YYYY-MM-DD` when registry InstallDate is parseable, else empty.
+    pub install_date: String,
+    /// Raw DisplayIcon registry value (may be `path` or `path,index`).
+    pub display_icon: String,
 }
 
 /// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
@@ -148,6 +152,8 @@ unsafe fn read_uninstall_entry(
     let mut uninstall_string = String::new();
     let mut quiet = String::new();
     let mut size_kb = 0i64;
+    let mut install_date = String::new();
+    let mut display_icon = String::new();
 
     let mut n = 0u32;
     loop {
@@ -180,6 +186,8 @@ unsafe fn read_uninstall_entry(
                 "InstallLocation" => install_location = s.trim_end_matches(['\\', '/']).to_string(),
                 "UninstallString" => uninstall_string = s,
                 "QuietUninstallString" => quiet = s,
+                "DisplayIcon" => display_icon = s,
+                "InstallDate" => install_date = format_install_date(&s),
                 "EstimatedSize" => {
                     if data_len >= 4 {
                         size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
@@ -212,7 +220,61 @@ unsafe fn read_uninstall_entry(
         source: alias.to_string(),
         registry_key,
         estimated_size_kb: size_kb,
+        install_date,
+        display_icon,
     })
+}
+
+/// Normalize common InstallDate registry formats to `YYYY-MM-DD`.
+pub fn format_install_date(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    // YYYYMMDD
+    if digits.len() == 8 && s.chars().all(|c| c.is_ascii_digit() || c == '/' || c == '-' || c == '.') {
+        let (y, m, d) = (&digits[0..4], &digits[4..6], &digits[6..8]);
+        if let (Ok(mv), Ok(dv)) = (m.parse::<u32>(), d.parse::<u32>()) {
+            if (1..=12).contains(&mv) && (1..=31).contains(&dv) {
+                return format!("{y}-{m:0>2}-{d:0>2}");
+            }
+        }
+    }
+    // YYYY/MM/DD or YYYY-MM-DD already
+    if digits.len() == 8 {
+        if let Some(rest) = s.strip_prefix(&digits[0..4]) {
+            let sep_ok = rest.starts_with(['/', '-', '.']);
+            if sep_ok {
+                let m = &digits[4..6];
+                let d = &digits[6..8];
+                if let (Ok(mv), Ok(dv)) = (m.parse::<u32>(), d.parse::<u32>()) {
+                    if (1..=12).contains(&mv) && (1..=31).contains(&dv) {
+                        return format!("{}-{m:0>2}-{d:0>2}", &digits[0..4]);
+                    }
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Split DisplayIcon into (file path, resource index).
+pub fn parse_display_icon(raw: &str) -> (String, i32) {
+    let s = raw.trim();
+    if s.is_empty() {
+        return (String::new(), 0);
+    }
+    let unquoted = s.trim_matches('"');
+    if let Some((path, idx)) = unquoted.rsplit_once(',') {
+        let idx = idx.trim().trim_matches('"');
+        if !idx.is_empty() && idx.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            let index = idx.parse::<i32>().unwrap_or(0);
+            let path = path.trim().trim_matches('"').to_string();
+            return (path, index);
+        }
+    }
+    (unquoted.to_string(), 0)
 }
 
 fn looks_system_update(name: &str) -> bool {
@@ -258,6 +320,30 @@ mod tests {
         assert!(looks_system_update("KB5021234"));
         assert!(looks_system_update("Update for Windows 10"));
         assert!(!looks_system_update("7-Zip 24.08"));
+    }
+
+    #[test]
+    fn install_date_formats() {
+        assert_eq!(format_install_date("20250601"), "2025-06-01");
+        assert_eq!(format_install_date("2025/06/01"), "2025-06-01");
+        assert_eq!(format_install_date(""), "");
+        assert_eq!(format_install_date("not-a-date"), "");
+    }
+
+    #[test]
+    fn display_icon_parse() {
+        assert_eq!(
+            parse_display_icon(r#"C:\App\app.exe,0"#),
+            (r"C:\App\app.exe".to_string(), 0)
+        );
+        assert_eq!(
+            parse_display_icon(r#""C:\App\app.exe",1"#),
+            (r"C:\App\app.exe".to_string(), 1)
+        );
+        assert_eq!(
+            parse_display_icon(r#"C:\App\app.ico"#),
+            (r"C:\App\app.ico".to_string(), 0)
+        );
     }
 
     #[cfg(windows)]

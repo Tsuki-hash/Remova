@@ -4,6 +4,7 @@ pub mod apps;
 pub mod backup;
 pub mod executor;
 pub mod history;
+pub mod icon;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
@@ -19,6 +20,57 @@ use scanner::{CleanupItem, ScanResult};
 #[tauri::command]
 fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
     Ok(apps::scan_installed_apps())
+}
+
+/// Return `data:image/png;base64,...` for the app icon, or null.
+#[tauri::command]
+fn app_icon_data(display_icon: String) -> Option<String> {
+    let png = icon::extract_icon_png(&display_icon)?;
+    use base64_light::*;
+    Some(format!(
+        "data:image/png;base64,{}",
+        b64_encode(&png)
+    ))
+}
+
+mod base64_light {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub fn b64_encode(data: &[u8]) -> String {
+        let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+        for chunk in data.chunks(3) {
+            let b0 = chunk[0] as u32;
+            let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+            let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+            let n = (b0 << 16) | (b1 << 8) | b2;
+            out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+            out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+            if chunk.len() > 1 {
+                out.push(ALPHABET[(n >> 6) as usize & 63] as char);
+            } else {
+                out.push('=');
+            }
+            if chunk.len() > 2 {
+                out.push(ALPHABET[n as usize & 63] as char);
+            } else {
+                out.push('=');
+            }
+        }
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::b64_encode;
+
+        #[test]
+        fn encode_known() {
+            assert_eq!(b64_encode(b"Man"), "TWFu");
+            assert_eq!(b64_encode(b"Ma"), "TWE=");
+            assert_eq!(b64_encode(b"M"), "TQ==");
+        }
+    }
 }
 
 #[tauri::command]
@@ -186,6 +238,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
+            app_icon_data,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,

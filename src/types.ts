@@ -8,6 +8,8 @@ export type InstalledApp = {
   source: string;
   registry_key: string;
   estimated_size_kb: number;
+  install_date: string;
+  display_icon: string;
 };
 
 export type Evidence = {

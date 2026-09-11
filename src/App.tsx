@@ -10,6 +10,78 @@ import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
 
 type Theme = "light" | "dark";
 
+/** Process-wide icon cache: displayIcon raw → data URL (or null on failure). */
+const iconCache = new Map<string, string | null>();
+const iconInflight = new Map<string, Promise<string | null>>();
+
+function loadAppIcon(displayIcon: string): Promise<string | null> {
+  if (iconCache.has(displayIcon)) {
+    return Promise.resolve(iconCache.get(displayIcon) ?? null);
+  }
+  const existing = iconInflight.get(displayIcon);
+  if (existing) return existing;
+  const p = invoke<string | null>("app_icon_data", { displayIcon })
+    .then((url) => {
+      iconCache.set(displayIcon, url);
+      iconInflight.delete(displayIcon);
+      return url;
+    })
+    .catch(() => {
+      iconCache.set(displayIcon, null);
+      iconInflight.delete(displayIcon);
+      return null;
+    });
+  iconInflight.set(displayIcon, p);
+  return p;
+}
+
+function AppIcon({ displayIcon, name }: { displayIcon: string; name: string }) {
+  const [src, setSrc] = useState<string | null>(() =>
+    displayIcon ? (iconCache.get(displayIcon) ?? null) : null,
+  );
+
+  useEffect(() => {
+    if (!displayIcon) {
+      setSrc(null);
+      return;
+    }
+    let cancelled = false;
+    void loadAppIcon(displayIcon).then((url) => {
+      if (!cancelled) setSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayIcon]);
+
+  const initial = (name.trim()[0] || "?").toUpperCase();
+  return (
+    <span
+      style={{
+        width: 20,
+        height: 20,
+        borderRadius: 4,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "var(--th-bg)",
+        color: "var(--muted)",
+        fontSize: 11,
+        fontWeight: 600,
+        overflow: "hidden",
+      }}
+      aria-hidden
+    >
+      {src ? (
+        <img src={src} width={20} height={20} alt="" style={{ display: "block" }} />
+      ) : (
+        initial
+      )}
+    </span>
+  );
+}
+
 function loadTheme(): Theme {
   const v = localStorage.getItem("remova_theme");
   return v === "dark" ? "dark" : "light";
@@ -50,7 +122,7 @@ export default function App() {
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
   const [sortCol, setSortCol] = useState<
-    "name" | "publisher" | "install_location" | "size" | null
+    "name" | "publisher" | "install_location" | "size" | "install_date" | null
   >(null);
   const [sortDesc, setSortDesc] = useState(false);
   const [admin, setAdmin] = useState<boolean | null>(null);
@@ -185,13 +257,23 @@ export default function App() {
     return sortDesc ? s.reverse() : s;
   }, [apps, q, sortCol, sortDesc]);
 
-  const sortBy = (col: "name" | "publisher" | "install_location" | "size") => {
+  const sortBy = (col: "name" | "publisher" | "install_location" | "size" | "install_date") => {
     if (sortCol === col) setSortDesc((d) => !d);
     else {
       setSortCol(col);
-      setSortDesc(false);
+      setSortDesc(col === "size" || col === "install_date");
     }
   };
+
+  /** App used by 深度分析: row click, else the single multi-checkbox target. */
+  const analyzeApp = useMemo(() => {
+    if (selected) return selected;
+    if (multi.size === 1) {
+      const key = [...multi][0];
+      return apps.find((a) => a.registry_key + a.name === key) ?? null;
+    }
+    return null;
+  }, [selected, multi, apps]);
 
   const toggleMulti = (key: string) => {
     setMulti((m) => {
@@ -468,9 +550,14 @@ export default function App() {
           Admin
         </button>
         <button
-          style={css.btn}
-          disabled={!selected || scanning}
-          onClick={() => selected && analyze(selected)}
+          style={{
+            ...css.btn,
+            opacity: !analyzeApp || scanning ? 0.5 : 1,
+            cursor: !analyzeApp || scanning ? "not-allowed" : "pointer",
+          }}
+          disabled={!analyzeApp || scanning}
+          title={!analyzeApp ? L.selectRowHint : undefined}
+          onClick={() => analyzeApp && analyze(analyzeApp)}
         >
           {scanning ? L.analyzing : L.analyze}
         </button>
@@ -638,24 +725,39 @@ export default function App() {
             <table style={css.table}>
               <thead>
                 <tr>
-                  <th style={css.th}>✓</th>
-                  <th style={{ ...css.th, cursor: "pointer" }} onClick={() => sortBy("name")}>
+                  <th style={{ ...css.th, width: 48, whiteSpace: "nowrap" }}>✓</th>
+                  <th
+                    style={{ ...css.th, cursor: "pointer", whiteSpace: "nowrap" }}
+                    onClick={() => sortBy("name")}
+                  >
                     {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th style={css.th}>{L.colVersion}</th>
+                  <th style={{ ...css.th, whiteSpace: "nowrap" }}>{L.colVersion}</th>
                   <th
-                    style={{ ...css.th, cursor: "pointer" }}
+                    style={{ ...css.th, cursor: "pointer", whiteSpace: "nowrap" }}
                     onClick={() => sortBy("publisher")}
                   >
                     {L.colPublisher} {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
                   <th
-                    style={{ ...css.th, cursor: "pointer", width: 90 }}
+                    style={{ ...css.th, cursor: "pointer", width: 90, minWidth: 90, whiteSpace: "nowrap" }}
                     onClick={() => sortBy("size")}
                   >
                     {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th style={css.th}>{L.colSource}</th>
+                  <th
+                    style={{
+                      ...css.th,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      minWidth: 110,
+                    }}
+                    onClick={() => sortBy("install_date")}
+                  >
+                    {L.colInstallDate}{" "}
+                    {sortCol === "install_date" ? (sortDesc ? "↓" : "↑") : ""}
+                  </th>
+                  <th style={{ ...css.th, whiteSpace: "nowrap" }}>{L.colSource}</th>
                   <th
                     style={{ ...css.th, cursor: "pointer" }}
                     onClick={() => sortBy("install_location")}
@@ -685,16 +787,26 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={multi.has(key)}
-                          onChange={() => toggleMulti(key)}
+                          onChange={() => {
+                            const next = !multi.has(key);
+                            toggleMulti(key);
+                            if (next && !selected) setSelected(a);
+                          }}
                           onClick={(e) => e.stopPropagation()}
                         />
                       </td>
-                      <td style={css.td}>{a.name}</td>
+                      <td style={css.td}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <AppIcon displayIcon={a.display_icon} name={a.name} />
+                          <span>{a.name}</span>
+                        </div>
+                      </td>
                       <td style={css.td}>{a.version || "—"}</td>
                       <td style={css.td}>{a.publisher || "—"}</td>
                       <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap" }}>
                         {formatSize(a.estimated_size_kb)}
                       </td>
+                      <td style={{ ...css.td, whiteSpace: "nowrap" }}>{a.install_date || "—"}</td>
                       <td style={css.td}>{a.source}</td>
                       <td style={css.td}>{a.install_location || "—"}</td>
                     </tr>
