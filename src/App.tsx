@@ -126,7 +126,7 @@ export default function App() {
     void invoke<{ free_gb: number; total_gb: number }>("disk_usage")
       .then((d) => setDisk(`C: ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`))
       .catch(() => {});
-    void fetch("https://api.github.com/repos/Tsuki-hash/Remova-next/releases/latest", {
+    void fetch("https://api.github.com/repos/Tsuki-hash/Remova/releases/latest", {
       headers: { Accept: "application/vnd.github+json" },
     })
       .then((r) => (r.ok ? r.json() : null))
