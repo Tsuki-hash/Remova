@@ -100,6 +100,11 @@ export function currentLang() {
   return lang;
 }
 
-export function t(): (typeof dict)["zh"] {
-  return dict[lang];
+export type Strings = Omit<(typeof dict)["zh"], "batchConfirm" | "cleanupConfirm"> & {
+  batchConfirm: (n: number) => string;
+  cleanupConfirm: (n: number, official: boolean) => string;
+};
+
+export function t(): Strings {
+  return dict[lang] as Strings;
 }
