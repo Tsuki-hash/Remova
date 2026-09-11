@@ -73,6 +73,10 @@ export default function App() {
   const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
+  const [sortCol, setSortCol] = useState<"name" | "publisher" | "location" | null>(null);
+  const [sortDesc, setSortDesc] = useState(false);
+  const [disk, setDisk] = useState("");
+  const [admin, setAdmin] = useState<boolean | null>(null);
   const [history, setHistory] = useState<
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
   >([]);
@@ -98,16 +102,38 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    void invoke<boolean>("is_elevated")
+      .then(setAdmin)
+      .catch(() => setAdmin(null));
+    // disk from navigator not available in tauri without plugin — leave blank or try
+  }, []);
+
+  const sortBy = (col: "name" | "publisher" | "location") => {
+    if (sortCol === col) setSortDesc((d) => !d);
+    else {
+      setSortCol(col);
+      setSortDesc(false);
+    }
+  };
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return apps;
-    return apps.filter(
-      (a) =>
-        a.name.toLowerCase().includes(needle) ||
-        a.publisher.toLowerCase().includes(needle) ||
-        a.install_location.toLowerCase().includes(needle),
+    let list = apps;
+    if (needle) {
+      list = list.filter(
+        (a) =>
+          a.name.toLowerCase().includes(needle) ||
+          a.publisher.toLowerCase().includes(needle) ||
+          a.install_location.toLowerCase().includes(needle),
+      );
+    }
+    if (!sortCol) return list;
+    const s = [...list].sort((a, b) =>
+      (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase()),
     );
-  }, [apps, q]);
+    return sortDesc ? s.reverse() : s;
+  }, [apps, q, sortCol, sortDesc]);
 
   const analyze = useCallback(async (app: InstalledApp) => {
     setSelected(app);
@@ -193,6 +219,9 @@ export default function App() {
         <span style={styles.muted}>Deep Uninstall · Tauri + React + Rust</span>
         <span style={{ ...styles.muted, marginLeft: "auto" }}>
           {loading ? "加载中…" : `${filtered.length} / ${apps.length} 个软件`}
+          {admin === false && " · 非管理员"}
+          {admin === true && " · 管理员"}
+          {disk && ` · ${disk}`}
         </span>
       </div>
       <div style={styles.bar}>
@@ -204,6 +233,25 @@ export default function App() {
         />
         <button style={styles.btnGhost} onClick={loadHistory}>
           历史
+        </button>
+        <button
+          style={styles.btnGhost}
+          onClick={async () => {
+            try {
+              const csv = await invoke<string>("export_history_csv");
+              const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "remova-history.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+        >
+          导出 CSV
         </button>
         <button style={styles.btnGhost} onClick={restoreLatest}>
           还原最近备份
@@ -338,7 +386,11 @@ export default function App() {
                           : styles.confSuspected),
                       }}
                     >
-                      {it.confidence === "confirmed" ? "确定" : "疑似"}
+                      {it.confidence === "confirmed"
+                        ? "★★★ 确定"
+                        : it.score >= 30
+                          ? "★★ 疑似"
+                          : "★ 低"}
                     </td>
                     <td
                       style={{
@@ -366,15 +418,27 @@ export default function App() {
         <div style={styles.card}>
           <div style={styles.scroll}>
             <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>名称</th>
-                  <th style={styles.th}>版本</th>
-                  <th style={styles.th}>发布者</th>
-                  <th style={styles.th}>来源</th>
-                  <th style={styles.th}>安装路径</th>
-                </tr>
-              </thead>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, cursor: "pointer" }} onClick={() => sortBy("name")}>
+                  名称 {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
+                </th>
+                <th style={styles.th}>版本</th>
+                <th
+                  style={{ ...styles.th, cursor: "pointer" }}
+                  onClick={() => sortBy("publisher")}
+                >
+                  发布者 {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
+                </th>
+                <th style={styles.th}>来源</th>
+                <th
+                  style={{ ...styles.th, cursor: "pointer" }}
+                  onClick={() => sortBy("location")}
+                >
+                  安装路径 {sortCol === "location" ? (sortDesc ? "↓" : "↑") : ""}
+                </th>
+              </tr>
+            </thead>
               <tbody>
                 {filtered.map((a) => (
                   <tr

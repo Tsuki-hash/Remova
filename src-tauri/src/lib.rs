@@ -68,6 +68,62 @@ fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
     Ok(history::load(200))
 }
 
+#[tauri::command]
+fn export_history_csv() -> Result<String, String> {
+    let entries = history::load(500);
+    let mut out = String::from("app_name,deleted,failed,skipped,aborted,backup_dir,created_at\n");
+    for e in entries {
+        out.push_str(&format!(
+            "\"{}\",{},{},{},{},\"{}\",{}\n",
+            e.app_name.replace('"', "'"),
+            e.deleted,
+            e.failed,
+            e.skipped,
+            e.aborted,
+            e.backup_dir,
+            e.created_at
+        ));
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn is_elevated() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        use windows::Win32::Foundation::CloseHandle;
+        unsafe {
+            let mut token = windows::Win32::Foundation::HANDLE::default();
+            if OpenProcessToken(
+                GetCurrentProcess(),
+                windows::Win32::Security::TOKEN_QUERY,
+                &mut token,
+            )
+            .is_err()
+            {
+                return Ok(false);
+            }
+            let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut ret = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elev as *mut _ as *mut _),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut ret,
+            );
+            let _ = CloseHandle(token);
+            Ok(ok.is_ok() && elev.TokenIsElevated != 0)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -77,7 +133,9 @@ pub fn run() {
             run_cleanup_dry_run,
             run_full_cleanup,
             restore_latest_backup,
-            list_cleanup_history
+            list_cleanup_history,
+            export_history_csv,
+            is_elevated
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

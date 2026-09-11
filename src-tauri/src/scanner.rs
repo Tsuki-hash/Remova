@@ -469,23 +469,106 @@ pub fn analyze_associations(
                     detail: vdata.chars().take(120).collect(),
                 }],
             );
-            // push_item may drop <30; re-attach with explicit score if needed
-            if let Some(last) = items.last_mut() {
-                if last.score != score {
-                    last.score = score;
-                    let (c, r) = finalize_score(score);
-                    last.confidence = c;
-                    last.risk = r;
-                }
-                let _ = conf;
-                let _ = risk;
-            }
         }
     }
+
+    // 6. Windows services (suspected / high — display only)
+    scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
+
+    // 7. Scheduled tasks (suspected / high — display only)
+    scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
 
     ScanResult {
         app_name: name.to_string(),
         items,
+    }
+}
+
+fn scan_services(
+    name_slugs: &[String],
+    exe_stems: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
+    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
+    for svc in crate::regscan::list_subkeys(root) {
+        let svc_path = format!("{root}\\{svc}");
+        if is_safe_to_delete_registry(&svc_path).is_err() {
+            continue;
+        }
+        let display = crate::regscan::read_string_default(&format!(r"{svc_path}\DisplayName"))
+            .unwrap_or_default();
+        let image = crate::regscan::read_string_default(&format!(r"{svc_path}\ImagePath"))
+            .unwrap_or_default();
+        let blob = format!("{svc} {display} {image}").to_lowercase();
+        let hit_install = !install_low.is_empty() && blob.contains(install_low);
+        let svc_n = normalize_for_match(&svc);
+        let strong = hit_install
+            || name_norms
+                .iter()
+                .any(|n| n.len() >= 6 && (n == &svc_n || svc_n.contains(n.as_str())));
+        let _ = exe_stems;
+        if !strong {
+            continue;
+        }
+        // force HIGH suspected regardless of score thresholds
+        let score = 40;
+        items.push(CleanupItem {
+            path: svc_path,
+            kind: ItemKind::Registry,
+            score,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::High,
+            reason: format!("Windows service leftover: {svc}"),
+            evidence: vec![Evidence {
+                code: "windows_service".into(),
+                label: "Service matches product (high risk, unselected)".into(),
+                weight: score,
+                detail: image.chars().take(120).collect(),
+            }],
+        });
+    }
+}
+
+fn scan_scheduled_tasks(
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
+    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
+    for top in crate::regscan::list_subkeys(root) {
+        if top.eq_ignore_ascii_case("microsoft") {
+            continue;
+        }
+        let key_path = format!("{root}\\{top}");
+        if is_safe_to_delete_registry(&key_path).is_err() {
+            continue;
+        }
+        let leaf_n = normalize_for_match(&top);
+        let hit_install =
+            !install_low.is_empty() && key_path.to_lowercase().contains(install_low);
+        let strong =
+            hit_install || name_norms.iter().any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
+        if !strong {
+            continue;
+        }
+        let score = 45;
+        items.push(CleanupItem {
+            path: key_path,
+            kind: ItemKind::Registry,
+            score,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::High,
+            reason: format!("Scheduled task leftover: {top}"),
+            evidence: vec![Evidence {
+                code: "scheduled_task".into(),
+                label: "Task name matches product (high risk, unselected)".into(),
+                weight: score,
+                detail: top,
+            }],
+        });
     }
 }
 
