@@ -72,6 +72,11 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
+  const [useOfficial, setUseOfficial] = useState(false);
+  const [history, setHistory] = useState<
+    { app_name: string; deleted: number; failed: number; backup_dir: string }[]
+  >([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,12 +146,12 @@ export default function App() {
     if (!scan || !selected) return;
     setDryRunning(true);
     try {
-      const r = await invoke<CleanupReport>("run_full_cleanup", {
+      const r = await invoke<FullCleanupReport>("run_full_cleanup", {
         app: selected,
         items: scan.items,
         options: {
           dry_run: false,
-          skip_official_uninstall: true,
+          skip_official_uninstall: !useOfficial,
           backup_enabled: true,
         },
       });
@@ -157,13 +162,35 @@ export default function App() {
     } finally {
       setDryRunning(false);
     }
-  }, [scan, selected]);
+  }, [scan, selected, useOfficial]);
+
+  const restoreLatest = useCallback(async () => {
+    if (!window.confirm("将从最近备份还原文件与注册表。继续？")) return;
+    try {
+      const msgs = await invoke<string[]>("restore_latest_backup");
+      window.alert(msgs.length ? `还原完成：\n${msgs.slice(0, 8).join("\n")}` : "无内容可还原");
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const h = await invoke<
+        { app_name: string; deleted: number; failed: number; backup_dir: string }[]
+      >("list_cleanup_history");
+      setHistory(h);
+      setShowHistory(true);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <h1 style={styles.h1}>Remova</h1>
-        <span style={styles.muted}>Deep Uninstall · Phase 2（dry-run 清理）</span>
+        <span style={styles.muted}>Deep Uninstall · Tauri + React + Rust</span>
         <span style={{ ...styles.muted, marginLeft: "auto" }}>
           {loading ? "加载中…" : `${filtered.length} / ${apps.length} 个软件`}
         </span>
@@ -175,6 +202,12 @@ export default function App() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        <button style={styles.btnGhost} onClick={loadHistory}>
+          历史
+        </button>
+        <button style={styles.btnGhost} onClick={restoreLatest}>
+          还原最近备份
+        </button>
         <button
           style={styles.btn}
           disabled={!selected || scanning}
@@ -183,44 +216,63 @@ export default function App() {
           {scanning ? "分析中…" : "深度分析"}
         </button>
         {scan && (
-          <button style={styles.btn} disabled={dryRunning} onClick={dryRun}>
-            {dryRunning ? "演练中…" : "演练清理 (dry-run)"}
-          </button>
-        )}
-        {scan && (
-          <button
-            style={{
-              ...styles.btn,
-              background: "#b91c1c",
-              opacity: dryRunning ? 0.6 : 1,
-            }}
-            disabled={dryRunning}
-            onClick={() => {
-              if (
-                !window.confirm(
-                  `将备份并清理 ${scan.items.length} 项（可能调用官方卸载器）。确认继续？`,
-                )
-              ) {
-                return;
-              }
-              void execReal();
-            }}
-          >
-            备份并清理
-          </button>
-        )}
-        {scan && (
-          <button
-            style={styles.btnGhost}
-            onClick={() => {
-              setScan(null);
-              setReport(null);
-            }}
-          >
-            关闭预览
-          </button>
+          <>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={useOfficial}
+                onChange={(e) => setUseOfficial(e.target.checked)}
+              />
+              调用官方卸载器
+            </label>
+            <button style={styles.btn} disabled={dryRunning} onClick={dryRun}>
+              {dryRunning ? "处理中…" : "演练清理"}
+            </button>
+            <button
+              style={{ ...styles.btn, background: "#b91c1c", opacity: dryRunning ? 0.6 : 1 }}
+              disabled={dryRunning}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    `将备份并清理 ${scan.items.length} 项${useOfficial ? "并调用官方卸载器" : ""}。确认？`,
+                  )
+                ) {
+                  return;
+                }
+                void execReal();
+              }}
+            >
+              备份并清理
+            </button>
+            <button
+              style={styles.btnGhost}
+              onClick={() => {
+                setScan(null);
+                setReport(null);
+              }}
+            >
+              关闭预览
+            </button>
+          </>
         )}
       </div>
+      {showHistory && (
+        <div style={{ ...styles.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <strong>清理历史</strong>
+          <button style={{ marginLeft: 12, ...styles.btnGhost }} onClick={() => setShowHistory(false)}>
+            关闭
+          </button>
+          <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
+            {history.length === 0 && <div>暂无记录</div>}
+            {history.map((h, i) => (
+              <div key={i}>
+                {h.app_name} · 删 {h.deleted} · 失败 {h.failed}
+                {h.backup_dir ? ` · ${h.backup_dir}` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {error && <div style={{ color: "#b91c1c", marginBottom: 12 }}>{error}</div>}
       {report && (
         <div

@@ -1,36 +1,39 @@
 # Remova-next
 
-Tauri 2 + React 19 + Rust rewrite of Remova (Phase 0: read-only installed app list).
+Tauri 2 + React 19 + Rust rewrite of Remova.
+
+## Features
+
+- Installed app list (HKLM64 / HKLM32 / HKCU)
+- Deep analyze with evidence scores (read-only)
+- Dry-run cleanup planning
+- Backup → cleanup with safety gates
+- Optional official uninstaller
+- Restore latest backup
+- Local history
 
 ## Requirements
 
+- Windows 10/11
 - Node.js 20+
-- Rust 1.77+ (stable MSVC toolchain on Windows)
-- Tauri CLI 2 (`npm i` installs `@tauri-apps/cli`)
+- Rust stable MSVC toolchain
 
 ## Develop
 
 ```powershell
 cd Remova-next
-npm install
-npm run tauri dev
+npm.cmd install
+npm.cmd run tauri dev
 ```
 
-## Test
+## Test / Build
 
 ```powershell
-cd src-tauri
-cargo test
+cd src-tauri && cargo test --lib
+npm.cmd run build
+npm.cmd run tauri build
 ```
 
-## Build
+## Safety
 
-```powershell
-npm run tauri build
-```
-
-## Layout
-
-- `src/` — React 19 + TypeScript UI
-- `src-tauri/` — Rust core (`apps` registry scan, `safety` guards)
-- `docs/compose/spec/` — feature specs
+Real deletes require UI confirmation and pass `safety` checks. Backups: `%PROGRAMDATA%\Remova\Backup\`.
