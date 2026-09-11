@@ -24,10 +24,11 @@
 | 批量卸载 | ✅ | ✅ | 多选队列清理确定项 |
 | 磁盘空间条 | ✅ | ✅ | C: 可用/总量 |
 | 首次引导 | ✅ | ✅ | localStorage |
-| 扫描 ETA | ✅ | ⬜ | |
+| 扫描 ETA | ✅ | ✅ | 分析完成后显示耗时 |
 | 版本检查 | ✅ | ✅ | GitHub latest（前端） |
-| 优雅退出等待 | ✅ | ⬜ | |
-| MoveFileEx 重启删除 | ✅ | ⬜ | |
-| 系统还原点 | ✅ | ⬜ | |
-| PyInstaller/exe | ✅ | 🟡 | `tauri build` |
+| 优雅退出等待 | ✅ | 🟡 | 任务中 beforeunload 提示 |
+| MoveFileEx 重启删除 | ✅ | ✅ | 删除失败时调度 |
+| 系统还原点 | ✅ | ✅ | SRSetRestorePointW（尽力） |
+| 提权重启 | ✅ | ✅ | ShellExecuteW runas |
+| PyInstaller/exe | ✅ | ✅ | v0.1.0 Release：exe + msi + nsis |
 | CI | ✅ | ✅ | windows test+build |
