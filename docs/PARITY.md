@@ -1,8 +1,10 @@
 # Remova-next vs Python Remova 对齐清单
 
+**迁移状态（2026-09-11）**：真机验收 **A–G 通过**；列表实测 **100%**。Remova-next 可作 Python 版功能级替换，版本 **v1.0.0**。
+
 **列表实测（2026-09-11）**：Python 232 = Rust 232，**intersection 232，coverage 100%**（`scripts/compare_lists.py`）。
 
-**验收清单**：见 `docs/ACCEPTANCE.md`。
+**验收清单**：见 `docs/ACCEPTANCE.md`（已勾选）。
 
 | 能力 | Python (Trash) | Remova-next | 备注 |
 |---|:---:|:---:|---|
