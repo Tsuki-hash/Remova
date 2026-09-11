@@ -1,66 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "./types";
+import type {
+  CleanupReport,
+  FullCleanupReport,
+  InstalledApp,
+  ScanResult,
+} from "./types";
+import { currentLang, loadLang, setLang, t } from "./i18n";
 
-const styles = {
-  page: { padding: 24, maxWidth: 1280, margin: "0 auto" },
-  header: { display: "flex", alignItems: "baseline", gap: 16, marginBottom: 16 },
-  h1: { fontSize: 28, fontWeight: 700, margin: 0 },
-  muted: { color: "#2f3e52", fontSize: 14 },
-  bar: { display: "flex", gap: 12, marginBottom: 12, alignItems: "center" },
-  input: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
-    border: "1px solid #d0d7e2",
-    padding: "0 14px",
-    fontSize: 14,
-    background: "#fff",
-  },
-  btn: {
-    height: 40,
-    padding: "0 16px",
-    borderRadius: 10,
-    border: "none",
-    background: "#0d9488",
-    color: "#fff",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  btnGhost: {
-    height: 40,
-    padding: "0 16px",
-    borderRadius: 10,
-    border: "1px solid #d0d7e2",
-    background: "#fff",
-    color: "#0b1220",
-    cursor: "pointer",
-  },
-  card: {
-    background: "#fff",
-    border: "1px solid #d0d7e2",
-    borderRadius: 16,
-    overflow: "hidden",
-  },
-  table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
-  th: {
-    textAlign: "left" as const,
-    padding: "10px 12px",
-    background: "#e8eef5",
-    borderBottom: "1px solid #d0d7e2",
-    position: "sticky" as const,
-    top: 0,
-  },
-  td: {
-    padding: "10px 12px",
-    borderBottom: "1px solid #e8eef5",
-    verticalAlign: "top" as const,
-  },
-  scroll: { maxHeight: "calc(100vh - 200px)", overflow: "auto" as const },
-  confConfirmed: { color: "#0f766e", fontWeight: 600 },
-  confSuspected: { color: "#b45309" },
-  riskHigh: { color: "#b91c1c", fontWeight: 600 },
-};
+type Theme = "light" | "dark";
+
+function loadTheme(): Theme {
+  const v = localStorage.getItem("remova_theme");
+  return v === "dark" ? "dark" : "light";
+}
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+  if (theme === "dark") {
+    root.style.setProperty("--bg", "#0f1419");
+    root.style.setProperty("--fg", "#e6edf3");
+    root.style.setProperty("--muted", "#9ba7b4");
+    root.style.setProperty("--surface", "#1c2128");
+    root.style.setProperty("--border", "#30363d");
+    root.style.setProperty("--accent", "#14b8a6");
+    root.style.setProperty("--th-bg", "#262c36");
+  } else {
+    root.style.setProperty("--bg", "#f5f7fa");
+    root.style.setProperty("--fg", "#0b1220");
+    root.style.setProperty("--muted", "#2f3e52");
+    root.style.setProperty("--surface", "#ffffff");
+    root.style.setProperty("--border", "#d0d7e2");
+    root.style.setProperty("--accent", "#0d9488");
+    root.style.setProperty("--th-bg", "#e8eef5");
+  }
+  localStorage.setItem("remova_theme", theme);
+}
 
 export default function App() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
@@ -68,53 +43,63 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<InstalledApp | null>(null);
+  const [multi, setMulti] = useState<Set<string>>(new Set());
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
+  const [, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
   const [sortCol, setSortCol] = useState<"name" | "publisher" | "install_location" | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
   const [admin, setAdmin] = useState<boolean | null>(null);
+  const [disk, setDisk] = useState("");
+  const [theme, setTheme] = useState<Theme>(loadTheme());
+  const [langVer, setLangVer] = useState(0);
+  const [showGuide, setShowGuide] = useState(!localStorage.getItem("remova_guided"));
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
   >([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [batching, setBatching] = useState(false);
+
+  useEffect(() => {
+    loadLang();
+    applyTheme(theme);
+    setLangVer((v) => v + 1);
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const list = await invoke<InstalledApp[]>("list_installed_apps");
-        if (!cancelled) {
-          setApps(list);
-          setError(null);
-        }
+        if (!cancelled) setApps(list);
       } catch (e) {
         if (!cancelled) setError(String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
+    void invoke<boolean>("is_elevated").then(setAdmin).catch(() => {});
+    void invoke<{ free_gb: number; total_gb: number }>("disk_usage")
+      .then((d) => setDisk(`C: ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`))
+      .catch(() => {});
+    void fetch("https://api.github.com/repos/Tsuki-hash/Remova-next/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { tag_name?: string } | null) => {
+        if (j?.tag_name) setNotice(`${t().versionNew}: ${j.tag_name}`);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    void invoke<boolean>("is_elevated")
-      .then(setAdmin)
-      .catch(() => setAdmin(null));
-    // disk from navigator not available in tauri without plugin — leave blank or try
-  }, []);
-
-  const sortBy = (col: "name" | "publisher" | "install_location") => {
-    if (sortCol === col) setSortDesc((d) => !d);
-    else {
-      setSortCol(col);
-      setSortDesc(false);
-    }
-  };
+  const L = useMemo(() => t(), [langVer]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -133,6 +118,23 @@ export default function App() {
     );
     return sortDesc ? s.reverse() : s;
   }, [apps, q, sortCol, sortDesc]);
+
+  const sortBy = (col: "name" | "publisher" | "install_location") => {
+    if (sortCol === col) setSortDesc((d) => !d);
+    else {
+      setSortCol(col);
+      setSortDesc(false);
+    }
+  };
+
+  const toggleMulti = (key: string) => {
+    setMulti((m) => {
+      const n = new Set(m);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  };
 
   const analyze = useCallback(async (app: InstalledApp) => {
     setSelected(app);
@@ -159,7 +161,6 @@ export default function App() {
         items: scan.items,
       });
       setReport(r);
-      setError(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -181,7 +182,6 @@ export default function App() {
         },
       });
       setReport(r);
-      setError(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -189,77 +189,211 @@ export default function App() {
     }
   }, [scan, selected, useOfficial]);
 
-  const restoreLatest = useCallback(async () => {
-    if (!window.confirm("将从最近备份还原文件与注册表。继续？")) return;
+  const batchCleanup = useCallback(async () => {
+    const keys = new Set(multi);
+    const queue = apps.filter((a) => keys.has(a.registry_key + a.name));
+    if (!queue.length) return;
+    if (!window.confirm(L.batchConfirm(queue.length))) return;
+    setBatching(true);
     try {
-      const msgs = await invoke<string[]>("restore_latest_backup");
-      window.alert(msgs.length ? `还原完成：\n${msgs.slice(0, 8).join("\n")}` : "无内容可还原");
+      for (let i = 0; i < queue.length; i++) {
+        const app = queue[i];
+        setNotice(`[${i + 1}/${queue.length}] ${app.name}`);
+        const r = await invoke<ScanResult>("analyze_associations", { app });
+        const items = r.items.filter(
+          (it) => it.confidence === "confirmed" && it.risk !== "high",
+        );
+        if (!items.length) continue;
+        await invoke<FullCleanupReport>("run_full_cleanup", {
+          app,
+          items,
+          options: {
+            dry_run: false,
+            skip_official_uninstall: true,
+            backup_enabled: true,
+          },
+        });
+      }
+      setNotice("Batch finished");
+      setMulti(new Set());
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBatching(false);
     }
-  }, []);
+  }, [apps, multi, L]);
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const h = await invoke<
-        { app_name: string; deleted: number; failed: number; backup_dir: string }[]
-      >("list_cleanup_history");
-      setHistory(h);
-      setShowHistory(true);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
+  const css = {
+    page: { padding: 24, maxWidth: 1280, margin: "0 auto", color: "var(--fg)" },
+    muted: { color: "var(--muted)", fontSize: 14 },
+    input: {
+      flex: 1,
+      height: 40,
+      borderRadius: 10,
+      border: "1px solid var(--border)",
+      padding: "0 14px",
+      fontSize: 14,
+      background: "var(--surface)",
+      color: "var(--fg)",
+    },
+    btn: {
+      height: 40,
+      padding: "0 14px",
+      borderRadius: 10,
+      border: "none",
+      background: "var(--accent)",
+      color: "#fff",
+      fontWeight: 600,
+      cursor: "pointer",
+    },
+    btnGhost: {
+      height: 40,
+      padding: "0 14px",
+      borderRadius: 10,
+      border: "1px solid var(--border)",
+      background: "var(--surface)",
+      color: "var(--fg)",
+      cursor: "pointer",
+    },
+    card: {
+      background: "var(--surface)",
+      border: "1px solid var(--border)",
+      borderRadius: 16,
+      overflow: "hidden",
+    },
+    th: {
+      textAlign: "left" as const,
+      padding: "10px 12px",
+      background: "var(--th-bg)",
+      borderBottom: "1px solid var(--border)",
+      position: "sticky" as const,
+      top: 0,
+    },
+    td: {
+      padding: "10px 12px",
+      borderBottom: "1px solid var(--border)",
+      verticalAlign: "top" as const,
+    },
+    table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
+    scroll: { maxHeight: "calc(100vh - 240px)", overflow: "auto" as const },
+  };
 
   return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <h1 style={styles.h1}>Remova</h1>
-        <span style={styles.muted}>Deep Uninstall · Tauri + React + Rust</span>
-        <span style={{ ...styles.muted, marginLeft: "auto" }}>
-          {loading ? "加载中…" : `${filtered.length} / ${apps.length} 个软件`}
-          {admin === false && " · 非管理员"}
-          {admin === true && " · 管理员"}
+    <div style={css.page}>
+      <div style={{ display: "flex", gap: 16, alignItems: "baseline", marginBottom: 16 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>{L.title}</h1>
+        <span style={css.muted}>{L.subtitle}</span>
+        <span style={{ ...css.muted, marginLeft: "auto" }}>
+          {loading ? "…" : `${filtered.length} / ${apps.length}`}
+          {admin === false && ` · ${L.nonAdmin}`}
+          {admin === true && ` · ${L.admin}`}
+          {disk && ` · ${L.disk} ${disk}`}
         </span>
+        <button
+          style={css.btnGhost}
+          onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
+        >
+          {L.themeToggle}
+        </button>
+        <button
+          style={css.btnGhost}
+          onClick={() => {
+            const next = currentLang() === "zh" ? "en" : "zh";
+            setLang(next);
+            setLangVer((v) => v + 1);
+          }}
+        >
+          {L.langToggle}
+        </button>
       </div>
-      <div style={styles.bar}>
+
+      {showGuide && (
+        <div
+          style={{
+            ...css.card,
+            padding: 12,
+            marginBottom: 12,
+            background: "var(--th-bg)",
+            fontSize: 13,
+          }}
+        >
+          {L.guided}{" "}
+          <button
+            style={{ ...css.btnGhost, height: 28 }}
+            onClick={() => {
+              localStorage.setItem("remova_guided", "1");
+              setShowGuide(false);
+            }}
+          >
+            {L.closeGuide}
+          </button>
+        </div>
+      )}
+      {notice && (
+        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>{notice}</div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <input
-          style={styles.input}
-          placeholder="搜索名称 / 发布者 / 安装路径…"
+          style={css.input}
+          placeholder={L.search}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <button style={styles.btnGhost} onClick={loadHistory}>
-          历史
+        <button
+          style={css.btnGhost}
+          onClick={async () => {
+            const h = await invoke<
+              { app_name: string; deleted: number; failed: number; backup_dir: string }[]
+            >("list_cleanup_history");
+            setHistory(h);
+            setShowHistory(true);
+          }}
+        >
+          {L.history}
         </button>
         <button
-          style={styles.btnGhost}
+          style={css.btnGhost}
           onClick={async () => {
+            const csv = await invoke<string>("export_history_csv");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "remova-history.csv";
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          {L.exportCsv}
+        </button>
+        <button
+          style={css.btnGhost}
+          onClick={async () => {
+            if (!window.confirm(L.restoreConfirm)) return;
             try {
-              const csv = await invoke<string>("export_history_csv");
-              const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = "remova-history.csv";
-              a.click();
-              URL.revokeObjectURL(url);
+              const msgs = await invoke<string[]>("restore_latest_backup");
+              alert(msgs.slice(0, 8).join("\n") || "ok");
             } catch (e) {
               setError(String(e));
             }
           }}
         >
-          导出 CSV
-        </button>
-        <button style={styles.btnGhost} onClick={restoreLatest}>
-          还原最近备份
+          {L.restore}
         </button>
         <button
-          style={styles.btn}
+          style={{ ...css.btn, opacity: batching ? 0.6 : 1 }}
+          disabled={batching || multi.size === 0}
+          onClick={() => void batchCleanup()}
+        >
+          {L.batch} ({multi.size})
+        </button>
+        <button
+          style={css.btn}
           disabled={!selected || scanning}
           onClick={() => selected && analyze(selected)}
         >
-          {scanning ? "分析中…" : "深度分析"}
+          {scanning ? L.analyzing : L.analyze}
         </button>
         {scan && (
           <>
@@ -269,143 +403,88 @@ export default function App() {
                 checked={useOfficial}
                 onChange={(e) => setUseOfficial(e.target.checked)}
               />
-              调用官方卸载器
+              {L.useOfficial}
             </label>
-            <button style={styles.btn} disabled={dryRunning} onClick={dryRun}>
-              {dryRunning ? "处理中…" : "演练清理"}
+            <button style={css.btn} disabled={dryRunning} onClick={dryRun}>
+              {L.dryRun}
             </button>
             <button
-              style={{ ...styles.btn, background: "#b91c1c", opacity: dryRunning ? 0.6 : 1 }}
+              style={{ ...css.btn, background: "#b91c1c" }}
               disabled={dryRunning}
               onClick={() => {
-                if (
-                  !window.confirm(
-                    `将备份并清理 ${scan.items.length} 项${useOfficial ? "并调用官方卸载器" : ""}。确认？`,
-                  )
-                ) {
-                  return;
-                }
+                if (!window.confirm(L.cleanupConfirm(scan.items.length, useOfficial))) return;
                 void execReal();
               }}
             >
-              备份并清理
+              {L.cleanup}
             </button>
             <button
-              style={styles.btnGhost}
+              style={css.btnGhost}
               onClick={() => {
                 setScan(null);
                 setReport(null);
               }}
             >
-              关闭预览
+              {L.closePreview}
             </button>
           </>
         )}
       </div>
+
       {showHistory && (
-        <div style={{ ...styles.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <strong>清理历史</strong>
-          <button style={{ marginLeft: 12, ...styles.btnGhost }} onClick={() => setShowHistory(false)}>
-            关闭
+        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <strong>{L.historyTitle}</strong>
+          <button style={{ marginLeft: 12, ...css.btnGhost }} onClick={() => setShowHistory(false)}>
+            ×
           </button>
           <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
-            {history.length === 0 && <div>暂无记录</div>}
+            {history.length === 0 && <div>{L.noHistory}</div>}
             {history.map((h, i) => (
               <div key={i}>
-                {h.app_name} · 删 {h.deleted} · 失败 {h.failed}
+                {h.app_name} · {h.deleted}/{h.failed}
                 {h.backup_dir ? ` · ${h.backup_dir}` : ""}
               </div>
             ))}
           </div>
         </div>
       )}
+
       {error && <div style={{ color: "#b91c1c", marginBottom: 12 }}>{error}</div>}
-      {report && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "12px 16px",
-            background: "#e8eef5",
-            borderRadius: 12,
-            fontSize: 13,
-          }}
-        >
-          <strong>{report.dry_run ? "dry-run 摘要" : "清理摘要"}</strong>
-          <span style={{ marginLeft: 12 }}>
-            {report.dry_run
-              ? `计划删除 ${(report as CleanupReport).deleted_planned} · 跳过 ${report.skipped} · ${report.uninstall_message}`
-              : `已删除 ${(report as FullCleanupReport).deleted} · 失败 ${(report as FullCleanupReport).failed} · 跳过 ${report.skipped} · ${(report as FullCleanupReport).aborted ? "已中止 · " : ""}${report.uninstall_message}${(report as FullCleanupReport).backup_dir ? " · 备份 " + (report as FullCleanupReport).backup_dir : ""}`}
-          </span>
-          {report.item_details.length > 0 && (
-            <div style={{ marginTop: 8, maxHeight: 120, overflow: "auto" }}>
-              {report.item_details.slice(0, 20).map((d) => (
-                <div key={d.path}>
-                  [{d.status}] {d.path}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {scan ? (
-        <div style={styles.card}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #e8eef5" }}>
+        <div style={css.card}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
             <strong>{scan.app_name}</strong>
-            <span style={{ ...styles.muted, marginLeft: 12 }}>
-              共 {scan.items.length} 项 · 确定{" "}
-              {scan.items.filter((i) => i.confidence === "confirmed").length} · 疑似{" "}
-              {scan.items.filter((i) => i.confidence === "suspected").length}
+            <span style={{ ...css.muted, marginLeft: 12 }}>
+              {scan.items.length} items ·{" "}
+              {scan.items.filter((i) => i.confidence === "confirmed").length} confirmed
             </span>
           </div>
-          <div style={styles.scroll}>
-            <table style={styles.table}>
+          <div style={css.scroll}>
+            <table style={css.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>路径 / 键</th>
-                  <th style={styles.th}>类型</th>
-                  <th style={styles.th}>分数</th>
-                  <th style={styles.th}>关联</th>
-                  <th style={styles.th}>风险</th>
-                  <th style={styles.th}>依据</th>
+                  <th style={css.th}>{L.colLocation}</th>
+                  <th style={css.th}>type</th>
+                  <th style={css.th}>score</th>
+                  <th style={css.th}>match</th>
+                  <th style={css.th}>risk</th>
                 </tr>
               </thead>
               <tbody>
                 {scan.items.map((it) => (
                   <tr key={it.path}>
-                    <td style={styles.td}>{it.path}</td>
-                    <td style={styles.td}>{it.kind}</td>
-                    <td style={styles.td}>{it.score}</td>
-                    <td
-                      style={{
-                        ...styles.td,
-                        ...(it.confidence === "confirmed"
-                          ? styles.confConfirmed
-                          : styles.confSuspected),
-                      }}
-                    >
+                    <td style={css.td}>{it.path}</td>
+                    <td style={css.td}>{it.kind}</td>
+                    <td style={css.td}>{it.score}</td>
+                    <td style={css.td}>
                       {it.confidence === "confirmed"
-                        ? "★★★ 确定"
+                        ? L.confirmed
                         : it.score >= 30
-                          ? "★★ 疑似"
-                          : "★ 低"}
+                          ? L.suspected
+                          : L.low}
                     </td>
-                    <td
-                      style={{
-                        ...styles.td,
-                        ...(it.risk === "high" ? styles.riskHigh : null),
-                      }}
-                    >
-                      {it.risk}
-                    </td>
-                    <td style={styles.td}>
-                      {it.evidence.map((e) => (
-                        <div key={e.code + e.detail}>
-                          {e.label} ({e.weight})
-                          {e.detail ? ` — ${e.detail.slice(0, 80)}` : ""}
-                        </div>
-                      ))}
-                    </td>
+                    <td style={css.td}>{it.risk}</td>
                   </tr>
                 ))}
               </tbody>
@@ -413,58 +492,64 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={styles.card}>
-          <div style={styles.scroll}>
-            <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ ...styles.th, cursor: "pointer" }} onClick={() => sortBy("name")}>
-                  名称 {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
-                </th>
-                <th style={styles.th}>版本</th>
-                <th
-                  style={{ ...styles.th, cursor: "pointer" }}
-                  onClick={() => sortBy("publisher")}
-                >
-                  发布者 {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
-                </th>
-                <th style={styles.th}>来源</th>
-                <th
-                  style={{ ...styles.th, cursor: "pointer" }}
-                  onClick={() => sortBy("install_location")}
-                >
-                  安装路径 {sortCol === "install_location" ? (sortDesc ? "↓" : "↑") : ""}
-                </th>
-              </tr>
-            </thead>
-              <tbody>
-                {filtered.map((a) => (
-                  <tr
-                    key={a.registry_key + a.name}
-                    onClick={() => setSelected(a)}
-                    style={{
-                      cursor: "pointer",
-                      background:
-                        selected?.registry_key === a.registry_key && selected.name === a.name
-                          ? "#ccfbf1"
-                          : undefined,
-                    }}
-                    onDoubleClick={() => analyze(a)}
+        <div style={css.card}>
+          <div style={css.scroll}>
+            <table style={css.table}>
+              <thead>
+                <tr>
+                  <th style={css.th}>✓</th>
+                  <th style={{ ...css.th, cursor: "pointer" }} onClick={() => sortBy("name")}>
+                    {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
+                  </th>
+                  <th style={css.th}>{L.colVersion}</th>
+                  <th
+                    style={{ ...css.th, cursor: "pointer" }}
+                    onClick={() => sortBy("publisher")}
                   >
-                    <td style={styles.td}>{a.name}</td>
-                    <td style={styles.td}>{a.version || "—"}</td>
-                    <td style={styles.td}>{a.publisher || "—"}</td>
-                    <td style={styles.td}>{a.source}</td>
-                    <td style={styles.td}>{a.install_location || "—"}</td>
-                  </tr>
-                ))}
-                {!loading && filtered.length === 0 && (
-                  <tr>
-                    <td style={styles.td} colSpan={5}>
-                      无匹配项
-                    </td>
-                  </tr>
-                )}
+                    {L.colPublisher} {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
+                  </th>
+                  <th style={css.th}>{L.colSource}</th>
+                  <th
+                    style={{ ...css.th, cursor: "pointer" }}
+                    onClick={() => sortBy("install_location")}
+                  >
+                    {L.colLocation}{" "}
+                    {sortCol === "install_location" ? (sortDesc ? "↓" : "↑") : ""}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((a) => {
+                  const key = a.registry_key + a.name;
+                  return (
+                    <tr
+                      key={key}
+                      onClick={() => setSelected(a)}
+                      onDoubleClick={() => analyze(a)}
+                      style={{
+                        cursor: "pointer",
+                        background:
+                          selected?.registry_key === a.registry_key && selected.name === a.name
+                            ? "var(--th-bg)"
+                            : undefined,
+                      }}
+                    >
+                      <td style={css.td}>
+                        <input
+                          type="checkbox"
+                          checked={multi.has(key)}
+                          onChange={() => toggleMulti(key)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                      <td style={css.td}>{a.name}</td>
+                      <td style={css.td}>{a.version || "—"}</td>
+                      <td style={css.td}>{a.publisher || "—"}</td>
+                      <td style={css.td}>{a.source}</td>
+                      <td style={css.td}>{a.install_location || "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -91,9 +91,9 @@ fn export_history_csv() -> Result<String, String> {
 fn is_elevated() -> Result<bool, String> {
     #[cfg(windows)]
     {
+        use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
         use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-        use windows::Win32::Foundation::CloseHandle;
         unsafe {
             let mut token = windows::Win32::Foundation::HANDLE::default();
             if OpenProcessToken(
@@ -124,6 +124,47 @@ fn is_elevated() -> Result<bool, String> {
     }
 }
 
+#[derive(serde::Serialize)]
+struct DiskInfo {
+    free_gb: f64,
+    total_gb: f64,
+}
+
+#[tauri::command]
+fn disk_usage() -> Result<DiskInfo, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        use windows::core::PCWSTR;
+        let root: Vec<u16> = "C:\\\0".encode_utf16().collect();
+        let mut free = 0u64;
+        let mut total = 0u64;
+        let mut total_free = 0u64;
+        unsafe {
+            let ok = GetDiskFreeSpaceExW(
+                PCWSTR(root.as_ptr()),
+                Some(&mut free),
+                Some(&mut total),
+                Some(&mut total_free),
+            );
+            if ok.is_err() {
+                return Err("GetDiskFreeSpaceExW failed".into());
+            }
+        }
+        Ok(DiskInfo {
+            free_gb: total_free as f64 / 1024f64.powi(3),
+            total_gb: total as f64 / 1024f64.powi(3),
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(DiskInfo {
+            free_gb: 0.0,
+            total_gb: 0.0,
+        })
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -135,7 +176,8 @@ pub fn run() {
             restore_latest_backup,
             list_cleanup_history,
             export_history_csv,
-            is_elevated
+            is_elevated,
+            disk_usage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

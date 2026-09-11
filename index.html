@@ -7,12 +7,19 @@
     <style>
       :root {
         color-scheme: light;
+        --bg: #f5f7fa;
+        --fg: #0b1220;
+        --muted: #2f3e52;
+        --surface: #ffffff;
+        --border: #d0d7e2;
+        --accent: #0d9488;
+        --th-bg: #e8eef5;
         font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
-        background: #f5f7fa;
-        color: #0b1220;
+        background: var(--bg);
+        color: var(--fg);
       }
       * { box-sizing: border-box; }
-      body { margin: 0; }
+      body { margin: 0; background: var(--bg); color: var(--fg); }
       #root { min-height: 100vh; }
     </style>
   </head>
