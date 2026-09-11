@@ -9,6 +9,7 @@ pub mod regscan;
 pub mod restore;
 pub mod safety;
 pub mod scanner;
+pub mod sysops;
 
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
@@ -165,6 +166,11 @@ fn disk_usage() -> Result<DiskInfo, String> {
     }
 }
 
+#[tauri::command]
+fn elevate_restart() -> Result<(), String> {
+    sysops::elevate_relaunch(&[])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -177,7 +183,8 @@ pub fn run() {
             list_cleanup_history,
             export_history_csv,
             is_elevated,
-            disk_usage
+            disk_usage,
+            elevate_restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

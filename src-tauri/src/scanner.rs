@@ -448,11 +448,6 @@ pub fn analyze_associations(
                 continue;
             }
             let score = if hit_install { 55 } else { 40 };
-            let (conf, risk) = if hit_install {
-                (Confidence::Confirmed, RiskLevel::Low)
-            } else {
-                (Confidence::Suspected, RiskLevel::Medium)
-            };
             push_item(
                 &mut items,
                 path,

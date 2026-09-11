@@ -70,6 +70,35 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (batching || dryRunning) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [batching, dryRunning]);
+
+  const analyze = useCallback(async (app: InstalledApp) => {
+    setSelected(app);
+    setScanning(true);
+    setScan(null);
+    setReport(null);
+    const t0 = performance.now();
+    try {
+      const r = await invoke<ScanResult>("analyze_associations", { app });
+      setScan(r);
+      setError(null);
+      setNotice(`analyze ${(performance.now() - t0) / 1000}s · ${r.items.length} items`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -135,22 +164,6 @@ export default function App() {
       return n;
     });
   };
-
-  const analyze = useCallback(async (app: InstalledApp) => {
-    setSelected(app);
-    setScanning(true);
-    setScan(null);
-    setReport(null);
-    try {
-      const r = await invoke<ScanResult>("analyze_associations", { app });
-      setScan(r);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setScanning(false);
-    }
-  }, []);
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
@@ -387,6 +400,19 @@ export default function App() {
           onClick={() => void batchCleanup()}
         >
           {L.batch} ({multi.size})
+        </button>
+        <button
+          style={css.btnGhost}
+          disabled={admin === true || admin === null}
+          onClick={async () => {
+            try {
+              await invoke("elevate_restart");
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+        >
+          Admin
         </button>
         <button
           style={css.btn}

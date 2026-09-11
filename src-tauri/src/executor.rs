@@ -225,6 +225,11 @@ pub fn run_full_cleanup(
 
     let mut backup_dir = String::new();
     if opts.backup_enabled {
+        // restore point first (non-fatal)
+        let (_rp_ok, _rp_msg) = crate::sysops::create_restore_point(&format!(
+            "Remova: {}",
+            app.name.chars().take(40).collect::<String>()
+        ));
         match crate::backup::create_session(&app.name) {
             Ok(session) => {
                 backup_dir = session.to_string_lossy().to_string();
@@ -359,9 +364,20 @@ pub fn run_full_cleanup(
                             message: String::new(),
                         });
                     }
-                    Err(e) => {
-                        failed += 1;
-                        errors.push(format!("{}: {e}", it.path));
+                    Err(_e) => {
+                        // try schedule delete on reboot for locked files
+                        if crate::sysops::schedule_delete_on_reboot(&it.path) {
+                            deleted += 1;
+                            details.push(ItemDetail {
+                                path: it.path.clone(),
+                                kind: format!("{:?}", it.kind).to_lowercase(),
+                                status: "delayed".into(),
+                                message: "reboot delete".into(),
+                            });
+                        } else {
+                            failed += 1;
+                            errors.push(format!("{}: delete failed", it.path));
+                        }
                     }
                 }
             }
