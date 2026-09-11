@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { InstalledApp, ScanResult } from "./types";
+import type { CleanupReport, InstalledApp, ScanResult } from "./types";
 
 const styles = {
   page: { padding: 24, maxWidth: 1280, margin: "0 auto" },
@@ -70,6 +70,8 @@ export default function App() {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [report, setReport] = useState<CleanupReport | null>(null);
+  const [dryRunning, setDryRunning] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +108,7 @@ export default function App() {
     setSelected(app);
     setScanning(true);
     setScan(null);
+    setReport(null);
     try {
       const r = await invoke<ScanResult>("analyze_associations", { app });
       setScan(r);
@@ -117,11 +120,28 @@ export default function App() {
     }
   }, []);
 
+  const dryRun = useCallback(async () => {
+    if (!scan) return;
+    setDryRunning(true);
+    try {
+      const r = await invoke<CleanupReport>("run_cleanup_dry_run", {
+        appName: scan.app_name,
+        items: scan.items,
+      });
+      setReport(r);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDryRunning(false);
+    }
+  }, [scan]);
+
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <h1 style={styles.h1}>Remova</h1>
-        <span style={styles.muted}>Deep Uninstall · Phase 1（只读关联分析）</span>
+        <span style={styles.muted}>Deep Uninstall · Phase 2（dry-run 清理）</span>
         <span style={{ ...styles.muted, marginLeft: "auto" }}>
           {loading ? "加载中…" : `${filtered.length} / ${apps.length} 个软件`}
         </span>
@@ -141,12 +161,49 @@ export default function App() {
           {scanning ? "分析中…" : "深度分析"}
         </button>
         {scan && (
-          <button style={styles.btnGhost} onClick={() => setScan(null)}>
+          <button style={styles.btn} disabled={dryRunning} onClick={dryRun}>
+            {dryRunning ? "演练中…" : "演练清理 (dry-run)"}
+          </button>
+        )}
+        {scan && (
+          <button
+            style={styles.btnGhost}
+            onClick={() => {
+              setScan(null);
+              setReport(null);
+            }}
+          >
             关闭预览
           </button>
         )}
       </div>
       {error && <div style={{ color: "#b91c1c", marginBottom: 12 }}>{error}</div>}
+      {report && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "12px 16px",
+            background: "#e8eef5",
+            borderRadius: 12,
+            fontSize: 13,
+          }}
+        >
+          <strong>dry-run 摘要</strong>
+          <span style={{ marginLeft: 12 }}>
+            计划删除 {report.deleted_planned} · 跳过 {report.skipped} ·{" "}
+            {report.uninstall_message}
+          </span>
+          {report.item_details.length > 0 && (
+            <div style={{ marginTop: 8, maxHeight: 120, overflow: "auto" }}>
+              {report.item_details.slice(0, 20).map((d) => (
+                <div key={d.path}>
+                  [{d.status}] {d.path}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {scan ? (
         <div style={styles.card}>

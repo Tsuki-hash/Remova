@@ -1,12 +1,14 @@
 //! Remova core library (Tauri backend).
 
 pub mod apps;
+pub mod executor;
 pub mod regscan;
 pub mod safety;
 pub mod scanner;
 
 use apps::InstalledApp;
-use scanner::ScanResult;
+use executor::CleanupReport;
+use scanner::{CleanupItem, ScanResult};
 
 #[tauri::command]
 fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
@@ -23,12 +25,18 @@ fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
     ))
 }
 
+#[tauri::command]
+fn run_cleanup_dry_run(app_name: String, items: Vec<CleanupItem>) -> Result<CleanupReport, String> {
+    Ok(executor::run_cleanup_dry(&app_name, &items))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
-            analyze_associations
+            analyze_associations,
+            run_cleanup_dry_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
