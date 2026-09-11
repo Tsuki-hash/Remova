@@ -1,14 +1,20 @@
 ---
 feature: remova-next-phase0
-status: designed
-updated: 2026-09-10
+status: delivered
+updated: 2026-09-11
 branch: main
-commits: # filled at delivery
+commits: 4927353 (local git, no remote)
 ---
 
 # Remova-next Phase 0 — Tauri 骨架 + 只读软件列表
 
 ## Report
+
+**What was built** — 新仓库 `Remova-next`：Tauri 2 + React 19 + TS + Rust。`list_installed_apps` 枚举 HKLM64/HKLM32/HKCU Uninstall；`safety` 模块与 Python 护栏对齐；React 搜索列表页。
+
+**Verification** — `cargo test --lib` **10/10 PASS**；`npm run build` 成功。
+
+**Journey log** — windows 0.58 `REG_SAM_FLAGS` 不能与 `u32` 直接 `|`；HKLM32 使用无 WOW6432Node 路径 + `KEY_WOW64_32KEY`。
 
 ## [S1] Problem
 
