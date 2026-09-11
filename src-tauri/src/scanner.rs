@@ -473,9 +473,204 @@ pub fn analyze_associations(
     // 7. Scheduled tasks (suspected / high — display only)
     scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
 
+    // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
+    scan_software_keys(&name_slugs, &mut items);
+
+    // 9. Shortcuts + TEMP
+    scan_shortcuts(&name_slugs, &exe_stems, &install_low, &mut items);
+    scan_temp(&name_slugs, &mut items);
+
     ScanResult {
         app_name: name.to_string(),
         items,
+    }
+}
+
+fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+    let pubs: [(&str, &str); 3] = [
+        ("HKLM64", r"SOFTWARE"),
+        ("HKLM32", r"SOFTWARE"),
+        ("HKCU", r"SOFTWARE"),
+    ];
+    for (alias, sub) in pubs {
+        let root = format!("{alias}\\{sub}");
+        for slug in name_slugs.iter().take(3) {
+            let key = format!("{root}\\{slug}");
+            if is_safe_to_delete_registry(&key).is_err() {
+                continue;
+            }
+            if crate::regscan::list_subkeys(&key).is_empty()
+                && crate::regscan::list_values(&key).is_empty()
+            {
+                continue;
+            }
+            let score = 40;
+            items.push(CleanupItem {
+                path: key,
+                kind: ItemKind::Registry,
+                score,
+                confidence: Confidence::Confirmed,
+                risk: RiskLevel::Low,
+                reason: format!("Software key: {slug}"),
+                evidence: vec![Evidence {
+                    code: "software_key_exact".into(),
+                    label: "HKLM/HKCU Software\\Product".into(),
+                    weight: score,
+                    detail: slug.clone(),
+                }],
+            });
+        }
+    }
+}
+
+fn scan_shortcuts(
+    name_slugs: &[String],
+    exe_stems: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let mut roots: Vec<PathBuf> = vec![];
+    if let Some(up) = std::env::var_os("USERPROFILE") {
+        roots.push(PathBuf::from(up).join("Desktop"));
+        roots.push(
+            PathBuf::from(std::env::var_os("USERPROFILE").unwrap())
+                .join("AppData/Roaming/Microsoft/Windows/Start Menu"),
+        );
+    }
+    if let Some(pu) = std::env::var_os("PUBLIC") {
+        roots.push(PathBuf::from(pu).join("Desktop"));
+    }
+    roots.push(PathBuf::from(r"C:\ProgramData\Microsoft\Windows\Start Menu"));
+
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+        walk_shortcuts(&root, 0, name_slugs, exe_stems, install_low, items);
+    }
+}
+
+fn walk_shortcuts(
+    dir: &Path,
+    depth: u32,
+    name_slugs: &[String],
+    exe_stems: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    if depth > 3 {
+        return;
+    }
+    let Ok(rd) = dir.read_dir() else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            walk_shortcuts(&p, depth + 1, name_slugs, exe_stems, install_low, items);
+            continue;
+        }
+        let Some(ext) = p.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let ext = ext.to_lowercase();
+        if !matches!(ext.as_str(), "lnk" | "url" | "appref-ms") {
+            continue;
+        }
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let sn = normalize_for_match(stem);
+        let hit = name_slugs.iter().any(|s| normalize_for_match(s) == sn)
+            || exe_stems
+                .iter()
+                .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
+            || {
+                // binary peek for install path
+                if let Ok(data) = std::fs::read(&p) {
+                    !install_low.is_empty()
+                        && (data.windows(install_low.len()).any(|w| {
+                            String::from_utf8_lossy(w).to_lowercase() == *install_low
+                        }) || {
+                            let u16s: Vec<u16> = install_low
+                                .encode_utf16()
+                                .collect();
+                            let bytes: Vec<u8> = u16s
+                                .iter()
+                                .flat_map(|u| u.to_le_bytes())
+                                .collect();
+                            data.windows(bytes.len()).any(|w| w == bytes)
+                        })
+                } else {
+                    false
+                }
+            };
+        if !hit || !is_safe_fs(&p) {
+            continue;
+        }
+        items.push(CleanupItem {
+            path: p.to_string_lossy().to_string(),
+            kind: ItemKind::File,
+            score: 50,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "Shortcut".into(),
+            evidence: vec![Evidence {
+                code: "shortcut_target".into(),
+                label: "Shortcut matches product".into(),
+                weight: 50,
+                detail: stem.to_string(),
+            }],
+        });
+    }
+}
+
+fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+    let Ok(temp) = std::env::var("TEMP") else {
+        return;
+    };
+    let temp = PathBuf::from(temp);
+    if !temp.exists() {
+        return;
+    }
+    let slugs: Vec<String> = name_slugs
+        .iter()
+        .map(|s| normalize_for_match(s))
+        .filter(|s| s.len() >= 4)
+        .collect();
+    if slugs.is_empty() {
+        return;
+    }
+    let Ok(rd) = temp.read_dir() else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        let name = p.to_string_lossy().to_lowercase();
+        if !slugs.iter().any(|s| name.contains(s.as_str())) {
+            continue;
+        }
+        if !is_safe_fs(&p) {
+            continue;
+        }
+        items.push(CleanupItem {
+            path: p.to_string_lossy().to_string(),
+            kind: if p.is_dir() {
+                ItemKind::Dir
+            } else {
+                ItemKind::File
+            },
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "TEMP name match".into(),
+            evidence: vec![Evidence {
+                code: "recent_temp_match".into(),
+                label: "TEMP folder/file name match".into(),
+                weight: 30,
+                detail: p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            }],
+        });
     }
 }
 

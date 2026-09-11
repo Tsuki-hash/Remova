@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CleanupReport,
@@ -62,6 +62,10 @@ export default function App() {
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
   >([]);
   const [batching, setBatching] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [evidence, setEvidence] = useState<string | null>(null);
+  const [histQ, setHistQ] = useState("");
+  const busyRef = useRef(false);
 
   useEffect(() => {
     loadLang();
@@ -89,8 +93,16 @@ export default function App() {
     try {
       const r = await invoke<ScanResult>("analyze_associations", { app });
       setScan(r);
+      // default select confirmed non-high
+      setSelectedPaths(
+        new Set(
+          r.items
+            .filter((it) => it.confidence === "confirmed" && it.risk !== "high")
+            .map((it) => it.path),
+        ),
+      );
       setError(null);
-      setNotice(`analyze ${(performance.now() - t0) / 1000}s · ${r.items.length} items`);
+      setNotice(`analyze ${((performance.now() - t0) / 1000).toFixed(1)}s · ${r.items.length} items`);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -122,6 +134,26 @@ export default function App() {
         if (j?.tag_name) setNotice(`${t().versionNew}: ${j.tag_name}`);
       })
       .catch(() => {});
+    // tauri window close confirm
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        await win.onCloseRequested(async (event) => {
+          if (busyRef.current) {
+            if (
+              !window.confirm(
+                "Task in progress. Close window may interrupt cleanup. Close anyway?",
+              )
+            ) {
+              event.preventDefault();
+            }
+          }
+        });
+      } catch {
+        // not in tauri
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -167,11 +199,12 @@ export default function App() {
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
+    const items = scan.items.filter((it) => selectedPaths.has(it.path));
     setDryRunning(true);
     try {
       const r = await invoke<CleanupReport>("run_cleanup_dry_run", {
         appName: scan.app_name,
-        items: scan.items,
+        items,
       });
       setReport(r);
     } catch (e) {
@@ -179,15 +212,17 @@ export default function App() {
     } finally {
       setDryRunning(false);
     }
-  }, [scan]);
+  }, [scan, selectedPaths]);
 
   const execReal = useCallback(async () => {
     if (!scan || !selected) return;
+    const items = scan.items.filter((it) => selectedPaths.has(it.path));
+    busyRef.current = true;
     setDryRunning(true);
     try {
       const r = await invoke<FullCleanupReport>("run_full_cleanup", {
         app: selected,
-        items: scan.items,
+        items,
         options: {
           dry_run: false,
           skip_official_uninstall: !useOfficial,
@@ -198,11 +233,13 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      busyRef.current = false;
       setDryRunning(false);
     }
-  }, [scan, selected, useOfficial]);
+  }, [scan, selected, useOfficial, selectedPaths]);
 
   const batchCleanup = useCallback(async () => {
+    busyRef.current = true;
     const keys = new Set(multi);
     const queue = apps.filter((a) => keys.has(a.registry_key + a.name));
     if (!queue.length) return;
@@ -232,6 +269,7 @@ export default function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      busyRef.current = false;
       setBatching(false);
     }
   }, [apps, multi, L]);
@@ -383,9 +421,19 @@ export default function App() {
         <button
           style={css.btnGhost}
           onClick={async () => {
-            if (!window.confirm(L.restoreConfirm)) return;
             try {
-              const msgs = await invoke<string[]>("restore_latest_backup");
+              const names = await invoke<string[]>("list_restore_sessions");
+              if (names.length === 0) {
+                setNotice("no backup sessions");
+                return;
+              }
+              const pick = window.prompt(
+                `Sessions:\n${names.slice(0, 15).join("\n")}\n\nEnter session name to restore:`,
+                names[0],
+              );
+              if (!pick) return;
+              if (!window.confirm(L.restoreConfirm)) return;
+              const msgs = await invoke<string[]>("restore_session_by_name", { name: pick });
               alert(msgs.slice(0, 8).join("\n") || "ok");
             } catch (e) {
               setError(String(e));
@@ -436,9 +484,9 @@ export default function App() {
             </button>
             <button
               style={{ ...css.btn, background: "#b91c1c" }}
-              disabled={dryRunning}
+              disabled={dryRunning || selectedPaths.size === 0}
               onClick={() => {
-                if (!window.confirm(L.cleanupConfirm(scan.items.length, useOfficial))) return;
+                if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
                 void execReal();
               }}
             >
@@ -460,17 +508,30 @@ export default function App() {
       {showHistory && (
         <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
           <strong>{L.historyTitle}</strong>
+          <input
+            style={{ ...css.input, maxWidth: 220, height: 32, marginLeft: 12 }}
+            placeholder={L.search}
+            value={histQ}
+            onChange={(e) => setHistQ(e.target.value)}
+          />
           <button style={{ marginLeft: 12, ...css.btnGhost }} onClick={() => setShowHistory(false)}>
             ×
           </button>
           <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
-            {history.length === 0 && <div>{L.noHistory}</div>}
-            {history.map((h, i) => (
-              <div key={i}>
-                {h.app_name} · {h.deleted}/{h.failed}
-                {h.backup_dir ? ` · ${h.backup_dir}` : ""}
-              </div>
-            ))}
+            {history.filter(
+              (h) => !histQ.trim() || h.app_name.toLowerCase().includes(histQ.trim().toLowerCase()),
+            ).length === 0 && <div>{L.noHistory}</div>}
+            {history
+              .filter(
+                (h) =>
+                  !histQ.trim() || h.app_name.toLowerCase().includes(histQ.trim().toLowerCase()),
+              )
+              .map((h, i) => (
+                <div key={i}>
+                  {h.app_name} · {h.deleted}/{h.failed}
+                  {h.backup_dir ? ` · ${h.backup_dir}` : ""}
+                </div>
+              ))}
           </div>
         </div>
       )}
@@ -490,16 +551,32 @@ export default function App() {
             <table style={css.table}>
               <thead>
                 <tr>
+                  <th style={css.th}>✓</th>
                   <th style={css.th}>{L.colLocation}</th>
                   <th style={css.th}>type</th>
                   <th style={css.th}>score</th>
                   <th style={css.th}>match</th>
                   <th style={css.th}>risk</th>
+                  <th style={css.th}>evidence</th>
                 </tr>
               </thead>
               <tbody>
                 {scan.items.map((it) => (
                   <tr key={it.path}>
+                    <td style={css.td}>
+                      <input
+                        type="checkbox"
+                        checked={selectedPaths.has(it.path)}
+                        onChange={() =>
+                          setSelectedPaths((s) => {
+                            const n = new Set(s);
+                            if (n.has(it.path)) n.delete(it.path);
+                            else n.add(it.path);
+                            return n;
+                          })
+                        }
+                      />
+                    </td>
                     <td style={css.td}>{it.path}</td>
                     <td style={css.td}>{it.kind}</td>
                     <td style={css.td}>{it.score}</td>
@@ -511,11 +588,44 @@ export default function App() {
                           : L.low}
                     </td>
                     <td style={css.td}>{it.risk}</td>
+                    <td style={css.td}>
+                      <button
+                        style={{ ...css.btnGhost, height: 28 }}
+                        onClick={() =>
+                          setEvidence(
+                            it.evidence
+                              .map(
+                                (e) =>
+                                  `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`,
+                              )
+                              .join("\n") || it.reason,
+                          )
+                        }
+                      >
+                        ⓘ
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {evidence && (
+            <div
+              style={{
+                padding: 12,
+                borderTop: "1px solid var(--border)",
+                fontSize: 13,
+                whiteSpace: "pre-wrap",
+                background: "var(--th-bg)",
+              }}
+            >
+              {evidence}{" "}
+              <button style={{ ...css.btnGhost, height: 28 }} onClick={() => setEvidence(null)}>
+                ×
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div style={css.card}>
