@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "Remova deep uninstall (Tauri)"
 edition = "2021"
 rust-version = "1.77"
+default-run = "remova"
 
 [lib]
 name = "remova_lib"
