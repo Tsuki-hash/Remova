@@ -73,9 +73,8 @@ export default function App() {
   const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
-  const [sortCol, setSortCol] = useState<"name" | "publisher" | "location" | null>(null);
+  const [sortCol, setSortCol] = useState<"name" | "publisher" | "install_location" | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
-  const [disk, setDisk] = useState("");
   const [admin, setAdmin] = useState<boolean | null>(null);
   const [history, setHistory] = useState<
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
@@ -109,7 +108,7 @@ export default function App() {
     // disk from navigator not available in tauri without plugin — leave blank or try
   }, []);
 
-  const sortBy = (col: "name" | "publisher" | "location") => {
+  const sortBy = (col: "name" | "publisher" | "install_location") => {
     if (sortCol === col) setSortDesc((d) => !d);
     else {
       setSortCol(col);
@@ -221,7 +220,6 @@ export default function App() {
           {loading ? "加载中…" : `${filtered.length} / ${apps.length} 个软件`}
           {admin === false && " · 非管理员"}
           {admin === true && " · 管理员"}
-          {disk && ` · ${disk}`}
         </span>
       </div>
       <div style={styles.bar}>
@@ -433,9 +431,9 @@ export default function App() {
                 <th style={styles.th}>来源</th>
                 <th
                   style={{ ...styles.th, cursor: "pointer" }}
-                  onClick={() => sortBy("location")}
+                  onClick={() => sortBy("install_location")}
                 >
-                  安装路径 {sortCol === "location" ? (sortDesc ? "↓" : "↑") : ""}
+                  安装路径 {sortCol === "install_location" ? (sortDesc ? "↓" : "↑") : ""}
                 </th>
               </tr>
             </thead>
