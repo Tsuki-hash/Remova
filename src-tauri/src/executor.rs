@@ -314,6 +314,15 @@ pub fn run_full_cleanup(
                     });
                     continue;
                 }
+                // Service / task: try native delete first
+                let low = it.path.to_uppercase();
+                if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
+                    let svc = crate::regops::leaf_name(&it.path);
+                    let _ = crate::regops::sc_delete_service(&svc);
+                } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
+                    let tn = crate::regops::leaf_name(&it.path);
+                    let _ = crate::regops::schtasks_delete(&tn);
+                }
                 let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
                     crate::regops::delete_value(k, v)
                 } else {

@@ -98,3 +98,30 @@ pub fn split_value_path(path: &str) -> Option<(&str, &str)> {
     }
     Some((&path[..i], &path[i + 1..]))
 }
+
+/// Best-effort: stop/delete Windows service via sc.exe.
+pub fn sc_delete_service(svc_name: &str) -> bool {
+    if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
+        return false;
+    }
+    use std::process::Command;
+    let _ = Command::new("sc").args(["stop", svc_name]).output();
+    let out = Command::new("sc").args(["delete", svc_name]).output();
+    matches!(out, Ok(o) if o.status.success())
+}
+
+/// Best-effort: schtasks /delete for a task leaf name.
+pub fn schtasks_delete(task_name: &str) -> bool {
+    if task_name.is_empty() || task_name.contains('"') {
+        return false;
+    }
+    use std::process::Command;
+    let out = Command::new("schtasks")
+        .args(["/delete", "/tn", task_name, "/f"])
+        .output();
+    matches!(out, Ok(o) if o.status.success())
+}
+
+pub fn leaf_name(path: &str) -> String {
+    path.rsplit('\\').next().unwrap_or("").to_string()
+}

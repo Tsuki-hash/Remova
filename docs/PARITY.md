@@ -1,5 +1,9 @@
 # Remova-next vs Python Remova 对齐清单
 
+**列表实测（2026-09-11）**：Python 232 = Rust 232，**intersection 232，coverage 100%**（`scripts/compare_lists.py`）。
+
+**验收清单**：见 `docs/ACCEPTANCE.md`。
+
 | 能力 | Python (Trash) | Remova-next | 备注 |
 |---|:---:|:---:|---|
 | 已安装软件列表 | ✅ | ✅ | HKLM64/32 + HKCU |
@@ -30,5 +34,8 @@
 | MoveFileEx 重启删除 | ✅ | ✅ | 删除失败时调度 |
 | 系统还原点 | ✅ | ✅ | SRSetRestorePointW（尽力） |
 | 提权重启 | ✅ | ✅ | ShellExecuteW runas |
-| PyInstaller/exe | ✅ | ✅ | v0.1.0 Release：exe + msi + nsis |
-| CI | ✅ | ✅ | windows test+build |
+| 任务/服务原生命令删除 | ✅ | ✅ | schtasks / sc + 注册表 |
+| 指定备份会话还原 | ✅ | 🟡 | API 已有；UI 仍为最近 |
+| Python↔Rust 列表对比 | — | ✅ | 100% 本机 |
+| PyInstaller/exe | ✅ | ✅ | v0.1.0 Release |
+| CI | ✅ | ✅ | |

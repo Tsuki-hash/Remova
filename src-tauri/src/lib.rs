@@ -171,6 +171,16 @@ fn elevate_restart() -> Result<(), String> {
     sysops::elevate_relaunch(&[])
 }
 
+#[tauri::command]
+fn list_restore_sessions() -> Result<Vec<String>, String> {
+    Ok(restore::list_session_names())
+}
+
+#[tauri::command]
+fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
+    restore::restore_by_name(&name)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -184,7 +194,9 @@ pub fn run() {
             export_history_csv,
             is_elevated,
             disk_usage,
-            elevate_restart
+            elevate_restart,
+            list_restore_sessions,
+            restore_session_by_name
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

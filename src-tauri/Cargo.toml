@@ -9,6 +9,10 @@ rust-version = "1.77"
 name = "remova_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "list_apps"
+path = "src/bin/list_apps.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

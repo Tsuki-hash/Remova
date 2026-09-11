@@ -88,6 +88,21 @@ pub fn list_sessions() -> Vec<PathBuf> {
     out
 }
 
+pub fn list_session_names() -> Vec<String> {
+    list_sessions()
+        .iter()
+        .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+        .collect()
+}
+
+pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
+    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err("invalid session name".into());
+    }
+    let path = crate::backup::backup_root().join(name);
+    restore_session(&path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
