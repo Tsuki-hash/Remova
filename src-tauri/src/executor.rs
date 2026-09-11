@@ -121,7 +121,7 @@ fn is_safe_fs(p: &Path) -> bool {
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
-    let mut errors = vec![];
+    let errors = vec![];
     let mut details = vec![];
 
     for it in items {
@@ -156,6 +156,228 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
         uninstall_message: "dry-run: official uninstaller not launched".into(),
         deleted_planned,
         skipped,
+        errors,
+        item_details: details,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullCleanupOptions {
+    pub dry_run: bool,
+    pub skip_official_uninstall: bool,
+    pub backup_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullCleanupReport {
+    pub app_name: String,
+    pub dry_run: bool,
+    pub backup_dir: String,
+    pub uninstall_ok: bool,
+    pub uninstall_message: String,
+    pub deleted: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub aborted: bool,
+    pub errors: Vec<String>,
+    pub item_details: Vec<ItemDetail>,
+}
+
+/// Full cleanup: optional backup → official uninstall → residual delete.
+pub fn run_full_cleanup(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    opts: &FullCleanupOptions,
+) -> FullCleanupReport {
+    if opts.dry_run {
+        let dry = run_cleanup_dry(&app.name, items);
+        return FullCleanupReport {
+            app_name: dry.app_name,
+            dry_run: true,
+            backup_dir: String::new(),
+            uninstall_ok: false,
+            uninstall_message: dry.uninstall_message,
+            deleted: dry.deleted_planned,
+            failed: 0,
+            skipped: dry.skipped,
+            aborted: false,
+            errors: dry.errors,
+            item_details: dry.item_details,
+        };
+    }
+
+    let selected: Vec<&CleanupItem> = items.iter().collect();
+    if selected.is_empty() {
+        return FullCleanupReport {
+            app_name: app.name.clone(),
+            dry_run: false,
+            backup_dir: String::new(),
+            uninstall_ok: false,
+            uninstall_message: "no items".into(),
+            deleted: 0,
+            failed: 0,
+            skipped: 0,
+            aborted: true,
+            errors: vec![],
+            item_details: vec![],
+        };
+    }
+
+    let mut backup_dir = String::new();
+    if opts.backup_enabled {
+        match crate::backup::create_session(&app.name) {
+            Ok(session) => {
+                backup_dir = session.to_string_lossy().to_string();
+                let (_ok, fail, errors) = crate::backup::backup_items(items, &session);
+                if fail > 0 {
+                    return FullCleanupReport {
+                        app_name: app.name.clone(),
+                        dry_run: false,
+                        backup_dir,
+                        uninstall_ok: false,
+                        uninstall_message: format!("backup failed for {fail} item(s); aborted"),
+                        deleted: 0,
+                        failed: 0,
+                        skipped: 0,
+                        aborted: true,
+                        errors,
+                        item_details: vec![],
+                    };
+                }
+            }
+            Err(e) => {
+                return FullCleanupReport {
+                    app_name: app.name.clone(),
+                    dry_run: false,
+                    backup_dir: String::new(),
+                    uninstall_ok: false,
+                    uninstall_message: format!("backup session failed: {e}"),
+                    deleted: 0,
+                    failed: 0,
+                    skipped: 0,
+                    aborted: true,
+                    errors: vec![e.to_string()],
+                    item_details: vec![],
+                };
+            }
+        }
+    }
+
+    let mut uninstall_ok = false;
+    let mut uninstall_message = "skipped".into();
+    if !opts.skip_official_uninstall {
+        let cmd = build_uninstall_command(
+            &app.uninstall_string,
+            &app.quiet_uninstall_string,
+            true,
+        );
+        match cmd {
+            Some(argv) if !argv.is_empty() => {
+                let mut parts = argv.iter();
+                let exe = parts.next().unwrap().clone();
+                let rest: Vec<String> = parts.cloned().collect();
+                match std::process::Command::new(&exe).args(&rest).spawn() {
+                    Ok(_) => {
+                        uninstall_ok = true;
+                        uninstall_message = format!("launched {}", argv[0]);
+                    }
+                    Err(e) => {
+                        uninstall_message = format!("launch failed: {e}");
+                    }
+                }
+            }
+            _ => uninstall_message = "no uninstall string".into(),
+        }
+    }
+
+    let mut deleted = 0u32;
+    let mut failed = 0u32;
+    let mut skipped = 0u32;
+    let mut errors = vec![];
+    let mut details = vec![];
+
+    for it in items {
+        match it.kind {
+            ItemKind::Registry => {
+                if is_safe_to_delete_registry(&it.path).is_err() {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: "registry".into(),
+                        status: "skipped".into(),
+                        message: "safety".into(),
+                    });
+                    continue;
+                }
+                let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
+                    crate::regops::delete_value(k, v)
+                } else {
+                    crate::regops::delete_key(&it.path)
+                };
+                match res {
+                    Ok(()) => {
+                        deleted += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: "registry".into(),
+                            status: "deleted".into(),
+                            message: String::new(),
+                        });
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        errors.push(format!("{}: {e}", it.path));
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: "registry".into(),
+                            status: "failed".into(),
+                            message: e,
+                        });
+                    }
+                }
+            }
+            _ => {
+                let p = Path::new(&it.path);
+                if !is_safe_fs(p) {
+                    skipped += 1;
+                    continue;
+                }
+                let res = if p.is_dir() {
+                    std::fs::remove_dir_all(p)
+                } else if p.exists() {
+                    std::fs::remove_file(p)
+                } else {
+                    Ok(())
+                };
+                match res {
+                    Ok(()) => {
+                        deleted += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "deleted".into(),
+                            message: String::new(),
+                        });
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        errors.push(format!("{}: {e}", it.path));
+                    }
+                }
+            }
+        }
+    }
+
+    FullCleanupReport {
+        app_name: app.name.clone(),
+        dry_run: false,
+        backup_dir,
+        uninstall_ok,
+        uninstall_message,
+        deleted,
+        failed,
+        skipped,
+        aborted: false,
         errors,
         item_details: details,
     }

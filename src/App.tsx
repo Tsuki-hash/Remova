@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { CleanupReport, InstalledApp, ScanResult } from "./types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "./types";
 
 const styles = {
   page: { padding: 24, maxWidth: 1280, margin: "0 auto" },
@@ -70,7 +70,7 @@ export default function App() {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<CleanupReport | null>(null);
+  const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
 
   useEffect(() => {
@@ -137,6 +137,28 @@ export default function App() {
     }
   }, [scan]);
 
+  const execReal = useCallback(async () => {
+    if (!scan || !selected) return;
+    setDryRunning(true);
+    try {
+      const r = await invoke<CleanupReport>("run_full_cleanup", {
+        app: selected,
+        items: scan.items,
+        options: {
+          dry_run: false,
+          skip_official_uninstall: true,
+          backup_enabled: true,
+        },
+      });
+      setReport(r);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDryRunning(false);
+    }
+  }, [scan, selected]);
+
   return (
     <div style={styles.page}>
       <div style={styles.header}>
@@ -167,6 +189,28 @@ export default function App() {
         )}
         {scan && (
           <button
+            style={{
+              ...styles.btn,
+              background: "#b91c1c",
+              opacity: dryRunning ? 0.6 : 1,
+            }}
+            disabled={dryRunning}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `将备份并清理 ${scan.items.length} 项（可能调用官方卸载器）。确认继续？`,
+                )
+              ) {
+                return;
+              }
+              void execReal();
+            }}
+          >
+            备份并清理
+          </button>
+        )}
+        {scan && (
+          <button
             style={styles.btnGhost}
             onClick={() => {
               setScan(null);
@@ -188,10 +232,11 @@ export default function App() {
             fontSize: 13,
           }}
         >
-          <strong>dry-run 摘要</strong>
+          <strong>{report.dry_run ? "dry-run 摘要" : "清理摘要"}</strong>
           <span style={{ marginLeft: 12 }}>
-            计划删除 {report.deleted_planned} · 跳过 {report.skipped} ·{" "}
-            {report.uninstall_message}
+            {report.dry_run
+              ? `计划删除 ${(report as CleanupReport).deleted_planned} · 跳过 ${report.skipped} · ${report.uninstall_message}`
+              : `已删除 ${(report as FullCleanupReport).deleted} · 失败 ${(report as FullCleanupReport).failed} · 跳过 ${report.skipped} · ${(report as FullCleanupReport).aborted ? "已中止 · " : ""}${report.uninstall_message}${(report as FullCleanupReport).backup_dir ? " · 备份 " + (report as FullCleanupReport).backup_dir : ""}`}
           </span>
           {report.item_details.length > 0 && (
             <div style={{ marginTop: 8, maxHeight: 120, overflow: "auto" }}>

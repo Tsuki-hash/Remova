@@ -49,3 +49,17 @@ export type CleanupReport = {
   errors: string[];
   item_details: ItemDetail[];
 };
+
+export type FullCleanupReport = {
+  app_name: string;
+  dry_run: boolean;
+  backup_dir: string;
+  uninstall_ok: boolean;
+  uninstall_message: string;
+  deleted: number;
+  failed: number;
+  skipped: number;
+  aborted: boolean;
+  errors: string[];
+  item_details: ItemDetail[];
+};
