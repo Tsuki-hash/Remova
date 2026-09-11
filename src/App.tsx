@@ -6,7 +6,7 @@ import type {
   InstalledApp,
   ScanResult,
 } from "./types";
-import { currentLang, loadLang, setLang, t } from "./i18n";
+import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
 
 type Theme = "light" | "dark";
 
@@ -49,7 +49,9 @@ export default function App() {
   const [, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
-  const [sortCol, setSortCol] = useState<"name" | "publisher" | "install_location" | null>(null);
+  const [sortCol, setSortCol] = useState<
+    "name" | "publisher" | "install_location" | "size" | null
+  >(null);
   const [sortDesc, setSortDesc] = useState(false);
   const [admin, setAdmin] = useState<boolean | null>(null);
   const [disk, setDisk] = useState("");
@@ -174,13 +176,16 @@ export default function App() {
       );
     }
     if (!sortCol) return list;
-    const s = [...list].sort((a, b) =>
-      (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase()),
-    );
+    const s = [...list].sort((a, b) => {
+      if (sortCol === "size") {
+        return (a.estimated_size_kb || 0) - (b.estimated_size_kb || 0);
+      }
+      return (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase());
+    });
     return sortDesc ? s.reverse() : s;
   }, [apps, q, sortCol, sortDesc]);
 
-  const sortBy = (col: "name" | "publisher" | "install_location") => {
+  const sortBy = (col: "name" | "publisher" | "install_location" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
     else {
       setSortCol(col);
@@ -479,9 +484,6 @@ export default function App() {
               />
               {L.useOfficial}
             </label>
-            <button style={css.btn} disabled={dryRunning} onClick={dryRun}>
-              {L.dryRun}
-            </button>
             <button
               style={{ ...css.btn, background: "#b91c1c" }}
               disabled={dryRunning || selectedPaths.size === 0}
@@ -490,7 +492,10 @@ export default function App() {
                 void execReal();
               }}
             >
-              {L.cleanup}
+              {L.cleanup} ({selectedPaths.size})
+            </button>
+            <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={dryRun}>
+              {L.dryRun}
             </button>
             <button
               style={css.btnGhost}
@@ -644,6 +649,12 @@ export default function App() {
                   >
                     {L.colPublisher} {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
+                  <th
+                    style={{ ...css.th, cursor: "pointer", width: 90 }}
+                    onClick={() => sortBy("size")}
+                  >
+                    {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
+                  </th>
                   <th style={css.th}>{L.colSource}</th>
                   <th
                     style={{ ...css.th, cursor: "pointer" }}
@@ -681,6 +692,9 @@ export default function App() {
                       <td style={css.td}>{a.name}</td>
                       <td style={css.td}>{a.version || "—"}</td>
                       <td style={css.td}>{a.publisher || "—"}</td>
+                      <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap" }}>
+                        {formatSize(a.estimated_size_kb)}
+                      </td>
                       <td style={css.td}>{a.source}</td>
                       <td style={css.td}>{a.install_location || "—"}</td>
                     </tr>

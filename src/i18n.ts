@@ -12,8 +12,8 @@ const dict = {
     restore: "还原最近备份",
     analyze: "深度分析",
     analyzing: "分析中…",
-    dryRun: "演练清理",
-    cleanup: "备份并清理",
+    dryRun: "仅预览",
+    cleanup: "清理选中项",
     closePreview: "关闭预览",
     useOfficial: "调用官方卸载器",
     batch: "批量清理",
@@ -22,6 +22,7 @@ const dict = {
     colPublisher: "发布者",
     colSource: "来源",
     colLocation: "安装路径",
+    colSize: "占用",
     confirmed: "★★★ 确定",
     suspected: "★★ 疑似",
     low: "★ 低",
@@ -29,7 +30,7 @@ const dict = {
     nonAdmin: "非管理员",
     disk: "磁盘",
     guided:
-      "快速上手：选中软件 → 深度分析 → 演练清理 → 确认后备份并清理。可多选后「批量清理」。",
+      "选中软件 → 深度分析 → 勾选要清理的项 →「清理选中项」（会先备份）。不确定时可先「仅预览」。",
     closeGuide: "知道了",
     versionNew: "发现新版本",
     themeToggle: "深色/浅色",
@@ -51,8 +52,8 @@ const dict = {
     restore: "Restore latest backup",
     analyze: "Deep analyze",
     analyzing: "Analyzing…",
-    dryRun: "Dry-run cleanup",
-    cleanup: "Backup & cleanup",
+    dryRun: "Preview only",
+    cleanup: "Clean selected",
     closePreview: "Close preview",
     useOfficial: "Run official uninstaller",
     batch: "Batch cleanup",
@@ -61,6 +62,7 @@ const dict = {
     colPublisher: "Publisher",
     colSource: "Source",
     colLocation: "Install path",
+    colSize: "Size",
     confirmed: "★★★ Confirmed",
     suspected: "★★ Suspected",
     low: "★ Low",
@@ -68,7 +70,7 @@ const dict = {
     nonAdmin: "Not admin",
     disk: "Disk",
     guided:
-      "Quick start: select an app → deep analyze → dry-run → backup & cleanup. Multi-select for batch.",
+      "Select an app → deep analyze → check items → Clean selected (backs up first). Use Preview only if unsure.",
     closeGuide: "Got it",
     versionNew: "New version available",
     themeToggle: "Dark/Light",
@@ -104,6 +106,14 @@ export type Strings = Omit<(typeof dict)["zh"], "batchConfirm" | "cleanupConfirm
   batchConfirm: (n: number) => string;
   cleanupConfirm: (n: number, official: boolean) => string;
 };
+
+export function formatSize(kb: number): string {
+  if (!kb || kb <= 0) return "—";
+  if (kb < 1024) return `${kb} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
 
 export function t(): Strings {
   return dict[lang] as Strings;
