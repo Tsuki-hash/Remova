@@ -90,23 +90,62 @@ function loadTheme(): Theme {
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === "dark") {
-    root.style.setProperty("--bg", "#0f1419");
-    root.style.setProperty("--fg", "#e6edf3");
-    root.style.setProperty("--muted", "#9ba7b4");
-    root.style.setProperty("--surface", "#1c2128");
-    root.style.setProperty("--border", "#30363d");
-    root.style.setProperty("--accent", "#14b8a6");
-    root.style.setProperty("--th-bg", "#262c36");
+    root.style.setProperty("--bg", "#0b0f14");
+    root.style.setProperty("--fg", "#e7eef7");
+    root.style.setProperty("--muted", "#8b9bb0");
+    root.style.setProperty("--surface", "#141a22");
+    root.style.setProperty("--surface-2", "#1b2330");
+    root.style.setProperty("--border", "#2a3444");
+    root.style.setProperty("--accent", "#2dd4bf");
+    root.style.setProperty("--accent-ink", "#042f2e");
+    root.style.setProperty("--danger", "#f87171");
+    root.style.setProperty("--th-bg", "#1b2330");
+    root.style.setProperty("--row-hover", "#1f2937");
+    root.style.setProperty("--shadow", "0 8px 24px rgba(0,0,0,.35)");
   } else {
-    root.style.setProperty("--bg", "#f5f7fa");
-    root.style.setProperty("--fg", "#0b1220");
-    root.style.setProperty("--muted", "#2f3e52");
+    root.style.setProperty("--bg", "#f3f6f9");
+    root.style.setProperty("--fg", "#0f172a");
+    root.style.setProperty("--muted", "#5b6b7f");
     root.style.setProperty("--surface", "#ffffff");
-    root.style.setProperty("--border", "#d0d7e2");
-    root.style.setProperty("--accent", "#0d9488");
-    root.style.setProperty("--th-bg", "#e8eef5");
+    root.style.setProperty("--surface-2", "#f8fafc");
+    root.style.setProperty("--border", "#d8e0ea");
+    root.style.setProperty("--accent", "#0f766e");
+    root.style.setProperty("--accent-ink", "#ffffff");
+    root.style.setProperty("--danger", "#dc2626");
+    root.style.setProperty("--th-bg", "#f1f5f9");
+    root.style.setProperty("--row-hover", "#f0fdfa");
+    root.style.setProperty("--shadow", "0 10px 30px rgba(15,23,42,.06)");
   }
   localStorage.setItem("remova_theme", theme);
+}
+
+/** Certificate DN or noisy package name → short readable label. */
+function prettyPublisher(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s || s === "—") return "—";
+  if (/^CN=/i.test(s) || s.includes(", O=") || s.includes(",OU=")) {
+    const cn = /CN=([^,]+)/i.exec(s)?.[1]?.trim();
+    if (cn && !/^[0-9a-f-]{20,}$/i.test(cn) && cn.length <= 48) return cn;
+    if (cn && /^[0-9a-f-]{20,}$/i.test(cn)) return "Signed package";
+    return "Signed package";
+  }
+  return s.length > 42 ? `${s.slice(0, 40)}…` : s;
+}
+
+function prettyAppName(name: string, source: string): string {
+  const n = (name || "").trim();
+  if (!n) return "—";
+  // Store packages sometimes use long hex / GUID-like ids as Name.
+  if (source === "Store" && /^[0-9a-f]{6,}(\.[0-9a-f]+)+$/i.test(n)) {
+    return `Store app · ${n.slice(0, 8)}…`;
+  }
+  return n;
+}
+
+function shortPath(p: string): string {
+  const s = p || "";
+  if (s.length <= 64) return s;
+  return `${s.slice(0, 28)}…${s.slice(-28)}`;
 }
 
 type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
@@ -197,6 +236,7 @@ export default function App() {
   const [manageBusy, setManageBusy] = useState(false);
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
   const [monitoring, setMonitoring] = useState(false);
@@ -817,10 +857,18 @@ export default function App() {
   }, [batchResults]);
 
   const css = {
-    page: { padding: 24, maxWidth: 1280, margin: "0 auto", color: "var(--fg)" },
-    muted: { color: "var(--muted)", fontSize: 14 },
+    page: {
+      padding: "20px 24px 32px",
+      maxWidth: 1400,
+      margin: "0 auto",
+      color: "var(--fg)",
+      fontFamily:
+        "'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
+    },
+    muted: { color: "var(--muted)", fontSize: 13 },
     input: {
       flex: 1,
+      minWidth: 200,
       height: 40,
       borderRadius: 10,
       border: "1px solid var(--border)",
@@ -828,31 +876,50 @@ export default function App() {
       fontSize: 14,
       background: "var(--surface)",
       color: "var(--fg)",
+      outline: "none",
     },
     btn: {
-      height: 40,
+      height: 36,
       padding: "0 14px",
       borderRadius: 10,
       border: "none",
       background: "var(--accent)",
-      color: "#fff",
+      color: "var(--accent-ink)",
       fontWeight: 600,
+      fontSize: 13,
       cursor: "pointer",
+      whiteSpace: "nowrap" as const,
+      transition: "opacity .15s, transform .05s",
     },
     btnGhost: {
-      height: 40,
-      padding: "0 14px",
+      height: 36,
+      padding: "0 12px",
       borderRadius: 10,
       border: "1px solid var(--border)",
       background: "var(--surface)",
       color: "var(--fg)",
+      fontSize: 13,
       cursor: "pointer",
+      whiteSpace: "nowrap" as const,
+      transition: "background .15s, border-color .15s, opacity .15s",
+    },
+    btnSm: {
+      height: 30,
+      padding: "0 10px",
+      borderRadius: 8,
+      border: "1px solid var(--border)",
+      background: "var(--surface)",
+      color: "var(--fg)",
+      fontSize: 12,
+      cursor: "pointer",
+      whiteSpace: "nowrap" as const,
     },
     card: {
       background: "var(--surface)",
       border: "1px solid var(--border)",
-      borderRadius: 16,
+      borderRadius: 14,
       overflow: "hidden",
+      boxShadow: "var(--shadow)",
     },
     th: {
       textAlign: "left" as const,
@@ -861,58 +928,135 @@ export default function App() {
       borderBottom: "1px solid var(--border)",
       position: "sticky" as const,
       top: 0,
+      zIndex: 1,
+      fontSize: 12,
+      fontWeight: 600,
+      color: "var(--muted)",
+      letterSpacing: 0.2,
     },
     td: {
       padding: "10px 12px",
       borderBottom: "1px solid var(--border)",
-      verticalAlign: "top" as const,
+      verticalAlign: "middle" as const,
+      fontSize: 13,
     },
     table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
-    scroll: { maxHeight: "calc(100vh - 240px)", overflow: "auto" as const },
+    scroll: {
+      maxHeight: "calc(100vh - 280px)",
+      overflow: "auto" as const,
+      overscrollBehavior: "contain" as const,
+    },
+    toolbar: {
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      flexWrap: "wrap" as const,
+      marginBottom: 10,
+    },
+    chip: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      height: 28,
+      padding: "0 10px",
+      borderRadius: 999,
+      background: "var(--surface-2)",
+      border: "1px solid var(--border)",
+      fontSize: 12,
+      color: "var(--muted)",
+    },
   };
+
+  const globalCss = `
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button:not(:disabled):hover { filter: brightness(1.05); }
+    button:not(:disabled):active { transform: translateY(1px); }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    input::placeholder { color: var(--muted); opacity: .85; }
+    tbody tr { transition: background .12s; }
+    tbody tr:hover { background: var(--row-hover); }
+    .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  `;
 
   return (
     <div style={css.page}>
-      <div style={{ display: "flex", gap: 16, alignItems: "baseline", marginBottom: 16 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>{L.title}</h1>
-        <span style={css.muted}>{L.subtitle}</span>
-        <span style={{ ...css.muted, marginLeft: "auto" }}>
-          {loading ? "…" : `${filtered.length} / ${apps.length}`}
-          {admin === false && ` · ${L.nonAdmin}`}
-          {admin === true && ` · ${L.admin}`}
-          {disk && ` · ${L.disk} ${disk}`}
-        </span>
-        <button
-          style={css.btnGhost}
-          onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
-        >
-          {L.themeToggle}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={() => {
-            const next = currentLang() === "zh" ? "en" : "zh";
-            setLang(next);
-            setLangVer((v) => v + 1);
-          }}
-        >
-          {L.langToggle}
-        </button>
-      </div>
+      <style>{globalCss}</style>
+      {/* Brand */}
+      <header
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>
+              {L.title}
+            </h1>
+            <span style={{ ...css.muted, fontSize: 12 }}>{L.subtitle}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={css.chip}>
+              {loading ? "…" : `${filtered.length} / ${apps.length}`}
+            </span>
+            {admin !== null && (
+              <span
+                style={{
+                  ...css.chip,
+                  color: admin ? "var(--accent)" : "var(--danger)",
+                  borderColor: admin ? "var(--accent)" : "var(--danger)",
+                }}
+              >
+                {admin ? L.admin : L.nonAdmin}
+              </span>
+            )}
+            {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
+            {estimating && <span style={css.chip}>{L.estimatingSizes}</span>}
+            {monitoring && <span style={css.chip}>{L.monitorRunning}</span>}
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button
+            style={css.btnSm}
+            onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
+          >
+            {L.themeToggle}
+          </button>
+          <button
+            style={css.btnSm}
+            onClick={() => {
+              const next = currentLang() === "zh" ? "en" : "zh";
+              setLang(next);
+              setLangVer((v) => v + 1);
+            }}
+          >
+            {L.langToggle}
+          </button>
+        </div>
+      </header>
 
       {showGuide && (
         <div
           style={{
             ...css.card,
-            padding: 12,
+            padding: "10px 14px",
             marginBottom: 12,
-            background: "var(--th-bg)",
+            background: "var(--surface-2)",
             fontSize: 13,
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
           }}
         >
-          {L.guided}{" "}
+          <span style={{ flex: 1 }}>{L.guided}</span>
           <button
-            style={{ ...css.btnGhost, height: 28 }}
+            style={css.btnSm}
             onClick={() => {
               localStorage.setItem("remova_guided", "1");
               setShowGuide(false);
@@ -923,145 +1067,50 @@ export default function App() {
         </div>
       )}
       {notice && (
-        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>
-          {notice}
-          {estimating ? ` · ${L.estimatingSizes}` : ""}
-        </div>
+        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>{notice}</div>
       )}
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+      {/* Search + primary actions */}
+      <div style={css.toolbar}>
         <input
-          style={css.input}
+          style={{ ...css.input, flex: "1 1 280px" }}
           placeholder={L.search}
           value={q}
           onChange={(e) => setQ(e.target.value)}
+          aria-label={L.search}
         />
-        <button
-          style={css.btnGhost}
-          onClick={async () => {
-            const h = await invoke<
-              { app_name: string; deleted: number; failed: number; backup_dir: string }[]
-            >("list_cleanup_history");
-            setHistory(h);
-            setShowHistory(true);
-          }}
-        >
-          {L.history}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={async () => {
-            const csv = await invoke<string>("export_history_csv");
-            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "remova-history.csv";
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          {L.exportCsv}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={() => void openRestoreSessions()}
-        >
-          {L.restore}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={() => {
-            if (showManage) {
-              setShowManage(false);
-              return;
-            }
-            setShowManage(true);
-            void loadManage("startup");
-          }}
-        >
-          {showManage ? L.manageClose : L.manage}
-        </button>
-        <button
-          style={css.btnGhost}
-          disabled={!selected || forceBusy || scanning}
-          title={selected ? L.forceCleanHint : L.selectRowHint}
-          onClick={() => void forceClean()}
-        >
-          {L.forceClean}
-        </button>
-        <button
-          style={css.btnGhost}
-          disabled={!selected?.publisher}
-          onClick={() => void doIgnorePublisher()}
-        >
-          {L.ignorePublisher}
-        </button>
-        <button
-          style={css.btnGhost}
-          disabled={!selected?.name}
-          onClick={() => void doIgnoreApp()}
-        >
-          {L.ignoreApp}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={() => void runOrphanScan()}
-        >
-          {L.orphanScan}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={() => void toggleMonitor()}
-        >
-          {monitoring ? L.monitorStop : L.monitorInstall}
-        </button>
-        {lastReport && (
-          <button style={css.btnGhost} onClick={exportHtmlReport}>
-            {L.exportReport}
-          </button>
-        )}
-        <button
-          style={css.btnGhost}
-          onClick={() => {
-            window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
-          }}
-        >
-          {L.openReleases}
-        </button>
-        <button
-          style={css.btnGhost}
-          onClick={async () => {
-            try {
-              if (shellMenu) {
-                await invoke("unregister_context_menu");
-                setShellMenu(false);
-                setNotice(L.shellUnregister);
-              } else {
-                await invoke("register_context_menu");
-                setShellMenu(true);
-                setNotice(L.shellMenuOn);
-              }
-            } catch (e) {
-              setError(formatError(e));
-            }
-          }}
-        >
-          {shellMenu ? L.shellUnregister : L.shellMenu}
-        </button>
         {batching ? (
-          <button style={{ ...css.btn, background: "#b45309" }} onClick={() => cancelBatch()}>
+          <button style={{ ...css.btn, background: "#b45309", color: "#fff" }} onClick={() => cancelBatch()}>
             {L.batchCancel}
           </button>
         ) : (
           <button
             style={{ ...css.btn, opacity: multi.size === 0 ? 0.5 : 1 }}
             disabled={multi.size === 0}
+            title={multi.size === 0 ? L.selectRowHint : undefined}
             onClick={() => void batchCleanup()}
           >
             {L.batch} ({multi.size})
           </button>
         )}
+        <button
+          style={{
+            ...css.btn,
+            opacity: !analyzeApp || scanning ? 0.5 : 1,
+          }}
+          disabled={!analyzeApp || scanning}
+          title={!analyzeApp ? L.selectRowHint : undefined}
+          onClick={() => analyzeApp && analyze(analyzeApp)}
+        >
+          {scanning ? L.analyzing : L.analyze}
+        </button>
+        <button
+          style={css.btnGhost}
+          aria-expanded={showTools}
+          onClick={() => setShowTools((v) => !v)}
+        >
+          {showTools ? "收起工具" : "更多工具"}
+        </button>
         <button
           style={css.btnGhost}
           disabled={admin === true || admin === null}
@@ -1076,58 +1125,159 @@ export default function App() {
         >
           Admin
         </button>
-        <button
-          style={{
-            ...css.btn,
-            opacity: !analyzeApp || scanning ? 0.5 : 1,
-            cursor: !analyzeApp || scanning ? "not-allowed" : "pointer",
-          }}
-          disabled={!analyzeApp || scanning}
-          title={!analyzeApp ? L.selectRowHint : undefined}
-          onClick={() => analyzeApp && analyze(analyzeApp)}
-        >
-          {scanning ? L.analyzing : L.analyze}
-        </button>
-        {estimating && (
-          <button style={css.btnGhost} onClick={() => void stopSizeEstimate()}>
-            {L.stopEstimate}
-          </button>
-        )}
-        {scan && (
-          <>
-            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={useOfficial}
-                onChange={(e) => setUseOfficial(e.target.checked)}
-              />
-              {L.useOfficial}
-            </label>
-            <button
-              style={{ ...css.btn, background: "#b91c1c" }}
-              disabled={dryRunning || selectedPaths.size === 0}
-              onClick={() => {
-                if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
-                void execReal();
-              }}
-            >
-              {L.cleanup} ({selectedPaths.size})
-            </button>
-            <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={dryRun}>
-              {L.dryRun}
-            </button>
-            <button
-              style={css.btnGhost}
-              onClick={() => {
-                setScan(null);
-                setReport(null);
-              }}
-            >
-              {L.closePreview}
-            </button>
-          </>
-        )}
       </div>
+
+      {/* Secondary tools (collapsed by default — reduces visual noise) */}
+      {showTools && (
+        <div
+          style={{
+            ...css.toolbar,
+            padding: "10px 12px",
+            marginBottom: 10,
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+          }}
+        >
+          <button style={css.btnGhost} onClick={async () => {
+            const h = await invoke<
+              { app_name: string; deleted: number; failed: number; backup_dir: string }[]
+            >("list_cleanup_history");
+            setHistory(h);
+            setShowHistory(true);
+          }}>
+            {L.history}
+          </button>
+          <button style={css.btnGhost} onClick={async () => {
+            const csv = await invoke<string>("export_history_csv");
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "remova-history.csv";
+            a.click();
+            URL.revokeObjectURL(url);
+          }}>
+            {L.exportCsv}
+          </button>
+          <button style={css.btnGhost} onClick={() => void openRestoreSessions()}>
+            {L.restore}
+          </button>
+          <button style={css.btnGhost} onClick={() => {
+            if (showManage) {
+              setShowManage(false);
+              return;
+            }
+            setShowManage(true);
+            void loadManage("startup");
+          }}>
+            {showManage ? L.manageClose : L.manage}
+          </button>
+          <button
+            style={css.btnGhost}
+            disabled={!selected || forceBusy || scanning}
+            title={selected ? L.forceCleanHint : L.selectRowHint}
+            onClick={() => void forceClean()}
+          >
+            {L.forceClean}
+          </button>
+          <button style={css.btnGhost} disabled={!selected?.publisher} onClick={() => void doIgnorePublisher()}>
+            {L.ignorePublisher}
+          </button>
+          <button style={css.btnGhost} disabled={!selected?.name} onClick={() => void doIgnoreApp()}>
+            {L.ignoreApp}
+          </button>
+          <button style={css.btnGhost} onClick={() => void runOrphanScan()}>
+            {L.orphanScan}
+          </button>
+          <button style={css.btnGhost} onClick={() => void toggleMonitor()}>
+            {monitoring ? L.monitorStop : L.monitorInstall}
+          </button>
+          {lastReport && (
+            <button style={css.btnGhost} onClick={exportHtmlReport}>
+              {L.exportReport}
+            </button>
+          )}
+          <button
+            style={css.btnGhost}
+            onClick={() => {
+              window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
+            }}
+          >
+            {L.openReleases}
+          </button>
+          <button
+            style={css.btnGhost}
+            onClick={async () => {
+              try {
+                if (shellMenu) {
+                  await invoke("unregister_context_menu");
+                  setShellMenu(false);
+                  setNotice(L.shellUnregister);
+                } else {
+                  await invoke("register_context_menu");
+                  setShellMenu(true);
+                  setNotice(L.shellMenuOn);
+                }
+              } catch (e) {
+                setError(formatError(e));
+              }
+            }}
+          >
+            {shellMenu ? L.shellUnregister : L.shellMenu}
+          </button>
+          {estimating && (
+            <button style={css.btnGhost} onClick={() => void stopSizeEstimate()}>
+              {L.stopEstimate}
+            </button>
+          )}
+        </div>
+      )}
+
+      {scan && (
+        <div
+          style={{
+            ...css.toolbar,
+            marginBottom: 10,
+            padding: "10px 12px",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+          }}
+        >
+          <strong style={{ fontSize: 13 }}>{scan.app_name}</strong>
+          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={useOfficial}
+              onChange={(e) => setUseOfficial(e.target.checked)}
+            />
+            {L.useOfficial}
+          </label>
+          <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={dryRun}>
+            {L.dryRun}
+          </button>
+          <button
+            style={{ ...css.btn, background: "var(--danger)", color: "#fff" }}
+            disabled={dryRunning || selectedPaths.size === 0}
+            onClick={() => {
+              if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
+              void execReal();
+            }}
+          >
+            {L.cleanup} ({selectedPaths.size})
+          </button>
+          <button
+            style={css.btnGhost}
+            onClick={() => {
+              setScan(null);
+              setReport(null);
+            }}
+          >
+            {L.closePreview}
+          </button>
+        </div>
+      )}
 
       {showHistory && (
         <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
@@ -1605,19 +1755,46 @@ export default function App() {
                         />
                       </td>
                       <td style={css.td}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                           <AppIcon displayIcon={a.display_icon} name={a.name} />
-                          <span>{a.name}</span>
+                          <span className="ell" style={{ maxWidth: 280 }} title={a.name}>
+                            {prettyAppName(a.name, a.source)}
+                          </span>
                         </div>
                       </td>
-                      <td style={css.td}>{a.version || "—"}</td>
-                      <td style={css.td}>{a.publisher || "—"}</td>
-                      <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap" }}>
+                      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
+                        {a.version || "—"}
+                      </td>
+                      <td style={css.td}>
+                        <span className="ell" style={{ display: "block", maxWidth: 180 }} title={a.publisher}>
+                          {prettyPublisher(a.publisher)}
+                        </span>
+                      </td>
+                      <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                         {formatAppSize(a)}
                       </td>
-                      <td style={{ ...css.td, whiteSpace: "nowrap" }}>{a.install_date || "—"}</td>
-                      <td style={css.td}>{a.source}</td>
-                      <td style={css.td}>{a.install_location || "—"}</td>
+                      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
+                        {a.install_date || "—"}
+                      </td>
+                      <td style={css.td}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: 6,
+                            fontSize: 11,
+                            background: a.source === "Store" ? "var(--surface-2)" : "transparent",
+                            border: "1px solid var(--border)",
+                          }}
+                        >
+                          {a.source}
+                        </span>
+                      </td>
+                      <td style={css.td}>
+                        <span className="ell" style={{ display: "block", maxWidth: 320, color: "var(--muted)", fontSize: 12 }} title={a.install_location}>
+                          {a.install_location ? shortPath(a.install_location) : "—"}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}
