@@ -26,6 +26,7 @@ pub struct ItemDetail {
 }
 
 /// Build argv for the official uninstaller (parity with Python `build_uninstall_command`).
+/// Store packages (`remova-store:<PackageFullName>`) map to PowerShell Remove-AppxPackage.
 pub fn build_uninstall_command(uninstall_string: &str, quiet_uninstall: &str, prefer_quiet: bool) -> Option<Vec<String>> {
     let mut raw = String::new();
     if prefer_quiet && !quiet_uninstall.trim().is_empty() {
@@ -36,6 +37,20 @@ pub fn build_uninstall_command(uninstall_string: &str, quiet_uninstall: &str, pr
     }
     if raw.is_empty() {
         return None;
+    }
+
+    if let Some(full) = raw.strip_prefix("remova-store:") {
+        let full = full.trim();
+        if full.is_empty() {
+            return None;
+        }
+        return Some(vec![
+            "powershell.exe".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            format!("Remove-AppxPackage -Package '{full}' -ErrorAction Stop"),
+        ]);
     }
 
     // MSI product code
@@ -411,6 +426,21 @@ pub fn run_full_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_uninstall_maps_to_powershell() {
+        let cmd = build_uninstall_command(
+            "remova-store:Microsoft.WindowsCalculator_10.2210.0.0_x64__8wekyb3d8bbwe",
+            "",
+            true,
+        )
+        .unwrap();
+        assert_eq!(cmd[0], "powershell.exe");
+        assert!(cmd.iter().any(|a| a.contains("Remove-AppxPackage")));
+        assert!(cmd
+            .iter()
+            .any(|a| a.contains("Microsoft.WindowsCalculator_10.2210.0.0_x64__8wekyb3d8bbwe")));
+    }
 
     #[test]
     fn msi_guid() {

@@ -58,6 +58,8 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         for (alias, hive, sub, access) in sources {
             collect_uninstall(hive, sub, access, alias, &mut out);
         }
+        // Merge Store/MSIX packages (WinRT). Dedup after sort by name+source.
+        out.extend(crate::storeapps::scan_store_apps());
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out.dedup_by(|a, b| {

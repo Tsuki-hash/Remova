@@ -11,6 +11,7 @@ pub mod regscan;
 pub mod restore;
 pub mod safety;
 pub mod scanner;
+pub mod storeapps;
 pub mod sysops;
 
 use apps::InstalledApp;
