@@ -8,302 +8,19 @@ import type {
 } from "./types";
 import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
 import { compareSemver } from "./semver";
-
-type Theme = "light" | "dark";
-
-/** Module-level styles — not rebuilt every render (PERF-3). */
-const cssStyles = {
-  page: {
-    padding: "20px 24px 32px",
-    maxWidth: 1400,
-    margin: "0 auto",
-    color: "var(--fg)",
-    fontFamily:
-      "'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
-  },
-  muted: { color: "var(--muted)", fontSize: 13 },
-  input: {
-    flex: 1,
-    minWidth: 200,
-    height: 40,
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    padding: "0 14px",
-    fontSize: 14,
-    background: "var(--surface)",
-    color: "var(--fg)",
-    outline: "none",
-  },
-  btn: {
-    height: 36,
-    padding: "0 14px",
-    borderRadius: 10,
-    border: "none",
-    background: "var(--accent)",
-    color: "var(--accent-ink)",
-    fontWeight: 600,
-    fontSize: 13,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-    transition: "opacity .15s, transform .05s",
-  },
-  btnGhost: {
-    height: 36,
-    padding: "0 12px",
-    borderRadius: 10,
-    border: "1px solid var(--border)",
-    background: "var(--surface)",
-    color: "var(--fg)",
-    fontSize: 13,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-    transition: "background .15s, border-color .15s, opacity .15s",
-  },
-  btnSm: {
-    height: 30,
-    padding: "0 10px",
-    borderRadius: 8,
-    border: "1px solid var(--border)",
-    background: "var(--surface)",
-    color: "var(--fg)",
-    fontSize: 12,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  card: {
-    background: "var(--surface)",
-    border: "1px solid var(--border)",
-    borderRadius: 14,
-    overflow: "hidden",
-    boxShadow: "var(--shadow)",
-  },
-  th: {
-    textAlign: "left" as const,
-    padding: "10px 12px",
-    background: "var(--th-bg)",
-    borderBottom: "1px solid var(--border)",
-    position: "sticky" as const,
-    top: 0,
-    zIndex: 1,
-    fontSize: 12,
-    fontWeight: 600,
-    color: "var(--muted)",
-    letterSpacing: 0.2,
-  },
-  td: {
-    padding: "10px 12px",
-    borderBottom: "1px solid var(--border)",
-    verticalAlign: "middle" as const,
-    fontSize: 13,
-  },
-  table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
-  scroll: {
-    maxHeight: "calc(100vh - 280px)",
-    overflow: "auto" as const,
-    overscrollBehavior: "contain" as const,
-  },
-  toolbar: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    flexWrap: "wrap" as const,
-    marginBottom: 10,
-  },
-  chip: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    height: 28,
-    padding: "0 10px",
-    borderRadius: 999,
-    background: "var(--surface-2)",
-    border: "1px solid var(--border)",
-    fontSize: 12,
-    color: "var(--muted)",
-  },
-};
-
-const globalCss = `
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button:not(:disabled):hover { filter: brightness(1.05); }
-  button:not(:disabled):active { transform: translateY(1px); }
-  button:focus-visible, input:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  input::placeholder { color: var(--muted); opacity: .85; }
-  tbody tr { transition: background .12s; }
-  tbody tr:hover { background: var(--row-hover); }
-  .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-`;
-
-/** Process-wide icon cache: displayIcon raw → data URL (or null on failure). */
-const iconCache = new Map<string, string | null>();
-const iconInflight = new Map<string, Promise<string | null>>();
-
-function loadAppIcon(displayIcon: string): Promise<string | null> {
-  if (iconCache.has(displayIcon)) {
-    return Promise.resolve(iconCache.get(displayIcon) ?? null);
-  }
-  const existing = iconInflight.get(displayIcon);
-  if (existing) return existing;
-  const p = invoke<string | null>("app_icon_data", { displayIcon })
-    .then((url) => {
-      iconCache.set(displayIcon, url);
-      iconInflight.delete(displayIcon);
-      return url;
-    })
-    .catch(() => {
-      iconCache.set(displayIcon, null);
-      iconInflight.delete(displayIcon);
-      return null;
-    });
-  iconInflight.set(displayIcon, p);
-  return p;
-}
-
-function AppIcon({ displayIcon, name }: { displayIcon: string; name: string }) {
-  const [src, setSrc] = useState<string | null>(() =>
-    displayIcon ? (iconCache.get(displayIcon) ?? null) : null,
-  );
-
-  useEffect(() => {
-    if (!displayIcon) {
-      setSrc(null);
-      return;
-    }
-    let cancelled = false;
-    void loadAppIcon(displayIcon).then((url) => {
-      if (!cancelled) setSrc(url);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [displayIcon]);
-
-  const initial = (name.trim()[0] || "?").toUpperCase();
-  return (
-    <span
-      style={{
-        width: 20,
-        height: 20,
-        borderRadius: 4,
-        flexShrink: 0,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--th-bg)",
-        color: "var(--muted)",
-        fontSize: 11,
-        fontWeight: 600,
-        overflow: "hidden",
-      }}
-      aria-hidden
-    >
-      {src ? (
-        <img src={src} width={20} height={20} alt="" style={{ display: "block" }} />
-      ) : (
-        initial
-      )}
-    </span>
-  );
-}
-
-function loadTheme(): Theme {
-  const v = localStorage.getItem("remova_theme");
-  return v === "dark" ? "dark" : "light";
-}
-
-function applyTheme(theme: Theme) {
-  const root = document.documentElement;
-  if (theme === "dark") {
-    root.style.setProperty("--bg", "#0b0f14");
-    root.style.setProperty("--fg", "#e7eef7");
-    root.style.setProperty("--muted", "#8b9bb0");
-    root.style.setProperty("--surface", "#141a22");
-    root.style.setProperty("--surface-2", "#1b2330");
-    root.style.setProperty("--border", "#2a3444");
-    root.style.setProperty("--accent", "#2dd4bf");
-    root.style.setProperty("--accent-ink", "#042f2e");
-    root.style.setProperty("--danger", "#f87171");
-    root.style.setProperty("--th-bg", "#1b2330");
-    root.style.setProperty("--row-hover", "#1f2937");
-    root.style.setProperty("--shadow", "0 8px 24px rgba(0,0,0,.35)");
-  } else {
-    root.style.setProperty("--bg", "#f3f6f9");
-    root.style.setProperty("--fg", "#0f172a");
-    root.style.setProperty("--muted", "#5b6b7f");
-    root.style.setProperty("--surface", "#ffffff");
-    root.style.setProperty("--surface-2", "#f8fafc");
-    root.style.setProperty("--border", "#d8e0ea");
-    root.style.setProperty("--accent", "#0f766e");
-    root.style.setProperty("--accent-ink", "#ffffff");
-    root.style.setProperty("--danger", "#dc2626");
-    root.style.setProperty("--th-bg", "#f1f5f9");
-    root.style.setProperty("--row-hover", "#f0fdfa");
-    root.style.setProperty("--shadow", "0 10px 30px rgba(15,23,42,.06)");
-  }
-  localStorage.setItem("remova_theme", theme);
-}
-
-/** Certificate DN or noisy package name → short readable label. */
-function prettyPublisher(raw: string): string {
-  const s = (raw || "").trim();
-  if (!s || s === "—") return "—";
-  if (/^CN=/i.test(s) || s.includes(", O=") || s.includes(",OU=")) {
-    const cn = /CN=([^,]+)/i.exec(s)?.[1]?.trim();
-    if (cn && !/^[0-9a-f-]{20,}$/i.test(cn) && cn.length <= 48) return cn;
-    if (cn && /^[0-9a-f-]{20,}$/i.test(cn)) return "Signed package";
-    return "Signed package";
-  }
-  return s.length > 42 ? `${s.slice(0, 40)}…` : s;
-}
-
-function prettyAppName(name: string, source: string): string {
-  const n = (name || "").trim();
-  if (!n) return "—";
-  // Store packages sometimes use long hex / GUID-like ids as Name.
-  if (source === "Store" && /^[0-9a-f]{6,}(\.[0-9a-f]+)+$/i.test(n)) {
-    return `Store app · ${n.slice(0, 8)}…`;
-  }
-  return n;
-}
-
-function shortPath(p: string): string {
-  const s = p || "";
-  if (s.length <= 64) return s;
-  return `${s.slice(0, 28)}…${s.slice(-28)}`;
-}
-
-type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
-
-/** Map backend error tokens / raw exceptions to user-actionable copy. */
-function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
-  const L = t();
-  const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-  const elev = raw.match(/^elevate:(denied|cancelled|not_found|failed):(\d+)/);
-  if (elev) {
-    const kind = elev[1];
-    const code = Number(elev[2]);
-    if (kind === "denied") return L.errElevateDenied;
-    if (kind === "cancelled") return L.errElevateCancelled;
-    if (kind === "not_found") return L.errElevateNotFound;
-    return L.errElevateFailed(code);
-  }
-  const detail = raw.replace(/^Error:\s*/i, "").trim() || raw;
-  if (ctx === "analyze") return L.errAnalyzeFailed(detail);
-  if (ctx === "cleanup") return L.errCleanupFailed(detail);
-  if (ctx === "elevate") return L.errElevateFailed(0);
-  return L.errInvokeFailed(detail);
-}
-
-function escapeHtml(s: string): string {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { cssStyles as css, globalCss } from "./styles";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { RestorePanel } from "./components/RestorePanel";
+import { MonitorPanel } from "./components/MonitorPanel";
+import { ManagePanel, type ManageItem, type ManageTab } from "./components/ManagePanel";
+import { AppRow } from "./components/AppRow";
+import {
+  BatchProgress,
+  BatchSummaryPanel,
+  type BatchItemResult,
+} from "./components/BatchPanels";
+import { escapeHtml, formatError } from "./lib/format";
+import { applyTheme, loadTheme, type Theme } from "./lib/theme";
 
 declare const __APP_VERSION__: string;
 
@@ -334,13 +51,6 @@ export default function App() {
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
   >([]);
   const [batching, setBatching] = useState(false);
-  type BatchStatus = "ok" | "failed" | "skipped";
-  type BatchItemResult = {
-    key: string;
-    name: string;
-    status: BatchStatus;
-    detail: string;
-  };
   const [batchIndex, setBatchIndex] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
   const [batchCurrent, setBatchCurrent] = useState("");
@@ -352,13 +62,6 @@ export default function App() {
   const [restorePick, setRestorePick] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
-  type ManageTab = "startup" | "services" | "tasks";
-  type ManageItem = {
-    name: string;
-    detail: string;
-    location: string;
-    enabled: boolean;
-  };
   const [showManage, setShowManage] = useState(false);
   const [manageTab, setManageTab] = useState<ManageTab>("startup");
   const [manageItems, setManageItems] = useState<ManageItem[]>([]);
@@ -1040,8 +743,6 @@ export default function App() {
     setShowBatchSummary(false);
   }, [batchResults]);
 
-  const css = cssStyles;
-
   return (
     <div style={css.page}>
       <style>{globalCss}</style>
@@ -1398,286 +1099,52 @@ export default function App() {
       )}
 
       {showHistory && (
-        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <strong>{L.historyTitle}</strong>
-          <input
-            style={{ ...css.input, maxWidth: 220, height: 32, marginLeft: 12 }}
-            placeholder={L.search}
-            value={histQ}
-            onChange={(e) => setHistQ(e.target.value)}
-          />
-          <button style={{ marginLeft: 12, ...css.btnGhost }} onClick={() => setShowHistory(false)}>
-            ×
-          </button>
-          <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
-            {history.filter(
-              (h) => !histQ.trim() || h.app_name.toLowerCase().includes(histQ.trim().toLowerCase()),
-            ).length === 0 && <div>{L.noHistory}</div>}
-            {history
-              .filter(
-                (h) =>
-                  !histQ.trim() || h.app_name.toLowerCase().includes(histQ.trim().toLowerCase()),
-              )
-              .map((h, i) => (
-                <div key={i}>
-                  {h.app_name} · {L.histRow(h.deleted, h.failed)}
-                  {h.backup_dir ? ` · ${h.backup_dir}` : ""}
-                </div>
-              ))}
-          </div>
-        </div>
+        <HistoryPanel
+          history={history}
+          histQ={histQ}
+          setHistQ={setHistQ}
+          onClose={() => setShowHistory(false)}
+        />
       )}
 
       {showRestore && (
-        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-            <strong>{L.restoreSessions}</strong>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              <button
-                style={{ ...css.btn, height: 32, opacity: restoreBusy || !restorePick ? 0.5 : 1 }}
-                disabled={restoreBusy || !restorePick}
-                onClick={() => void runRestoreSession()}
-              >
-                {L.restoreRun}
-              </button>
-              <button
-                style={{ ...css.btnGhost, height: 32 }}
-                onClick={() => setShowRestore(false)}
-              >
-                {L.restoreClose}
-              </button>
-            </div>
-          </div>
-          {restoreSessions.length === 0 ? (
-            <div style={css.muted}>{L.restoreNoSessions}</div>
-          ) : (
-            <>
-              <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>
-              <div style={{ maxHeight: 180, overflow: "auto" }}>
-                {restoreSessions.map((name) => (
-                  <label
-                    key={name}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "6px 4px",
-                      borderBottom: "1px solid var(--border)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="restore-session"
-                      checked={restorePick === name}
-                      onChange={() => setRestorePick(name)}
-                    />
-                    <span>{name}</span>
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-          {restoreMsgs.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <strong>{L.restoreResult}</strong>
-              <pre
-                style={{
-                  margin: "6px 0 0",
-                  whiteSpace: "pre-wrap",
-                  fontSize: 12,
-                  color: "var(--muted)",
-                }}
-              >
-                {restoreMsgs.slice(0, 20).join("\n")}
-              </pre>
-            </div>
-          )}
-        </div>
+        <RestorePanel
+          sessions={restoreSessions}
+          pick={restorePick}
+          setPick={setRestorePick}
+          busy={restoreBusy}
+          msgs={restoreMsgs}
+          onRun={() => void runRestoreSession()}
+          onClose={() => setShowRestore(false)}
+        />
       )}
 
       {monitorDiff && (
-        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <strong>{L.monitorDiff}</strong>
-          <div style={{ ...css.muted, margin: "6px 0" }}>
-            files={monitorDiff.added_files.length} · reg={monitorDiff.added_reg_values.length}
-          </div>
-          <div style={{ maxHeight: 160, overflow: "auto" }}>
-            {[...monitorDiff.added_files, ...monitorDiff.added_reg_values]
-              .slice(0, 80)
-              .map((line) => (
-                <div key={line} style={{ wordBreak: "break-all", padding: "2px 0" }}>
-                  {line}
-                </div>
-              ))}
-          </div>
-          <button
-            style={{ ...css.btnGhost, height: 30, marginTop: 8 }}
-            onClick={() => setMonitorDiff(null)}
-          >
-            {L.batchDismiss}
-          </button>
-        </div>
+        <MonitorPanel diff={monitorDiff} onDismiss={() => setMonitorDiff(null)} />
       )}
 
       {showManage && (
-        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-            <strong>{L.manage}</strong>
-            {(["startup", "services", "tasks"] as ManageTab[]).map((tab) => (
-              <button
-                key={tab}
-                style={{
-                  ...css.btnGhost,
-                  height: 30,
-                  borderColor: manageTab === tab ? "var(--accent)" : undefined,
-                }}
-                onClick={() => void loadManage(tab)}
-              >
-                {tab === "startup"
-                  ? L.manageStartup
-                  : tab === "services"
-                    ? L.manageServices
-                    : L.manageTasks}
-              </button>
-            ))}
-            <button
-              style={{ ...css.btnGhost, height: 30 }}
-              onClick={() => void loadManage(manageTab)}
-            >
-              {L.manageReload}
-            </button>
-            <button
-              style={{ ...css.btnGhost, height: 30, marginLeft: "auto" }}
-              onClick={() => setShowManage(false)}
-            >
-              ×
-            </button>
-          </div>
-          <div style={{ maxHeight: 240, overflow: "auto" }}>
-            {manageBusy && <div style={css.muted}>{L.estimatingSizes}</div>}
-            {!manageBusy && manageItems.length === 0 && (
-              <div style={css.muted}>{L.noHistory}</div>
-            )}
-            {!manageBusy &&
-              manageItems.slice(0, 200).map((it) => (
-                <div
-                  key={it.location + it.name}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "6px 2px",
-                    borderBottom: "1px solid var(--border)",
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div>{it.name}</div>
-                    <div style={{ ...css.muted, fontSize: 12, wordBreak: "break-all" }}>
-                      {it.detail || it.location}
-                    </div>
-                  </div>
-                  <span style={{ color: it.enabled ? "var(--accent)" : "var(--muted)" }}>
-                    {it.enabled ? "●" : "○"}
-                  </span>
-                  <button
-                    style={{ ...css.btnGhost, height: 28 }}
-                    disabled={manageBusy}
-                    onClick={() => void toggleManageItem(it)}
-                  >
-                    {it.enabled ? L.manageDisable : L.manageEnable}
-                  </button>
-                </div>
-              ))}
-          </div>
-        </div>
+        <ManagePanel
+          tab={manageTab}
+          items={manageItems}
+          busy={manageBusy}
+          onTab={(tab) => void loadManage(tab)}
+          onReload={() => void loadManage(manageTab)}
+          onToggle={(it) => void toggleManageItem(it)}
+          onClose={() => setShowManage(false)}
+        />
       )}
 
       {batching && batchTotal > 0 && (
-        <div
-          style={{
-            ...css.card,
-            marginBottom: 12,
-            padding: "10px 14px",
-            fontSize: 13,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <span>
-              {batchIndex}/{batchTotal} · {batchCurrent}
-            </span>
-            <span style={css.muted}>{L.batchCancelHint}</span>
-          </div>
-          <div
-            style={{
-              marginTop: 8,
-              height: 6,
-              borderRadius: 3,
-              background: "var(--th-bg)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${batchTotal ? (batchIndex / batchTotal) * 100 : 0}%`,
-                height: "100%",
-                background: "var(--accent)",
-                transition: "width 0.2s",
-              }}
-            />
-          </div>
-        </div>
+        <BatchProgress index={batchIndex} total={batchTotal} current={batchCurrent} />
       )}
 
       {showBatchSummary && batchResults.length > 0 && (
-        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-            <strong>{L.batchSummary}</strong>
-            <span style={css.muted}>
-              {L.batchOk} {batchResults.filter((r) => r.status === "ok").length} ·{" "}
-              {L.batchFailed} {batchResults.filter((r) => r.status === "failed").length} ·{" "}
-              {L.batchSkipped} {batchResults.filter((r) => r.status === "skipped").length}
-            </span>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {batchResults.some((r) => r.status === "failed") && (
-                <button style={{ ...css.btnGhost, height: 32 }} onClick={retryFailedBatch}>
-                  {L.batchRetryFailed}
-                </button>
-              )}
-              <button
-                style={{ ...css.btnGhost, height: 32 }}
-                onClick={() => setShowBatchSummary(false)}
-              >
-                {L.batchDismiss}
-              </button>
-            </div>
-          </div>
-          <div style={{ maxHeight: 180, overflow: "auto" }}>
-            {batchResults.map((r) => (
-              <div key={r.key} style={{ padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
-                <span
-                  style={{
-                    color:
-                      r.status === "failed"
-                        ? "#b91c1c"
-                        : r.status === "ok"
-                          ? "var(--accent)"
-                          : "var(--muted)",
-                    marginRight: 8,
-                  }}
-                >
-                  {r.status === "ok"
-                    ? L.batchOk
-                    : r.status === "failed"
-                      ? L.batchFailed
-                      : L.batchSkipped}
-                </span>
-                {r.name}
-                {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}
-              </div>
-            ))}
-          </div>
-        </div>
+        <BatchSummaryPanel
+          results={batchResults}
+          onRetryFailed={retryFailedBatch}
+          onDismiss={() => setShowBatchSummary(false)}
+        />
       )}
 
       {error && (
@@ -1848,82 +1315,22 @@ export default function App() {
                 {filtered.map((a) => {
                   const key = a.registry_key + a.name;
                   return (
-                    <tr
+                    <AppRow
                       key={key}
-                      onClick={() => setSelected(a)}
-                      onDoubleClick={() => analyze(a)}
-                      title={[
-                        prettyAppName(a.name, a.source),
-                        a.publisher && `${L.colPublisher}: ${a.publisher}`,
-                        a.install_location && `${L.colLocation}: ${a.install_location}`,
-                        (a.quiet_uninstall_string || a.uninstall_string) &&
-                          `${L.colUninstall}: ${a.quiet_uninstall_string || a.uninstall_string}`,
-                        a.registry_key && `${L.colRegKey}: ${a.registry_key}`,
-                      ]
-                        .filter(Boolean)
-                        .join("\n") || undefined}
-                      style={{
-                        cursor: "pointer",
-                        background:
-                          selected?.registry_key === a.registry_key && selected.name === a.name
-                            ? "var(--th-bg)"
-                            : undefined,
+                      app={a}
+                      rowKey={key}
+                      selected={
+                        selected?.registry_key === a.registry_key && selected.name === a.name
+                      }
+                      checked={multi.has(key)}
+                      sizeText={formatAppSize(a)}
+                      onSelect={setSelected}
+                      onAnalyze={analyze}
+                      onToggleMulti={toggleMulti}
+                      onEnsureSelected={(app) => {
+                        if (!selected) setSelected(app);
                       }}
-                    >
-                      <td style={css.td}>
-                        <input
-                          type="checkbox"
-                          checked={multi.has(key)}
-                          onChange={() => {
-                            const next = !multi.has(key);
-                            toggleMulti(key);
-                            if (next && !selected) setSelected(a);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </td>
-                      <td style={css.td}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <AppIcon displayIcon={a.display_icon} name={a.name} />
-                          <span className="ell" style={{ maxWidth: 280 }} title={a.name}>
-                            {prettyAppName(a.name, a.source)}
-                          </span>
-                        </div>
-                      </td>
-                      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
-                        {a.version || "—"}
-                      </td>
-                      <td style={css.td}>
-                        <span className="ell" style={{ display: "block", maxWidth: 180 }} title={a.publisher}>
-                          {prettyPublisher(a.publisher)}
-                        </span>
-                      </td>
-                      <td style={{ ...css.td, textAlign: "right" as const, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                        {formatAppSize(a)}
-                      </td>
-                      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
-                        {a.install_date || "—"}
-                      </td>
-                      <td style={css.td}>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            padding: "2px 8px",
-                            borderRadius: 6,
-                            fontSize: 11,
-                            background: a.source === "Store" ? "var(--surface-2)" : "transparent",
-                            border: "1px solid var(--border)",
-                          }}
-                        >
-                          {a.source}
-                        </span>
-                      </td>
-                      <td style={css.td}>
-                        <span className="ell" style={{ display: "block", maxWidth: 320, color: "var(--muted)", fontSize: 12 }} title={a.install_location}>
-                          {a.install_location ? shortPath(a.install_location) : "—"}
-                        </span>
-                      </td>
-                    </tr>
+                    />
                   );
                 })}
               </tbody>

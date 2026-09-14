@@ -33,6 +33,6 @@ App.tsx ~1900 行、40+ useState，所有面板内联；改动回归面大（ARC
 ## Tasks
 - [x] T1: 抽 format/theme/AppIcon — acceptance: 新模块存在且可复用 (covers: S2)
 - [x] T2: 抽 History/Restore/Monitor/Manage/Batch 面板 — acceptance: 面板组件独立存在 (covers: S2; depends: T1)
-- [ ] T3: App.tsx 正式切换到新组件 — acceptance: 行为不变且 build 通过 (covers: S2; depends: T2)
-- [ ] T4: memo AppRow — acceptance: 行 props 稳定时不整表重渲染 (covers: S2; depends: T3)
+- [x] T3: App.tsx 正式切换到新组件 — acceptance: 行为不变且 build 通过 (covers: S2; depends: T2)
+- [x] T4: memo AppRow — acceptance: 行组件 memo 化，build 通过 (covers: S2; depends: T3)
 - [ ] T5: review + 报告 — acceptance: review 通过并回填报告 (covers: S2; depends: T4)
