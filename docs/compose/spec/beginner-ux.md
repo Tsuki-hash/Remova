@@ -3,7 +3,7 @@ feature: beginner-ux
 status: delivered
 updated: 2026-09-14
 branch: main
-commits: uncommitted-on-60e295b
+commits: 60e295b..1d57320
 ---
 
 # Beginner UX: simplified main flow
