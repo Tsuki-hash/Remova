@@ -158,6 +158,19 @@ export default function App() {
     { app_name: string; deleted: number; failed: number; backup_dir: string }[]
   >([]);
   const [batching, setBatching] = useState(false);
+  type BatchStatus = "ok" | "failed" | "skipped";
+  type BatchItemResult = {
+    key: string;
+    name: string;
+    status: BatchStatus;
+    detail: string;
+  };
+  const [batchIndex, setBatchIndex] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchCurrent, setBatchCurrent] = useState("");
+  const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
+  const [showBatchSummary, setShowBatchSummary] = useState(false);
+  const batchCancelRef = useRef(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
   const [histQ, setHistQ] = useState("");
@@ -425,35 +438,92 @@ export default function App() {
     const queue = apps.filter((a) => keys.has(a.registry_key + a.name));
     if (!queue.length) return;
     if (!window.confirm(L.batchConfirm(queue.length))) return;
+    batchCancelRef.current = false;
     setBatching(true);
+    setBatchIndex(0);
+    setBatchTotal(queue.length);
+    setBatchResults([]);
+    setShowBatchSummary(false);
+    const results: BatchItemResult[] = [];
+    const okKeys = new Set<string>();
     try {
       for (let i = 0; i < queue.length; i++) {
+        if (batchCancelRef.current) break;
         const app = queue[i];
+        const key = app.registry_key + app.name;
+        setBatchIndex(i + 1);
+        setBatchCurrent(app.name);
         setNotice(`[${i + 1}/${queue.length}] ${app.name}`);
-        const r = await invoke<ScanResult>("analyze_associations", { app });
-        const items = r.items.filter(
-          (it) => it.confidence === "confirmed" && it.risk !== "high",
-        );
-        if (!items.length) continue;
-        await invoke<FullCleanupReport>("run_full_cleanup", {
-          app,
-          items,
-          options: {
-            dry_run: false,
-            skip_official_uninstall: true,
-            backup_enabled: true,
-          },
-        });
+        try {
+          const r = await invoke<ScanResult>("analyze_associations", { app });
+          const items = r.items.filter(
+            (it) => it.confidence === "confirmed" && it.risk !== "high",
+          );
+          if (!items.length) {
+            results.push({
+              key,
+              name: app.name,
+              status: "skipped",
+              detail: "",
+            });
+            okKeys.add(key);
+            continue;
+          }
+          const report = await invoke<FullCleanupReport>("run_full_cleanup", {
+            app,
+            items,
+            options: {
+              dry_run: false,
+              skip_official_uninstall: true,
+              backup_enabled: true,
+            },
+          });
+          const detail = `deleted=${report.deleted} failed=${report.failed}`;
+          if (report.failed > 0 && report.deleted === 0) {
+            results.push({ key, name: app.name, status: "failed", detail });
+          } else {
+            results.push({ key, name: app.name, status: "ok", detail });
+            okKeys.add(key);
+          }
+        } catch (e) {
+          results.push({
+            key,
+            name: app.name,
+            status: "failed",
+            detail: formatError(e, "cleanup"),
+          });
+        }
+        setBatchResults([...results]);
       }
-      setNotice("Batch finished");
-      setMulti(new Set());
-    } catch (e) {
-      setError(formatError(e, "cleanup"));
+      const cancelled = batchCancelRef.current;
+      setNotice(cancelled ? L.batchCancelled : L.batchDone);
+      // Keep failures selected for retry; drop successes from multi.
+      setMulti((m) => {
+        const n = new Set(m);
+        for (const k of okKeys) n.delete(k);
+        return n;
+      });
+      setShowBatchSummary(true);
     } finally {
       busyRef.current = false;
       setBatching(false);
+      setBatchCurrent("");
+      setBatchIndex(0);
     }
   }, [apps, multi, L]);
+
+  const cancelBatch = useCallback(() => {
+    batchCancelRef.current = true;
+    setNotice(L.batchCancelHint);
+  }, [L]);
+
+  const retryFailedBatch = useCallback(() => {
+    const failed = batchResults.filter((r) => r.status === "failed");
+    if (!failed.length) return;
+    setMulti(new Set(failed.map((r) => r.key)));
+    setBatchResults([]);
+    setShowBatchSummary(false);
+  }, [batchResults]);
 
   const css = {
     page: { padding: 24, maxWidth: 1280, margin: "0 auto", color: "var(--fg)" },
@@ -626,13 +696,19 @@ export default function App() {
         >
           {L.restore}
         </button>
-        <button
-          style={{ ...css.btn, opacity: batching ? 0.6 : 1 }}
-          disabled={batching || multi.size === 0}
-          onClick={() => void batchCleanup()}
-        >
-          {L.batch} ({multi.size})
-        </button>
+        {batching ? (
+          <button style={{ ...css.btn, background: "#b45309" }} onClick={() => cancelBatch()}>
+            {L.batchCancel}
+          </button>
+        ) : (
+          <button
+            style={{ ...css.btn, opacity: multi.size === 0 ? 0.5 : 1 }}
+            disabled={multi.size === 0}
+            onClick={() => void batchCleanup()}
+          >
+            {L.batch} ({multi.size})
+          </button>
+        )}
         <button
           style={css.btnGhost}
           disabled={admin === true || admin === null}
@@ -727,6 +803,93 @@ export default function App() {
                   {h.backup_dir ? ` · ${h.backup_dir}` : ""}
                 </div>
               ))}
+          </div>
+        </div>
+      )}
+
+      {batching && batchTotal > 0 && (
+        <div
+          style={{
+            ...css.card,
+            marginBottom: 12,
+            padding: "10px 14px",
+            fontSize: 13,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span>
+              {batchIndex}/{batchTotal} · {batchCurrent}
+            </span>
+            <span style={css.muted}>{L.batchCancelHint}</span>
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              height: 6,
+              borderRadius: 3,
+              background: "var(--th-bg)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${batchTotal ? (batchIndex / batchTotal) * 100 : 0}%`,
+                height: "100%",
+                background: "var(--accent)",
+                transition: "width 0.2s",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {showBatchSummary && batchResults.length > 0 && (
+        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <strong>{L.batchSummary}</strong>
+            <span style={css.muted}>
+              {L.batchOk} {batchResults.filter((r) => r.status === "ok").length} ·{" "}
+              {L.batchFailed} {batchResults.filter((r) => r.status === "failed").length} ·{" "}
+              {L.batchSkipped} {batchResults.filter((r) => r.status === "skipped").length}
+            </span>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              {batchResults.some((r) => r.status === "failed") && (
+                <button style={{ ...css.btnGhost, height: 32 }} onClick={retryFailedBatch}>
+                  {L.batchRetryFailed}
+                </button>
+              )}
+              <button
+                style={{ ...css.btnGhost, height: 32 }}
+                onClick={() => setShowBatchSummary(false)}
+              >
+                {L.batchDismiss}
+              </button>
+            </div>
+          </div>
+          <div style={{ maxHeight: 180, overflow: "auto" }}>
+            {batchResults.map((r) => (
+              <div key={r.key} style={{ padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                <span
+                  style={{
+                    color:
+                      r.status === "failed"
+                        ? "#b91c1c"
+                        : r.status === "ok"
+                          ? "var(--accent)"
+                          : "var(--muted)",
+                    marginRight: 8,
+                  }}
+                >
+                  {r.status === "ok"
+                    ? L.batchOk
+                    : r.status === "failed"
+                      ? L.batchFailed
+                      : L.batchSkipped}
+                </span>
+                {r.name}
+                {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}
+              </div>
+            ))}
           </div>
         </div>
       )}
