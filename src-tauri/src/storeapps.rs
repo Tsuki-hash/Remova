@@ -132,7 +132,7 @@ fn civil_from_days(days: i64) -> String {
     // Howard Hinnant's civil_from_days
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as i64;
+    let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
@@ -148,7 +148,9 @@ mod tests {
     #[test]
     fn blocked_prefixes() {
         assert!(super::is_blocked_package("Microsoft.WindowsStore"));
-        assert!(super::is_blocked_package("Microsoft.Windows.ShellExperienceHost"));
+        assert!(super::is_blocked_package(
+            "Microsoft.Windows.ShellExperienceHost"
+        ));
         assert!(super::is_blocked_package("Microsoft.VCLibs.140.00"));
         assert!(super::is_blocked_package(
             "1527c705-839a-4832-9118-54d4Bd6a0c89"

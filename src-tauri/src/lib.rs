@@ -61,18 +61,14 @@ async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let png = icon::extract_icon_png(&display_icon)?;
         use base64_light::*;
-        Some(format!(
-            "data:image/png;base64,{}",
-            b64_encode(&png)
-        ))
+        Some(format!("data:image/png;base64,{}", b64_encode(&png)))
     })
     .await
     .map_err(|e| e.to_string())
 }
 
 mod base64_light {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     pub fn b64_encode(data: &[u8]) -> String {
         let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -235,21 +231,26 @@ fn is_elevated() -> Result<bool, String> {
 struct DiskInfo {
     free_gb: f64,
     total_gb: f64,
+    drive: String,
 }
 
 #[tauri::command]
 fn disk_usage() -> Result<DiskInfo, String> {
     #[cfg(windows)]
     {
-        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
         use windows::core::PCWSTR;
-        let root: Vec<u16> = "C:\\\0".encode_utf16().collect();
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        // System drive, not hardcoded C: (FUNC-6)
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        let drive = drive.trim_end_matches('\\').to_uppercase();
+        let root = format!("{drive}\\\0");
+        let wide: Vec<u16> = root.encode_utf16().collect();
         let mut free = 0u64;
         let mut total = 0u64;
         let mut total_free = 0u64;
         unsafe {
             let ok = GetDiskFreeSpaceExW(
-                PCWSTR(root.as_ptr()),
+                PCWSTR(wide.as_ptr()),
                 Some(&mut free),
                 Some(&mut total),
                 Some(&mut total_free),
@@ -261,6 +262,7 @@ fn disk_usage() -> Result<DiskInfo, String> {
         Ok(DiskInfo {
             free_gb: total_free as f64 / 1024f64.powi(3),
             total_gb: total as f64 / 1024f64.powi(3),
+            drive,
         })
     }
     #[cfg(not(windows))]
@@ -268,6 +270,7 @@ fn disk_usage() -> Result<DiskInfo, String> {
         Ok(DiskInfo {
             free_gb: 0.0,
             total_gb: 0.0,
+            drive: String::new(),
         })
     }
 }
@@ -331,6 +334,21 @@ async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn take_pending_analyze() -> Result<Option<String>, String> {
+    let local = std::env::var_os("LOCALAPPDATA").ok_or("no LOCALAPPDATA")?;
+    let p = std::path::PathBuf::from(local)
+        .join("Remova")
+        .join("pending_analyze.txt");
+    if !p.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&p);
+    let s = s.trim().to_string();
+    Ok(if s.is_empty() { None } else { Some(s) })
+}
+
 const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
 
 #[tauri::command]
@@ -338,14 +356,11 @@ fn register_context_menu() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe = exe.to_string_lossy().to_string();
     // Create key tree via PowerShell-free reg write
-    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "用 Remova 深度卸载")?;
+    // MUIVerb is written as a resource-able string; keep a stable bilingual label.
+    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "Remova Deep Uninstall")?;
     crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "Icon", &format!("\"{exe}\""))?;
     let cmd_key = format!(r"{CONTEXT_MENU_KEY}\command");
-    crate::regops::create_reg_sz(
-        &cmd_key,
-        "",
-        &format!("\"{exe}\" --analyze \"%1\""),
-    )?;
+    crate::regops::create_reg_sz(&cmd_key, "", &format!("\"{exe}\" --analyze \"%1\""))?;
     Ok(())
 }
 
@@ -426,7 +441,8 @@ pub fn run() {
             ignore_app_name,
             scan_orphan_leftovers,
             begin_install_monitor,
-            end_install_monitor
+            end_install_monitor,
+            take_pending_analyze
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -21,7 +21,15 @@ fn history_path() -> PathBuf {
     PathBuf::from(pd).join("Remova").join("history.jsonl")
 }
 
-pub fn append(app_name: &str, deleted: u32, failed: u32, skipped: u32, aborted: bool, dry_run: bool, backup_dir: &str) -> bool {
+pub fn append(
+    app_name: &str,
+    deleted: u32,
+    failed: u32,
+    skipped: u32,
+    aborted: bool,
+    dry_run: bool,
+    backup_dir: &str,
+) -> bool {
     if dry_run {
         return true;
     }

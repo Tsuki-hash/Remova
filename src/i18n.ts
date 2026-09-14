@@ -101,6 +101,8 @@ const dict = {
     monitorRunning: "安装监控中…请完成安装后再结束",
     monitorDiff: "安装差异",
     monitorNoSnap: "请先开始监控",
+    toolsExpand: "更多工具",
+    toolsCollapse: "收起工具",
     toolsExpandHint: "展开历史、导出、忽略、扫描等次要工具",
     toolsCollapseHint: "收起次要工具栏",
     historyHint: "查看过往清理记录（应用名与成功/失败数）",
@@ -120,6 +122,14 @@ const dict = {
     stopEstimateHint: "停止正在运行的占用估算",
     dryRunSummary: "仅预览结果",
     dryRunPlanned: "计划删除",
+    closeConfirmBusy: "任务进行中，关闭窗口可能中断清理。仍要关闭？",
+    colUninstall: "卸载命令",
+    colRegKey: "注册表键",
+    restorePointOk: "还原点已创建",
+    restorePointFail: "还原点未创建（系统还原可能已关闭）",
+    orphanScanEmpty: "未发现孤立残留",
+    batchDetail: (deleted: number, failed: number) => `成功 ${deleted} · 失败 ${failed}`,
+    histRow: (deleted: number, failed: number) => `${deleted} 成功 / ${failed} 失败`,
   },
   en: {
     title: "Remova",
@@ -219,6 +229,8 @@ const dict = {
     monitorRunning: "Monitoring… finish install, then stop",
     monitorDiff: "Install diff",
     monitorNoSnap: "Start monitoring first",
+    toolsExpand: "More tools",
+    toolsCollapse: "Hide tools",
     toolsExpandHint: "Show history, export, ignore, and scan tools",
     toolsCollapseHint: "Hide secondary tools",
     historyHint: "View past cleanup records",
@@ -238,6 +250,14 @@ const dict = {
     stopEstimateHint: "Stop the running size estimate",
     dryRunSummary: "Dry-run result",
     dryRunPlanned: "Planned",
+    closeConfirmBusy: "Task in progress. Close window may interrupt cleanup. Close anyway?",
+    colUninstall: "Uninstall cmd",
+    colRegKey: "Registry key",
+    restorePointOk: "Restore point created",
+    restorePointFail: "Restore point not created (System Restore may be off)",
+    orphanScanEmpty: "No orphan leftovers found",
+    batchDetail: (deleted: number, failed: number) => `ok ${deleted} · failed ${failed}`,
+    histRow: (deleted: number, failed: number) => `${deleted} ok / ${failed} failed`,
   },
 } as const;
 
@@ -258,17 +278,13 @@ export function currentLang() {
   return lang;
 }
 
-export type Strings = Omit<
-  (typeof dict)["zh"],
-  "batchConfirm" | "cleanupConfirm" | "errElevateFailed" | "errAnalyzeFailed" | "errCleanupFailed" | "errInvokeFailed"
-> & {
-  batchConfirm: (n: number) => string;
-  cleanupConfirm: (n: number, official: boolean) => string;
-  errElevateFailed: (code: number) => string;
-  errAnalyzeFailed: (detail: string) => string;
-  errCleanupFailed: (detail: string) => string;
-  errInvokeFailed: (detail: string) => string;
-};
+export type Strings = (typeof dict)["zh"];
+
+// Compile-time: zh/en must expose the same keys.
+type MissingInEn = Exclude<keyof (typeof dict)["zh"], keyof (typeof dict)["en"]>;
+type MissingInZh = Exclude<keyof (typeof dict)["en"], keyof (typeof dict)["zh"]>;
+const _i18nKeysMatch: [MissingInEn, MissingInZh] extends [never, never] ? true : never = true;
+void _i18nKeysMatch;
 
 export function formatSize(kb: number): string {
   if (!kb || kb <= 0) return "—";

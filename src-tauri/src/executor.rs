@@ -1,7 +1,7 @@
 //! Uninstall command parsing and dry-run cleanup planning (Phase 2).
 
-use crate::scanner::{CleanupItem, ItemKind};
 use crate::safety::is_safe_to_delete_registry;
+use crate::scanner::{CleanupItem, ItemKind};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -27,7 +27,11 @@ pub struct ItemDetail {
 
 /// Build argv for the official uninstaller (parity with Python `build_uninstall_command`).
 /// Store packages (`remova-store:<PackageFullName>`) map to PowerShell Remove-AppxPackage.
-pub fn build_uninstall_command(uninstall_string: &str, quiet_uninstall: &str, prefer_quiet: bool) -> Option<Vec<String>> {
+pub fn build_uninstall_command(
+    uninstall_string: &str,
+    quiet_uninstall: &str,
+    prefer_quiet: bool,
+) -> Option<Vec<String>> {
     let mut raw = String::new();
     if prefer_quiet && !quiet_uninstall.trim().is_empty() {
         raw = quiet_uninstall.trim().to_string();
@@ -100,8 +104,8 @@ fn split_win_args(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut in_quotes = false;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    let chars = s.chars().peekable();
+    for c in chars {
         match c {
             '"' => in_quotes = !in_quotes,
             ' ' | '\t' if !in_quotes => {
@@ -185,6 +189,8 @@ pub struct FullCleanupReport {
     pub failed: u32,
     pub skipped: u32,
     pub aborted: bool,
+    pub restore_point_ok: bool,
+    pub restore_point_msg: String,
     pub errors: Vec<String>,
     pub item_details: Vec<ItemDetail>,
 }
@@ -207,6 +213,8 @@ pub fn run_full_cleanup(
             failed: 0,
             skipped: dry.skipped,
             aborted: false,
+            restore_point_ok: false,
+            restore_point_msg: String::new(),
             errors: dry.errors,
             item_details: dry.item_details,
         };
@@ -224,18 +232,23 @@ pub fn run_full_cleanup(
             failed: 0,
             skipped: 0,
             aborted: true,
+            restore_point_ok: false,
+            restore_point_msg: String::new(),
             errors: vec![],
             item_details: vec![],
         };
     }
 
     let mut backup_dir = String::new();
+    let mut restore_point_ok = false;
+    let mut restore_point_msg = String::new();
     if opts.backup_enabled {
-        // restore point first (non-fatal)
-        let (_rp_ok, _rp_msg) = crate::sysops::create_restore_point(&format!(
+        let (rp_ok, rp_msg) = crate::sysops::create_restore_point(&format!(
             "Remova: {}",
             app.name.chars().take(40).collect::<String>()
         ));
+        restore_point_ok = rp_ok;
+        restore_point_msg = rp_msg;
         match crate::backup::create_session(&app.name) {
             Ok(session) => {
                 backup_dir = session.to_string_lossy().to_string();
@@ -251,6 +264,8 @@ pub fn run_full_cleanup(
                         failed: 0,
                         skipped: 0,
                         aborted: true,
+                        restore_point_ok,
+                        restore_point_msg,
                         errors,
                         item_details: vec![],
                     };
@@ -267,6 +282,8 @@ pub fn run_full_cleanup(
                     failed: 0,
                     skipped: 0,
                     aborted: true,
+                    restore_point_ok,
+                    restore_point_msg,
                     errors: vec![e.to_string()],
                     item_details: vec![],
                 };
@@ -277,11 +294,7 @@ pub fn run_full_cleanup(
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
     if !opts.skip_official_uninstall {
-        let cmd = build_uninstall_command(
-            &app.uninstall_string,
-            &app.quiet_uninstall_string,
-            true,
-        );
+        let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
         match cmd {
             Some(argv) if !argv.is_empty() => {
                 let mut parts = argv.iter();
@@ -299,10 +312,7 @@ pub fn run_full_cleanup(
                                     uninstall_message = if status.success() {
                                         format!("uninstaller finished: {}", argv[0])
                                     } else {
-                                        format!(
-                                            "uninstaller exited with {:?}",
-                                            status.code()
-                                        )
+                                        format!("uninstaller exited with {:?}", status.code())
                                     };
                                     break;
                                 }
@@ -441,6 +451,8 @@ pub fn run_full_cleanup(
         failed,
         skipped,
         aborted: false,
+        restore_point_ok,
+        restore_point_msg,
         errors,
         item_details: details,
     }
@@ -474,7 +486,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cmd[0].to_lowercase(), "msiexec.exe");
-        assert!(cmd.contains(&"/x".to_string()) || cmd.iter().any(|x| x.eq_ignore_ascii_case("/x")));
+        assert!(
+            cmd.contains(&"/x".to_string()) || cmd.iter().any(|x| x.eq_ignore_ascii_case("/x"))
+        );
         assert!(cmd
             .iter()
             .any(|x| x.eq_ignore_ascii_case("{12345678-1234-1234-1234-1234567890AB}")));
@@ -482,20 +496,17 @@ mod tests {
 
     #[test]
     fn quoted_exe() {
-        let cmd = build_uninstall_command(r#""C:\Program Files\App\uninst.exe" /S /foo=bar"#, "", true)
-            .unwrap();
+        let cmd =
+            build_uninstall_command(r#""C:\Program Files\App\uninst.exe" /S /foo=bar"#, "", true)
+                .unwrap();
         assert_eq!(cmd[0], r"C:\Program Files\App\uninst.exe");
         assert!(cmd.iter().any(|x| x == "/S"));
     }
 
     #[test]
     fn prefer_quiet() {
-        let cmd = build_uninstall_command(
-            r"C:\a\uninst.exe",
-            r#""C:\a\uninst.exe" /S"#,
-            true,
-        )
-        .unwrap();
+        let cmd =
+            build_uninstall_command(r"C:\a\uninst.exe", r#""C:\a\uninst.exe" /S"#, true).unwrap();
         assert!(cmd.iter().any(|x| x == "/S"));
     }
 

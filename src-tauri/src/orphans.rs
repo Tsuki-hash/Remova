@@ -41,7 +41,10 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
             continue;
         }
         let tokens = slug_tokens(&app.name);
-        if tokens.iter().any(|t| t.len() >= 4 && leaf.contains(t.as_str())) {
+        if tokens
+            .iter()
+            .any(|t| t.len() >= 4 && leaf.contains(t.as_str()))
+        {
             return true;
         }
     }
@@ -50,7 +53,12 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
 
 pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
     let mut roots: Vec<std::path::PathBuf> = vec![];
-    for env in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "PROGRAMDATA"] {
+    for env in [
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+    ] {
         if let Ok(v) = std::env::var(env) {
             roots.push(std::path::PathBuf::from(v));
         }
@@ -66,10 +74,24 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             let name = e.file_name().to_string_lossy().to_string();
-            // skip obvious system folders
+            // skip obvious system / installer cache folders (FUNC-8)
             if matches!(
                 name.to_lowercase().as_str(),
-                "windows" | "windowsapps" | "common files" | "microsoft" | "reference assemblies"
+                "windows"
+                    | "windowsapps"
+                    | "common files"
+                    | "microsoft"
+                    | "reference assemblies"
+                    | "package cache"
+                    | "installshield installation information"
+                    | "windows kits"
+                    | "internet explorer"
+                    | "windows defender"
+                    | "windows security"
+                    | "windows powershell"
+                    | "dotnet"
+                    | "msbuild"
+                    | "nuget"
             ) {
                 continue;
             }

@@ -52,7 +52,7 @@ pub fn list_startup_items() -> Vec<ManageItem> {
             });
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
@@ -70,7 +70,7 @@ fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
     };
     crate::regscan::read_binary(sa_key, value_name).map(|b| {
         // 0x03 in first byte = disabled; anything else (incl. missing/0x02) = enabled
-        !(b.len() >= 1 && b[0] == 0x03)
+        !(!b.is_empty() && b[0] == 0x03)
     })
 }
 
@@ -111,7 +111,7 @@ pub fn list_services() -> Vec<ManageItem> {
             });
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
@@ -140,7 +140,9 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             .split(',')
             .map(|h| h.trim_matches('"').to_lowercase())
             .collect();
-        let idx_task = headers.iter().position(|h| h.contains("taskname") || h == "任务名");
+        let idx_task = headers
+            .iter()
+            .position(|h| h.contains("taskname") || h == "任务名");
         let idx_status = headers
             .iter()
             .position(|h| h.contains("status") || h == "状态");
@@ -159,11 +161,14 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             if lower.starts_with("\\microsoft\\windows\\") {
                 continue;
             }
-            let status = idx_status.and_then(|i| cols.get(i).cloned()).unwrap_or_default();
+            let status = idx_status
+                .and_then(|i| cols.get(i).cloned())
+                .unwrap_or_default();
             let comment = idx_comment
                 .and_then(|i| cols.get(i).cloned())
                 .unwrap_or_default();
-            let enabled = !status.eq_ignore_ascii_case("disabled") && !status.eq_ignore_ascii_case("已禁用");
+            let enabled =
+                !status.eq_ignore_ascii_case("disabled") && !status.eq_ignore_ascii_case("已禁用");
             items.push(ManageItem {
                 name: name.clone(),
                 detail: if comment.is_empty() {
@@ -175,7 +180,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
                 enabled,
             });
         }
-        items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        items.sort_by_key(|a| a.name.to_lowercase());
         items.truncate(500);
         items
     }

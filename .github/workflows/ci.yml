@@ -16,6 +16,16 @@ jobs:
           node-version: "22"
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: cargo fmt
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: cargo clippy
+        run: cargo clippy --lib -- -D warnings
+        working-directory: src-tauri
 
       - name: cargo test
         run: cargo test --lib

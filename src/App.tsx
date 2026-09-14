@@ -7,8 +7,135 @@ import type {
   ScanResult,
 } from "./types";
 import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
+import { compareSemver } from "./semver";
 
 type Theme = "light" | "dark";
+
+/** Module-level styles — not rebuilt every render (PERF-3). */
+const cssStyles = {
+  page: {
+    padding: "20px 24px 32px",
+    maxWidth: 1400,
+    margin: "0 auto",
+    color: "var(--fg)",
+    fontFamily:
+      "'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
+  },
+  muted: { color: "var(--muted)", fontSize: 13 },
+  input: {
+    flex: 1,
+    minWidth: 200,
+    height: 40,
+    borderRadius: 10,
+    border: "1px solid var(--border)",
+    padding: "0 14px",
+    fontSize: 14,
+    background: "var(--surface)",
+    color: "var(--fg)",
+    outline: "none",
+  },
+  btn: {
+    height: 36,
+    padding: "0 14px",
+    borderRadius: 10,
+    border: "none",
+    background: "var(--accent)",
+    color: "var(--accent-ink)",
+    fontWeight: 600,
+    fontSize: 13,
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+    transition: "opacity .15s, transform .05s",
+  },
+  btnGhost: {
+    height: 36,
+    padding: "0 12px",
+    borderRadius: 10,
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
+    color: "var(--fg)",
+    fontSize: 13,
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+    transition: "background .15s, border-color .15s, opacity .15s",
+  },
+  btnSm: {
+    height: 30,
+    padding: "0 10px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--surface)",
+    color: "var(--fg)",
+    fontSize: 12,
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+  },
+  card: {
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: 14,
+    overflow: "hidden",
+    boxShadow: "var(--shadow)",
+  },
+  th: {
+    textAlign: "left" as const,
+    padding: "10px 12px",
+    background: "var(--th-bg)",
+    borderBottom: "1px solid var(--border)",
+    position: "sticky" as const,
+    top: 0,
+    zIndex: 1,
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--muted)",
+    letterSpacing: 0.2,
+  },
+  td: {
+    padding: "10px 12px",
+    borderBottom: "1px solid var(--border)",
+    verticalAlign: "middle" as const,
+    fontSize: 13,
+  },
+  table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
+  scroll: {
+    maxHeight: "calc(100vh - 280px)",
+    overflow: "auto" as const,
+    overscrollBehavior: "contain" as const,
+  },
+  toolbar: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    flexWrap: "wrap" as const,
+    marginBottom: 10,
+  },
+  chip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    height: 28,
+    padding: "0 10px",
+    borderRadius: 999,
+    background: "var(--surface-2)",
+    border: "1px solid var(--border)",
+    fontSize: 12,
+    color: "var(--muted)",
+  },
+};
+
+const globalCss = `
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:not(:disabled):hover { filter: brightness(1.05); }
+  button:not(:disabled):active { transform: translateY(1px); }
+  button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  input::placeholder { color: var(--muted); opacity: .85; }
+  tbody tr { transition: background .12s; }
+  tbody tr:hover { background: var(--row-hover); }
+  .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+`;
 
 /** Process-wide icon cache: displayIcon raw → data URL (or null on failure). */
 const iconCache = new Map<string, string | null>();
@@ -178,6 +305,8 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+declare const __APP_VERSION__: string;
+
 export default function App() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -331,17 +460,41 @@ export default function App() {
         setIgnoreName(ig.names || []);
       })
       .catch(() => {});
-    void invoke<{ free_gb: number; total_gb: number }>("disk_usage")
-      .then((d) => setDisk(`C: ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`))
-      .catch(() => {});
-    void fetch("https://api.github.com/repos/Tsuki-hash/Remova/releases/latest", {
-      headers: { Accept: "application/vnd.github+json" },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { tag_name?: string } | null) => {
-        if (j?.tag_name) setNotice(`${t().versionNew}: ${j.tag_name}`);
+    void invoke<{ free_gb: number; total_gb: number; drive?: string }>("disk_usage")
+      .then((d) => {
+        const drive = (d.drive || localStorage.getItem("remova_disk_drive") || "C:")
+          .slice(0, 2)
+          .toUpperCase();
+        localStorage.setItem("remova_disk_drive", drive);
+        setDisk(`${drive} ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`);
       })
       .catch(() => {});
+    // Update check: compare semver, 8s timeout (FUNC-7)
+    void (async () => {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(
+          "https://api.github.com/repos/Tsuki-hash/Remova/releases/latest",
+          {
+            headers: { Accept: "application/vnd.github+json" },
+            signal: ctrl.signal,
+          },
+        );
+        clearTimeout(timer);
+        if (!r.ok) return;
+        const j = (await r.json()) as { tag_name?: string } | null;
+        const tag = j?.tag_name?.replace(/^v/i, "");
+        if (!tag) return;
+        const cur = __APP_VERSION__;
+        if (compareSemver(tag, cur) > 0) {
+          setNotice(`${t().versionNew}: v${tag}`);
+        }
+      } catch {
+        // offline / blocked — ignore
+      }
+    })();
+    // Context menu --analyze handoff runs after apps load (see effect below)
     // tauri window close confirm
     void (async () => {
       try {
@@ -351,7 +504,7 @@ export default function App() {
           if (busyRef.current) {
             if (
               !window.confirm(
-                "Task in progress. Close window may interrupt cleanup. Close anyway?",
+                t().closeConfirmBusy,
               )
             ) {
               event.preventDefault();
@@ -410,6 +563,34 @@ export default function App() {
       disposed = true;
     };
   }, [apps, loading]);
+
+  // Context menu --analyze: match path to an app after list load (FUNC-2).
+  useEffect(() => {
+    if (loading || apps.length === 0) return;
+    let cancelled = false;
+    void invoke<string | null>("take_pending_analyze")
+      .then((p) => {
+        if (cancelled || !p) return;
+        const low = p.toLowerCase();
+        const hit = apps.find(
+          (a) =>
+            a.install_location &&
+            low.startsWith(a.install_location.replace(/\//g, "\\").toLowerCase()),
+        );
+        if (hit) {
+          setSelected(hit);
+          void analyze(hit);
+        } else {
+          setQ(p);
+          setNotice(p);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, apps]);
 
   const stopSizeEstimate = useCallback(async () => {
     sizeCancelRef.current = true;
@@ -619,9 +800,7 @@ export default function App() {
           backup_enabled: true,
         },
       });
-      setNotice(
-        `${L.forceClean}: ${selected.name} deleted=${report.deleted} failed=${report.failed}`,
-      );
+      setNotice(`${L.forceClean}: ${selected.name} · ${L.batchDetail(report.deleted, report.failed)}`);
       setLastReport(report);
     } catch (e) {
       setError(formatError(e, "cleanup"));
@@ -669,7 +848,7 @@ export default function App() {
     const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Remova report — ${escapeHtml(r.app_name)}</title>
 <style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef}</style>
 </head><body><h1>Remova — ${escapeHtml(r.app_name)}</h1>
-<p>dry_run=${r.dry_run} deleted=${r.deleted} failed=${r.failed} skipped=${r.skipped} aborted=${r.aborted}</p>
+<p>${r.dry_run ? L.dryRunSummary : L.batchSummary} · ${L.batchOk}: ${r.deleted} · ${L.batchFailed}: ${r.failed} · ${L.batchSkipped}: ${r.skipped}${r.aborted ? " · aborted" : ""}</p>
 <p>${escapeHtml(r.uninstall_message || "")}</p>
 <p>backup: ${escapeHtml(r.backup_dir || "")}</p>
 <table><tr><th>kind</th><th>status</th><th>path</th><th>message</th></tr>${rows}</table>
@@ -692,7 +871,7 @@ export default function App() {
         items,
       });
       setSelectedPaths(new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)));
-      setNotice(`${L.orphanScan}: ${items.length}`);
+      setNotice(items.length === 0 ? L.orphanScanEmpty : `${L.orphanScan}: ${items.length}`);
     } catch (e) {
       setError(formatError(e, "analyze"));
     }
@@ -813,7 +992,7 @@ export default function App() {
               backup_enabled: true,
             },
           });
-          const detail = `deleted=${report.deleted} failed=${report.failed}`;
+          const detail = L.batchDetail(report.deleted, report.failed);
           if (report.failed > 0 && report.deleted === 0) {
             results.push({ key, name: app.name, status: "failed", detail });
           } else {
@@ -861,130 +1040,7 @@ export default function App() {
     setShowBatchSummary(false);
   }, [batchResults]);
 
-  const css = {
-    page: {
-      padding: "20px 24px 32px",
-      maxWidth: 1400,
-      margin: "0 auto",
-      color: "var(--fg)",
-      fontFamily:
-        "'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
-    },
-    muted: { color: "var(--muted)", fontSize: 13 },
-    input: {
-      flex: 1,
-      minWidth: 200,
-      height: 40,
-      borderRadius: 10,
-      border: "1px solid var(--border)",
-      padding: "0 14px",
-      fontSize: 14,
-      background: "var(--surface)",
-      color: "var(--fg)",
-      outline: "none",
-    },
-    btn: {
-      height: 36,
-      padding: "0 14px",
-      borderRadius: 10,
-      border: "none",
-      background: "var(--accent)",
-      color: "var(--accent-ink)",
-      fontWeight: 600,
-      fontSize: 13,
-      cursor: "pointer",
-      whiteSpace: "nowrap" as const,
-      transition: "opacity .15s, transform .05s",
-    },
-    btnGhost: {
-      height: 36,
-      padding: "0 12px",
-      borderRadius: 10,
-      border: "1px solid var(--border)",
-      background: "var(--surface)",
-      color: "var(--fg)",
-      fontSize: 13,
-      cursor: "pointer",
-      whiteSpace: "nowrap" as const,
-      transition: "background .15s, border-color .15s, opacity .15s",
-    },
-    btnSm: {
-      height: 30,
-      padding: "0 10px",
-      borderRadius: 8,
-      border: "1px solid var(--border)",
-      background: "var(--surface)",
-      color: "var(--fg)",
-      fontSize: 12,
-      cursor: "pointer",
-      whiteSpace: "nowrap" as const,
-    },
-    card: {
-      background: "var(--surface)",
-      border: "1px solid var(--border)",
-      borderRadius: 14,
-      overflow: "hidden",
-      boxShadow: "var(--shadow)",
-    },
-    th: {
-      textAlign: "left" as const,
-      padding: "10px 12px",
-      background: "var(--th-bg)",
-      borderBottom: "1px solid var(--border)",
-      position: "sticky" as const,
-      top: 0,
-      zIndex: 1,
-      fontSize: 12,
-      fontWeight: 600,
-      color: "var(--muted)",
-      letterSpacing: 0.2,
-    },
-    td: {
-      padding: "10px 12px",
-      borderBottom: "1px solid var(--border)",
-      verticalAlign: "middle" as const,
-      fontSize: 13,
-    },
-    table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
-    scroll: {
-      maxHeight: "calc(100vh - 280px)",
-      overflow: "auto" as const,
-      overscrollBehavior: "contain" as const,
-    },
-    toolbar: {
-      display: "flex",
-      gap: 8,
-      alignItems: "center",
-      flexWrap: "wrap" as const,
-      marginBottom: 10,
-    },
-    chip: {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 6,
-      height: 28,
-      padding: "0 10px",
-      borderRadius: 999,
-      background: "var(--surface-2)",
-      border: "1px solid var(--border)",
-      fontSize: 12,
-      color: "var(--muted)",
-    },
-  };
-
-  const globalCss = `
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    button:not(:disabled):hover { filter: brightness(1.05); }
-    button:not(:disabled):active { transform: translateY(1px); }
-    button:focus-visible, input:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-    input::placeholder { color: var(--muted); opacity: .85; }
-    tbody tr { transition: background .12s; }
-    tbody tr:hover { background: var(--row-hover); }
-    .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  `;
+  const css = cssStyles;
 
   return (
     <div style={css.page}>
@@ -1115,7 +1171,7 @@ export default function App() {
           title={showTools ? L.toolsCollapseHint : L.toolsExpandHint}
           onClick={() => setShowTools((v) => !v)}
         >
-          {showTools ? "收起工具" : "更多工具"}
+          {showTools ? L.toolsCollapse : L.toolsExpand}
         </button>
         <button
           style={css.btnGhost}
@@ -1332,6 +1388,12 @@ export default function App() {
           {"uninstall_message" in report && report.uninstall_message && (
             <div style={{ marginTop: 6, color: "var(--muted)" }}>{report.uninstall_message}</div>
           )}
+          {"restore_point_ok" in report && (
+            <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
+              {report.restore_point_ok ? L.restorePointOk : L.restorePointFail}
+              {report.restore_point_msg ? ` — ${report.restore_point_msg}` : ""}
+            </div>
+          )}
         </div>
       )}
 
@@ -1358,7 +1420,7 @@ export default function App() {
               )
               .map((h, i) => (
                 <div key={i}>
-                  {h.app_name} · {h.deleted}/{h.failed}
+                  {h.app_name} · {L.histRow(h.deleted, h.failed)}
                   {h.backup_dir ? ` · ${h.backup_dir}` : ""}
                 </div>
               ))}
@@ -1795,8 +1857,8 @@ export default function App() {
                         a.publisher && `${L.colPublisher}: ${a.publisher}`,
                         a.install_location && `${L.colLocation}: ${a.install_location}`,
                         (a.quiet_uninstall_string || a.uninstall_string) &&
-                          `Uninstall: ${a.quiet_uninstall_string || a.uninstall_string}`,
-                        a.registry_key && `Key: ${a.registry_key}`,
+                          `${L.colUninstall}: ${a.quiet_uninstall_string || a.uninstall_string}`,
+                        a.registry_key && `${L.colRegKey}: ${a.registry_key}`,
                       ]
                         .filter(Boolean)
                         .join("\n") || undefined}

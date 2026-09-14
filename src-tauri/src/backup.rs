@@ -13,7 +13,13 @@ pub fn backup_root() -> PathBuf {
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     let safe: String = app_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(60)
         .collect();
     let ts = std::time::SystemTime::now()
@@ -36,15 +42,9 @@ fn reg_view_flag(key_path: &str) -> &'static str {
 }
 
 fn safe_name(path: &str) -> String {
-    path.replace('\\', "__")
-        .replace('/', "__")
+    path.replace(['\\', '/'], "__")
         .replace(':', "")
-        .replace('*', "_")
-        .replace('?', "_")
-        .replace('"', "_")
-        .replace('<', "_")
-        .replace('>', "_")
-        .replace('|', "_")
+        .replace(['*', '?', '"', '<', '>', '|'], "_")
         .chars()
         .take(180)
         .collect()

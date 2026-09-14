@@ -103,7 +103,14 @@ pub fn slugify(text: &str) -> Vec<String> {
         joined.clone()
     };
     let mut slugs: Vec<String> = vec![];
-    for s in [joined, hyphen, underscore, spaced.to_lowercase(), cleaned.to_lowercase(), short] {
+    for s in [
+        joined,
+        hyphen,
+        underscore,
+        spaced.to_lowercase(),
+        cleaned.to_lowercase(),
+        short,
+    ] {
         let s = s.trim().to_string();
         if s.len() >= 2 && !slugs.contains(&s) {
             slugs.push(s);
@@ -117,7 +124,11 @@ pub fn extract_exe_stems(install: &Path, name_slugs: &[String]) -> Vec<String> {
     if let Ok(rd) = install.read_dir() {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().map(|x| x.eq_ignore_ascii_case("exe")).unwrap_or(false) && p.is_file() {
+            if p.extension()
+                .map(|x| x.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+                && p.is_file()
+            {
                 if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
                     let lower = stem.to_lowercase();
                     if !matches!(
@@ -192,7 +203,11 @@ fn push_item(
     });
 }
 
-fn matches_product_dir(name: &str, name_slugs: &[String], exe_stems: &[String]) -> Option<&'static str> {
+fn matches_product_dir(
+    name: &str,
+    name_slugs: &[String],
+    exe_stems: &[String],
+) -> Option<&'static str> {
     let norm = normalize_for_match(name);
     if norm.len() < 2 {
         return None;
@@ -211,7 +226,10 @@ fn matches_product_dir(name: &str, name_slugs: &[String], exe_stems: &[String]) 
     }
     for slug in name_slugs {
         let sn = normalize_for_match(slug);
-        if sn.len() >= 4 && norm.len() >= 4 && (sn.contains(norm.as_str()) || norm.contains(sn.as_str())) {
+        if sn.len() >= 4
+            && norm.len() >= 4
+            && (sn.contains(norm.as_str()) || norm.contains(sn.as_str()))
+        {
             return Some("suspected");
         }
     }
@@ -254,7 +272,11 @@ pub fn analyze_associations(
             let is_dir = root.is_dir();
             items.push(CleanupItem {
                 path: root.to_string_lossy().to_string(),
-                kind: if is_dir { ItemKind::Dir } else { ItemKind::File },
+                kind: if is_dir {
+                    ItemKind::Dir
+                } else {
+                    ItemKind::File
+                },
                 score: SCORE_CONFIRMED,
                 confidence: Confidence::Confirmed,
                 risk: RiskLevel::Low,
@@ -324,7 +346,11 @@ pub fn analyze_associations(
             } else {
                 RiskLevel::Medium
             };
-            let score = if conf == Confidence::Confirmed { 40 } else { 30 };
+            let score = if conf == Confidence::Confirmed {
+                40
+            } else {
+                30
+            };
             let label = if conf == Confidence::Confirmed {
                 "Product folder name matches exactly"
             } else {
@@ -352,23 +378,21 @@ pub fn analyze_associations(
     }
 
     // 3. Uninstall key
-    if !registry_key.trim().is_empty() {
-        if is_safe_to_delete_registry(registry_key).is_ok() {
-            items.push(CleanupItem {
-                path: registry_key.to_string(),
-                kind: ItemKind::Registry,
-                score: SCORE_CONFIRMED,
-                confidence: Confidence::Confirmed,
-                risk: RiskLevel::Low,
-                reason: "Uninstall registry key".into(),
-                evidence: vec![Evidence {
-                    code: "uninstall_key".into(),
-                    label: "This product's uninstall key".into(),
-                    weight: 90,
-                    detail: registry_key.to_string(),
-                }],
-            });
-        }
+    if !registry_key.trim().is_empty() && is_safe_to_delete_registry(registry_key).is_ok() {
+        items.push(CleanupItem {
+            path: registry_key.to_string(),
+            kind: ItemKind::Registry,
+            score: SCORE_CONFIRMED,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "Uninstall registry key".into(),
+            evidence: vec![Evidence {
+                code: "uninstall_key".into(),
+                label: "This product's uninstall key".into(),
+                weight: 90,
+                detail: registry_key.to_string(),
+            }],
+        });
     }
 
     // 4. App Paths — only when install location verifies
@@ -408,7 +432,12 @@ pub fn analyze_associations(
     // 5. Run startup values
     let install_low = install
         .as_ref()
-        .map(|p| p.to_string_lossy().to_lowercase().trim_end_matches('\\').to_string())
+        .map(|p| {
+            p.to_string_lossy()
+                .to_lowercase()
+                .trim_end_matches('\\')
+                .to_string()
+        })
         .unwrap_or_default();
     for (alias, sub) in [
         ("HKLM64", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
@@ -523,7 +552,9 @@ fn scan_shortcuts(
     if let Some(pu) = std::env::var_os("PUBLIC") {
         roots.push(PathBuf::from(pu).join("Desktop"));
     }
-    roots.push(PathBuf::from(r"C:\ProgramData\Microsoft\Windows\Start Menu"));
+    roots.push(PathBuf::from(
+        r"C:\ProgramData\Microsoft\Windows\Start Menu",
+    ));
 
     for root in roots {
         if !root.exists() {
@@ -572,18 +603,15 @@ fn walk_shortcuts(
                 // binary peek for install path
                 if let Ok(data) = std::fs::read(&p) {
                     !install_low.is_empty()
-                        && (data.windows(install_low.len()).any(|w| {
-                            String::from_utf8_lossy(w).to_lowercase() == *install_low
-                        }) || {
-                            let u16s: Vec<u16> = install_low
-                                .encode_utf16()
-                                .collect();
-                            let bytes: Vec<u8> = u16s
-                                .iter()
-                                .flat_map(|u| u.to_le_bytes())
-                                .collect();
-                            data.windows(bytes.len()).any(|w| w == bytes)
-                        })
+                        && (data
+                            .windows(install_low.len())
+                            .any(|w| String::from_utf8_lossy(w).to_lowercase() == *install_low)
+                            || {
+                                let u16s: Vec<u16> = install_low.encode_utf16().collect();
+                                let bytes: Vec<u8> =
+                                    u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
+                                data.windows(bytes.len()).any(|w| w == bytes)
+                            })
                 } else {
                     false
                 }
@@ -651,7 +679,11 @@ fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                 code: "recent_temp_match".into(),
                 label: "TEMP folder/file name match".into(),
                 weight: 30,
-                detail: p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                detail: p
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
             }],
         });
     }
@@ -704,11 +736,7 @@ fn scan_services(
     }
 }
 
-fn scan_scheduled_tasks(
-    name_slugs: &[String],
-    install_low: &str,
-    items: &mut Vec<CleanupItem>,
-) {
+fn scan_scheduled_tasks(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
     let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for top in crate::regscan::list_subkeys(root) {
@@ -720,10 +748,11 @@ fn scan_scheduled_tasks(
             continue;
         }
         let leaf_n = normalize_for_match(&top);
-        let hit_install =
-            !install_low.is_empty() && key_path.to_lowercase().contains(install_low);
-        let strong =
-            hit_install || name_norms.iter().any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
+        let hit_install = !install_low.is_empty() && key_path.to_lowercase().contains(install_low);
+        let strong = hit_install
+            || name_norms
+                .iter()
+                .any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
         if !strong {
             continue;
         }
@@ -765,13 +794,21 @@ mod tests {
     #[test]
     fn product_dir_match() {
         let slugs = slugify("DemoApp");
-        assert_eq!(matches_product_dir("DemoApp", &slugs, &[]), Some("confirmed"));
+        assert_eq!(
+            matches_product_dir("DemoApp", &slugs, &[]),
+            Some("confirmed")
+        );
         assert!(matches_product_dir("TotallyOther", &slugs, &[]).is_none());
     }
 
     #[test]
     fn analyze_empty_location_no_panic() {
-        let r = analyze_associations("DemoApp", "", "DemoVendor", r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{X}");
+        let r = analyze_associations(
+            "DemoApp",
+            "",
+            "DemoVendor",
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{X}",
+        );
         assert!(r.items.iter().any(|i| i.path.contains("Uninstall")));
     }
 }

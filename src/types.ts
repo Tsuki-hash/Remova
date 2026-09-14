@@ -62,6 +62,8 @@ export type FullCleanupReport = {
   failed: number;
   skipped: number;
   aborted: boolean;
+  restore_point_ok: boolean;
+  restore_point_msg: string;
   errors: string[];
   item_details: ItemDetail[];
 };

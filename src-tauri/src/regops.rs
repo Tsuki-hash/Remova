@@ -90,15 +90,9 @@ pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
-            RegOpenKeyExW(
-                hive,
-                PCWSTR(w.as_ptr()),
-                0,
-                KEY_SET_VALUE | access,
-                &mut hk,
-            )
-            .ok()
-            .map_err(|_| format!("open failed {key_path}"))?;
+            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk)
+                .ok()
+                .map_err(|_| format!("open failed {key_path}"))?;
             let vw = to_wide(value_name);
             let st = RegDeleteValueW(hk, PCWSTR(vw.as_ptr()));
             let _ = RegCloseKey(hk);
@@ -295,24 +289,12 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
-            RegOpenKeyExW(
-                hive,
-                PCWSTR(w.as_ptr()),
-                0,
-                KEY_SET_VALUE | access,
-                &mut hk,
-            )
-            .ok()
-            .map_err(|_| format!("open service key failed {svc_name}"))?;
+            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk)
+                .ok()
+                .map_err(|_| format!("open service key failed {svc_name}"))?;
             let name_w = to_wide("Start");
             let bytes = start.to_le_bytes();
-            let st = RegSetValueExW(
-                hk,
-                PCWSTR(name_w.as_ptr()),
-                0,
-                REG_DWORD,
-                Some(&bytes),
-            );
+            let st = RegSetValueExW(hk, PCWSTR(name_w.as_ptr()), 0, REG_DWORD, Some(&bytes));
             let _ = RegCloseKey(hk);
             if st != ERROR_SUCCESS {
                 return Err(format!("write Start failed for {svc_name}"));

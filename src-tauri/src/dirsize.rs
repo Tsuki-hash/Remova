@@ -25,10 +25,10 @@ pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
         return 0;
     }
     let bytes = walk_size_bytes_with(root, cancelled);
-    if bytes <= 0 {
+    if bytes == 0 {
         0
     } else {
-        ((bytes + 1023) / 1024) as i64
+        bytes.div_ceil(1024) as i64
     }
 }
 

@@ -37,8 +37,8 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
     #[cfg(windows)]
     {
         use windows::Win32::System::Restore::{
-            APPLICATION_INSTALL, BEGIN_SYSTEM_CHANGE, RESTOREPOINTINFO_TYPE, RESTOREPOINTINFOW,
-            SRSetRestorePointW, STATEMGRSTATUS,
+            SRSetRestorePointW, APPLICATION_INSTALL, BEGIN_SYSTEM_CHANGE, RESTOREPOINTINFOW,
+            RESTOREPOINTINFO_TYPE, STATEMGRSTATUS,
         };
         let desc: Vec<u16> = description
             .chars()

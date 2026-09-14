@@ -61,7 +61,7 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         // Merge Store/MSIX packages (WinRT). Dedup after sort by name+source.
         out.extend(crate::storeapps::scan_store_apps());
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out.dedup_by(|a, b| {
         a.name.eq_ignore_ascii_case(&b.name)
             && a.version == b.version
@@ -81,7 +81,13 @@ fn collect_uninstall(
     unsafe {
         let mut root = HKEY::default();
         let sub_w = to_wide(sub);
-        let st = RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root);
+        let st = RegOpenKeyExW(
+            hive,
+            PCWSTR(sub_w.as_ptr()),
+            0,
+            KEY_READ | access,
+            &mut root,
+        );
         if st != ERROR_SUCCESS {
             return;
         }
@@ -190,10 +196,8 @@ unsafe fn read_uninstall_entry(
                 "QuietUninstallString" => quiet = s,
                 "DisplayIcon" => display_icon = s,
                 "InstallDate" => install_date = format_install_date(&s),
-                "EstimatedSize" => {
-                    if data_len >= 4 {
-                        size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
-                    }
+                "EstimatedSize" if data_len >= 4 => {
+                    size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
                 }
                 _ => {}
             }
@@ -201,7 +205,8 @@ unsafe fn read_uninstall_entry(
     }
     let _ = RegCloseKey(hk);
 
-    if display.trim().is_empty() || (uninstall_string.trim().is_empty() && quiet.trim().is_empty()) {
+    if display.trim().is_empty() || (uninstall_string.trim().is_empty() && quiet.trim().is_empty())
+    {
         return None;
     }
     if looks_system_update(&display) {
@@ -235,7 +240,10 @@ pub fn format_install_date(raw: &str) -> String {
     }
     let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
     // YYYYMMDD
-    if digits.len() == 8 && s.chars().all(|c| c.is_ascii_digit() || c == '/' || c == '-' || c == '.') {
+    if digits.len() == 8
+        && s.chars()
+            .all(|c| c.is_ascii_digit() || c == '/' || c == '-' || c == '.')
+    {
         let (y, m, d) = (&digits[0..4], &digits[4..6], &digits[6..8]);
         if let (Ok(mv), Ok(dv)) = (m.parse::<u32>(), d.parse::<u32>()) {
             if (1..=12).contains(&mv) && (1..=31).contains(&dv) {

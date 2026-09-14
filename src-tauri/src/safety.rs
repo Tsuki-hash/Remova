@@ -25,7 +25,10 @@ pub fn critical_service_names() -> &'static [&'static str] {
 
 fn normalize_hklm(key_path: &str) -> String {
     let low = key_path.replace('/', "\\").to_uppercase();
-    let low = low.strip_prefix("HKLM64\\").map(|s| format!("HKLM\\{s}")).unwrap_or(low);
+    let low = low
+        .strip_prefix("HKLM64\\")
+        .map(|s| format!("HKLM\\{s}"))
+        .unwrap_or(low);
     let low = low
         .strip_prefix("HKLM32\\")
         .map(|s| format!("HKLM\\{s}"))
@@ -221,10 +224,10 @@ mod tests {
 
     #[test]
     fn critical_service_blocked() {
-        assert!(is_safe_to_delete_registry(
-            r"HKLM64\SYSTEM\CurrentControlSet\Services\Winmgmt"
-        )
-        .is_err());
+        assert!(
+            is_safe_to_delete_registry(r"HKLM64\SYSTEM\CurrentControlSet\Services\Winmgmt")
+                .is_err()
+        );
     }
 
     #[test]

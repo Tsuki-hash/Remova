@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://ipc.localhost https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

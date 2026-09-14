@@ -22,7 +22,9 @@ fn extract_from_path(_path: &str, _index: i32) -> Option<Vec<u8>> {
 fn extract_from_path(path: &str, index: i32) -> Option<Vec<u8>> {
     use std::path::Path;
     use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{ExtractIconExW, SHGetFileInfoW, SHGFI_ICON, SHGFI_LARGEICON, SHFILEINFOW};
+    use windows::Win32::UI::Shell::{
+        ExtractIconExW, SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON,
+    };
     use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
 
     if !Path::new(path).exists() {

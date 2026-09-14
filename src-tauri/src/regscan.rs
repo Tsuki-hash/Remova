@@ -38,9 +38,18 @@ pub fn find_app_paths(exe_name: &str) -> Vec<String> {
     #[cfg(windows)]
     {
         let targets = [
-            ("HKLM64", r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
-            ("HKLM32", r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
-            ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+            (
+                "HKLM64",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+            ),
+            (
+                "HKLM32",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+            ),
+            (
+                "HKCU",
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+            ),
         ];
         let needle = exe_name.to_lowercase();
         let mut hits = vec![];
@@ -71,8 +80,13 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
-            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            ) != ERROR_SUCCESS
             {
                 return vec![];
             }
@@ -131,8 +145,13 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
-            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            ) != ERROR_SUCCESS
             {
                 return vec![];
             }
@@ -188,14 +207,17 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     #[cfg(windows)]
     {
         use windows::Win32::System::Registry::REG_DWORD;
-        let Some((hive, sub, access)) = parse_alias(key) else {
-            return None;
-        };
+        let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
-            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            ) != ERROR_SUCCESS
             {
                 return None;
             }
@@ -222,8 +244,7 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
                 }
                 n += 1;
                 let name = String::from_utf16_lossy(&vname[..vname_len as usize]);
-                if name.eq_ignore_ascii_case(value_name) && vtype == REG_DWORD.0 && data_len >= 4
-                {
+                if name.eq_ignore_ascii_case(value_name) && vtype == REG_DWORD.0 && data_len >= 4 {
                     found = Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]));
                     break;
                 }
@@ -244,14 +265,17 @@ pub fn read_binary(key: &str, value_name: &str) -> Option<Vec<u8>> {
     #[cfg(windows)]
     {
         use windows::Win32::System::Registry::{RegQueryValueExW, REG_BINARY, REG_VALUE_TYPE};
-        let Some((hive, sub, access)) = parse_alias(key) else {
-            return None;
-        };
+        let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
-            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            ) != ERROR_SUCCESS
             {
                 return None;
             }
@@ -285,9 +309,7 @@ pub fn read_string_default(key: &str) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        let Some((hive, sub, access)) = parse_alias(key) else {
-            return None;
-        };
+        let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
             let mut hk = HKEY::default();

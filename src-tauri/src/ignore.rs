@@ -65,11 +65,7 @@ pub fn add_name(name: &str) -> Result<IgnoreList, String> {
 
 pub fn is_publisher_ignored(list: &IgnoreList, publisher: &str) -> bool {
     let p = publisher.trim();
-    p.is_empty()
-        || list
-            .publishers
-            .iter()
-            .any(|x| x.eq_ignore_ascii_case(p))
+    p.is_empty() || list.publishers.iter().any(|x| x.eq_ignore_ascii_case(p))
 }
 
 pub fn is_name_ignored(list: &IgnoreList, name: &str) -> bool {
@@ -96,10 +92,7 @@ mod tests {
         l.paths.push(r"C:\Program Files\Common Files".into());
         assert!(is_publisher_ignored(&l, "microsoft corporation"));
         assert!(is_name_ignored(&l, "onedrive"));
-        assert!(is_path_ignored(
-            &l,
-            r"C:\Program Files\Common Files\foo"
-        ));
+        assert!(is_path_ignored(&l, r"C:\Program Files\Common Files\foo"));
         assert!(!is_name_ignored(&l, "7-Zip"));
     }
 }

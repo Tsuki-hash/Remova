@@ -24,7 +24,12 @@ fn monitor_state_path() -> PathBuf {
 
 fn roots() -> Vec<PathBuf> {
     let mut v = vec![];
-    for e in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "PROGRAMDATA"] {
+    for e in [
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+    ] {
         if let Ok(p) = std::env::var(e) {
             v.push(PathBuf::from(p));
         }
@@ -103,7 +108,8 @@ pub fn begin() -> Result<(), String> {
 
 pub fn end() -> Result<MonitorDiff, String> {
     let p = monitor_state_path();
-    let raw = std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
+    let raw =
+        std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
     let before: FullSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&p);
     let after = take_fs_snapshot();
@@ -111,14 +117,14 @@ pub fn end() -> Result<MonitorDiff, String> {
     let added_files: Vec<String> = after
         .files
         .difference(&before.fs.files)
-        .cloned()
         .take(200)
+        .cloned()
         .collect();
     let before_reg: BTreeSet<String> = before.reg.into_iter().collect();
     let added_reg_values: Vec<String> = after_reg
         .difference(&before_reg)
-        .cloned()
         .take(100)
+        .cloned()
         .collect();
     Ok(MonitorDiff {
         added_files,
