@@ -10,6 +10,7 @@ pub mod ignore;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
+pub mod pipeline_smoke;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
