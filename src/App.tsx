@@ -809,44 +809,48 @@ export default function App() {
   return (
     <div style={css.page}>
       <style>{globalCss}</style>
-      {/* Brand */}
+      {/* Brand strip */}
       <header
         style={{
           display: "flex",
           gap: 12,
           alignItems: "center",
           flexWrap: "wrap",
-          marginBottom: 14,
+          marginBottom: 10,
+          paddingBottom: 8,
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>
+            <h1
+              style={{
+                fontSize: 18,
+                fontWeight: 650,
+                margin: 0,
+                letterSpacing: -0.2,
+              }}
+            >
               {L.title}
             </h1>
-            <span style={{ ...css.muted, fontSize: 12 }}>{L.subtitle}</span>
+            <span style={{ ...css.muted, fontSize: 11, letterSpacing: 0.3 }}>{L.subtitle}</span>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <span style={css.chip}>
               {loading ? "…" : `${filtered.length} / ${apps.length}`}
             </span>
             {admin !== null && (
-              <span
-                style={{
-                  ...css.chip,
-                  color: admin ? "var(--accent)" : "var(--danger)",
-                  borderColor: admin ? "var(--accent)" : "var(--danger)",
-                }}
-              >
+              <span style={admin ? css.chipAccent : css.chipDanger}>
                 {admin ? L.admin : L.nonAdmin}
               </span>
             )}
             {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
-            {estimating && <span style={css.chip}>{L.estimatingSizes}</span>}
-            {monitoring && <span style={css.chip}>{L.monitorRunning}</span>}
+            {estimating && <span style={css.chipAccent}>{L.estimatingSizes}</span>}
+            {monitoring && <span style={css.chipAccent}>{L.monitorRunning}</span>}
           </div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           <button
             style={css.btnSm}
             onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
@@ -918,7 +922,7 @@ export default function App() {
           ))}
         </select>
         {batching ? (
-          <button style={{ ...css.btn, background: "#b45309", color: "#fff" }} onClick={() => cancelBatch()}>
+          <button style={{ ...css.btnGhost, color: "var(--warn)", borderColor: "var(--border-strong)" }} onClick={() => cancelBatch()}>
             {L.batchCancel}
           </button>
         ) : (
@@ -1093,10 +1097,10 @@ export default function App() {
           style={{
             ...css.toolbar,
             marginBottom: 10,
-            padding: "10px 12px",
+            padding: "8px 12px",
             background: "var(--surface-2)",
             border: "1px solid var(--border)",
-            borderRadius: 12,
+            borderRadius: 8,
           }}
         >
           <button
@@ -1109,12 +1113,13 @@ export default function App() {
           >
             ← {L.closePreview}
           </button>
-          <strong style={{ fontSize: 13 }}>{scan.app_name}</strong>
-          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+          <strong style={{ fontSize: 13, fontWeight: 600 }}>{scan.app_name}</strong>
+          <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>
             <input
               type="checkbox"
               checked={useOfficial}
               onChange={(e) => setUseOfficial(e.target.checked)}
+              style={{ accentColor: "var(--accent)" }}
             />
             {L.useOfficial}
           </label>
@@ -1122,7 +1127,7 @@ export default function App() {
             {L.dryRun}
           </button>
           <button
-            style={{ ...css.btn, background: "var(--danger)", color: "#fff" }}
+            style={{ ...css.btn, background: "var(--danger)", color: "#1a0505" }}
             disabled={dryRunning || selectedPaths.size === 0 || busyRef.current}
             onClick={() => {
               if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
@@ -1358,47 +1363,55 @@ export default function App() {
           )}
         </div>
       ) : (
-        <div style={css.card}>
+        <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <div ref={listScrollRef} style={css.scroll}>
             <table style={css.table}>
+              <colgroup>
+                <col style={{ width: 36 }} />
+                <col style={{ width: "22%" }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: 88 }} />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 64 }} />
+                <col />
+              </colgroup>
               <thead>
                 <tr>
-                  <th style={{ ...css.th, width: 48, whiteSpace: "nowrap" }}>✓</th>
+                  <th style={css.th}>✓</th>
                   <th
-                    style={{ ...css.th, cursor: "pointer", whiteSpace: "nowrap" }}
+                    style={{ ...css.th, cursor: "pointer" }}
                     onClick={() => sortBy("name")}
+                    title={L.colName}
                   >
                     {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th style={{ ...css.th, whiteSpace: "nowrap" }}>{L.colVersion}</th>
+                  <th style={css.th}>{L.colVersion}</th>
                   <th
-                    style={{ ...css.th, cursor: "pointer", whiteSpace: "nowrap" }}
+                    style={{ ...css.th, cursor: "pointer" }}
                     onClick={() => sortBy("publisher")}
+                    title={L.colPublisher}
                   >
                     {L.colPublisher} {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
                   <th
-                    style={{ ...css.th, cursor: "pointer", width: 90, minWidth: 90, whiteSpace: "nowrap" }}
+                    style={{ ...css.th, cursor: "pointer", textAlign: "right" as const }}
                     onClick={() => sortBy("size")}
                   >
                     {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
                   <th
-                    style={{
-                      ...css.th,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      minWidth: 110,
-                    }}
+                    style={{ ...css.th, cursor: "pointer" }}
                     onClick={() => sortBy("install_date")}
                   >
                     {L.colInstallDate}{" "}
                     {sortCol === "install_date" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th style={{ ...css.th, whiteSpace: "nowrap" }}>{L.colSource}</th>
+                  <th style={css.th}>{L.colSource}</th>
                   <th
                     style={{ ...css.th, cursor: "pointer" }}
                     onClick={() => sortBy("install_location")}
+                    title={L.colLocation}
                   >
                     {L.colLocation}{" "}
                     {sortCol === "install_location" ? (sortDesc ? "↓" : "↑") : ""}

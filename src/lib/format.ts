@@ -23,8 +23,8 @@ export function prettyAppName(name: string, source: string): string {
 
 export function shortPath(p: string): string {
   const s = p || "";
-  if (s.length <= 64) return s;
-  return `${s.slice(0, 28)}…${s.slice(-28)}`;
+  if (s.length <= 48) return s;
+  return `${s.slice(0, 20)}…${s.slice(-20)}`;
 }
 
 export type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";

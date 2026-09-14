@@ -1,127 +1,229 @@
-/** Module-level styles — not rebuilt every render (PERF-3 / ARCH-4). */
+/**
+ * Remova styles — dark professional tool (convention mode).
+ * Tight radii (6px), hairline borders, mono for data, sky accent rail.
+ */
 
 export const cssStyles = {
   page: {
-    padding: "20px 24px 32px",
-    maxWidth: 1400,
-    margin: "0 auto",
+    padding: "12px 14px 12px",
+    maxWidth: "100%",
+    height: "100vh",
+    display: "flex",
+    flexDirection: "column" as const,
     color: "var(--fg)",
     fontFamily:
-      "'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
+      "'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif",
+    fontSize: 13,
+    lineHeight: 1.45,
+    overflow: "hidden",
   },
-  muted: { color: "var(--muted)", fontSize: 13 },
+  muted: { color: "var(--muted)", fontSize: 12 },
+  mono: {
+    fontFamily: "var(--mono)",
+    fontSize: 12,
+    fontVariantNumeric: "tabular-nums" as const,
+  },
   input: {
     flex: 1,
     minWidth: 200,
-    height: 40,
-    borderRadius: 10,
+    height: 34,
+    borderRadius: 6,
     border: "1px solid var(--border)",
-    padding: "0 14px",
-    fontSize: 14,
+    padding: "0 12px",
+    fontSize: 13,
     background: "var(--surface)",
     color: "var(--fg)",
     outline: "none",
+    transition: "border-color .12s",
   },
   btn: {
-    height: 36,
+    height: 34,
     padding: "0 14px",
-    borderRadius: 10,
-    border: "none",
+    borderRadius: 6,
+    border: "1px solid transparent",
     background: "var(--accent)",
     color: "var(--accent-ink)",
     fontWeight: 600,
-    fontSize: 13,
+    fontSize: 12.5,
+    letterSpacing: 0.1,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
-    transition: "opacity .15s, transform .05s",
+    transition: "filter .12s, transform .05s",
   },
   btnGhost: {
-    height: 36,
+    height: 34,
     padding: "0 12px",
-    borderRadius: 10,
+    borderRadius: 6,
     border: "1px solid var(--border)",
-    background: "var(--surface)",
+    background: "transparent",
     color: "var(--fg)",
-    fontSize: 13,
+    fontSize: 12.5,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
-    transition: "background .15s, border-color .15s, opacity .15s",
+    transition: "background .12s, border-color .12s, color .12s",
   },
   btnSm: {
-    height: 30,
+    height: 28,
     padding: "0 10px",
-    borderRadius: 8,
+    borderRadius: 5,
     border: "1px solid var(--border)",
-    background: "var(--surface)",
-    color: "var(--fg)",
+    background: "transparent",
+    color: "var(--muted)",
     fontSize: 12,
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+    transition: "background .12s, color .12s, border-color .12s",
+  },
+  btnDanger: {
+    height: 34,
+    padding: "0 14px",
+    borderRadius: 6,
+    border: "1px solid transparent",
+    background: "var(--danger)",
+    color: "#1a0505",
+    fontWeight: 600,
+    fontSize: 12.5,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
   },
   card: {
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    borderRadius: 14,
+    borderRadius: 8,
     overflow: "hidden",
     boxShadow: "var(--shadow)",
   },
   th: {
     textAlign: "left" as const,
-    padding: "10px 12px",
+    padding: "7px 8px",
     background: "var(--th-bg)",
     borderBottom: "1px solid var(--border)",
     position: "sticky" as const,
     top: 0,
     zIndex: 1,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 600,
     color: "var(--muted)",
-    letterSpacing: 0.2,
+    letterSpacing: 0.4,
+    textTransform: "uppercase" as const,
+    whiteSpace: "nowrap" as const,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   td: {
-    padding: "10px 12px",
+    padding: "6px 8px",
     borderBottom: "1px solid var(--border)",
     verticalAlign: "middle" as const,
     fontSize: 13,
+    overflow: "hidden",
   },
-  table: { width: "100%", borderCollapse: "collapse" as const, fontSize: 13 },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse" as const,
+    fontSize: 13,
+    tableLayout: "fixed" as const,
+  },
   scroll: {
-    maxHeight: "calc(100vh - 280px)",
+    flex: 1,
+    minHeight: 0,
     overflow: "auto" as const,
     overscrollBehavior: "contain" as const,
     position: "relative" as const,
   },
   toolbar: {
     display: "flex",
-    gap: 8,
+    gap: 6,
     alignItems: "center",
     flexWrap: "wrap" as const,
-    marginBottom: 10,
+    marginBottom: 8,
+    flexShrink: 0,
   },
   chip: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    height: 28,
-    padding: "0 10px",
-    borderRadius: 999,
+    height: 24,
+    padding: "0 9px",
+    borderRadius: 4,
     background: "var(--surface-2)",
     border: "1px solid var(--border)",
-    fontSize: 12,
+    fontSize: 11,
     color: "var(--muted)",
+    fontFamily: "var(--mono)",
+    letterSpacing: 0.2,
+  },
+  chipAccent: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    height: 24,
+    padding: "0 9px",
+    borderRadius: 4,
+    background: "var(--accent-soft)",
+    border: "1px solid transparent",
+    fontSize: 11,
+    color: "var(--accent)",
+    fontWeight: 600,
+  },
+  chipDanger: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    height: 24,
+    padding: "0 9px",
+    borderRadius: 4,
+    background: "var(--danger-soft)",
+    border: "1px solid transparent",
+    fontSize: 11,
+    color: "var(--danger)",
+    fontWeight: 600,
+  },
+  sourceBadge: {
+    display: "inline-block",
+    padding: "1px 7px",
+    borderRadius: 3,
+    fontSize: 10.5,
+    fontWeight: 600,
+    letterSpacing: 0.4,
+    fontFamily: "var(--mono)",
+    background: "var(--surface-2)",
+    color: "var(--muted)",
+    border: "1px solid var(--border)",
   },
 };
 
 export const globalCss = `
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button:not(:disabled):hover { filter: brightness(1.05); }
-  button:not(:disabled):active { transform: translateY(1px); }
-  button:focus-visible, input:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
   }
-  input::placeholder { color: var(--muted); opacity: .85; }
-  tbody tr { transition: background .12s; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:not(:disabled):hover { filter: brightness(1.08); }
+  button:not(:disabled):active { transform: translateY(0.5px); }
+  button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  input::placeholder { color: var(--muted); opacity: .7; }
+  input:hover, select:hover { border-color: var(--border-strong); }
+  tbody tr { transition: background .1s; }
   tbody tr:hover { background: var(--row-hover); }
   .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ::selection { background: var(--accent-soft); color: var(--fg); }
+  /* Slim scrollbars for the tool aesthetic */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 5px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
 `;

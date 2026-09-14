@@ -46,10 +46,11 @@ function AppRowImpl({
         .join("\n") || undefined}
       style={{
         cursor: "pointer",
-        background: selected ? "var(--th-bg)" : undefined,
+        background: selected ? "var(--row-selected)" : undefined,
+        boxShadow: selected ? "inset 2px 0 0 var(--accent)" : undefined,
       }}
     >
-      <td style={css.td}>
+      <td style={{ ...css.td, width: 36, textAlign: "center" as const }}>
         <input
           type="checkbox"
           checked={checked}
@@ -59,55 +60,56 @@ function AppRowImpl({
             if (next && !selected) onEnsureSelected(a);
           }}
           onClick={(e) => e.stopPropagation()}
+          style={{ accentColor: "var(--accent)", cursor: "pointer", margin: 0 }}
         />
       </td>
       <td style={css.td}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <AppIcon displayIcon={a.display_icon} name={a.name} />
-          <span className="ell" style={{ maxWidth: 280 }} title={a.name}>
+          <span
+            className="ell"
+            style={{ fontWeight: selected ? 600 : 500, minWidth: 0 }}
+            title={a.name}
+          >
             {prettyAppName(a.name, a.source)}
           </span>
         </div>
       </td>
-      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
+      <td style={{ ...css.td, ...css.mono, whiteSpace: "nowrap" }}>
         {a.version || "—"}
       </td>
       <td style={css.td}>
-        <span className="ell" style={{ display: "block", maxWidth: 180 }} title={a.publisher}>
+        <span className="ell" style={{ display: "block", minWidth: 0 }} title={a.publisher}>
           {prettyPublisher(a.publisher)}
         </span>
       </td>
       <td
         style={{
           ...css.td,
+          ...css.mono,
           textAlign: "right" as const,
           whiteSpace: "nowrap",
-          fontVariantNumeric: "tabular-nums",
+          color: sizeText === "—" ? "var(--muted)" : "var(--fg)",
         }}
       >
         {sizeText}
       </td>
-      <td style={{ ...css.td, whiteSpace: "nowrap", color: "var(--muted)" }}>
+      <td style={{ ...css.td, ...css.mono, whiteSpace: "nowrap", color: "var(--muted)" }}>
         {a.install_date || "—"}
       </td>
-      <td style={css.td}>
-        <span
-          style={{
-            display: "inline-block",
-            padding: "2px 8px",
-            borderRadius: 6,
-            fontSize: 11,
-            background: a.source === "Store" ? "var(--surface-2)" : "transparent",
-            border: "1px solid var(--border)",
-          }}
-        >
-          {a.source}
-        </span>
+      <td style={{ ...css.td, textAlign: "center" as const }}>
+        <span style={css.sourceBadge}>{a.source}</span>
       </td>
       <td style={css.td}>
         <span
           className="ell"
-          style={{ display: "block", maxWidth: 320, color: "var(--muted)", fontSize: 12 }}
+          style={{
+            display: "block",
+            color: "var(--muted)",
+            fontSize: 12,
+            fontFamily: "var(--mono)",
+            minWidth: 0,
+          }}
           title={a.install_location}
         >
           {a.install_location ? shortPath(a.install_location) : "—"}
