@@ -42,7 +42,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             let e = e.map_err(|e| e.to_string())?;
             let export = e.path().join("export.reg");
             if export.exists() {
-                let out = Command::new("reg")
+                let out = Command::new(crate::regops::sys_tool("reg.exe"))
                     .args(["import", &export.to_string_lossy()])
                     .output()
                     .map_err(|e| e.to_string())?;

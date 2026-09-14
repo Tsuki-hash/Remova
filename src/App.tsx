@@ -25,6 +25,11 @@ import { applyTheme, loadTheme, type Theme } from "./lib/theme";
 
 declare const __APP_VERSION__: string;
 
+/** Stable row/multi-select key (CODE-8: avoid ambiguous string concat). */
+function appKey(a: InstalledApp): string {
+  return `${a.source}\u0000${a.registry_key}\u0000${a.name}`;
+}
+
 export default function App() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +42,8 @@ export default function App() {
   const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
+  const [batchUseOfficial, setBatchUseOfficial] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState<string>("");
   const [sortCol, setSortCol] = useState<
     "name" | "publisher" | "install_location" | "size" | "install_date" | null
   >(null);
@@ -357,6 +364,9 @@ export default function App() {
         !ignorePub.some((p) => p && a.publisher?.toLowerCase() === p.toLowerCase()) &&
         !ignoreName.some((n) => n && a.name?.toLowerCase() === n.toLowerCase()),
     );
+    if (sourceFilter) {
+      list = list.filter((a) => a.source === sourceFilter);
+    }
     if (needle) {
       list = list.filter(
         (a) =>
@@ -373,7 +383,7 @@ export default function App() {
       return (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName]);
+  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter]);
 
   const sortBy = (col: "name" | "publisher" | "install_location" | "size" | "install_date") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -399,7 +409,7 @@ export default function App() {
     if (selected) return selected;
     if (multi.size === 1) {
       const key = [...multi][0];
-      return apps.find((a) => a.registry_key + a.name === key) ?? null;
+      return apps.find((a) => appKey(a) === key) ?? null;
     }
     return null;
   }, [selected, multi, apps]);
@@ -700,12 +710,12 @@ export default function App() {
 
   const batchCleanup = useCallback(async () => {
     const keys = new Set(multi);
-    const queue = apps.filter((a) => keys.has(a.registry_key + a.name));
+    const queue = apps.filter((a) => keys.has(appKey(a)));
     if (!queue.length) {
       setNotice(L.selectRowHint);
       return;
     }
-    if (!window.confirm(L.batchConfirm(queue.length))) return;
+    if (!window.confirm(L.batchConfirm(queue.length, batchUseOfficial))) return;
 
     busyRef.current = true;
     batchCancelRef.current = false;
@@ -720,7 +730,7 @@ export default function App() {
       for (let i = 0; i < queue.length; i++) {
         if (batchCancelRef.current) break;
         const app = queue[i];
-        const key = app.registry_key + app.name;
+        const key = appKey(app);
         setBatchIndex(i + 1);
         setBatchCurrent(app.name);
         setNotice(`[${i + 1}/${queue.length}] ${app.name}`);
@@ -744,7 +754,7 @@ export default function App() {
             items,
             options: {
               dry_run: false,
-              skip_official_uninstall: true,
+              skip_official_uninstall: !batchUseOfficial,
               backup_enabled: true,
             },
           });
@@ -888,25 +898,51 @@ export default function App() {
       {/* Search + primary actions */}
       <div style={css.toolbar}>
         <input
-          style={{ ...css.input, flex: "1 1 280px" }}
+          style={{ ...css.input, flex: "1 1 240px" }}
           placeholder={L.search}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           aria-label={L.search}
         />
+        <select
+          style={{ ...css.input, flex: "0 0 auto", minWidth: 110, height: 36 }}
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          aria-label={L.colSource}
+        >
+          <option value="">{L.allSources}</option>
+          {Array.from(new Set(apps.map((a) => a.source))).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
         {batching ? (
           <button style={{ ...css.btn, background: "#b45309", color: "#fff" }} onClick={() => cancelBatch()}>
             {L.batchCancel}
           </button>
         ) : (
-          <button
-            style={{ ...css.btn, opacity: multi.size === 0 ? 0.5 : 1 }}
-            disabled={multi.size === 0}
-            title={multi.size === 0 ? L.selectRowHint : undefined}
-            onClick={() => void batchCleanup()}
-          >
-            {L.batch} ({multi.size})
-          </button>
+          <>
+            <label
+              style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}
+              title={L.batchOfficialHint}
+            >
+              <input
+                type="checkbox"
+                checked={batchUseOfficial}
+                onChange={(e) => setBatchUseOfficial(e.target.checked)}
+              />
+              {L.useOfficial}
+            </label>
+            <button
+              style={{ ...css.btn, opacity: multi.size === 0 ? 0.5 : 1 }}
+              disabled={multi.size === 0}
+              title={multi.size === 0 ? L.selectRowHint : L.batchOfficialHint}
+              onClick={() => void batchCleanup()}
+            >
+              {L.batch} ({multi.size})
+            </button>
+          </>
         )}
         <button
           style={{
@@ -1379,7 +1415,7 @@ export default function App() {
                     )}
                     {virtualRows.map((vr) => {
                       const a = filtered[vr.index];
-                      const key = a.registry_key + a.name;
+                      const key = appKey(a);
                       return (
                         <AppRow
                           key={key}
@@ -1411,7 +1447,7 @@ export default function App() {
                   </>
                 ) : (
                   filtered.map((a) => {
-                    const key = a.registry_key + a.name;
+                    const key = appKey(a);
                     return (
                       <AppRow
                         key={key}

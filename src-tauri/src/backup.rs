@@ -74,7 +74,7 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
                 "HKCU" => "HKCU",
                 _ => return Err(format!("unsupported hive {alias}")),
             };
-            let out = Command::new("reg")
+            let out = Command::new(crate::regops::sys_tool("reg.exe"))
                 .args([
                     "export",
                     &format!("{hive}\\{rest}"),
@@ -102,7 +102,7 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
             if !src.exists() {
                 return Ok(());
             }
-            let digest = format!("{:x}", md5_short(&item.path));
+            let digest = format!("{:x}", fnv1a64(&item.path));
             let name = src
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -138,8 +138,14 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
     let mut ok = 0u32;
     let mut fail = 0u32;
     let mut errors = vec![];
+    // Load path_map once; write once at end (PERF-6).
+    let map_path = session.join("files").join("path_map.json");
+    let mut path_map: std::collections::BTreeMap<String, String> = fs::read_to_string(&map_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     for it in items {
-        match backup_item(it, session) {
+        match backup_item_with_map(it, session, &mut path_map) {
             Ok(()) => ok += 1,
             Err(e) => {
                 fail += 1;
@@ -147,10 +153,93 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
             }
         }
     }
+    if !path_map.is_empty() {
+        let _ = fs::write(
+            &map_path,
+            serde_json::to_string_pretty(&path_map).unwrap_or_default(),
+        );
+    }
     (ok, fail, errors)
 }
 
-fn md5_short(s: &str) -> u64 {
+fn backup_item_with_map(
+    item: &CleanupItem,
+    session: &Path,
+    path_map: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    match item.kind {
+        ItemKind::Registry => {
+            // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
+            let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
+                parent
+            } else {
+                item.path.as_str()
+            };
+            let dest = session
+                .join("registry")
+                .join(safe_name(&item.path))
+                .join("export.reg");
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let (alias, rest) = export_path
+                .split_once('\\')
+                .ok_or_else(|| "bad key".to_string())?;
+            let hive = match alias.to_uppercase().as_str() {
+                "HKLM64" | "HKLM32" | "HKLM" => "HKLM",
+                "HKCU" => "HKCU",
+                _ => return Err(format!("unsupported hive {alias}")),
+            };
+            let out = Command::new(crate::regops::sys_tool("reg.exe"))
+                .args([
+                    "export",
+                    &format!("{hive}\\{rest}"),
+                    &dest.to_string_lossy(),
+                    "/y",
+                    reg_view_flag(export_path),
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(format!("reg export failed for {}", item.path));
+            }
+            // Record the specific value name for Run items so restore knows what was targeted.
+            if item.path.contains('|') {
+                let meta = session
+                    .join("registry")
+                    .join(safe_name(&item.path))
+                    .join("value.txt");
+                let _ = fs::write(&meta, &item.path);
+            }
+            Ok(())
+        }
+        _ => {
+            let src = Path::new(&item.path);
+            if !src.exists() {
+                return Ok(());
+            }
+            let digest = format!("{:x}", fnv1a64(&item.path));
+            let name = src
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "item".into());
+            let rel = format!("{digest}_{name}");
+            let dest = session.join("files").join(&rel);
+            if src.is_dir() {
+                copy_dir(src, &dest).map_err(|e| e.to_string())?;
+            } else {
+                if let Some(p) = dest.parent() {
+                    fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                }
+                fs::copy(src, &dest).map_err(|e| e.to_string())?;
+            }
+            path_map.insert(rel, item.path.clone());
+            Ok(())
+        }
+    }
+}
+
+fn fnv1a64(s: &str) -> u64 {
     // FNV-1a 64 — unique enough for backup names (not crypto)
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.as_bytes() {

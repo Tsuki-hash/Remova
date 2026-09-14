@@ -115,7 +115,8 @@ pub fn list_services() -> Vec<ManageItem> {
     out
 }
 
-/// Parse `schtasks /query /fo CSV /v` rows (best-effort).
+/// Parse `schtasks /query /fo CSV /v` rows.
+/// CSV format is locale-independent for column order: TaskName, Next Run Time, Status, ...
 pub fn list_scheduled_tasks() -> Vec<ManageItem> {
     #[cfg(not(windows))]
     {
@@ -124,7 +125,8 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        let Ok(out) = Command::new("schtasks")
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let Ok(out) = Command::new(format!(r"{windir}\System32\schtasks.exe"))
             .args(["/query", "/fo", "CSV", "/v"])
             .output()
         else {
@@ -136,19 +138,28 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         let Some(header) = lines.next() else {
             return items;
         };
+        // Prefer positional columns (CSV order is stable across locales):
+        // 0=TaskName, 2=Status; comment varies — fall back to name matching.
         let headers: Vec<String> = header
             .split(',')
             .map(|h| h.trim_matches('"').to_lowercase())
             .collect();
         let idx_task = headers
             .iter()
-            .position(|h| h.contains("taskname") || h == "任务名");
+            .position(|h| h.contains("taskname") || h.contains("任务名") || h.contains("작업 이름"))
+            .or(Some(0));
         let idx_status = headers
             .iter()
-            .position(|h| h.contains("status") || h == "状态");
+            .position(|h| {
+                h.contains("status")
+                    || h.contains("状态")
+                    || h.contains("상태")
+                    || h.contains("status")
+            })
+            .or(Some(2));
         let idx_comment = headers
             .iter()
-            .position(|h| h.contains("comment") || h.contains("comment") || h == "注释");
+            .position(|h| h.contains("comment") || h.contains("注释") || h.contains("설명"));
         for line in lines {
             let cols = split_csv_line(line);
             let Some(ti) = idx_task else { continue };
@@ -167,8 +178,19 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             let comment = idx_comment
                 .and_then(|i| cols.get(i).cloned())
                 .unwrap_or_default();
-            let enabled =
-                !status.eq_ignore_ascii_case("disabled") && !status.eq_ignore_ascii_case("已禁用");
+            // "Disabled" is localized; treat empty/Ready/Running as enabled when unknown.
+            let disabled_markers = [
+                "disabled",
+                "已禁用",
+                "禁用",
+                "deaktiviert",
+                "désactivé",
+                "desactivado",
+                "비활성화",
+            ];
+            let enabled = !disabled_markers
+                .iter()
+                .any(|m| status.eq_ignore_ascii_case(m));
             items.push(ManageItem {
                 name: name.clone(),
                 detail: if comment.is_empty() {
@@ -279,8 +301,9 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::process::Command;
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
         let action = if enabled { "/enable" } else { "/disable" };
-        let st = Command::new("schtasks")
+        let st = Command::new(format!(r"{windir}\System32\schtasks.exe"))
             .args(["/change", "/tn", task_name, action])
             .output()
             .map_err(|e| e.to_string())?;

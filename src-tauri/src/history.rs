@@ -41,7 +41,7 @@ pub fn append(
         aborted,
         dry_run,
         backup_dir: backup_dir.into(),
-        created_at: chrono_like_now(),
+        created_at: unix_now_secs(),
     };
     let line = match serde_json::to_string(&entry) {
         Ok(s) => s,
@@ -73,8 +73,8 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     out
 }
 
-fn chrono_like_now() -> String {
-    // ISO-ish without chrono dep
+fn unix_now_secs() -> String {
+    // Epoch seconds as string (kept dependency-free).
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

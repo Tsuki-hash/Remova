@@ -189,12 +189,46 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
     }
 }
 
-/// Read REG_SZ/EXPAND_SZ value by name.
+/// Read REG_SZ/EXPAND_SZ value by name via RegQueryValueExW (PERF-5).
 pub fn read_string(key: &str, value_name: &str) -> Option<String> {
-    list_values(key)
-        .into_iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(value_name))
-        .map(|(_, v)| v)
+    #[cfg(not(windows))]
+    {
+        let _ = (key, value_name);
+        None
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{RegQueryValueExW, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE};
+        let Some((hive, sub, access)) = parse_alias(key) else {
+            return None;
+        };
+        unsafe {
+            let sub_w = to_wide(&sub);
+            let mut root = HKEY::default();
+            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
+                != ERROR_SUCCESS
+            {
+                return None;
+            }
+            let name_w = to_wide(value_name);
+            let mut vtype = REG_VALUE_TYPE(0);
+            let mut data = vec![0u8; 4096];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                root,
+                PCWSTR(name_w.as_ptr()),
+                None,
+                Some(&mut vtype),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            let _ = RegCloseKey(root);
+            if st != ERROR_SUCCESS || (vtype != REG_SZ && vtype != REG_EXPAND_SZ) {
+                return None;
+            }
+            Some(wstring_from_reg_data(&data[..data_len as usize]))
+        }
+    }
 }
 
 /// Read REG_DWORD value by name.

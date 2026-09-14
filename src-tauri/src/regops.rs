@@ -112,14 +112,21 @@ pub fn split_value_path(path: &str) -> Option<(&str, &str)> {
     Some((&path[..i], &path[i + 1..]))
 }
 
+/// System32 absolute path for a tool (SEC-4: avoid PATH hijack).
+pub fn sys_tool(name: &str) -> String {
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    format!(r"{windir}\System32\{name}")
+}
+
 /// Best-effort: stop/delete Windows service via sc.exe.
 pub fn sc_delete_service(svc_name: &str) -> bool {
     if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
         return false;
     }
     use std::process::Command;
-    let _ = Command::new("sc").args(["stop", svc_name]).output();
-    let out = Command::new("sc").args(["delete", svc_name]).output();
+    let sc = sys_tool("sc.exe");
+    let _ = Command::new(&sc).args(["stop", svc_name]).output();
+    let out = Command::new(&sc).args(["delete", svc_name]).output();
     matches!(out, Ok(o) if o.status.success())
 }
 
@@ -129,7 +136,7 @@ pub fn schtasks_delete(task_name: &str) -> bool {
         return false;
     }
     use std::process::Command;
-    let out = Command::new("schtasks")
+    let out = Command::new(sys_tool("schtasks.exe"))
         .args(["/delete", "/tn", task_name, "/f"])
         .output();
     matches!(out, Ok(o) if o.status.success())
@@ -220,7 +227,7 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
         args.push("REG_SZ".into());
         args.push("/d".into());
         args.push(data.into());
-        let out = Command::new("reg").args(&args).output();
+        let out = Command::new(sys_tool("reg.exe")).args(&args).output();
         match out {
             Ok(o) if o.status.success() => Ok(()),
             Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
@@ -265,7 +272,7 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
                 data.iter().map(|b| format!("{b:02x}")).collect(),
             ];
         }
-        let out = Command::new("reg").args(&args).output();
+        let out = Command::new(sys_tool("reg.exe")).args(&args).output();
         match out {
             Ok(o) if o.status.success() => Ok(()),
             Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),

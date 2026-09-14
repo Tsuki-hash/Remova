@@ -1,16 +1,45 @@
-//! Extract a file/app icon as PNG bytes (Windows).
+//! Extract a file/app icon as PNG bytes (Windows). Optional disk cache (PERF-4).
 
 use crate::apps::parse_display_icon;
+use std::path::PathBuf;
 
 const ICON_SIZE: i32 = 32;
 
+fn icon_cache_dir() -> PathBuf {
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Public".into());
+    PathBuf::from(local).join("Remova").join("icons")
+}
+
+fn cache_key(raw: &str) -> String {
+    // FNV-1a 64 hex of the raw DisplayIcon string.
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in raw.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}.png")
+}
+
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
+/// Uses `%LOCALAPPDATA%\Remova\icons\{hash}.png` as disk cache.
 pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
+    let dir = icon_cache_dir();
+    let cache_file = dir.join(cache_key(raw_display_icon));
+    if cache_file.is_file() {
+        if let Ok(bytes) = std::fs::read(&cache_file) {
+            if !bytes.is_empty() {
+                return Some(bytes);
+            }
+        }
+    }
     let (path, index) = parse_display_icon(raw_display_icon);
     if path.is_empty() {
         return None;
     }
-    extract_from_path(&path, index)
+    let png = extract_from_path(&path, index)?;
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&cache_file, &png);
+    Some(png)
 }
 
 #[cfg(not(windows))]

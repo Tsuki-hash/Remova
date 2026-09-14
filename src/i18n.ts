@@ -37,8 +37,8 @@ const dict = {
     versionNew: "发现新版本",
     themeToggle: "深色/浅色",
     langToggle: "English",
-    batchConfirm: (n: number) =>
-      `将对 ${n} 个已选软件依次分析并清理「确定」项（跳过高风险）。继续？`,
+    batchConfirm: (n: number, official?: boolean) =>
+      `将对 ${n} 个已选软件依次分析并清理「确定」项（跳过高风险）${official ? "，并调用官方卸载器" : ""}。继续？`,
     cleanupConfirm: (n: number, official: boolean) =>
       `将备份并清理 ${n} 项${official ? "并调用官方卸载器" : ""}。确认？`,
     restoreConfirm: "将从最近备份还原文件与注册表。继续？",
@@ -133,6 +133,11 @@ const dict = {
     deleteSession: "删除",
     deleteSessionConfirm: (name: string) => `将永久删除备份会话「${name}」。继续？`,
     monitorToCleanup: "转入清理列表",
+    filterSource: "来源",
+    filterAll: "全部",
+    allSources: "全部来源",
+    batchOfficial: "批量含官方卸载",
+    batchOfficialHint: "批量清理时先调用各软件的官方卸载器（更慢但更干净）",
   },
   en: {
     title: "Remova",
@@ -168,8 +173,8 @@ const dict = {
     versionNew: "New version available",
     themeToggle: "Dark/Light",
     langToggle: "中文",
-    batchConfirm: (n: number) =>
-      `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped). Continue?`,
+    batchConfirm: (n: number, official?: boolean) =>
+      `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Continue?`,
     cleanupConfirm: (n: number, official: boolean) =>
       `Backup and clean ${n} items${official ? " with official uninstaller" : ""}. Confirm?`,
     restoreConfirm: "Restore files and registry from latest backup?",
@@ -264,6 +269,11 @@ const dict = {
     deleteSession: "Delete",
     deleteSessionConfirm: (name: string) => `Permanently delete backup session "${name}"?`,
     monitorToCleanup: "Add to cleanup list",
+    filterSource: "Source",
+    filterAll: "All",
+    allSources: "All sources",
+    batchOfficial: "Official uninstall in batch",
+    batchOfficialHint: "Run each app's official uninstaller during batch (slower but cleaner)",
   },
 } as const;
 
