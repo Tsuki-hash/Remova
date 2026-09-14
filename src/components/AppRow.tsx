@@ -3,7 +3,7 @@ import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppIcon } from "./AppIcon";
-import { prettyAppName, prettyPublisher, shortPath } from "../lib/format";
+import { prettyAppName } from "../lib/format";
 
 type Props = {
   app: InstalledApp;
@@ -11,8 +11,9 @@ type Props = {
   selected: boolean;
   checked: boolean;
   sizeText: string;
+  uninstalling: boolean;
   onSelect: (app: InstalledApp) => void;
-  onAnalyze: (app: InstalledApp) => void;
+  onUninstall: (app: InstalledApp) => void;
   onToggleMulti: (key: string) => void;
   onEnsureSelected: (app: InstalledApp) => void;
 };
@@ -23,23 +24,26 @@ function AppRowImpl({
   selected,
   checked,
   sizeText,
+  uninstalling,
   onSelect,
-  onAnalyze,
+  onUninstall,
   onToggleMulti,
   onEnsureSelected,
 }: Props) {
   const L = t();
   const a = app;
+  const hasUninstall = Boolean(
+    (a.quiet_uninstall_string || a.uninstall_string || "").trim(),
+  );
   return (
     <tr
       onClick={() => onSelect(a)}
-      onDoubleClick={() => onAnalyze(a)}
       title={[
         prettyAppName(a.name, a.source),
-        a.publisher && `${L.colPublisher}: ${a.publisher}`,
-        a.install_location && `${L.colLocation}: ${a.install_location}`,
-        (a.quiet_uninstall_string || a.uninstall_string) &&
-          `${L.colUninstall}: ${a.quiet_uninstall_string || a.uninstall_string}`,
+        a.version && `${L.detailVersion}: ${a.version}`,
+        a.publisher && `${L.detailPublisher}: ${a.publisher}`,
+        a.install_date && `${L.detailDate}: ${a.install_date}`,
+        a.install_location && `${L.detailPath}: ${a.install_location}`,
         a.registry_key && `${L.colRegKey}: ${a.registry_key}`,
       ]
         .filter(Boolean)
@@ -50,7 +54,7 @@ function AppRowImpl({
         boxShadow: selected ? "inset 2px 0 0 var(--accent)" : undefined,
       }}
     >
-      <td style={{ ...css.td, width: 36, textAlign: "center" as const }}>
+      <td style={{ ...css.td, width: 40, textAlign: "center" as const, paddingTop: 10, paddingBottom: 10 }}>
         <input
           type="checkbox"
           checked={checked}
@@ -61,27 +65,20 @@ function AppRowImpl({
           }}
           onClick={(e) => e.stopPropagation()}
           style={{ accentColor: "var(--accent)", cursor: "pointer", margin: 0 }}
+          aria-label={prettyAppName(a.name, a.source)}
         />
       </td>
-      <td style={css.td}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <td style={{ ...css.td, paddingTop: 10, paddingBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <AppIcon displayIcon={a.display_icon} name={a.name} />
           <span
             className="ell"
-            style={{ fontWeight: selected ? 600 : 500, minWidth: 0 }}
+            style={{ fontWeight: selected ? 650 : 550, minWidth: 0, fontSize: 13.5 }}
             title={a.name}
           >
             {prettyAppName(a.name, a.source)}
           </span>
         </div>
-      </td>
-      <td style={{ ...css.td, ...css.mono, whiteSpace: "nowrap" }}>
-        {a.version || "—"}
-      </td>
-      <td style={css.td}>
-        <span className="ell" style={{ display: "block", minWidth: 0 }} title={a.publisher}>
-          {prettyPublisher(a.publisher)}
-        </span>
       </td>
       <td
         style={{
@@ -89,31 +86,34 @@ function AppRowImpl({
           ...css.mono,
           textAlign: "right" as const,
           whiteSpace: "nowrap",
+          width: 100,
+          paddingTop: 10,
+          paddingBottom: 10,
           color: sizeText === "—" ? "var(--muted)" : "var(--fg)",
         }}
       >
         {sizeText}
       </td>
-      <td style={{ ...css.td, ...css.mono, whiteSpace: "nowrap", color: "var(--muted)" }}>
-        {a.install_date || "—"}
-      </td>
-      <td style={{ ...css.td, textAlign: "center" as const }}>
-        <span style={css.sourceBadge}>{a.source}</span>
-      </td>
-      <td style={css.td}>
-        <span
-          className="ell"
+      <td style={{ ...css.td, width: 108, textAlign: "right" as const, paddingTop: 8, paddingBottom: 8 }}>
+        <button
           style={{
-            display: "block",
-            color: "var(--muted)",
-            fontSize: 12,
-            fontFamily: "var(--mono)",
-            minWidth: 0,
+            ...css.btnSm,
+            height: 30,
+            color: hasUninstall ? "var(--danger)" : "var(--muted)",
+            borderColor: hasUninstall ? "var(--danger)" : "var(--border)",
+            background: hasUninstall ? "var(--danger-soft)" : "transparent",
+            fontWeight: 600,
+            opacity: uninstalling ? 0.6 : 1,
           }}
-          title={a.install_location}
+          disabled={!hasUninstall || uninstalling}
+          title={hasUninstall ? L.uninstallConfirm(prettyAppName(a.name, a.source)) : L.uninstallNoCmd}
+          onClick={(e) => {
+            e.stopPropagation();
+            onUninstall(a);
+          }}
         >
-          {a.install_location ? shortPath(a.install_location) : "—"}
-        </span>
+          {uninstalling ? L.uninstalling : L.uninstall}
+        </button>
       </td>
     </tr>
   );

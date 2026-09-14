@@ -67,3 +67,9 @@ export type FullCleanupReport = {
   errors: string[];
   item_details: ItemDetail[];
 };
+
+export type OfficialUninstallResult = {
+  ok: boolean;
+  message: string;
+  had_command: boolean;
+};

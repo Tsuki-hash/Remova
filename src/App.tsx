@@ -5,6 +5,7 @@ import type {
   CleanupReport,
   FullCleanupReport,
   InstalledApp,
+  OfficialUninstallResult,
   ScanResult,
 } from "./types";
 import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
@@ -15,12 +16,13 @@ import { RestorePanel } from "./components/RestorePanel";
 import { MonitorPanel } from "./components/MonitorPanel";
 import { ManagePanel, type ManageItem, type ManageTab } from "./components/ManagePanel";
 import { AppRow } from "./components/AppRow";
+import { MoreMenu } from "./components/MoreMenu";
 import {
   BatchProgress,
   BatchSummaryPanel,
   type BatchItemResult,
 } from "./components/BatchPanels";
-import { escapeHtml, formatError } from "./lib/format";
+import { escapeHtml, formatError, prettyAppName } from "./lib/format";
 import { applyTheme, loadTheme, type Theme } from "./lib/theme";
 
 declare const __APP_VERSION__: string;
@@ -41,12 +43,12 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
+  /** Beginner batch path runs official uninstaller by default. */
+  const batchUseOfficial = true;
+  /** Deep-analyze leftover path can still opt into official uninstaller. */
   const [useOfficial, setUseOfficial] = useState(false);
-  const [batchUseOfficial, setBatchUseOfficial] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<string>("");
-  const [sortCol, setSortCol] = useState<
-    "name" | "publisher" | "install_location" | "size" | "install_date" | null
-  >(null);
+  const [sortCol, setSortCol] = useState<"name" | "size" | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
   const [admin, setAdmin] = useState<boolean | null>(null);
   const [disk, setDisk] = useState("");
@@ -78,7 +80,10 @@ export default function App() {
   const [manageBusy, setManageBusy] = useState(false);
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
-  const [showTools, setShowTools] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
+  const [officialResult, setOfficialResult] = useState<OfficialUninstallResult | null>(null);
+  const [postUninstallApp, setPostUninstallApp] = useState<InstalledApp | null>(null);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
   const [monitoring, setMonitoring] = useState(false);
@@ -153,6 +158,67 @@ export default function App() {
       setScanning(false);
     }
   }, []);
+
+  const refreshApps = useCallback(async () => {
+    try {
+      const list = await invoke<InstalledApp[]>("list_installed_apps");
+      setApps(list);
+    } catch (e) {
+      setError(formatError(e));
+    }
+  }, []);
+
+  const startUninstall = useCallback(
+    async (app: InstalledApp) => {
+      const strings = t();
+      const label = prettyAppName(app.name, app.source);
+      if (!window.confirm(strings.uninstallConfirm(label))) return;
+      const key = appKey(app);
+      setUninstallingKey(key);
+      setSelected(app);
+      setOfficialResult(null);
+      setPostUninstallApp(null);
+      busyRef.current = true;
+      try {
+        const r = await invoke<OfficialUninstallResult>("run_official_uninstall", { app });
+        setOfficialResult(r);
+        if (!r.had_command) {
+          setNotice(strings.uninstallNoCmd);
+        } else if (r.ok) {
+          setNotice(strings.uninstallOk);
+        } else {
+          setNotice(`${strings.uninstallFail}: ${r.message}`);
+        }
+        if (r.had_command && r.ok) {
+          setPostUninstallApp(app);
+        }
+        await refreshApps();
+      } catch (e) {
+        setError(formatError(e, "cleanup"));
+      } finally {
+        busyRef.current = false;
+        setUninstallingKey(null);
+      }
+    },
+    [refreshApps],
+  );
+
+  const scanLeftoversFor = useCallback(
+    async (app: InstalledApp) => {
+      setPostUninstallApp(null);
+      setOfficialResult(null);
+      await analyze(app);
+    },
+    [analyze],
+  );
+
+  const skipLeftovers = useCallback(async () => {
+    setPostUninstallApp(null);
+    setOfficialResult(null);
+    setScan(null);
+    setReport(null);
+    await refreshApps();
+  }, [refreshApps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -380,16 +446,16 @@ export default function App() {
       if (sortCol === "size") {
         return sizeOf(a) - sizeOf(b);
       }
-      return (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase());
+      return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
   }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter]);
 
-  const sortBy = (col: "name" | "publisher" | "install_location" | "size" | "install_date") => {
+  const sortBy = (col: "name" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
     else {
       setSortCol(col);
-      setSortDesc(col === "size" || col === "install_date");
+      setSortDesc(col === "size");
     }
   };
 
@@ -398,7 +464,7 @@ export default function App() {
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: () => 44,
+    estimateSize: () => 52,
     overscan: 12,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -692,7 +758,9 @@ export default function App() {
         items,
         options: {
           dry_run: false,
-          skip_official_uninstall: !useOfficial,
+          // Post-uninstall residual cleanup never re-runs official uninstaller.
+          // Deep-analyze path may still opt in via the checkbox.
+          skip_official_uninstall: postUninstallApp ? true : !useOfficial,
           backup_enabled: true,
         },
       });
@@ -700,13 +768,15 @@ export default function App() {
       if (r && typeof r === "object" && "deleted" in r) {
         setLastReport(r as FullCleanupReport);
       }
+      setPostUninstallApp(null);
+      void refreshApps();
     } catch (e) {
       setError(formatError(e, "cleanup"));
     } finally {
       busyRef.current = false;
       setDryRunning(false);
     }
-  }, [scan, selected, useOfficial, selectedPaths]);
+  }, [scan, selected, selectedPaths, refreshApps, postUninstallApp, useOfficial]);
 
   const batchCleanup = useCallback(async () => {
     const keys = new Set(multi);
@@ -850,24 +920,7 @@ export default function App() {
             {monitoring && <span style={css.chipAccent}>{L.monitorRunning}</span>}
           </div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button
-            style={css.btnSm}
-            onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
-          >
-            {L.themeToggle}
-          </button>
-          <button
-            style={css.btnSm}
-            onClick={() => {
-              const next = currentLang() === "zh" ? "en" : "zh";
-              setLang(next);
-              setLangVer((v) => v + 1);
-            }}
-          >
-            {L.langToggle}
-          </button>
-        </div>
+        <div style={{ marginLeft: "auto" }} />
       </header>
 
       {showGuide && (
@@ -925,170 +978,246 @@ export default function App() {
           <button style={{ ...css.btnGhost, color: "var(--warn)", borderColor: "var(--border-strong)" }} onClick={() => cancelBatch()}>
             {L.batchCancel}
           </button>
-        ) : (
-          <>
-            <label
-              style={{ fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}
-              title={L.batchOfficialHint}
-            >
-              <input
-                type="checkbox"
-                checked={batchUseOfficial}
-                onChange={(e) => setBatchUseOfficial(e.target.checked)}
-              />
-              {L.useOfficial}
-            </label>
-            <button
-              style={{ ...css.btn, opacity: multi.size === 0 ? 0.5 : 1 }}
-              disabled={multi.size === 0}
-              title={multi.size === 0 ? L.selectRowHint : L.batchOfficialHint}
-              onClick={() => void batchCleanup()}
-            >
-              {L.batch} ({multi.size})
-            </button>
-          </>
-        )}
-        <button
-          style={{
-            ...css.btn,
-            opacity: !analyzeApp || scanning ? 0.5 : 1,
-          }}
-          disabled={!analyzeApp || scanning}
-          title={!analyzeApp ? L.selectRowHint : undefined}
-          onClick={() => analyzeApp && analyze(analyzeApp)}
-        >
-          {scanning ? L.analyzing : L.analyze}
-        </button>
-        <button
-          style={css.btnGhost}
-          aria-expanded={showTools}
-          title={showTools ? L.toolsCollapseHint : L.toolsExpandHint}
-          onClick={() => setShowTools((v) => !v)}
-        >
-          {showTools ? L.toolsCollapse : L.toolsExpand}
-        </button>
-        <button
-          style={css.btnGhost}
-          disabled={admin === true || admin === null}
-          title={admin === true ? L.adminAlready : L.adminHint}
-          onClick={async () => {
-            try {
-              await invoke("elevate_restart");
-            } catch (e) {
-              setError(formatError(e, "elevate"));
-            }
-          }}
-        >
-          Admin
-        </button>
+        ) : multi.size > 0 ? (
+          <button
+            style={css.btn}
+            title={L.batchOfficialHint}
+            onClick={() => void batchCleanup()}
+          >
+            {L.batchUninstall} ({multi.size})
+          </button>
+        ) : null}
+        <MoreMenu
+          open={showMoreMenu}
+          onOpenChange={setShowMoreMenu}
+          items={[
+            {
+              id: "admin",
+              label: L.adminMenu,
+              hint: admin === true ? L.adminAlready : L.adminHint,
+              disabled: admin === true || admin === null,
+              onClick: async () => {
+                try {
+                  await invoke("elevate_restart");
+                } catch (e) {
+                  setError(formatError(e, "elevate"));
+                }
+              },
+            },
+            {
+              id: "history",
+              label: L.history,
+              hint: L.historyHint,
+              onClick: async () => {
+                const h = await invoke<
+                  { app_name: string; deleted: number; failed: number; backup_dir: string }[]
+                >("list_cleanup_history");
+                setHistory(h);
+                setShowHistory(true);
+              },
+            },
+            {
+              id: "export-csv",
+              label: L.exportCsv,
+              hint: L.exportCsvHint,
+              onClick: async () => {
+                const csv = await invoke<string>("export_history_csv");
+                const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "remova-history.csv";
+                a.click();
+                URL.revokeObjectURL(url);
+              },
+            },
+            {
+              id: "restore",
+              label: L.restore,
+              hint: L.restoreHint,
+              onClick: () => void openRestoreSessions(),
+            },
+            {
+              id: "manage",
+              label: showManage ? L.manageClose : L.manage,
+              hint: showManage ? L.manageCloseHint : L.manageHint,
+              onClick: () => {
+                if (showManage) {
+                  setShowManage(false);
+                  return;
+                }
+                setShowManage(true);
+                void loadManage("startup");
+              },
+            },
+            {
+              id: "force",
+              label: L.forceClean,
+              hint: selected ? L.forceCleanHint : L.selectRowHint,
+              disabled: !selected || forceBusy || scanning,
+              onClick: () => void forceClean(),
+            },
+            {
+              id: "ignore-pub",
+              label: L.ignorePublisher,
+              hint: L.ignorePublisherHint,
+              disabled: !selected?.publisher,
+              onClick: () => void doIgnorePublisher(),
+            },
+            {
+              id: "ignore-app",
+              label: L.ignoreApp,
+              hint: L.ignoreAppHint,
+              disabled: !selected?.name,
+              onClick: () => void doIgnoreApp(),
+            },
+            {
+              id: "orphan",
+              label: L.orphanScan,
+              hint: L.orphanScanHint,
+              onClick: () => void runOrphanScan(),
+            },
+            {
+              id: "monitor",
+              label: monitoring ? L.monitorStop : L.monitorInstall,
+              hint: monitoring ? L.monitorStopHint : L.monitorInstallHint,
+              onClick: () => void toggleMonitor(),
+            },
+            {
+              id: "analyze",
+              label: L.analyze,
+              hint: L.selectRowHint,
+              disabled: !analyzeApp || scanning,
+              onClick: () => analyzeApp && void analyze(analyzeApp),
+            },
+            {
+              id: "export-report",
+              label: L.exportReport,
+              hint: L.exportReportHint,
+              disabled: !lastReport,
+              onClick: exportHtmlReport,
+            },
+            {
+              id: "shell",
+              label: shellMenu ? L.shellUnregister : L.shellMenu,
+              hint: shellMenu ? L.shellUnregisterHint : L.shellMenuHint,
+              onClick: async () => {
+                try {
+                  if (shellMenu) {
+                    await invoke("unregister_context_menu");
+                    setShellMenu(false);
+                    setNotice(L.shellUnregister);
+                  } else {
+                    await invoke("register_context_menu");
+                    setShellMenu(true);
+                    setNotice(L.shellMenuOn);
+                  }
+                } catch (e) {
+                  setError(formatError(e));
+                }
+              },
+            },
+            {
+              id: "releases",
+              label: L.openReleases,
+              hint: L.openReleasesHint,
+              onClick: () => {
+                window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
+              },
+            },
+            {
+              id: "theme",
+              label: L.themeToggle,
+              onClick: () => setTheme((th) => (th === "dark" ? "light" : "dark")),
+            },
+            {
+              id: "lang",
+              label: L.langToggle,
+              onClick: () => {
+                const next = currentLang() === "zh" ? "en" : "zh";
+                setLang(next);
+                setLangVer((v) => v + 1);
+              },
+            },
+            ...(estimating
+              ? [
+                  {
+                    id: "stop-est",
+                    label: L.stopEstimate,
+                    hint: L.stopEstimateHint,
+                    onClick: () => void stopSizeEstimate(),
+                  },
+                ]
+              : []),
+          ]}
+        />
       </div>
 
-      {/* Secondary tools (collapsed by default — reduces visual noise) */}
-      {showTools && (
+      {selected && !scan && (
         <div
           style={{
-            ...css.toolbar,
-            padding: "10px 12px",
+            ...css.card,
             marginBottom: 10,
+            padding: "10px 14px",
+            fontSize: 12.5,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px 18px",
+            alignItems: "center",
             background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
           }}
         >
-          <button style={css.btnGhost} title={L.historyHint} onClick={async () => {
-            const h = await invoke<
-              { app_name: string; deleted: number; failed: number; backup_dir: string }[]
-            >("list_cleanup_history");
-            setHistory(h);
-            setShowHistory(true);
-          }}>
-            {L.history}
-          </button>
-          <button style={css.btnGhost} title={L.exportCsvHint} onClick={async () => {
-            const csv = await invoke<string>("export_history_csv");
-            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "remova-history.csv";
-            a.click();
-            URL.revokeObjectURL(url);
-          }}>
-            {L.exportCsv}
-          </button>
-          <button style={css.btnGhost} title={L.restoreHint} onClick={() => void openRestoreSessions()}>
-            {L.restore}
-          </button>
-          <button style={css.btnGhost} title={showManage ? L.manageCloseHint : L.manageHint} onClick={() => {
-            if (showManage) {
-              setShowManage(false);
-              return;
-            }
-            setShowManage(true);
-            void loadManage("startup");
-          }}>
-            {showManage ? L.manageClose : L.manage}
-          </button>
-          <button
-            style={css.btnGhost}
-            disabled={!selected || forceBusy || scanning}
-            title={selected ? L.forceCleanHint : L.selectRowHint}
-            onClick={() => void forceClean()}
+          <strong style={{ fontSize: 13.5 }}>
+            {prettyAppName(selected.name, selected.source)}
+          </strong>
+          <span className="ell" style={{ color: "var(--muted)", maxWidth: 280 }} title={selected.publisher}>
+            {L.detailPublisher}: {selected.publisher || "—"}
+          </span>
+          <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
+            {L.detailVersion}: {selected.version || "—"}
+          </span>
+          <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
+            {L.detailDate}: {selected.install_date || "—"}
+          </span>
+          <span style={css.sourceBadge}>{selected.source}</span>
+          <span
+            className="ell"
+            style={{ color: "var(--muted)", fontFamily: "var(--mono)", flex: "1 1 200px", minWidth: 0 }}
+            title={selected.install_location}
           >
-            {L.forceClean}
-          </button>
-          <button style={css.btnGhost} title={L.ignorePublisherHint} disabled={!selected?.publisher} onClick={() => void doIgnorePublisher()}>
-            {L.ignorePublisher}
-          </button>
-          <button style={css.btnGhost} title={L.ignoreAppHint} disabled={!selected?.name} onClick={() => void doIgnoreApp()}>
-            {L.ignoreApp}
-          </button>
-          <button style={css.btnGhost} title={L.orphanScanHint} onClick={() => void runOrphanScan()}>
-            {L.orphanScan}
-          </button>
-          <button style={css.btnGhost} title={monitoring ? L.monitorStopHint : L.monitorInstallHint} onClick={() => void toggleMonitor()}>
-            {monitoring ? L.monitorStop : L.monitorInstall}
-          </button>
-          {lastReport && (
-            <button style={css.btnGhost} title={L.exportReportHint} onClick={exportHtmlReport}>
-              {L.exportReport}
-            </button>
-          )}
+            {selected.install_location || "—"}
+          </span>
+        </div>
+      )}
+
+      {postUninstallApp && (
+        <div
+          style={{
+            ...css.card,
+            marginBottom: 10,
+            padding: "12px 14px",
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ flex: "1 1 220px" }}>
+            {officialResult?.ok ? L.uninstallOk : officialResult ? `${L.uninstallFail}: ${officialResult.message}` : L.uninstallOk}
+            {" — "}
+            {L.leftoversPrompt}
+          </span>
           <button
-            style={css.btnGhost}
-            title={L.openReleasesHint}
-            onClick={() => {
-              window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
-            }}
+            style={css.btn}
+            disabled={scanning}
+            onClick={() => void scanLeftoversFor(postUninstallApp)}
           >
-            {L.openReleases}
+            {scanning ? L.analyzing : L.scanLeftovers}
           </button>
-          <button
-            style={css.btnGhost}
-            title={shellMenu ? L.shellUnregisterHint : L.shellMenuHint}
-            onClick={async () => {
-              try {
-                if (shellMenu) {
-                  await invoke("unregister_context_menu");
-                  setShellMenu(false);
-                  setNotice(L.shellUnregister);
-                } else {
-                  await invoke("register_context_menu");
-                  setShellMenu(true);
-                  setNotice(L.shellMenuOn);
-                }
-              } catch (e) {
-                setError(formatError(e));
-              }
-            }}
-          >
-            {shellMenu ? L.shellUnregister : L.shellMenu}
+          <button style={css.btnGhost} onClick={() => void skipLeftovers()}>
+            {L.skipLeftovers}
           </button>
-          {estimating && (
-            <button style={css.btnGhost} title={L.stopEstimateHint} onClick={() => void stopSizeEstimate()}>
-              {L.stopEstimate}
-            </button>
-          )}
         </div>
       )}
 
@@ -1109,20 +1238,35 @@ export default function App() {
               setScan(null);
               setReport(null);
               setError(null);
+              void refreshApps();
             }}
           >
             ← {L.closePreview}
           </button>
           <strong style={{ fontSize: 13, fontWeight: 600 }}>{scan.app_name}</strong>
-          <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>
-            <input
-              type="checkbox"
-              checked={useOfficial}
-              onChange={(e) => setUseOfficial(e.target.checked)}
-              style={{ accentColor: "var(--accent)" }}
-            />
-            {L.useOfficial}
-          </label>
+          <span style={{ ...css.muted }}>
+            {scan.items.length} · {scan.items.filter((i) => i.confidence === "confirmed").length} ★
+          </span>
+          {!postUninstallApp && (
+            <label
+              style={{
+                fontSize: 12.5,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                color: "var(--muted)",
+              }}
+              title={L.batchOfficialHint}
+            >
+              <input
+                type="checkbox"
+                checked={useOfficial}
+                onChange={(e) => setUseOfficial(e.target.checked)}
+                style={{ accentColor: "var(--accent)" }}
+              />
+              {L.useOfficial}
+            </label>
+          )}
           <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={dryRun}>
             {L.dryRun}
           </button>
@@ -1130,7 +1274,7 @@ export default function App() {
             style={{ ...css.btn, background: "var(--danger)", color: "#1a0505" }}
             disabled={dryRunning || selectedPaths.size === 0 || busyRef.current}
             onClick={() => {
-              if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
+              if (!window.confirm(L.cleanupConfirm(selectedPaths.size, !postUninstallApp && useOfficial))) return;
               void execReal();
             }}
           >
@@ -1278,8 +1422,8 @@ export default function App() {
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
             <strong>{scan.app_name}</strong>
             <span style={{ ...css.muted, marginLeft: 12 }}>
-              {scan.items.length} items ·{" "}
-              {scan.items.filter((i) => i.confidence === "confirmed").length} confirmed
+              {L.leftoversTitle}: {scan.items.length} ·{" "}
+              {scan.items.filter((i) => i.confidence === "confirmed").length} {L.confirmed}
             </span>
           </div>
           <div style={css.scroll}>
@@ -1288,14 +1432,19 @@ export default function App() {
                 <tr>
                   <th style={css.th}>✓</th>
                   <th style={css.th}>{L.colLocation}</th>
-                  <th style={css.th}>type</th>
-                  <th style={css.th}>score</th>
-                  <th style={css.th}>match</th>
-                  <th style={css.th}>risk</th>
-                  <th style={css.th}>evidence</th>
+                  <th style={css.th}>{L.colSource}</th>
+                  <th style={css.th}>{L.confirmed}</th>
+                  <th style={css.th}>ⓘ</th>
                 </tr>
               </thead>
               <tbody>
+                {scan.items.length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ ...css.td, color: "var(--muted)" }}>
+                      {L.leftoversNone}
+                    </td>
+                  </tr>
+                )}
                 {scan.items.map((it) => (
                   <tr key={it.path}>
                     <td style={css.td}>
@@ -1312,17 +1461,35 @@ export default function App() {
                         }
                       />
                     </td>
-                    <td style={css.td}>{it.path}</td>
-                    <td style={css.td}>{it.kind}</td>
-                    <td style={css.td}>{it.score}</td>
                     <td style={css.td}>
-                      {it.confidence === "confirmed"
-                        ? L.confirmed
-                        : it.score >= 30
-                          ? L.suspected
-                          : L.low}
+                      <span className="ell" style={{ display: "block" }} title={it.path}>
+                        {it.path}
+                      </span>
                     </td>
-                    <td style={css.td}>{it.risk}</td>
+                    <td style={css.td}>
+                      <span style={css.sourceBadge}>{it.kind}</span>
+                    </td>
+                    <td style={css.td}>
+                      <span
+                        style={{
+                          color:
+                            it.risk === "high"
+                              ? "var(--danger)"
+                              : it.confidence === "confirmed"
+                                ? "var(--ok)"
+                                : "var(--warn)",
+                          fontWeight: 600,
+                          fontSize: 12,
+                        }}
+                      >
+                        {it.confidence === "confirmed"
+                          ? L.confirmed
+                          : it.score >= 30
+                            ? L.suspected
+                            : L.low}
+                        {it.risk === "high" ? " · high" : ""}
+                      </span>
+                    </td>
                     <td style={css.td}>
                       <button
                         style={{ ...css.btnGhost, height: 28 }}
@@ -1367,14 +1534,10 @@ export default function App() {
           <div ref={listScrollRef} style={css.scroll}>
             <table style={css.table}>
               <colgroup>
-                <col style={{ width: 36 }} />
-                <col style={{ width: "22%" }} />
-                <col style={{ width: 110 }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: 88 }} />
-                <col style={{ width: 96 }} />
-                <col style={{ width: 64 }} />
+                <col style={{ width: 40 }} />
                 <col />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 108 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1386,44 +1549,28 @@ export default function App() {
                   >
                     {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th style={css.th}>{L.colVersion}</th>
-                  <th
-                    style={{ ...css.th, cursor: "pointer" }}
-                    onClick={() => sortBy("publisher")}
-                    title={L.colPublisher}
-                  >
-                    {L.colPublisher} {sortCol === "publisher" ? (sortDesc ? "↓" : "↑") : ""}
-                  </th>
                   <th
                     style={{ ...css.th, cursor: "pointer", textAlign: "right" as const }}
                     onClick={() => sortBy("size")}
                   >
                     {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
                   </th>
-                  <th
-                    style={{ ...css.th, cursor: "pointer" }}
-                    onClick={() => sortBy("install_date")}
-                  >
-                    {L.colInstallDate}{" "}
-                    {sortCol === "install_date" ? (sortDesc ? "↓" : "↑") : ""}
-                  </th>
-                  <th style={css.th}>{L.colSource}</th>
-                  <th
-                    style={{ ...css.th, cursor: "pointer" }}
-                    onClick={() => sortBy("install_location")}
-                    title={L.colLocation}
-                  >
-                    {L.colLocation}{" "}
-                    {sortCol === "install_location" ? (sortDesc ? "↓" : "↑") : ""}
-                  </th>
+                  <th style={{ ...css.th, textAlign: "right" as const }}>{L.actionCol}</th>
                 </tr>
               </thead>
               <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}>
+                      {loading ? "…" : L.emptyList}
+                    </td>
+                  </tr>
+                )}
                 {virtualRows.length > 0 ? (
                   <>
                     {virtualRows[0].start > 0 && (
                       <tr aria-hidden style={{ height: virtualRows[0].start }}>
-                        <td colSpan={8} style={{ padding: 0, border: "none" }} />
+                        <td colSpan={4} style={{ padding: 0, border: "none" }} />
                       </tr>
                     )}
                     {virtualRows.map((vr) => {
@@ -1439,8 +1586,9 @@ export default function App() {
                           }
                           checked={multi.has(key)}
                           sizeText={formatAppSize(a)}
+                          uninstalling={uninstallingKey === key}
                           onSelect={setSelected}
-                          onAnalyze={analyze}
+                          onUninstall={(app) => void startUninstall(app)}
                           onToggleMulti={toggleMulti}
                           onEnsureSelected={(app) => {
                             if (!selected) setSelected(app);
@@ -1453,7 +1601,7 @@ export default function App() {
                       const pad = totalSize - last.end;
                       return pad > 0 ? (
                         <tr aria-hidden style={{ height: pad }}>
-                          <td colSpan={8} style={{ padding: 0, border: "none" }} />
+                          <td colSpan={4} style={{ padding: 0, border: "none" }} />
                         </tr>
                       ) : null;
                     })()}
@@ -1471,8 +1619,9 @@ export default function App() {
                         }
                         checked={multi.has(key)}
                         sizeText={formatAppSize(a)}
+                        uninstalling={uninstallingKey === key}
                         onSelect={setSelected}
-                        onAnalyze={analyze}
+                        onUninstall={(app) => void startUninstall(app)}
                         onToggleMulti={toggleMulti}
                         onEnsureSelected={(app) => {
                           if (!selected) setSelected(app);

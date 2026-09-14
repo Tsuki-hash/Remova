@@ -178,6 +178,78 @@ pub struct FullCleanupOptions {
     pub backup_enabled: bool,
 }
 
+/// Result of launching only the official uninstaller (no residual delete).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfficialUninstallResult {
+    pub ok: bool,
+    pub message: String,
+    pub had_command: bool,
+}
+
+/// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
+pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
+    let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
+    match cmd {
+        Some(argv) if !argv.is_empty() => {
+            let mut parts = argv.iter();
+            let exe = parts.next().unwrap().clone();
+            let rest: Vec<String> = parts.cloned().collect();
+            match std::process::Command::new(&exe).args(&rest).spawn() {
+                Ok(mut child) => {
+                    let timeout = std::time::Duration::from_secs(300);
+                    let start = std::time::Instant::now();
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                let ok = status.success();
+                                let message = if ok {
+                                    format!("uninstaller finished: {}", argv[0])
+                                } else {
+                                    format!("uninstaller exited with {:?}", status.code())
+                                };
+                                return OfficialUninstallResult {
+                                    ok,
+                                    message,
+                                    had_command: true,
+                                };
+                            }
+                            Ok(None) => {
+                                if start.elapsed() >= timeout {
+                                    let _ = child.kill();
+                                    let _ = child.wait();
+                                    return OfficialUninstallResult {
+                                        ok: false,
+                                        message: format!("uninstaller timed out (5m): {}", argv[0]),
+                                        had_command: true,
+                                    };
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(200));
+                            }
+                            Err(e) => {
+                                return OfficialUninstallResult {
+                                    ok: false,
+                                    message: format!("wait failed: {e}"),
+                                    had_command: true,
+                                };
+                            }
+                        }
+                    }
+                }
+                Err(e) => OfficialUninstallResult {
+                    ok: false,
+                    message: format!("launch failed: {e}"),
+                    had_command: true,
+                },
+            }
+        }
+        _ => OfficialUninstallResult {
+            ok: false,
+            message: "no uninstall string".into(),
+            had_command: false,
+        },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullCleanupReport {
     pub app_name: String,
@@ -294,53 +366,9 @@ pub fn run_full_cleanup(
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
     if !opts.skip_official_uninstall {
-        let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
-        match cmd {
-            Some(argv) if !argv.is_empty() => {
-                let mut parts = argv.iter();
-                let exe = parts.next().unwrap().clone();
-                let rest: Vec<String> = parts.cloned().collect();
-                match std::process::Command::new(&exe).args(&rest).spawn() {
-                    Ok(mut child) => {
-                        // Wait for uninstaller so residual delete is not racy.
-                        let timeout = std::time::Duration::from_secs(300);
-                        let start = std::time::Instant::now();
-                        loop {
-                            match child.try_wait() {
-                                Ok(Some(status)) => {
-                                    uninstall_ok = status.success();
-                                    uninstall_message = if status.success() {
-                                        format!("uninstaller finished: {}", argv[0])
-                                    } else {
-                                        format!("uninstaller exited with {:?}", status.code())
-                                    };
-                                    break;
-                                }
-                                Ok(None) => {
-                                    if start.elapsed() >= timeout {
-                                        let _ = child.kill();
-                                        let _ = child.wait();
-                                        uninstall_ok = false;
-                                        uninstall_message =
-                                            format!("uninstaller timed out (5m): {}", argv[0]);
-                                        break;
-                                    }
-                                    std::thread::sleep(std::time::Duration::from_millis(200));
-                                }
-                                Err(e) => {
-                                    uninstall_message = format!("wait failed: {e}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        uninstall_message = format!("launch failed: {e}");
-                    }
-                }
-            }
-            _ => uninstall_message = "no uninstall string".into(),
-        }
+        let official = run_official_uninstall(app);
+        uninstall_ok = official.ok;
+        uninstall_message = official.message;
     }
 
     let mut deleted = 0u32;
@@ -513,6 +541,27 @@ mod tests {
     #[test]
     fn empty_none() {
         assert!(build_uninstall_command("", "", true).is_none());
+    }
+
+    #[test]
+    fn official_uninstall_no_string() {
+        let app = crate::apps::InstalledApp {
+            name: "Ghost".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let r = run_official_uninstall(&app);
+        assert!(!r.had_command);
+        assert!(!r.ok);
+        assert_eq!(r.message, "no uninstall string");
     }
 
     #[test]

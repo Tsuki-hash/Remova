@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-14
+
+### Added
+- Row-level official uninstall with post-success leftover scan prompt
+- `run_official_uninstall` Tauri command (shared with full cleanup)
+- More menu for secondary tools (history, restore, manage, force clean, ignore, orphan, monitor, deep analyze, theme/lang)
+- Selected-app detail strip (publisher/version/date/source/path)
+- Empty-list human copy
+
+### Changed
+- Default list is four columns: checkbox / name / size / uninstall
+- Beginner guide points to Uninstall then leftover scan
+- Residual cleanup after official uninstall always backs up and skips a second official uninstaller
+- Batch cleanup runs official uninstaller by default
+- Toolbar only shows batch button when rows are selected
+
 ## [1.1.0] - 2026-09-14
 
 ### Added

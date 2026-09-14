@@ -133,6 +133,15 @@ async fn run_cleanup_dry_run(
 }
 
 #[tauri::command]
+async fn run_official_uninstall(
+    app: InstalledApp,
+) -> Result<executor::OfficialUninstallResult, String> {
+    tauri::async_runtime::spawn_blocking(move || executor::run_official_uninstall(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn run_full_cleanup(
     app: InstalledApp,
     items: Vec<CleanupItem>,
@@ -447,6 +456,7 @@ pub fn run() {
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,
+            run_official_uninstall,
             restore_latest_backup,
             list_cleanup_history,
             export_history_csv,
