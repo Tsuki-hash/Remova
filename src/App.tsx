@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -379,6 +380,17 @@ export default function App() {
       setSortDesc(col === "size" || col === "install_date");
     }
   };
+
+  // Virtualize the app list (PERF-2): only render visible rows.
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => listScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
 
   /** App used by 深度分析: row click, else the single multi-checkbox target. */
   const analyzeApp = useMemo(() => {
@@ -1265,7 +1277,7 @@ export default function App() {
         </div>
       ) : (
         <div style={css.card}>
-          <div style={css.scroll}>
+          <div ref={listScrollRef} style={css.scroll}>
             <table style={css.table}>
               <thead>
                 <tr>
@@ -1312,27 +1324,68 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((a) => {
-                  const key = a.registry_key + a.name;
-                  return (
-                    <AppRow
-                      key={key}
-                      app={a}
-                      rowKey={key}
-                      selected={
-                        selected?.registry_key === a.registry_key && selected.name === a.name
-                      }
-                      checked={multi.has(key)}
-                      sizeText={formatAppSize(a)}
-                      onSelect={setSelected}
-                      onAnalyze={analyze}
-                      onToggleMulti={toggleMulti}
-                      onEnsureSelected={(app) => {
-                        if (!selected) setSelected(app);
-                      }}
-                    />
-                  );
-                })}
+                {virtualRows.length > 0 ? (
+                  <>
+                    {virtualRows[0].start > 0 && (
+                      <tr aria-hidden style={{ height: virtualRows[0].start }}>
+                        <td colSpan={8} style={{ padding: 0, border: "none" }} />
+                      </tr>
+                    )}
+                    {virtualRows.map((vr) => {
+                      const a = filtered[vr.index];
+                      const key = a.registry_key + a.name;
+                      return (
+                        <AppRow
+                          key={key}
+                          app={a}
+                          rowKey={key}
+                          selected={
+                            selected?.registry_key === a.registry_key && selected.name === a.name
+                          }
+                          checked={multi.has(key)}
+                          sizeText={formatAppSize(a)}
+                          onSelect={setSelected}
+                          onAnalyze={analyze}
+                          onToggleMulti={toggleMulti}
+                          onEnsureSelected={(app) => {
+                            if (!selected) setSelected(app);
+                          }}
+                        />
+                      );
+                    })}
+                    {(() => {
+                      const last = virtualRows[virtualRows.length - 1];
+                      const pad = totalSize - last.end;
+                      return pad > 0 ? (
+                        <tr aria-hidden style={{ height: pad }}>
+                          <td colSpan={8} style={{ padding: 0, border: "none" }} />
+                        </tr>
+                      ) : null;
+                    })()}
+                  </>
+                ) : (
+                  filtered.map((a) => {
+                    const key = a.registry_key + a.name;
+                    return (
+                      <AppRow
+                        key={key}
+                        app={a}
+                        rowKey={key}
+                        selected={
+                          selected?.registry_key === a.registry_key && selected.name === a.name
+                        }
+                        checked={multi.has(key)}
+                        sizeText={formatAppSize(a)}
+                        onSelect={setSelected}
+                        onAnalyze={analyze}
+                        onToggleMulti={toggleMulti}
+                        onEnsureSelected={(app) => {
+                          if (!selected) setSelected(app);
+                        }}
+                      />
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>

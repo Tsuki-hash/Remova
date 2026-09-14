@@ -89,6 +89,7 @@ export const cssStyles = {
     maxHeight: "calc(100vh - 280px)",
     overflow: "auto" as const,
     overscrollBehavior: "contain" as const,
+    position: "relative" as const,
   },
   toolbar: {
     display: "flex",
