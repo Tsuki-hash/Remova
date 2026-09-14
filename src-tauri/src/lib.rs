@@ -24,8 +24,10 @@ use history::HistoryEntry;
 use scanner::{CleanupItem, ScanResult};
 
 #[tauri::command]
-fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    Ok(apps::scan_installed_apps())
+async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
+    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Clear cancel flag before a new estimate batch.
@@ -55,13 +57,17 @@ fn cancel_size_estimate() {
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
-fn app_icon_data(display_icon: String) -> Option<String> {
-    let png = icon::extract_icon_png(&display_icon)?;
-    use base64_light::*;
-    Some(format!(
-        "data:image/png;base64,{}",
-        b64_encode(&png)
-    ))
+async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let png = icon::extract_icon_png(&display_icon)?;
+        use base64_light::*;
+        Some(format!(
+            "data:image/png;base64,{}",
+            b64_encode(&png)
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 mod base64_light {
@@ -105,46 +111,63 @@ mod base64_light {
 }
 
 #[tauri::command]
-fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
-    Ok(scanner::analyze_associations(
-        &app.name,
-        &app.install_location,
-        &app.publisher,
-        &app.registry_key,
-    ))
+async fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::analyze_associations(
+            &app.name,
+            &app.install_location,
+            &app.publisher,
+            &app.registry_key,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn run_cleanup_dry_run(app_name: String, items: Vec<CleanupItem>) -> Result<CleanupReport, String> {
-    Ok(executor::run_cleanup_dry(&app_name, &items))
+async fn run_cleanup_dry_run(
+    app_name: String,
+    items: Vec<CleanupItem>,
+) -> Result<CleanupReport, String> {
+    tauri::async_runtime::spawn_blocking(move || executor::run_cleanup_dry(&app_name, &items))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn run_full_cleanup(
+async fn run_full_cleanup(
     app: InstalledApp,
     items: Vec<CleanupItem>,
     options: FullCleanupOptions,
 ) -> Result<FullCleanupReport, String> {
-    let report = executor::run_full_cleanup(&app, &items, &options);
-    history::append(
-        &report.app_name,
-        report.deleted,
-        report.failed,
-        report.skipped,
-        report.aborted,
-        report.dry_run,
-        &report.backup_dir,
-    );
-    Ok(report)
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = executor::run_full_cleanup(&app, &items, &options);
+        history::append(
+            &report.app_name,
+            report.deleted,
+            report.failed,
+            report.skipped,
+            report.aborted,
+            report.dry_run,
+            &report.backup_dir,
+        );
+        report
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn restore_latest_backup() -> Result<Vec<String>, String> {
-    let sessions = restore::list_sessions();
-    let Some(s) = sessions.first() else {
-        return Err("no backup sessions".into());
-    };
-    restore::restore_session(s)
+async fn restore_latest_backup() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let sessions = restore::list_sessions();
+        let Some(s) = sessions.first().cloned() else {
+            return Err("no backup sessions".to_string());
+        };
+        restore::restore_session(&s)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -260,38 +283,52 @@ fn list_restore_sessions() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
-    restore::restore_by_name(&name)
+async fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || restore::restore_by_name(&name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn list_startup_items() -> Result<Vec<manage::ManageItem>, String> {
-    Ok(manage::list_startup_items())
+async fn list_startup_items() -> Result<Vec<manage::ManageItem>, String> {
+    tauri::async_runtime::spawn_blocking(manage::list_startup_items)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn list_services() -> Result<Vec<manage::ManageItem>, String> {
-    Ok(manage::list_services())
+async fn list_services() -> Result<Vec<manage::ManageItem>, String> {
+    tauri::async_runtime::spawn_blocking(manage::list_services)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn list_scheduled_tasks() -> Result<Vec<manage::ManageItem>, String> {
-    Ok(manage::list_scheduled_tasks())
+async fn list_scheduled_tasks() -> Result<Vec<manage::ManageItem>, String> {
+    tauri::async_runtime::spawn_blocking(manage::list_scheduled_tasks)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_startup_enabled(location: String, enabled: bool) -> Result<(), String> {
-    manage::set_startup_enabled(&location, enabled)
+async fn set_startup_enabled(location: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || manage::set_startup_enabled(&location, enabled))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn set_service_start_disabled(name: String, disable: bool) -> Result<(), String> {
-    manage::set_service_start_disabled(&name, disable)
+async fn set_service_start_disabled(name: String, disable: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || manage::set_service_start_disabled(&name, disable))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
-    manage::set_task_enabled(&name, enabled)
+async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || manage::set_task_enabled(&name, enabled))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
@@ -333,19 +370,27 @@ fn ignore_app_name(name: String) -> Result<ignore::IgnoreList, String> {
 }
 
 #[tauri::command]
-fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
-    let installed = apps::scan_installed_apps();
-    Ok(orphans::scan_orphans(&installed))
+async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let installed = apps::scan_installed_apps();
+        orphans::scan_orphans(&installed)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn begin_install_monitor() -> Result<(), String> {
-    installmon::begin()
+async fn begin_install_monitor() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(installmon::begin)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
-    installmon::end()
+async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
+    tauri::async_runtime::spawn_blocking(installmon::end)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

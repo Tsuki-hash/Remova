@@ -120,16 +120,7 @@ fn split_win_args(s: &str) -> Vec<String> {
 }
 
 fn is_safe_fs(p: &Path) -> bool {
-    let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
-    let protected = [
-        r"c:\windows",
-        r"c:\programdata\microsoft",
-        r"c:\program files\windowsapps",
-        r"c:\program files\common files\microsoft shared",
-    ];
-    !protected
-        .iter()
-        .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
+    crate::safety::is_safe_fs(p)
 }
 
 /// Dry-run cleanup: validate items and report what would happen. Never deletes.
@@ -297,9 +288,41 @@ pub fn run_full_cleanup(
                 let exe = parts.next().unwrap().clone();
                 let rest: Vec<String> = parts.cloned().collect();
                 match std::process::Command::new(&exe).args(&rest).spawn() {
-                    Ok(_) => {
-                        uninstall_ok = true;
-                        uninstall_message = format!("launched {}", argv[0]);
+                    Ok(mut child) => {
+                        // Wait for uninstaller so residual delete is not racy.
+                        let timeout = std::time::Duration::from_secs(300);
+                        let start = std::time::Instant::now();
+                        loop {
+                            match child.try_wait() {
+                                Ok(Some(status)) => {
+                                    uninstall_ok = status.success();
+                                    uninstall_message = if status.success() {
+                                        format!("uninstaller finished: {}", argv[0])
+                                    } else {
+                                        format!(
+                                            "uninstaller exited with {:?}",
+                                            status.code()
+                                        )
+                                    };
+                                    break;
+                                }
+                                Ok(None) => {
+                                    if start.elapsed() >= timeout {
+                                        let _ = child.kill();
+                                        let _ = child.wait();
+                                        uninstall_ok = false;
+                                        uninstall_message =
+                                            format!("uninstaller timed out (5m): {}", argv[0]);
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(200));
+                                }
+                                Err(e) => {
+                                    uninstall_message = format!("wait failed: {e}");
+                                    break;
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         uninstall_message = format!("launch failed: {e}");

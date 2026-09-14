@@ -28,6 +28,8 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 /// Delete registry key tree. Caller must have run safety checks.
+/// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
+/// Parent needs DELETE + enumerate/query/set rights (MSDN RegDeleteTreeW).
 pub fn delete_key(key_path: &str) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -36,21 +38,38 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
+        use windows::Win32::System::Registry::{
+            KEY_ENUMERATE_SUB_KEYS, KEY_QUERY_VALUE, KEY_SET_VALUE,
+        };
+        // DELETE (0x00010000) is not exported by this windows crate build.
+        const DELETE_RIGHT: REG_SAM_FLAGS = REG_SAM_FLAGS(0x0001_0000);
         let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
         unsafe {
-            let w = to_wide(&sub);
-            let st = RegDeleteTreeW(hive, PCWSTR(w.as_ptr()));
-            // Fallback if hive open path differs: open parent
+            // Split into parent + leaf so RegDeleteTreeW can target the child under a view-aware handle.
+            let (parent, leaf) = match sub.rsplit_once('\\') {
+                Some((p, l)) => (p.to_string(), l.to_string()),
+                None => (String::new(), sub.clone()),
+            };
+            let parent_w = if parent.is_empty() {
+                Vec::new()
+            } else {
+                to_wide(&parent)
+            };
+            let rights =
+                DELETE_RIGHT | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | KEY_SET_VALUE | access;
+            let mut parent_hk = HKEY::default();
+            let open = if parent.is_empty() {
+                RegOpenKeyExW(hive, PCWSTR::null(), 0, rights, &mut parent_hk)
+            } else {
+                RegOpenKeyExW(hive, PCWSTR(parent_w.as_ptr()), 0, rights, &mut parent_hk)
+            };
+            if open.is_err() {
+                return Err(format!("open parent failed for {key_path}"));
+            }
+            let leaf_w = to_wide(&leaf);
+            let st = RegDeleteTreeW(parent_hk, PCWSTR(leaf_w.as_ptr()));
+            let _ = RegCloseKey(parent_hk);
             if st != ERROR_SUCCESS {
-                let mut hk = HKEY::default();
-                let _ = RegOpenKeyExW(
-                    hive,
-                    PCWSTR(w.as_ptr()),
-                    0,
-                    KEY_READ | access,
-                    &mut hk,
-                );
-                let _ = RegCloseKey(hk);
                 return Err(format!("RegDeleteTreeW failed for {key_path}"));
             }
         }
@@ -207,6 +226,51 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
         args.push("REG_SZ".into());
         args.push("/d".into());
         args.push(data.into());
+        let out = Command::new("reg").args(&args).output();
+        match out {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+/// Write REG_BINARY under `key_path` (creates key tree via `reg add` fallback).
+pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (key_path, value_name, data);
+        Err("not windows".into())
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        // reg.exe REG_BINARY takes hex without 0x, e.g. 02000000...
+        let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+        let mut args = vec![
+            "add".to_string(),
+            key_path.to_string(),
+            "/f".to_string(),
+            "/v".into(),
+            value_name.to_string(),
+            "/t".into(),
+            "REG_BINARY".into(),
+            "/d".into(),
+            hex,
+        ];
+        // empty value name → default value
+        if value_name.is_empty() {
+            args = vec![
+                "add".into(),
+                key_path.into(),
+                "/f".into(),
+                "/ve".into(),
+                "/t".into(),
+                "REG_BINARY".into(),
+                "/d".into(),
+                data.iter().map(|b| format!("{b:02x}")).collect(),
+            ];
+        }
         let out = Command::new("reg").args(&args).output();
         match out {
             Ok(o) if o.status.success() => Ok(()),

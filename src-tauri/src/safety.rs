@@ -146,9 +146,62 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Unified filesystem safety gate (scanner + executor).
+/// Rejects protected prefixes, drive roots (`C:` / `C:\`), and shallow paths.
+pub fn is_safe_fs(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
+    let trimmed = s.trim_end_matches('\\');
+    // Drive root: "c:" or "c:\"
+    if trimmed.len() == 2 && trimmed.ends_with(':') {
+        return false;
+    }
+    // Shallow: must be at least `drive:\dir\file-or-dir` (4 components on Windows).
+    let comps = p.components().count();
+    if comps < 4 {
+        return false;
+    }
+    let protected = [
+        r"c:\windows",
+        r"c:\windows.old",
+        r"c:\programdata\microsoft",
+        r"c:\program files\windowsapps",
+        r"c:\program files\common files\microsoft shared",
+        r"c:\program files (x86)\common files\microsoft shared",
+        r"c:\users\default",
+    ];
+    !protected
+        .iter()
+        .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn fs_rejects_drive_root() {
+        assert!(!is_safe_fs(Path::new(r"C:\")));
+        assert!(!is_safe_fs(Path::new("C:")));
+        assert!(!is_safe_fs(Path::new(r"D:\")));
+    }
+
+    #[test]
+    fn fs_rejects_shallow() {
+        assert!(!is_safe_fs(Path::new(r"C:\foo")));
+    }
+
+    #[test]
+    fn fs_rejects_protected() {
+        assert!(!is_safe_fs(Path::new(r"C:\Windows\System32")));
+        assert!(!is_safe_fs(Path::new(r"c:\programdata\microsoft\x")));
+    }
+
+    #[test]
+    fn fs_allows_normal_install() {
+        assert!(is_safe_fs(Path::new(r"C:\Program Files\MyApp")));
+        assert!(is_safe_fs(Path::new(r"D:\Games\SomeGame")));
+    }
 
     #[test]
     fn uninstall_product_key_ok() {

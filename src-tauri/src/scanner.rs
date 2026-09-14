@@ -219,25 +219,7 @@ fn matches_product_dir(name: &str, name_slugs: &[String], exe_stems: &[String]) 
 }
 
 fn is_safe_fs(p: &Path) -> bool {
-    let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
-    let protected = [
-        r"c:\windows",
-        r"c:\windows.old",
-        r"c:\programdata\microsoft",
-        r"c:\program files\windowsapps",
-        r"c:\program files\common files\microsoft shared",
-        r"c:\program files (x86)\common files\microsoft shared",
-        r"c:\users\default",
-    ];
-    for pref in protected {
-        if s == pref || s.starts_with(&format!("{pref}\\")) {
-            return false;
-        }
-    }
-    if s.len() == 2 && s.ends_with(':') {
-        return false;
-    }
-    true
+    crate::safety::is_safe_fs(p)
 }
 
 /// Analyze filesystem + registry associations for one installed app (read-only).
@@ -328,7 +310,7 @@ pub fn analyze_associations(
             let Some(m) = matches_product_dir(file_name, &name_slugs, &exe_stems) else {
                 continue;
             };
-            if !is_safe_fs(&child) || !safety_path_ok(&child) {
+            if !is_safe_fs(&child) {
                 continue;
             }
             seen.insert(key);
@@ -505,12 +487,13 @@ fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                 continue;
             }
             let score = 40;
+            let (confidence, risk) = finalize_score(score);
             items.push(CleanupItem {
                 path: key,
                 kind: ItemKind::Registry,
                 score,
-                confidence: Confidence::Confirmed,
-                risk: RiskLevel::Low,
+                confidence,
+                risk,
                 reason: format!("Software key: {slug}"),
                 evidence: vec![Evidence {
                     code: "software_key_exact".into(),
@@ -760,10 +743,6 @@ fn scan_scheduled_tasks(
             }],
         });
     }
-}
-
-fn safety_path_ok(_p: &Path) -> bool {
-    true
 }
 
 #[cfg(test)]

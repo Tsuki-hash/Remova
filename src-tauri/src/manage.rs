@@ -37,11 +37,13 @@ const RUN_KEYS: &[(&str, &str, &str)] = &[
 
 pub fn list_startup_items() -> Vec<ManageItem> {
     let mut out = Vec::new();
-    for (alias, sub, view) in RUN_KEYS {
+    for (alias, sub, _view) in RUN_KEYS {
         let key = format!(r"{}\{}", alias, sub);
         for (vname, vdata) in crate::regscan::list_values(&key) {
-            let enabled = !vname.ends_with(".remova-disabled");
             let display = vname.trim_end_matches(".remova-disabled").to_string();
+            // Prefer StartupApproved flag; fall back to legacy rename suffix.
+            let enabled = startup_approved_enabled(&key, &display)
+                .unwrap_or(!vname.ends_with(".remova-disabled"));
             out.push(ManageItem {
                 name: display,
                 detail: vdata.chars().take(160).collect(),
@@ -49,10 +51,27 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                 enabled,
             });
         }
-        let _ = view;
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out
+}
+
+/// Read Explorer StartupApproved\Run binary for a value name. None if missing.
+fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
+    let low = run_key.to_uppercase().replace('/', "\\");
+    let sa_key = if low.contains("\\RUNONCE") {
+        return None;
+    } else if low.contains("HKLM32") {
+        r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    } else if low.starts_with("HKLM") {
+        r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    } else {
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    };
+    crate::regscan::read_binary(sa_key, value_name).map(|b| {
+        // 0x03 in first byte = disabled; anything else (incl. missing/0x02) = enabled
+        !(b.len() >= 1 && b[0] == 0x03)
+    })
 }
 
 pub fn list_services() -> Vec<ManageItem> {
@@ -187,27 +206,45 @@ fn split_csv_line(line: &str) -> Vec<String> {
     out
 }
 
-/// Disable/enable startup value by renaming with `.remova-disabled` suffix.
+/// Enable/disable a Run startup value via Explorer `StartupApproved\Run` binary flag.
+/// Falls back to renaming a legacy `.remova-disabled` value if present.
+///
+/// Windows reads every value under Run at logon; only StartupApproved actually blocks it.
+/// Binary layout (12 bytes): byte0 = 0x02 enabled / 0x03 disabled.
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
-    // location: HKCU\...\Run::ValueName  or  ...\Run::ValueName.remova-disabled
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err("bad startup location".into());
     };
-    let cur_disabled = vname.ends_with(".remova-disabled");
     let base = vname.trim_end_matches(".remova-disabled");
-    if enabled && !cur_disabled {
-        return Ok(());
+    let cur_disabled = vname.ends_with(".remova-disabled");
+
+    // Migrate legacy rename-based disable back to original name first.
+    if cur_disabled {
+        crate::regops::rename_reg_value(key, vname, base)?;
     }
-    if !enabled && cur_disabled {
+
+    write_startup_approved(key, base, enabled)
+}
+
+fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Result<(), String> {
+    // Map Run key → matching StartupApproved hive/view.
+    // HKCU\...\Run → HKCU\...\Explorer\StartupApproved\Run
+    // HKLM64/32\...\Run → same hive Explorer\StartupApproved\Run (Run32 for 32-bit view)
+    let low = run_key.to_uppercase().replace('/', "\\");
+    let sa_key = if low.contains("\\RUNONCE") {
+        // RunOnce has no StartupApproved companion; leave value intact (one-shot).
         return Ok(());
-    }
-    let from = vname.to_string();
-    let to = if enabled {
-        base.to_string()
+    } else if low.contains("HKLM32") {
+        r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    } else if low.starts_with("HKLM") {
+        r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     } else {
-        format!("{base}.remova-disabled")
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     };
-    crate::regops::rename_reg_value(key, &from, &to)
+
+    let mut buf = [0u8; 12];
+    buf[0] = if enabled { 0x02 } else { 0x03 };
+    crate::regops::write_reg_binary(sa_key, value_name, &buf)
 }
 
 /// Set service Start=4 (disabled) or 3 (manual) — not auto to avoid surprise.

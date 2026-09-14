@@ -234,6 +234,49 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     }
 }
 
+/// Read REG_BINARY value by name (StartupApproved etc.).
+pub fn read_binary(key: &str, value_name: &str) -> Option<Vec<u8>> {
+    #[cfg(not(windows))]
+    {
+        let _ = (key, value_name);
+        None
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{RegQueryValueExW, REG_BINARY, REG_VALUE_TYPE};
+        let Some((hive, sub, access)) = parse_alias(key) else {
+            return None;
+        };
+        unsafe {
+            let sub_w = to_wide(&sub);
+            let mut root = HKEY::default();
+            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
+                != ERROR_SUCCESS
+            {
+                return None;
+            }
+            let name_w = to_wide(value_name);
+            let mut vtype = REG_VALUE_TYPE(0);
+            let mut data = vec![0u8; 64];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                root,
+                PCWSTR(name_w.as_ptr()),
+                None,
+                Some(&mut vtype),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            let _ = RegCloseKey(root);
+            if st != ERROR_SUCCESS || vtype != REG_BINARY {
+                return None;
+            }
+            data.truncate(data_len as usize);
+            Some(data)
+        }
+    }
+}
+
 pub fn read_string_default(key: &str) -> Option<String> {
     #[cfg(not(windows))]
     {

@@ -187,7 +187,7 @@ export default function App() {
   const [multi, setMulti] = useState<Set<string>>(new Set());
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
+  const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [useOfficial, setUseOfficial] = useState(false);
   const [sortCol, setSortCol] = useState<
@@ -237,7 +237,6 @@ export default function App() {
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
   const [showTools, setShowTools] = useState(false);
-  const [hoverApp, setHoverApp] = useState<InstalledApp | null>(null);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
   const [monitoring, setMonitoring] = useState(false);
@@ -1113,6 +1112,7 @@ export default function App() {
         <button
           style={css.btnGhost}
           aria-expanded={showTools}
+          title={showTools ? L.toolsCollapseHint : L.toolsExpandHint}
           onClick={() => setShowTools((v) => !v)}
         >
           {showTools ? "收起工具" : "更多工具"}
@@ -1145,7 +1145,7 @@ export default function App() {
             borderRadius: 12,
           }}
         >
-          <button style={css.btnGhost} onClick={async () => {
+          <button style={css.btnGhost} title={L.historyHint} onClick={async () => {
             const h = await invoke<
               { app_name: string; deleted: number; failed: number; backup_dir: string }[]
             >("list_cleanup_history");
@@ -1154,7 +1154,7 @@ export default function App() {
           }}>
             {L.history}
           </button>
-          <button style={css.btnGhost} onClick={async () => {
+          <button style={css.btnGhost} title={L.exportCsvHint} onClick={async () => {
             const csv = await invoke<string>("export_history_csv");
             const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
             const url = URL.createObjectURL(blob);
@@ -1166,10 +1166,10 @@ export default function App() {
           }}>
             {L.exportCsv}
           </button>
-          <button style={css.btnGhost} onClick={() => void openRestoreSessions()}>
+          <button style={css.btnGhost} title={L.restoreHint} onClick={() => void openRestoreSessions()}>
             {L.restore}
           </button>
-          <button style={css.btnGhost} onClick={() => {
+          <button style={css.btnGhost} title={showManage ? L.manageCloseHint : L.manageHint} onClick={() => {
             if (showManage) {
               setShowManage(false);
               return;
@@ -1187,25 +1187,26 @@ export default function App() {
           >
             {L.forceClean}
           </button>
-          <button style={css.btnGhost} disabled={!selected?.publisher} onClick={() => void doIgnorePublisher()}>
+          <button style={css.btnGhost} title={L.ignorePublisherHint} disabled={!selected?.publisher} onClick={() => void doIgnorePublisher()}>
             {L.ignorePublisher}
           </button>
-          <button style={css.btnGhost} disabled={!selected?.name} onClick={() => void doIgnoreApp()}>
+          <button style={css.btnGhost} title={L.ignoreAppHint} disabled={!selected?.name} onClick={() => void doIgnoreApp()}>
             {L.ignoreApp}
           </button>
-          <button style={css.btnGhost} onClick={() => void runOrphanScan()}>
+          <button style={css.btnGhost} title={L.orphanScanHint} onClick={() => void runOrphanScan()}>
             {L.orphanScan}
           </button>
-          <button style={css.btnGhost} onClick={() => void toggleMonitor()}>
+          <button style={css.btnGhost} title={monitoring ? L.monitorStopHint : L.monitorInstallHint} onClick={() => void toggleMonitor()}>
             {monitoring ? L.monitorStop : L.monitorInstall}
           </button>
           {lastReport && (
-            <button style={css.btnGhost} onClick={exportHtmlReport}>
+            <button style={css.btnGhost} title={L.exportReportHint} onClick={exportHtmlReport}>
               {L.exportReport}
             </button>
           )}
           <button
             style={css.btnGhost}
+            title={L.openReleasesHint}
             onClick={() => {
               window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
             }}
@@ -1214,6 +1215,7 @@ export default function App() {
           </button>
           <button
             style={css.btnGhost}
+            title={shellMenu ? L.shellUnregisterHint : L.shellMenuHint}
             onClick={async () => {
               try {
                 if (shellMenu) {
@@ -1233,7 +1235,7 @@ export default function App() {
             {shellMenu ? L.shellUnregister : L.shellMenu}
           </button>
           {estimating && (
-            <button style={css.btnGhost} onClick={() => void stopSizeEstimate()}>
+            <button style={css.btnGhost} title={L.stopEstimateHint} onClick={() => void stopSizeEstimate()}>
               {L.stopEstimate}
             </button>
           )}
@@ -1286,51 +1288,50 @@ export default function App() {
         </div>
       )}
 
-      {/* Hover / selected app details */}
-      {(hoverApp || selected) && (
+      {report && (
         <div
           style={{
+            ...css.card,
             marginBottom: 10,
-            padding: "10px 12px",
-            fontSize: 12,
+            padding: 12,
+            fontSize: 13,
             background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            color: "var(--muted)",
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: "6px 16px",
           }}
         >
-          {(() => {
-            const a = hoverApp || selected!;
-            return (
-              <>
-                <div>
-                  <b style={{ color: "var(--fg)" }}>{prettyAppName(a.name, a.source)}</b>
-                  {hoverApp && selected && hoverApp !== selected ? (
-                    <span style={{ marginLeft: 8, opacity: 0.7 }}>({L.selectRowHint})</span>
-                  ) : null}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <strong>
+              {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
+            </strong>
+            {"deleted_planned" in report ? (
+              <span>
+                {L.dryRunPlanned}: {report.deleted_planned} · {L.batchSkipped}: {report.skipped}
+              </span>
+            ) : (
+              <span>
+                {L.batchOk}: {report.deleted} · {L.batchFailed}: {report.failed} · {L.batchSkipped}:{" "}
+                {report.skipped}
+              </span>
+            )}
+            <button style={{ ...css.btnGhost, height: 28 }} onClick={() => setReport(null)}>
+              ×
+            </button>
+          </div>
+          {report.item_details.length > 0 && (
+            <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8, color: "var(--muted)" }}>
+              {report.item_details.slice(0, 50).map((d, i) => (
+                <div key={i} className="ell" title={d.path}>
+                  [{d.status}] {d.path}
+                  {d.message ? ` — ${d.message}` : ""}
                 </div>
-                <div className="ell" title={a.publisher}>
-                  {L.colPublisher}: {a.publisher || "—"}
-                </div>
-                <div className="ell" title={a.install_location}>
-                  {L.colLocation}: {a.install_location || "—"}
-                </div>
-                <div>
-                  {L.colVersion}: {a.version || "—"} · {L.colSize}: {formatAppSize(a)} ·{" "}
-                  {L.colInstallDate}: {a.install_date || "—"} · {L.colSource}: {a.source}
-                </div>
-                <div className="ell" title={a.uninstall_string || a.quiet_uninstall_string}>
-                  Uninstall: {a.quiet_uninstall_string || a.uninstall_string || "—"}
-                </div>
-                <div className="ell" title={a.registry_key}>
-                  Key: {a.registry_key}
-                </div>
-              </>
-            );
-          })()}
+              ))}
+              {report.item_details.length > 50 && (
+                <div>… +{report.item_details.length - 50}</div>
+              )}
+            </div>
+          )}
+          {"uninstall_message" in report && report.uninstall_message && (
+            <div style={{ marginTop: 6, color: "var(--muted)" }}>{report.uninstall_message}</div>
+          )}
         </div>
       )}
 
@@ -1789,8 +1790,16 @@ export default function App() {
                       key={key}
                       onClick={() => setSelected(a)}
                       onDoubleClick={() => analyze(a)}
-                      onMouseEnter={() => setHoverApp(a)}
-                      onMouseLeave={() => setHoverApp(null)}
+                      title={[
+                        prettyAppName(a.name, a.source),
+                        a.publisher && `${L.colPublisher}: ${a.publisher}`,
+                        a.install_location && `${L.colLocation}: ${a.install_location}`,
+                        (a.quiet_uninstall_string || a.uninstall_string) &&
+                          `Uninstall: ${a.quiet_uninstall_string || a.uninstall_string}`,
+                        a.registry_key && `Key: ${a.registry_key}`,
+                      ]
+                        .filter(Boolean)
+                        .join("\n") || undefined}
                       style={{
                         cursor: "pointer",
                         background:

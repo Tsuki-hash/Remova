@@ -53,9 +53,12 @@ fn safe_name(path: &str) -> String {
 pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
     match item.kind {
         ItemKind::Registry => {
-            if item.path.contains('|') {
-                return Ok(()); // Run value: export parent key
-            }
+            // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
+            let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
+                parent
+            } else {
+                item.path.as_str()
+            };
             let dest = session
                 .join("registry")
                 .join(safe_name(&item.path))
@@ -63,8 +66,7 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            let (alias, rest) = item
-                .path
+            let (alias, rest) = export_path
                 .split_once('\\')
                 .ok_or_else(|| "bad key".to_string())?;
             let hive = match alias.to_uppercase().as_str() {
@@ -78,12 +80,20 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
                     &format!("{hive}\\{rest}"),
                     &dest.to_string_lossy(),
                     "/y",
-                    reg_view_flag(&item.path),
+                    reg_view_flag(export_path),
                 ])
                 .output()
                 .map_err(|e| e.to_string())?;
             if !out.status.success() {
                 return Err(format!("reg export failed for {}", item.path));
+            }
+            // Record the specific value name for Run items so restore knows what was targeted.
+            if item.path.contains('|') {
+                let meta = session
+                    .join("registry")
+                    .join(safe_name(&item.path))
+                    .join("value.txt");
+                let _ = fs::write(&meta, &item.path);
             }
             Ok(())
         }
