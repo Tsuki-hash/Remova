@@ -237,6 +237,7 @@ export default function App() {
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
   const [showTools, setShowTools] = useState(false);
+  const [hoverApp, setHoverApp] = useState<InstalledApp | null>(null);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
   const [monitoring, setMonitoring] = useState(false);
@@ -764,11 +765,15 @@ export default function App() {
   }, [scan, selected, useOfficial, selectedPaths]);
 
   const batchCleanup = useCallback(async () => {
-    busyRef.current = true;
     const keys = new Set(multi);
     const queue = apps.filter((a) => keys.has(a.registry_key + a.name));
-    if (!queue.length) return;
+    if (!queue.length) {
+      setNotice(L.selectRowHint);
+      return;
+    }
     if (!window.confirm(L.batchConfirm(queue.length))) return;
+
+    busyRef.current = true;
     batchCancelRef.current = false;
     setBatching(true);
     setBatchIndex(0);
@@ -828,13 +833,14 @@ export default function App() {
       }
       const cancelled = batchCancelRef.current;
       setNotice(cancelled ? L.batchCancelled : L.batchDone);
-      // Keep failures selected for retry; drop successes from multi.
       setMulti((m) => {
         const n = new Set(m);
         for (const k of okKeys) n.delete(k);
         return n;
       });
       setShowBatchSummary(true);
+    } catch (e) {
+      setError(formatError(e, "cleanup"));
     } finally {
       busyRef.current = false;
       setBatching(false);
@@ -1245,6 +1251,16 @@ export default function App() {
             borderRadius: 12,
           }}
         >
+          <button
+            style={css.btnGhost}
+            onClick={() => {
+              setScan(null);
+              setReport(null);
+              setError(null);
+            }}
+          >
+            ← {L.closePreview}
+          </button>
           <strong style={{ fontSize: 13 }}>{scan.app_name}</strong>
           <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
             <input
@@ -1259,7 +1275,7 @@ export default function App() {
           </button>
           <button
             style={{ ...css.btn, background: "var(--danger)", color: "#fff" }}
-            disabled={dryRunning || selectedPaths.size === 0}
+            disabled={dryRunning || selectedPaths.size === 0 || busyRef.current}
             onClick={() => {
               if (!window.confirm(L.cleanupConfirm(selectedPaths.size, useOfficial))) return;
               void execReal();
@@ -1267,15 +1283,54 @@ export default function App() {
           >
             {L.cleanup} ({selectedPaths.size})
           </button>
-          <button
-            style={css.btnGhost}
-            onClick={() => {
-              setScan(null);
-              setReport(null);
-            }}
-          >
-            {L.closePreview}
-          </button>
+        </div>
+      )}
+
+      {/* Hover / selected app details */}
+      {(hoverApp || selected) && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "10px 12px",
+            fontSize: 12,
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            color: "var(--muted)",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "6px 16px",
+          }}
+        >
+          {(() => {
+            const a = hoverApp || selected!;
+            return (
+              <>
+                <div>
+                  <b style={{ color: "var(--fg)" }}>{prettyAppName(a.name, a.source)}</b>
+                  {hoverApp && selected && hoverApp !== selected ? (
+                    <span style={{ marginLeft: 8, opacity: 0.7 }}>({L.selectRowHint})</span>
+                  ) : null}
+                </div>
+                <div className="ell" title={a.publisher}>
+                  {L.colPublisher}: {a.publisher || "—"}
+                </div>
+                <div className="ell" title={a.install_location}>
+                  {L.colLocation}: {a.install_location || "—"}
+                </div>
+                <div>
+                  {L.colVersion}: {a.version || "—"} · {L.colSize}: {formatAppSize(a)} ·{" "}
+                  {L.colInstallDate}: {a.install_date || "—"} · {L.colSource}: {a.source}
+                </div>
+                <div className="ell" title={a.uninstall_string || a.quiet_uninstall_string}>
+                  Uninstall: {a.quiet_uninstall_string || a.uninstall_string || "—"}
+                </div>
+                <div className="ell" title={a.registry_key}>
+                  Key: {a.registry_key}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -1734,6 +1789,8 @@ export default function App() {
                       key={key}
                       onClick={() => setSelected(a)}
                       onDoubleClick={() => analyze(a)}
+                      onMouseEnter={() => setHoverApp(a)}
+                      onMouseLeave={() => setHoverApp(null)}
                       style={{
                         cursor: "pointer",
                         background:
