@@ -131,6 +131,14 @@ function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   return L.errInvokeFailed(detail);
 }
 
+function escapeHtml(s: string): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export default function App() {
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +197,14 @@ export default function App() {
   const [manageBusy, setManageBusy] = useState(false);
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
+  const [ignorePub, setIgnorePub] = useState<string[]>([]);
+  const [ignoreName, setIgnoreName] = useState<string[]>([]);
+  const [monitoring, setMonitoring] = useState(false);
+  const [monitorDiff, setMonitorDiff] = useState<{
+    added_files: string[];
+    added_reg_values: string[];
+  } | null>(null);
+  const [lastReport, setLastReport] = useState<FullCleanupReport | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
   const [histQ, setHistQ] = useState("");
@@ -269,6 +285,12 @@ export default function App() {
       }
     })();
     void invoke<boolean>("is_elevated").then(setAdmin).catch(() => {});
+    void invoke<{ publishers: string[]; names: string[]; paths: string[] }>("load_ignore")
+      .then((ig) => {
+        setIgnorePub(ig.publishers || []);
+        setIgnoreName(ig.names || []);
+      })
+      .catch(() => {});
     void invoke<{ free_gb: number; total_gb: number }>("disk_usage")
       .then((d) => setDisk(`C: ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`))
       .catch(() => {});
@@ -403,6 +425,11 @@ export default function App() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let list = apps;
+    list = list.filter(
+      (a) =>
+        !ignorePub.some((p) => p && a.publisher?.toLowerCase() === p.toLowerCase()) &&
+        !ignoreName.some((n) => n && a.name?.toLowerCase() === n.toLowerCase()),
+    );
     if (needle) {
       list = list.filter(
         (a) =>
@@ -419,7 +446,7 @@ export default function App() {
       return (a[sortCol] || "").toLowerCase().localeCompare((b[sortCol] || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap]);
+  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName]);
 
   const sortBy = (col: "name" | "publisher" | "install_location" | "size" | "install_date") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -555,6 +582,7 @@ export default function App() {
       setNotice(
         `${L.forceClean}: ${selected.name} deleted=${report.deleted} failed=${report.failed}`,
       );
+      setLastReport(report);
     } catch (e) {
       setError(formatError(e, "cleanup"));
     } finally {
@@ -562,6 +590,94 @@ export default function App() {
       setForceBusy(false);
     }
   }, [selected, forceBusy, L]);
+
+  const doIgnorePublisher = useCallback(async () => {
+    if (!selected?.publisher) return;
+    try {
+      const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_publisher", {
+        name: selected.publisher,
+      });
+      setIgnorePub(ig.publishers || []);
+      setNotice(L.ignoreLoaded);
+    } catch (e) {
+      setError(formatError(e));
+    }
+  }, [selected, L]);
+
+  const doIgnoreApp = useCallback(async () => {
+    if (!selected?.name) return;
+    try {
+      const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_app_name", {
+        name: selected.name,
+      });
+      setIgnoreName(ig.names || []);
+      setNotice(L.ignoreLoaded);
+    } catch (e) {
+      setError(formatError(e));
+    }
+  }, [selected, L]);
+
+  const exportHtmlReport = useCallback(() => {
+    if (!lastReport) return;
+    const r = lastReport;
+    const rows = (r.item_details || [])
+      .map(
+        (d) =>
+          `<tr><td>${escapeHtml(d.kind)}</td><td>${escapeHtml(d.status)}</td><td>${escapeHtml(d.path)}</td><td>${escapeHtml(d.message)}</td></tr>`,
+      )
+      .join("\n");
+    const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Remova report — ${escapeHtml(r.app_name)}</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef}</style>
+</head><body><h1>Remova — ${escapeHtml(r.app_name)}</h1>
+<p>dry_run=${r.dry_run} deleted=${r.deleted} failed=${r.failed} skipped=${r.skipped} aborted=${r.aborted}</p>
+<p>${escapeHtml(r.uninstall_message || "")}</p>
+<p>backup: ${escapeHtml(r.backup_dir || "")}</p>
+<table><tr><th>kind</th><th>status</th><th>path</th><th>message</th></tr>${rows}</table>
+</body></html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `remova-report-${(r.app_name || "app").replace(/[^\w.-]+/g, "_")}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [lastReport]);
+
+  const runOrphanScan = useCallback(async () => {
+    setNotice(L.orphanScanning);
+    try {
+      const items = await invoke<ScanResult["items"]>("scan_orphan_leftovers");
+      setScan({
+        app_name: L.orphanScan,
+        items,
+      });
+      setSelectedPaths(new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)));
+      setNotice(`${L.orphanScan}: ${items.length}`);
+    } catch (e) {
+      setError(formatError(e, "analyze"));
+    }
+  }, [L]);
+
+  const toggleMonitor = useCallback(async () => {
+    try {
+      if (!monitoring) {
+        await invoke("begin_install_monitor");
+        setMonitoring(true);
+        setMonitorDiff(null);
+        setNotice(L.monitorRunning);
+      } else {
+        const d = await invoke<{ added_files: string[]; added_reg_values: string[] }>(
+          "end_install_monitor",
+        );
+        setMonitoring(false);
+        setMonitorDiff(d);
+        setNotice(`${L.monitorDiff}: ${d.added_files.length} files / ${d.added_reg_values.length} reg`);
+      }
+    } catch (e) {
+      setError(formatError(e));
+      setMonitoring(false);
+    }
+  }, [monitoring, L]);
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
@@ -596,6 +712,9 @@ export default function App() {
         },
       });
       setReport(r);
+      if (r && typeof r === "object" && "deleted" in r) {
+        setLastReport(r as FullCleanupReport);
+      }
     } catch (e) {
       setError(formatError(e, "cleanup"));
     } finally {
@@ -873,6 +992,45 @@ export default function App() {
         </button>
         <button
           style={css.btnGhost}
+          disabled={!selected?.publisher}
+          onClick={() => void doIgnorePublisher()}
+        >
+          {L.ignorePublisher}
+        </button>
+        <button
+          style={css.btnGhost}
+          disabled={!selected?.name}
+          onClick={() => void doIgnoreApp()}
+        >
+          {L.ignoreApp}
+        </button>
+        <button
+          style={css.btnGhost}
+          onClick={() => void runOrphanScan()}
+        >
+          {L.orphanScan}
+        </button>
+        <button
+          style={css.btnGhost}
+          onClick={() => void toggleMonitor()}
+        >
+          {monitoring ? L.monitorStop : L.monitorInstall}
+        </button>
+        {lastReport && (
+          <button style={css.btnGhost} onClick={exportHtmlReport}>
+            {L.exportReport}
+          </button>
+        )}
+        <button
+          style={css.btnGhost}
+          onClick={() => {
+            window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
+          }}
+        >
+          {L.openReleases}
+        </button>
+        <button
+          style={css.btnGhost}
           onClick={async () => {
             try {
               if (shellMenu) {
@@ -1067,6 +1225,30 @@ export default function App() {
               </pre>
             </div>
           )}
+        </div>
+      )}
+
+      {monitorDiff && (
+        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <strong>{L.monitorDiff}</strong>
+          <div style={{ ...css.muted, margin: "6px 0" }}>
+            files={monitorDiff.added_files.length} · reg={monitorDiff.added_reg_values.length}
+          </div>
+          <div style={{ maxHeight: 160, overflow: "auto" }}>
+            {[...monitorDiff.added_files, ...monitorDiff.added_reg_values]
+              .slice(0, 80)
+              .map((line) => (
+                <div key={line} style={{ wordBreak: "break-all", padding: "2px 0" }}>
+                  {line}
+                </div>
+              ))}
+          </div>
+          <button
+            style={{ ...css.btnGhost, height: 30, marginTop: 8 }}
+            onClick={() => setMonitorDiff(null)}
+          >
+            {L.batchDismiss}
+          </button>
         </div>
       )}
 

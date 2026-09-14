@@ -6,7 +6,10 @@ pub mod dirsize;
 pub mod executor;
 pub mod history;
 pub mod icon;
+pub mod ignore;
+pub mod installmon;
 pub mod manage;
+pub mod orphans;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
@@ -314,6 +317,37 @@ fn unregister_context_menu() -> Result<(), String> {
     crate::regops::delete_key(CONTEXT_MENU_KEY)
 }
 
+#[tauri::command]
+fn load_ignore() -> Result<ignore::IgnoreList, String> {
+    Ok(ignore::load())
+}
+
+#[tauri::command]
+fn ignore_publisher(name: String) -> Result<ignore::IgnoreList, String> {
+    ignore::add_publisher(&name)
+}
+
+#[tauri::command]
+fn ignore_app_name(name: String) -> Result<ignore::IgnoreList, String> {
+    ignore::add_name(&name)
+}
+
+#[tauri::command]
+fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
+    let installed = apps::scan_installed_apps();
+    Ok(orphans::scan_orphans(&installed))
+}
+
+#[tauri::command]
+fn begin_install_monitor() -> Result<(), String> {
+    installmon::begin()
+}
+
+#[tauri::command]
+fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
+    installmon::end()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -341,7 +375,13 @@ pub fn run() {
             set_service_start_disabled,
             set_task_enabled,
             register_context_menu,
-            unregister_context_menu
+            unregister_context_menu,
+            load_ignore,
+            ignore_publisher,
+            ignore_app_name,
+            scan_orphan_leftovers,
+            begin_install_monitor,
+            end_install_monitor
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
