@@ -6,6 +6,7 @@ pub mod dirsize;
 pub mod executor;
 pub mod history;
 pub mod icon;
+pub mod manage;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
@@ -260,6 +261,59 @@ fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
     restore::restore_by_name(&name)
 }
 
+#[tauri::command]
+fn list_startup_items() -> Result<Vec<manage::ManageItem>, String> {
+    Ok(manage::list_startup_items())
+}
+
+#[tauri::command]
+fn list_services() -> Result<Vec<manage::ManageItem>, String> {
+    Ok(manage::list_services())
+}
+
+#[tauri::command]
+fn list_scheduled_tasks() -> Result<Vec<manage::ManageItem>, String> {
+    Ok(manage::list_scheduled_tasks())
+}
+
+#[tauri::command]
+fn set_startup_enabled(location: String, enabled: bool) -> Result<(), String> {
+    manage::set_startup_enabled(&location, enabled)
+}
+
+#[tauri::command]
+fn set_service_start_disabled(name: String, disable: bool) -> Result<(), String> {
+    manage::set_service_start_disabled(&name, disable)
+}
+
+#[tauri::command]
+fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
+    manage::set_task_enabled(&name, enabled)
+}
+
+const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
+
+#[tauri::command]
+fn register_context_menu() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy().to_string();
+    // Create key tree via PowerShell-free reg write
+    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "用 Remova 深度卸载")?;
+    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "Icon", &format!("\"{exe}\""))?;
+    let cmd_key = format!(r"{CONTEXT_MENU_KEY}\command");
+    crate::regops::create_reg_sz(
+        &cmd_key,
+        "",
+        &format!("\"{exe}\" --analyze \"%1\""),
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+fn unregister_context_menu() -> Result<(), String> {
+    crate::regops::delete_key(CONTEXT_MENU_KEY)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -279,7 +333,15 @@ pub fn run() {
             disk_usage,
             elevate_restart,
             list_restore_sessions,
-            restore_session_by_name
+            restore_session_by_name,
+            list_startup_items,
+            list_services,
+            list_scheduled_tasks,
+            set_startup_enabled,
+            set_service_start_disabled,
+            set_task_enabled,
+            register_context_menu,
+            unregister_context_menu
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

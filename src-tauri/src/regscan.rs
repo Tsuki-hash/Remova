@@ -170,6 +170,70 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
     }
 }
 
+/// Read REG_SZ/EXPAND_SZ value by name.
+pub fn read_string(key: &str, value_name: &str) -> Option<String> {
+    list_values(key)
+        .into_iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(value_name))
+        .map(|(_, v)| v)
+}
+
+/// Read REG_DWORD value by name.
+pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
+    #[cfg(not(windows))]
+    {
+        let _ = (key, value_name);
+        None
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::REG_DWORD;
+        let Some((hive, sub, access)) = parse_alias(key) else {
+            return None;
+        };
+        unsafe {
+            let sub_w = to_wide(&sub);
+            let mut root = HKEY::default();
+            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
+                != ERROR_SUCCESS
+            {
+                return None;
+            }
+            let mut n = 0u32;
+            let mut found = None;
+            loop {
+                let mut vname = vec![0u16; 256];
+                let mut vname_len = vname.len() as u32;
+                let mut vtype = 0u32;
+                let mut data = vec![0u8; 16];
+                let mut data_len = data.len() as u32;
+                if RegEnumValueW(
+                    root,
+                    n,
+                    windows::core::PWSTR(vname.as_mut_ptr()),
+                    &mut vname_len,
+                    None,
+                    Some(&mut vtype),
+                    Some(data.as_mut_ptr()),
+                    Some(&mut data_len),
+                ) != ERROR_SUCCESS
+                {
+                    break;
+                }
+                n += 1;
+                let name = String::from_utf16_lossy(&vname[..vname_len as usize]);
+                if name.eq_ignore_ascii_case(value_name) && vtype == REG_DWORD.0 && data_len >= 4
+                {
+                    found = Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]));
+                    break;
+                }
+            }
+            let _ = RegCloseKey(root);
+            found
+        }
+    }
+}
+
 pub fn read_string_default(key: &str) -> Option<String> {
     #[cfg(not(windows))]
     {

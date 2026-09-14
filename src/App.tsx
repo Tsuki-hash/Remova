@@ -171,6 +171,24 @@ export default function App() {
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const batchCancelRef = useRef(false);
+  const [showRestore, setShowRestore] = useState(false);
+  const [restoreSessions, setRestoreSessions] = useState<string[]>([]);
+  const [restorePick, setRestorePick] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
+  type ManageTab = "startup" | "services" | "tasks";
+  type ManageItem = {
+    name: string;
+    detail: string;
+    location: string;
+    enabled: boolean;
+  };
+  const [showManage, setShowManage] = useState(false);
+  const [manageTab, setManageTab] = useState<ManageTab>("startup");
+  const [manageItems, setManageItems] = useState<ManageItem[]>([]);
+  const [manageBusy, setManageBusy] = useState(false);
+  const [forceBusy, setForceBusy] = useState(false);
+  const [shellMenu, setShellMenu] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
   const [histQ, setHistQ] = useState("");
@@ -341,6 +359,45 @@ export default function App() {
     }
   }, []);
 
+  // Drag-drop: match dropped path to install_location and analyze (P1-3).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const webview = getCurrentWebview();
+        const un = await webview.onDragDropEvent((event) => {
+          if (event.payload.type !== "drop") return;
+          const path = (event.payload.paths || [])[0];
+          if (!path) return;
+          const norm = path.replace(/\//g, "\\").toLowerCase();
+          const hit =
+            apps.find((a) => {
+              const loc = (a.install_location || "").replace(/\//g, "\\").toLowerCase();
+              return loc && (norm.startsWith(loc) || loc.startsWith(norm) || norm === loc);
+            }) ?? null;
+          if (hit) {
+            setSelected(hit);
+            void analyze(hit);
+            setNotice(hit.name);
+          } else {
+            setNotice(`${t().dropHint}: ${path}`);
+          }
+        });
+        if (cancelled) un();
+        else unlisten = un;
+      } catch {
+        // not in tauri
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apps]);
+
   const L = useMemo(() => t(), [langVer]);
 
   const filtered = useMemo(() => {
@@ -390,6 +447,121 @@ export default function App() {
       return n;
     });
   };
+
+  const openRestoreSessions = useCallback(async () => {
+    setShowRestore(true);
+    setRestoreMsgs([]);
+    setRestorePick("");
+    setRestoreSessions([]);
+    try {
+      const names = await invoke<string[]>("list_restore_sessions");
+      setRestoreSessions(names);
+      if (names.length > 0) setRestorePick(names[0]);
+    } catch (e) {
+      setError(formatError(e));
+      setShowRestore(false);
+    }
+  }, []);
+
+  const runRestoreSession = useCallback(async () => {
+    if (!restorePick || restoreBusy) return;
+    if (!window.confirm(L.restoreConfirm)) return;
+    setRestoreBusy(true);
+    setRestoreMsgs([]);
+    try {
+      const msgs = await invoke<string[]>("restore_session_by_name", {
+        name: restorePick,
+      });
+      setRestoreMsgs(msgs.length ? msgs : ["ok"]);
+    } catch (e) {
+      setRestoreMsgs([formatError(e)]);
+    } finally {
+      setRestoreBusy(false);
+    }
+  }, [restorePick, restoreBusy, L]);
+
+  const loadManage = useCallback(async (tab: ManageTab) => {
+    setManageTab(tab);
+    setManageBusy(true);
+    try {
+      const cmd =
+        tab === "startup"
+          ? "list_startup_items"
+          : tab === "services"
+            ? "list_services"
+            : "list_scheduled_tasks";
+      const items = await invoke<ManageItem[]>(cmd);
+      setManageItems(items);
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setManageBusy(false);
+    }
+  }, []);
+
+  const toggleManageItem = useCallback(
+    async (item: ManageItem) => {
+      setManageBusy(true);
+      try {
+        if (manageTab === "startup") {
+          await invoke("set_startup_enabled", {
+            location: item.location,
+            enabled: !item.enabled,
+          });
+        } else if (manageTab === "services") {
+          await invoke("set_service_start_disabled", {
+            name: item.name,
+            disable: item.enabled,
+          });
+        } else {
+          await invoke("set_task_enabled", {
+            name: item.name,
+            enabled: !item.enabled,
+          });
+        }
+        await loadManage(manageTab);
+      } catch (e) {
+        setError(formatError(e));
+      } finally {
+        setManageBusy(false);
+      }
+    },
+    [manageTab, loadManage],
+  );
+
+  const forceClean = useCallback(async () => {
+    if (!selected || forceBusy) return;
+    if (!window.confirm(L.forceCleanHint)) return;
+    setForceBusy(true);
+    busyRef.current = true;
+    try {
+      const r = await invoke<ScanResult>("analyze_associations", { app: selected });
+      const items = r.items.filter(
+        (it) => it.confidence === "confirmed" && it.risk !== "high",
+      );
+      if (!items.length) {
+        setNotice(L.noHistory);
+        return;
+      }
+      const report = await invoke<FullCleanupReport>("run_full_cleanup", {
+        app: selected,
+        items,
+        options: {
+          dry_run: false,
+          skip_official_uninstall: true,
+          backup_enabled: true,
+        },
+      });
+      setNotice(
+        `${L.forceClean}: ${selected.name} deleted=${report.deleted} failed=${report.failed}`,
+      );
+    } catch (e) {
+      setError(formatError(e, "cleanup"));
+    } finally {
+      busyRef.current = false;
+      setForceBusy(false);
+    }
+  }, [selected, forceBusy, L]);
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
@@ -674,27 +846,50 @@ export default function App() {
         </button>
         <button
           style={css.btnGhost}
+          onClick={() => void openRestoreSessions()}
+        >
+          {L.restore}
+        </button>
+        <button
+          style={css.btnGhost}
+          onClick={() => {
+            if (showManage) {
+              setShowManage(false);
+              return;
+            }
+            setShowManage(true);
+            void loadManage("startup");
+          }}
+        >
+          {showManage ? L.manageClose : L.manage}
+        </button>
+        <button
+          style={css.btnGhost}
+          disabled={!selected || forceBusy || scanning}
+          title={selected ? L.forceCleanHint : L.selectRowHint}
+          onClick={() => void forceClean()}
+        >
+          {L.forceClean}
+        </button>
+        <button
+          style={css.btnGhost}
           onClick={async () => {
             try {
-              const names = await invoke<string[]>("list_restore_sessions");
-              if (names.length === 0) {
-                setNotice("no backup sessions");
-                return;
+              if (shellMenu) {
+                await invoke("unregister_context_menu");
+                setShellMenu(false);
+                setNotice(L.shellUnregister);
+              } else {
+                await invoke("register_context_menu");
+                setShellMenu(true);
+                setNotice(L.shellMenuOn);
               }
-              const pick = window.prompt(
-                `Sessions:\n${names.slice(0, 15).join("\n")}\n\nEnter session name to restore:`,
-                names[0],
-              );
-              if (!pick) return;
-              if (!window.confirm(L.restoreConfirm)) return;
-              const msgs = await invoke<string[]>("restore_session_by_name", { name: pick });
-              alert(msgs.slice(0, 8).join("\n") || "ok");
             } catch (e) {
               setError(formatError(e));
             }
           }}
         >
-          {L.restore}
+          {shellMenu ? L.shellUnregister : L.shellMenu}
         </button>
         {batching ? (
           <button style={{ ...css.btn, background: "#b45309" }} onClick={() => cancelBatch()}>
@@ -801,6 +996,147 @@ export default function App() {
                 <div key={i}>
                   {h.app_name} · {h.deleted}/{h.failed}
                   {h.backup_dir ? ` · ${h.backup_dir}` : ""}
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {showRestore && (
+        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <strong>{L.restoreSessions}</strong>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button
+                style={{ ...css.btn, height: 32, opacity: restoreBusy || !restorePick ? 0.5 : 1 }}
+                disabled={restoreBusy || !restorePick}
+                onClick={() => void runRestoreSession()}
+              >
+                {L.restoreRun}
+              </button>
+              <button
+                style={{ ...css.btnGhost, height: 32 }}
+                onClick={() => setShowRestore(false)}
+              >
+                {L.restoreClose}
+              </button>
+            </div>
+          </div>
+          {restoreSessions.length === 0 ? (
+            <div style={css.muted}>{L.restoreNoSessions}</div>
+          ) : (
+            <>
+              <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>
+              <div style={{ maxHeight: 180, overflow: "auto" }}>
+                {restoreSessions.map((name) => (
+                  <label
+                    key={name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 4px",
+                      borderBottom: "1px solid var(--border)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="restore-session"
+                      checked={restorePick === name}
+                      onChange={() => setRestorePick(name)}
+                    />
+                    <span>{name}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+          {restoreMsgs.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <strong>{L.restoreResult}</strong>
+              <pre
+                style={{
+                  margin: "6px 0 0",
+                  whiteSpace: "pre-wrap",
+                  fontSize: 12,
+                  color: "var(--muted)",
+                }}
+              >
+                {restoreMsgs.slice(0, 20).join("\n")}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showManage && (
+        <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+            <strong>{L.manage}</strong>
+            {(["startup", "services", "tasks"] as ManageTab[]).map((tab) => (
+              <button
+                key={tab}
+                style={{
+                  ...css.btnGhost,
+                  height: 30,
+                  borderColor: manageTab === tab ? "var(--accent)" : undefined,
+                }}
+                onClick={() => void loadManage(tab)}
+              >
+                {tab === "startup"
+                  ? L.manageStartup
+                  : tab === "services"
+                    ? L.manageServices
+                    : L.manageTasks}
+              </button>
+            ))}
+            <button
+              style={{ ...css.btnGhost, height: 30 }}
+              onClick={() => void loadManage(manageTab)}
+            >
+              {L.manageReload}
+            </button>
+            <button
+              style={{ ...css.btnGhost, height: 30, marginLeft: "auto" }}
+              onClick={() => setShowManage(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ maxHeight: 240, overflow: "auto" }}>
+            {manageBusy && <div style={css.muted}>{L.estimatingSizes}</div>}
+            {!manageBusy && manageItems.length === 0 && (
+              <div style={css.muted}>{L.noHistory}</div>
+            )}
+            {!manageBusy &&
+              manageItems.slice(0, 200).map((it) => (
+                <div
+                  key={it.location + it.name}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "6px 2px",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div>{it.name}</div>
+                    <div style={{ ...css.muted, fontSize: 12, wordBreak: "break-all" }}>
+                      {it.detail || it.location}
+                    </div>
+                  </div>
+                  <span style={{ color: it.enabled ? "var(--accent)" : "var(--muted)" }}>
+                    {it.enabled ? "●" : "○"}
+                  </span>
+                  <button
+                    style={{ ...css.btnGhost, height: 28 }}
+                    disabled={manageBusy}
+                    onClick={() => void toggleManageItem(it)}
+                  >
+                    {it.enabled ? L.manageDisable : L.manageEnable}
+                  </button>
                 </div>
               ))}
           </div>

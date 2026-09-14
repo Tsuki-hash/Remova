@@ -125,3 +125,135 @@ pub fn schtasks_delete(task_name: &str) -> bool {
 pub fn leaf_name(path: &str) -> String {
     path.rsplit('\\').next().unwrap_or("").to_string()
 }
+
+/// Rename a registry value (copy data + delete old) under `key`.
+pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (key_path, from, to);
+        Err("not windows".into())
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{RegQueryValueExW, RegSetValueExW, REG_VALUE_TYPE};
+        let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        unsafe {
+            let w = to_wide(&sub);
+            let mut hk = HKEY::default();
+            RegOpenKeyExW(
+                hive,
+                PCWSTR(w.as_ptr()),
+                0,
+                KEY_READ | KEY_SET_VALUE | access,
+                &mut hk,
+            )
+            .ok()
+            .map_err(|_| format!("open failed {key_path}"))?;
+            let from_w = to_wide(from);
+            let mut typ = REG_VALUE_TYPE(0);
+            let mut data = vec![0u8; 8192];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                hk,
+                PCWSTR(from_w.as_ptr()),
+                None,
+                Some(&mut typ),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            if st != ERROR_SUCCESS {
+                let _ = RegCloseKey(hk);
+                return Err(format!("query failed {from}"));
+            }
+            let to_w = to_wide(to);
+            let st = RegSetValueExW(
+                hk,
+                PCWSTR(to_w.as_ptr()),
+                0,
+                typ,
+                Some(&data[..data_len as usize]),
+            );
+            if st == ERROR_SUCCESS {
+                let _ = RegDeleteValueW(hk, PCWSTR(from_w.as_ptr()));
+            }
+            let _ = RegCloseKey(hk);
+            if st != ERROR_SUCCESS {
+                return Err(format!("set failed {to}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Write REG_SZ under `key_path` (creates key tree via `reg add` fallback).
+pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (key_path, value_name, data);
+        Err("not windows".into())
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        // Prefer reg.exe for reliable key creation under HKCU\Software\Classes\*\shell
+        let mut args = vec!["add".to_string(), key_path.to_string(), "/f".to_string()];
+        if !value_name.is_empty() {
+            args.push("/v".into());
+            args.push(value_name.into());
+        } else {
+            args.push("/ve".into());
+        }
+        args.push("/t".into());
+        args.push("REG_SZ".into());
+        args.push("/d".into());
+        args.push(data.into());
+        let out = Command::new("reg").args(&args).output();
+        match out {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+/// Write service Start DWORD (2=auto, 3=manual, 4=disabled).
+pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (svc_name, start);
+        Err("not windows".into())
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, REG_DWORD};
+        let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{svc_name}");
+        let (hive, sub, access) = parse(&key_path).ok_or_else(|| "bad key".to_string())?;
+        unsafe {
+            let w = to_wide(&sub);
+            let mut hk = HKEY::default();
+            RegOpenKeyExW(
+                hive,
+                PCWSTR(w.as_ptr()),
+                0,
+                KEY_SET_VALUE | access,
+                &mut hk,
+            )
+            .ok()
+            .map_err(|_| format!("open service key failed {svc_name}"))?;
+            let name_w = to_wide("Start");
+            let bytes = start.to_le_bytes();
+            let st = RegSetValueExW(
+                hk,
+                PCWSTR(name_w.as_ptr()),
+                0,
+                REG_DWORD,
+                Some(&bytes),
+            );
+            let _ = RegCloseKey(hk);
+            if st != ERROR_SUCCESS {
+                return Err(format!("write Start failed for {svc_name}"));
+            }
+        }
+        Ok(())
+    }
+}
