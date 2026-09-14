@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [1.1.1] - 2026-09-14
+## [1.1.0] - 2026-09-14
 
 ### Added
 - Async Tauri commands for all heavy IO (list/analyze/cleanup/monitor/manage)
@@ -43,9 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - List hover strip covering sticky table header
 - `delete_key` parent handle rights for `RegDeleteTreeW`
 
-## [1.1.0] - 2026-09-11
-
-### Added
+### Earlier 1.1.0 work (2026-09-11)
 - P0–P2 product backlog: Store apps, batch progress, restore UI, manage console,
   force clean, ignore list, orphan scan, HTML report, install monitor, releases link
 
