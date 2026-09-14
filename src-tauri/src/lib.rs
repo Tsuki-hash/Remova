@@ -22,6 +22,7 @@ use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
 use history::HistoryEntry;
 use scanner::{CleanupItem, ScanResult};
+use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
@@ -411,6 +412,14 @@ async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Focus the existing window when a second launch happens
+        // (e.g. Explorer context menu while Remova is already open).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
             app_icon_data,

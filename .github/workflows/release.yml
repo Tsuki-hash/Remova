@@ -23,6 +23,9 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      - name: frontend tests
+        run: npm test
+
       - name: cargo test
         run: cargo test --lib
         working-directory: src-tauri
