@@ -1,5 +1,12 @@
 import { t } from "../i18n";
+import { formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
+
+export type SessionInfo = {
+  name: string;
+  size_kb: number;
+  created_at: string;
+};
 
 export function RestorePanel({
   sessions,
@@ -8,14 +15,16 @@ export function RestorePanel({
   busy,
   msgs,
   onRun,
+  onDelete,
   onClose,
 }: {
-  sessions: string[];
+  sessions: SessionInfo[];
   pick: string;
   setPick: (v: string) => void;
   busy: boolean;
   msgs: string[];
   onRun: () => void;
+  onDelete: (name: string) => void;
   onClose: () => void;
 }) {
   const L = t();
@@ -41,10 +50,10 @@ export function RestorePanel({
       ) : (
         <>
           <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>
-          <div style={{ maxHeight: 180, overflow: "auto" }}>
-            {sessions.map((name) => (
+          <div style={{ maxHeight: 220, overflow: "auto" }}>
+            {sessions.map((s) => (
               <label
-                key={name}
+                key={s.name}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -57,10 +66,25 @@ export function RestorePanel({
                 <input
                   type="radio"
                   name="restore-session"
-                  checked={pick === name}
-                  onChange={() => setPick(name)}
+                  checked={pick === s.name}
+                  onChange={() => setPick(s.name)}
                 />
-                <span>{name}</span>
+                <span style={{ flex: 1, minWidth: 0 }} className="ell">
+                  {s.name}
+                </span>
+                <span style={{ ...css.muted, whiteSpace: "nowrap" }}>
+                  {formatSize(s.size_kb)}
+                </span>
+                <button
+                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "#b91c1c" }}
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (window.confirm(L.deleteSessionConfirm(s.name))) onDelete(s.name);
+                  }}
+                >
+                  {L.deleteSession}
+                </button>
               </label>
             ))}
           </div>

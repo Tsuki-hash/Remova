@@ -59,7 +59,9 @@ export default function App() {
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const batchCancelRef = useRef(false);
   const [showRestore, setShowRestore] = useState(false);
-  const [restoreSessions, setRestoreSessions] = useState<string[]>([]);
+  const [restoreSessions, setRestoreSessions] = useState<
+    { name: string; size_kb: number; created_at: string }[]
+  >([]);
   const [restorePick, setRestorePick] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
@@ -417,14 +419,32 @@ export default function App() {
     setRestorePick("");
     setRestoreSessions([]);
     try {
-      const names = await invoke<string[]>("list_restore_sessions");
-      setRestoreSessions(names);
-      if (names.length > 0) setRestorePick(names[0]);
+      const sessions = await invoke<
+        { name: string; size_kb: number; created_at: string }[]
+      >("list_backup_sessions");
+      setRestoreSessions(sessions);
+      if (sessions.length > 0) setRestorePick(sessions[0].name);
     } catch (e) {
       setError(formatError(e));
       setShowRestore(false);
     }
   }, []);
+
+  const deleteBackupSession = useCallback(
+    async (name: string) => {
+      try {
+        await invoke("delete_backup_session", { name });
+        const sessions = await invoke<
+          { name: string; size_kb: number; created_at: string }[]
+        >("list_backup_sessions");
+        setRestoreSessions(sessions);
+        if (restorePick === name) setRestorePick(sessions[0]?.name ?? "");
+      } catch (e) {
+        setError(formatError(e));
+      }
+    },
+    [restorePick],
+  );
 
   const runRestoreSession = useCallback(async () => {
     if (!restorePick || restoreBusy) return;
@@ -612,6 +632,27 @@ export default function App() {
       setMonitoring(false);
     }
   }, [monitoring, L]);
+
+  const monitorDiffToCleanup = useCallback(
+    async (diff: { added_files: string[]; added_reg_values: string[] }) => {
+      try {
+        const items = await invoke<ScanResult["items"]>("monitor_diff_to_items", { diff });
+        if (!items.length) {
+          setNotice(L.monitorNoSnap);
+          return;
+        }
+        setScan({ app_name: L.monitorDiff, items });
+        setSelectedPaths(
+          new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)),
+        );
+        setMonitorDiff(null);
+        setNotice(`${L.monitorToCleanup}: ${items.length}`);
+      } catch (e) {
+        setError(formatError(e));
+      }
+    },
+    [L],
+  );
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
@@ -1127,12 +1168,17 @@ export default function App() {
           busy={restoreBusy}
           msgs={restoreMsgs}
           onRun={() => void runRestoreSession()}
+          onDelete={(name) => void deleteBackupSession(name)}
           onClose={() => setShowRestore(false)}
         />
       )}
 
       {monitorDiff && (
-        <MonitorPanel diff={monitorDiff} onDismiss={() => setMonitorDiff(null)} />
+        <MonitorPanel
+          diff={monitorDiff}
+          onToCleanup={() => void monitorDiffToCleanup(monitorDiff)}
+          onDismiss={() => setMonitorDiff(null)}
+        />
       )}
 
       {showManage && (

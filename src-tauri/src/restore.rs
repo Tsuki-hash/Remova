@@ -103,6 +103,55 @@ pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
     restore_session(&path)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionInfo {
+    pub name: String,
+    pub size_kb: u64,
+    pub created_at: String,
+}
+
+fn dir_size_kb(p: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(rd) = fs::read_dir(p) {
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                total = total.saturating_add(dir_size_kb(&path));
+            } else if let Ok(md) = e.metadata() {
+                total = total.saturating_add(md.len() / 1024);
+            }
+        }
+    }
+    total
+}
+
+/// List backup sessions with size (KB) and folder name as created-at hint.
+pub fn list_session_info() -> Vec<SessionInfo> {
+    list_sessions()
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            Some(SessionInfo {
+                name: name.clone(),
+                size_kb: dir_size_kb(p),
+                created_at: name.split('_').next().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Delete one backup session by name. Path-traversal guarded.
+pub fn delete_session_by_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err("invalid session name".into());
+    }
+    let path = crate::backup::backup_root().join(name);
+    if !path.is_dir() {
+        return Err("session not found".into());
+    }
+    fs::remove_dir_all(&path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

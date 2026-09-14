@@ -130,6 +130,9 @@ const dict = {
     orphanScanEmpty: "未发现孤立残留",
     batchDetail: (deleted: number, failed: number) => `成功 ${deleted} · 失败 ${failed}`,
     histRow: (deleted: number, failed: number) => `${deleted} 成功 / ${failed} 失败`,
+    deleteSession: "删除",
+    deleteSessionConfirm: (name: string) => `将永久删除备份会话「${name}」。继续？`,
+    monitorToCleanup: "转入清理列表",
   },
   en: {
     title: "Remova",
@@ -258,6 +261,9 @@ const dict = {
     orphanScanEmpty: "No orphan leftovers found",
     batchDetail: (deleted: number, failed: number) => `ok ${deleted} · failed ${failed}`,
     histRow: (deleted: number, failed: number) => `${deleted} ok / ${failed} failed`,
+    deleteSession: "Delete",
+    deleteSessionConfirm: (name: string) => `Permanently delete backup session "${name}"?`,
+    monitorToCleanup: "Add to cleanup list",
   },
 } as const;
 

@@ -132,6 +132,53 @@ pub fn end() -> Result<MonitorDiff, String> {
     })
 }
 
+/// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
+/// Files become Dir/File items; registry values stay as `key|value` paths.
+/// Score is Suspected-level so default auto-check still applies (confirmed only).
+pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupItem> {
+    use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
+    let mut items = Vec::new();
+    for f in &diff.added_files {
+        let p = std::path::Path::new(f);
+        let kind = if p.is_dir() {
+            ItemKind::Dir
+        } else {
+            ItemKind::File
+        };
+        items.push(CleanupItem {
+            path: f.clone(),
+            kind,
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "Install monitor: new path".into(),
+            evidence: vec![Evidence {
+                code: "install_monitor".into(),
+                label: "Added during monitored install".into(),
+                weight: 30,
+                detail: String::new(),
+            }],
+        });
+    }
+    for r in &diff.added_reg_values {
+        items.push(CleanupItem {
+            path: r.clone(),
+            kind: crate::scanner::ItemKind::Registry,
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "Install monitor: new registry entry".into(),
+            evidence: vec![Evidence {
+                code: "install_monitor".into(),
+                label: "Added during monitored install".into(),
+                weight: 30,
+                detail: String::new(),
+            }],
+        });
+    }
+    items
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

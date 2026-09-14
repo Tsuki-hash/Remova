@@ -288,6 +288,18 @@ fn list_restore_sessions() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String> {
+    Ok(restore::list_session_info())
+}
+
+#[tauri::command]
+async fn delete_backup_session(name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || restore::delete_session_by_name(&name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || restore::restore_by_name(&name))
         .await
@@ -410,6 +422,11 @@ async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn monitor_diff_to_items(diff: installmon::MonitorDiff) -> Result<Vec<scanner::CleanupItem>, String> {
+    Ok(installmon::diff_to_cleanup_items(&diff))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -437,6 +454,8 @@ pub fn run() {
             disk_usage,
             elevate_restart,
             list_restore_sessions,
+            list_backup_sessions,
+            delete_backup_session,
             restore_session_by_name,
             list_startup_items,
             list_services,
@@ -452,6 +471,7 @@ pub fn run() {
             scan_orphan_leftovers,
             begin_install_monitor,
             end_install_monitor,
+            monitor_diff_to_items,
             take_pending_analyze
         ])
         .run(tauri::generate_context!())
