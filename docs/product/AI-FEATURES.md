@@ -221,9 +221,9 @@ Remova 的差异化是「**证据级可解释 + 可备份回滚**」。AI 只放
 
 | 文档 | 关系 |
 |---|---|
-| `docs/PRODUCT-GAPS.md` | 本文件是 AI 垂直路线图；完成后可回写状态 |
-| `docs/ARCHITECTURE.md` | 实施时需补 `ai` 模块到模块地图与命令表 |
-| `docs/compose/spec/ai-*.md` | 每个里程碑开工前单独写 compose spec，本文件保持总纲 |
+| `product/PRODUCT-GAPS.md` | 本文件是 AI 垂直路线图；完成后可回写状态 |
+| `ARCHITECTURE.md` | 实施时需补 `ai` 模块到模块地图与命令表 |
+| `archive/compose/spec/` | 历史 compose 规格（已归档） |
 
 ---
 
