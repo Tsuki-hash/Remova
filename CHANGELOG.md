@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Anthropic Messages API provider (`x-api-key` + `anthropic-version`) alongside OpenAI-compatible and Ollama
 - Redesigned AI settings panel: provider presets, labeled fields, key status, privacy notes
 
+### Fixed
+- Duplicate software rows when the same product is registered under both HKLM64 and HKLM32 (merge by install location / MSI product code / uninstall command; fill missing fields)
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

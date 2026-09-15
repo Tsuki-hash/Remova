@@ -58,16 +58,94 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         for (alias, hive, sub, access) in sources {
             collect_uninstall(hive, sub, access, alias, &mut out);
         }
-        // Merge Store/MSIX packages (WinRT). Dedup after sort by name+source.
+        // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
         out.extend(crate::storeapps::scan_store_apps());
     }
     out.sort_by_key(|a| a.name.to_lowercase());
+    // HKLM64 + HKLM32 often list the same product twice (same path / MSI product code).
     out.dedup_by(|a, b| {
-        a.name.eq_ignore_ascii_case(&b.name)
-            && a.version == b.version
-            && a.uninstall_string.eq_ignore_ascii_case(&b.uninstall_string)
+        if !same_product(a, b) {
+            return false;
+        }
+        merge_app_fields(a, b);
+        true
     });
     out
+}
+
+/// Uninstall string comparable form: case-insensitive, no quotes/whitespace.
+fn normalize_cmd(s: &str) -> String {
+    s.trim()
+        .to_lowercase()
+        .replace('"', "")
+        .replace('\'', "")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+fn key_leaf(registry_key: &str) -> &str {
+    registry_key.rsplit('\\').next().unwrap_or("")
+}
+
+/// True when two uninstall entries refer to the same installed product.
+pub fn same_product(a: &InstalledApp, b: &InstalledApp) -> bool {
+    if !a.name.eq_ignore_ascii_case(&b.name) {
+        return false;
+    }
+    // Same MSI/product GUID under Uninstall (even if hive/view differs).
+    let ka = key_leaf(&a.registry_key).to_lowercase();
+    let kb = key_leaf(&b.registry_key).to_lowercase();
+    if ka.starts_with('{') && ka.ends_with('}') && ka == kb {
+        return true;
+    }
+    // Same uninstall command (quote/whitespace-insensitive).
+    if !a.uninstall_string.trim().is_empty()
+        && !b.uninstall_string.trim().is_empty()
+        && normalize_cmd(&a.uninstall_string) == normalize_cmd(&b.uninstall_string)
+    {
+        return true;
+    }
+    // Same non-empty install location (the usual HKLM64/HKLM32 twin).
+    if !a.install_location.trim().is_empty()
+        && a.install_location.eq_ignore_ascii_case(&b.install_location)
+    {
+        return true;
+    }
+    false
+}
+
+/// Fill empty fields on `keep` from `drop` so the surviving row is more complete.
+fn merge_app_fields(keep: &mut InstalledApp, drop: &InstalledApp) {
+    if keep.quiet_uninstall_string.trim().is_empty() {
+        keep.quiet_uninstall_string = drop.quiet_uninstall_string.clone();
+    }
+    if keep.uninstall_string.trim().is_empty() {
+        keep.uninstall_string = drop.uninstall_string.clone();
+    }
+    if keep.install_location.trim().is_empty() {
+        keep.install_location = drop.install_location.clone();
+    }
+    if keep.estimated_size_kb <= 0 {
+        keep.estimated_size_kb = drop.estimated_size_kb;
+    }
+    if keep.display_icon.trim().is_empty() {
+        keep.display_icon = drop.display_icon.clone();
+    }
+    if keep.install_date.trim().is_empty() {
+        keep.install_date = drop.install_date.clone();
+    }
+    if keep.version.trim().is_empty() {
+        keep.version = drop.version.clone();
+    }
+    if keep.publisher.trim().is_empty() {
+        keep.publisher = drop.publisher.clone();
+    }
+    // Prefer 64-bit hive view as the canonical registry key for deletion.
+    if keep.source == "HKLM32" && drop.source == "HKLM64" {
+        keep.source = drop.source.clone();
+        keep.registry_key = drop.registry_key.clone();
+    }
 }
 
 #[cfg(windows)]
@@ -354,6 +432,100 @@ mod tests {
             parse_display_icon(r#"C:\App\app.ico"#),
             (r"C:\App\app.ico".to_string(), 0)
         );
+    }
+
+    #[test]
+    fn same_product_by_install_location() {
+        let mk = |name: &str, loc: &str, src: &str, key: &str, uns: &str| InstalledApp {
+            name: name.into(),
+            version: "1.0".into(),
+            publisher: "P".into(),
+            install_location: loc.into(),
+            uninstall_string: uns.into(),
+            quiet_uninstall_string: String::new(),
+            source: src.into(),
+            registry_key: key.into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let a = mk(
+            "Xftp 8",
+            r"C:\Program Files (x86)\NetSarang\Xftp 8",
+            "HKLM64",
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Xftp 8",
+            r"C:\Program Files (x86)\NetSarang\Xftp 8\uninst.exe",
+        );
+        let b = mk(
+            "xftp 8",
+            r"C:\Program Files (x86)\NetSarang\Xftp 8",
+            "HKLM32",
+            r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Xftp 8",
+            r#""C:\Program Files (x86)\NetSarang\Xftp 8\uninst.exe""#,
+        );
+        assert!(same_product(&a, &b));
+        let c = mk(
+            "Other App",
+            r"C:\Program Files\Other",
+            "HKLM64",
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Other",
+            "x",
+        );
+        assert!(!same_product(&a, &c));
+    }
+
+    #[test]
+    fn same_product_by_msi_guid() {
+        let mk = |src: &str| InstalledApp {
+            name: "Acme".into(),
+            version: "2".into(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: src.into(),
+            registry_key: format!(
+                r"{src}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{ABC-123}}"
+            ),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        assert!(same_product(&mk("HKLM64"), &mk("HKLM32")));
+    }
+
+    #[test]
+    fn merge_fills_empty_fields() {
+        let mut keep = InstalledApp {
+            name: "App".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: "u".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM32".into(),
+            registry_key: "HKLM32\\...\\App".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let drop = InstalledApp {
+            name: "App".into(),
+            version: "1.2".into(),
+            publisher: "Pub".into(),
+            install_location: r"C:\App".into(),
+            uninstall_string: "u".into(),
+            quiet_uninstall_string: "q".into(),
+            source: "HKLM64".into(),
+            registry_key: "HKLM64\\...\\App".into(),
+            estimated_size_kb: 99,
+            install_date: "2024-01-01".into(),
+            display_icon: "icon".into(),
+        };
+        merge_app_fields(&mut keep, &drop);
+        assert_eq!(keep.version, "1.2");
+        assert_eq!(keep.estimated_size_kb, 99);
+        assert_eq!(keep.source, "HKLM64");
     }
 
     #[cfg(windows)]
