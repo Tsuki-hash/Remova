@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-16
+
 ### Added
+- In-app confirm dialog (replaces native `window.confirm`); danger actions use hold-to-confirm
+- Toast host for success/error/info feedback with auto-dismiss
+- After official uninstall succeeds, residual review opens automatically (no extra prompt)
 - More page split into Everyday / Advanced sections with clearer tool rows
 - Service/task/startup disable confirmations with risk copy
 - Collapsible selected-app detail strip
@@ -26,13 +31,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Manage Microsoft/system filter: path + token heuristics instead of bare "windows" substring
 - Status chips use pill radius for a more consumer look
 - Restore-point status in report uses success/warn colors
-
-### Added (P0+P1 hotfix)
-- In-app confirm dialog (replaces native `window.confirm`); danger actions use hold-to-confirm
-- Toast host for success/error/info feedback with auto-dismiss
-- After official uninstall succeeds, residual review opens automatically (no extra prompt)
-
-### Changed (P0+P1 hotfix)
 - Confidence labels are human-readable (确定/疑似) instead of star glyphs
 - Analyze / batch / monitor / ignore / manage actions report results via toast with localized copy
 - Forced-clean empty result no longer reuses "no history" copy
