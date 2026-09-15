@@ -45,6 +45,15 @@ impl Default for AiConfig {
     }
 }
 
+/// Apply provider preset defaults (base_url + model) when the user switches providers.
+pub fn provider_preset(provider: &str) -> (&'static str, &'static str) {
+    match provider {
+        "anthropic" => ("https://api.anthropic.com/v1", "claude-sonnet-4-5"),
+        "ollama" => ("http://127.0.0.1:11434/v1", "llama3.2"),
+        _ => ("https://api.openai.com/v1", "gpt-4o-mini"),
+    }
+}
+
 /// Config view for UI — never returns the raw API key.
 #[derive(Debug, Clone, Serialize)]
 pub struct AiConfigView {
@@ -187,29 +196,74 @@ fn cache_put(key: u64, value: String) {
     }
 }
 
-fn normalize_base_url(u: &str) -> String {
+fn normalize_base_url(u: &str, provider: &str) -> String {
     let u = u.trim().trim_end_matches('/').to_string();
     if u.is_empty() {
-        return "https://api.openai.com/v1".into();
+        let (base, _) = provider_preset(provider);
+        return base.into();
     }
     u
 }
 
-/// Call OpenAI-compatible `/chat/completions`. Ollama uses same shape with base_url `http://127.0.0.1:11434/v1`.
-fn chat_completion(cfg: &AiConfig, system: &str, user: &str) -> Result<String, String> {
-    if !cfg.enabled {
-        return Err("ai disabled".into());
+fn build_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .timeout_read(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .build()
+}
+
+/// Anthropic Messages API (`POST /v1/messages`).
+fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, String> {
+    let key = cfg.api_key.trim();
+    if key.is_empty() {
+        return Err("anthropic api key empty".into());
     }
-    if cfg.model.trim().is_empty() {
-        return Err("ai model empty".into());
+    let base = normalize_base_url(&cfg.base_url, "anthropic");
+    // Accept either ".../v1" or full host.
+    let url = if base.ends_with("/v1") {
+        format!("{base}/messages")
+    } else {
+        format!("{base}/v1/messages")
+    };
+    let body = serde_json::json!({
+        "model": cfg.model.trim(),
+        "max_tokens": 400,
+        "temperature": 0.2,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    });
+    let resp = build_agent()
+        .post(&url)
+        .set("Content-Type", "application/json")
+        .set("x-api-key", key)
+        .set("anthropic-version", "2023-06-01")
+        .send_json(body)
+        .map_err(|e| format!("anthropic http: {e}"))?;
+    let v: serde_json::Value = resp.into_json().map_err(|e| format!("anthropic parse: {e}"))?;
+    if let Some(arr) = v["content"].as_array() {
+        let text: String = arr
+            .iter()
+            .filter_map(|c| c["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("")
+            .trim()
+            .to_string();
+        if !text.is_empty() {
+            return Ok(text);
+        }
     }
-    let needs_key = cfg.provider != "ollama" && !cfg.base_url.contains("127.0.0.1")
+    Err("anthropic empty response".into())
+}
+
+/// OpenAI-compatible `/chat/completions`. Ollama uses the same shape.
+fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String, String> {
+    let needs_key = cfg.provider != "ollama"
+        && !cfg.base_url.contains("127.0.0.1")
         && !cfg.base_url.contains("localhost");
     if needs_key && cfg.api_key.trim().is_empty() {
         return Err("ai api key empty".into());
     }
-
-    let base = normalize_base_url(&cfg.base_url);
+    let base = normalize_base_url(&cfg.base_url, &cfg.provider);
     let url = format!("{base}/chat/completions");
     let body = serde_json::json!({
         "model": cfg.model.trim(),
@@ -220,21 +274,13 @@ fn chat_completion(cfg: &AiConfig, system: &str, user: &str) -> Result<String, S
             {"role": "user", "content": user},
         ],
     });
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .timeout_read(Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .build();
-
-    let mut req = agent.post(&url).set("Content-Type", "application/json");
+    let mut req = build_agent()
+        .post(&url)
+        .set("Content-Type", "application/json");
     if !cfg.api_key.trim().is_empty() {
         req = req.set("Authorization", &format!("Bearer {}", cfg.api_key.trim()));
     }
-
-    let resp = req
-        .send_json(body)
-        .map_err(|e| format!("ai http: {e}"))?;
-
+    let resp = req.send_json(body).map_err(|e| format!("ai http: {e}"))?;
     let v: serde_json::Value = resp.into_json().map_err(|e| format!("ai parse: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
@@ -245,6 +291,20 @@ fn chat_completion(cfg: &AiConfig, system: &str, user: &str) -> Result<String, S
         return Err("ai empty response".into());
     }
     Ok(text)
+}
+
+/// Unified chat entry: anthropic | openai | ollama (openai-compatible).
+fn chat_completion(cfg: &AiConfig, system: &str, user: &str) -> Result<String, String> {
+    if !cfg.enabled {
+        return Err("ai disabled".into());
+    }
+    if cfg.model.trim().is_empty() {
+        return Err("ai model empty".into());
+    }
+    match cfg.provider.as_str() {
+        "anthropic" => chat_anthropic(cfg, system, user),
+        _ => chat_openai_compat(cfg, system, user),
+    }
 }
 
 // ── Explain items ──────────────────────────────────────────────
@@ -527,6 +587,13 @@ mod tests {
         let s = sanitize_path(p, true);
         assert!(s.contains("Users\\*\\") || s.contains("Users\\*\\"), "{s}");
         assert!(!s.contains("alice"), "{s}");
+    }
+
+    #[test]
+    fn provider_presets() {
+        assert!(provider_preset("anthropic").0.contains("anthropic"));
+        assert!(provider_preset("ollama").0.contains("11434"));
+        assert!(provider_preset("openai").0.contains("openai"));
     }
 
     #[test]
