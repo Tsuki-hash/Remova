@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -37,16 +38,9 @@ function RowMenu({
 }) {
   const L = t();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; minWidth: number } | null>(null);
 
   const items = [
     { id: "analyze", label: L.rowAnalyze, fn: onAnalyze },
@@ -57,9 +51,51 @@ function RowMenu({
       : []),
   ];
 
+  // Fixed + portal so virtualized list overflow does not clip the menu.
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const menuH = 40 + items.length * 34;
+    const spaceBelow = window.innerHeight - r.bottom;
+    const flip = spaceBelow < menuH + 8 && r.top > menuH + 8;
+    const top = flip ? r.top - menuH - 4 : r.bottom + 4;
+    const minWidth = 168;
+    const left = Math.max(8, Math.min(r.right - minWidth, window.innerWidth - minWidth - 8));
+    setPos({ top, left, minWidth });
+  }, [open, items.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (
+        menuRef.current?.contains(e.target as Node) ||
+        btnRef.current?.contains(e.target as Node)
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onScroll);
+    // Scroll closes menu — re-open on the new row position.
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onScroll);
+      document.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open]);
+
   return (
-    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+    <div style={{ position: "relative", display: "inline-block" }}>
       <button
+        ref={btnRef}
         style={{
           ...css.btnSm,
           width: 32,
@@ -77,49 +113,54 @@ function RowMenu({
       >
         ⋯
       </button>
-      {open && (
-        <div
-          role="menu"
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 2px)",
-            zIndex: 30,
-            minWidth: 160,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            boxShadow: "var(--shadow)",
-            padding: 4,
-          }}
-        >
-          {items.map((it) => (
-            <button
-              key={it.id}
-              role="menuitem"
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left" as const,
-                border: "none",
-                background: "transparent",
-                color: "var(--fg)",
-                padding: "8px 10px",
-                borderRadius: 6,
-                fontSize: 12.5,
-                cursor: "pointer",
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                it.fn(app);
-              }}
-            >
-              {it.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{
+              position: "fixed",
+              top: pos.top,
+              left: pos.left,
+              zIndex: 10000,
+              minWidth: pos.minWidth,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "var(--shadow)",
+              padding: 4,
+            }}
+          >
+            {items.map((it) => (
+              <button
+                key={it.id}
+                role="menuitem"
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left" as const,
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--fg)",
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  fontSize: 12.5,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap" as const,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  it.fn(app);
+                }}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
