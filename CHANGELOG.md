@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Startup/services toggle button labels use action verbs (启用 / 禁用) instead of status-like 已启用/已禁用
+- Service disable failures show a human message (admin rights / protected) instead of raw `open service key failed`
+- Avoid double-wrapped “操作失败：操作失败：” on manage errors
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

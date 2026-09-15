@@ -58,6 +58,24 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     return L.errElevateFailed(code);
   }
   const detail = raw.replace(/^Error:\s*/i, "").trim() || raw;
+  const low = detail.toLowerCase();
+  if (low.includes("critical system service protected") || low.includes("critical service")) {
+    return L.errServiceProtected;
+  }
+  if (
+    low.includes("open service key failed") ||
+    low.includes("write start failed") ||
+    low.includes("access is denied") ||
+    low.includes("拒绝访问")
+  ) {
+    const name =
+      detail
+        .match(/failed\s+(\S+)/i)?.[1] ||
+      detail
+        .match(/for\s+(\S+)/i)?.[1] ||
+      "";
+    return L.errServiceKey(name || detail);
+  }
   if (ctx === "analyze") return L.errAnalyzeFailed(detail);
   if (ctx === "cleanup") return L.errCleanupFailed(detail);
   if (ctx === "elevate") return L.errElevateFailed(0);

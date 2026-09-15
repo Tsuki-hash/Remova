@@ -69,12 +69,15 @@ export function ManageListPage({
         });
       }
       toast.success(
-        `${item.name} · ${item.enabled ? L.manageDisable : L.manageEnable}`,
+        item.enabled
+          ? L.manageDisabledDone(item.name)
+          : L.manageEnabledDone(item.name),
       );
       await reload();
     } catch (e) {
-      onError?.(formatError(e));
-      toast.error(L.errInvokeFailed(formatError(e)));
+      const msg = formatError(e);
+      onError?.(msg);
+      toast.error(msg);
     }
   };
 
