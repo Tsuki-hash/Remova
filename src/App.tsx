@@ -1286,22 +1286,24 @@ export default function App() {
                     kinds[it.kind] = (kinds[it.kind] || 0) + 1;
                   }
                   const brief = await invoke<string | null>("ai_risk_brief", {
-                    appName: selected.name,
-                    publisher: selected.publisher || "",
-                    action: residualFromUninstall ? "residual_cleanup" : "cleanup",
-                    itemCount: selectedPaths.size,
-                    kindCounts: kinds,
-                    hasService: (scan?.items || []).some(
-                      (it) => selectedPaths.has(it.path) && it.kind.toLowerCase().includes("service"),
-                    ),
-                    hasRunKey: (scan?.items || []).some(
-                      (it) =>
-                        selectedPaths.has(it.path) &&
-                        (it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run")),
-                    ),
-                    hasSharedHint: (scan?.items || []).some(
-                      (it) => selectedPaths.has(it.path) && it.shared,
-                    ),
+                    request: {
+                      appName: selected.name,
+                      publisher: selected.publisher || "",
+                      action: residualFromUninstall ? "residual_cleanup" : "cleanup",
+                      itemCount: selectedPaths.size,
+                      kindCounts: kinds,
+                      hasService: (scan?.items || []).some(
+                        (it) => selectedPaths.has(it.path) && it.kind.toLowerCase().includes("service"),
+                      ),
+                      hasRunKey: (scan?.items || []).some(
+                        (it) =>
+                          selectedPaths.has(it.path) &&
+                          (it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run")),
+                      ),
+                      hasSharedHint: (scan?.items || []).some(
+                        (it) => selectedPaths.has(it.path) && it.shared,
+                      ),
+                    },
                   });
                   if (brief) {
                     setAiRisk(brief);
@@ -1432,14 +1434,16 @@ export default function App() {
                       .slice(0, 5)
                       .map((d) => d.path);
                     const note = await invoke<string | null>("ai_summarize_report", {
-                      appName: report.app_name,
-                      deleted: report.deleted,
-                      failed: report.failed,
-                      skipped: report.skipped,
-                      aborted: report.aborted,
-                      backupDir: report.backup_dir || "",
-                      restorePointOk: report.restore_point_ok,
-                      topFailed,
+                      request: {
+                        appName: report.app_name,
+                        deleted: report.deleted,
+                        failed: report.failed,
+                        skipped: report.skipped,
+                        aborted: report.aborted,
+                        backupDir: report.backup_dir || "",
+                        restorePointOk: report.restore_point_ok,
+                        topFailed,
+                      },
                     });
                     setAiReportNote(note);
                     if (!note) toast.error(L.aiFailed);

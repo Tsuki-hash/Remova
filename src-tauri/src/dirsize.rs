@@ -111,7 +111,7 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
         fs::File::create(tmp.join("x.bin"))
             .unwrap()
-            .write_all(&vec![0u8; 100])
+            .write_all(&[0u8; 100])
             .unwrap();
         let flag = AtomicBool::new(true);
         assert_eq!(walk_size_kb_with(&tmp, &flag), 0);

@@ -148,7 +148,8 @@ pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSu
             out.push(IgnoreSuggestion {
                 kind: "publisher".into(),
                 value: pub_trim.to_string(),
-                reason: "该发布者存在多处共享路径残留，可选择整体忽略（请确认无本软件关键组件）".into(),
+                reason: "该发布者存在多处共享路径残留，可选择整体忽略（请确认无本软件关键组件）"
+                    .into(),
             });
         }
     }
@@ -207,8 +208,12 @@ mod tests {
             r"C:\Program Files\Common Files\Acme\lib.dll".to_string(),
         ];
         let s = suggest_from_leftovers("Acme Corp", &paths);
-        assert!(s.iter().any(|x| x.kind == "path" && x.value.contains("Package Cache")));
-        assert!(s.iter().any(|x| x.kind == "path" && x.value.contains("Common Files")));
+        assert!(s
+            .iter()
+            .any(|x| x.kind == "path" && x.value.contains("Package Cache")));
+        assert!(s
+            .iter()
+            .any(|x| x.kind == "path" && x.value.contains("Common Files")));
     }
 
     #[test]

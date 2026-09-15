@@ -108,35 +108,14 @@ fn save_ai_config(
 }
 
 #[tauri::command]
-async fn ai_risk_brief(
-    app_name: String,
-    publisher: String,
-    action: String,
-    item_count: usize,
-    kind_counts: std::collections::HashMap<String, usize>,
-    has_service: bool,
-    has_run_key: bool,
-    has_shared_hint: bool,
-) -> Result<Option<String>, String> {
+async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>, String> {
     let cfg = ai::load_config();
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let input = ai::RiskBriefInput {
-            app_name,
-            publisher,
-            action,
-            item_count,
-            kind_counts,
-            has_service,
-            has_run_key,
-            has_shared_hint,
-        };
-        ai::risk_brief(&cfg, &input).ok()
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request).ok())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -157,42 +136,18 @@ async fn ai_explain_items(
 }
 
 #[tauri::command]
-async fn ai_summarize_report(
-    app_name: String,
-    deleted: usize,
-    failed: usize,
-    skipped: usize,
-    aborted: bool,
-    backup_dir: String,
-    restore_point_ok: bool,
-    top_failed: Vec<String>,
-) -> Result<Option<String>, String> {
+async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option<String>, String> {
     let cfg = ai::load_config();
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let input = ai::ReportBriefInput {
-            app_name,
-            deleted,
-            failed,
-            skipped,
-            aborted,
-            backup_dir,
-            restore_point_ok,
-            top_failed,
-        };
-        ai::summarize_report(&cfg, &input).ok()
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request).ok())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn ai_parse_intent(
-    text: String,
-    app_names: Vec<String>,
-) -> Result<ai::NlIntent, String> {
+async fn ai_parse_intent(text: String, app_names: Vec<String>) -> Result<ai::NlIntent, String> {
     let cfg = ai::load_config();
     if !cfg.enabled {
         return Err("ai disabled".into());

@@ -239,7 +239,9 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .set("anthropic-version", "2023-06-01")
         .send_json(body)
         .map_err(|e| format!("anthropic http: {e}"))?;
-    let v: serde_json::Value = resp.into_json().map_err(|e| format!("anthropic parse: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| format!("anthropic parse: {e}"))?;
     if let Some(arr) = v["content"].as_array() {
         let text: String = arr
             .iter()
@@ -326,7 +328,8 @@ pub struct ExplainOutput {
     pub suggest_check: bool,
 }
 
-const EXPLAIN_SYSTEM: &str = "你是 Windows 深度卸载助手。根据给定的残留候选证据，用中文写 1-2 句说明：\
+const EXPLAIN_SYSTEM: &str =
+    "你是 Windows 深度卸载助手。根据给定的残留候选证据，用中文写 1-2 句说明：\
 这是什么、为何像残留、删除的常见影响。不要编造路径外的事实。\
 suggest_check 仅当 confidence=confirmed 且 risk!=high 时可为 true。\
 严格输出 JSON 数组，元素字段：path, summary, suggest_check。";
@@ -392,7 +395,10 @@ pub fn explain_items(
 
     // Map back to original paths by order / sanitized match
     for (i, p) in parsed.iter().enumerate() {
-        let orig = batch.get(i).map(|x| x.path.clone()).unwrap_or_else(|| p.path.clone());
+        let orig = batch
+            .get(i)
+            .map(|x| x.path.clone())
+            .unwrap_or_else(|| p.path.clone());
         let item = ExplainOutput {
             path: orig,
             summary: p.summary.clone(),
@@ -416,6 +422,7 @@ pub fn explain_items(
 // ── Risk brief ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RiskBriefInput {
     pub app_name: String,
     pub publisher: String,
@@ -427,10 +434,12 @@ pub struct RiskBriefInput {
     pub has_shared_hint: bool,
 }
 
-const RISK_SYSTEM: &str = "你是 Windows 卸载风险说明助手。用中文写 2-3 句：这次操作做什么、可能影响什么、\
+const RISK_SYSTEM: &str =
+    "你是 Windows 卸载风险说明助手。用中文写 2-3 句：这次操作做什么、可能影响什么、\
 哪些项默认不会删。语气克制、可执行。不要输出 Markdown 标题。";
 
-const REPORT_SYSTEM: &str = "你是 Windows 卸载报告解读助手。用中文写 3-5 句：删了什么、失败怎么办、\
+const REPORT_SYSTEM: &str =
+    "你是 Windows 卸载报告解读助手。用中文写 3-5 句：删了什么、失败怎么办、\
 是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
 
 pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
@@ -465,12 +474,16 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, Stri
 
 fn strip_code_fence(s: &str) -> String {
     let t = s.trim();
-    let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
+    let t = t
+        .strip_prefix("```json")
+        .or_else(|| t.strip_prefix("```"))
+        .unwrap_or(t);
     let t = t.strip_suffix("```").unwrap_or(t);
     t.trim().to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReportBriefInput {
     pub app_name: String,
     pub deleted: usize,
@@ -550,7 +563,11 @@ filter 字段可选：name_like（关键词）、publisher、size_gt_kb（整数
 只输出一个 JSON 对象，不要解释。字段：action, filter, include_leftovers, note。\
 note 用一句话复述计划（中文）。";
 
-pub fn parse_nl_intent(cfg: &AiConfig, user_text: &str, app_names: &[String]) -> Result<NlIntent, String> {
+pub fn parse_nl_intent(
+    cfg: &AiConfig,
+    user_text: &str,
+    app_names: &[String],
+) -> Result<NlIntent, String> {
     let names: Vec<&str> = app_names.iter().take(40).map(|s| s.as_str()).collect();
     let user = format!(
         "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",

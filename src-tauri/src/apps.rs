@@ -77,8 +77,7 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
 fn normalize_cmd(s: &str) -> String {
     s.trim()
         .to_lowercase()
-        .replace('"', "")
-        .replace('\'', "")
+        .replace(['"', '\''], "")
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect()
