@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-16
+
 ### Added
 - AI orchestration module (`ai.rs`): OpenAI-compatible / Ollama chat, path sanitize, TTL cache
 - AI settings panel (More → Advanced): enable, provider, base URL, model, API key, path-sharing toggle
@@ -17,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rule-based ignore suggestions for shared leftover roots (Package Cache, Common Files, …)
 - Design doc: `docs/AI-FEATURES.md`
 - Dependency: `ureq` (rustls) for backend AI HTTP
+
+### Notes
+- AI features are **off by default**; core uninstall path is unchanged without configuration
+- AI never deletes files — it only explains, ranks, and plans; `safety` gates still apply
 
 ## [1.2.1] - 2026-09-16
 
