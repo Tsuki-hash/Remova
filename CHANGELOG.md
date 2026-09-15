@@ -6,13 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-16
+
 ### Changed
 - No permanent “Administrator” toolbar button (matches Geek/IObit-style tools). Non-admin chip is clickable; manage actions offer one-shot elevated restart when needed.
 
 ### Fixed
+- Duplicate software rows when the same product is registered under both HKLM64 and HKLM32
+- Row `⋯` menu clipped by virtualized list overflow (portal + fixed positioning)
+- Beginner-friendly filters: removed technical source dropdown; chips use 桌面程序 / 商店应用; friendly source labels in details
 - Startup/services toggle button labels use action verbs (启用 / 禁用) instead of status-like 已启用/已禁用
 - Service disable failures show a human message (admin rights / protected) instead of raw `open service key failed`
+- Structured manage error codes (`manage:access_denied|protected|…`) with Chinese guidance and elevate prompt
 - Avoid double-wrapped “操作失败：操作失败：” on manage errors
+- CI: `cargo fmt` / `clippy -D warnings` clean
+
+### Added
+- Anthropic Messages API provider (`x-api-key` + `anthropic-version`) alongside OpenAI-compatible and Ollama
+- Redesigned AI settings panel: provider presets, labeled fields, key status, privacy notes
 
 ## [1.3.0] - 2026-09-16
 
