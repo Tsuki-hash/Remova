@@ -27,6 +27,7 @@ export type CleanupItem = {
   risk: "low" | "medium" | "high";
   reason: string;
   evidence: Evidence[];
+  shared?: boolean;
 };
 
 export type ScanResult = {

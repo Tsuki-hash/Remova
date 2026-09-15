@@ -158,6 +158,7 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 weight: 30,
                 detail: String::new(),
             }],
+            shared: false,
         });
     }
     for r in &diff.added_reg_values {
@@ -174,6 +175,7 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 weight: 30,
                 detail: String::new(),
             }],
+            shared: false,
         });
     }
     items

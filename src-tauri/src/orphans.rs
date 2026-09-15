@@ -115,6 +115,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                     weight: score,
                     detail: name,
                 }],
+                shared: false,
             });
             if out.len() >= 80 {
                 return out;

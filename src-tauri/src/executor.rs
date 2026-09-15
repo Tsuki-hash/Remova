@@ -577,6 +577,7 @@ mod tests {
             risk: crate::scanner::RiskLevel::Low,
             reason: "t".into(),
             evidence: vec![],
+            shared: false,
         }];
         let r = run_cleanup_dry("App", &items);
         assert!(r.dry_run);
@@ -594,6 +595,7 @@ mod tests {
             risk: crate::scanner::RiskLevel::High,
             reason: "t".into(),
             evidence: vec![],
+            shared: false,
         }];
         let r = run_cleanup_dry("App", &items);
         assert_eq!(r.skipped, 1);

@@ -96,6 +96,8 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiNotes, setAiNotes] = useState<Record<string, string>>({});
   const [aiRisk, setAiRisk] = useState<string | null>(null);
+  const [aiReportNote, setAiReportNote] = useState<string | null>(null);
+  const [aiReportBusy, setAiReportBusy] = useState(false);
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
@@ -157,7 +159,12 @@ export default function App() {
         setSelectedPaths(
           new Set(
             r.items
-              .filter((it) => it.confidence === "confirmed" && it.risk !== "high")
+              .filter(
+                (it) =>
+                  it.confidence === "confirmed" &&
+                  it.risk !== "high" &&
+                  !it.shared,
+              )
               .map((it) => it.path),
           ),
         );
@@ -750,6 +757,7 @@ export default function App() {
       setReport(r);
       if (r && typeof r === "object" && "deleted" in r) {
         setLastReport(r as FullCleanupReport);
+        setAiReportNote(null);
         const fr = r as FullCleanupReport;
         if (fr.failed > 0) {
           toast.error(L.batchDetail(fr.deleted, fr.failed));
@@ -1225,7 +1233,9 @@ export default function App() {
                         selectedPaths.has(it.path) &&
                         (it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run")),
                     ),
-                    hasSharedHint: false,
+                    hasSharedHint: (scan?.items || []).some(
+                      (it) => selectedPaths.has(it.path) && it.shared,
+                    ),
                   });
                   if (brief) {
                     setAiRisk(brief);
@@ -1344,7 +1354,55 @@ export default function App() {
                 {L.openBackupDir}
               </button>
             )}
+            {aiEnabled && "deleted" in report && (
+              <button
+                style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
+                disabled={aiReportBusy}
+                onClick={async () => {
+                  setAiReportBusy(true);
+                  try {
+                    const topFailed = (report.item_details || [])
+                      .filter((d) => d.status && d.status.toLowerCase().includes("fail"))
+                      .slice(0, 5)
+                      .map((d) => d.path);
+                    const note = await invoke<string | null>("ai_summarize_report", {
+                      appName: report.app_name,
+                      deleted: report.deleted,
+                      failed: report.failed,
+                      skipped: report.skipped,
+                      aborted: report.aborted,
+                      backupDir: report.backup_dir || "",
+                      restorePointOk: report.restore_point_ok,
+                      topFailed,
+                    });
+                    setAiReportNote(note);
+                    if (!note) toast.error(L.aiFailed);
+                  } catch {
+                    toast.error(L.aiFailed);
+                  } finally {
+                    setAiReportBusy(false);
+                  }
+                }}
+              >
+                {aiReportBusy ? L.aiReportBusy : L.aiReportSummary}
+              </button>
+            )}
           </div>
+          {aiReportNote && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "8px 10px",
+                borderRadius: 8,
+                background: "var(--accent-soft)",
+                fontSize: 12.5,
+                lineHeight: 1.5,
+              }}
+            >
+              ✦ {aiReportNote}
+              <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
+            </div>
+          )}
           {report.item_details.length > 0 && (
             <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8, color: "var(--muted)" }}>
               {report.item_details.slice(0, 50).map((d, i) => (
@@ -1458,6 +1516,19 @@ export default function App() {
                     </td>
                     <td style={css.td}>
                       <span style={css.sourceBadge}>{it.kind}</span>
+                      {it.shared && (
+                        <span
+                          style={{
+                            ...css.sourceBadge,
+                            marginLeft: 6,
+                            color: "var(--warn)",
+                            borderColor: "var(--warn)",
+                          }}
+                          title={L.sharedHint}
+                        >
+                          {L.badgeShared}
+                        </span>
+                      )}
                     </td>
                     <td style={css.td}>
                       <span

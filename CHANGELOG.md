@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AI settings panel (More → Advanced): enable, provider, base URL, model, API key, path-sharing toggle
 - Residual list “AI explain” button + per-row model summaries (advisory only)
 - Cleanup confirm includes optional AI risk brief when enabled
+- Shared-runtime heuristic (`shared.rs`): VC++/.NET/WebView/etc. marked and unchecked by default
+- Optional AI cleanup-report summary button
 - Design doc: `docs/AI-FEATURES.md`
 - Dependency: `ureq` (rustls) for backend AI HTTP
 

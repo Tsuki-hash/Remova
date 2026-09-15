@@ -300,6 +300,7 @@ mod tests {
             risk: RiskLevel::Low,
             reason: "t".into(),
             evidence: vec![],
+            shared: false,
         };
         assert!(backup_item(&item, &tmp).is_ok());
         let _ = fs::remove_dir_all(&tmp);

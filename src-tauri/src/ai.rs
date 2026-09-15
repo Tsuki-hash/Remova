@@ -370,6 +370,9 @@ pub struct RiskBriefInput {
 const RISK_SYSTEM: &str = "你是 Windows 卸载风险说明助手。用中文写 2-3 句：这次操作做什么、可能影响什么、\
 哪些项默认不会删。语气克制、可执行。不要输出 Markdown 标题。";
 
+const REPORT_SYSTEM: &str = "你是 Windows 卸载报告解读助手。用中文写 3-5 句：删了什么、失败怎么办、\
+是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
+
 pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
     let key = fnv1a64(&format!(
         "risk|{}|{}|{}|{}|{}|{}|{}",
@@ -405,6 +408,47 @@ fn strip_code_fence(s: &str) -> String {
     let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t);
     let t = t.strip_suffix("```").unwrap_or(t);
     t.trim().to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportBriefInput {
+    pub app_name: String,
+    pub deleted: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub aborted: bool,
+    pub backup_dir: String,
+    pub restore_point_ok: bool,
+    pub top_failed: Vec<String>,
+}
+
+pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
+    let key = fnv1a64(&format!(
+        "report|{}|{}|{}|{}|{}|{}",
+        input.app_name,
+        input.deleted,
+        input.failed,
+        input.skipped,
+        input.aborted,
+        input.restore_point_ok
+    ));
+    if let Some(c) = cache_get(key) {
+        return Ok(c);
+    }
+    let user = format!(
+        "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n备份目录: {}\n还原点: {}\n失败样例: {}",
+        input.app_name,
+        input.deleted,
+        input.failed,
+        input.skipped,
+        input.aborted,
+        sanitize_path(&input.backup_dir, true),
+        input.restore_point_ok,
+        input.top_failed.join(" | ")
+    );
+    let text = chat_completion(cfg, REPORT_SYSTEM, &user)?;
+    cache_put(key, text.clone());
+    Ok(text)
 }
 
 #[cfg(test)]

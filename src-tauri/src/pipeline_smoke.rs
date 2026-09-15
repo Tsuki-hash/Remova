@@ -48,6 +48,7 @@ fn file_item(path: &str) -> CleanupItem {
             weight: 90,
             detail: String::new(),
         }],
+        shared: false,
     }
 }
 
@@ -120,6 +121,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             risk: RiskLevel::Low,
             reason: "t".into(),
             evidence: vec![],
+            shared: false,
         },
         CleanupItem {
             path: r"C:\Windows".into(),
@@ -129,6 +131,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             risk: RiskLevel::Low,
             reason: "t".into(),
             evidence: vec![],
+            shared: false,
         },
     ];
     let dry = run_cleanup_dry("Protected", &items);

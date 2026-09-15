@@ -47,6 +47,9 @@ pub struct CleanupItem {
     pub risk: RiskLevel,
     pub reason: String,
     pub evidence: Vec<Evidence>,
+    /// Shared runtime / redistributable — default do-not-select.
+    #[serde(default)]
+    pub shared: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +203,7 @@ fn push_item(
         risk,
         reason,
         evidence,
+        shared: false,
     });
 }
 
@@ -287,6 +291,7 @@ pub fn analyze_associations(
                     weight: 90,
                     detail: root.to_string_lossy().to_string(),
                 }],
+                shared: false,
             });
         }
     }
@@ -373,6 +378,7 @@ pub fn analyze_associations(
                     weight: score,
                     detail: file_name.to_string(),
                 }],
+                shared: false,
             });
         }
     }
@@ -392,6 +398,7 @@ pub fn analyze_associations(
                 weight: 90,
                 detail: registry_key.to_string(),
             }],
+            shared: false,
         });
     }
 
@@ -422,6 +429,7 @@ pub fn analyze_associations(
                                 weight: 50,
                                 detail: target,
                             }],
+                            shared: false,
                         });
                     }
                 }
@@ -491,6 +499,10 @@ pub fn analyze_associations(
     scan_shortcuts(&name_slugs, &exe_stems, &install_low, &mut items);
     scan_temp(&name_slugs, &mut items);
 
+    for it in &mut items {
+        it.shared = crate::shared::is_shared_item(name, &it.path, &it.reason);
+    }
+
     ScanResult {
         app_name: name.to_string(),
         items,
@@ -530,6 +542,7 @@ fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                     weight: score,
                     detail: slug.clone(),
                 }],
+                shared: false,
             });
         }
     }
@@ -632,6 +645,7 @@ fn walk_shortcuts(
                 weight: 50,
                 detail: stem.to_string(),
             }],
+            shared: false,
         });
     }
 }
@@ -685,6 +699,7 @@ fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                     .to_string_lossy()
                     .to_string(),
             }],
+            shared: false,
         });
     }
 }
@@ -732,6 +747,7 @@ fn scan_services(
                 weight: score,
                 detail: image.chars().take(120).collect(),
             }],
+            shared: false,
         });
     }
 }
@@ -770,6 +786,7 @@ fn scan_scheduled_tasks(name_slugs: &[String], install_low: &str, items: &mut Ve
                 weight: score,
                 detail: top,
             }],
+            shared: false,
         });
     }
 }

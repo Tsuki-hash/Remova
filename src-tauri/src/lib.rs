@@ -18,6 +18,7 @@ pub mod regscan;
 pub mod restore;
 pub mod safety;
 pub mod scanner;
+pub mod shared;
 pub mod storeapps;
 pub mod sysops;
 
@@ -150,6 +151,38 @@ async fn ai_explain_items(
     }
     tauri::async_runtime::spawn_blocking(move || {
         ai::explain_items(&cfg, &app_name, &publisher, &items).unwrap_or_default()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_summarize_report(
+    app_name: String,
+    deleted: usize,
+    failed: usize,
+    skipped: usize,
+    aborted: bool,
+    backup_dir: String,
+    restore_point_ok: bool,
+    top_failed: Vec<String>,
+) -> Result<Option<String>, String> {
+    let cfg = ai::load_config();
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let input = ai::ReportBriefInput {
+            app_name,
+            deleted,
+            failed,
+            skipped,
+            aborted,
+            backup_dir,
+            restore_point_ok,
+            top_failed,
+        };
+        ai::summarize_report(&cfg, &input).ok()
     })
     .await
     .map_err(|e| e.to_string())
@@ -587,7 +620,8 @@ pub fn run() {
             get_ai_config,
             save_ai_config,
             ai_risk_brief,
-            ai_explain_items
+            ai_explain_items,
+            ai_summarize_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
