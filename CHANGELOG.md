@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Duplicate software rows when the same product is registered under both HKLM64 and HKLM32 (merge by install location / MSI product code / uninstall command; fill missing fields)
+- Row `⋯` menu clipped by virtualized list overflow (portal + fixed positioning)
+- Removed technical source dropdown (HKCU/HKLM64/HKLM32) from toolbar; category chips use beginner labels (桌面程序 / 商店应用); detail strip shows friendly source names
 
 ## [1.3.0] - 2026-09-16
 

@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { prettyAppName, prettyPublisher, shortPath } from "../lib/format";
+import { prettyAppName, prettyPublisher, shortPath, sourceLabel } from "../lib/format";
+
+const labels = {
+  sourceHkcu: "当前用户",
+  sourceHklm64: "系统 64 位",
+  sourceHklm32: "系统 32 位",
+  sourceStore: "Microsoft Store",
+};
+
+describe("sourceLabel", () => {
+  it("maps technical codes to beginner labels", () => {
+    expect(sourceLabel("HKLM64", labels)).toBe("系统 64 位");
+    expect(sourceLabel("HKLM32", labels)).toBe("系统 32 位");
+    expect(sourceLabel("HKCU", labels)).toBe("当前用户");
+    expect(sourceLabel("Store", labels)).toBe("Microsoft Store");
+    expect(sourceLabel("Custom", labels)).toBe("Custom");
+  });
+});
 
 describe("prettyAppName", () => {
   it("store GUID shortened", () => {

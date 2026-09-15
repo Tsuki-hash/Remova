@@ -27,6 +27,22 @@ export function shortPath(p: string): string {
   return `${s.slice(0, 20)}…${s.slice(-20)}`;
 }
 
+/** Beginner-facing label for registry/store source codes. */
+export function sourceLabel(source: string, L: { sourceHkcu: string; sourceHklm64: string; sourceHklm32: string; sourceStore: string }): string {
+  switch (source) {
+    case "HKCU":
+      return L.sourceHkcu;
+    case "HKLM64":
+      return L.sourceHklm64;
+    case "HKLM32":
+      return L.sourceHklm32;
+    case "Store":
+      return L.sourceStore;
+    default:
+      return source;
+  }
+}
+
 export type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
 
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {

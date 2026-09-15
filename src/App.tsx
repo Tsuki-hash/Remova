@@ -17,7 +17,7 @@ import {
   BatchSummaryPanel,
   type BatchItemResult,
 } from "./components/BatchPanels";
-import { escapeHtml, formatError, prettyAppName } from "./lib/format";
+import { escapeHtml, formatError, prettyAppName, sourceLabel } from "./lib/format";
 import { applyTheme, loadNav, loadTheme, saveNav, type NavId, type Theme } from "./lib/theme";
 import { Shell } from "./components/Shell";
 import { ManageListPage } from "./components/ManageListPage";
@@ -51,7 +51,6 @@ export default function App() {
   const batchUseOfficial = true;
   /** Deep-analyze leftover path can still opt into official uninstaller. */
   const [useOfficial, setUseOfficial] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState<string>("");
   const [sortCol, setSortCol] = useState<"name" | "size" | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
   const [admin, setAdmin] = useState<boolean | null>(null);
@@ -486,9 +485,6 @@ export default function App() {
         .sort((a, b) => (b.install_date || "").localeCompare(a.install_date || ""))
         .slice(0, 50);
     }
-    if (sourceFilter) {
-      list = list.filter((a) => a.source === sourceFilter);
-    }
     if (needle) {
       list = list.filter(
         (a) =>
@@ -505,7 +501,7 @@ export default function App() {
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
+  }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, category]);
 
   const sortBy = (col: "name" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -1069,19 +1065,6 @@ export default function App() {
                 }}
                 aria-label={L.search}
               />
-              <select
-                style={{ ...css.input, flex: "0 0 auto", minWidth: 110, height: 36 }}
-                value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value)}
-                aria-label={L.colSource}
-              >
-                <option value="">{L.allSources}</option>
-                {Array.from(new Set(apps.map((a) => a.source))).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
               {estimating && (
                 <button style={css.btnSm} title={L.stopEstimateHint} onClick={() => void stopSizeEstimate()}>
                   {L.stopEstimate}
@@ -1146,7 +1129,9 @@ export default function App() {
             <strong style={{ fontSize: 13.5 }}>
               {prettyAppName(selected.name, selected.source)}
             </strong>
-            <span style={css.sourceBadge}>{selected.source}</span>
+            <span style={css.sourceBadge} title={selected.source}>
+              {sourceLabel(selected.source, L)}
+            </span>
             <button
               style={{ ...css.btnSm, height: 26, marginLeft: "auto" }}
               onClick={() => setShowDetail((v) => !v)}
@@ -1719,7 +1704,7 @@ export default function App() {
                     <td colSpan={4} style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}>
                       {loading
                         ? L.loadingApps
-                        : q.trim() || sourceFilter || category !== "all"
+                        : q.trim() || category !== "all"
                           ? L.emptySearch
                           : L.emptyList}
                     </td>
