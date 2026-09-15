@@ -1,6 +1,6 @@
 /**
- * Remova styles — dark professional tool (convention mode).
- * Tight radii (6px), hairline borders, mono for data, sky accent rail.
+ * Remova styles — light-first consumer shell (IObit-like).
+ * Soft blue accent, rounded cards, mono for data. Tokens live in lib/theme.ts.
  */
 
 export const cssStyles = {

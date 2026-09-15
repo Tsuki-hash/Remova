@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { toast } from "../lib/toast";
 import { useManageList, type ManageTabId } from "../lib/useManageList";
 import type { ManageItem } from "./ManagePanel";
 
@@ -25,12 +26,10 @@ function looksMicrosoft(it: ManageItem): boolean {
 export function ManageListPage({
   tab,
   title,
-  onNotice,
   onError,
 }: {
   tab: ManagePageTab;
   title: string;
-  onNotice?: (msg: string) => void;
   onError?: (msg: string) => void;
 }) {
   const L = t();
@@ -63,10 +62,11 @@ export function ManageListPage({
           enabled: !item.enabled,
         });
       }
-      onNotice?.(item.enabled ? L.manageDisable : L.manageEnable);
+      toast.success(item.enabled ? L.manageDisable : L.manageEnable);
       await reload();
     } catch (e) {
       onError?.(formatError(e));
+      toast.error(L.errInvokeFailed(formatError(e)));
     } finally {
       // busy handled by hook reload
     }

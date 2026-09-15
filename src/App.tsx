@@ -22,6 +22,10 @@ import { applyTheme, loadNav, loadTheme, saveNav, type NavId, type Theme } from 
 import { Shell } from "./components/Shell";
 import { ManageListPage } from "./components/ManageListPage";
 import { MorePage } from "./components/MorePage";
+import { ConfirmHost } from "./components/ui/ConfirmHost";
+import { ToastHost } from "./components/ui/ToastHost";
+import { requestConfirm } from "./lib/confirm";
+import { toast } from "./lib/toast";
 
 declare const __APP_VERSION__: string;
 
@@ -64,7 +68,6 @@ export default function App() {
   }, []);
   const [langVer, setLangVer] = useState(0);
   const [showGuide, setShowGuide] = useState(!localStorage.getItem("remova_guided"));
-  const [notice, setNotice] = useState<string | null>(null);
   const [batching, setBatching] = useState(false);
   const [batchIndex, setBatchIndex] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
@@ -75,8 +78,8 @@ export default function App() {
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
   const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
-  const [officialResult, setOfficialResult] = useState<OfficialUninstallResult | null>(null);
-  const [postUninstallApp, setPostUninstallApp] = useState<InstalledApp | null>(null);
+  /** Residual cleanup after official uninstall always skips a second official run. */
+  const [residualFromUninstall, setResidualFromUninstall] = useState(false);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
   const [monitoring, setMonitoring] = useState(false);
@@ -130,32 +133,38 @@ export default function App() {
     saveNav(n);
   }, []);
 
-  const analyze = useCallback(async (app: InstalledApp) => {
-    goNav("software");
-    setSelected(app);
-    setScanning(true);
-    setScan(null);
-    setReport(null);
-    const t0 = performance.now();
-    try {
-      const r = await invoke<ScanResult>("analyze_associations", { app });
-      setScan(r);
-      // default select confirmed non-high
-      setSelectedPaths(
-        new Set(
-          r.items
-            .filter((it) => it.confidence === "confirmed" && it.risk !== "high")
-            .map((it) => it.path),
-        ),
-      );
-      setError(null);
-      setNotice(`analyze ${((performance.now() - t0) / 1000).toFixed(1)}s · ${r.items.length} items`);
-    } catch (e) {
-      setError(formatError(e, "analyze"));
-    } finally {
-      setScanning(false);
-    }
-  }, [goNav]);
+  const analyze = useCallback(
+    async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
+      goNav("software");
+      if (!opts?.fromUninstall) setResidualFromUninstall(false);
+      setSelected(app);
+      setScanning(true);
+      setScan(null);
+      setReport(null);
+      const t0 = performance.now();
+      try {
+        const r = await invoke<ScanResult>("analyze_associations", { app });
+        setScan(r);
+        setSelectedPaths(
+          new Set(
+            r.items
+              .filter((it) => it.confidence === "confirmed" && it.risk !== "high")
+              .map((it) => it.path),
+          ),
+        );
+        setError(null);
+        toast.success(
+          t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),
+        );
+      } catch (e) {
+        setError(formatError(e, "analyze"));
+        toast.error(t().errAnalyzeFailed(formatError(e, "analyze")));
+      } finally {
+        setScanning(false);
+      }
+    },
+    [goNav],
+  );
 
   const refreshApps = useCallback(async () => {
     try {
@@ -170,54 +179,42 @@ export default function App() {
     async (app: InstalledApp) => {
       const strings = t();
       const label = prettyAppName(app.name, app.source);
-      if (!window.confirm(strings.uninstallConfirm(label))) return;
+      const ok = await requestConfirm({
+        title: strings.uninstall,
+        message: strings.uninstallConfirm(label),
+        confirmLabel: strings.uninstall,
+      });
+      if (!ok) return;
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
-      setOfficialResult(null);
-      setPostUninstallApp(null);
+      setResidualFromUninstall(false);
       busyRef.current = true;
       try {
         const r = await invoke<OfficialUninstallResult>("run_official_uninstall", { app });
-        setOfficialResult(r);
         if (!r.had_command) {
-          setNotice(strings.uninstallNoCmd);
+          toast.info(strings.uninstallNoCmd);
         } else if (r.ok) {
-          setNotice(strings.uninstallOk);
+          toast.success(strings.uninstallOk);
         } else {
-          setNotice(`${strings.uninstallFail}: ${r.message}`);
+          toast.error(`${strings.uninstallFail}: ${r.message}`);
         }
         if (r.had_command && r.ok) {
-          setPostUninstallApp(app);
+          // Capture app before refresh; enter residual review automatically.
+          toast.info(strings.uninstallScanningLeftovers);
+          await analyze(app, { fromUninstall: true });
         }
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
+        toast.error(strings.errCleanupFailed(formatError(e, "cleanup")));
       } finally {
         busyRef.current = false;
         setUninstallingKey(null);
       }
     },
-    [refreshApps],
+    [analyze, refreshApps],
   );
-
-  const scanLeftoversFor = useCallback(
-    async (app: InstalledApp) => {
-      setPostUninstallApp(null);
-      setOfficialResult(null);
-      goNav("software");
-      await analyze(app);
-    },
-    [analyze, goNav],
-  );
-
-  const skipLeftovers = useCallback(async () => {
-    setPostUninstallApp(null);
-    setOfficialResult(null);
-    setScan(null);
-    setReport(null);
-    await refreshApps();
-  }, [refreshApps]);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,7 +263,7 @@ export default function App() {
         if (!tag) return;
         const cur = __APP_VERSION__;
         if (compareSemver(tag, cur) > 0) {
-          setNotice(`${t().versionNew}: v${tag}`);
+          toast.info(`${t().versionNew}: v${tag}`);
         }
       } catch {
         // offline / blocked — ignore
@@ -280,11 +277,13 @@ export default function App() {
         const win = getCurrentWindow();
         await win.onCloseRequested(async (event) => {
           if (busyRef.current) {
-            if (
-              !window.confirm(
-                t().closeConfirmBusy,
-              )
-            ) {
+            const ok = await requestConfirm({
+              title: t().closeConfirmBusy,
+              confirmLabel: t().confirmOk,
+              cancelLabel: t().cancel,
+              danger: true,
+            });
+            if (!ok) {
               event.preventDefault();
             }
           }
@@ -361,7 +360,7 @@ export default function App() {
           void analyze(hit);
         } else {
           setQ(p);
-          setNotice(p);
+          toast.info(p);
         }
       })
       .catch(() => {});
@@ -402,9 +401,9 @@ export default function App() {
           if (hit) {
             setSelected(hit);
             void analyze(hit);
-            setNotice(hit.name);
+            toast.info(prettyAppName(hit.name, hit.source));
           } else {
-            setNotice(`${t().dropHint}: ${path}`);
+            toast.info(`${t().dropHint}: ${path}`);
           }
         });
         if (cancelled) un();
@@ -507,7 +506,13 @@ export default function App() {
     async (appOverride?: InstalledApp) => {
       const target = appOverride ?? selected;
       if (!target || forceBusy) return;
-      if (!window.confirm(L.forceCleanHint)) return;
+      const ok = await requestConfirm({
+        title: L.forceClean,
+        message: `${prettyAppName(target.name, target.source)}\n${L.forceCleanHint}`,
+        confirmLabel: L.forceClean,
+        danger: true,
+      });
+      if (!ok) return;
       setForceBusy(true);
       busyRef.current = true;
       try {
@@ -516,7 +521,7 @@ export default function App() {
           (it) => it.confidence === "confirmed" && it.risk !== "high",
         );
         if (!items.length) {
-          setNotice(L.noHistory);
+          toast.info(L.toastForceCleanEmpty);
           return;
         }
         const report = await invoke<FullCleanupReport>("run_full_cleanup", {
@@ -528,11 +533,14 @@ export default function App() {
             backup_enabled: true,
           },
         });
-        setNotice(`${L.forceClean}: ${target.name} · ${L.batchDetail(report.deleted, report.failed)}`);
+        toast.success(
+          `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
+        );
         setLastReport(report);
         void refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
+        toast.error(L.errCleanupFailed(formatError(e, "cleanup")));
       } finally {
         busyRef.current = false;
         setForceBusy(false);
@@ -550,7 +558,7 @@ export default function App() {
           name: pub,
         });
         setIgnorePub(ig.publishers || []);
-        setNotice(L.ignoreLoaded);
+        toast.success(L.ignoreLoaded);
       } catch (e) {
         setError(formatError(e));
       }
@@ -567,7 +575,7 @@ export default function App() {
           name,
         });
         setIgnoreName(ig.names || []);
-        setNotice(L.ignoreLoaded);
+        toast.success(L.ignoreLoaded);
       } catch (e) {
         setError(formatError(e));
       }
@@ -602,7 +610,7 @@ export default function App() {
   }, [lastReport]);
 
   const runOrphanScan = useCallback(async () => {
-    setNotice(L.orphanScanning);
+    toast.info(L.orphanScanning);
     try {
       const items = await invoke<ScanResult["items"]>("scan_orphan_leftovers");
       goNav("software");
@@ -611,9 +619,11 @@ export default function App() {
         items,
       });
       setSelectedPaths(new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)));
-      setNotice(items.length === 0 ? L.orphanScanEmpty : `${L.orphanScan}: ${items.length}`);
+      if (items.length === 0) toast.info(L.orphanScanEmpty);
+      else toast.success(`${L.orphanScan}: ${items.length}`);
     } catch (e) {
       setError(formatError(e, "analyze"));
+      toast.error(L.errAnalyzeFailed(formatError(e, "analyze")));
     }
   }, [L, goNav]);
 
@@ -623,17 +633,18 @@ export default function App() {
         await invoke("begin_install_monitor");
         setMonitoring(true);
         setMonitorDiff(null);
-        setNotice(L.monitorRunning);
+        toast.info(L.monitorRunning);
       } else {
         const d = await invoke<{ added_files: string[]; added_reg_values: string[] }>(
           "end_install_monitor",
         );
         setMonitoring(false);
         setMonitorDiff(d);
-        setNotice(`${L.monitorDiff}: ${d.added_files.length} files / ${d.added_reg_values.length} reg`);
+        toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length));
       }
     } catch (e) {
       setError(formatError(e));
+      toast.error(L.errInvokeFailed(formatError(e)));
       setMonitoring(false);
     }
   }, [monitoring, L]);
@@ -643,7 +654,7 @@ export default function App() {
       try {
         const items = await invoke<ScanResult["items"]>("monitor_diff_to_items", { diff });
         if (!items.length) {
-          setNotice(L.monitorNoSnap);
+          toast.info(L.monitorNoSnap);
           return;
         }
         goNav("software");
@@ -652,7 +663,7 @@ export default function App() {
           new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)),
         );
         setMonitorDiff(null);
-        setNotice(`${L.monitorToCleanup}: ${items.length}`);
+        toast.success(`${L.monitorToCleanup}: ${items.length}`);
       } catch (e) {
         setError(formatError(e));
       }
@@ -688,34 +699,47 @@ export default function App() {
         items,
         options: {
           dry_run: false,
-          // Post-uninstall residual cleanup never re-runs official uninstaller.
+          // Residual cleanup after official uninstall never re-runs official uninstaller.
           // Deep-analyze path may still opt in via the checkbox.
-          skip_official_uninstall: postUninstallApp ? true : !useOfficial,
+          skip_official_uninstall: residualFromUninstall || !useOfficial,
           backup_enabled: true,
         },
       });
       setReport(r);
       if (r && typeof r === "object" && "deleted" in r) {
         setLastReport(r as FullCleanupReport);
+        const fr = r as FullCleanupReport;
+        if (fr.failed > 0) {
+          toast.error(L.batchDetail(fr.deleted, fr.failed));
+        } else {
+          toast.success(L.batchDetail(fr.deleted, fr.failed));
+        }
       }
-      setPostUninstallApp(null);
+      setResidualFromUninstall(false);
       void refreshApps();
     } catch (e) {
       setError(formatError(e, "cleanup"));
+      toast.error(L.errCleanupFailed(formatError(e, "cleanup")));
     } finally {
       busyRef.current = false;
       setDryRunning(false);
     }
-  }, [scan, selected, selectedPaths, refreshApps, postUninstallApp, useOfficial]);
+  }, [scan, selected, selectedPaths, refreshApps, residualFromUninstall, useOfficial, L]);
 
   const batchCleanup = useCallback(async () => {
     const keys = new Set(multi);
     const queue = apps.filter((a) => keys.has(appKey(a)));
     if (!queue.length) {
-      setNotice(L.selectRowHint);
+      toast.info(L.selectRowHint);
       return;
     }
-    if (!window.confirm(L.batchConfirm(queue.length, batchUseOfficial))) return;
+    const ok = await requestConfirm({
+      title: L.batchUninstall,
+      message: L.batchConfirm(queue.length, batchUseOfficial),
+      confirmLabel: L.batchUninstall,
+      danger: true,
+    });
+    if (!ok) return;
 
     busyRef.current = true;
     batchCancelRef.current = false;
@@ -733,7 +757,7 @@ export default function App() {
         const key = appKey(app);
         setBatchIndex(i + 1);
         setBatchCurrent(app.name);
-        setNotice(`[${i + 1}/${queue.length}] ${app.name}`);
+        toast.info(L.toastBatchProgress(i + 1, queue.length, prettyAppName(app.name, app.source)));
         try {
           const r = await invoke<ScanResult>("analyze_associations", { app });
           const items = r.items.filter(
@@ -776,7 +800,7 @@ export default function App() {
         setBatchResults([...results]);
       }
       const cancelled = batchCancelRef.current;
-      setNotice(cancelled ? L.batchCancelled : L.batchDone);
+      toast.info(cancelled ? L.batchCancelled : L.batchDone);
       setMulti((m) => {
         const n = new Set(m);
         for (const k of okKeys) n.delete(k);
@@ -795,7 +819,7 @@ export default function App() {
 
   const cancelBatch = useCallback(() => {
     batchCancelRef.current = true;
-    setNotice(L.batchCancelHint);
+    toast.info(L.batchCancelHint);
   }, [L]);
 
   const retryFailedBatch = useCallback(() => {
@@ -809,6 +833,8 @@ export default function App() {
   return (
     <>
       <style>{globalCss}</style>
+      <ConfirmHost />
+      <ToastHost />
       <Shell
         nav={nav}
         onNav={goNav}
@@ -864,9 +890,6 @@ export default function App() {
           </>
         }
       >
-        {notice && (
-          <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)", flexShrink: 0 }}>{notice}</div>
-        )}
         {error && (
           <div
             style={{
@@ -895,13 +918,13 @@ export default function App() {
           </div>
         )}
         {nav === "startup" && (
-          <ManageListPage tab="startup" title={L.navStartup} onNotice={setNotice} onError={setError} />
+          <ManageListPage tab="startup" title={L.navStartup} onError={setError} />
         )}
         {nav === "services" && (
-          <ManageListPage tab="services" title={L.navServices} onNotice={setNotice} onError={setError} />
+          <ManageListPage tab="services" title={L.navServices} onError={setError} />
         )}
         {nav === "tasks" && (
-          <ManageListPage tab="tasks" title={L.navTasks} onNotice={setNotice} onError={setError} />
+          <ManageListPage tab="tasks" title={L.navTasks} onError={setError} />
         )}
         {nav === "more" && (
           <MorePage
@@ -922,11 +945,11 @@ export default function App() {
                 if (shellMenu) {
                   await invoke("unregister_context_menu");
                   setShellMenu(false);
-                  setNotice(L.shellUnregister);
+                  toast.success(L.shellUnregister);
                 } else {
                   await invoke("register_context_menu");
                   setShellMenu(true);
-                  setNotice(L.shellMenuOn);
+                  toast.success(L.shellMenuOn);
                 }
               } catch (e) {
                 setError(formatError(e));
@@ -934,7 +957,6 @@ export default function App() {
             }}
             onExportReport={exportHtmlReport}
             onError={setError}
-            onNotice={setNotice}
           />
         )}
         {nav === "software" && (
@@ -1067,37 +1089,6 @@ export default function App() {
         </div>
       )}
 
-      {postUninstallApp && (
-        <div
-          style={{
-            ...css.card,
-            marginBottom: 10,
-            padding: "12px 14px",
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            flexWrap: "wrap",
-            fontSize: 13,
-          }}
-        >
-          <span style={{ flex: "1 1 220px" }}>
-            {officialResult?.ok ? L.uninstallOk : officialResult ? `${L.uninstallFail}: ${officialResult.message}` : L.uninstallOk}
-            {" — "}
-            {L.leftoversPrompt}
-          </span>
-          <button
-            style={css.btn}
-            disabled={scanning}
-            onClick={() => void scanLeftoversFor(postUninstallApp)}
-          >
-            {scanning ? L.analyzing : L.scanLeftovers}
-          </button>
-          <button style={css.btnGhost} onClick={() => void skipLeftovers()}>
-            {L.skipLeftovers}
-          </button>
-        </div>
-      )}
-
       {scan && (
         <div
           style={{
@@ -1115,6 +1106,7 @@ export default function App() {
               setScan(null);
               setReport(null);
               setError(null);
+              setResidualFromUninstall(false);
               void refreshApps();
             }}
           >
@@ -1122,9 +1114,10 @@ export default function App() {
           </button>
           <strong style={{ fontSize: 13, fontWeight: 600 }}>{scan.app_name}</strong>
           <span style={{ ...css.muted }}>
-            {scan.items.length} · {scan.items.filter((i) => i.confidence === "confirmed").length} ★
+            {scan.items.length} · {scan.items.filter((i) => i.confidence === "confirmed").length} {L.confirmed}
           </span>
-          {!postUninstallApp && (
+          {scanning && <span style={{ ...css.muted }}>{L.analyzing}</span>}
+          {!residualFromUninstall && (
             <label
               style={{
                 fontSize: 12.5,
@@ -1150,9 +1143,14 @@ export default function App() {
           <button
             style={{ ...css.btn, background: "var(--danger)", color: "#1a0505" }}
             disabled={dryRunning || selectedPaths.size === 0 || busyRef.current}
-            onClick={() => {
-              if (!window.confirm(L.cleanupConfirm(selectedPaths.size, !postUninstallApp && useOfficial))) return;
-              void execReal();
+            onClick={async () => {
+              const ok = await requestConfirm({
+                title: L.cleanup,
+                message: L.cleanupConfirm(selectedPaths.size, residualFromUninstall || useOfficial),
+                confirmLabel: L.cleanup,
+                danger: true,
+              });
+              if (ok) void execReal();
             }}
           >
             {L.cleanup} ({selectedPaths.size})
@@ -1254,7 +1252,12 @@ export default function App() {
                   </tr>
                 )}
                 {scan.items.map((it) => (
-                  <tr key={it.path}>
+                  <tr
+                    key={it.path}
+                    style={{
+                      boxShadow: it.risk === "high" ? "inset 3px 0 0 var(--danger)" : undefined,
+                    }}
+                  >
                     <td style={css.td}>
                       <input
                         type="checkbox"
@@ -1290,12 +1293,13 @@ export default function App() {
                           fontSize: 12,
                         }}
                       >
-                        {it.confidence === "confirmed"
-                          ? L.confirmed
-                          : it.score >= 30
-                            ? L.suspected
-                            : L.low}
-                        {it.risk === "high" ? " · high" : ""}
+                        {it.risk === "high"
+                          ? L.riskHigh
+                          : it.confidence === "confirmed"
+                            ? L.confirmed
+                            : it.score >= 30
+                              ? L.suspected
+                              : L.low}
                       </span>
                     </td>
                     <td style={css.td}>

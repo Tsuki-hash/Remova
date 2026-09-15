@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- In-app confirm dialog (replaces native `window.confirm`); danger actions use hold-to-confirm
+- Toast host for success/error/info feedback with auto-dismiss
+- After official uninstall succeeds, residual review opens automatically (no extra prompt)
+
+### Changed
+- Confidence labels are human-readable (确定/疑似) instead of star glyphs
+- Analyze / batch / monitor / ignore / manage actions report results via toast with localized copy
+- Forced-clean empty result no longer reuses "no history" copy
+- Residual cleanup after official uninstall always skips a second official uninstaller run
+
 ## [1.2.0] - 2026-09-15
 
 ### Added

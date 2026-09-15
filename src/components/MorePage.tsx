@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { requestConfirm } from "../lib/confirm";
+import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
@@ -36,7 +38,6 @@ export function MorePage({
   onShellToggle,
   onExportReport,
   onError,
-  onNotice,
 }: {
   selected: InstalledApp | null;
   monitoring: boolean;
@@ -53,7 +54,6 @@ export function MorePage({
   onShellToggle: () => void;
   onExportReport: () => void;
   onError: (msg: string) => void;
-  onNotice: (msg: string) => void;
 }) {
   const L = t();
   const [openTool, setOpenTool] = useState<ToolId | null>(null);
@@ -106,7 +106,7 @@ export function MorePage({
       a.download = "remova-history.csv";
       a.click();
       URL.revokeObjectURL(url);
-      onNotice(L.exportCsv);
+      toast.success(L.exportCsv);
     } catch (e) {
       onError(formatError(e));
     }
@@ -127,14 +127,22 @@ export function MorePage({
 
   const runRestore = async () => {
     if (!restorePick || restoreBusy) return;
-    if (!window.confirm(L.restoreConfirm)) return;
+    const ok = await requestConfirm({
+      title: L.restore,
+      message: L.restoreConfirm,
+      confirmLabel: L.restoreRun,
+      danger: true,
+    });
+    if (!ok) return;
     setRestoreBusy(true);
     setRestoreMsgs([]);
     try {
       const msgs = await invoke<string[]>("restore_session_by_name", { name: restorePick });
       setRestoreMsgs(msgs.length ? msgs : ["ok"]);
+      toast.success(L.restoreResult);
     } catch (e) {
       setRestoreMsgs([formatError(e)]);
+      toast.error(L.errInvokeFailed(formatError(e)));
     } finally {
       setRestoreBusy(false);
     }
