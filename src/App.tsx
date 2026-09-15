@@ -906,10 +906,25 @@ export default function App() {
           nav === "software" ? (
             <>
               <span style={css.chip}>{loading ? "…" : `${filtered.length} / ${apps.length}`}</span>
-              {admin !== null && (
-                <span style={admin ? css.chipAccent : css.chipDanger}>
-                  {admin ? L.admin : L.nonAdmin}
-                </span>
+              {admin === false && (
+                <button
+                  style={{
+                    ...css.chipDanger,
+                    border: "none",
+                    cursor: "pointer",
+                    height: 24,
+                  }}
+                  title={L.adminChipHint}
+                  onClick={async () => {
+                    try {
+                      await invoke("elevate_restart");
+                    } catch (e) {
+                      toast.error(formatError(e, "elevate"));
+                    }
+                  }}
+                >
+                  {L.nonAdmin}
+                </button>
               )}
               {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
               {estimating && (
@@ -925,20 +940,6 @@ export default function App() {
         }
         actions={
           <>
-            <button
-              style={css.btnSm}
-              title={L.adminHint}
-              disabled={admin === true || admin === null}
-              onClick={async () => {
-                try {
-                  await invoke("elevate_restart");
-                } catch (e) {
-                  setError(formatError(e, "elevate"));
-                }
-              }}
-            >
-              {L.adminMenu}
-            </button>
             <button
               style={css.btnSm}
               onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}

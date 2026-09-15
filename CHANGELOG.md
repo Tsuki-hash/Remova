@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- No permanent “Administrator” toolbar button (matches Geek/IObit-style tools). Non-admin chip is clickable; manage actions offer one-shot elevated restart when needed.
+
 ### Fixed
 - Startup/services toggle button labels use action verbs (启用 / 禁用) instead of status-like 已启用/已禁用
 - Service disable failures show a human message (admin rights / protected) instead of raw `open service key failed`

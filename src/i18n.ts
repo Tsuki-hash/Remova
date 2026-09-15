@@ -59,6 +59,11 @@ const dict = {
     errorDismiss: "知道了",
     adminHint: "当前不是管理员，清理系统软件可能失败。点击以管理员身份重启。",
     adminAlready: "已是管理员。",
+    elevateAskTitle: "需要管理员权限",
+    elevateAskBody:
+      "修改服务、系统启动项或清理系统目录时需要管理员权限。将以管理员身份重启 Remova（界面会短暂关闭），继续？",
+    elevateAskOk: "以管理员重启",
+    adminChipHint: "非管理员模式。点击可切换为管理员（改服务时会用到）",
     errElevateDenied:
       "提权失败：访问被拒绝。请在 UAC 弹窗中选择「是」；若仍失败，请右键 Remova 选择「以管理员身份运行」。",
     errElevateCancelled: "已取消管理员提权，当前仍以普通权限运行。",
@@ -337,6 +342,11 @@ const dict = {
     errorDismiss: "Dismiss",
     adminHint: "Not running as administrator. Cleaning system software may fail. Click to restart as admin.",
     adminAlready: "Running as administrator.",
+    elevateAskTitle: "Administrator required",
+    elevateAskBody:
+      "Changing services, system startup items, or cleaning system folders needs administrator rights. Remova will restart elevated. Continue?",
+    elevateAskOk: "Restart as admin",
+    adminChipHint: "Running without admin. Click to switch (needed for services)",
     errElevateDenied:
       "Elevation failed: access denied. Click Yes on the UAC prompt; if it still fails, right-click Remova and run as administrator.",
     errElevateCancelled: "Admin elevation cancelled. Still running with standard privileges.",

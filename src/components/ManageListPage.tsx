@@ -14,6 +14,29 @@ export type ManagePageTab = ManageTabId;
 
 const ROW_H = 64;
 
+/** Offer one-click elevate when an admin-gated action fails or is attempted. */
+async function ensureElevatedForManage(): Promise<boolean> {
+  try {
+    const elevated = await invoke<boolean>("is_elevated");
+    if (elevated) return true;
+  } catch {
+    // fall through to prompt
+  }
+  const L = t();
+  const ok = await requestConfirm({
+    title: L.elevateAskTitle,
+    message: L.elevateAskBody,
+    confirmLabel: L.elevateAskOk,
+  });
+  if (!ok) return false;
+  try {
+    await invoke("elevate_restart");
+  } catch (e) {
+    toast.error(formatError(e, "elevate"));
+  }
+  return false;
+}
+
 export function ManageListPage({
   tab,
   title,
@@ -36,6 +59,10 @@ export function ManageListPage({
   }, [tab]);
 
   const toggle = async (item: ManageItem) => {
+    // Services always need admin; Run keys / tasks often do too on this machine.
+    if (!(await ensureElevatedForManage())) {
+      return;
+    }
     if (item.enabled) {
       const message =
         tab === "services"
@@ -78,6 +105,9 @@ export function ManageListPage({
       const msg = formatError(e);
       onError?.(msg);
       toast.error(msg);
+      if (/管理员|administrator|权限|access denied/i.test(msg)) {
+        await ensureElevatedForManage();
+      }
     }
   };
 
