@@ -27,7 +27,7 @@ import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { requestConfirm } from "./lib/confirm";
 import { toast } from "./lib/toast";
-import type { AiConfigView, AiExplainOutput } from "./types";
+import type { AiConfigView, AiExplainOutput, IgnoreSuggestion } from "./types";
 
 declare const __APP_VERSION__: string;
 
@@ -101,6 +101,7 @@ export default function App() {
   const [aiReportNote, setAiReportNote] = useState<string | null>(null);
   const [aiReportBusy, setAiReportBusy] = useState(false);
   const [copilotList, setCopilotList] = useState<InstalledApp[] | null>(null);
+  const [ignoreSuggestions, setIgnoreSuggestions] = useState<IgnoreSuggestion[]>([]);
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
@@ -155,10 +156,20 @@ export default function App() {
       setReport(null);
       setAiNotes({});
       setAiRisk(null);
+      setIgnoreSuggestions([]);
       const t0 = performance.now();
       try {
         const r = await invoke<ScanResult>("analyze_associations", { app });
         setScan(r);
+        const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
+        if (sharedPaths.length > 0 && app.publisher) {
+          void invoke<IgnoreSuggestion[]>("suggest_ignore_rules", {
+            publisher: app.publisher,
+            paths: sharedPaths,
+          })
+            .then((sugs) => setIgnoreSuggestions(sugs || []))
+            .catch(() => {});
+        }
         setSelectedPaths(
           new Set(
             r.items
@@ -1175,6 +1186,53 @@ export default function App() {
         </div>
       )}
 
+      {scan && ignoreSuggestions.length > 0 && (
+        <div
+          style={{
+            marginBottom: 8,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface-2)",
+            fontSize: 12.5,
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <strong>{L.ignoreSuggestTitle}</strong>
+          <span style={{ color: "var(--muted)", flex: "1 1 180px" }}>
+            {ignoreSuggestions
+              .map((s) => `${s.value}（${s.reason}）`)
+              .join("；")}
+          </span>
+          <button
+            style={css.btnSm}
+            onClick={async () => {
+              try {
+                const ig = await invoke<{ publishers: string[]; names: string[] }>(
+                  "apply_ignore_suggestions",
+                  { suggestions: ignoreSuggestions },
+                );
+                setIgnorePub(ig.publishers || []);
+                setIgnoreName(ig.names || []);
+                setIgnoreSuggestions([]);
+                toast.success(L.ignoreSuggestDone);
+              } catch (e) {
+                toast.error(L.errInvokeFailed(formatError(e)));
+              }
+            }}
+          >
+            {L.ignoreSuggestApply}
+          </button>
+          <button style={css.btnSm} onClick={() => setIgnoreSuggestions([])}>
+            ×
+          </button>
+        </div>
+      )}
+
       {scan && (
         <div
           style={{
@@ -1193,6 +1251,7 @@ export default function App() {
               setReport(null);
               setError(null);
               setResidualFromUninstall(false);
+              setIgnoreSuggestions([]);
               void refreshApps();
             }}
           >

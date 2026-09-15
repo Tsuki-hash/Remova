@@ -103,3 +103,9 @@ export type NlIntent = {
   include_leftovers: boolean;
   note: string;
 };
+
+export type IgnoreSuggestion = {
+  kind: string;
+  value: string;
+  reason: string;
+};

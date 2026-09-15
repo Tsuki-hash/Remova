@@ -552,6 +552,22 @@ fn ignore_app_name(name: String) -> Result<ignore::IgnoreList, String> {
     ignore::add_name(&name)
 }
 
+/// Rule-based ignore suggestions from leftover paths (shared runtimes).
+#[tauri::command]
+fn suggest_ignore_rules(
+    publisher: String,
+    paths: Vec<String>,
+) -> Result<Vec<ignore::IgnoreSuggestion>, String> {
+    Ok(ignore::suggest_from_leftovers(&publisher, &paths))
+}
+
+#[tauri::command]
+fn apply_ignore_suggestions(
+    suggestions: Vec<ignore::IgnoreSuggestion>,
+) -> Result<ignore::IgnoreList, String> {
+    ignore::apply_suggestions(&suggestions)
+}
+
 #[tauri::command]
 async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -626,6 +642,8 @@ pub fn run() {
             load_ignore,
             ignore_publisher,
             ignore_app_name,
+            suggest_ignore_rules,
+            apply_ignore_suggestions,
             scan_orphan_leftovers,
             begin_install_monitor,
             end_install_monitor,

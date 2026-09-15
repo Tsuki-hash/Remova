@@ -24,7 +24,8 @@ lib.rs          Tauri 命令层 + base64 编码；invoke_handler 注册
 main.rs         入口，调用 remova_lib::run()
 apps.rs         已安装软件枚举（Uninstall 注册表 + Store 合并）
 storeapps.rs    WinRT PackageManager 枚举 MSIX/Store 包
-scanner.rs      关联扫描（CleanupItem / ScanResult / 证据评分）
+scanner.rs      关联扫描（CleanupItem / ScanResult / 证据评分；含 shared 标记）
+shared.rs       共享运行库启发式（VC++/.NET/Common Files…）
 executor.rs     卸载命令解析、dry-run、真删流水线
 safety.rs       统一安全门禁：is_safe_fs / is_safe_to_delete_registry
 backup.rs       备份会话创建、文件复制、reg export
@@ -37,8 +38,9 @@ installmon.rs   安装前后快照差分
 orphans.rs      孤儿目录扫描
 dirsize.rs      目录体积估算（可取消）
 icon.rs         DisplayIcon → PNG data URL
-ignore.rs       忽略列表 JSON
+ignore.rs       忽略列表 JSON + 路径/发布者建议与应用
 history.rs      清理历史 JSONL
+ai.rs           AI 编排：配置、脱敏、chat、缓存、意图解析（默认关闭）
 ```
 
 ### 2.1 职责要点
@@ -55,6 +57,9 @@ history.rs      清理历史 JSONL
 | `installmon` | `begin` / `end` → `MonitorDiff` | 预算 80k 路径；差分取前 200 文件 / 100 注册表项 |
 | `orphans` | `scan_orphans` | 与已安装列表做路径/名称排除；上限 80 条 |
 | `dirsize` | `walk_size_kb` + `AtomicBool` 取消 | BFS，跳过符号链接 |
+| `shared` | `is_shared_item` | 残留项是否像共享运行库（默认不勾选） |
+| `ignore` | `suggest_from_leftovers`, `apply_suggestions` | Package Cache / Common Files 等路径忽略建议 |
+| `ai` | `AiConfig`, `explain_items`, `risk_brief`, `parse_nl_intent` | 默认关闭；不执行删除；超时与缓存见 `ai.rs` |
 
 ---
 

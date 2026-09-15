@@ -80,6 +80,110 @@ pub fn is_path_ignored(list: &IgnoreList, path: &str) -> bool {
         .any(|x| p.starts_with(&x.replace('/', "\\").to_lowercase()))
 }
 
+pub fn add_path(path: &str) -> Result<IgnoreList, String> {
+    let mut l = load();
+    let p = path.trim().replace('/', "\\");
+    if p.is_empty() {
+        return Err("empty path".into());
+    }
+    if !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+        l.paths.push(p);
+    }
+    save(&l)?;
+    Ok(l)
+}
+
+/// One proposed ignore rule with a human reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IgnoreSuggestion {
+    /// "path" | "publisher"
+    pub kind: String,
+    pub value: String,
+    pub reason: String,
+}
+
+const SHARED_ROOTS: &[&str] = &[
+    r"C:\ProgramData\Package Cache",
+    r"C:\Program Files\Common Files",
+    r"C:\Program Files (x86)\Common Files",
+    r"C:\Program Files\Microsoft Shared",
+    r"C:\Program Files (x86)\Microsoft Shared",
+    r"C:\Windows\Microsoft.NET",
+    r"C:\Windows\assembly",
+];
+
+fn longest_root(path: &str) -> Option<&'static str> {
+    let p = path.replace('/', "\\").to_lowercase();
+    let mut best: Option<&'static str> = None;
+    for r in SHARED_ROOTS {
+        let rl = r.to_lowercase();
+        if p.starts_with(&rl) && best.map(|b| b.len() < r.len()).unwrap_or(true) {
+            best = Some(*r);
+        }
+    }
+    best
+}
+
+/// Rule-based suggestions from leftover/shared paths (no LLM required).
+pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSuggestion> {
+    let mut out: Vec<IgnoreSuggestion> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in paths {
+        if let Some(root) = longest_root(path) {
+            if seen.insert(root.to_string()) {
+                out.push(IgnoreSuggestion {
+                    kind: "path".into(),
+                    value: root.to_string(),
+                    reason: "共享运行库/安装缓存目录，反复出现在残留中".into(),
+                });
+            }
+        }
+    }
+    // Publisher ignore only when multiple shared-root hits exist (aggressive otherwise).
+    let pub_trim = publisher.trim();
+    if out.len() >= 2 && !pub_trim.is_empty() && !is_publisher_ignored(&load(), pub_trim) {
+        // still prefer path ignores; publisher only as last resort for non-Microsoft vendors
+        let low = pub_trim.to_lowercase();
+        if !low.contains("microsoft") {
+            out.push(IgnoreSuggestion {
+                kind: "publisher".into(),
+                value: pub_trim.to_string(),
+                reason: "该发布者存在多处共享路径残留，可选择整体忽略（请确认无本软件关键组件）".into(),
+            });
+        }
+    }
+    out
+}
+
+pub fn apply_suggestions(items: &[IgnoreSuggestion]) -> Result<IgnoreList, String> {
+    let mut l = load();
+    for it in items {
+        match it.kind.as_str() {
+            "path" => {
+                let p = it.value.trim().replace('/', "\\");
+                if !p.is_empty() && !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+                    l.paths.push(p);
+                }
+            }
+            "publisher" => {
+                let p = it.value.trim();
+                if !p.is_empty() && !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+                    l.publishers.push(p.to_string());
+                }
+            }
+            "name" => {
+                let n = it.value.trim();
+                if !n.is_empty() && !l.names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+                    l.names.push(n.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    save(&l)?;
+    Ok(l)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +198,23 @@ mod tests {
         assert!(is_name_ignored(&l, "onedrive"));
         assert!(is_path_ignored(&l, r"C:\Program Files\Common Files\foo"));
         assert!(!is_name_ignored(&l, "7-Zip"));
+    }
+
+    #[test]
+    fn suggest_shared_roots() {
+        let paths = vec![
+            r"C:\ProgramData\Package Cache\{abc}\vc_redist.exe".to_string(),
+            r"C:\Program Files\Common Files\Acme\lib.dll".to_string(),
+        ];
+        let s = suggest_from_leftovers("Acme Corp", &paths);
+        assert!(s.iter().any(|x| x.kind == "path" && x.value.contains("Package Cache")));
+        assert!(s.iter().any(|x| x.kind == "path" && x.value.contains("Common Files")));
+    }
+
+    #[test]
+    fn apply_suggestions_persists_paths() {
+        let mut l = IgnoreList::default();
+        l.paths.push(r"C:\ProgramData\Package Cache".into());
+        assert!(is_path_ignored(&l, r"C:\ProgramData\Package Cache\x"));
     }
 }
