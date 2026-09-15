@@ -554,7 +554,7 @@ pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), Strin
         .iter()
         .any(|c| c.eq_ignore_ascii_case(name))
     {
-        return Err("critical system service protected".into());
+        return Err(format!("manage:protected:{name}"));
     }
     let start: u32 = if disable { 4 } else { 3 };
     crate::regops::write_service_start(name, start)

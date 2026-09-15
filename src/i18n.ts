@@ -109,9 +109,13 @@ const dict = {
     manageStatusOn: "运行中",
     manageStatusOff: "已停用",
     errServiceKey: (name: string) =>
-      `无法修改服务「${name}」。通常需要管理员权限；若是系统关键服务则会被保护。可点右上角「管理员权限」重启后再试。`,
+      `无法修改服务「${name}」：可能已被卸载，或系统拒绝访问。可刷新列表后再试。`,
     errServiceProtected: "该服务受系统保护，不能禁用",
+    errServiceProtectedNamed: (name: string) =>
+      `「${name}」是系统关键服务，Remova 会保护它，不能禁用。`,
     errAccessAdmin: "权限不足：请以管理员身份运行 Remova 后再试",
+    errAccessAdminNamed: (name: string) =>
+      `权限不足：没有权限修改「${name}」。这通常需要管理员权限。点「以管理员重启」后再试。`,
     moreSectionCommon: "常用",
     moreSectionAdvanced: "进阶",
     moreSectionCommonHint: "历史、备份还原与导出",
@@ -392,9 +396,13 @@ const dict = {
     manageStatusOn: "Running",
     manageStatusOff: "Stopped",
     errServiceKey: (name: string) =>
-      `Could not change service "${name}". This usually needs administrator rights, or the service is protected. Try restarting Remova as administrator.`,
+      `Could not change service "${name}": it may be uninstalled, or Windows denied access. Refresh and try again.`,
     errServiceProtected: "This service is protected by the system and cannot be disabled",
+    errServiceProtectedNamed: (name: string) =>
+      `"${name}" is a critical system service and is protected — Remova will not disable it.`,
     errAccessAdmin: "Access denied: run Remova as administrator and try again",
+    errAccessAdminNamed: (name: string) =>
+      `Access denied: you do not have permission to change "${name}". This usually requires administrator rights. Restart as admin and try again.`,
     moreSectionCommon: "Everyday",
     moreSectionAdvanced: "Advanced",
     moreSectionCommonHint: "History, backup restore, and exports",

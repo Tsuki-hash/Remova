@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { prettyAppName, prettyPublisher, shortPath, sourceLabel } from "../lib/format";
+import {
+  formatError,
+  isAccessDeniedError,
+  prettyAppName,
+  prettyPublisher,
+  shortPath,
+  sourceLabel,
+} from "../lib/format";
 
 const labels = {
   sourceHkcu: "当前用户",
@@ -15,6 +22,23 @@ describe("sourceLabel", () => {
     expect(sourceLabel("HKCU", labels)).toBe("当前用户");
     expect(sourceLabel("Store", labels)).toBe("Microsoft Store");
     expect(sourceLabel("Custom", labels)).toBe("Custom");
+  });
+});
+
+describe("formatError manage codes", () => {
+  it("maps access_denied to Chinese admin guidance", () => {
+    // default lang is zh
+    const msg = formatError("manage:access_denied:WslInstaller");
+    expect(msg).toContain("权限不足");
+    expect(msg).toContain("WslInstaller");
+    expect(msg).not.toContain("open service key");
+    expect(isAccessDeniedError("manage:access_denied:WslInstaller")).toBe(true);
+  });
+
+  it("maps protected service", () => {
+    const msg = formatError("manage:protected:WinDefend");
+    expect(msg).toContain("关键服务");
+    expect(msg).toContain("WinDefend");
   });
 });
 

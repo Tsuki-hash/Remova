@@ -282,6 +282,9 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
 }
 
 /// Write service Start DWORD (2=auto, 3=manual, 4=disabled).
+///
+/// Errors use stable codes for the UI:
+/// `manage:access_denied:<name>` | `manage:open_failed:<name>` | `manage:write_failed:<name>`
 pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -290,21 +293,29 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
+        use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
         use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, REG_DWORD};
         let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{svc_name}");
         let (hive, sub, access) = parse(&key_path).ok_or_else(|| "bad key".to_string())?;
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
-            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk)
-                .ok()
-                .map_err(|_| format!("open service key failed {svc_name}"))?;
+            let st = RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk);
+            if st == ERROR_ACCESS_DENIED {
+                return Err(format!("manage:access_denied:{svc_name}"));
+            }
+            if st != ERROR_SUCCESS {
+                return Err(format!("manage:open_failed:{svc_name}"));
+            }
             let name_w = to_wide("Start");
             let bytes = start.to_le_bytes();
             let st = RegSetValueExW(hk, PCWSTR(name_w.as_ptr()), 0, REG_DWORD, Some(&bytes));
             let _ = RegCloseKey(hk);
+            if st == ERROR_ACCESS_DENIED {
+                return Err(format!("manage:access_denied:{svc_name}"));
+            }
             if st != ERROR_SUCCESS {
-                return Err(format!("write Start failed for {svc_name}"));
+                return Err(format!("manage:write_failed:{svc_name}"));
             }
         }
         Ok(())

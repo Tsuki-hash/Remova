@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { formatError } from "../lib/format";
+import { formatError, isAccessDeniedError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { useManageList, type ManageTabId } from "../lib/useManageList";
@@ -105,7 +105,7 @@ export function ManageListPage({
       const msg = formatError(e);
       onError?.(msg);
       toast.error(msg);
-      if (/管理员|administrator|权限|access denied/i.test(msg)) {
+      if (isAccessDeniedError(e)) {
         await ensureElevatedForManage();
       }
     }
