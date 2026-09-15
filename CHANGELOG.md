@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Reorganized `docs/` into `product/`, `reviews/`, `archive/` with a top-level index (`docs/README.md`)
+
 ## [1.3.1] - 2026-09-16
 
 ### Changed

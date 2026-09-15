@@ -4,6 +4,8 @@
 
 Evidence-based association scan, safety preview, backup/restore, dry-run planning.
 
+Docs: see [`docs/README.md`](./docs/README.md) for user guide, architecture, product roadmap.
+
 ## Features
 
 - Installed app list (HKLM64 / HKLM32 / HKCU)
