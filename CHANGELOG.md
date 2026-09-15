@@ -6,20 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- Anthropic Messages API provider (`x-api-key` + `anthropic-version`) alongside OpenAI-compatible and Ollama
-- Redesigned AI settings panel: provider presets, labeled fields, key status, privacy notes
-
-### Fixed
-- Duplicate software rows when the same product is registered under both HKLM64 and HKLM32 (merge by install location / MSI product code / uninstall command; fill missing fields)
-- Row `⋯` menu clipped by virtualized list overflow (portal + fixed positioning)
-- Removed technical source dropdown (HKCU/HKLM64/HKLM32) from toolbar; category chips use beginner labels (桌面程序 / 商店应用); detail strip shows friendly source names
-
 ## [1.3.0] - 2026-09-16
 
 ### Added
-- AI orchestration module (`ai.rs`): OpenAI-compatible / Ollama chat, path sanitize, TTL cache
-- AI settings panel (More → Advanced): enable, provider, base URL, model, API key, path-sharing toggle
+- AI orchestration module (`ai.rs`): OpenAI-compatible / Anthropic / Ollama chat, path sanitize, TTL cache
+- AI settings panel: provider presets (OpenAI / Anthropic / Ollama), labeled fields, key status, privacy notes
 - Residual list “AI explain” button + per-row model summaries (advisory only)
 - Cleanup confirm includes optional AI risk brief when enabled
 - Shared-runtime heuristic (`shared.rs`): VC++/.NET/WebView/etc. marked and unchecked by default
@@ -28,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rule-based ignore suggestions for shared leftover roots (Package Cache, Common Files, …)
 - Design doc: `docs/AI-FEATURES.md`
 - Dependency: `ureq` (rustls) for backend AI HTTP
+
+### Fixed
+- Duplicate software rows when the same product is registered under both HKLM64 and HKLM32
+- Row `⋯` menu clipped by virtualized list overflow (portal + fixed positioning)
+- Beginner-friendly filters: removed technical source dropdown; chips use 桌面程序 / 商店应用; friendly source labels in details
 
 ### Notes
 - AI features are **off by default**; core uninstall path is unchanged without configuration
