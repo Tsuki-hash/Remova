@@ -4,24 +4,15 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { useManageList, type ManageTabId } from "../lib/useManageList";
+import { looksMicrosoft } from "../lib/manageFilter";
 import type { ManageItem } from "./ManagePanel";
 
 export type ManagePageTab = ManageTabId;
 
 const ROW_H = 64;
-
-function looksMicrosoft(it: ManageItem): boolean {
-  const s = `${it.name} ${it.detail}`.toLowerCase();
-  return (
-    s.includes("microsoft") ||
-    s.includes("windows") ||
-    it.name.toLowerCase().startsWith("wpn") ||
-    it.name.toLowerCase().startsWith("w32") ||
-    it.name.toLowerCase().startsWith("win")
-  );
-}
 
 export function ManageListPage({
   tab,
@@ -45,6 +36,21 @@ export function ManageListPage({
   }, [tab]);
 
   const toggle = async (item: ManageItem) => {
+    if (item.enabled) {
+      const message =
+        tab === "services"
+          ? L.confirmDisableService(item.name)
+          : tab === "tasks"
+            ? L.confirmDisableTask(item.name)
+            : L.confirmDisableStartup(item.name);
+      const ok = await requestConfirm({
+        title: L.manageDisable,
+        message,
+        confirmLabel: L.manageDisable,
+        danger: tab === "services",
+      });
+      if (!ok) return;
+    }
     try {
       if (tab === "startup") {
         await invoke("set_startup_enabled", {
@@ -62,13 +68,13 @@ export function ManageListPage({
           enabled: !item.enabled,
         });
       }
-      toast.success(item.enabled ? L.manageDisable : L.manageEnable);
+      toast.success(
+        `${item.name} · ${item.enabled ? L.manageDisable : L.manageEnable}`,
+      );
       await reload();
     } catch (e) {
       onError?.(formatError(e));
       toast.error(L.errInvokeFailed(formatError(e)));
-    } finally {
-      // busy handled by hook reload
     }
   };
 
@@ -195,13 +201,13 @@ export function ManageListPage({
                     {tab === "startup" ? "⚡" : tab === "services" ? "⚙" : "⏱"}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13.5 }} className="ell">
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }} className="ell" title={it.name}>
                       {it.name}
                     </div>
                     <div
                       style={{ ...css.muted, fontSize: 12, wordBreak: "break-all" }}
                       className="ell"
-                      title={it.detail || it.location}
+                      title={`${it.detail || ""}\n${it.location || ""}`}
                     >
                       {it.detail || it.location}
                     </div>
@@ -211,11 +217,12 @@ export function ManageListPage({
                       fontSize: 12,
                       fontWeight: 600,
                       color: it.enabled ? "var(--ok)" : "var(--muted)",
-                      minWidth: 48,
+                      minWidth: 56,
                       textAlign: "center" as const,
+                      whiteSpace: "nowrap" as const,
                     }}
                   >
-                    {it.enabled ? "ON" : "OFF"}
+                    {it.enabled ? L.manageStatusOn : L.manageStatusOff}
                   </span>
                   <button
                     style={{

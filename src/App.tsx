@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -90,11 +90,13 @@ export default function App() {
   const [lastReport, setLastReport] = useState<FullCleanupReport | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
+  const [showDetail, setShowDetail] = useState(true);
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
   const sizeCache = useRef<Map<string, number>>(new Map());
   const sizeCancelRef = useRef(false);
+  const [sizeProgress, setSizeProgress] = useState({ done: 0, total: 0 });
 
   const sizeOf = useCallback((a: InstalledApp): number => {
     if (a.estimated_size_kb > 0) return a.estimated_size_kb;
@@ -313,9 +315,12 @@ export default function App() {
     let disposed = false;
     sizeCancelRef.current = false;
     setEstimating(true);
+    const total = pending.length;
+    setSizeProgress({ done: 0, total });
     void invoke("begin_size_estimate").catch(() => {});
 
     (async () => {
+      let done = 0;
       const workers = Array.from({ length: 2 }, async () => {
         while (pending.length > 0 && !disposed && !sizeCancelRef.current) {
           const path = pending.shift();
@@ -330,10 +335,15 @@ export default function App() {
             sizeCache.current.set(path, 0);
             setSizeMap((m) => ({ ...m, [path]: 0 }));
           }
+          done += 1;
+          if (!disposed) setSizeProgress({ done, total });
         }
       });
       await Promise.all(workers);
-      if (!disposed) setEstimating(false);
+      if (!disposed) {
+        setEstimating(false);
+        setSizeProgress({ done: 0, total: 0 });
+      }
     })();
 
     return () => {
@@ -420,9 +430,11 @@ export default function App() {
   }, [apps]);
 
   const L = useMemo(() => t(), [langVer]);
+  // Keep typing responsive on large lists while filters settle.
+  const deferredQ = useDeferredValue(q);
 
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    const needle = deferredQ.trim().toLowerCase();
     let list = apps;
     list = list.filter(
       (a) =>
@@ -462,7 +474,7 @@ export default function App() {
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
+  }, [apps, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
 
   const sortBy = (col: "name" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -482,16 +494,6 @@ export default function App() {
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
-
-  /** App used by 深度分析: row click, else the single multi-checkbox target. */
-  const analyzeApp = useMemo(() => {
-    if (selected) return selected;
-    if (multi.size === 1) {
-      const key = [...multi][0];
-      return apps.find((a) => appKey(a) === key) ?? null;
-    }
-    return null;
-  }, [selected, multi, apps]);
 
   const toggleMulti = (key: string) => {
     setMulti((m) => {
@@ -850,7 +852,13 @@ export default function App() {
                 </span>
               )}
               {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
-              {estimating && <span style={css.chipAccent}>{L.estimatingSizes}</span>}
+              {estimating && (
+                <span style={css.chipAccent}>
+                  {sizeProgress.total > 0
+                    ? L.estimateProgress(sizeProgress.done, sizeProgress.total)
+                    : L.estimatingSizes}
+                </span>
+              )}
               {monitoring && <span style={css.chipAccent}>{L.monitorRunning}</span>}
             </>
           ) : null
@@ -935,7 +943,6 @@ export default function App() {
             shellMenu={shellMenu}
             onForceClean={() => void forceClean()}
             onIgnorePublisher={() => void doIgnorePublisher()}
-            onIgnoreApp={() => void doIgnoreApp()}
             onOrphanScan={() => void runOrphanScan()}
             onToggleMonitor={() => void toggleMonitor()}
             onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
@@ -1013,16 +1020,7 @@ export default function App() {
                   {L.stopEstimate}
                 </button>
               )}
-              {analyzeApp && !scan && (
-                <button
-                  style={css.btnSm}
-                  disabled={scanning}
-                  title={L.selectRowHint}
-                  onClick={() => analyzeApp && void analyze(analyzeApp)}
-                >
-                  {scanning ? L.analyzing : L.analyze}
-                </button>
-              )}
+              {scanning && <span style={{ ...css.muted, flexShrink: 0 }}>{L.analyzing}</span>}
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 10, flexShrink: 0, flexWrap: "wrap" }}>
               {(
@@ -1057,35 +1055,53 @@ export default function App() {
           style={{
             ...css.card,
             marginBottom: 10,
-            padding: "10px 14px",
+            padding: showDetail ? "10px 14px" : "8px 14px",
             fontSize: 12.5,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "6px 18px",
-            alignItems: "center",
             background: "var(--surface-2)",
+            flexShrink: 0,
           }}
         >
-          <strong style={{ fontSize: 13.5 }}>
-            {prettyAppName(selected.name, selected.source)}
-          </strong>
-          <span className="ell" style={{ color: "var(--muted)", maxWidth: 280 }} title={selected.publisher}>
-            {L.detailPublisher}: {selected.publisher || "—"}
-          </span>
-          <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
-            {L.detailVersion}: {selected.version || "—"}
-          </span>
-          <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
-            {L.detailDate}: {selected.install_date || "—"}
-          </span>
-          <span style={css.sourceBadge}>{selected.source}</span>
-          <span
-            className="ell"
-            style={{ color: "var(--muted)", fontFamily: "var(--mono)", flex: "1 1 200px", minWidth: 0 }}
-            title={selected.install_location}
-          >
-            {selected.install_location || "—"}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <strong style={{ fontSize: 13.5 }}>
+              {prettyAppName(selected.name, selected.source)}
+            </strong>
+            <span style={css.sourceBadge}>{selected.source}</span>
+            <button
+              style={{ ...css.btnSm, height: 26, marginLeft: "auto" }}
+              onClick={() => setShowDetail((v) => !v)}
+              aria-expanded={showDetail}
+            >
+              {showDetail ? L.detailHide : L.detailShow}
+            </button>
+          </div>
+          {showDetail && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px 18px",
+                alignItems: "center",
+                marginTop: 8,
+              }}
+            >
+              <span className="ell" style={{ color: "var(--muted)", maxWidth: 280 }} title={selected.publisher}>
+                {L.detailPublisher}: {selected.publisher || "—"}
+              </span>
+              <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
+                {L.detailVersion}: {selected.version || "—"}
+              </span>
+              <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
+                {L.detailDate}: {selected.install_date || "—"}
+              </span>
+              <span
+                className="ell"
+                style={{ color: "var(--muted)", fontFamily: "var(--mono)", flex: "1 1 200px", minWidth: 0 }}
+                title={selected.install_location}
+              >
+                {selected.install_location || "—"}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -1137,6 +1153,9 @@ export default function App() {
               {L.useOfficial}
             </label>
           )}
+          {scanning && (
+            <div className="remova-progress" style={{ marginTop: 8, flexShrink: 0 }} aria-hidden />
+          )}
           <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={dryRun}>
             {L.dryRun}
           </button>
@@ -1172,19 +1191,52 @@ export default function App() {
             <strong>
               {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
             </strong>
-            {"deleted_planned" in report ? (
-              <span>
-                {L.dryRunPlanned}: {report.deleted_planned} · {L.batchSkipped}: {report.skipped}
-              </span>
-            ) : (
-              <span>
-                {L.batchOk}: {report.deleted} · {L.batchFailed}: {report.failed} · {L.batchSkipped}:{" "}
-                {report.skipped}
-              </span>
-            )}
-            <button style={{ ...css.btnGhost, height: 28 }} onClick={() => setReport(null)}>
+            <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={() => setReport(null)}>
               ×
             </button>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+            {("deleted_planned" in report
+              ? [
+                  { label: L.dryRunPlanned, value: report.deleted_planned, tone: "var(--accent)" },
+                  { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
+                ]
+              : [
+                  { label: L.reportDeleted, value: report.deleted, tone: "var(--ok)" },
+                  { label: L.reportFailed, value: report.failed, tone: "var(--danger)" },
+                  { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
+                ]
+            ).map((s) => (
+              <div
+                key={s.label}
+                style={{
+                  minWidth: 72,
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  textAlign: "center" as const,
+                }}
+              >
+                <div style={{ fontSize: 20, fontWeight: 700, color: s.tone, lineHeight: 1.1 }}>{s.value}</div>
+                <div style={{ ...css.muted, fontSize: 11, marginTop: 2 }}>{s.label}</div>
+              </div>
+            ))}
+            {"backup_dir" in report && report.backup_dir && (
+              <button
+                style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
+                title={report.backup_dir}
+                onClick={async () => {
+                  try {
+                    await invoke("open_path_in_explorer", { path: report.backup_dir });
+                  } catch (e) {
+                    toast.error(L.errInvokeFailed(formatError(e)));
+                  }
+                }}
+              >
+                {L.openBackupDir}
+              </button>
+            )}
           </div>
           {report.item_details.length > 0 && (
             <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8, color: "var(--muted)" }}>
@@ -1204,7 +1256,14 @@ export default function App() {
           )}
           {"restore_point_ok" in report && (
             <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
-              {report.restore_point_ok ? L.restorePointOk : L.restorePointFail}
+              <span
+                style={{
+                  color: report.restore_point_ok ? "var(--ok)" : "var(--warn)",
+                  fontWeight: 600,
+                }}
+              >
+                {report.restore_point_ok ? L.restorePointOk : L.restorePointFail}
+              </span>
               {report.restore_point_msg ? ` — ${report.restore_point_msg}` : ""}
             </div>
           )}
@@ -1345,6 +1404,17 @@ export default function App() {
       ) : (
         <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <div ref={listScrollRef} style={css.scroll}>
+            {loading && apps.length === 0 && (
+              <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="remova-skeleton"
+                    style={{ height: 48, opacity: 1 - i * 0.08 }}
+                  />
+                ))}
+              </div>
+            )}
             <table style={css.table}>
               <colgroup>
                 <col style={{ width: 40 }} />
@@ -1372,10 +1442,14 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && (
+                {filtered.length === 0 && !(loading && apps.length === 0) && (
                   <tr>
                     <td colSpan={4} style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}>
-                      {loading ? "…" : L.emptyList}
+                      {loading
+                        ? L.loadingApps
+                        : q.trim() || sourceFilter || category !== "all"
+                          ? L.emptySearch
+                          : L.emptyList}
                     </td>
                   </tr>
                 )}

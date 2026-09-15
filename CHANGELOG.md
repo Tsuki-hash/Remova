@@ -7,11 +7,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- More page split into Everyday / Advanced sections with clearer tool rows
+- Service/task/startup disable confirmations with risk copy
+- Collapsible selected-app detail strip
+- Localized running/stopped status labels (replaces ON/OFF)
+- Size estimate progress chip (`done/total`)
+- Cleanup report summary cards (deleted / failed / skipped) + open backup folder
+- `open_path_in_explorer` Tauri command (System32 explorer.exe)
+- App list loading skeleton + smarter empty-search copy
+- Indeterminate progress bar while deep-analyzing
+- Unit tests for `looksMicrosoft` manage filter
+
+### Changed
+- Deep analyze removed from software toolbar (row ⋯ menu is the entry)
+- More page ignore action focuses on selected publisher
+- Force clean / ignore live under Advanced; history/restore/export under Everyday
+- Search box uses `useDeferredValue` for smoother typing on large lists
+- Manage Microsoft/system filter: path + token heuristics instead of bare "windows" substring
+- Status chips use pill radius for a more consumer look
+- Restore-point status in report uses success/warn colors
+
+### Added (P0+P1 hotfix)
 - In-app confirm dialog (replaces native `window.confirm`); danger actions use hold-to-confirm
 - Toast host for success/error/info feedback with auto-dismiss
 - After official uninstall succeeds, residual review opens automatically (no extra prompt)
 
-### Changed
+### Changed (P0+P1 hotfix)
 - Confidence labels are human-readable (确定/疑似) instead of star glyphs
 - Analyze / batch / monitor / ignore / manage actions report results via toast with localized copy
 - Forced-clean empty result no longer reuses "no history" copy

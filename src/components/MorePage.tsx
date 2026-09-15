@@ -22,6 +22,66 @@ type ToolId =
   | "csv"
   | "report";
 
+type ToolItem = {
+  id: ToolId;
+  title: string;
+  desc: string;
+  icon: string;
+  action?: () => void;
+  disabled?: boolean;
+};
+
+function ToolRow({
+  item,
+  active,
+}: {
+  item: ToolItem;
+  active: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={item.disabled}
+      onClick={item.action}
+      style={{
+        width: "100%",
+        textAlign: "left" as const,
+        border: "1px solid var(--border)",
+        background: active ? "var(--accent-soft)" : "var(--surface)",
+        borderColor: active ? "var(--accent)" : "var(--border)",
+        borderRadius: 10,
+        padding: "12px 14px",
+        cursor: item.disabled ? "not-allowed" : "pointer",
+        boxShadow: "var(--shadow)",
+        opacity: item.disabled ? 0.55 : 1,
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+      }}
+    >
+      <span
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: "var(--surface-2)",
+          display: "grid",
+          placeItems: "center",
+          fontSize: 15,
+          flexShrink: 0,
+        }}
+        aria-hidden
+      >
+        {item.icon}
+      </span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontWeight: 650, fontSize: 13.5, marginBottom: 3 }}>{item.title}</div>
+        <div style={{ ...css.muted, fontSize: 12, lineHeight: 1.45 }}>{item.desc}</div>
+      </span>
+    </button>
+  );
+}
+
 export function MorePage({
   selected,
   monitoring,
@@ -30,7 +90,6 @@ export function MorePage({
   shellMenu,
   onForceClean,
   onIgnorePublisher,
-  onIgnoreApp,
   onOrphanScan,
   onToggleMonitor,
   onMonitorToCleanup,
@@ -46,7 +105,6 @@ export function MorePage({
   shellMenu: boolean;
   onForceClean: () => void;
   onIgnorePublisher: () => void;
-  onIgnoreApp: () => void;
   onOrphanScan: () => void;
   onToggleMonitor: () => void;
   onMonitorToCleanup: () => void;
@@ -148,35 +206,55 @@ export function MorePage({
     }
   };
 
-  const cards: {
-    id: ToolId;
-    title: string;
-    desc: string;
-    action?: () => void;
-    disabled?: boolean;
-  }[] = [
+  const common: ToolItem[] = [
     {
       id: "history",
       title: L.history,
       desc: L.historyHint,
+      icon: "⏱",
       action: () => void openHistory(),
     },
     {
       id: "restore",
       title: L.restore,
       desc: L.restoreHint,
+      icon: "↩",
       action: () => void openRestore(),
     },
     {
       id: "csv",
       title: L.exportCsv,
       desc: L.exportCsvHint,
+      icon: "↓",
       action: () => void exportCsv(),
     },
+    ...(lastReport
+      ? [
+          {
+            id: "report" as const,
+            title: L.exportReport,
+            desc: L.exportReportHint,
+            icon: "⎙",
+            action: onExportReport,
+          },
+        ]
+      : []),
+    {
+      id: "ignore",
+      title: L.ignorePub,
+      desc: selected ? L.ignorePublisherHint : L.selectRowHint,
+      icon: "∅",
+      action: onIgnorePublisher,
+      disabled: !selected?.publisher,
+    },
+  ];
+
+  const advanced: ToolItem[] = [
     {
       id: "force",
       title: L.forceClean,
       desc: selected ? L.forceCleanHint : L.selectRowHint,
+      icon: "⌘",
       action: onForceClean,
       disabled: !selected,
     },
@@ -184,74 +262,66 @@ export function MorePage({
       id: "orphan",
       title: L.orphanScan,
       desc: L.orphanScanHint,
+      icon: "⌕",
       action: onOrphanScan,
     },
     {
       id: "monitor",
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
+      icon: monitoring ? "■" : "●",
       action: onToggleMonitor,
-    },
-    {
-      id: "ignore",
-      title: L.ignoreApp,
-      desc: selected ? L.ignoreAppHint : L.selectRowHint,
-      action: onIgnoreApp,
-      disabled: !selected?.name,
     },
     {
       id: "shell",
       title: shellMenu ? L.shellUnregister : L.shellMenu,
       desc: shellMenu ? L.shellUnregisterHint : L.shellMenuHint,
+      icon: "☰",
       action: onShellToggle,
     },
     {
       id: "releases",
       title: L.openReleases,
       desc: L.openReleasesHint,
+      icon: "↗",
       action: () => window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank"),
     },
   ];
 
-  if (lastReport) {
-    cards.splice(2, 0, {
-      id: "report" as const,
-      title: L.exportReport,
-      desc: L.exportReportHint,
-      action: onExportReport,
-    });
-  }
-
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 12, overflow: "auto" }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-          gap: 12,
-        }}
-      >
-        {cards.map((c) => (
-          <button
-            key={`${c.id}-${c.title}`}
-            disabled={c.disabled}
-            onClick={c.action}
-            style={{
-              textAlign: "left" as const,
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              borderRadius: 12,
-              padding: "14px 16px",
-              cursor: c.disabled ? "not-allowed" : "pointer",
-              boxShadow: "var(--shadow)",
-              opacity: c.disabled ? 0.55 : 1,
-            }}
-          >
-            <div style={{ fontWeight: 650, fontSize: 14, marginBottom: 6 }}>{c.title}</div>
-            <div style={{ ...css.muted, fontSize: 12.5, lineHeight: 1.45 }}>{c.desc}</div>
-          </button>
-        ))}
-      </div>
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        overflow: "auto",
+      }}
+    >
+      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{L.moreSectionCommon}</div>
+          <div style={css.muted}>{L.moreSectionCommonHint}</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+          {common.map((c) => (
+            <ToolRow key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </div>
+      </section>
+
+      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{L.moreSectionAdvanced}</div>
+          <div style={css.muted}>{L.moreSectionAdvancedHint}</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+          {advanced.map((c) => (
+            <ToolRow key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </div>
+      </section>
 
       {openTool === "history" && (
         <HistoryPanel
@@ -279,14 +349,6 @@ export function MorePage({
           onToCleanup={onMonitorToCleanup}
           onDismiss={onDismissMonitor}
         />
-      )}
-      {selected && (
-        <div style={{ ...css.muted, fontSize: 12 }}>
-          {L.forceClean}: {selected.name} · {L.ignorePublisherHint}
-          <button style={{ ...css.btnSm, marginLeft: 10 }} onClick={onIgnorePublisher}>
-            {L.ignorePublisher}
-          </button>
-        </div>
       )}
     </div>
   );

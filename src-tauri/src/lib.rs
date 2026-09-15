@@ -58,6 +58,22 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
+/// Open Explorer at a path (backup dir, install location).
+#[tauri::command]
+fn open_path_in_explorer(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("empty path".into());
+    }
+    use std::process::Command;
+    let explorer = regops::sys_tool("explorer.exe");
+    Command::new(explorer)
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
 async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
@@ -456,6 +472,7 @@ pub fn run() {
             estimate_dir_size_kb,
             cancel_size_estimate,
             begin_size_estimate,
+            open_path_in_explorer,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,

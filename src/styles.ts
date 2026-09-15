@@ -144,7 +144,7 @@ export const cssStyles = {
     gap: 6,
     height: 24,
     padding: "0 9px",
-    borderRadius: 4,
+    borderRadius: 999,
     background: "var(--surface-2)",
     border: "1px solid var(--border)",
     fontSize: 11,
@@ -158,7 +158,7 @@ export const cssStyles = {
     gap: 6,
     height: 24,
     padding: "0 9px",
-    borderRadius: 4,
+    borderRadius: 999,
     background: "var(--accent-soft)",
     border: "1px solid transparent",
     fontSize: 11,
@@ -171,7 +171,7 @@ export const cssStyles = {
     gap: 6,
     height: 24,
     padding: "0 9px",
-    borderRadius: 4,
+    borderRadius: 999,
     background: "var(--danger-soft)",
     border: "1px solid transparent",
     fontSize: 11,
@@ -225,5 +225,34 @@ export const globalCss = `
   ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+  @keyframes remova-pulse {
+    0%, 100% { opacity: .55; }
+    50% { opacity: 1; }
+  }
+  .remova-skeleton {
+    animation: remova-pulse 1.2s ease-in-out infinite;
+    background: var(--surface-2);
+    border-radius: 8px;
+  }
+  .remova-progress {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    overflow: hidden;
+    position: relative;
+  }
+  .remova-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    border-radius: inherit;
+    background: var(--accent);
+    animation: remova-indeterminate 1.1s ease-in-out infinite;
+  }
+  @keyframes remova-indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
   }
 `;
