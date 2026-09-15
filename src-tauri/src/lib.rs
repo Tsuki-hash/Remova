@@ -1,5 +1,6 @@
 //! Remova core library (Tauri backend).
 
+pub mod ai;
 pub mod apps;
 pub mod backup;
 pub mod dirsize;
@@ -72,6 +73,86 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn get_ai_config() -> Result<ai::AiConfigView, String> {
+    Ok(ai::AiConfigView::from(&ai::load_config()))
+}
+
+/// Save AI settings. Empty `api_key` keeps the stored key unchanged.
+#[tauri::command]
+fn save_ai_config(
+    enabled: bool,
+    provider: String,
+    base_url: String,
+    model: String,
+    allow_cloud_paths: bool,
+    api_key: Option<String>,
+) -> Result<ai::AiConfigView, String> {
+    let mut c = ai::load_config();
+    c.enabled = enabled;
+    c.provider = provider;
+    c.base_url = base_url;
+    c.model = model;
+    c.allow_cloud_paths = allow_cloud_paths;
+    if let Some(k) = api_key {
+        let k = k.trim().to_string();
+        if !k.is_empty() {
+            c.api_key = k;
+        }
+    }
+    ai::save_config(&c)?;
+    Ok(ai::AiConfigView::from(&c))
+}
+
+#[tauri::command]
+async fn ai_risk_brief(
+    app_name: String,
+    publisher: String,
+    action: String,
+    item_count: usize,
+    kind_counts: std::collections::HashMap<String, usize>,
+    has_service: bool,
+    has_run_key: bool,
+    has_shared_hint: bool,
+) -> Result<Option<String>, String> {
+    let cfg = ai::load_config();
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let input = ai::RiskBriefInput {
+            app_name,
+            publisher,
+            action,
+            item_count,
+            kind_counts,
+            has_service,
+            has_run_key,
+            has_shared_hint,
+        };
+        ai::risk_brief(&cfg, &input).ok()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ai_explain_items(
+    app_name: String,
+    publisher: String,
+    items: Vec<ai::ExplainInput>,
+) -> Result<Vec<ai::ExplainOutput>, String> {
+    let cfg = ai::load_config();
+    if !cfg.enabled {
+        return Ok(vec![]);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        ai::explain_items(&cfg, &app_name, &publisher, &items).unwrap_or_default()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
@@ -502,7 +583,11 @@ pub fn run() {
             begin_install_monitor,
             end_install_monitor,
             monitor_diff_to_items,
-            take_pending_analyze
+            take_pending_analyze,
+            get_ai_config,
+            save_ai_config,
+            ai_risk_brief,
+            ai_explain_items
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- AI orchestration module (`ai.rs`): OpenAI-compatible / Ollama chat, path sanitize, TTL cache
+- AI settings panel (More → Advanced): enable, provider, base URL, model, API key, path-sharing toggle
+- Residual list “AI explain” button + per-row model summaries (advisory only)
+- Cleanup confirm includes optional AI risk brief when enabled
+- Design doc: `docs/AI-FEATURES.md`
+- Dependency: `ureq` (rustls) for backend AI HTTP
+
 ## [1.2.1] - 2026-09-16
 
 ### Added

@@ -8,6 +8,7 @@ import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
+import { AiSettingsPanel } from "./AiSettingsPanel";
 import type { FullCleanupReport, InstalledApp } from "../types";
 
 type ToolId =
@@ -20,7 +21,8 @@ type ToolId =
   | "shell"
   | "releases"
   | "csv"
-  | "report";
+  | "report"
+  | "ai";
 
 type ToolItem = {
   id: ToolId;
@@ -280,6 +282,13 @@ export function MorePage({
       action: onShellToggle,
     },
     {
+      id: "ai",
+      title: L.aiSettings,
+      desc: L.aiSettingsHint,
+      icon: "✦",
+      action: () => setOpenTool(openTool === "ai" ? null : "ai"),
+    },
+    {
       id: "releases",
       title: L.openReleases,
       desc: L.openReleasesHint,
@@ -331,6 +340,7 @@ export function MorePage({
           onClose={() => setOpenTool(null)}
         />
       )}
+      {openTool === "ai" && <AiSettingsPanel onClose={() => setOpenTool(null)} />}
       {openTool === "restore" && (
         <RestorePanel
           sessions={restoreSessions}

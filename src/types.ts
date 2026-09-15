@@ -73,3 +73,18 @@ export type OfficialUninstallResult = {
   message: string;
   had_command: boolean;
 };
+
+export type AiConfigView = {
+  enabled: boolean;
+  provider: string;
+  base_url: string;
+  model: string;
+  allow_cloud_paths: boolean;
+  has_api_key: boolean;
+};
+
+export type AiExplainOutput = {
+  path: string;
+  summary: string;
+  suggest_check: boolean;
+};

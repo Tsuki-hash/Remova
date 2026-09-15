@@ -26,6 +26,7 @@ import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { requestConfirm } from "./lib/confirm";
 import { toast } from "./lib/toast";
+import type { AiConfigView, AiExplainOutput } from "./types";
 
 declare const __APP_VERSION__: string;
 
@@ -91,6 +92,10 @@ export default function App() {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNotes, setAiNotes] = useState<Record<string, string>>({});
+  const [aiRisk, setAiRisk] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
@@ -143,6 +148,8 @@ export default function App() {
       setScanning(true);
       setScan(null);
       setReport(null);
+      setAiNotes({});
+      setAiRisk(null);
       const t0 = performance.now();
       try {
         const r = await invoke<ScanResult>("analyze_associations", { app });
@@ -231,6 +238,9 @@ export default function App() {
       }
     })();
     void invoke<boolean>("is_elevated").then(setAdmin).catch(() => {});
+    void invoke<AiConfigView>("get_ai_config")
+      .then((c) => setAiEnabled(c.enabled))
+      .catch(() => {});
     void invoke<{ publishers: string[]; names: string[]; paths: string[] }>("load_ignore")
       .then((ig) => {
         setIgnorePub(ig.publishers || []);
@@ -672,6 +682,36 @@ export default function App() {
     },
     [L, goNav],
   );
+
+  const runAiExplain = useCallback(async () => {
+    if (!scan || !aiEnabled || aiBusy) return;
+    setAiBusy(true);
+    try {
+      const items = scan.items.slice(0, 12).map((it) => ({
+        path: it.path,
+        kind: it.kind,
+        confidence: it.confidence,
+        risk: it.risk,
+        reason: it.reason,
+        evidence_labels: (it.evidence || []).map((e) => e.label).filter(Boolean),
+      }));
+      const out = await invoke<AiExplainOutput[]>("ai_explain_items", {
+        appName: scan.app_name,
+        publisher: selected?.publisher || "",
+        items,
+      });
+      const map: Record<string, string> = {};
+      for (const o of out) {
+        map[o.path] = o.summary;
+      }
+      setAiNotes(map);
+      if (!out.length) toast.info(L.aiDisabledHint);
+    } catch {
+      toast.error(L.aiFailed);
+    } finally {
+      setAiBusy(false);
+    }
+  }, [scan, selected, aiEnabled, aiBusy, L]);
 
   const dryRun = useCallback(async () => {
     if (!scan) return;
@@ -1163,9 +1203,41 @@ export default function App() {
             style={{ ...css.btn, background: "var(--danger)", color: "#1a0505" }}
             disabled={dryRunning || selectedPaths.size === 0 || busyRef.current}
             onClick={async () => {
+              let message = L.cleanupConfirm(selectedPaths.size, residualFromUninstall || useOfficial);
+              if (aiEnabled && selected) {
+                try {
+                  const kinds: Record<string, number> = {};
+                  for (const it of scan?.items || []) {
+                    if (!selectedPaths.has(it.path)) continue;
+                    kinds[it.kind] = (kinds[it.kind] || 0) + 1;
+                  }
+                  const brief = await invoke<string | null>("ai_risk_brief", {
+                    appName: selected.name,
+                    publisher: selected.publisher || "",
+                    action: residualFromUninstall ? "residual_cleanup" : "cleanup",
+                    itemCount: selectedPaths.size,
+                    kindCounts: kinds,
+                    hasService: (scan?.items || []).some(
+                      (it) => selectedPaths.has(it.path) && it.kind.toLowerCase().includes("service"),
+                    ),
+                    hasRunKey: (scan?.items || []).some(
+                      (it) =>
+                        selectedPaths.has(it.path) &&
+                        (it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run")),
+                    ),
+                    hasSharedHint: false,
+                  });
+                  if (brief) {
+                    setAiRisk(brief);
+                    message = `${message}\n\n${L.aiRiskTitle}: ${brief}\n\n${L.aiDisclaimer}`;
+                  }
+                } catch {
+                  // non-blocking
+                }
+              }
               const ok = await requestConfirm({
                 title: L.cleanup,
-                message: L.cleanupConfirm(selectedPaths.size, residualFromUninstall || useOfficial),
+                message,
                 confirmLabel: L.cleanup,
                 danger: true,
               });
@@ -1173,6 +1245,41 @@ export default function App() {
             }}
           >
             {L.cleanup} ({selectedPaths.size})
+          </button>
+          {aiEnabled && (
+            <button
+              style={css.btnSm}
+              disabled={aiBusy || !scan || scan.items.length === 0}
+              title={L.aiSettingsHint}
+              onClick={() => void runAiExplain()}
+            >
+              {aiBusy ? L.aiExplaining : L.aiExplain}
+            </button>
+          )}
+        </div>
+      )}
+
+      {aiRisk && scan && (
+        <div
+          style={{
+            marginBottom: 8,
+            padding: "8px 12px",
+            borderRadius: 8,
+            background: "var(--accent-soft)",
+            color: "var(--fg)",
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            flexShrink: 0,
+          }}
+        >
+          <strong>{L.aiRiskTitle}: </strong>
+          {aiRisk}
+          <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
+          <button
+            style={{ ...css.btnSm, marginLeft: 10, height: 24 }}
+            onClick={() => setAiRisk(null)}
+          >
+            ×
           </button>
         </div>
       )}
@@ -1335,6 +1442,19 @@ export default function App() {
                       <span className="ell" style={{ display: "block" }} title={it.path}>
                         {it.path}
                       </span>
+                      {aiNotes[it.path] && (
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--muted)",
+                            marginTop: 2,
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          ✦ {aiNotes[it.path]}
+                          <span style={{ opacity: 0.75 }}> · {L.aiDisclaimer}</span>
+                        </div>
+                      )}
                     </td>
                     <td style={css.td}>
                       <span style={css.sourceBadge}>{it.kind}</span>
