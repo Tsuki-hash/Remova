@@ -188,6 +188,20 @@ async fn ai_summarize_report(
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn ai_parse_intent(
+    text: String,
+    app_names: Vec<String>,
+) -> Result<ai::NlIntent, String> {
+    let cfg = ai::load_config();
+    if !cfg.enabled {
+        return Err("ai disabled".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || ai::parse_nl_intent(&cfg, &text, &app_names))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
 async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
@@ -621,7 +635,8 @@ pub fn run() {
             save_ai_config,
             ai_risk_brief,
             ai_explain_items,
-            ai_summarize_report
+            ai_summarize_report,
+            ai_parse_intent
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

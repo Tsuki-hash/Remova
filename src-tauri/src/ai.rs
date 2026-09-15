@@ -451,6 +451,64 @@ pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<Stri
     Ok(text)
 }
 
+// ── NL intent (Copilot) ────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NlFilter {
+    pub name_like: Option<String>,
+    pub publisher: Option<String>,
+    pub size_gt_kb: Option<i64>,
+    pub installed_after: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NlIntent {
+    /// list | analyze | batch_uninstall | force_clean
+    pub action: String,
+    pub filter: NlFilter,
+    pub include_leftovers: bool,
+    pub note: String,
+}
+
+impl Default for NlIntent {
+    fn default() -> Self {
+        Self {
+            action: "list".into(),
+            filter: NlFilter::default(),
+            include_leftovers: true,
+            note: String::new(),
+        }
+    }
+}
+
+const INTENT_SYSTEM: &str = "你是 Windows 卸载助手的意图解析器。把用户中文/英文指令解析成 JSON，\
+仅允许 action 取值 list|analyze|batch_uninstall|force_clean。\
+filter 字段可选：name_like（关键词）、publisher、size_gt_kb（整数）、installed_after（YYYY-MM-DD）。\
+危险动作也要照常解析，由应用层二次确认。\
+只输出一个 JSON 对象，不要解释。字段：action, filter, include_leftovers, note。\
+note 用一句话复述计划（中文）。";
+
+pub fn parse_nl_intent(cfg: &AiConfig, user_text: &str, app_names: &[String]) -> Result<NlIntent, String> {
+    let names: Vec<&str> = app_names.iter().take(40).map(|s| s.as_str()).collect();
+    let user = format!(
+        "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",
+        user_text.trim(),
+        names.join(" | ")
+    );
+    let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
+    let cleaned = strip_code_fence(&text);
+    let mut intent: NlIntent =
+        serde_json::from_str(&cleaned).map_err(|e| format!("ai intent json: {e} | {cleaned}"))?;
+    // Clamp dangerous defaults — never auto-run.
+    match intent.action.as_str() {
+        "list" | "analyze" | "batch_uninstall" | "force_clean" => {}
+        _ => intent.action = "list".into(),
+    }
+    Ok(intent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

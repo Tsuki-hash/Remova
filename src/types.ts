@@ -89,3 +89,17 @@ export type AiExplainOutput = {
   summary: string;
   suggest_check: boolean;
 };
+
+export type NlFilter = {
+  name_like?: string | null;
+  publisher?: string | null;
+  size_gt_kb?: number | null;
+  installed_after?: string | null;
+};
+
+export type NlIntent = {
+  action: "list" | "analyze" | "batch_uninstall" | "force_clean" | string;
+  filter: NlFilter;
+  include_leftovers: boolean;
+  note: string;
+};

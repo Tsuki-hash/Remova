@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cleanup confirm includes optional AI risk brief when enabled
 - Shared-runtime heuristic (`shared.rs`): VC++/.NET/WebView/etc. marked and unchecked by default
 - Optional AI cleanup-report summary button
+- Copilot panel: natural-language intent → plan preview → filter / analyze / batch / force-clean (all with confirm)
 - Design doc: `docs/AI-FEATURES.md`
 - Dependency: `ureq` (rustls) for backend AI HTTP
 

@@ -22,6 +22,7 @@ import { applyTheme, loadNav, loadTheme, saveNav, type NavId, type Theme } from 
 import { Shell } from "./components/Shell";
 import { ManageListPage } from "./components/ManageListPage";
 import { MorePage } from "./components/MorePage";
+import { CopilotPanel } from "./components/CopilotPanel";
 import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { requestConfirm } from "./lib/confirm";
@@ -65,6 +66,7 @@ export default function App() {
   );
   const setCategory = useCallback((id: "all" | "desktop" | "store" | "large" | "recent") => {
     setCategoryState(id);
+    setCopilotList(null);
     localStorage.setItem("remova_cat", id);
   }, []);
   const [langVer, setLangVer] = useState(0);
@@ -98,6 +100,7 @@ export default function App() {
   const [aiRisk, setAiRisk] = useState<string | null>(null);
   const [aiReportNote, setAiReportNote] = useState<string | null>(null);
   const [aiReportBusy, setAiReportBusy] = useState(false);
+  const [copilotList, setCopilotList] = useState<InstalledApp[] | null>(null);
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
@@ -452,7 +455,7 @@ export default function App() {
 
   const filtered = useMemo(() => {
     const needle = deferredQ.trim().toLowerCase();
-    let list = apps;
+    let list = copilotList ?? apps;
     list = list.filter(
       (a) =>
         !ignorePub.some((p) => p && a.publisher?.toLowerCase() === p.toLowerCase()) &&
@@ -491,7 +494,7 @@ export default function App() {
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
+  }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
 
   const sortBy = (col: "name" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -776,13 +779,15 @@ export default function App() {
     }
   }, [scan, selected, selectedPaths, refreshApps, residualFromUninstall, useOfficial, L]);
 
-  const batchCleanup = useCallback(async () => {
-    const keys = new Set(multi);
-    const queue = apps.filter((a) => keys.has(appKey(a)));
-    if (!queue.length) {
-      toast.info(L.selectRowHint);
-      return;
-    }
+  const batchCleanup = useCallback(
+    async (queueOverride?: InstalledApp[]) => {
+      const queue =
+        queueOverride ??
+        apps.filter((a) => new Set(multi).has(appKey(a)));
+      if (!queue.length) {
+        toast.info(L.selectRowHint);
+        return;
+      }
     const ok = await requestConfirm({
       title: L.batchUninstall,
       message: L.batchConfirm(queue.length, batchUseOfficial),
@@ -1047,7 +1052,10 @@ export default function App() {
                 style={{ ...css.input, flex: "1 1 220px" }}
                 placeholder={L.search}
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setCopilotList(null);
+                }}
                 aria-label={L.search}
               />
               <select
@@ -1070,6 +1078,20 @@ export default function App() {
               )}
               {scanning && <span style={{ ...css.muted, flexShrink: 0 }}>{L.analyzing}</span>}
             </div>
+            <CopilotPanel
+              apps={apps}
+              aiEnabled={aiEnabled}
+              onApplyFilter={(list) => {
+                setCopilotList(list);
+                setQ("");
+                toast.success(`${L.colName}: ${list.length}`);
+              }}
+              onAnalyze={(app) => void analyze(app)}
+              onBatch={(list) => {
+                void batchCleanup(list);
+              }}
+              onForceClean={(app) => void forceClean(app)}
+            />
             <div style={{ display: "flex", gap: 8, marginBottom: 10, flexShrink: 0, flexWrap: "wrap" }}>
               {(
                 [
