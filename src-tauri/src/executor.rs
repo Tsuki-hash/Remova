@@ -25,6 +25,9 @@ pub struct ItemDetail {
     pub message: String,
 }
 
+/// Lightweight error alias until thiserror is fully adopted (ARCH-5).
+pub type ExecResult<T> = Result<T, String>;
+
 /// Build argv for the official uninstaller (parity with Python `build_uninstall_command`).
 /// Store packages (`remova-store:<PackageFullName>`) map to PowerShell Remove-AppxPackage.
 pub fn build_uninstall_command(

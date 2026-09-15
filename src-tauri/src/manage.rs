@@ -19,8 +19,18 @@ const RUN_KEYS: &[(&str, &str, &str)] = &[
         "64",
     ),
     (
+        "HKLM64",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+        "64",
+    ),
+    (
         "HKLM32",
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+        "32",
+    ),
+    (
+        "HKLM32",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
         "32",
     ),
     (
@@ -31,6 +41,17 @@ const RUN_KEYS: &[(&str, &str, &str)] = &[
     (
         "HKCU",
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+        "64",
+    ),
+    // Policy-driven Run keys (enterprise / some OEM images)
+    (
+        "HKLM64",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run",
+        "64",
+    ),
+    (
+        "HKCU",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run",
         "64",
     ),
 ];
@@ -52,8 +73,162 @@ pub fn list_startup_items() -> Vec<ManageItem> {
             });
         }
     }
+    // Startup folders (user + common) — .lnk / .exe / .bat etc.
+    for folder in startup_folder_paths() {
+        let Ok(rd) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(fname) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if fname.eq_ignore_ascii_case("desktop.ini") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(fname)
+                .trim_end_matches(".remova-disabled")
+                .to_string();
+            let enabled = startup_folder_enabled(&stem)
+                .unwrap_or(!fname.to_lowercase().contains(".remova-disabled"));
+            out.push(ManageItem {
+                name: stem,
+                detail: path.display().to_string(),
+                location: format!("FOLDER::{folder}::{fname}"),
+                enabled,
+            });
+        }
+    }
+    // UWP / Store packaged startup tasks (Task Manager “Startup apps”).
+    for it in list_packaged_startup() {
+        out.push(it);
+    }
+    // Auto-start (Start=2) user-mode services — consumer tools list these as 开机自启.
+    for svc in list_auto_services() {
+        out.push(svc);
+    }
     out.sort_by_key(|a| a.name.to_lowercase());
+    out.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name) && a.location == b.location);
     out
+}
+
+/// User-mode services with Start=2 (auto), including Microsoft ones (consumers expect them).
+fn list_auto_services() -> Vec<ManageItem> {
+    let mut out = Vec::new();
+    let keys = [
+        ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
+        ("HKLM32", r"SYSTEM\CurrentControlSet\Services"),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for (alias, sub) in keys {
+        let root = format!(r"{alias}\{sub}");
+        for svc in crate::regscan::list_subkeys(&root) {
+            if svc.contains('\\') {
+                continue;
+            }
+            if critical_service_names()
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(&svc))
+            {
+                continue;
+            }
+            if !seen.insert(svc.to_lowercase()) {
+                continue;
+            }
+            let path = format!(r"{root}\{svc}");
+            let svc_type = crate::regscan::read_dword(&path, "Type").unwrap_or(0);
+            if svc_type & 0xF0 == 0 {
+                continue;
+            }
+            let start = crate::regscan::read_dword(&path, "Start").unwrap_or(3);
+            if start != 2 {
+                continue;
+            }
+            let display_name = crate::regscan::read_string(&path, "DisplayName")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| svc.clone());
+            out.push(ManageItem {
+                name: display_name,
+                detail: format!("自动服务 · {svc}"),
+                location: format!("SVC::{svc}"),
+                enabled: true,
+            });
+        }
+    }
+    out
+}
+
+/// Enumerate StartupApproved PackagedStartup values (UWP/Store apps).
+/// Value name is typically `PackageFamilyName!AppId`; binary flag same layout as Run.
+fn list_packaged_startup() -> Vec<ManageItem> {
+    let mut out = Vec::new();
+    let sa =
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup";
+    for (vname, _) in crate::regscan::list_values(sa) {
+        if vname.is_empty() {
+            continue;
+        }
+        let enabled = crate::regscan::read_binary(sa, &vname)
+            .map(|b| !(!b.is_empty() && b[0] == 0x03))
+            .unwrap_or(true);
+        // Resolve display name from SystemAppData when possible.
+        let display = resolve_packaged_display_name(&vname).unwrap_or_else(|| vname.clone());
+        out.push(ManageItem {
+            name: display,
+            detail: format!("Store · {vname}"),
+            location: format!("PACKAGED::{sa}::{vname}"),
+            enabled,
+        });
+    }
+    out
+}
+
+/// `PackageFamilyName!AppId` → friendly display from AppModel registry.
+fn resolve_packaged_display_name(value_name: &str) -> Option<String> {
+    let (pfn, app_id) = value_name.split_once('!')?;
+    let root = format!(
+        r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\{pfn}"
+    );
+    // AppId may be a GUID path under SystemAppData\{pfn}\{AppId}
+    let key = format!(r"{root}\{app_id}");
+    if let Some(d) = crate::regscan::read_string(&key, "DisplayName").filter(|s| !s.is_empty()) {
+        return Some(d);
+    }
+    // Some images store DisplayName on the package root.
+    if let Some(d) = crate::regscan::read_string(&root, "DisplayName").filter(|s| !s.is_empty()) {
+        return Some(d);
+    }
+    None
+}
+
+fn startup_folder_paths() -> Vec<String> {
+    let mut dirs = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        dirs.push(format!(
+            r"{appdata}\Microsoft\Windows\Start Menu\Programs\Startup"
+        ));
+    }
+    if let Ok(pd) = std::env::var("ProgramData") {
+        dirs.push(format!(
+            r"{pd}\Microsoft\Windows\Start Menu\Programs\Startup"
+        ));
+    }
+    dirs
+}
+
+/// Task Manager stores folder-shortcut enable flags under StartupApproved\StartupFolder.
+fn startup_folder_enabled(file_name: &str) -> Option<bool> {
+    crate::regscan::read_binary(
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+        file_name,
+    )
+    .map(|b| !(!b.is_empty() && b[0] == 0x03))
 }
 
 /// Read Explorer StartupApproved\Run binary for a value name. None if missing.
@@ -97,15 +272,34 @@ pub fn list_services() -> Vec<ManageItem> {
             if !seen.insert(svc.to_lowercase()) {
                 continue;
             }
+            // Skip kernel / filesystem drivers (Type bit0/bit1). Keep Win32 process services (0x10/0x20).
+            let svc_type = crate::regscan::read_dword(&path, "Type").unwrap_or(0);
+            if svc_type & 0xF0 == 0 {
+                continue;
+            }
             let start = crate::regscan::read_dword(&path, "Start").unwrap_or(3);
             // 2=auto, 3=manual, 4=disabled
             let enabled = start != 4;
             let display_name = crate::regscan::read_string(&path, "DisplayName")
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| svc.clone());
+            let desc = crate::regscan::read_string(&path, "Description")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default();
+            let start_label = match start {
+                2 => "Auto",
+                3 => "Manual",
+                4 => "Disabled",
+                _ => "Other",
+            };
+            let detail = if desc.is_empty() {
+                format!("{display_name} · {start_label}")
+            } else {
+                format!("{start_label} · {desc}")
+            };
             out.push(ManageItem {
                 name: svc,
-                detail: display_name,
+                detail,
                 location: path,
                 enabled,
             });
@@ -116,7 +310,8 @@ pub fn list_services() -> Vec<ManageItem> {
 }
 
 /// Parse `schtasks /query /fo CSV /v` rows.
-/// CSV format is locale-independent for column order: TaskName, Next Run Time, Status, ...
+/// Verbose CSV column order is stable across locales:
+/// 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment.
 pub fn list_scheduled_tasks() -> Vec<ManageItem> {
     #[cfg(not(windows))]
     {
@@ -132,53 +327,32 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         else {
             return Vec::new();
         };
-        let text = String::from_utf8_lossy(&out.stdout);
+        // schtasks on zh-CN often emits OEM code page, not UTF-8.
+        let text = decode_console_bytes(&out.stdout);
         let mut items = Vec::new();
         let mut lines = text.lines();
-        let Some(header) = lines.next() else {
-            return items;
-        };
-        // Prefer positional columns (CSV order is stable across locales):
-        // 0=TaskName, 2=Status; comment varies — fall back to name matching.
-        let headers: Vec<String> = header
-            .split(',')
-            .map(|h| h.trim_matches('"').to_lowercase())
-            .collect();
-        let idx_task = headers
-            .iter()
-            .position(|h| h.contains("taskname") || h.contains("任务名") || h.contains("작업 이름"))
-            .or(Some(0));
-        let idx_status = headers
-            .iter()
-            .position(|h| {
-                h.contains("status")
-                    || h.contains("状态")
-                    || h.contains("상태")
-                    || h.contains("status")
-            })
-            .or(Some(2));
-        let idx_comment = headers
-            .iter()
-            .position(|h| h.contains("comment") || h.contains("注释") || h.contains("설명"));
+        // Skip header; positional columns are locale-stable in /fo CSV /v:
+        // 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment
+        let _ = lines.next();
+        const IDX_TASK: usize = 1;
+        const IDX_STATUS: usize = 3;
+        const IDX_RUN: usize = 8;
+        const IDX_COMMENT: usize = 10;
         for line in lines {
             let cols = split_csv_line(line);
-            let Some(ti) = idx_task else { continue };
-            let Some(name) = cols.get(ti) else { continue };
+            let Some(name) = cols.get(IDX_TASK).cloned() else {
+                continue;
+            };
             if name.is_empty() || name.eq_ignore_ascii_case("taskname") {
                 continue;
             }
-            // Skip Microsoft\Windows noise lightly
             let lower = name.to_lowercase();
             if lower.starts_with("\\microsoft\\windows\\") {
                 continue;
             }
-            let status = idx_status
-                .and_then(|i| cols.get(i).cloned())
-                .unwrap_or_default();
-            let comment = idx_comment
-                .and_then(|i| cols.get(i).cloned())
-                .unwrap_or_default();
-            // "Disabled" is localized; treat empty/Ready/Running as enabled when unknown.
+            let status = cols.get(IDX_STATUS).cloned().unwrap_or_default();
+            let run = cols.get(IDX_RUN).cloned().unwrap_or_default();
+            let comment = cols.get(IDX_COMMENT).cloned().unwrap_or_default();
             let disabled_markers = [
                 "disabled",
                 "已禁用",
@@ -191,20 +365,70 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             let enabled = !disabled_markers
                 .iter()
                 .any(|m| status.eq_ignore_ascii_case(m));
+            let detail = if !comment.is_empty() && comment != "N/A" {
+                comment.chars().take(120).collect()
+            } else if !run.is_empty() && run != "N/A" {
+                run.chars().take(120).collect()
+            } else {
+                status.clone()
+            };
+            let location = name.clone();
             items.push(ManageItem {
-                name: name.clone(),
-                detail: if comment.is_empty() {
-                    status
-                } else {
-                    comment.chars().take(120).collect()
-                },
-                location: name.clone(),
+                name,
+                detail,
+                location,
                 enabled,
             });
         }
         items.sort_by_key(|a| a.name.to_lowercase());
+        items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         items.truncate(500);
         items
+    }
+}
+
+/// Decode console output that may be UTF-8 or OEM code page (schtasks on zh-CN).
+fn decode_console_bytes(bytes: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::ERROR_INVALID_PARAMETER;
+        use windows::Win32::Globalization::{MultiByteToWideChar, CP_OEMCP};
+        let len = bytes.len() as i32;
+        if len <= 0 {
+            return String::new();
+        }
+        let n = unsafe {
+            MultiByteToWideChar(
+                CP_OEMCP,
+                windows::Win32::Globalization::MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+                bytes,
+                None,
+            )
+        };
+        if n <= 0 {
+            let _ = ERROR_INVALID_PARAMETER;
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut wide = vec![0u16; n as usize];
+        let written = unsafe {
+            MultiByteToWideChar(
+                CP_OEMCP,
+                windows::Win32::Globalization::MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+                bytes,
+                Some(&mut wide),
+            )
+        };
+        if written <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        String::from_utf16_lossy(&wide[..written as usize])
+    }
+    #[cfg(not(windows))]
+    {
+        String::from_utf8_lossy(bytes).into_owned()
     }
 }
 
@@ -239,6 +463,43 @@ fn split_csv_line(line: &str) -> Vec<String> {
 /// Windows reads every value under Run at logon; only StartupApproved actually blocks it.
 /// Binary layout (12 bytes): byte0 = 0x02 enabled / 0x03 disabled.
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
+    if let Some(svc) = location.strip_prefix("SVC::") {
+        // Auto service → disable means Start=4; enable restores Start=2 (auto).
+        if svc.trim().is_empty() || svc.contains('\\') {
+            return Err("bad service name".into());
+        }
+        if critical_service_names()
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(svc))
+        {
+            return Err("critical system service protected".into());
+        }
+        let start: u32 = if enabled { 2 } else { 4 };
+        return crate::regops::write_service_start(svc, start);
+    }
+    if let Some(rest) = location.strip_prefix("PACKAGED::") {
+        // PACKAGED::<sa_key>::<value_name>
+        let Some((sa_key, vname)) = rest.rsplit_once("::") else {
+            return Err("bad packaged startup location".into());
+        };
+        let mut buf = [0u8; 12];
+        buf[0] = if enabled { 0x02 } else { 0x03 };
+        return crate::regops::write_reg_binary(sa_key, vname, &buf);
+    }
+    if let Some(rest) = location.strip_prefix("FOLDER::") {
+        // FOLDER::<dir>::<file>
+        let Some((dir, fname)) = rest.rsplit_once("::") else {
+            return Err("bad startup folder location".into());
+        };
+        let stem = std::path::Path::new(fname)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(fname)
+            .trim_end_matches(".remova-disabled")
+            .to_string();
+        let _ = dir; // enable flag is per-user StartupApproved, not per-folder path
+        return write_startup_folder_approved(&stem, enabled);
+    }
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err("bad startup location".into());
     };
@@ -251,6 +512,16 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     }
 
     write_startup_approved(key, base, enabled)
+}
+
+fn write_startup_folder_approved(file_stem: &str, enabled: bool) -> Result<(), String> {
+    let mut buf = [0u8; 12];
+    buf[0] = if enabled { 0x02 } else { 0x03 };
+    crate::regops::write_reg_binary(
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+        file_stem,
+        &buf,
+    )
 }
 
 fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Result<(), String> {
@@ -343,5 +614,32 @@ mod tests {
         for i in &items {
             assert!(i.location.contains("::"));
         }
+        // Machine typically has more than one Run value or startup-folder entry.
+        // Empty list is still valid on a locked-down VM, so only assert shape.
+        assert!(items.len() < 10_000);
+    }
+
+    #[test]
+    fn startup_folder_paths_nonempty_on_windows() {
+        #[cfg(windows)]
+        {
+            assert!(!super::startup_folder_paths().is_empty());
+        }
+    }
+
+    #[test]
+    fn schtasks_verbose_csv_uses_taskname_column_not_hostname() {
+        // HostName is col 0; TaskName is col 1 — regression for laptop-name-as-task bug.
+        let header = r#""HostName","TaskName","Next Run Time","Status","Logon Mode","Last Run Time","Last Result","Author","Task To Run","Start In","Comment","Scheduled Task State""#;
+        let row = r#""MYLAPTOP","\Vendor\Cleanup","N/A","Ready","Interactive only","N/A","0","Vendor","C:\tools\cleanup.exe","C:\","Cleanup temp","Enabled""#;
+        let cols = super::split_csv_line(row);
+        assert_eq!(cols.get(0).map(String::as_str), Some("MYLAPTOP"));
+        assert_eq!(cols.get(1).map(String::as_str), Some(r"\Vendor\Cleanup"));
+        assert_eq!(cols.get(3).map(String::as_str), Some("Ready"));
+        assert_eq!(
+            cols.get(8).map(String::as_str),
+            Some(r"C:\tools\cleanup.exe")
+        );
+        let _ = header;
     }
 }

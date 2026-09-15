@@ -10,10 +10,7 @@ use crate::executor::{run_cleanup_dry, run_full_cleanup, FullCleanupOptions};
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
 
 fn tmp_root() -> PathBuf {
-    let p = std::env::temp_dir().join(format!(
-        "remova_pipeline_{}",
-        std::process::id()
-    ));
+    let p = std::env::temp_dir().join(format!("remova_pipeline_{}", std::process::id()));
     let _ = fs::remove_dir_all(&p);
     fs::create_dir_all(&p).unwrap();
     p
@@ -28,7 +25,9 @@ fn fake_app(name: &str, loc: &str) -> InstalledApp {
         uninstall_string: String::new(),
         quiet_uninstall_string: String::new(),
         source: "HKLM64".into(),
-        registry_key: format!(r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{{name}}}"),
+        registry_key: format!(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{{{name}}}"
+        ),
         estimated_size_kb: 0,
         install_date: String::new(),
         display_icon: String::new(),
@@ -92,7 +91,11 @@ fn pipeline_dry_run_backup_delete_restore() {
 
     // 3) Restore from the recorded session
     let session = PathBuf::from(&report.backup_dir);
-    assert!(session.is_dir(), "backup session missing: {}", report.backup_dir);
+    assert!(
+        session.is_dir(),
+        "backup session missing: {}",
+        report.backup_dir
+    );
     let msgs = crate::restore::restore_session(&session).expect("restore failed");
     assert!(msgs.iter().any(|m| m.contains("restored")));
     assert!(app_dir.join("bin").join("app.exe").exists(), "exe restored");

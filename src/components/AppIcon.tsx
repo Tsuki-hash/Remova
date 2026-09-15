@@ -49,23 +49,23 @@ export function AppIcon({ displayIcon, name }: { displayIcon: string; name: stri
   return (
     <span
       style={{
-        width: 20,
-        height: 20,
-        borderRadius: 4,
+        width: 32,
+        height: 32,
+        borderRadius: 8,
         flexShrink: 0,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "var(--th-bg)",
+        background: "var(--surface-2)",
         color: "var(--muted)",
-        fontSize: 11,
-        fontWeight: 600,
+        fontSize: 13,
+        fontWeight: 700,
         overflow: "hidden",
       }}
       aria-hidden
     >
       {src ? (
-        <img src={src} width={20} height={20} alt="" style={{ display: "block" }} />
+        <img src={src} width={32} height={32} alt="" style={{ display: "block" }} />
       ) : (
         initial
       )}

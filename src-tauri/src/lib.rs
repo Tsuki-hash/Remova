@@ -10,6 +10,7 @@ pub mod ignore;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
+#[cfg(test)]
 pub mod pipeline_smoke;
 pub mod regops;
 pub mod regscan;
@@ -432,7 +433,9 @@ async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
 }
 
 #[tauri::command]
-fn monitor_diff_to_items(diff: installmon::MonitorDiff) -> Result<Vec<scanner::CleanupItem>, String> {
+fn monitor_diff_to_items(
+    diff: installmon::MonitorDiff,
+) -> Result<Vec<scanner::CleanupItem>, String> {
     Ok(installmon::diff_to_cleanup_items(&diff))
 }
 

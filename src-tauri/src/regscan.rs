@@ -198,15 +198,20 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        use windows::Win32::System::Registry::{RegQueryValueExW, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE};
-        let Some((hive, sub, access)) = parse_alias(key) else {
-            return None;
+        use windows::Win32::System::Registry::{
+            RegQueryValueExW, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
         };
+        let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
-            if RegOpenKeyExW(hive, PCWSTR(sub_w.as_ptr()), 0, KEY_READ | access, &mut root)
-                != ERROR_SUCCESS
+            if RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            ) != ERROR_SUCCESS
             {
                 return None;
             }

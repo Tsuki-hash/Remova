@@ -18,6 +18,10 @@ Evidence-based association scan, safety preview, backup/restore, dry-run plannin
 GitHub Releases: `Remova.exe`, `Remova_*_x64-setup.exe` (NSIS), `Remova_*_x64_en-US.msi`  
 https://github.com/Tsuki-hash/Remova/releases
 
+### Portable
+
+NSIS/MSI installers are the supported path. For a semi-portable trial, copy `remova.exe` from `src-tauri/target/release/` — registry scans work without install; per-user backup root is `%PROGRAMDATA%\Remova\Backup\`. A dedicated portable zip is tracked as IMP-12.
+
 ## Develop
 
 ```powershell

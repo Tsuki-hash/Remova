@@ -26,8 +26,8 @@ export const cssStyles = {
   input: {
     flex: 1,
     minWidth: 200,
-    height: 34,
-    borderRadius: 6,
+    height: 36,
+    borderRadius: 8,
     border: "1px solid var(--border)",
     padding: "0 12px",
     fontSize: 13,
@@ -89,7 +89,7 @@ export const cssStyles = {
   card: {
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    borderRadius: 8,
+    borderRadius: 12,
     overflow: "hidden",
     boxShadow: "var(--shadow)",
   },

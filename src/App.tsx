@@ -11,19 +11,17 @@ import type {
 import { currentLang, formatSize, loadLang, setLang, t } from "./i18n";
 import { compareSemver } from "./semver";
 import { cssStyles as css, globalCss } from "./styles";
-import { HistoryPanel } from "./components/HistoryPanel";
-import { RestorePanel } from "./components/RestorePanel";
-import { MonitorPanel } from "./components/MonitorPanel";
-import { ManagePanel, type ManageItem, type ManageTab } from "./components/ManagePanel";
 import { AppRow } from "./components/AppRow";
-import { MoreMenu } from "./components/MoreMenu";
 import {
   BatchProgress,
   BatchSummaryPanel,
   type BatchItemResult,
 } from "./components/BatchPanels";
 import { escapeHtml, formatError, prettyAppName } from "./lib/format";
-import { applyTheme, loadTheme, type Theme } from "./lib/theme";
+import { applyTheme, loadNav, loadTheme, saveNav, type NavId, type Theme } from "./lib/theme";
+import { Shell } from "./components/Shell";
+import { ManageListPage } from "./components/ManageListPage";
+import { MorePage } from "./components/MorePage";
 
 declare const __APP_VERSION__: string;
 
@@ -53,13 +51,20 @@ export default function App() {
   const [admin, setAdmin] = useState<boolean | null>(null);
   const [disk, setDisk] = useState("");
   const [theme, setTheme] = useState<Theme>(loadTheme());
+  const [nav, setNav] = useState<NavId>(loadNav());
+  const [category, setCategoryState] = useState<"all" | "desktop" | "store" | "large" | "recent">(
+    () => {
+      const v = localStorage.getItem("remova_cat");
+      return v === "desktop" || v === "store" || v === "large" || v === "recent" ? v : "all";
+    },
+  );
+  const setCategory = useCallback((id: "all" | "desktop" | "store" | "large" | "recent") => {
+    setCategoryState(id);
+    localStorage.setItem("remova_cat", id);
+  }, []);
   const [langVer, setLangVer] = useState(0);
   const [showGuide, setShowGuide] = useState(!localStorage.getItem("remova_guided"));
   const [notice, setNotice] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<
-    { app_name: string; deleted: number; failed: number; backup_dir: string }[]
-  >([]);
   const [batching, setBatching] = useState(false);
   const [batchIndex, setBatchIndex] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
@@ -67,20 +72,8 @@ export default function App() {
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const batchCancelRef = useRef(false);
-  const [showRestore, setShowRestore] = useState(false);
-  const [restoreSessions, setRestoreSessions] = useState<
-    { name: string; size_kb: number; created_at: string }[]
-  >([]);
-  const [restorePick, setRestorePick] = useState("");
-  const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
-  const [showManage, setShowManage] = useState(false);
-  const [manageTab, setManageTab] = useState<ManageTab>("startup");
-  const [manageItems, setManageItems] = useState<ManageItem[]>([]);
-  const [manageBusy, setManageBusy] = useState(false);
   const [forceBusy, setForceBusy] = useState(false);
   const [shellMenu, setShellMenu] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
   const [officialResult, setOfficialResult] = useState<OfficialUninstallResult | null>(null);
   const [postUninstallApp, setPostUninstallApp] = useState<InstalledApp | null>(null);
@@ -94,7 +87,6 @@ export default function App() {
   const [lastReport, setLastReport] = useState<FullCleanupReport | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [evidence, setEvidence] = useState<string | null>(null);
-  const [histQ, setHistQ] = useState("");
   const busyRef = useRef(false);
   const [sizeMap, setSizeMap] = useState<Record<string, number>>({});
   const [estimating, setEstimating] = useState(false);
@@ -133,7 +125,13 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [batching, dryRunning]);
 
+  const goNav = useCallback((n: NavId) => {
+    setNav(n);
+    saveNav(n);
+  }, []);
+
   const analyze = useCallback(async (app: InstalledApp) => {
+    goNav("software");
     setSelected(app);
     setScanning(true);
     setScan(null);
@@ -157,7 +155,7 @@ export default function App() {
     } finally {
       setScanning(false);
     }
-  }, []);
+  }, [goNav]);
 
   const refreshApps = useCallback(async () => {
     try {
@@ -207,9 +205,10 @@ export default function App() {
     async (app: InstalledApp) => {
       setPostUninstallApp(null);
       setOfficialResult(null);
+      goNav("software");
       await analyze(app);
     },
-    [analyze],
+    [analyze, goNav],
   );
 
   const skipLeftovers = useCallback(async () => {
@@ -357,6 +356,7 @@ export default function App() {
             low.startsWith(a.install_location.replace(/\//g, "\\").toLowerCase()),
         );
         if (hit) {
+          goNav("software");
           setSelected(hit);
           void analyze(hit);
         } else {
@@ -430,6 +430,20 @@ export default function App() {
         !ignorePub.some((p) => p && a.publisher?.toLowerCase() === p.toLowerCase()) &&
         !ignoreName.some((n) => n && a.name?.toLowerCase() === n.toLowerCase()),
     );
+    if (category === "desktop") {
+      list = list.filter((a) => a.source !== "Store");
+    } else if (category === "store") {
+      list = list.filter((a) => a.source === "Store");
+    } else if (category === "large") {
+      list = [...list]
+        .filter((a) => sizeOf(a) > 200 * 1024)
+        .sort((a, b) => sizeOf(b) - sizeOf(a));
+    } else if (category === "recent") {
+      list = [...list]
+        .filter((a) => a.install_date)
+        .sort((a, b) => (b.install_date || "").localeCompare(a.install_date || ""))
+        .slice(0, 50);
+    }
     if (sourceFilter) {
       list = list.filter((a) => a.source === sourceFilter);
     }
@@ -449,7 +463,7 @@ export default function App() {
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter]);
+  }, [apps, q, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, sourceFilter, category]);
 
   const sortBy = (col: "name" | "size") => {
     if (sortCol === col) setSortDesc((d) => !d);
@@ -464,7 +478,7 @@ export default function App() {
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: () => 52,
+    estimateSize: () => 56,
     overscan: 12,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -489,163 +503,77 @@ export default function App() {
     });
   };
 
-  const openRestoreSessions = useCallback(async () => {
-    setShowRestore(true);
-    setRestoreMsgs([]);
-    setRestorePick("");
-    setRestoreSessions([]);
-    try {
-      const sessions = await invoke<
-        { name: string; size_kb: number; created_at: string }[]
-      >("list_backup_sessions");
-      setRestoreSessions(sessions);
-      if (sessions.length > 0) setRestorePick(sessions[0].name);
-    } catch (e) {
-      setError(formatError(e));
-      setShowRestore(false);
-    }
-  }, []);
-
-  const deleteBackupSession = useCallback(
-    async (name: string) => {
+  const forceClean = useCallback(
+    async (appOverride?: InstalledApp) => {
+      const target = appOverride ?? selected;
+      if (!target || forceBusy) return;
+      if (!window.confirm(L.forceCleanHint)) return;
+      setForceBusy(true);
+      busyRef.current = true;
       try {
-        await invoke("delete_backup_session", { name });
-        const sessions = await invoke<
-          { name: string; size_kb: number; created_at: string }[]
-        >("list_backup_sessions");
-        setRestoreSessions(sessions);
-        if (restorePick === name) setRestorePick(sessions[0]?.name ?? "");
-      } catch (e) {
-        setError(formatError(e));
-      }
-    },
-    [restorePick],
-  );
-
-  const runRestoreSession = useCallback(async () => {
-    if (!restorePick || restoreBusy) return;
-    if (!window.confirm(L.restoreConfirm)) return;
-    setRestoreBusy(true);
-    setRestoreMsgs([]);
-    try {
-      const msgs = await invoke<string[]>("restore_session_by_name", {
-        name: restorePick,
-      });
-      setRestoreMsgs(msgs.length ? msgs : ["ok"]);
-    } catch (e) {
-      setRestoreMsgs([formatError(e)]);
-    } finally {
-      setRestoreBusy(false);
-    }
-  }, [restorePick, restoreBusy, L]);
-
-  const loadManage = useCallback(async (tab: ManageTab) => {
-    setManageTab(tab);
-    setManageBusy(true);
-    try {
-      const cmd =
-        tab === "startup"
-          ? "list_startup_items"
-          : tab === "services"
-            ? "list_services"
-            : "list_scheduled_tasks";
-      const items = await invoke<ManageItem[]>(cmd);
-      setManageItems(items);
-    } catch (e) {
-      setError(formatError(e));
-    } finally {
-      setManageBusy(false);
-    }
-  }, []);
-
-  const toggleManageItem = useCallback(
-    async (item: ManageItem) => {
-      setManageBusy(true);
-      try {
-        if (manageTab === "startup") {
-          await invoke("set_startup_enabled", {
-            location: item.location,
-            enabled: !item.enabled,
-          });
-        } else if (manageTab === "services") {
-          await invoke("set_service_start_disabled", {
-            name: item.name,
-            disable: item.enabled,
-          });
-        } else {
-          await invoke("set_task_enabled", {
-            name: item.name,
-            enabled: !item.enabled,
-          });
+        const r = await invoke<ScanResult>("analyze_associations", { app: target });
+        const items = r.items.filter(
+          (it) => it.confidence === "confirmed" && it.risk !== "high",
+        );
+        if (!items.length) {
+          setNotice(L.noHistory);
+          return;
         }
-        await loadManage(manageTab);
+        const report = await invoke<FullCleanupReport>("run_full_cleanup", {
+          app: target,
+          items,
+          options: {
+            dry_run: false,
+            skip_official_uninstall: true,
+            backup_enabled: true,
+          },
+        });
+        setNotice(`${L.forceClean}: ${target.name} · ${L.batchDetail(report.deleted, report.failed)}`);
+        setLastReport(report);
+        void refreshApps();
       } catch (e) {
-        setError(formatError(e));
+        setError(formatError(e, "cleanup"));
       } finally {
-        setManageBusy(false);
+        busyRef.current = false;
+        setForceBusy(false);
       }
     },
-    [manageTab, loadManage],
+    [selected, forceBusy, L, refreshApps],
   );
 
-  const forceClean = useCallback(async () => {
-    if (!selected || forceBusy) return;
-    if (!window.confirm(L.forceCleanHint)) return;
-    setForceBusy(true);
-    busyRef.current = true;
-    try {
-      const r = await invoke<ScanResult>("analyze_associations", { app: selected });
-      const items = r.items.filter(
-        (it) => it.confidence === "confirmed" && it.risk !== "high",
-      );
-      if (!items.length) {
-        setNotice(L.noHistory);
-        return;
+  const doIgnorePublisher = useCallback(
+    async (appOverride?: InstalledApp) => {
+      const pub = (appOverride ?? selected)?.publisher;
+      if (!pub) return;
+      try {
+        const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_publisher", {
+          name: pub,
+        });
+        setIgnorePub(ig.publishers || []);
+        setNotice(L.ignoreLoaded);
+      } catch (e) {
+        setError(formatError(e));
       }
-      const report = await invoke<FullCleanupReport>("run_full_cleanup", {
-        app: selected,
-        items,
-        options: {
-          dry_run: false,
-          skip_official_uninstall: true,
-          backup_enabled: true,
-        },
-      });
-      setNotice(`${L.forceClean}: ${selected.name} · ${L.batchDetail(report.deleted, report.failed)}`);
-      setLastReport(report);
-    } catch (e) {
-      setError(formatError(e, "cleanup"));
-    } finally {
-      busyRef.current = false;
-      setForceBusy(false);
-    }
-  }, [selected, forceBusy, L]);
+    },
+    [selected, L],
+  );
 
-  const doIgnorePublisher = useCallback(async () => {
-    if (!selected?.publisher) return;
-    try {
-      const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_publisher", {
-        name: selected.publisher,
-      });
-      setIgnorePub(ig.publishers || []);
-      setNotice(L.ignoreLoaded);
-    } catch (e) {
-      setError(formatError(e));
-    }
-  }, [selected, L]);
-
-  const doIgnoreApp = useCallback(async () => {
-    if (!selected?.name) return;
-    try {
-      const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_app_name", {
-        name: selected.name,
-      });
-      setIgnoreName(ig.names || []);
-      setNotice(L.ignoreLoaded);
-    } catch (e) {
-      setError(formatError(e));
-    }
-  }, [selected, L]);
+  const doIgnoreApp = useCallback(
+    async (appOverride?: InstalledApp) => {
+      const name = (appOverride ?? selected)?.name;
+      if (!name) return;
+      try {
+        const ig = await invoke<{ publishers: string[]; names: string[] }>("ignore_app_name", {
+          name,
+        });
+        setIgnoreName(ig.names || []);
+        setNotice(L.ignoreLoaded);
+      } catch (e) {
+        setError(formatError(e));
+      }
+    },
+    [selected, L],
+  );
 
   const exportHtmlReport = useCallback(() => {
     if (!lastReport) return;
@@ -677,6 +605,7 @@ export default function App() {
     setNotice(L.orphanScanning);
     try {
       const items = await invoke<ScanResult["items"]>("scan_orphan_leftovers");
+      goNav("software");
       setScan({
         app_name: L.orphanScan,
         items,
@@ -686,7 +615,7 @@ export default function App() {
     } catch (e) {
       setError(formatError(e, "analyze"));
     }
-  }, [L]);
+  }, [L, goNav]);
 
   const toggleMonitor = useCallback(async () => {
     try {
@@ -717,6 +646,7 @@ export default function App() {
           setNotice(L.monitorNoSnap);
           return;
         }
+        goNav("software");
         setScan({ app_name: L.monitorDiff, items });
         setSelectedPaths(
           new Set(items.filter((i) => i.confidence === "confirmed").map((i) => i.path)),
@@ -727,7 +657,7 @@ export default function App() {
         setError(formatError(e));
       }
     },
-    [L],
+    [L, goNav],
   );
 
   const dryRun = useCallback(async () => {
@@ -877,281 +807,228 @@ export default function App() {
   }, [batchResults]);
 
   return (
-    <div style={css.page}>
+    <>
       <style>{globalCss}</style>
-      {/* Brand strip */}
-      <header
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-          marginBottom: 10,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <h1
-              style={{
-                fontSize: 18,
-                fontWeight: 650,
-                margin: 0,
-                letterSpacing: -0.2,
-              }}
-            >
-              {L.title}
-            </h1>
-            <span style={{ ...css.muted, fontSize: 11, letterSpacing: 0.3 }}>{L.subtitle}</span>
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={css.chip}>
-              {loading ? "…" : `${filtered.length} / ${apps.length}`}
-            </span>
-            {admin !== null && (
-              <span style={admin ? css.chipAccent : css.chipDanger}>
-                {admin ? L.admin : L.nonAdmin}
-              </span>
-            )}
-            {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
-            {estimating && <span style={css.chipAccent}>{L.estimatingSizes}</span>}
-            {monitoring && <span style={css.chipAccent}>{L.monitorRunning}</span>}
-          </div>
-        </div>
-        <div style={{ marginLeft: "auto" }} />
-      </header>
-
-      {showGuide && (
-        <div
-          style={{
-            ...css.card,
-            padding: "10px 14px",
-            marginBottom: 12,
-            background: "var(--surface-2)",
-            fontSize: 13,
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-          }}
-        >
-          <span style={{ flex: 1 }}>{L.guided}</span>
-          <button
-            style={css.btnSm}
-            onClick={() => {
-              localStorage.setItem("remova_guided", "1");
-              setShowGuide(false);
-            }}
-          >
-            {L.closeGuide}
-          </button>
-        </div>
-      )}
-      {notice && (
-        <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>{notice}</div>
-      )}
-
-      {/* Search + primary actions */}
-      <div style={css.toolbar}>
-        <input
-          style={{ ...css.input, flex: "1 1 240px" }}
-          placeholder={L.search}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          aria-label={L.search}
-        />
-        <select
-          style={{ ...css.input, flex: "0 0 auto", minWidth: 110, height: 36 }}
-          value={sourceFilter}
-          onChange={(e) => setSourceFilter(e.target.value)}
-          aria-label={L.colSource}
-        >
-          <option value="">{L.allSources}</option>
-          {Array.from(new Set(apps.map((a) => a.source))).map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        {batching ? (
-          <button style={{ ...css.btnGhost, color: "var(--warn)", borderColor: "var(--border-strong)" }} onClick={() => cancelBatch()}>
-            {L.batchCancel}
-          </button>
-        ) : multi.size > 0 ? (
-          <button
-            style={css.btn}
-            title={L.batchOfficialHint}
-            onClick={() => void batchCleanup()}
-          >
-            {L.batchUninstall} ({multi.size})
-          </button>
-        ) : null}
-        <MoreMenu
-          open={showMoreMenu}
-          onOpenChange={setShowMoreMenu}
-          items={[
-            {
-              id: "admin",
-              label: L.adminMenu,
-              hint: admin === true ? L.adminAlready : L.adminHint,
-              disabled: admin === true || admin === null,
-              onClick: async () => {
+      <Shell
+        nav={nav}
+        onNav={goNav}
+        title={nav === "software" ? L.navSoftware : nav === "startup" ? L.navStartup : nav === "services" ? L.navServices : nav === "tasks" ? L.navTasks : L.toolboxTitle}
+        subtitle={nav === "software" ? L.subtitle : undefined}
+        status={
+          nav === "software" ? (
+            <>
+              <span style={css.chip}>{loading ? "…" : `${filtered.length} / ${apps.length}`}</span>
+              {admin !== null && (
+                <span style={admin ? css.chipAccent : css.chipDanger}>
+                  {admin ? L.admin : L.nonAdmin}
+                </span>
+              )}
+              {disk && <span style={css.chip}>{`${L.disk} ${disk}`}</span>}
+              {estimating && <span style={css.chipAccent}>{L.estimatingSizes}</span>}
+              {monitoring && <span style={css.chipAccent}>{L.monitorRunning}</span>}
+            </>
+          ) : null
+        }
+        actions={
+          <>
+            <button
+              style={css.btnSm}
+              title={L.adminHint}
+              disabled={admin === true || admin === null}
+              onClick={async () => {
                 try {
                   await invoke("elevate_restart");
                 } catch (e) {
                   setError(formatError(e, "elevate"));
                 }
-              },
-            },
-            {
-              id: "history",
-              label: L.history,
-              hint: L.historyHint,
-              onClick: async () => {
-                const h = await invoke<
-                  { app_name: string; deleted: number; failed: number; backup_dir: string }[]
-                >("list_cleanup_history");
-                setHistory(h);
-                setShowHistory(true);
-              },
-            },
-            {
-              id: "export-csv",
-              label: L.exportCsv,
-              hint: L.exportCsvHint,
-              onClick: async () => {
-                const csv = await invoke<string>("export_history_csv");
-                const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "remova-history.csv";
-                a.click();
-                URL.revokeObjectURL(url);
-              },
-            },
-            {
-              id: "restore",
-              label: L.restore,
-              hint: L.restoreHint,
-              onClick: () => void openRestoreSessions(),
-            },
-            {
-              id: "manage",
-              label: showManage ? L.manageClose : L.manage,
-              hint: showManage ? L.manageCloseHint : L.manageHint,
-              onClick: () => {
-                if (showManage) {
-                  setShowManage(false);
-                  return;
-                }
-                setShowManage(true);
-                void loadManage("startup");
-              },
-            },
-            {
-              id: "force",
-              label: L.forceClean,
-              hint: selected ? L.forceCleanHint : L.selectRowHint,
-              disabled: !selected || forceBusy || scanning,
-              onClick: () => void forceClean(),
-            },
-            {
-              id: "ignore-pub",
-              label: L.ignorePublisher,
-              hint: L.ignorePublisherHint,
-              disabled: !selected?.publisher,
-              onClick: () => void doIgnorePublisher(),
-            },
-            {
-              id: "ignore-app",
-              label: L.ignoreApp,
-              hint: L.ignoreAppHint,
-              disabled: !selected?.name,
-              onClick: () => void doIgnoreApp(),
-            },
-            {
-              id: "orphan",
-              label: L.orphanScan,
-              hint: L.orphanScanHint,
-              onClick: () => void runOrphanScan(),
-            },
-            {
-              id: "monitor",
-              label: monitoring ? L.monitorStop : L.monitorInstall,
-              hint: monitoring ? L.monitorStopHint : L.monitorInstallHint,
-              onClick: () => void toggleMonitor(),
-            },
-            {
-              id: "analyze",
-              label: L.analyze,
-              hint: L.selectRowHint,
-              disabled: !analyzeApp || scanning,
-              onClick: () => analyzeApp && void analyze(analyzeApp),
-            },
-            {
-              id: "export-report",
-              label: L.exportReport,
-              hint: L.exportReportHint,
-              disabled: !lastReport,
-              onClick: exportHtmlReport,
-            },
-            {
-              id: "shell",
-              label: shellMenu ? L.shellUnregister : L.shellMenu,
-              hint: shellMenu ? L.shellUnregisterHint : L.shellMenuHint,
-              onClick: async () => {
-                try {
-                  if (shellMenu) {
-                    await invoke("unregister_context_menu");
-                    setShellMenu(false);
-                    setNotice(L.shellUnregister);
-                  } else {
-                    await invoke("register_context_menu");
-                    setShellMenu(true);
-                    setNotice(L.shellMenuOn);
-                  }
-                } catch (e) {
-                  setError(formatError(e));
-                }
-              },
-            },
-            {
-              id: "releases",
-              label: L.openReleases,
-              hint: L.openReleasesHint,
-              onClick: () => {
-                window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank");
-              },
-            },
-            {
-              id: "theme",
-              label: L.themeToggle,
-              onClick: () => setTheme((th) => (th === "dark" ? "light" : "dark")),
-            },
-            {
-              id: "lang",
-              label: L.langToggle,
-              onClick: () => {
+              }}
+            >
+              {L.adminMenu}
+            </button>
+            <button
+              style={css.btnSm}
+              onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
+            >
+              {L.themeToggle}
+            </button>
+            <button
+              style={css.btnSm}
+              onClick={() => {
                 const next = currentLang() === "zh" ? "en" : "zh";
                 setLang(next);
                 setLangVer((v) => v + 1);
-              },
-            },
-            ...(estimating
-              ? [
-                  {
-                    id: "stop-est",
-                    label: L.stopEstimate,
-                    hint: L.stopEstimateHint,
-                    onClick: () => void stopSizeEstimate(),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      </div>
+              }}
+            >
+              {L.langToggle}
+            </button>
+          </>
+        }
+      >
+        {notice && (
+          <div style={{ marginBottom: 8, fontSize: 13, color: "var(--muted)", flexShrink: 0 }}>{notice}</div>
+        )}
+        {error && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 12,
+              marginBottom: 12,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #fca5a5",
+              background: "var(--surface)",
+              color: "#b91c1c",
+              fontSize: 13,
+              lineHeight: 1.45,
+              flexShrink: 0,
+            }}
+            role="alert"
+          >
+            <span style={{ flex: 1 }}>{error}</span>
+            <button
+              style={{ ...css.btnGhost, height: 28, padding: "0 10px", color: "#b91c1c", flexShrink: 0 }}
+              onClick={() => setError(null)}
+            >
+              {L.errorDismiss}
+            </button>
+          </div>
+        )}
+        {nav === "startup" && (
+          <ManageListPage tab="startup" title={L.navStartup} onNotice={setNotice} onError={setError} />
+        )}
+        {nav === "services" && (
+          <ManageListPage tab="services" title={L.navServices} onNotice={setNotice} onError={setError} />
+        )}
+        {nav === "tasks" && (
+          <ManageListPage tab="tasks" title={L.navTasks} onNotice={setNotice} onError={setError} />
+        )}
+        {nav === "more" && (
+          <MorePage
+            selected={selected}
+            monitoring={monitoring}
+            monitorDiff={monitorDiff}
+            lastReport={lastReport}
+            shellMenu={shellMenu}
+            onForceClean={() => void forceClean()}
+            onIgnorePublisher={() => void doIgnorePublisher()}
+            onIgnoreApp={() => void doIgnoreApp()}
+            onOrphanScan={() => void runOrphanScan()}
+            onToggleMonitor={() => void toggleMonitor()}
+            onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
+            onDismissMonitor={() => setMonitorDiff(null)}
+            onShellToggle={async () => {
+              try {
+                if (shellMenu) {
+                  await invoke("unregister_context_menu");
+                  setShellMenu(false);
+                  setNotice(L.shellUnregister);
+                } else {
+                  await invoke("register_context_menu");
+                  setShellMenu(true);
+                  setNotice(L.shellMenuOn);
+                }
+              } catch (e) {
+                setError(formatError(e));
+              }
+            }}
+            onExportReport={exportHtmlReport}
+            onError={setError}
+            onNotice={setNotice}
+          />
+        )}
+        {nav === "software" && (
+          <>
+            {showGuide && (
+              <div
+                style={{
+                  ...css.card,
+                  padding: "10px 14px",
+                  marginBottom: 12,
+                  background: "var(--surface-2)",
+                  fontSize: 13,
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <span style={{ flex: 1 }}>{L.guided}</span>
+                <button
+                  style={css.btnSm}
+                  onClick={() => {
+                    localStorage.setItem("remova_guided", "1");
+                    setShowGuide(false);
+                  }}
+                >
+                  {L.closeGuide}
+                </button>
+              </div>
+            )}
+            <div style={{ ...css.toolbar, flexShrink: 0 }}>
+              <input
+                style={{ ...css.input, flex: "1 1 220px" }}
+                placeholder={L.search}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label={L.search}
+              />
+              <select
+                style={{ ...css.input, flex: "0 0 auto", minWidth: 110, height: 36 }}
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                aria-label={L.colSource}
+              >
+                <option value="">{L.allSources}</option>
+                {Array.from(new Set(apps.map((a) => a.source))).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              {estimating && (
+                <button style={css.btnSm} title={L.stopEstimateHint} onClick={() => void stopSizeEstimate()}>
+                  {L.stopEstimate}
+                </button>
+              )}
+              {analyzeApp && !scan && (
+                <button
+                  style={css.btnSm}
+                  disabled={scanning}
+                  title={L.selectRowHint}
+                  onClick={() => analyzeApp && void analyze(analyzeApp)}
+                >
+                  {scanning ? L.analyzing : L.analyze}
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexShrink: 0, flexWrap: "wrap" }}>
+              {(
+                [
+                  ["all", L.catAll],
+                  ["desktop", L.catDesktop],
+                  ["store", L.catStore],
+                  ["large", L.catLarge],
+                  ["recent", L.catRecent],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  style={{
+                    ...css.btnSm,
+                    height: 30,
+                    borderRadius: 16,
+                    borderColor: category === id ? "var(--accent)" : "var(--border)",
+                    color: category === id ? "var(--accent)" : "var(--muted)",
+                    background: category === id ? "var(--accent-soft)" : "var(--surface)",
+                    fontWeight: category === id ? 650 : 500,
+                  }}
+                  onClick={() => setCategory(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
       {selected && !scan && (
         <div
@@ -1336,48 +1213,6 @@ export default function App() {
         </div>
       )}
 
-      {showHistory && (
-        <HistoryPanel
-          history={history}
-          histQ={histQ}
-          setHistQ={setHistQ}
-          onClose={() => setShowHistory(false)}
-        />
-      )}
-
-      {showRestore && (
-        <RestorePanel
-          sessions={restoreSessions}
-          pick={restorePick}
-          setPick={setRestorePick}
-          busy={restoreBusy}
-          msgs={restoreMsgs}
-          onRun={() => void runRestoreSession()}
-          onDelete={(name) => void deleteBackupSession(name)}
-          onClose={() => setShowRestore(false)}
-        />
-      )}
-
-      {monitorDiff && (
-        <MonitorPanel
-          diff={monitorDiff}
-          onToCleanup={() => void monitorDiffToCleanup(monitorDiff)}
-          onDismiss={() => setMonitorDiff(null)}
-        />
-      )}
-
-      {showManage && (
-        <ManagePanel
-          tab={manageTab}
-          items={manageItems}
-          busy={manageBusy}
-          onTab={(tab) => void loadManage(tab)}
-          onReload={() => void loadManage(manageTab)}
-          onToggle={(it) => void toggleManageItem(it)}
-          onClose={() => setShowManage(false)}
-        />
-      )}
-
       {batching && batchTotal > 0 && (
         <BatchProgress index={batchIndex} total={batchTotal} current={batchCurrent} />
       )}
@@ -1390,36 +1225,9 @@ export default function App() {
         />
       )}
 
-      {error && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
-            marginBottom: 12,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid #fca5a5",
-            background: "var(--surface)",
-            color: "#b91c1c",
-            fontSize: 13,
-            lineHeight: 1.45,
-          }}
-          role="alert"
-        >
-          <span style={{ flex: 1 }}>{error}</span>
-          <button
-            style={{ ...css.btnGhost, height: 28, padding: "0 10px", color: "#b91c1c", flexShrink: 0 }}
-            onClick={() => setError(null)}
-          >
-            {L.errorDismiss}
-          </button>
-        </div>
-      )}
-
       {scan ? (
-        <div style={css.card}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
             <strong>{scan.app_name}</strong>
             <span style={{ ...css.muted, marginLeft: 12 }}>
               {L.leftoversTitle}: {scan.items.length} ·{" "}
@@ -1520,6 +1328,7 @@ export default function App() {
                 fontSize: 13,
                 whiteSpace: "pre-wrap",
                 background: "var(--th-bg)",
+                flexShrink: 0,
               }}
             >
               {evidence}{" "}
@@ -1537,7 +1346,7 @@ export default function App() {
                 <col style={{ width: 40 }} />
                 <col />
                 <col style={{ width: 100 }} />
-                <col style={{ width: 108 }} />
+                <col style={{ width: 150 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1589,6 +1398,10 @@ export default function App() {
                           uninstalling={uninstallingKey === key}
                           onSelect={setSelected}
                           onUninstall={(app) => void startUninstall(app)}
+                          onAnalyze={(app) => void analyze(app)}
+                          onForceClean={(app) => void forceClean(app)}
+                          onIgnoreApp={(app) => void doIgnoreApp(app)}
+                          onIgnorePub={(app) => void doIgnorePublisher(app)}
                           onToggleMulti={toggleMulti}
                           onEnsureSelected={(app) => {
                             if (!selected) setSelected(app);
@@ -1622,6 +1435,10 @@ export default function App() {
                         uninstalling={uninstallingKey === key}
                         onSelect={setSelected}
                         onUninstall={(app) => void startUninstall(app)}
+                        onAnalyze={(app) => void analyze(app)}
+                        onForceClean={(app) => void forceClean(app)}
+                        onIgnoreApp={(app) => void doIgnoreApp(app)}
+                        onIgnorePub={(app) => void doIgnorePublisher(app)}
                         onToggleMulti={toggleMulti}
                         onEnsureSelected={(app) => {
                           if (!selected) setSelected(app);
@@ -1633,8 +1450,42 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {multi.size > 0 && !scan && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 14px",
+                borderTop: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600 }}>
+                {L.batchUninstall} · {multi.size}
+              </span>
+              <button
+                style={css.btnGhost}
+                onClick={() => (batching ? cancelBatch() : setMulti(new Set()))}
+              >
+                {batching ? L.batchCancel : L.batchDismiss}
+              </button>
+              <button
+                style={{ ...css.btn, marginLeft: "auto", background: "var(--danger)", color: "#fff" }}
+                disabled={batching}
+                title={L.batchOfficialHint}
+                onClick={() => void batchCleanup()}
+              >
+                {`${L.batchUninstall} (${multi.size})`}
+              </button>
+            </div>
+          )}
         </div>
       )}
-    </div>
+          </>
+        )}
+      </Shell>
+    </>
   );
 }

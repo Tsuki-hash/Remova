@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-15
+
+### Added
+- Left sidebar modules: Software / Startup / Services / Tasks / More
+- Category chips on software list (All / Desktop / Store / Large / Recent); Large sorts by size; category persists
+- Bottom batch action bar when rows are selected
+- Toolbox page (history, restore, export CSV, force clean, orphan scan, install monitor, ignore, context menu, Releases)
+- Full pages for startup items, services, and scheduled tasks (virtualized lists)
+- Global notice/error chrome on every module
+- Row `⋯` menu: deep analyze / force clean / ignore app / ignore publisher
+- Startup scan: Run/RunOnce (HKLM64/32+HKCU), Policies Explorer Run, user+common Startup folders
+- Service list: skip kernel drivers; show Auto/Manual/Disabled + Description; default hide Microsoft/system
+- Task list: positional CSV columns + OEM decode (no more hostname-as-name)
+
+### Changed
+- IObit-like light shell: soft blue accent, rounded cards, larger icons
+- Sidebar collapses to icon rail under 1100px width; subtitle is Deep Uninstall only
+- Orphan scan / monitor → cleanup / deep analyze auto-switch to Software page
+- Manage pages default “enabled only”; loading/empty copy
+- Comprehensive review doc: `docs/20260915-项目全面评审.md`
+
 ## [1.1.1] - 2026-09-14
 
 ### Added

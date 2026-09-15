@@ -1,63 +1,76 @@
 /**
- * Remova design tokens — dark professional tool.
+ * Remova design tokens — IObit-like consumer shell.
  *
- * SUBJECT  deep uninstall utility; job: precision + trust
- * COLOR    slate-black canvas, sky accent, hairline borders
- * TYPE     Segoe UI for chrome; Cascadia/Consolas for data columns
- * SIGNATURE 2px sky rail on selected row + status pill in header
+ * SUBJECT  deep uninstall utility for everyday Windows users
+ * COLOR    soft gray canvas, white surfaces, consumer blue accent
+ * TYPE     Segoe UI / YaHei UI chrome; Cascadia for data
+ * SIGNATURE left-nav active pill + card list rows
  */
 
 export type Theme = "light" | "dark";
 
+export type NavId = "software" | "startup" | "services" | "tasks" | "more";
+
 export function loadTheme(): Theme {
   const v2 = localStorage.getItem("remova_theme_v2");
   if (v2 === "light" || v2 === "dark") return v2;
-  // Default light — cleaner for dense tables.
   return "light";
+}
+
+export function loadNav(): NavId {
+  const v = localStorage.getItem("remova_nav");
+  if (v === "startup" || v === "services" || v === "tasks" || v === "more" || v === "software") {
+    return v;
+  }
+  return "software";
+}
+
+export function saveNav(nav: NavId) {
+  localStorage.setItem("remova_nav", nav);
 }
 
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.dataset.theme = theme;
   if (theme === "dark") {
-    root.style.setProperty("--bg", "#0B0F14");
-    root.style.setProperty("--fg", "#E6EDF3");
+    root.style.setProperty("--bg", "#0F141A");
+    root.style.setProperty("--fg", "#E8EEF5");
     root.style.setProperty("--muted", "#8B9AAB");
-    root.style.setProperty("--surface", "#12181F");
-    root.style.setProperty("--surface-2", "#1A222C");
-    root.style.setProperty("--border", "#26303D");
-    root.style.setProperty("--border-strong", "#3A4A5C");
-    root.style.setProperty("--accent", "#38BDF8");
-    root.style.setProperty("--accent-ink", "#04121C");
-    root.style.setProperty("--accent-soft", "rgba(56,189,248,.12)");
-    root.style.setProperty("--danger", "#F87171");
-    root.style.setProperty("--danger-soft", "rgba(248,113,113,.12)");
-    root.style.setProperty("--warn", "#FBBF24");
-    root.style.setProperty("--ok", "#34D399");
-    root.style.setProperty("--th-bg", "#0F141A");
-    root.style.setProperty("--row-hover", "#161E28");
-    root.style.setProperty("--row-selected", "#0F2432");
-    root.style.setProperty("--shadow", "0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px rgba(0,0,0,.45)");
+    root.style.setProperty("--surface", "#161D26");
+    root.style.setProperty("--surface-2", "#1C2530");
+    root.style.setProperty("--border", "#2A3542");
+    root.style.setProperty("--border-strong", "#3D4C5E");
+    root.style.setProperty("--accent", "#3B8EE8");
+    root.style.setProperty("--accent-ink", "#FFFFFF");
+    root.style.setProperty("--accent-soft", "rgba(59,142,232,.16)");
+    root.style.setProperty("--danger", "#F07178");
+    root.style.setProperty("--danger-soft", "rgba(240,113,120,.14)");
+    root.style.setProperty("--warn", "#F2C94C");
+    root.style.setProperty("--ok", "#6FCF97");
+    root.style.setProperty("--th-bg", "#121820");
+    root.style.setProperty("--row-hover", "#1A2430");
+    root.style.setProperty("--row-selected", "#152A3E");
+    root.style.setProperty("--shadow", "0 8px 24px rgba(0,0,0,.35)");
     root.style.setProperty("--mono", "'Cascadia Code', 'SF Mono', Consolas, 'Courier New', monospace");
   } else {
-    root.style.setProperty("--bg", "#F4F6F8");
-    root.style.setProperty("--fg", "#0F172A");
-    root.style.setProperty("--muted", "#5B6B7F");
+    root.style.setProperty("--bg", "#F5F7FA");
+    root.style.setProperty("--fg", "#1F2937");
+    root.style.setProperty("--muted", "#6B7280");
     root.style.setProperty("--surface", "#FFFFFF");
-    root.style.setProperty("--surface-2", "#F1F5F9");
-    root.style.setProperty("--border", "#D8E0EA");
-    root.style.setProperty("--border-strong", "#B0BEC9");
-    root.style.setProperty("--accent", "#0284C7");
+    root.style.setProperty("--surface-2", "#EEF3F9");
+    root.style.setProperty("--border", "#E5E7EB");
+    root.style.setProperty("--border-strong", "#D1D5DB");
+    root.style.setProperty("--accent", "#2F80ED");
     root.style.setProperty("--accent-ink", "#FFFFFF");
-    root.style.setProperty("--accent-soft", "rgba(2,132,199,.10)");
-    root.style.setProperty("--danger", "#DC2626");
-    root.style.setProperty("--danger-soft", "rgba(220,38,38,.08)");
-    root.style.setProperty("--warn", "#D97706");
-    root.style.setProperty("--ok", "#059669");
-    root.style.setProperty("--th-bg", "#EEF2F6");
-    root.style.setProperty("--row-hover", "#F0F7FC");
-    root.style.setProperty("--row-selected", "#E0F2FE");
-    root.style.setProperty("--shadow", "0 1px 2px rgba(15,23,42,.04), 0 4px 16px rgba(15,23,42,.06)");
+    root.style.setProperty("--accent-soft", "rgba(47,128,237,.12)");
+    root.style.setProperty("--danger", "#EB5757");
+    root.style.setProperty("--danger-soft", "rgba(235,87,87,.10)");
+    root.style.setProperty("--warn", "#F2994A");
+    root.style.setProperty("--ok", "#27AE60");
+    root.style.setProperty("--th-bg", "#F3F6FA");
+    root.style.setProperty("--row-hover", "#F4F8FC");
+    root.style.setProperty("--row-selected", "#E8F1FD");
+    root.style.setProperty("--shadow", "0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.06)");
     root.style.setProperty("--mono", "'Cascadia Code', 'SF Mono', Consolas, 'Courier New', monospace");
   }
   localStorage.setItem("remova_theme_v2", theme);
