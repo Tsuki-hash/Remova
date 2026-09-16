@@ -1,0 +1,10 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+tsconfig.tsbuildinfo
+.DS_Store
+*.log
+
+# Private development docs — do not publish
+docs/
