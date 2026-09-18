@@ -72,7 +72,14 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (code === "safety:protected") {
       return L.errServiceProtected;
     }
-    if (code === "backup:failed" || code === "restore:failed") {
+    if (
+      code === "backup:failed" ||
+      code === "restore:failed" ||
+      code.startsWith("backup:") ||
+      code.startsWith("restore:") ||
+      code.startsWith("path:") ||
+      code.startsWith("exec:")
+    ) {
       return L.errCleanupFailed(name || code);
     }
     if (code.startsWith("ai:")) {

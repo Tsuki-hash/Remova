@@ -40,8 +40,14 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
+      - name: frontend typecheck tests
+        run: npm run typecheck:tests
+
       - name: frontend test
         run: npm test
 
       - name: frontend build
         run: npm run build
+
+      - name: command table vs generate_handler
+        run: pwsh -NoProfile -File scripts/check-commands.ps1

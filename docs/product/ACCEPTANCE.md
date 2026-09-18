@@ -1,7 +1,8 @@
 # Remova-next 真机验收清单
 
 **状态：已通过（用户确认，2026-09-11）**  
-基线：Release `v0.1.0` / `npm run tauri dev`；列表对比 coverage 100%。
+历史验收基线：Release `v0.1.0` / `npm run tauri dev`；列表对比 coverage 100%。  
+**当前文档/代码基线：1.1.0**（1.0.1 功能已并入 1.1.0；版本以 `package.json` 为准）。
 
 ## A. 只读（无风险）
 
