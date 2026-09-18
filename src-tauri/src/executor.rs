@@ -135,10 +135,18 @@ fn is_safe_fs(p: &Path) -> bool {
 /// Process-wide lock so batch + manual cleanup cannot race PATH/backup (S-08).
 static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Dry-run with the same semantic gates as full delete when `app` is known (S-05).
+/// Dry-run with the same semantic gates as full delete when `app` is known (S-05 / A-02).
 pub fn run_cleanup_dry_for_app(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
+) -> CleanupReport {
+    run_cleanup_dry_for_app_source(app, items, crate::policy::CleanupSource::Uninstall)
+}
+
+pub fn run_cleanup_dry_for_app_source(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
 ) -> CleanupReport {
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
@@ -147,35 +155,14 @@ pub fn run_cleanup_dry_for_app(
     let ignore = crate::ignore::load();
 
     for it in items {
-        let (ok, why) = if it.user_data {
-            (false, "user_data red line".to_string())
-        } else if it.shared {
-            (false, "shared runtime".to_string())
-        } else if crate::ignore::should_skip_leftover_path(&ignore, &it.path) {
-            (false, "ignored path".to_string())
-        } else if matches!(it.kind, ItemKind::File | ItemKind::Dir)
-            && !path_associated_with_app(app, it)
-        {
-            (false, "path not associated with app".to_string())
-        } else {
-            let safe = match it.kind {
-                ItemKind::Registry => is_safe_to_delete_registry(&it.path).is_ok(),
-                ItemKind::Path => !it.path.trim().is_empty(),
-                _ => is_safe_fs(Path::new(&it.path)),
-            };
-            if safe {
-                (true, String::new())
-            } else {
-                (false, "failed safety gate".to_string())
-            }
-        };
-        if !ok {
+        let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
+        if !decision.is_allow() {
             skipped += 1;
             details.push(ItemDetail {
                 path: it.path.clone(),
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
-                message: why,
+                message: decision.message().to_string(),
             });
             continue;
         }
@@ -522,13 +509,33 @@ struct DeleteOutcome {
 
 /// Stage 2: residual delete loop (AR-07 extracted).
 fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) -> DeleteOutcome {
+    delete_cleanup_items_source(app, items, crate::policy::CleanupSource::Uninstall)
+}
+
+fn delete_cleanup_items_source(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
+) -> DeleteOutcome {
     let mut deleted = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
     let mut errors = vec![];
     let mut details = vec![];
+    let ignore = crate::ignore::load();
 
     for it in items {
+        let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
+        if !decision.is_allow() {
+            skipped += 1;
+            details.push(ItemDetail {
+                path: it.path.clone(),
+                kind: format!("{:?}", it.kind).to_lowercase(),
+                status: "skipped".into(),
+                message: decision.message().to_string(),
+            });
+            continue;
+        }
         match it.kind {
             ItemKind::Path => match crate::regops::scrub_path_entry(&it.path) {
                 Ok(true) => {
@@ -561,16 +568,6 @@ fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) 
                 }
             },
             ItemKind::Registry => {
-                if is_safe_to_delete_registry(&it.path).is_err() {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "registry".into(),
-                        status: "skipped".into(),
-                        message: "safety".into(),
-                    });
-                    continue;
-                }
                 let low = it.path.to_uppercase();
                 let mut native_note = String::new();
                 if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
@@ -624,52 +621,6 @@ fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) 
             }
             _ => {
                 let p = Path::new(&it.path);
-                if it.user_data {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "user_data red line".into(),
-                    });
-                    continue;
-                }
-                if it.shared {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "shared runtime (backend)".into(),
-                    });
-                    continue;
-                }
-                let ignore = crate::ignore::load();
-                if crate::ignore::should_skip_leftover_path(&ignore, &it.path) {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "ignored path".into(),
-                    });
-                    continue;
-                }
-                // AR-10 medium association gate for filesystem leftovers.
-                if !path_associated_with_app(app, it) {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "path not associated with app".into(),
-                    });
-                    continue;
-                }
-                if !is_safe_fs(p) {
-                    skipped += 1;
-                    continue;
-                }
                 let res = if p.is_dir() {
                     std::fs::remove_dir_all(p)
                 } else if p.exists() {

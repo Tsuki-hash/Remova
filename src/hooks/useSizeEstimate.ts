@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatSize } from "../i18n";
+import { formatSize } from "../lib/format";
 import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 

@@ -18,6 +18,7 @@ pub mod orphans;
 pub mod path_value_smoke;
 #[cfg(test)]
 pub mod pipeline_smoke;
+pub mod policy;
 pub mod regops;
 pub mod regscan;
 pub mod restore;

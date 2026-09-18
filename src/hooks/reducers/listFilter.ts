@@ -1,5 +1,7 @@
-export type CategoryId = "all" | "desktop" | "store" | "large" | "recent";
-export type SortColState = "name" | "size" | "recommend" | null;
+import type { CategoryId, SortCol } from "../../lib/categories";
+
+export type { CategoryId };
+export type SortColState = SortCol;
 
 export type ListFilterState = {
   q: string;
@@ -23,10 +25,7 @@ export function initialListFilterState(): ListFilterState {
   return { q: "", sortCol: null, sortDesc: false, category: loadCategory() };
 }
 
-export function listFilterReducer(
-  state: ListFilterState,
-  action: ListFilterAction,
-): ListFilterState {
+export function listFilterReducer(state: ListFilterState, action: ListFilterAction): ListFilterState {
   switch (action.type) {
     case "q/set":
       return { ...state, q: action.value };

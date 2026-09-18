@@ -4,8 +4,7 @@ import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppRow } from "./AppRow";
-import type { SortCol } from "../hooks/useAppFilter";
-import type { CategoryId } from "./SoftwareToolbar";
+import type { SortCol, CategoryId } from "../lib/categories";
 
 export function SoftwareListTable({
   filtered,
