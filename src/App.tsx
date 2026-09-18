@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, Suspense, lazy } from "react";
 import { api } from "./lib/api";
 import type {
   CleanupReport,
@@ -11,13 +11,10 @@ import { cssStyles as css, globalCss } from "./styles";
 import { formatError } from "./lib/format";
 import { applyTheme } from "./lib/theme";
 import { Shell } from "./components/Shell";
-import { ManageListPage } from "./components/ManageListPage";
-import { MorePage } from "./components/MorePage";
 import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
-import { OrphanPage } from "./components/OrphanPage";
 import { toast } from "./lib/toast";
 import { isRecentInstall, summarizeLeftovers } from "./lib/decision";
 import type { LinkedBucketId } from "./lib/linkedItems";
@@ -32,11 +29,23 @@ import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome, useResidualState } from "./hooks/useResidualState";
 import { ErrorBanner } from "./components/StatusBanners";
-import { SoftwarePage } from "./components/SoftwarePage";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
+import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
+
+/** PF-08: code-split heavy nav pages. */
+const SoftwarePage = lazy(() =>
+  import("./components/SoftwarePage").then((m) => ({ default: m.SoftwarePage })),
+);
+const ManageListPage = lazy(() =>
+  import("./components/ManageListPage").then((m) => ({ default: m.ManageListPage })),
+);
+const MorePage = lazy(() => import("./components/MorePage").then((m) => ({ default: m.MorePage })));
+const OrphanPage = lazy(() =>
+  import("./components/OrphanPage").then((m) => ({ default: m.OrphanPage })),
+);
 
 declare const __APP_VERSION__: string;
 
@@ -145,6 +154,9 @@ export default function App() {
     [setCategoryState, setCopilotList],
   );
   const busyRef = useRef(false);
+  const analyzeRef = useRef<
+    (app: InstalledApp, opts?: { fromUninstall?: boolean }) => Promise<void>
+  >(async () => {});
   /** Linked-bucket drill-down filter for the leftover table. */
   const [kindFilter, setKindFilter] = useState<LinkedBucketId | null>(null);
   const pendingBucketFilter = useRef<LinkedBucketId | null>(null);
@@ -222,6 +234,11 @@ export default function App() {
       setError,
     },
     refreshApps,
+    onAfterCleanup: (app) => {
+      if (loadRescanAfterUninstall()) {
+        void analyzeRef.current(app, { fromUninstall: true });
+      }
+    },
     busyRef,
   });
 
@@ -251,6 +268,7 @@ export default function App() {
     refreshApps,
     busyRef,
   });
+  analyzeRef.current = analyze;
 
   const checkup = useCheckupStats(apps, sizeOf, sizeMap);
 
@@ -603,49 +621,56 @@ export default function App() {
         }
       >
         {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
-        {nav === "startup" && (
-          <ManageListPage tab="startup" title={L.navStartup} onError={setError} />
-        )}
-        {nav === "services" && (
-          <ManageListPage tab="services" title={L.navServices} onError={setError} />
-        )}
-        {nav === "tasks" && (
-          <ManageListPage tab="tasks" title={L.navTasks} onError={setError} />
+        {(nav === "startup" || nav === "services" || nav === "tasks") && (
+          <Suspense fallback={null}>
+            <ManageListPage
+              tab={nav === "startup" ? "startup" : nav === "services" ? "services" : "tasks"}
+              title={
+                nav === "startup" ? L.navStartup : nav === "services" ? L.navServices : L.navTasks
+              }
+              onError={setError}
+            />
+          </Suspense>
         )}
         {nav === "orphans" && (
-          <OrphanPage
-            onLastReport={(r) => {
-              setLastReport(r);
-              setReport(r);
-            }}
-          />
+          <Suspense fallback={null}>
+            <OrphanPage
+              onLastReport={(r) => {
+                setLastReport(r);
+                setReport(r);
+              }}
+            />
+          </Suspense>
         )}
         {nav === "more" && (
-          <MorePage
-            selected={selected}
-            monitoring={monitoring}
-            monitorDiff={monitorDiff}
-            lastReport={lastReport}
-            shellMenu={shellMenu}
-            closeMode={closeMode}
-            onCloseModeChange={setCloseMode}
-            onForceClean={() => void forceClean()}
-            onIgnorePublisher={() => void doIgnorePublisher()}
-            onOrphanScan={() => void runOrphanScan()}
-            onToggleMonitor={() => void toggleMonitor()}
-            onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
-            onDismissMonitor={() => setMonitorDiff(null)}
-            onShellToggle={() => void toggleShellMenuApi(shellMenu, setShellMenu, setError, L)}
-            onExportReport={() => {
-              if (lastReport) exportHtmlReport(lastReport, L);
-            }}
-            onError={setError}
-            onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
-            onGoSoftware={() => goNav("software")}
-          />
+          <Suspense fallback={null}>
+            <MorePage
+              selected={selected}
+              monitoring={monitoring}
+              monitorDiff={monitorDiff}
+              lastReport={lastReport}
+              shellMenu={shellMenu}
+              closeMode={closeMode}
+              onCloseModeChange={setCloseMode}
+              onForceClean={() => void forceClean()}
+              onIgnorePublisher={() => void doIgnorePublisher()}
+              onOrphanScan={() => void runOrphanScan()}
+              onToggleMonitor={() => void toggleMonitor()}
+              onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
+              onDismissMonitor={() => setMonitorDiff(null)}
+              onShellToggle={() => void toggleShellMenuApi(shellMenu, setShellMenu, setError, L)}
+              onExportReport={() => {
+                if (lastReport) exportHtmlReport(lastReport, L);
+              }}
+              onError={setError}
+              onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
+              onGoSoftware={() => goNav("software")}
+            />
+          </Suspense>
         )}
         {nav === "software" && (
-          <SoftwarePage
+          <Suspense fallback={null}>
+            <SoftwarePage
             apps={apps}
             filtered={filtered}
             loading={loading}
@@ -755,6 +780,7 @@ export default function App() {
               toast.info(L.batchUninstall);
             }}
           />
+          </Suspense>
         )}
       </Shell>
     </>

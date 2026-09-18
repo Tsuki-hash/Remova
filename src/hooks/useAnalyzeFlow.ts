@@ -7,6 +7,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
 import { appKey } from "../lib/appKey";
+import { loadRescanAfterUninstall } from "../lib/rescanPref";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 
@@ -187,6 +188,13 @@ export function useAnalyzeFlow({
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
         else if (r.ok) toast.success(strings.uninstallOk);
         else toast.error(`${strings.uninstallFail}: ${r.message}`);
+        // FN-04: default-on rescan after successful official uninstall only.
+        if (r.had_command && r.ok && loadRescanAfterUninstall()) {
+          setUninstallStage("scan");
+          await analyze(app, { fromUninstall: true });
+          setUninstallStage("report");
+          setTimeout(() => setUninstallStage("idle"), 2000);
+        }
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));

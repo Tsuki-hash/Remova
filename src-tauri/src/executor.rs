@@ -358,6 +358,236 @@ fn try_backup_phase(
     }
 }
 
+/// Medium association gate (AR-10): file/dir leftovers must look related to the app.
+/// Registry/PATH items are gated by safety/PATH scrub instead.
+pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
+    if item.path.trim().is_empty() {
+        return false;
+    }
+    match item.kind {
+        ItemKind::Registry | ItemKind::Path => true,
+        ItemKind::File | ItemKind::Dir => {
+            let path = item.path.replace('/', "\\");
+            let low = path.to_lowercase();
+            let install = app
+                .install_location
+                .trim()
+                .replace('/', "\\")
+                .trim_end_matches('\\')
+                .to_lowercase();
+            if !install.is_empty() {
+                let inst = install.as_str();
+                if low == inst || low.starts_with(&format!("{inst}\\")) {
+                    return true;
+                }
+            }
+            let slugs = crate::scanner::slugify(&app.name);
+            if slugs
+                .iter()
+                .filter(|s| s.len() >= 4)
+                .any(|s| low.contains(&s.to_lowercase()))
+            {
+                return true;
+            }
+            let pub_slugs = crate::scanner::slugify(&app.publisher);
+            if !pub_slugs.is_empty()
+                && pub_slugs
+                    .iter()
+                    .filter(|s| s.len() >= 6)
+                    .any(|s| low.contains(&s.to_lowercase()))
+                && (low.contains("\\appdata\\")
+                    || low.contains("\\programdata\\")
+                    || low.contains("\\program files"))
+            {
+                return true;
+            }
+            false
+        }
+    }
+}
+
+struct DeleteOutcome {
+    deleted: u32,
+    failed: u32,
+    skipped: u32,
+    errors: Vec<String>,
+    details: Vec<ItemDetail>,
+}
+
+/// Stage 2: residual delete loop (AR-07 extracted).
+fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) -> DeleteOutcome {
+    let mut deleted = 0u32;
+    let mut failed = 0u32;
+    let mut skipped = 0u32;
+    let mut errors = vec![];
+    let mut details = vec![];
+
+    for it in items {
+        match it.kind {
+            ItemKind::Path => match crate::regops::scrub_path_entry(&it.path) {
+                Ok(true) => {
+                    deleted += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: "path".into(),
+                        status: "deleted".into(),
+                        message: "PATH entry removed".into(),
+                    });
+                }
+                Ok(false) => {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: "path".into(),
+                        status: "skipped".into(),
+                        message: "not found in PATH".into(),
+                    });
+                }
+                Err(e) => {
+                    failed += 1;
+                    errors.push(format!("{}: {e}", it.path));
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: "path".into(),
+                        status: "failed".into(),
+                        message: e,
+                    });
+                }
+            },
+            ItemKind::Registry => {
+                if is_safe_to_delete_registry(&it.path).is_err() {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: "registry".into(),
+                        status: "skipped".into(),
+                        message: "safety".into(),
+                    });
+                    continue;
+                }
+                let low = it.path.to_uppercase();
+                let mut native_note = String::new();
+                if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
+                    let svc = crate::regops::leaf_name(&it.path);
+                    let native_ok = crate::regops::sc_delete_service(&svc);
+                    native_note = if native_ok {
+                        format!("sc delete {svc}: ok")
+                    } else {
+                        format!("sc delete {svc}: failed or not found")
+                    };
+                } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
+                    let tn = crate::regops::leaf_name(&it.path);
+                    let native_ok = crate::regops::schtasks_delete(&tn);
+                    native_note = if native_ok {
+                        format!("schtasks delete {tn}: ok")
+                    } else {
+                        format!("schtasks delete {tn}: failed or not found")
+                    };
+                }
+                let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
+                    crate::regops::delete_value(k, v)
+                } else {
+                    crate::regops::delete_key(&it.path)
+                };
+                match res {
+                    Ok(()) => {
+                        deleted += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: "registry".into(),
+                            status: "deleted".into(),
+                            message: native_note,
+                        });
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        let msg = if native_note.is_empty() {
+                            e.clone()
+                        } else {
+                            format!("{native_note}; {e}")
+                        };
+                        errors.push(format!("{}: {msg}", it.path));
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: "registry".into(),
+                            status: "failed".into(),
+                            message: msg,
+                        });
+                    }
+                }
+            }
+            _ => {
+                let p = Path::new(&it.path);
+                if it.user_data {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "user_data red line".into(),
+                    });
+                    continue;
+                }
+                // AR-10 medium association gate for filesystem leftovers.
+                if !path_associated_with_app(app, it) {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "path not associated with app".into(),
+                    });
+                    continue;
+                }
+                if !is_safe_fs(p) {
+                    skipped += 1;
+                    continue;
+                }
+                let res = if p.is_dir() {
+                    std::fs::remove_dir_all(p)
+                } else if p.exists() {
+                    std::fs::remove_file(p)
+                } else {
+                    Ok(())
+                };
+                match res {
+                    Ok(()) => {
+                        deleted += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "deleted".into(),
+                            message: String::new(),
+                        });
+                    }
+                    Err(_e) => {
+                        // try schedule delete on reboot for locked files
+                        if crate::sysops::schedule_delete_on_reboot(&it.path) {
+                            deleted += 1;
+                            details.push(ItemDetail {
+                                path: it.path.clone(),
+                                kind: format!("{:?}", it.kind).to_lowercase(),
+                                status: "delayed".into(),
+                                message: "reboot delete".into(),
+                            });
+                        } else {
+                            failed += 1;
+                            errors.push(format!("{}: delete failed", it.path));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    DeleteOutcome {
+        deleted,
+        failed,
+        skipped,
+        errors,
+        details,
+    }
+}
+
 /// Full cleanup: optional backup → official uninstall → residual delete.
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
@@ -428,159 +658,7 @@ pub fn run_full_cleanup(
         uninstall_message = official.message;
     }
 
-    let mut deleted = 0u32;
-    let mut failed = 0u32;
-    let mut skipped = 0u32;
-    let mut errors = vec![];
-    let mut details = vec![];
-
-    for it in items {
-        match it.kind {
-            ItemKind::Path => match crate::regops::scrub_path_entry(&it.path) {
-                Ok(true) => {
-                    deleted += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "deleted".into(),
-                        message: "PATH entry removed".into(),
-                    });
-                }
-                Ok(false) => {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "skipped".into(),
-                        message: "not found in PATH".into(),
-                    });
-                }
-                Err(e) => {
-                    failed += 1;
-                    errors.push(format!("{}: {e}", it.path));
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "failed".into(),
-                        message: e,
-                    });
-                }
-            },
-            ItemKind::Registry => {
-                if is_safe_to_delete_registry(&it.path).is_err() {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "registry".into(),
-                        status: "skipped".into(),
-                        message: "safety".into(),
-                    });
-                    continue;
-                }
-                // Service / task: try native delete first; surface native result in the report.
-                let low = it.path.to_uppercase();
-                let mut native_note = String::new();
-                if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
-                    let svc = crate::regops::leaf_name(&it.path);
-                    let native_ok = crate::regops::sc_delete_service(&svc);
-                    native_note = if native_ok {
-                        format!("sc delete {svc}: ok")
-                    } else {
-                        format!("sc delete {svc}: failed or not found")
-                    };
-                } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
-                    let tn = crate::regops::leaf_name(&it.path);
-                    let native_ok = crate::regops::schtasks_delete(&tn);
-                    native_note = if native_ok {
-                        format!("schtasks delete {tn}: ok")
-                    } else {
-                        format!("schtasks delete {tn}: failed or not found")
-                    };
-                }
-                let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
-                    crate::regops::delete_value(k, v)
-                } else {
-                    crate::regops::delete_key(&it.path)
-                };
-                match res {
-                    Ok(()) => {
-                        deleted += 1;
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: "registry".into(),
-                            status: "deleted".into(),
-                            message: native_note,
-                        });
-                    }
-                    Err(e) => {
-                        failed += 1;
-                        let msg = if native_note.is_empty() {
-                            e.clone()
-                        } else {
-                            format!("{native_note}; {e}")
-                        };
-                        errors.push(format!("{}: {msg}", it.path));
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: "registry".into(),
-                            status: "failed".into(),
-                            message: msg,
-                        });
-                    }
-                }
-            }
-            _ => {
-                let p = Path::new(&it.path);
-                if it.user_data {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "user_data red line".into(),
-                    });
-                    continue;
-                }
-                if !is_safe_fs(p) {
-                    skipped += 1;
-                    continue;
-                }
-                let res = if p.is_dir() {
-                    std::fs::remove_dir_all(p)
-                } else if p.exists() {
-                    std::fs::remove_file(p)
-                } else {
-                    Ok(())
-                };
-                match res {
-                    Ok(()) => {
-                        deleted += 1;
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: format!("{:?}", it.kind).to_lowercase(),
-                            status: "deleted".into(),
-                            message: String::new(),
-                        });
-                    }
-                    Err(_e) => {
-                        // try schedule delete on reboot for locked files
-                        if crate::sysops::schedule_delete_on_reboot(&it.path) {
-                            deleted += 1;
-                            details.push(ItemDetail {
-                                path: it.path.clone(),
-                                kind: format!("{:?}", it.kind).to_lowercase(),
-                                status: "delayed".into(),
-                                message: "reboot delete".into(),
-                            });
-                        } else {
-                            failed += 1;
-                            errors.push(format!("{}: delete failed", it.path));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let del = delete_cleanup_items(app, items);
 
     FullCleanupReport {
         app_name: app.name.clone(),
@@ -588,20 +666,59 @@ pub fn run_full_cleanup(
         backup_dir,
         uninstall_ok,
         uninstall_message,
-        deleted,
-        failed,
-        skipped,
+        deleted: del.deleted,
+        failed: del.failed,
+        skipped: del.skipped,
         aborted: false,
         restore_point_ok,
         restore_point_msg,
-        errors,
-        item_details: details,
+        errors: del.errors,
+        item_details: del.details,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::{Confidence, RiskLevel};
+
+    #[test]
+    fn path_association_medium_gate() {
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            version: "1".into(),
+            publisher: "Acme Corp".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let mut it = CleanupItem {
+            path: r"C:\Program Files\DemoApp\bin\x.exe".into(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            size_kb: None,
+            bucket: None,
+        };
+        assert!(path_associated_with_app(&app, &it));
+        it.path = r"C:\Users\a\AppData\Local\demoapp\cache".into();
+        assert!(path_associated_with_app(&app, &it));
+        it.path = r"C:\Program Files\UnrelatedVendor\Tool\bin.exe".into();
+        assert!(!path_associated_with_app(&app, &it));
+        it.kind = ItemKind::Registry;
+        it.path = r"HKCU\Software\Demo".into();
+        assert!(path_associated_with_app(&app, &it));
+    }
 
     #[test]
     fn msi_only_for_msiexec_or_bare_guid() {
