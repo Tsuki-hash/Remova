@@ -54,6 +54,8 @@ fn file_item(path: &str) -> CleanupItem {
         }],
         shared: false,
         user_data: false,
+        size_kb: None,
+        bucket: None,
     }
 }
 
@@ -135,6 +137,8 @@ fn pipeline_skips_protected_and_shallow_paths() {
             evidence: vec![],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         },
         CleanupItem {
             path: r"C:\Windows".into(),
@@ -146,6 +150,8 @@ fn pipeline_skips_protected_and_shallow_paths() {
             evidence: vec![],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         },
     ];
     let dry = run_cleanup_dry("Protected", &items);

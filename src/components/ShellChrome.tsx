@@ -1,4 +1,5 @@
 import type { UpdateInfo } from "../lib/updateCheck";
+import { openUpdateDownload } from "../lib/updateCheck";
 import { t } from "../i18n";
 
 const linkBtn = {
@@ -66,8 +67,15 @@ export function ShellFooter({
       {updateInfo && (
         <button
           style={linkBtn}
-          title={updateInfo.url}
-          onClick={() => window.open(updateInfo.url, "_blank")}
+          title={updateInfo.downloadUrl || updateInfo.url}
+          onClick={() => {
+            const target = updateInfo.downloadUrl || updateInfo.url;
+            if (updateInfo.downloadUrl) {
+              void openUpdateDownload(updateInfo).catch(() => window.open(target, "_blank"));
+            } else {
+              window.open(target, "_blank");
+            }
+          }}
         >
           {L.versionNew} v{updateInfo.version} → {L.versionDownload}
         </button>

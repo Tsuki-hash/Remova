@@ -10,25 +10,8 @@ import { appKey } from "../lib/appKey";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 
-/** Deep-analyze + official uninstall flow used by list rows and detail drawer. */
-export function useAnalyzeFlow({
-  goNav,
-  setSelected,
-  setScanning,
-  setScan,
-  setReport,
-  setAiNotes,
-  setAiRisk,
-  setIgnoreSuggestions,
-  setSelectedPaths,
-  setError,
-  setResidualFromUninstall,
-  setUninstallingKey,
-  setUninstallStage,
-  refreshApps,
-  busyRef,
-}: {
-  goNav: (n: "software") => void;
+/** Grouped setters for the analyze/uninstall flow (A-4: fewer flat parameters). */
+export type AnalyzeFlowSetters = {
   setSelected: (a: InstalledApp | null) => void;
   setScanning: (v: boolean) => void;
   setScan: (r: ScanResult | null) => void;
@@ -41,9 +24,34 @@ export function useAnalyzeFlow({
   setResidualFromUninstall: (v: boolean) => void;
   setUninstallingKey: (k: string | null) => void;
   setUninstallStage: (s: UninstallStage) => void;
+};
+
+/** Deep-analyze + official uninstall flow used by list rows and detail drawer. */
+export function useAnalyzeFlow({
+  goNav,
+  flow,
+  refreshApps,
+  busyRef,
+}: {
+  goNav: (n: "software") => void;
+  flow: AnalyzeFlowSetters;
   refreshApps: () => Promise<void>;
   busyRef: { current: boolean };
 }) {
+  const {
+    setSelected,
+    setScanning,
+    setScan,
+    setReport,
+    setAiNotes,
+    setAiRisk,
+    setIgnoreSuggestions,
+    setSelectedPaths,
+    setError,
+    setResidualFromUninstall,
+    setUninstallingKey,
+    setUninstallStage,
+  } = flow;
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
       goNav("software");
