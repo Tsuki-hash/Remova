@@ -43,6 +43,19 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     (async () => {
       let done = 0;
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+      let pendingFlush: Record<string, number> = {};
+      const flush = () => {
+        const batch = pendingFlush;
+        pendingFlush = {};
+        flushTimer = null;
+        if (Object.keys(batch).length === 0) return;
+        setSizeMap((m) => ({ ...m, ...batch }));
+      };
+      const queueSet = (path: string, kb: number) => {
+        pendingFlush[path] = kb;
+        if (!flushTimer) flushTimer = setTimeout(flush, 80);
+      };
       const workers = Array.from({ length: 2 }, async () => {
         while (pending.length > 0 && !disposed && !sizeCancelRef.current) {
           const path = pending.shift();
@@ -51,17 +64,21 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
             const kb = await api.estimateDirSizeKb(path);
             if (disposed || sizeCancelRef.current) break;
             sizeCache.current.set(path, kb > 0 ? kb : 0);
-            setSizeMap((m) => ({ ...m, [path]: kb > 0 ? kb : 0 }));
+            queueSet(path, kb > 0 ? kb : 0);
           } catch {
             if (disposed || sizeCancelRef.current) break;
             sizeCache.current.set(path, 0);
-            setSizeMap((m) => ({ ...m, [path]: 0 }));
+            queueSet(path, 0);
           }
           done += 1;
           if (!disposed) setSizeProgress({ done, total });
         }
       });
       await Promise.all(workers);
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flush();
+      }
       if (!disposed) {
         setEstimating(false);
         setSizeProgress({ done: 0, total: 0 });

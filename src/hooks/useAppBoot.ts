@@ -5,7 +5,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import { compareSemver } from "../semver";
-import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
+import { checkLatestRelease, RELEASES_URL, type UpdateInfo } from "../lib/updateCheck";
 import { consumeQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
 import type { InstalledApp } from "../types";
 
@@ -47,18 +47,21 @@ export function useAppBoot({
         if (!cancelled) setLoading(false);
       }
     })();
-    void api.isElevated().then(setAdmin).catch(() => {});
+    void api
+      .isElevated()
+      .then(setAdmin)
+      .catch((e) => console.warn("[boot] isElevated", e));
     void api
       .getAiConfig()
       .then((c) => setAiEnabled(c.enabled))
-      .catch(() => {});
+      .catch((e) => console.warn("[boot] getAiConfig", e));
     void api
       .loadIgnore()
       .then((ig) => {
         setIgnorePub(ig.publishers || []);
         setIgnoreName(ig.names || []);
       })
-      .catch(() => {});
+      .catch((e) => console.warn("[boot] loadIgnore", e));
     void api
       .diskUsage()
       .then((d) => {
@@ -68,7 +71,7 @@ export function useAppBoot({
         localStorage.setItem("remova_disk_drive", drive);
         setDisk(`${drive} ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`);
       })
-      .catch(() => {});
+      .catch((e) => console.warn("[boot] diskUsage", e));
     // Silent update check on launch
     void checkLatestRelease()
       .then((info) => {
@@ -137,18 +140,38 @@ export function useAppBoot({
 /** Manual update check from toolbox. */
 export async function checkUpdateNow(
   setUpdateInfo: (v: UpdateInfo | null) => void,
-  L: { versionCheckFailed: string; versionNew: string; versionUpToDate: (v: string) => string },
+  L: {
+    versionCheckFailed: string;
+    versionNew: string;
+    versionUpToDate: (v: string) => string;
+    openReleasesToast: string;
+  },
 ) {
   try {
     const info = await checkLatestRelease();
     if (!info) {
       toast.error(L.versionCheckFailed);
+      // Network / GitHub unreachable: still open Releases so the action is useful.
+      try {
+        await api.openPath(RELEASES_URL);
+        toast.info(L.openReleasesToast);
+      } catch {
+        window.open(RELEASES_URL, "_blank");
+      }
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
       setUpdateInfo(info);
       toast.success(`${L.versionNew}: v${info.version}`);
-      window.open(info.url, "_blank");
+      if (info.downloadUrl) {
+        try {
+          await api.openPath(info.downloadUrl);
+        } catch {
+          window.open(info.url, "_blank");
+        }
+      } else {
+        window.open(info.url, "_blank");
+      }
     } else {
       toast.success(L.versionUpToDate(__APP_VERSION__));
     }

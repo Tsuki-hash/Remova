@@ -17,18 +17,8 @@ export function loadTheme(): Theme {
   return "light";
 }
 
+/** Always open on the software list (main uninstall path); do not restore last tab. */
 export function loadNav(): NavId {
-  const v = localStorage.getItem("remova_nav");
-  if (
-    v === "startup" ||
-    v === "services" ||
-    v === "tasks" ||
-    v === "more" ||
-    v === "software" ||
-    v === "orphans"
-  ) {
-    return v;
-  }
   return "software";
 }
 

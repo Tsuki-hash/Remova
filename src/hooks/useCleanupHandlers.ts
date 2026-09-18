@@ -10,6 +10,18 @@ import { appKey } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
 import type { BatchItemResult } from "../components/BatchPanels";
 
+/** Grouped cleanup setters (A-4). */
+export type CleanupFlowSetters = {
+  setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
+  setResidualFromUninstall: (v: boolean) => void;
+  setAiRisk: (v: string | null) => void;
+  setReport: (r: CleanupReport | FullCleanupReport | null) => void;
+  setLastReport: (r: FullCleanupReport | null) => void;
+  setVerifyRows: (rows: { path: string; kind: string; still_there: boolean }[] | null) => void;
+  setAiReportNote: (v: string | null) => void;
+  setError: (e: string | null) => void;
+};
+
 /** Force-clean / dry-run / real cleanup / beginner batch handlers. */
 export function useCleanupHandlers({
   L,
@@ -19,17 +31,11 @@ export function useCleanupHandlers({
   residualFromUninstall,
   useOfficial,
   aiEnabled,
+  aiRisk,
   apps,
   multi,
-  setMulti,
-  setResidualFromUninstall,
-  setAiRisk,
-  setReport,
-  setLastReport,
-  setVerifyRows,
-  setAiReportNote,
+  flow,
   refreshApps,
-  setError,
   busyRef,
 }: {
   L: Strings;
@@ -39,19 +45,23 @@ export function useCleanupHandlers({
   residualFromUninstall: boolean;
   useOfficial: boolean;
   aiEnabled: boolean;
+  aiRisk?: string | null;
   apps: InstalledApp[];
   multi: Set<string>;
-  setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
-  setResidualFromUninstall: (v: boolean) => void;
-  setAiRisk: (v: string | null) => void;
-  setReport: (r: CleanupReport | FullCleanupReport | null) => void;
-  setLastReport: (r: FullCleanupReport | null) => void;
-  setVerifyRows: (rows: { path: string; kind: string; still_there: boolean }[] | null) => void;
-  setAiReportNote: (v: string | null) => void;
+  flow: CleanupFlowSetters;
   refreshApps: () => Promise<void>;
-  setError: (e: string | null) => void;
   busyRef: { current: boolean };
 }) {
+  const {
+    setMulti,
+    setResidualFromUninstall,
+    setAiRisk,
+    setReport,
+    setLastReport,
+    setVerifyRows,
+    setAiReportNote,
+    setError,
+  } = flow;
   const [forceBusy, setForceBusy] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
   /** Beginner batch path runs official uninstaller by default. */
@@ -175,43 +185,46 @@ export function useCleanupHandlers({
     busyRef,
   ]);
 
-  /** Confirm vault + optional AI risk brief, then execReal (ScanActionsBar onCleanup). */
+  /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
   const handleCleanupConfirm = useCallback(async () => {
     if (!scan) return;
+    const n = selectedPaths.size;
     let message = L.cleanupConfirmVault(
-      selectedPaths.size,
+      n,
       residualFromUninstall || useOfficial,
     );
-    const hasShared = scan.items.some((it) => selectedPaths.has(it.path) && it.shared);
-    if (hasShared) {
-      message = `${message}\n\n⚠ ${L.confirmSharedSelected}`;
+    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
+    const riskBits: string[] = [];
+    if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
+    if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);
+    if (picked.some((it) => it.risk === "high")) riskBits.push(L.conclusionHighRiskHint);
+    if (riskBits.length) {
+      message = `${message}\n\n⚠ ${riskBits.slice(0, 2).join("\n")}`;
     }
-    if (aiEnabled && selected) {
+    if (aiEnabled && selected && aiRisk) {
+      message = `${message}\n\n${L.aiRiskTitle}: ${aiRisk.slice(0, 160)}`;
+    } else if (aiEnabled && selected) {
       try {
         const kinds: Record<string, number> = {};
-        for (const it of scan.items) {
-          if (!selectedPaths.has(it.path)) continue;
+        for (const it of picked) {
           kinds[it.kind] = (kinds[it.kind] || 0) + 1;
         }
         const brief = await api.aiRiskBrief({
           appName: selected.name,
           publisher: selected.publisher || "",
           action: residualFromUninstall ? "residual_cleanup" : "cleanup",
-          itemCount: selectedPaths.size,
+          itemCount: n,
           kindCounts: kinds,
-          hasService: scan.items.some(
-            (it) => selectedPaths.has(it.path) && it.kind.toLowerCase().includes("service"),
-          ),
-          hasRunKey: scan.items.some(
+          hasService: picked.some((it) => it.kind.toLowerCase().includes("service")),
+          hasRunKey: picked.some(
             (it) =>
-              selectedPaths.has(it.path) &&
-              (it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run")),
+              it.path.toLowerCase().includes("\\run") || it.kind.toLowerCase().includes("run"),
           ),
-          hasSharedHint: scan.items.some((it) => selectedPaths.has(it.path) && it.shared),
+          hasSharedHint: picked.some((it) => it.shared),
         });
         if (brief) {
           setAiRisk(brief);
-          message = `${message}\n\n${L.aiRiskTitle}: ${brief}\n\n${L.aiDisclaimer}`;
+          message = `${message}\n\n${L.aiRiskTitle}: ${brief.slice(0, 160)}`;
         }
       } catch {
         // non-blocking
@@ -231,6 +244,7 @@ export function useCleanupHandlers({
     residualFromUninstall,
     useOfficial,
     aiEnabled,
+    aiRisk,
     L,
     setAiRisk,
     execReal,

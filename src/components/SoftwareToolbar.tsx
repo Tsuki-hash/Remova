@@ -10,17 +10,21 @@ export function SoftwareToolbar({
   category,
   estimating,
   scanning,
+  aiEnabled,
   onQuery,
   onCategory,
   onStopEstimate,
+  onOpenAi,
 }: {
   q: string;
   category: CategoryId;
   estimating: boolean;
   scanning: boolean;
+  aiEnabled: boolean;
   onQuery: (v: string) => void;
   onCategory: (id: CategoryId) => void;
   onStopEstimate: () => void;
+  onOpenAi: () => void;
 }) {
   const L = t();
   const [guideOpen, setGuideOpen] = useState(false);
@@ -62,6 +66,26 @@ export function SoftwareToolbar({
         onChange={(e) => onQuery(e.target.value)}
         aria-label={L.search}
       />
+      <button
+        type="button"
+        onClick={onOpenAi}
+        title={aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
+        style={{
+          height: 32,
+          padding: "0 12px",
+          borderRadius: 8,
+          border: `1px solid ${aiEnabled ? "var(--accent)" : "var(--border)"}`,
+          background: aiEnabled ? "var(--accent-soft)" : "var(--surface)",
+          color: aiEnabled ? "var(--accent)" : "var(--muted)",
+          fontSize: 12,
+          fontWeight: 650,
+          cursor: "pointer",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
+      </button>
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {(
           [
