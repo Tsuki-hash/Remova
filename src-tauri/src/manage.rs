@@ -206,6 +206,13 @@ fn resolve_packaged_display_name(value_name: &str) -> Option<String> {
     None
 }
 
+/// Serialize manage write-side mutations (services / startup / tasks) — S-08.
+static MANAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_manage() -> std::sync::MutexGuard<'static, ()> {
+    MANAGE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn startup_folder_paths() -> Vec<String> {
     let mut dirs = Vec::new();
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -474,19 +481,31 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         allow_manage_reg_write(sa_key, true)?;
         let mut buf = [0u8; 12];
         buf[0] = if enabled { 0x02 } else { 0x03 };
+        let _guard = lock_manage();
         return crate::regops::write_reg_binary(sa_key, vname, &buf);
     }
     if let Some(rest) = location.strip_prefix("FOLDER::") {
         let Some((dir, fname)) = rest.rsplit_once("::") else {
             return Err("bad startup folder location".into());
         };
+        // S-09: only allow write when dir is one of the known Startup folders.
+        let dir_norm = dir.replace('/', "\\");
+        let dir_ok = startup_folder_paths()
+            .iter()
+            .any(|a| dir_norm.eq_ignore_ascii_case(&a.replace('/', "\\")));
+        if !dir_ok {
+            return Err(crate::error::manage_err("protected_registry", dir).to_ipc());
+        }
         let stem = std::path::Path::new(fname)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(fname)
             .trim_end_matches(".remova-disabled")
             .to_string();
-        let _ = dir;
+        if stem.trim().is_empty() || stem.contains('\\') || stem.contains('/') {
+            return Err(crate::error::manage_err("bad_name", fname).to_ipc());
+        }
+        let _guard = lock_manage();
         return write_startup_folder_approved(&stem, enabled);
     }
     let Some((key, vname)) = location.rsplit_once("::") else {
@@ -498,6 +517,7 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     }
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
+    let _guard = lock_manage();
     if cur_disabled {
         crate::regops::rename_reg_value(key, vname, base)?;
     }
@@ -543,6 +563,7 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
 pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), String> {
     allow_manage_service_write(name)?;
     let start: u32 = if disable { 4 } else { 3 };
+    let _guard = lock_manage();
     crate::regops::write_service_start(name, start)
 }
 
@@ -550,6 +571,7 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
         return Err("empty task".into());
     }
+    let _guard = lock_manage();
     // S-02: mirror list-side filter — never disable Microsoft\Windows system tasks.
     let low = task_name.replace('/', "\\").to_lowercase();
     if low.starts_with("\\microsoft\\windows\\") || low.starts_with("microsoft\\windows\\") {
@@ -628,6 +650,19 @@ mod tests {
             super::set_task_enabled(r"\Microsoft\Windows\Defrag\ScheduledDefrag", false).is_err()
         );
         assert!(super::set_task_enabled("Microsoft\\Windows\\Update", true).is_err());
+    }
+
+    #[test]
+    fn folder_startup_location_rejects_unknown_dir() {
+        // S-09: FOLDER:: must not accept arbitrary directories.
+        let loc = r"FOLDER::C:\Temp\NotStartup::evil.exe";
+        let err = super::set_startup_enabled(loc, false).unwrap_err();
+        assert!(
+            err.contains("protected_registry") || err.contains("bad startup"),
+            "got {err}"
+        );
+        let bad = r"FOLDER::missing-separators";
+        assert!(super::set_startup_enabled(bad, false).is_err());
     }
 
     #[test]

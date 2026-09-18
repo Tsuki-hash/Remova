@@ -140,7 +140,7 @@ fn normalize_hklm(key_path: &str) -> String {
 /// Final gate for registry key/value paths (same shape as Python `is_safe_to_delete_registry`).
 pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     if key_path.trim().is_empty() {
-        return Err("empty registry path".into());
+        return Err(crate::error::safety_err("empty registry path").to_ipc());
     }
     let low = normalize_hklm(key_path);
 
@@ -152,7 +152,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     ];
     for root in uninstall_roots {
         if low == root {
-            return Err("uninstall root protected".into());
+            return Err(crate::error::safety_err("uninstall root protected").to_ipc());
         }
         if low.starts_with(&format!("{root}\\")) {
             return Ok(());
@@ -167,7 +167,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     ];
     for root in app_paths_roots {
         if low == root {
-            return Err("app paths root protected".into());
+            return Err(crate::error::safety_err("app paths root protected").to_ipc());
         }
         if low.starts_with(&format!("{root}\\")) {
             return Ok(());
@@ -177,17 +177,17 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     // Services: direct child only; critical names blocked
     let services_root = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES";
     if low == services_root {
-        return Err("services root protected".into());
+        return Err(crate::error::safety_err("services root protected").to_ipc());
     }
     if let Some(rest) = low.strip_prefix(&format!("{services_root}\\")) {
         if rest.is_empty() || rest.contains('\\') {
-            return Err("only top-level service keys allowed".into());
+            return Err(crate::error::safety_err("only top-level service keys allowed").to_ipc());
         }
         if critical_service_names()
             .iter()
             .any(|n| rest == n.to_uppercase())
         {
-            return Err("critical system service protected".into());
+            return Err(crate::error::safety_err("critical system service protected").to_ipc());
         }
         return Ok(());
     }
@@ -196,11 +196,11 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     let task_root =
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS NT\\CURRENTVERSION\\SCHEDULE\\TASKCACHE\\TREE";
     if low == task_root {
-        return Err("task tree root protected".into());
+        return Err(crate::error::safety_err("task tree root protected").to_ipc());
     }
     if let Some(rest) = low.strip_prefix(&format!("{task_root}\\")) {
         if rest == "MICROSOFT" || rest.starts_with("MICROSOFT\\") {
-            return Err("system scheduled tasks protected".into());
+            return Err(crate::error::safety_err("system scheduled tasks protected").to_ipc());
         }
         return Ok(());
     }

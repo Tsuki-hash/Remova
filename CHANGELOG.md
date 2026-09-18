@@ -35,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Domain reducers / MorePage hooks / i18n split / SoftwarePage
 - **Docs (D-08)**: PARITY/PRODUCT-GAPS/ACCEPTANCE link paths fixed; acceptance notes historical v0.1.0 + current baseline **1.1.0**
 - **CI (D-09)**: `typecheck:tests` + `scripts/check-commands.ps1` (generate_handler! vs ARCHITECTURE §3); portable zip unified via `pwsh` + `scripts/package-portable.ps1`
+- **Shell setters (C-01)**: `setTheme` / `setLangVer` / `setShowDetail` apply real functional updaters (not toggle-on-fn)
+- **Manage write-side (S-09/S-08)**: `FOLDER::` only accepts known Startup folders; `MANAGE_LOCK` serializes manage mutations
+- **Safety IPC (R2-10)**: registry path gates emit `safety:protected::*` codes
+- **ARCHITECTURE**: module map includes `error.rs`/`constants.rs`; critical service count documented as dynamic (~37); `is_safe_fs` env-prefix rules aligned
 
 - Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
 - Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
