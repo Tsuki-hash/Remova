@@ -27,6 +27,15 @@ export function shortPath(p: string): string {
   return `${s.slice(0, 20)}…${s.slice(-20)}`;
 }
 
+/** Canonical size formatter (C-05) — i18n re-exports this for compatibility. */
+export function formatSize(kb: number): string {
+  if (!kb || kb <= 0) return "—";
+  if (kb < 1024) return `${kb} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
 /** Beginner-facing label for registry/store source codes. */
 export function sourceLabel(source: string, L: { sourceHkcu: string; sourceHklm64: string; sourceHklm32: string; sourceStore: string }): string {
   switch (source) {

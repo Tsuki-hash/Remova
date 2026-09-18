@@ -26,7 +26,8 @@ apps.rs         已安装软件枚举（Uninstall 注册表 + Store 合并）
 storeapps.rs    WinRT PackageManager 枚举 MSIX/Store 包
 scanner/         关联扫描（mod: types/score/analyze；fs_scans; reg_scans）
 shared.rs       共享运行库启发式（VC++/.NET/Common Files…）
-executor.rs     卸载命令解析、dry-run、真删流水线（user_data 硬拦）
+executor.rs     卸载命令解析、dry-run、真删（经 policy 门禁）
+policy.rs       CleanupSource + gate_cleanup_item；safety/manage/shared 门禁门面
 safety.rs       统一安全门禁：is_safe_fs / is_safe_to_delete_registry
 error.rs        RemovaError IPC：backup:* / restore:* / path:io / manage:* / safety:*
 constants.rs    产品常量（备份保留天数等）
@@ -79,6 +80,19 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 **安全谓词单一来源**：是否默认勾选一律 `decision.ts::defaultSelectable`（confirmed && !high && !shared && !user_data）。禁止在组件内复制该条件。
 
 **CleanupItem（1.0.1）**：`path` / `kind`（file|dir|registry|path）/ score / confidence / risk / reason / evidence / shared / user_data / **`size_kb?: Option<u64>`**（仅 file/dir；限长目录求和，超限 None）。
+
+**清理门禁单一源（A-02）**：`policy::gate_cleanup_item` + `CleanupSource`；dry-run 与真删共用。`policy` 再导出 `safety`/`manage`/`shared` 门禁入口。
+
+**前端状态域边界（A-03）**：
+
+| 状态 | 归属 | 用途 |
+|---|---|---|
+| `appCore.report` | `useAppCoreState` | 当前 Cleanup/Full 报告 → ReportPanel |
+| `residual.lastReport` | `useResidualState` | **仅 Full** 清理后的残留/校验/export HTML |
+| `scanUi` | `useScanUiState` | 扫描页 UI（证据、勾选、busy） |
+| `aiPanel` | `useAiPanelState` | AI 设置 / 风险 / 解释 / verify 行 |
+
+**SoftwarePage**：`React.memo` + `useSoftwareController` 收拢 props（P-02）。`CategoryId` 唯一定义在 `lib/categories.ts`。
 
 **open_path_in_explorer**：稳定错误码 `open_path:empty|not_found|failed`；文件用 `/select,`；System32 失败回退 PATH explorer。
 

@@ -1,10 +1,5 @@
 import { api } from "./lib/api";
-import type {
-  CleanupReport,
-  FullCleanupReport,
-  InstalledApp,
-  ScanResult,
-} from "./types";
+import type { FullCleanupReport, InstalledApp } from "./types";
 import { loadLang, t } from "./i18n";
 import { cssStyles as css, globalCss } from "./styles";
 import { formatError } from "./lib/format";
@@ -37,6 +32,8 @@ import { runAiReportSummary } from "./lib/aiNarrative";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, Suspense, lazy } from "react";
+import { useSoftwareController } from "./hooks/useSoftwareController";
+import type { SoftwarePageProps } from "./components/SoftwarePage";
 
 /** PF-08: code-split heavy nav pages. */
 const SoftwarePage = lazy(() =>
@@ -323,9 +320,12 @@ export default function App() {
   usePendingAnalyze({ loading, apps, goNav, setSelected: core.setSelected, analyze, setQ });
   useDragDropAnalyze({ apps, setSelected: core.setSelected, analyze });
 
-  const toggleMulti = (key: string) => {
-    core.toggleMulti(key);
-  };
+  const toggleMulti = useCallback(
+    (key: string) => {
+      core.toggleMulti(key);
+    },
+    [core],
+  );
 
   const doIgnorePublisher = useCallback(
     async (appOverride?: InstalledApp) => {
@@ -553,28 +553,244 @@ export default function App() {
     core.setSelected(null);
   }, [scanUi, core]);
 
-  const detailPanel = selected ? (
-    <AppDetailPanel
-      app={selected}
-      sizeText={formatAppSize(selected)}
-      uninstalling={uninstallingKey === appKey(selected)}
-      scan={scan}
-      onClose={detailOnClose}
-      onDeepUninstall={openDeepFromDrawer}
-      onAnalyze={openAnalyzeFromDrawer}
-      onOfficialOnly={(app) => void openOfficialOnly(app)}
-      onForceClean={(app) => void forceClean(app)}
-      onOpenPath={openPathSafe}
-      onDrillDown={drillDownBucket}
-      onViewLeftovers={() => setKindFilter(null)}
-    />
-  ) : null;
+  const detailPanel = useMemo(
+    () =>
+      selected ? (
+        <AppDetailPanel
+          app={selected}
+          sizeText={formatAppSize(selected)}
+          uninstalling={uninstallingKey === appKey(selected)}
+          scan={scan}
+          onClose={detailOnClose}
+          onDeepUninstall={openDeepFromDrawer}
+          onAnalyze={openAnalyzeFromDrawer}
+          onOfficialOnly={(app) => void openOfficialOnly(app)}
+          onForceClean={(app) => void forceClean(app)}
+          onOpenPath={openPathSafe}
+          onDrillDown={drillDownBucket}
+          onViewLeftovers={() => setKindFilter(null)}
+        />
+      ) : null,
+    [
+      selected,
+      formatAppSize,
+      uninstallingKey,
+      scan,
+      detailOnClose,
+      openDeepFromDrawer,
+      openAnalyzeFromDrawer,
+      openOfficialOnly,
+      forceClean,
+      openPathSafe,
+      drillDownBucket,
+      setKindFilter,
+    ],
+  );
 
   const [langTick] = useState(0);
   void langTick;
   const rescanNudge = loadRescanAfterUninstall;
   void rescanNudge;
   void analyzeRef;
+
+  const softwareControllerArgs = useMemo(
+    () => ({
+      apps,
+      filtered,
+      loading,
+      q,
+      category,
+      sortCol,
+      sortDesc,
+      selected,
+      multi,
+      uninstallingKey,
+      formatAppSize,
+      sizeOf,
+      sortBy,
+      selectApp,
+      setSelected: core.setSelected,
+      toggleMulti,
+      listStartUninstall,
+      listAnalyze,
+      listForceClean,
+      listIgnoreApp,
+      listIgnorePublisher,
+      appKey,
+      setMulti: core.setMulti,
+      estimating,
+      scanning,
+      aiEnabled,
+      uninstallStage,
+      showDetail,
+      onToggleDetail: shellActions.toggleDetail,
+      onQuery: (v: string) => {
+        setQ(v);
+        setCopilotList(null);
+      },
+      onCategory: setCategory,
+      onStopEstimate: () => void stopSizeEstimate(),
+      onOpenAi: () => goNav("more"),
+      scan,
+      selectedPaths,
+      evidence,
+      setEvidence,
+      setSelectedPaths,
+      ignoreSuggestions,
+      onIgnoreApplied: (pubs: string[], names: string[]) => {
+        core.setIgnorePub(pubs);
+        core.setIgnoreName(names);
+        residualActions.clearIgnoreSuggestions();
+      },
+      onDismissIgnore: () => residualActions.clearIgnoreSuggestions(),
+      residualFromUninstall,
+      useOfficial,
+      setUseOfficial: core.setUseOfficial,
+      aiBusy,
+      aiRisk,
+      setAiRisk,
+      aiNotes,
+      aiSummaryNote,
+      aiNudgeDismissed,
+      onDismissAiNudge: dismissAiNudge,
+      dryRunning,
+      busy: dryRunning || batching || scanning || aiBusy,
+      onBack: closePreview,
+      onDryRun: () => void dryRun(),
+      onCleanup: () => void handleCleanupConfirm(),
+      onAiExplain: () => void runAiExplain(),
+      error,
+      setError: core.setError,
+      report,
+      setReport: core.setReport,
+      aiReportBusy,
+      aiReportNote,
+      setAiReportBusy,
+      setAiReportNote,
+      verifyRows,
+      checkup,
+      checkupOpen,
+      setCheckupOpen: shell.setCheckupOpen,
+      checkupOrphanCount,
+      checkupOrphanScan,
+      onGoOrphans: () => {
+        shellActions.closeCheckup();
+        goNav("orphans");
+      },
+      batching,
+      batchIndex,
+      batchTotal,
+      batchCurrent,
+      batchResults,
+      showBatchSummary,
+      setShowBatchSummary,
+      retryFailedBatch,
+      cancelBatch,
+      batchCleanup: () => void batchCleanup(),
+      kindFilter,
+      setKindFilter,
+      riskFilter,
+      setRiskFilter,
+      detailPanel,
+      onOpenSettings: () => goNav("more"),
+      onCopilotApplyFilter: (list: InstalledApp[]) => {
+        setCopilotList(list);
+        setQ("");
+        setCategoryState("all");
+      },
+      onCopilotBatch: (list: InstalledApp[]) => {
+        core.setMulti(new Set(list.map(appKey)));
+        setCopilotList(list);
+        toast.info(L.batchUninstall);
+      },
+    }),
+    // Controller identity changes when domain state/handlers change (P-02: memo SoftwarePage).
+    [
+      apps,
+      filtered,
+      loading,
+      q,
+      category,
+      sortCol,
+      sortDesc,
+      selected,
+      multi,
+      uninstallingKey,
+      formatAppSize,
+      sizeOf,
+      sortBy,
+      selectApp,
+      core,
+      toggleMulti,
+      listStartUninstall,
+      listAnalyze,
+      listForceClean,
+      listIgnoreApp,
+      listIgnorePublisher,
+      estimating,
+      scanning,
+      aiEnabled,
+      uninstallStage,
+      showDetail,
+      shellActions,
+      setCategory,
+      stopSizeEstimate,
+      goNav,
+      scan,
+      selectedPaths,
+      evidence,
+      setEvidence,
+      setSelectedPaths,
+      ignoreSuggestions,
+      residualActions,
+      residualFromUninstall,
+      useOfficial,
+      aiBusy,
+      aiRisk,
+      setAiRisk,
+      aiNotes,
+      aiSummaryNote,
+      aiNudgeDismissed,
+      dismissAiNudge,
+      dryRunning,
+      batching,
+      closePreview,
+      dryRun,
+      handleCleanupConfirm,
+      runAiExplain,
+      error,
+      report,
+      aiReportBusy,
+      aiReportNote,
+      setAiReportBusy,
+      setAiReportNote,
+      verifyRows,
+      checkup,
+      checkupOpen,
+      shell,
+      checkupOrphanCount,
+      checkupOrphanScan,
+      batchIndex,
+      batchTotal,
+      batchCurrent,
+      batchResults,
+      showBatchSummary,
+      setShowBatchSummary,
+      retryFailedBatch,
+      cancelBatch,
+      batchCleanup,
+      kindFilter,
+      setKindFilter,
+      riskFilter,
+      setRiskFilter,
+      detailPanel,
+      setQ,
+      setCopilotList,
+      setCategoryState,
+      L,
+    ],
+  );
+  const softwareProps: SoftwarePageProps = useSoftwareController(softwareControllerArgs);
 
   return (
     <>
@@ -684,114 +900,7 @@ export default function App() {
           )}
           {nav === "software" && (
             <SoftwarePage
-              apps={apps}
-              filtered={filtered}
-              loading={loading}
-              q={q}
-              category={category}
-              sortCol={sortCol}
-              sortDesc={sortDesc}
-              selected={selected}
-              multi={multi}
-              uninstallingKey={uninstallingKey}
-              formatAppSize={formatAppSize}
-              sizeOf={sizeOf}
-              sortBy={sortBy}
-              selectApp={selectApp}
-              setSelected={core.setSelected}
-              toggleMulti={toggleMulti}
-              listStartUninstall={listStartUninstall}
-              listAnalyze={listAnalyze}
-              listForceClean={listForceClean}
-              listIgnoreApp={listIgnoreApp}
-              listIgnorePublisher={listIgnorePublisher}
-              appKey={appKey}
-              setMulti={core.setMulti}
-              estimating={estimating}
-              scanning={scanning}
-              aiEnabled={aiEnabled}
-              uninstallStage={uninstallStage}
-              showDetail={showDetail}
-              onToggleDetail={shellActions.toggleDetail}
-              onQuery={(v) => {
-                setQ(v);
-                setCopilotList(null);
-              }}
-              onCategory={setCategory}
-              onStopEstimate={() => void stopSizeEstimate()}
-              onOpenAi={() => goNav("more")}
-              scan={scan}
-              selectedPaths={selectedPaths}
-              evidence={evidence}
-              setEvidence={setEvidence}
-              setSelectedPaths={setSelectedPaths}
-              ignoreSuggestions={ignoreSuggestions}
-              onIgnoreApplied={(pubs, names) => {
-                core.setIgnorePub(pubs);
-                core.setIgnoreName(names);
-                residualActions.clearIgnoreSuggestions();
-              }}
-              onDismissIgnore={() => residualActions.clearIgnoreSuggestions()}
-              residualFromUninstall={residualFromUninstall}
-              useOfficial={useOfficial}
-              setUseOfficial={core.setUseOfficial}
-              aiBusy={aiBusy}
-              aiRisk={aiRisk}
-              setAiRisk={setAiRisk}
-              aiNotes={aiNotes}
-              aiSummaryNote={aiSummaryNote}
-              aiNudgeDismissed={aiNudgeDismissed}
-              onDismissAiNudge={dismissAiNudge}
-              dryRunning={dryRunning}
-              busy={dryRunning || batching || scanning || aiBusy}
-              onBack={closePreview}
-              onDryRun={() => void dryRun()}
-              onCleanup={() => void handleCleanupConfirm()}
-              onAiExplain={() => void runAiExplain()}
-              error={error}
-              setError={core.setError}
-              report={report}
-              setReport={core.setReport}
-              aiReportBusy={aiReportBusy}
-              aiReportNote={aiReportNote}
-              setAiReportBusy={setAiReportBusy}
-              setAiReportNote={setAiReportNote}
-              verifyRows={verifyRows}
-              checkup={checkup}
-              checkupOpen={checkupOpen}
-              setCheckupOpen={shell.setCheckupOpen}
-              checkupOrphanCount={checkupOrphanCount}
-              checkupOrphanScan={checkupOrphanScan}
-              onGoOrphans={() => {
-                shellActions.closeCheckup();
-                goNav("orphans");
-              }}
-              batching={batching}
-              batchIndex={batchIndex}
-              batchTotal={batchTotal}
-              batchCurrent={batchCurrent}
-              batchResults={batchResults}
-              showBatchSummary={showBatchSummary}
-              setShowBatchSummary={setShowBatchSummary}
-              retryFailedBatch={retryFailedBatch}
-              cancelBatch={cancelBatch}
-              batchCleanup={() => void batchCleanup()}
-              kindFilter={kindFilter}
-              setKindFilter={setKindFilter}
-              riskFilter={riskFilter}
-              setRiskFilter={setRiskFilter}
-              detailPanel={detailPanel}
-              onOpenSettings={() => goNav("more")}
-              onCopilotApplyFilter={(list) => {
-                setCopilotList(list);
-                setQ("");
-                setCategoryState("all");
-              }}
-              onCopilotBatch={(list) => {
-                core.setMulti(new Set(list.map(appKey)));
-                setCopilotList(list);
-                toast.info(L.batchUninstall);
-              }}
+              {...softwareProps}
             />
           )}
         </Suspense>
@@ -799,5 +908,3 @@ export default function App() {
     </>
   );
 }
-
-export type { CleanupReport, ScanResult };

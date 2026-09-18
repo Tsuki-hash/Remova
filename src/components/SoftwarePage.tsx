@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { memo } from "react";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -6,7 +7,7 @@ import type {
   IgnoreSuggestion,
   ScanResult,
 } from "../types";
-import type { SortCol } from "../hooks/useAppFilter";
+import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
@@ -14,7 +15,7 @@ import type { ReportVerifyRow } from "./ReportPanel";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { defaultSelectable } from "../lib/decision";
-import { SoftwareToolbar, type CategoryId } from "./SoftwareToolbar";
+import { SoftwareToolbar } from "./SoftwareToolbar";
 import { UninstallStageBar } from "./UninstallStageBar";
 import { SelectedAppCard } from "./SelectedAppCard";
 import { IgnoreSuggestBar } from "./IgnoreSuggestBar";
@@ -132,7 +133,7 @@ export type SoftwarePageProps = {
 };
 
 /** Software nav page: toolbar + scan/cleanup + list (extracted from App, FE-02). */
-export function SoftwarePage(p: SoftwarePageProps) {
+export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   return (
     <>
@@ -372,4 +373,4 @@ export function SoftwarePage(p: SoftwarePageProps) {
       )}
     </>
   );
-}
+});

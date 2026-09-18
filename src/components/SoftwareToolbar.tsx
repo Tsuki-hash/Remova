@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
+import type { CategoryId } from "../lib/categories";
 
-export type CategoryId = "all" | "desktop" | "store" | "large" | "recent";
+export type { CategoryId };
 
 /** Beginner toolbar: search + 3 plain filters (store/desktop live in meta only). */
 export function SoftwareToolbar({
