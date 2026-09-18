@@ -6,10 +6,10 @@ import type {
   InstalledApp,
   ScanResult,
 } from "./types";
-import { currentLang, loadLang, setLang, t } from "./i18n";
+import { loadLang, t } from "./i18n";
 import { cssStyles as css, globalCss } from "./styles";
 import { formatError } from "./lib/format";
-import { applyTheme, saveNav, type NavId } from "./lib/theme";
+import { applyTheme } from "./lib/theme";
 import { Shell } from "./components/Shell";
 import { ManageListPage } from "./components/ManageListPage";
 import { MorePage } from "./components/MorePage";
@@ -19,7 +19,7 @@ import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
 import { OrphanPage } from "./components/OrphanPage";
 import { toast } from "./lib/toast";
-import { defaultSelectable, isRecentInstall, summarizeLeftovers } from "./lib/decision";
+import { isRecentInstall, summarizeLeftovers } from "./lib/decision";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey } from "./lib/appKey";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
@@ -36,7 +36,7 @@ import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
-import { saveCloseMode, type CloseMode } from "./lib/closeMode";
+import { type CloseMode } from "./lib/closeMode";
 
 declare const __APP_VERSION__: string;
 
@@ -73,15 +73,12 @@ export default function App() {
   } = useListFilterChrome();
   const {
     theme,
-    setTheme,
     nav,
-    setNav,
     langVer,
     setLangVer,
     shellMenu,
     setShellMenu,
     closeMode,
-    setCloseModeState,
     updateInfo,
     setUpdateInfo,
     checkupOpen,
@@ -91,15 +88,15 @@ export default function App() {
     uninstallStage,
     setUninstallStage,
     showDetail,
-    setShowDetail,
+    actions: shellActions,
   } = useShellState();
   const setCloseMode = useCallback(
     (m: CloseMode) => {
-      setCloseModeState(m);
-      saveCloseMode(m);
+      shellActions.persistCloseMode(m);
     },
-    [setCloseModeState],
+    [shellActions],
   );
+  const goNav = shellActions.goNav;
   const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
   const [ignorePub, setIgnorePub] = useState<string[]>([]);
   const [ignoreName, setIgnoreName] = useState<string[]>([]);
@@ -118,6 +115,7 @@ export default function App() {
     setMonitorDiff,
     residualFromUninstall,
     setResidualFromUninstall,
+    actions: residualActions,
   } = useResidualState();
   const {
     aiEnabled,
@@ -136,6 +134,7 @@ export default function App() {
     setVerifyRows,
     copilotList,
     setCopilotList,
+    actions: aiActions,
   } = useAiPanelState();
   const setCategory = useCallback(
     (id: "all" | "desktop" | "store" | "large" | "recent") => {
@@ -184,11 +183,6 @@ export default function App() {
     } catch (e) {
       setError(formatError(e));
     }
-  }, []);
-
-  const goNav = useCallback((n: NavId) => {
-    setNav(n);
-    saveNav(n);
   }, []);
 
   const {
@@ -339,7 +333,7 @@ export default function App() {
       goNav("software");
       setScan({ app_name: L.orphanScan, items });
       // Orphans are unconfirmed by design — do not auto-select.
-      setSelectedPaths(new Set());
+      residualActions.clearSelection();
       if (items.length === 0) toast.info(L.orphanScanEmpty);
       else {
         const s = summarizeLeftovers(items);
@@ -381,7 +375,7 @@ export default function App() {
         }
         goNav("software");
         setScan({ app_name: L.monitorDiff, items });
-        setSelectedPaths(new Set(items.filter(defaultSelectable).map((i) => i.path)));
+        residualActions.selectDefaultItems(items);
         setMonitorDiff(null);
         toast.success(`${L.monitorToCleanup}: ${items.length}`);
       } catch (e) {
@@ -428,6 +422,7 @@ export default function App() {
   useEffect(() => {
     setAiSummaryNote(null);
     setRiskFilter(null);
+    aiActions.clearAiScanState();
     if (scan && scan.items.length > 0 && aiEnabled) {
       void runAiExplain();
     }
@@ -471,13 +466,16 @@ export default function App() {
     setReport(null);
     setError(null);
     setResidualFromUninstall(false);
-    setIgnoreSuggestions([]);
+    residualActions.clearIgnoreSuggestions();
+    residualActions.clearSelection();
     setKindFilter(null);
     setRiskFilter(null);
     setAiSummaryNote(null);
+    aiActions.clearAiScanState();
+    aiActions.clearAiReport();
     pendingBucketFilter.current = null;
     void refreshApps();
-  }, [refreshApps]);
+  }, [refreshApps, residualActions, aiActions]);
 
   // Apply drill-down filter once a pending analyze finishes.
   useEffect(() => {
@@ -591,17 +589,13 @@ export default function App() {
           <>
             <button
               style={css.btnSm}
-              onClick={() => setTheme((th) => (th === "dark" ? "light" : "dark"))}
+              onClick={shellActions.toggleTheme}
             >
               {L.themeToggle}
             </button>
             <button
               style={css.btnSm}
-              onClick={() => {
-                const next = currentLang() === "zh" ? "en" : "zh";
-                setLang(next);
-                setLangVer((v) => v + 1);
-              }}
+              onClick={shellActions.toggleLang}
             >
               {L.langToggle}
             </button>
@@ -680,7 +674,7 @@ export default function App() {
             aiEnabled={aiEnabled}
             uninstallStage={uninstallStage}
             showDetail={showDetail}
-            onToggleDetail={() => setShowDetail((v) => !v)}
+            onToggleDetail={shellActions.toggleDetail}
             onQuery={(v) => {
               setQ(v);
               setCopilotList(null);
@@ -699,7 +693,7 @@ export default function App() {
               setIgnoreName(names);
               setIgnoreSuggestions([]);
             }}
-            onDismissIgnore={() => setIgnoreSuggestions([])}
+            onDismissIgnore={() => residualActions.clearIgnoreSuggestions()}
             residualFromUninstall={residualFromUninstall}
             useOfficial={useOfficial}
             setUseOfficial={setUseOfficial}
@@ -731,7 +725,7 @@ export default function App() {
             checkupOrphanCount={checkupOrphanCount}
             checkupOrphanScan={checkupOrphanScan}
             onGoOrphans={() => {
-              setCheckupOpen(false);
+              shellActions.closeCheckup();
               goNav("orphans");
             }}
             batching={batching}

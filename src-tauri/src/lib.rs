@@ -4,6 +4,7 @@ pub mod ai;
 pub mod apps;
 pub mod backup;
 pub mod dirsize;
+pub mod error;
 pub mod executor;
 pub mod fsutil;
 pub mod history;
@@ -500,8 +501,10 @@ fn list_restore_sessions() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String> {
-    Ok(restore::list_session_info())
+async fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String> {
+    tauri::async_runtime::spawn_blocking(restore::list_session_info)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

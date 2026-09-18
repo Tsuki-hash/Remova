@@ -60,10 +60,12 @@ pub fn build_uninstall_command(
         ]);
     }
 
-    // MSI product code
+    // MSI product code: only when the string is clearly MSI (msiexec present, or bare {GUID}).
     if let Some(guid) = extract_guid(&raw) {
         let lower = raw.to_lowercase();
-        if lower.contains("msiexec") || raw.trim_start().starts_with('{') {
+        let trimmed = raw.trim();
+        let bare_guid = trimmed == guid || trimmed.trim_matches('"').eq_ignore_ascii_case(&guid);
+        if lower.contains("msiexec") || bare_guid {
             return Some(vec![
                 "msiexec.exe".into(),
                 "/x".into(),
@@ -560,6 +562,29 @@ pub fn run_full_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msi_only_for_msiexec_or_bare_guid() {
+        // MSI product code string
+        let bare = build_uninstall_command(r"{9A1B2C3D-1111-2222-3333-444455556666}", "", false);
+        assert!(matches!(bare.as_deref(), Some([msi, ..]) if msi == "msiexec.exe"));
+        // msiexec with extra args
+        let msi = build_uninstall_command(
+            r#"C:\Windows\System32\msiexec.exe /x {9A1B2C3D-1111-2222-3333-444455556666}"#,
+            "",
+            false,
+        );
+        assert!(msi.is_some());
+        // Non-MSI uninstall that merely contains a GUID → quoted exe path
+        let other = build_uninstall_command(
+            r#""C:\Program Files\Vendor\App\unins000.exe" /GUID={9A1B2C3D-1111-2222-3333-444455556666}"#,
+            "",
+            false,
+        )
+        .expect("quoted exe");
+        assert_eq!(other[0], r"C:\Program Files\Vendor\App\unins000.exe");
+        assert!(!other[0].eq_ignore_ascii_case("msiexec.exe"));
+    }
 
     #[test]
     fn store_uninstall_maps_to_powershell() {

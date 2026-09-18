@@ -25,11 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AppData / WebView name-match folders default to **suspected/medium** (not auto-selected) (BE-03)
 - ARCHITECTURE documents evidence-type confidence overrides vs score table
 - `batchEngine` unit tests cover ok / F-1 no-leftover uninstall / failed / cancel / invoke error
+- MSI uninstall command only when `msiexec` present or string is a bare `{GUID}` (BE-04)
+- `list_backup_sessions` runs on the blocking pool (no longer sync on the command thread)
 
 ### Changed
 - **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
 - ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
-- Residual/AI hooks expose `actions` API (togglePath, selectDefaultItems, clearResidualScan, clearAiScanState, …)
+- Residual/AI/Shell hooks expose `actions` API; App uses them for selection/clear/theme/lang/nav
+- **RemovaError** (`error.rs`): structured `code::message` IPC for manage/safety/backup/ai paths; `formatError` maps codes
 - Testing Library + jsdom: confirm store, CleanupConclusion, hooks actions unit tests
 - Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
 - Stable software-list callbacks (`useCallback`) so `AppRow.memo` is not defeated

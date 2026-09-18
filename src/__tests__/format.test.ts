@@ -35,10 +35,25 @@ describe("formatError manage codes", () => {
     expect(isAccessDeniedError("manage:access_denied:WslInstaller")).toBe(true);
   });
 
+  it("maps open_path not_found and raw os error 2", () => {
+    expect(formatError("open_path:not_found")).toContain("位置不存在");
+    expect(formatError("系统找不到指定的文件。(os error 2)")).toContain("位置不存在");
+    expect(formatError("open_path:empty")).toContain("路径为空");
+    expect(formatError("open_path:failed:boom")).toContain("资源管理器");
+  });
+
   it("maps protected service", () => {
     const msg = formatError("manage:protected:WinDefend");
     expect(msg).toContain("关键服务");
     expect(msg).toContain("WinDefend");
+  });
+
+  it("maps RemovaError IPC code::message form", () => {
+    expect(formatError("manage:protected::WinDefend")).toContain("关键服务");
+    expect(formatError("manage:protected::WinDefend")).toContain("WinDefend");
+    expect(formatError("manage:protected_registry::HKLM\\SOFTWARE\\Evil")).toContain("关键服务");
+    expect(formatError("ai:explain::timeout")).toContain("智能说明");
+    expect(formatError("backup:failed::disk full")).toBeTruthy();
   });
 });
 
