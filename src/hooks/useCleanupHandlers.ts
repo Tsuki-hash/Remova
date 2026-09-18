@@ -119,18 +119,18 @@ export function useCleanupHandlers({
   );
 
   const dryRun = useCallback(async () => {
-    if (!scan) return;
+    if (!scan || !selected) return;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     setDryRunning(true);
     try {
-      const r = await api.dryRun(scan.app_name, items);
+      const r = await api.dryRun(selected, items);
       setReport(r);
     } catch (e) {
       setError(formatError(e, "cleanup"));
     } finally {
       setDryRunning(false);
     }
-  }, [scan, selectedPaths, setReport, setError]);
+  }, [scan, selected, selectedPaths, setReport, setError]);
 
   const execReal = useCallback(async () => {
     if (!scan || !selected) return;
@@ -280,8 +280,9 @@ export function useCleanupHandlers({
           onShowSummary: setShowBatchSummary,
           onSetBatching: setBatching,
           onDoneKeys: (keys) => {
-            const okSet = new Set(keys);
+            // FE-P0a: remove finished keys without clearing failed multi selections.
             setMulti((m) => {
+              const okSet = new Set(keys);
               const n = new Set(m);
               for (const k of okSet) n.delete(k);
               return n;

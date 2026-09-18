@@ -132,6 +132,74 @@ fn is_safe_fs(p: &Path) -> bool {
     crate::safety::is_safe_fs(p)
 }
 
+/// Process-wide lock so batch + manual cleanup cannot race PATH/backup (S-08).
+static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Dry-run with the same semantic gates as full delete when `app` is known (S-05).
+pub fn run_cleanup_dry_for_app(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+) -> CleanupReport {
+    let mut deleted_planned = 0u32;
+    let mut skipped = 0u32;
+    let errors = vec![];
+    let mut details = vec![];
+    let ignore = crate::ignore::load();
+
+    for it in items {
+        let (ok, why) = if it.user_data {
+            (false, "user_data red line".to_string())
+        } else if it.shared {
+            (false, "shared runtime".to_string())
+        } else if crate::ignore::should_skip_leftover_path(&ignore, &it.path) {
+            (false, "ignored path".to_string())
+        } else if matches!(it.kind, ItemKind::File | ItemKind::Dir)
+            && !path_associated_with_app(app, it)
+        {
+            (false, "path not associated with app".to_string())
+        } else {
+            let safe = match it.kind {
+                ItemKind::Registry => is_safe_to_delete_registry(&it.path).is_ok(),
+                ItemKind::Path => !it.path.trim().is_empty(),
+                _ => is_safe_fs(Path::new(&it.path)),
+            };
+            if safe {
+                (true, String::new())
+            } else {
+                (false, "failed safety gate".to_string())
+            }
+        };
+        if !ok {
+            skipped += 1;
+            details.push(ItemDetail {
+                path: it.path.clone(),
+                kind: format!("{:?}", it.kind).to_lowercase(),
+                status: "skipped".into(),
+                message: why,
+            });
+            continue;
+        }
+        deleted_planned += 1;
+        details.push(ItemDetail {
+            path: it.path.clone(),
+            kind: format!("{:?}", it.kind).to_lowercase(),
+            status: "planned".into(),
+            message: "[dry-run]".into(),
+        });
+    }
+
+    CleanupReport {
+        app_name: app.name.clone(),
+        dry_run: true,
+        uninstall_command: vec![],
+        uninstall_message: "dry-run: official uninstaller not launched".into(),
+        deleted_planned,
+        skipped,
+        errors,
+        item_details: details,
+    }
+}
+
 /// Dry-run cleanup: validate items and report what would happen. Never deletes.
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
     let mut deleted_planned = 0u32;
@@ -358,8 +426,18 @@ fn try_backup_phase(
     }
 }
 
+/// True when cleanup was launched from the orphan leftovers page (no real InstalledApp).
+pub fn is_orphan_flow(app: &crate::apps::InstalledApp) -> bool {
+    app.source.eq_ignore_ascii_case("orphan")
+        || (app.registry_key.trim().is_empty()
+            && app.install_location.trim().is_empty()
+            && app.uninstall_string.trim().is_empty()
+            && app.quiet_uninstall_string.trim().is_empty())
+}
+
 /// Medium association gate (AR-10): file/dir leftovers must look related to the app.
 /// Registry/PATH items are gated by safety/PATH scrub instead.
+/// Orphan flow (S-01): skip slug matching — items already come from orphan scan + safety.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
         return false;
@@ -369,6 +447,11 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
         ItemKind::File | ItemKind::Dir => {
             let path = item.path.replace('/', "\\");
             let low = path.to_lowercase();
+            if is_orphan_flow(app) {
+                // S-01: orphan leftovers have no product install_location; allow any FS path
+                // that passes the shared safety gate (still user-confirmed in UI).
+                return crate::safety::is_safe_fs(std::path::Path::new(&item.path));
+            }
             let install = app
                 .install_location
                 .trim()
@@ -528,6 +611,27 @@ fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) 
                     });
                     continue;
                 }
+                if it.shared {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "shared runtime (backend)".into(),
+                    });
+                    continue;
+                }
+                let ignore = crate::ignore::load();
+                if crate::ignore::should_skip_leftover_path(&ignore, &it.path) {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "ignored path".into(),
+                    });
+                    continue;
+                }
                 // AR-10 medium association gate for filesystem leftovers.
                 if !path_associated_with_app(app, it) {
                     skipped += 1;
@@ -594,8 +698,9 @@ pub fn run_full_cleanup(
     items: &[CleanupItem],
     opts: &FullCleanupOptions,
 ) -> FullCleanupReport {
+    let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if opts.dry_run {
-        let dry = run_cleanup_dry(&app.name, items);
+        let dry = run_cleanup_dry_for_app(app, items);
         return FullCleanupReport {
             app_name: dry.app_name,
             dry_run: true,
@@ -718,6 +823,43 @@ mod tests {
         it.kind = ItemKind::Registry;
         it.path = r"HKCU\Software\Demo".into();
         assert!(path_associated_with_app(&app, &it));
+    }
+
+    #[test]
+    fn orphan_flow_uses_safety_not_slug() {
+        let app = crate::apps::InstalledApp {
+            name: "孤儿扫描".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "Orphan".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        assert!(is_orphan_flow(&app));
+        let base = CleanupItem {
+            path: r"C:\Program Files\SomeVendor\Tool".into(),
+            kind: ItemKind::Dir,
+            score: 40,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "orphan".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            size_kb: None,
+            bucket: None,
+        };
+        assert!(path_associated_with_app(&app, &base));
+        let win = CleanupItem {
+            path: r"C:\Windows".into(),
+            ..base.clone()
+        };
+        assert!(!path_associated_with_app(&app, &win));
     }
 
     #[test]

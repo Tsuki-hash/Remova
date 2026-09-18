@@ -340,10 +340,10 @@ async fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
 
 #[tauri::command]
 async fn run_cleanup_dry_run(
-    app_name: String,
+    app: InstalledApp,
     items: Vec<CleanupItem>,
 ) -> Result<CleanupReport, String> {
-    tauri::async_runtime::spawn_blocking(move || executor::run_cleanup_dry(&app_name, &items))
+    tauri::async_runtime::spawn_blocking(move || executor::run_cleanup_dry_for_app(&app, &items))
         .await
         .map_err(|e| e.to_string())
 }

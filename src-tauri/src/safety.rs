@@ -42,7 +42,6 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "wcmsvc",
         "wlansvc",
         "wudfsvc",
-        "mpssvc",
     ]
 }
 

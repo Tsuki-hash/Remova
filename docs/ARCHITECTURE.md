@@ -291,6 +291,52 @@ FullCleanupReport → history::append（非 dry_run）
 
 ## 5. 备份会话布局
 
+根目录：`%PROGRAMDATA%\Remova\Backup\`（或 `REMOVA_BACKUP_DIR`）
+
+```
+{unix_ts}_{safe_app_name}/
+├── path.json                 # PATH 残留快照（entry + scopes + 当时 User/Machine PATH）
+├── files/
+│   ├── {fnv64}_{original_name}
+│   ├── _path/{safe}.txt      # PATH 条目明文备份
+│   └── path_map.json
+└── registry/
+    └── {safe_name}/
+        ├── export.reg        # 父键/整键导出
+        ├── value.reg         # 单值导出（Run 类，还原优先）
+        └── value.txt         # key|ValueName 元数据
+```
+
+**还原顺序**
+
+1. `path_map.json` → 文件/目录写回  
+2. `path.json` → **merge** 缺失 PATH 段（不整环境覆盖；User/Machine 按 scopes）  
+3. Registry：存在 `value.reg` 则 **单值 import**；否则 `export.reg`  
+
+**门禁**：backup 任一项 fail → cleanup aborted；`path_map` / `value.reg` 写失败计入 fail。
+
+### 6.x AR-10 关联与来源
+
+| 来源 | 关联策略 |
+|---|---|
+| 正常卸载（有 install_location） | install 前缀 / slug / publisher 启发式 |
+| **孤儿（app.source=Orphan 或空 install+registry）** | 仅 `is_safe_fs`，不再用假 slug |
+| dry-run | 与真删共用：user_data / shared / ignore / AR-10 / safety |
+
+### 8.x `is_safe_fs` 保护前缀
+
+环境变量生成 + `c:\` 兜底：`SystemRoot`、`SystemRoot.old`、`ProgramData\Microsoft`、`ProgramFiles(x86)\WindowsApps`、`…\Microsoft Shared`、`SystemDrive\Users\Default` 等（见 `safety::protected_fs_prefixes`）。
+
+**关键服务名单**：动态，见 `safety::critical_service_names()`（约 30+，含 WinDefend/Appinfo/DcomLaunch 等；文档勿写死数量）。
+
+**manage 任务写侧**：拒绝 `\Microsoft\Windows\*` 前缀（`manage:protected_task`）。
+
+**IPC 错误**：`RemovaError` 形如 `code::message`（如 `manage:protected::Name`）；前端 `formatError` 兼容旧 `manage:kind:name`。
+
+**模块补全（前端）**：`hooks/reducers/*`、`useMore*`、`src/i18n/{zh,en,index}.ts`（`src/i18n.ts` 为 re-export）、`SoftwarePage`。
+
+---
+
 根目录：`%PROGRAMDATA%\Remova\Backup\`
 
 ```
