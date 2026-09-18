@@ -52,7 +52,10 @@ declare const __APP_VERSION__: string;
 
 function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number, sizeMap: Record<string, number>) {
   return useMemo(() => {
-    const large = apps.filter((a) => sizeOf(a) > 500 * 1024).length;
+    const large = apps.filter((a) => {
+      const kb = sizeMap[a.install_location] || sizeOf(a);
+      return kb > 500 * 1024;
+    }).length;
     const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
     return { total: apps.length, large, recent };
   }, [apps, sizeOf, sizeMap]);
@@ -170,7 +173,11 @@ export default function App() {
   } = useScanUiState();
   const dismissAiNudge = scanUi.dismissAiNudge;
 
-  const L = useMemo(() => t(), [langVer]);
+  // langVer forces t() after language switch (module dictionary is not reactive).
+  const L = useMemo(() => {
+    void langVer;
+    return t();
+  }, [langVer]);
   const deferredQ = useDeferredValue(q);
 
   const { estimating, sizeMap, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize } =
@@ -292,7 +299,7 @@ export default function App() {
     loadLang();
     applyTheme(theme);
     setLangVer((v) => v + 1);
-  }, [theme]);
+  }, [theme, setLangVer]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -329,7 +336,7 @@ export default function App() {
         setError(formatError(e));
       }
     },
-    [selected, L],
+    [selected, L, setIgnorePub, setError],
   );
 
   const doIgnoreApp = useCallback(
@@ -364,7 +371,7 @@ export default function App() {
       setError(formatError(e, "analyze"));
       toast.error(L.errAnalyzeFailed(formatError(e, "analyze")));
     }
-  }, [L, goNav]);
+  }, [L, goNav, residualActions, setError, setScan]);
 
   const toggleMonitor = useCallback(async () => {
     try {
@@ -384,7 +391,7 @@ export default function App() {
       toast.error(L.errInvokeFailed(formatError(e)));
       setMonitoring(false);
     }
-  }, [monitoring, L]);
+  }, [monitoring, L, setMonitoring, setMonitorDiff, setError]);
 
   const monitorDiffToCleanup = useCallback(
     async (diff: { added_files: string[]; added_reg_values: string[] }) => {
@@ -403,7 +410,7 @@ export default function App() {
         setError(formatError(e));
       }
     },
-    [L, goNav],
+    [L, goNav, residualActions, setScan, setMonitorDiff, setError],
   );
 
   const runAiExplain = useCallback(async () => {
@@ -437,7 +444,7 @@ export default function App() {
     } finally {
       setAiBusy(false);
     }
-  }, [scan, selected, aiEnabled, aiBusy, L]);
+  }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
   // Auto generate AI reading when scan finishes (decision layer, not a button-first flow).
   useEffect(() => {
@@ -488,7 +495,7 @@ export default function App() {
     aiActions.clearAiScanState();
     aiActions.clearAiReport();
     void refreshApps();
-  }, [refreshApps, residualActions, aiActions, scanUi]);
+  }, [refreshApps, residualActions, aiActions, scanUi, setScan, setReport, setError, setResidualFromUninstall]);
 
   // Apply drill-down filter once a pending analyze finishes.
   useEffect(() => {
@@ -525,7 +532,7 @@ export default function App() {
         setScanning(false);
       }
     })();
-  }, []);
+  }, [setCheckupOrphanCount, setScanning]);
 
   /** Stable row handlers so AppRow.memo is not defeated by inline arrows (PF-01). */
   const listStartUninstall = useCallback(
@@ -547,9 +554,9 @@ export default function App() {
     }
   }, []);
   const detailOnClose = useCallback(() => {
-    setKindFilter(null);
+    scanUi.clearKindFilter();
     setSelected(null);
-  }, []);
+  }, [scanUi, setSelected]);
 
   /** Single AppDetailPanel instance used in both list and scan layouts (FE-03). */
   const detailPanel = selected ? (
