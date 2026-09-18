@@ -28,6 +28,7 @@ import { useAppBoot, checkUpdateNow, toggleShellMenuApi } from "./hooks/useAppBo
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome, useResidualState } from "./hooks/useResidualState";
+import { useScanUiState } from "./hooks/useScanUiState";
 import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
@@ -157,15 +158,17 @@ export default function App() {
   const analyzeRef = useRef<
     (app: InstalledApp, opts?: { fromUninstall?: boolean }) => Promise<void>
   >(async () => {});
-  /** Linked-bucket drill-down filter for the leftover table. */
-  const [kindFilter, setKindFilter] = useState<LinkedBucketId | null>(null);
-  const pendingBucketFilter = useRef<LinkedBucketId | null>(null);
-  /** Decision-layer list filter: confirm | keep. */
-  const [riskFilter, setRiskFilter] = useState<"confirm" | "keep" | null>(null);
-  const [aiSummaryNote, setAiSummaryNote] = useState<string | null>(null);
-  const [aiNudgeDismissed, setAiNudgeDismissed] = useState(
-    () => localStorage.getItem("remova_ai_nudge") === "1",
-  );
+  const {
+    kindFilter,
+    setKindFilter,
+    riskFilter,
+    setRiskFilter,
+    aiSummaryNote,
+    setAiSummaryNote,
+    aiNudgeDismissed,
+    actions: scanUi,
+  } = useScanUiState();
+  const dismissAiNudge = scanUi.dismissAiNudge;
 
   const L = useMemo(() => t(), [langVer]);
   const deferredQ = useDeferredValue(q);
@@ -438,19 +441,14 @@ export default function App() {
 
   // Auto generate AI reading when scan finishes (decision layer, not a button-first flow).
   useEffect(() => {
-    setAiSummaryNote(null);
-    setRiskFilter(null);
+    scanUi.clearAiSummary();
+    scanUi.clearRiskFilter();
     aiActions.clearAiScanState();
     if (scan && scan.items.length > 0 && aiEnabled) {
       void runAiExplain();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan?.app_name, scan?.items.length, aiEnabled]);
-
-  const dismissAiNudge = () => {
-    setAiNudgeDismissed(true);
-    localStorage.setItem("remova_ai_nudge", "1");
-  };
 
   // Auto narrative after cleanup (P2 continuous story).
   const runAiReport = useCallback(async () => {
@@ -486,22 +484,20 @@ export default function App() {
     setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
-    setKindFilter(null);
-    setRiskFilter(null);
-    setAiSummaryNote(null);
+    scanUi.clearScanChrome();
     aiActions.clearAiScanState();
     aiActions.clearAiReport();
-    pendingBucketFilter.current = null;
     void refreshApps();
-  }, [refreshApps, residualActions, aiActions]);
+  }, [refreshApps, residualActions, aiActions, scanUi]);
 
   // Apply drill-down filter once a pending analyze finishes.
   useEffect(() => {
-    if (scan && pendingBucketFilter.current) {
-      setKindFilter(pendingBucketFilter.current);
-      pendingBucketFilter.current = null;
+    const pending = scanUi.takePendingBucket();
+    if (scan && pending) {
+      setKindFilter(pending);
     }
     if (!scan) setKindFilter(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan]);
 
   const drillDownBucket = useCallback(
@@ -509,11 +505,11 @@ export default function App() {
       if (scan && scan.app_name === selected?.name) {
         setKindFilter(bucket);
       } else {
-        pendingBucketFilter.current = bucket;
+        scanUi.setPendingBucket(bucket);
         if (selected) void analyze(selected);
       }
     },
-    [scan, selected, analyze],
+    [scan, selected, analyze, scanUi, setKindFilter],
   );
 
   const checkupOrphanScan = useCallback(() => {
