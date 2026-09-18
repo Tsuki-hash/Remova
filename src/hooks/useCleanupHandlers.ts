@@ -294,7 +294,7 @@ export function useCleanupHandlers({
         setError(formatError(e, "cleanup"));
       }
     },
-    [apps, multi, L, setMulti, setError, busyRef],
+    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial],
   );
 
   const cancelBatch = useCallback(() => {
