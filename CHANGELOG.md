@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Software list: removed virtualization full-map fallback when the virtual window is empty
 
 ### Changed
+- Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
+- Stable software-list callbacks (`useCallback`) so `AppRow.memo` is not defeated
+- MorePage badges use i18n (`badgeNew` / `badgeRunning`)
 - Docs index baseline aligned to package version **1.1.0**; CHANGELOG Unreleased de-duplicated against 1.1.0
 - `.gitignore`: track live docs (`ARCHITECTURE` / `USER-GUIDE` / `product/`); keep `docs/reviews`, `docs/compose`, `docs/archive` private
 - ARCHITECTURE command table synced with `generate_handler!` (removed ghost `restore_latest_backup`; added AI/verify/backup session commands)

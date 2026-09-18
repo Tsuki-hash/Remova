@@ -1,17 +1,18 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { InstalledApp, ScanResult } from "../types";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
-import { appHealth, summarizeLeftovers } from "../lib/decision";
+import { summarizeLeftovers } from "../lib/decision";
+import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
+import type { LinkedBucketId } from "../lib/linkedItems";
 
 export type UninstallMode = "official" | "deep" | "force";
 
 type Props = {
   app: InstalledApp;
   sizeText: string;
-  sizeKb: number;
   uninstalling: boolean;
   scan?: ScanResult | null;
   onClose: () => void;
@@ -20,14 +21,14 @@ type Props = {
   onOfficialOnly: (app: InstalledApp) => void;
   onForceClean?: (app: InstalledApp) => void;
   onOpenPath?: (path: string) => void;
-  extra?: ReactNode;
+  onDrillDown?: (bucket: LinkedBucketId) => void;
+  onViewLeftovers?: () => void;
 };
 
 /** Fixed right-hand detail column (not a modal drawer). */
 export function AppDetailPanel({
   app,
   sizeText,
-  sizeKb,
   uninstalling,
   scan,
   onClose,
@@ -36,65 +37,48 @@ export function AppDetailPanel({
   onOfficialOnly,
   onForceClean,
   onOpenPath,
-  extra,
+  onDrillDown,
+  onViewLeftovers,
 }: Props) {
   const L = t();
-  const [mode, setMode] = useState<UninstallMode>("deep");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const name = prettyAppName(app.name, app.source);
-  const health = appHealth(app, sizeKb, L);
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
   const linked = scan && scan.app_name === app.name ? summarizeLeftovers(scan.items) : null;
+  const buckets =
+    scan && scan.app_name === app.name ? buildLinkedBuckets(scan.items, app) : [];
 
-  const startByMode = () => {
-    if (mode === "official") onOfficialOnly(app);
-    else if (mode === "force") onForceClean?.(app);
-    else onDeepUninstall(app);
-  };
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
-  const primaryLabel =
-    mode === "official"
-      ? L.drawerOfficial
-      : mode === "force"
-        ? L.rowForceClean
-        : L.drawerDeepUninstall;
+  const runDeep = () => onDeepUninstall(app);
 
   const infoRows: { label: string; value: string; mono?: boolean; action?: boolean }[] = [
     { label: L.detailPath, value: app.install_location || "—", mono: true, action: true },
     { label: L.colSize, value: sizeText, mono: true },
     { label: L.detailDate, value: app.install_date || "—" },
     { label: L.detailVersion, value: app.version || "—" },
-    { label: L.detailSource, value: sourceLabel(app.source, L) },
-    { label: L.healthLabel, value: health.label },
   ];
 
-  const linkRows = linked
-    ? linked.byKind.slice(0, 6).map((k) => ({ id: k.kind, label: k.kind, value: String(k.count) }))
-    : [];
+  const menuItems: { label: string; onClick: () => void; danger?: boolean }[] = [
+    { label: L.drawerOfficial, onClick: () => onOfficialOnly(app) },
+    { label: L.drawerDeepUninstall, onClick: runDeep },
+    { label: L.rowForceClean, onClick: () => onForceClean?.(app), danger: true },
+    { label: L.drawerAnalyze, onClick: () => onAnalyze(app) },
+  ];
 
   return (
-    <aside
-      style={{
-        width: 340,
-        flexShrink: 0,
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-        overflow: "hidden",
-      }}
-      aria-label={name}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "flex-start",
-          padding: "14px 14px 10px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
+    <aside style={css.panelShell} aria-label={name}>
+      <div style={css.panelHeader}>
         <AppIcon displayIcon={app.display_icon} name={app.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14.5, lineHeight: 1.3 }}>{name}</div>
@@ -114,21 +98,21 @@ export function AppDetailPanel({
         </button>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "12px 14px" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <div style={css.panelBody}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
           <button
             style={{
               ...css.btn,
               flex: 1,
               height: 36,
-              background: mode === "force" ? "var(--danger)" : "var(--accent)",
+              background: "var(--accent)",
               color: "var(--accent-ink)",
-              opacity: mode === "force" ? (uninstalling ? 0.5 : 1) : !hasCmd || uninstalling ? 0.5 : 1,
+              opacity: !hasCmd || uninstalling ? 0.5 : 1,
             }}
-            disabled={mode === "force" ? uninstalling : !hasCmd || uninstalling}
-            onClick={startByMode}
+            disabled={!hasCmd || uninstalling}
+            onClick={runDeep}
           >
-            {uninstalling ? L.uninstalling : mode === "deep" ? L.drawerDeepUninstall : primaryLabel}
+            {uninstalling ? L.uninstalling : L.drawerDeepUninstall}
           </button>
           <button
             style={{ ...css.btnGhost, height: 36 }}
@@ -138,29 +122,64 @@ export function AppDetailPanel({
           >
             {L.openLocation}
           </button>
-          <button
-            style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
-            title={L.drawerAnalyzeHint}
-            onClick={() => onAnalyze(app)}
-          >
-            ⋯
-          </button>
+          <div ref={menuRef} style={{ position: "relative" }}>
+            <button
+              style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              ⋯
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 40,
+                  zIndex: 20,
+                  minWidth: 148,
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  boxShadow: "0 8px 24px rgba(0,0,0,.16)",
+                  padding: 4,
+                }}
+              >
+                {menuItems.map((m) => (
+                  <button
+                    key={m.label}
+                    role="menuitem"
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      border: "none",
+                      background: "transparent",
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      fontSize: 12.5,
+                      color: m.danger ? "var(--danger)" : "var(--ink)",
+                    }}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      m.onClick();
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{L.basicInfo}</div>
+        <div style={css.sectionTitle}>{L.basicInfo}</div>
         <div style={{ ...css.card, padding: "4px 10px", marginBottom: 14 }}>
           {infoRows.map((r) => (
-            <div
-              key={r.label}
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                padding: "7px 0",
-                borderBottom: "1px solid var(--border)",
-                fontSize: 12.5,
-              }}
-            >
+            <div key={r.label} style={css.detailRow}>
               <span style={{ ...css.muted, width: 64, flexShrink: 0 }}>{r.label}</span>
               <span
                 className={r.mono ? "ell" : undefined}
@@ -184,10 +203,13 @@ export function AppDetailPanel({
               )}
             </div>
           ))}
+          <div style={{ padding: "7px 0", fontSize: 12, color: "var(--muted)" }}>
+            {L.detailSource}: {sourceLabel(app.source, L)}
+          </div>
         </div>
 
-        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{L.linkedItems}</div>
-        {linkRows.length === 0 ? (
+        <div style={css.sectionTitle}>{L.linkedItems}</div>
+        {buckets.length === 0 ? (
           <div style={{ ...css.muted, marginBottom: 12, fontSize: 12 }}>
             {L.drawerAnalyzeHint}
             <div style={{ marginTop: 8 }}>
@@ -198,65 +220,87 @@ export function AppDetailPanel({
           </div>
         ) : (
           <div style={{ ...css.card, padding: "4px 10px", marginBottom: 12 }}>
-            {linkRows.map((r) => (
-              <div
-                key={r.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 0",
-                  borderBottom: "1px solid var(--border)",
-                  fontSize: 12.5,
-                }}
-              >
-                <span style={{ flex: 1 }}>{r.label}</span>
-                <span style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>{r.value}</span>
-                <span style={{ color: "var(--muted)" }}>›</span>
-              </div>
-            ))}
-            <div style={{ padding: "8px 0", fontSize: 12, color: "var(--muted)" }}>
-              {L.bucketSafe} {linked?.safe} · {L.bucketSuggest} {linked?.suggest} · {L.bucketKeep}{" "}
-              {linked?.keep}
-            </div>
+            {buckets.map((b) => {
+              const label =
+                b.id === "programFiles"
+                  ? L.linkedProgramFiles
+                  : b.id === "configFiles"
+                    ? L.linkedConfigFiles
+                    : b.id === "registry"
+                      ? L.linkedRegistry
+                      : b.id === "shortcuts"
+                        ? L.linkedShortcuts
+                        : b.id === "startup"
+                          ? L.linkedStartup
+                          : L.linkedOther;
+              const icon = linkedBucketIcon(b.id);
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    width: "100%",
+                    padding: "8px 0",
+                    border: "none",
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 12.5,
+                    background: "transparent",
+                    cursor: onDrillDown ? "pointer" : "default",
+                    textAlign: "left",
+                    color: "var(--ink)",
+                  }}
+                  onClick={() => onDrillDown?.(b.id)}
+                >
+                  <span style={{ width: 18, flexShrink: 0 }} aria-hidden>
+                    {icon}
+                  </span>
+                  <span style={{ flex: 1 }}>{label}</span>
+                  <span style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>
+                    {b.sizeKb != null ? formatSize(b.sizeKb) : L.itemCount(b.count)}
+                  </span>
+                  <span style={{ color: "var(--muted)" }}>›</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
-        {extra}
-
-        <div style={{ fontWeight: 700, fontSize: 13, margin: "14px 0 8px" }}>{L.uninstallModeTitle}</div>
-        {(
-          [
-            ["official", L.modeOfficial, L.modeOfficialHint],
-            ["deep", L.modeDeep, L.modeDeepHint],
-            ["force", L.modeForce, L.modeForceHint],
-          ] as const
-        ).map(([id, label, hint]) => (
-          <label
-            key={id}
+        {linked && linked.total > 0 ? (
+          <div
             style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "flex-start",
-              fontSize: 12.5,
-              cursor: "pointer",
-              lineHeight: 1.4,
+              ...css.card,
+              padding: "12px",
               marginBottom: 8,
+              background: "var(--surface-2)",
+              borderColor: "var(--accent)",
+              borderWidth: 1,
+              borderStyle: "solid",
             }}
           >
-            <input
-              type="radio"
-              name="uninstall-mode"
-              checked={mode === id}
-              onChange={() => setMode(id)}
-              style={{ marginTop: 2, accentColor: "var(--accent)" }}
-            />
-            <span>
-              <span style={{ fontWeight: 600 }}>{label}</span>
-              <span style={{ color: "var(--muted)", display: "block", fontSize: 11.5 }}>{hint}</span>
-            </span>
-          </label>
-        ))}
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              ✓ {L.deepUninstallRecommend}
+            </div>
+            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.45 }}>
+              {L.foundNLeftovers(linked.total)}
+            </div>
+            <button
+              style={{ ...css.btn, height: 32, width: "100%" }}
+              onClick={() => onViewLeftovers?.()}
+            >
+              {L.viewDetails}
+            </button>
+          </div>
+        ) : (
+          <button
+            style={{ ...css.btn, height: 34, width: "100%", marginBottom: 8 }}
+            onClick={() => onAnalyze(app)}
+          >
+            {L.scanLinkedLeftovers}
+          </button>
+        )}
       </div>
     </aside>
   );

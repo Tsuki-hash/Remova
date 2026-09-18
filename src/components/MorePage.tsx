@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { formatError } from "../lib/format";
+import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
@@ -31,58 +31,166 @@ type ToolItem = {
   title: string;
   desc: string;
   icon: string;
-  action?: () => void;
-  disabled?: boolean;
+  action: () => void;
+  /** Needs a selected app — card stays interactive and jumps to the list. */
+  needsSelection?: boolean;
+  /** Soft brand tint on the icon tile. */
+  accent?: boolean;
+  badge?: string;
 };
 
-function ToolRow({
+const cardBase: CSSProperties = {
+  width: "100%",
+  textAlign: "left",
+  border: "1px solid var(--border)",
+  background: "var(--surface)",
+  borderRadius: 10,
+  padding: "14px 14px 12px",
+  cursor: "pointer",
+  display: "flex",
+  gap: 12,
+  alignItems: "flex-start",
+  transition: "border-color .12s, box-shadow .12s, background .12s",
+};
+
+function ToolCard({
   item,
   active,
+  selectedApp,
 }: {
   item: ToolItem;
   active: boolean;
+  selectedApp: InstalledApp | null;
 }) {
+  const L = t();
+  const blocked = item.needsSelection && !selectedApp;
   return (
     <button
       type="button"
-      disabled={item.disabled}
       onClick={item.action}
       style={{
-        width: "100%",
-        textAlign: "left" as const,
-        border: "1px solid var(--border)",
+        ...cardBase,
+        borderColor: active ? "var(--accent)" : blocked ? "var(--border)" : "var(--border)",
         background: active ? "var(--accent-soft)" : "var(--surface)",
-        borderColor: active ? "var(--accent)" : "var(--border)",
-        borderRadius: 10,
-        padding: "12px 14px",
-        cursor: item.disabled ? "not-allowed" : "pointer",
-        boxShadow: "var(--shadow)",
-        opacity: item.disabled ? 0.55 : 1,
-        display: "flex",
-        gap: 12,
-        alignItems: "flex-start",
+        boxShadow: active ? "0 0 0 1px var(--accent)" : "none",
+      }}
+      onMouseEnter={(e) => {
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border-strong)";
+        e.currentTarget.style.boxShadow = "0 1px 0 rgba(0,0,0,.04)";
+      }}
+      onMouseLeave={(e) => {
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.boxShadow = "none";
       }}
     >
       <span
         style={{
-          width: 32,
-          height: 32,
-          borderRadius: 8,
-          background: "var(--surface-2)",
+          width: 36,
+          height: 36,
+          borderRadius: 9,
+          background: item.accent && !blocked ? "var(--accent-soft)" : "var(--surface-2)",
+          color: item.accent && !blocked ? "var(--accent)" : "var(--muted)",
           display: "grid",
           placeItems: "center",
-          fontSize: 15,
+          fontSize: 16,
+          fontWeight: 600,
           flexShrink: 0,
+          border: item.accent && !blocked ? "1px solid transparent" : "1px solid var(--border)",
         }}
         aria-hidden
       >
         {item.icon}
       </span>
       <span style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontWeight: 650, fontSize: 13.5, marginBottom: 3 }}>{item.title}</div>
-        <div style={{ ...css.muted, fontSize: 12, lineHeight: 1.45 }}>{item.desc}</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 4,
+          }}
+        >
+          <span style={{ fontWeight: 650, fontSize: 13.5 }}>{item.title}</span>
+          {item.badge && (
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 650,
+                letterSpacing: 0.2,
+                color: "var(--accent)",
+                background: "var(--accent-soft)",
+                borderRadius: 999,
+                padding: "1px 7px",
+              }}
+            >
+              {item.badge}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            color: blocked ? "var(--muted)" : "var(--muted)",
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          {blocked ? L.needsSoftware : item.desc}
+        </div>
+        {blocked && (
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--accent)",
+            }}
+          >
+            {L.goToSoftware} →
+          </div>
+        )}
+      </span>
+      <span style={{ color: "var(--muted)", fontSize: 14, alignSelf: "center" }} aria-hidden>
+        ›
       </span>
     </button>
+  );
+}
+
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 10,
+          paddingBottom: 6,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span style={{ fontWeight: 700, fontSize: 13.5, letterSpacing: 0.1 }}>{title}</span>
+        {hint && <span style={{ ...css.muted, fontSize: 12 }}>{hint}</span>}
+      </header>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {children}
+      </div>
+    </section>
   );
 }
 
@@ -104,6 +212,7 @@ export function MorePage({
   onExportReport,
   onError,
   onCheckUpdate,
+  onGoSoftware,
 }: {
   selected: InstalledApp | null;
   monitoring: boolean;
@@ -122,6 +231,7 @@ export function MorePage({
   onExportReport: () => void;
   onError: (msg: string) => void;
   onCheckUpdate: () => void;
+  onGoSoftware: () => void;
 }) {
   const L = t();
   const [openTool, setOpenTool] = useState<ToolId | null>(null);
@@ -145,14 +255,7 @@ export function MorePage({
 
   const openHistory = async () => {
     try {
-      const h = (await api.history()) as {
-        app_name: string;
-        deleted: number;
-        failed: number;
-        skipped?: number;
-        backup_dir: string;
-        created_at?: string;
-      }[];
+      const h = await api.history();
       setHistory(h);
       setOpenTool("history");
     } catch (e) {
@@ -224,6 +327,15 @@ export function MorePage({
     }
   };
 
+  const requireSelection = (run: () => void) => {
+    if (!selected) {
+      toast.info(L.selectRowHint);
+      onGoSoftware();
+      return;
+    }
+    run();
+  };
+
   const common: ToolItem[] = [
     {
       id: "history",
@@ -231,6 +343,7 @@ export function MorePage({
       desc: L.historyHint,
       icon: "⏱",
       action: () => void openHistory(),
+      accent: true,
     },
     {
       id: "restore",
@@ -238,6 +351,7 @@ export function MorePage({
       desc: L.restoreHint,
       icon: "↩",
       action: () => void openRestore(),
+      accent: true,
     },
     {
       id: "csv",
@@ -254,16 +368,19 @@ export function MorePage({
             desc: L.exportReportHint,
             icon: "⎙",
             action: onExportReport,
+            badge: L.badgeNew,
           },
         ]
       : []),
     {
       id: "ignore",
       title: L.ignorePub,
-      desc: selected ? L.ignorePublisherHint : L.selectRowHint,
+      desc: selected
+        ? `${L.ignorePublisherHint} · ${prettyAppName(selected.name, selected.source)}`
+        : L.ignorePublisherHint,
       icon: "∅",
-      action: onIgnorePublisher,
-      disabled: !selected?.publisher,
+      action: () => requireSelection(onIgnorePublisher),
+      needsSelection: true,
     },
   ];
 
@@ -271,10 +388,10 @@ export function MorePage({
     {
       id: "force",
       title: L.forceClean,
-      desc: selected ? L.forceCleanHint : L.selectRowHint,
+      desc: selected ? L.forceCleanHint : L.forceCleanHint,
       icon: "⌘",
-      action: onForceClean,
-      disabled: !selected,
+      action: () => requireSelection(onForceClean),
+      needsSelection: true,
     },
     {
       id: "orphan",
@@ -282,6 +399,7 @@ export function MorePage({
       desc: L.orphanScanHint,
       icon: "⌕",
       action: onOrphanScan,
+      accent: true,
     },
     {
       id: "monitor",
@@ -289,6 +407,8 @@ export function MorePage({
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
       icon: monitoring ? "■" : "●",
       action: onToggleMonitor,
+      accent: monitoring,
+      badge: monitoring ? L.badgeRunning : undefined,
     },
     {
       id: "shell",
@@ -320,6 +440,10 @@ export function MorePage({
     },
   ];
 
+  const selectedLabel = selected
+    ? prettyAppName(selected.name, selected.source)
+    : L.moreSelectedNone;
+
   return (
     <div
       style={{
@@ -327,69 +451,120 @@ export function MorePage({
         minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 14,
+        gap: 18,
         overflow: "auto",
+        paddingRight: 2,
       }}
     >
-      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{L.moreSectionCommon}</div>
-          <div style={css.muted}>{L.moreSectionCommonHint}</div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
-          {common.map((c) => (
-            <ToolRow key={c.id} item={c} active={openTool === c.id} />
-          ))}
-        </div>
-      </section>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 650,
+            letterSpacing: 0.3,
+            color: "var(--muted)",
+            textTransform: "uppercase" as const,
+          }}
+        >
+          {L.selectedAppChip}
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            height: 30,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+            background: selected ? "var(--accent-soft)" : "var(--surface)",
+            color: selected ? "var(--accent)" : "var(--muted)",
+            fontSize: 12.5,
+            fontWeight: 600,
+            maxWidth: 360,
+          }}
+        >
+          <span className="ell">{selectedLabel}</span>
+          {!selected && (
+            <button
+              type="button"
+              onClick={onGoSoftware}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "var(--accent)",
+                cursor: "pointer",
+                fontWeight: 650,
+                fontSize: 12,
+                padding: 0,
+              }}
+            >
+              {L.goToSoftware}
+            </button>
+          )}
+        </span>
+      </div>
 
-      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{L.moreSectionAdvanced}</div>
-          <div style={css.muted}>{L.moreSectionAdvancedHint}</div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
-          {advanced.map((c) => (
-            <ToolRow key={c.id} item={c} active={openTool === c.id} />
-          ))}
-        </div>
-      </section>
+      <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
+        {common.map((c) => (
+          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+        ))}
+      </Section>
 
-      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{L.closeMode}</div>
-          <div style={css.muted}>{L.closeModeHint}</div>
+      <Section title={L.moreSectionAdvanced} hint={L.moreSectionAdvancedHint}>
+        {advanced.map((c) => (
+          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+        ))}
+      </Section>
+
+      <Section title={L.closeMode} hint={L.closeModeHint}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              overflow: "hidden",
+              background: "var(--surface)",
+            }}
+          >
+            {(
+              [
+                { id: "tray" as const, label: L.closeModeTray },
+                { id: "quit" as const, label: L.closeModeQuit },
+              ]
+            ).map((opt) => {
+              const active = closeMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onCloseModeChange(opt.id)}
+                  style={{
+                    border: "none",
+                    background: active ? "var(--accent-soft)" : "transparent",
+                    color: active ? "var(--accent)" : "var(--fg)",
+                    padding: "10px 18px",
+                    fontSize: 13,
+                    fontWeight: active ? 650 : 500,
+                    cursor: "pointer",
+                    borderRight: opt.id === "tray" ? "1px solid var(--border)" : "none",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(
-            [
-              { id: "tray" as const, label: L.closeModeTray },
-              { id: "quit" as const, label: L.closeModeQuit },
-            ]
-          ).map((opt) => {
-            const active = closeMode === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => onCloseModeChange(opt.id)}
-                style={{
-                  border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                  background: active ? "var(--accent-soft)" : "var(--surface)",
-                  color: active ? "var(--accent)" : "var(--fg)",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  fontSize: 13,
-                  fontWeight: active ? 650 : 500,
-                  cursor: "pointer",
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      </Section>
 
       {openTool === "history" && (
         <HistoryPanel
