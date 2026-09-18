@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react";
 import type { InstalledApp } from "../types";
 import { recommendScore } from "../lib/decision";
+import type { CategoryId, SortCol } from "../lib/categories";
 
-export type CategoryId = "all" | "desktop" | "store" | "large" | "recent";
-export type SortCol = "name" | "size" | "recommend" | null;
+export type { CategoryId, SortCol };
 
 export function useAppFilter({
   apps,

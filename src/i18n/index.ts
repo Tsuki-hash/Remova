@@ -31,13 +31,7 @@ type MissingInZh = Exclude<keyof typeof en, keyof typeof zh>;
 const _i18nKeysMatch: [MissingInEn, MissingInZh] extends [never, never] ? true : never = true;
 void _i18nKeysMatch;
 
-export function formatSize(kb: number): string {
-  if (!kb || kb <= 0) return "—";
-  if (kb < 1024) return `${kb} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  return `${(mb / 1024).toFixed(2)} GB`;
-}
+export { formatSize } from "../lib/format";
 
 export function t(): Strings {
   return dict[lang] as Strings;

@@ -39,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Manage write-side (S-09/S-08)**: `FOLDER::` only accepts known Startup folders; `MANAGE_LOCK` serializes manage mutations
 - **Safety IPC (R2-10)**: registry path gates emit `safety:protected::*` codes
 - **ARCHITECTURE**: module map includes `error.rs`/`constants.rs`; critical service count documented as dynamic (~37); `is_safe_fs` env-prefix rules aligned
+- **Architecture debt**: `policy.rs` façade (dry-run/full share `gate_cleanup_item`); SoftwarePage `React.memo` + controller hook; `CategoryId` / `formatSize` single-sourced; App no longer re-exports types
 
 - Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
 - Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
