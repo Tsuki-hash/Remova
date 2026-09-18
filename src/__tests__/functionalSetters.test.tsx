@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useAppCoreState } from "../hooks/useAppCoreState";
 import { useResidualState } from "../hooks/useResidualState";
+import { useShellState } from "../hooks/useShellState";
 
 describe("FE-P0a functional setters", () => {
   it("setMulti applies updater instead of clearing", () => {
@@ -34,5 +35,25 @@ describe("FE-P0a functional setters", () => {
     );
     expect(result.current.selectedPaths.has("p1")).toBe(false);
     expect(result.current.selectedPaths.has("p2")).toBe(true);
+  });
+
+  it("shell setTheme/setLangVer/setShowDetail apply real updaters (C-01)", () => {
+    const { result } = renderHook(() => useShellState());
+    const startTheme = result.current.theme;
+    const flipped = startTheme === "dark" ? "light" : "dark";
+    act(() => result.current.setTheme((t) => (t === "dark" ? "light" : "dark")));
+    expect(result.current.theme).toBe(flipped);
+    act(() => result.current.setTheme(flipped));
+    expect(result.current.theme).toBe(flipped);
+
+    act(() => result.current.setLangVer((v) => v + 5));
+    expect(result.current.langVer).toBe(5);
+    act(() => result.current.setLangVer(2));
+    expect(result.current.langVer).toBe(2);
+
+    act(() => result.current.setShowDetail((s) => !s));
+    expect(result.current.showDetail).toBe(false);
+    act(() => result.current.setShowDetail(true));
+    expect(result.current.showDetail).toBe(true);
   });
 });
