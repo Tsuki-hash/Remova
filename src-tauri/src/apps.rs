@@ -70,6 +70,11 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         merge_app_fields(a, b);
         true
     });
+    // AR-04: backend-enforce ignore rules (publisher / name / install path).
+    let ignore = crate::ignore::load();
+    out.retain(|a| {
+        !crate::ignore::is_app_ignored(&ignore, &a.name, &a.publisher, &a.install_location)
+    });
     out
 }
 

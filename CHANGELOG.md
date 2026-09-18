@@ -12,10 +12,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Manage IPC safety**: PackagedStartup writes restricted to StartupApproved keys; Run locations must map to known Run/RunOnce keys
 - Expanded critical service names for manage disable/list (WinDefend, Appinfo, DcomLaunch, Power, ProfSvc, …)
 - `exportHtmlReport` unit test now exercises the real export function (was a local mock)
+- **`is_safe_fs`**: protected prefixes include `SystemRoot` / `ProgramData` / `ProgramFiles` / `SystemDrive` (not only `c:\`)
+- **Ignore rules enforced in backend**: list/scan/orphans consume publisher/name/path rules; empty publisher no longer treated as ignored
+- **Registry value restore**: Run-style `key|Value` backups write `value.reg`; restore prefers single-value import
+- Software list: removed virtualization full-map fallback when the virtual window is empty
 
 ### Changed
 - Docs index baseline aligned to package version **1.1.0**; CHANGELOG Unreleased de-duplicated against 1.1.0
 - `.gitignore`: track live docs (`ARCHITECTURE` / `USER-GUIDE` / `product/`); keep `docs/reviews`, `docs/compose`, `docs/archive` private
+- ARCHITECTURE command table synced with `generate_handler!` (removed ghost `restore_latest_backup`; added AI/verify/backup session commands)
+- USER-GUIDE: AI entry is 「详细说明」; conclusion card + Copilot documented; PATH/value restore notes
+- CI/Release: version consistency script + frontend lint; Release runs fmt/clippy and attaches CHANGELOG body
+- ESLint flat config + `npm run lint`; `typecheck:tests` via `tsconfig.vitest.json`
 
 ## [1.1.0] - 2026-09-17
 
