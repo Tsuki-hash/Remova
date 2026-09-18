@@ -187,6 +187,55 @@ pub fn scrub_path_entry_ok(entry: &str) -> bool {
     false
 }
 
+/// Whether a PATH string already contains `entry` (normalized exact match).
+pub fn path_contains_entry(path_value: &str, entry: &str) -> bool {
+    let needle = normalize_path_entry(entry);
+    if needle.is_empty() {
+        return false;
+    }
+    path_value
+        .split(';')
+        .any(|p| normalize_path_entry(p) == needle)
+}
+
+/// Append `entry` to a PATH value if missing. Returns the new value, or None if already present.
+pub fn merge_path_entry(path_value: &str, entry: &str) -> Option<String> {
+    let trimmed = entry.trim().trim_matches('"');
+    if trimmed.is_empty() || path_contains_entry(path_value, entry) {
+        return None;
+    }
+    let parts: Vec<&str> = path_value
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut out = parts;
+    out.push(trimmed);
+    Some(out.join(";"))
+}
+
+/// Restore one PATH segment into the given scopes when missing (Safety Vault).
+/// Returns Ok(true) if at least one scope was updated.
+pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> {
+    let mut changed = false;
+    let targets: Vec<&str> = if scopes.is_empty() {
+        vec!["User", "Machine"]
+    } else {
+        scopes.to_vec()
+    };
+    for scope in targets {
+        let current = read_path_scope(scope)?;
+        if let Some(next) = merge_path_entry(&current, entry) {
+            write_path_scope(scope, &next)?;
+            changed = true;
+        }
+    }
+    if changed {
+        broadcast_env_change();
+    }
+    Ok(changed)
+}
+
 /// Remove one PATH segment from User and Machine environments (exact match only).
 /// Returns Ok(true) if at least one scope changed.
 pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
@@ -263,7 +312,7 @@ pub fn read_path_scope_public(scope: &str) -> Result<String, String> {
     read_path_scope(scope)
 }
 
-fn write_path_scope(scope: &str, value: &str) -> Result<(), String> {
+pub(crate) fn write_path_scope(scope: &str, value: &str) -> Result<(), String> {
     use std::process::Command;
     let mut child_cmd = Command::new(powershell_exe());
     child_cmd.env("REMOVA_PATH_VALUE", value).args([

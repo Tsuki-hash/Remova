@@ -6,5 +6,7 @@ tsconfig.tsbuildinfo
 .DS_Store
 *.log
 
-# Private development docs — do not publish
-docs/
+# Internal drafts — keep private (architecture / user guide / product docs ARE tracked)
+docs/reviews/
+docs/compose/
+docs/archive/

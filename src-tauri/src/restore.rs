@@ -35,6 +35,23 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         }
     }
 
+    // PATH leftovers (path.json) — merge missing segments back; never whole-env overwrite.
+    let path_snap = session.join("path.json");
+    if path_snap.exists() {
+        let raw = fs::read_to_string(&path_snap).map_err(|e| e.to_string())?;
+        let snap: crate::backup::PathSnapshot =
+            serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        for it in &snap.items {
+            let scopes = path_restore_scopes(it);
+            let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
+            match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
+                Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
+                Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
+                Err(e) => return Err(format!("PATH restore failed for {}: {e}", it.entry)),
+            }
+        }
+    }
+
     // Registry exports
     let reg_root = session.join("registry");
     if reg_root.is_dir() {
@@ -59,18 +76,26 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for e in fs::read_dir(src)? {
-        let e = e?;
-        let t = e.file_type()?;
-        let to = dest.join(e.file_name());
-        if t.is_dir() {
-            copy_dir(&e.path(), &to)?;
-        } else {
-            fs::copy(e.path(), &to)?;
-        }
+    crate::fsutil::copy_dir(src, dest)
+}
+
+/// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else both.
+fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
+    if !item.scopes.is_empty() {
+        return item.scopes.clone();
     }
-    Ok(())
+    let mut out = Vec::new();
+    if crate::regops::path_contains_entry(&item.user_path, &item.entry) {
+        out.push("User".into());
+    }
+    if crate::regops::path_contains_entry(&item.machine_path, &item.entry) {
+        out.push("Machine".into());
+    }
+    if out.is_empty() {
+        out.push("User".into());
+        out.push("Machine".into());
+    }
+    out
 }
 
 pub fn list_sessions() -> Vec<PathBuf> {
@@ -253,6 +278,76 @@ mod tests {
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")));
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn path_restore_scopes_prefer_recorded() {
+        use crate::backup::PathSnapshotItem;
+        let item = PathSnapshotItem {
+            entry: r"C:\tools\foo".into(),
+            scopes: vec!["User".into()],
+            user_path: r"C:\other".into(),
+            machine_path: String::new(),
+        };
+        assert_eq!(super::path_restore_scopes(&item), vec!["User".to_string()]);
+
+        let empty_scopes = PathSnapshotItem {
+            entry: r"C:\tools\foo".into(),
+            scopes: vec![],
+            user_path: r"C:\tools\foo;C:\Windows".into(),
+            machine_path: r"C:\Windows".into(),
+        };
+        assert_eq!(
+            super::path_restore_scopes(&empty_scopes),
+            vec!["User".to_string()]
+        );
+
+        let none = PathSnapshotItem {
+            entry: r"C:\tools\foo".into(),
+            scopes: vec![],
+            user_path: String::new(),
+            machine_path: String::new(),
+        };
+        assert_eq!(
+            super::path_restore_scopes(&none),
+            vec!["User".to_string(), "Machine".to_string()]
+        );
+    }
+
+    #[test]
+    fn restore_session_reads_path_snapshot_without_mutating_system_path() {
+        // Pure merge helpers + snapshot parse — do not call restore_path_entry (would write PATH).
+        use crate::regops::{merge_path_entry, path_contains_entry};
+        assert!(path_contains_entry(r"C:\a;C:\b", r"c:\b\"));
+        assert!(!path_contains_entry(r"C:\a", r"C:\b"));
+        assert_eq!(merge_path_entry(r"C:\a;C:\b", r"C:\b"), None);
+        assert_eq!(
+            merge_path_entry(r"C:\a", r"C:\b"),
+            Some(r"C:\a;C:\b".to_string())
+        );
+
+        let tmp = std::env::temp_dir().join(format!("remova_path_snap_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let snap = crate::backup::PathSnapshot {
+            items: vec![crate::backup::PathSnapshotItem {
+                entry: r"C:\vendor\tool".into(),
+                scopes: vec!["User".into()],
+                user_path: r"C:\vendor\tool;C:\Windows".into(),
+                machine_path: r"C:\Windows".into(),
+            }],
+        };
+        fs::write(
+            tmp.join("path.json"),
+            serde_json::to_string_pretty(&snap).unwrap(),
+        )
+        .unwrap();
+        let raw = fs::read_to_string(tmp.join("path.json")).unwrap();
+        let back: crate::backup::PathSnapshot = serde_json::from_str(&raw).unwrap();
+        assert_eq!(back.items.len(), 1);
+        assert_eq!(back.items[0].entry, r"C:\vendor\tool");
+        assert_eq!(super::path_restore_scopes(&back.items[0]), vec!["User"]);
         let _ = fs::remove_dir_all(&tmp);
     }
 }
