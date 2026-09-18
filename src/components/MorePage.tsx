@@ -1,21 +1,16 @@
-import { useState } from "react";
-import { api } from "../lib/api";
 import { t } from "../i18n";
-import { formatError, prettyAppName } from "../lib/format";
-import { requestConfirm } from "../lib/confirm";
-import { toast } from "../lib/toast";
+import { prettyAppName } from "../lib/format";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
 import { AiSettingsPanel } from "./AiSettingsPanel";
 import type { CloseMode } from "../lib/closeMode";
-import {
-  loadRescanAfterUninstall,
-  saveRescanAfterUninstall,
-} from "../lib/rescanPref";
 import type { FullCleanupReport, InstalledApp } from "../types";
-import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
+import { ToolCard, type ToolItem } from "./MoreToolCard";
 import { Section } from "./MoreSection";
+import { useMoreHistory } from "../hooks/useMoreHistory";
+import { useMoreRestore } from "../hooks/useMoreRestore";
+import { useMoreTools } from "../hooks/useMoreTools";
 
 export function MorePage({
   selected,
@@ -57,108 +52,10 @@ export function MorePage({
   onGoSoftware: () => void;
 }) {
   const L = t();
-  const [openTool, setOpenTool] = useState<ToolId | null>(null);
-  const [rescanOn, setRescanOn] = useState(() => loadRescanAfterUninstall());
-  const [history, setHistory] = useState<
-    {
-      app_name: string;
-      deleted: number;
-      failed: number;
-      skipped?: number;
-      backup_dir: string;
-      created_at?: string;
-    }[]
-  >([]);
-  const [histQ, setHistQ] = useState("");
-  const [restoreSessions, setRestoreSessions] = useState<
-    { name: string; size_kb: number; created_at: string }[]
-  >([]);
-  const [restorePick, setRestorePick] = useState("");
-  const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
-
-  const openHistory = async () => {
-    try {
-      const h = await api.history();
-      setHistory(h);
-      setOpenTool("history");
-    } catch (e) {
-      onError(formatError(e));
-    }
-  };
-
-  const openRestore = async () => {
-    setRestoreMsgs([]);
-    setRestorePick("");
-    setRestoreSessions([]);
-    try {
-      const sessions = await api.backupSessions();
-      setRestoreSessions(sessions);
-      if (sessions[0]) setRestorePick(sessions[0].name);
-      setOpenTool("restore");
-    } catch (e) {
-      onError(formatError(e));
-    }
-  };
-
-  const exportCsv = async () => {
-    try {
-      const csv = await api.exportHistoryCsv();
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "remova-history.csv";
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success(L.exportCsv);
-    } catch (e) {
-      onError(formatError(e));
-    }
-  };
-
-  const deleteSession = async (name: string) => {
-    try {
-      await api.deleteBackupSession(name);
-      const sessions = await api.backupSessions();
-      setRestoreSessions(sessions);
-      if (restorePick === name) setRestorePick(sessions[0]?.name ?? "");
-    } catch (e) {
-      onError(formatError(e));
-    }
-  };
-
-  const runRestore = async () => {
-    if (!restorePick || restoreBusy) return;
-    const ok = await requestConfirm({
-      title: L.restore,
-      message: L.restoreConfirm,
-      confirmLabel: L.restoreRun,
-      danger: true,
-    });
-    if (!ok) return;
-    setRestoreBusy(true);
-    setRestoreMsgs([]);
-    try {
-      const msgs = await api.restoreSessionByName(restorePick);
-      setRestoreMsgs(msgs.length ? msgs : ["ok"]);
-      toast.success(L.restoreResult);
-    } catch (e) {
-      setRestoreMsgs([formatError(e)]);
-      toast.error(L.errInvokeFailed(formatError(e)));
-    } finally {
-      setRestoreBusy(false);
-    }
-  };
-
-  const requireSelection = (run: () => void) => {
-    if (!selected) {
-      toast.info(L.selectRowHint);
-      onGoSoftware();
-      return;
-    }
-    run();
-  };
+  const tools = useMoreTools({ selected, onGoSoftware });
+  const hist = useMoreHistory(onError);
+  const rest = useMoreRestore(onError);
+  const openTool = tools.openTool;
 
   const common: ToolItem[] = [
     {
@@ -166,7 +63,7 @@ export function MorePage({
       title: L.history,
       desc: L.historyHint,
       icon: "⏱",
-      action: () => void openHistory(),
+      action: () => void hist.loadHistory().then(() => tools.setOpenTool("history")),
       accent: true,
     },
     {
@@ -174,7 +71,7 @@ export function MorePage({
       title: L.restore,
       desc: L.restoreHint,
       icon: "↩",
-      action: () => void openRestore(),
+      action: () => void rest.loadRestore().then(() => tools.setOpenTool("restore")),
       accent: true,
     },
     {
@@ -182,7 +79,7 @@ export function MorePage({
       title: L.exportCsv,
       desc: L.exportCsvHint,
       icon: "↓",
-      action: () => void exportCsv(),
+      action: () => void hist.exportCsv(),
     },
     ...(lastReport
       ? [
@@ -203,7 +100,7 @@ export function MorePage({
         ? `${L.ignorePublisherHint} · ${prettyAppName(selected.name, selected.source)}`
         : L.ignorePublisherHint,
       icon: "∅",
-      action: () => requireSelection(onIgnorePublisher),
+      action: () => tools.requireSelection(onIgnorePublisher),
       needsSelection: true,
     },
   ];
@@ -212,9 +109,9 @@ export function MorePage({
     {
       id: "force",
       title: L.forceClean,
-      desc: selected ? L.forceCleanHint : L.forceCleanHint,
+      desc: L.forceCleanHint,
       icon: "⌘",
-      action: () => requireSelection(onForceClean),
+      action: () => tools.requireSelection(onForceClean),
       needsSelection: true,
     },
     {
@@ -246,7 +143,7 @@ export function MorePage({
       title: L.aiSettings,
       desc: L.aiSettingsHint,
       icon: "✦",
-      action: () => setOpenTool(openTool === "ai" ? null : "ai"),
+      action: () => tools.toggleTool("ai"),
     },
     {
       id: "releases",
@@ -280,14 +177,7 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span
           style={{
             fontSize: 11,
@@ -363,11 +253,8 @@ export function MorePage({
           >
             <input
               type="checkbox"
-              checked={rescanOn}
-              onChange={(e) => {
-                setRescanOn(e.target.checked);
-                saveRescanAfterUninstall(e.target.checked);
-              }}
+              checked={tools.rescanOn}
+              onChange={() => tools.toggleRescan()}
             />
             <span style={{ fontWeight: 600 }}>{L.rescanAfterUninstall}</span>
             <span style={{ color: "var(--muted)", fontSize: 12 }}>
@@ -383,12 +270,10 @@ export function MorePage({
               background: "var(--surface)",
             }}
           >
-            {(
-              [
-                { id: "tray" as const, label: L.closeModeTray },
-                { id: "quit" as const, label: L.closeModeQuit },
-              ]
-            ).map((opt) => {
+            {([
+              { id: "tray" as const, label: L.closeModeTray },
+              { id: "quit" as const, label: L.closeModeQuit },
+            ]).map((opt) => {
               const active = closeMode === opt.id;
               return (
                 <button
@@ -416,39 +301,32 @@ export function MorePage({
 
       {openTool === "history" && (
         <HistoryPanel
-          history={history}
-          histQ={histQ}
-          setHistQ={setHistQ}
-          onClose={() => setOpenTool(null)}
-          onOpenBackup={async (path) => {
-            try {
-              await api.openPath(path);
-            } catch (e) {
-              onError(formatError(e));
-            }
-          }}
+          history={hist.history}
+          histQ={hist.histQ}
+          setHistQ={hist.setHistQ}
+          onClose={hist.closeHistory}
         />
       )}
-      {openTool === "ai" && <AiSettingsPanel onClose={() => setOpenTool(null)} />}
       {openTool === "restore" && (
         <RestorePanel
-          sessions={restoreSessions}
-          pick={restorePick}
-          setPick={setRestorePick}
-          busy={restoreBusy}
-          msgs={restoreMsgs}
-          onRun={() => void runRestore()}
-          onDelete={(name) => void deleteSession(name)}
-          onClose={() => setOpenTool(null)}
+          sessions={rest.sessions}
+          pick={rest.restorePick}
+          setPick={rest.setRestorePick}
+          busy={rest.restoreBusy}
+          msgs={rest.restoreMsgs}
+          onRun={() => void rest.runRestore()}
+          onDelete={(name) => void rest.deleteSession(name)}
+          onClose={rest.closeRestore}
         />
       )}
-      {monitorDiff && (
+      {openTool === "monitor" && monitorDiff && (
         <MonitorPanel
           diff={monitorDiff}
           onToCleanup={onMonitorToCleanup}
           onDismiss={onDismissMonitor}
         />
       )}
+      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
     </div>
   );
 }

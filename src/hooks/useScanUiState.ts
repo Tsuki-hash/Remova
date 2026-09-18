@@ -1,59 +1,48 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useReducer } from "react";
 import type { LinkedBucketId } from "../lib/linkedItems";
+import { initialScanUiState, scanUiReducer } from "./reducers/scanUi";
 
-/**
- * Scan/conclusion UI chrome (PF-03): filters + AI nudge.
- * Kept out of App to shrink top-level state surface.
- */
+/** Scan/conclusion UI chrome (PF-03) — domain reducer. */
 export function useScanUiState() {
-  const [kindFilter, setKindFilter] = useState<LinkedBucketId | null>(null);
-  const pendingBucketFilter = useRef<LinkedBucketId | null>(null);
-  const [riskFilter, setRiskFilter] = useState<"confirm" | "keep" | null>(null);
-  const [aiSummaryNote, setAiSummaryNote] = useState<string | null>(null);
-  const [aiNudgeDismissed, setAiNudgeDismissed] = useState(
-    () => localStorage.getItem("remova_ai_nudge") === "1",
-  );
+  const [state, dispatch] = useReducer(scanUiReducer, undefined, initialScanUiState);
 
-  const clearKindFilter = useCallback(() => setKindFilter(null), []);
-  const clearRiskFilter = useCallback(() => setRiskFilter(null), []);
-  const clearAiSummary = useCallback(() => setAiSummaryNote(null), []);
-
+  const setKindFilter = useCallback((value: LinkedBucketId | null) => {
+    dispatch({ type: "kindFilter/set", value });
+  }, []);
+  const setRiskFilter = useCallback((value: "confirm" | "keep" | null) => {
+    dispatch({ type: "riskFilter/set", value });
+  }, []);
+  const setAiSummaryNote = useCallback((value: string | null) => {
+    dispatch({ type: "aiSummary/set", value });
+  }, []);
+  const clearKindFilter = useCallback(() => dispatch({ type: "kindFilter/set", value: null }), []);
+  const clearRiskFilter = useCallback(() => dispatch({ type: "riskFilter/set", value: null }), []);
+  const clearAiSummary = useCallback(() => dispatch({ type: "aiSummary/set", value: null }), []);
   const setPendingBucket = useCallback((bucket: LinkedBucketId | null) => {
-    pendingBucketFilter.current = bucket;
+    dispatch({ type: "pendingBucket/set", value: bucket });
   }, []);
-
   const takePendingBucket = useCallback((): LinkedBucketId | null => {
-    const v = pendingBucketFilter.current;
-    pendingBucketFilter.current = null;
+    const v = state.pendingBucket;
+    dispatch({ type: "pendingBucket/take" });
     return v;
-  }, []);
-
+  }, [state.pendingBucket]);
   const toggleRiskFilter = useCallback((mode: "confirm" | "keep") => {
-    setKindFilter(null);
-    setRiskFilter((cur) => (cur === mode ? null : mode));
+    dispatch({ type: "riskFilter/toggle", mode });
   }, []);
-
-  const clearScanChrome = useCallback(() => {
-    setKindFilter(null);
-    setRiskFilter(null);
-    setAiSummaryNote(null);
-    pendingBucketFilter.current = null;
-  }, []);
-
+  const clearScanChrome = useCallback(() => dispatch({ type: "chrome/clear" }), []);
   const dismissAiNudge = useCallback(() => {
-    setAiNudgeDismissed(true);
     localStorage.setItem("remova_ai_nudge", "1");
+    dispatch({ type: "aiNudge/dismiss" });
   }, []);
 
   return {
-    kindFilter,
+    kindFilter: state.kindFilter,
     setKindFilter,
-    riskFilter,
+    riskFilter: state.riskFilter,
     setRiskFilter,
-    aiSummaryNote,
+    aiSummaryNote: state.aiSummaryNote,
     setAiSummaryNote,
-    aiNudgeDismissed,
-    setAiNudgeDismissed,
+    aiNudgeDismissed: state.aiNudgeDismissed,
     actions: {
       clearKindFilter,
       clearRiskFilter,

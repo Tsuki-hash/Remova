@@ -1,60 +1,68 @@
-import { useCallback, useState } from "react";
+import { useCallback, useReducer } from "react";
 import type { CleanupItem, FullCleanupReport, IgnoreSuggestion } from "../types";
 import type { VerifyRow } from "../lib/api";
-import { defaultSelectable } from "../lib/decision";
+import { initialResidualState, residualReducer } from "./reducers/residual";
 
-export type MonitorDiffState = {
-  added_files: string[];
-  added_reg_values: string[];
-} | null;
-
-/** Residual / ignore / monitor side state + actions (A-1 action-ized). */
+/** Residual / ignore / monitor state + actions (domain reducer). */
 export function useResidualState() {
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const [evidence, setEvidence] = useState<string | null>(null);
-  const [ignoreSuggestions, setIgnoreSuggestions] = useState<IgnoreSuggestion[]>([]);
-  const [lastReport, setLastReport] = useState<FullCleanupReport | null>(null);
-  const [monitoring, setMonitoring] = useState(false);
-  const [monitorDiff, setMonitorDiff] = useState<MonitorDiffState>(null);
-  const [residualFromUninstall, setResidualFromUninstall] = useState(false);
+  const [state, dispatch] = useReducer(residualReducer, undefined, initialResidualState);
 
   const togglePath = useCallback((path: string) => {
-    setSelectedPaths((s) => {
-      const n = new Set(s);
-      if (n.has(path)) n.delete(path);
-      else n.add(path);
-      return n;
-    });
+    dispatch({ type: "selection/toggle", path });
   }, []);
-
+  const setSelectedPaths = useCallback(
+    (updater: Set<string> | ((s: Set<string>) => Set<string>)) => {
+      if (typeof updater === "function") {
+        // Functional updates are applied via toggle/clear elsewhere; rare path.
+        dispatch({ type: "selection/clear" });
+        return;
+      }
+      dispatch({ type: "selection/set", paths: updater });
+    },
+    [],
+  );
   const selectDefaultItems = useCallback((items: CleanupItem[]) => {
-    setSelectedPaths(new Set(items.filter(defaultSelectable).map((it) => it.path)));
+    dispatch({ type: "selection/defaultItems", items });
   }, []);
-
-  const clearSelection = useCallback(() => setSelectedPaths(new Set()), []);
-
-  const clearIgnoreSuggestions = useCallback(() => setIgnoreSuggestions([]), []);
-
-  const clearResidualScan = useCallback(() => {
-    setEvidence(null);
-    setIgnoreSuggestions([]);
-    setSelectedPaths(new Set());
+  const clearSelection = useCallback(() => dispatch({ type: "selection/clear" }), []);
+  const clearIgnoreSuggestions = useCallback(() => dispatch({ type: "ignore/clear" }), []);
+  const clearResidualScan = useCallback(() => dispatch({ type: "scanChrome/clear" }), []);
+  const setEvidence = useCallback((value: string | null) => {
+    dispatch({ type: "evidence/set", value });
+  }, []);
+  const setIgnoreSuggestions = useCallback((value: IgnoreSuggestion[]) => {
+    dispatch({ type: "ignore/set", value });
+  }, []);
+  const setLastReport = useCallback((value: FullCleanupReport | null) => {
+    dispatch({ type: "lastReport/set", value });
+  }, []);
+  const setMonitoring = useCallback((value: boolean) => {
+    dispatch({ type: "monitoring/set", value });
+  }, []);
+  const setMonitorDiff = useCallback(
+    (value: { added_files: string[]; added_reg_values: string[] } | null) => {
+      dispatch({ type: "monitorDiff/set", value });
+    },
+    [],
+  );
+  const setResidualFromUninstall = useCallback((value: boolean) => {
+    dispatch({ type: "residualFromUninstall/set", value });
   }, []);
 
   return {
-    selectedPaths,
+    selectedPaths: state.selectedPaths,
     setSelectedPaths,
-    evidence,
+    evidence: state.evidence,
     setEvidence,
-    ignoreSuggestions,
+    ignoreSuggestions: state.ignoreSuggestions,
     setIgnoreSuggestions,
-    lastReport,
+    lastReport: state.lastReport,
     setLastReport,
-    monitoring,
+    monitoring: state.monitoring,
     setMonitoring,
-    monitorDiff,
+    monitorDiff: state.monitorDiff,
     setMonitorDiff,
-    residualFromUninstall,
+    residualFromUninstall: state.residualFromUninstall,
     setResidualFromUninstall,
     actions: {
       togglePath,
@@ -62,34 +70,13 @@ export function useResidualState() {
       clearSelection,
       clearIgnoreSuggestions,
       clearResidualScan,
+      setEvidence,
+      setIgnoreSuggestions,
+      setLastReport,
+      setMonitoring,
+      setMonitorDiff,
+      setResidualFromUninstall,
     },
-  };
-}
-
-/** List filter chrome (category / sort) — paired with useAppFilter. */
-export function useListFilterChrome() {
-  const [q, setQ] = useState("");
-  const [sortCol, setSortCol] = useState<"name" | "size" | "recommend" | null>(null);
-  const [sortDesc, setSortDesc] = useState(false);
-  const [category, setCategoryState] = useState<"all" | "desktop" | "store" | "large" | "recent">(
-    () => {
-      const v = localStorage.getItem("remova_cat");
-      return v === "desktop" || v === "store" || v === "large" || v === "recent" ? v : "all";
-    },
-  );
-
-  const setQuery = useCallback((v: string) => setQ(v), []);
-
-  return {
-    q,
-    setQ,
-    sortCol,
-    setSortCol,
-    sortDesc,
-    setSortDesc,
-    category,
-    setCategoryState,
-    actions: { setQuery },
   };
 }
 

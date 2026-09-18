@@ -1,56 +1,72 @@
-import { useCallback, useState } from "react";
+import { useCallback, useReducer } from "react";
 import type { InstalledApp } from "../types";
 import type { VerifyRow } from "../lib/api";
+import { aiPanelReducer, initialAiPanelState } from "./reducers/aiPanel";
 
-/** AI / report / verify panel state + actions extracted from App. */
+/** AI / report / verify panel state + actions (domain reducer). */
 export function useAiPanelState() {
-  const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiNotes, setAiNotes] = useState<Record<string, string>>({});
-  const [aiRisk, setAiRisk] = useState<string | null>(null);
-  const [aiReportNote, setAiReportNote] = useState<string | null>(null);
-  const [aiReportBusy, setAiReportBusy] = useState(false);
-  const [verifyRows, setVerifyRows] = useState<VerifyRow[] | null>(null);
-  const [copilotList, setCopilotList] = useState<InstalledApp[] | null>(null);
+  const [state, dispatch] = useReducer(aiPanelReducer, undefined, initialAiPanelState);
 
-  const clearAiScanState = useCallback(() => {
-    setAiNotes({});
-    setAiRisk(null);
+  const setAiEnabled = useCallback((value: boolean) => {
+    dispatch({ type: "enabled/set", value });
   }, []);
-
-  const clearAiReport = useCallback(() => {
-    setAiReportNote(null);
-    setAiReportBusy(false);
+  const setAiBusy = useCallback((value: boolean) => {
+    dispatch({ type: "busy/set", value });
   }, []);
-
+  const setAiNotes = useCallback((value: Record<string, string>) => {
+    dispatch({ type: "notes/set", value });
+  }, []);
+  const setAiRisk = useCallback((value: string | null) => {
+    dispatch({ type: "risk/set", value });
+  }, []);
+  const setAiReportNote = useCallback((value: string | null) => {
+    dispatch({ type: "reportNote/set", value });
+  }, []);
+  const setAiReportBusy = useCallback((value: boolean) => {
+    dispatch({ type: "reportBusy/set", value });
+  }, []);
+  const setVerifyRows = useCallback((value: VerifyRow[] | null) => {
+    dispatch({ type: "verifyRows/set", value });
+  }, []);
+  const setCopilotList = useCallback((value: InstalledApp[] | null) => {
+    dispatch({ type: "copilot/set", value });
+  }, []);
+  const clearAiScanState = useCallback(() => dispatch({ type: "scanAi/clear" }), []);
+  const clearAiReport = useCallback(() => dispatch({ type: "reportAi/clear" }), []);
   const applyCopilotFilter = useCallback((list: InstalledApp[]) => {
-    setCopilotList(list);
+    dispatch({ type: "copilot/set", value: list });
   }, []);
-
-  const clearCopilotFilter = useCallback(() => setCopilotList(null), []);
+  const clearCopilotFilter = useCallback(() => dispatch({ type: "copilot/set", value: null }), []);
 
   return {
-    aiEnabled,
+    aiEnabled: state.aiEnabled,
     setAiEnabled,
-    aiBusy,
+    aiBusy: state.aiBusy,
     setAiBusy,
-    aiNotes,
+    aiNotes: state.aiNotes,
     setAiNotes,
-    aiRisk,
+    aiRisk: state.aiRisk,
     setAiRisk,
-    aiReportNote,
+    aiReportNote: state.aiReportNote,
     setAiReportNote,
-    aiReportBusy,
+    aiReportBusy: state.aiReportBusy,
     setAiReportBusy,
-    verifyRows,
+    verifyRows: state.verifyRows,
     setVerifyRows,
-    copilotList,
+    copilotList: state.copilotList,
     setCopilotList,
     actions: {
       clearAiScanState,
       clearAiReport,
       applyCopilotFilter,
       clearCopilotFilter,
+      setAiEnabled,
+      setAiBusy,
+      setAiNotes,
+      setAiRisk,
+      setAiReportNote,
+      setAiReportBusy,
+      setVerifyRows,
     },
   };
 }

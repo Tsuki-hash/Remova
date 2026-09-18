@@ -35,13 +35,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Empty leftover paths filtered before full cleanup abort check (AR-10 light)
 
 ### Changed
-- **FN-04**: auto-rescan leftovers after successful official uninstall (default on; toggle in More)
-- **PF-08**: route-level code-split for Software / Manage / More / Orphan pages
-- Cleanup delete loop extracted (`delete_cleanup_items`); migration scripts under `scripts/archive/`
+- **Domain reducers** (`src/hooks/reducers/`): shell / residual / aiPanel / scanUi / listFilter / appCore — App state via `useReducer` actions
+- MorePage business hooks: `useMoreHistory` / `useMoreRestore` / `useMoreTools`
 - Scan UI chrome in `useScanUiState`; i18n split `src/i18n/{zh,en,index}.ts`
-- MorePage chrome in `MoreToolCard` / `MoreSection`
-- ESLint exhaustive-deps cleaned (callback deps); lint exits 0
-- **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
+- ESLint exhaustive-deps cleaned; lint exits 0
+- **SoftwarePage** extracted from App (FE-02)
+- **FN-04**: auto-rescan leftovers after successful official uninstall (default on)
+- **PF-08**: route-level code-split for Software / Manage / More / Orphan pages
 - ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
 - Residual/AI/Shell hooks expose `actions` API; App uses them for selection/clear/theme/lang/nav
 - **RemovaError** (`error.rs`): structured `code::message` IPC for manage/safety/backup/ai paths; `formatError` maps codes
