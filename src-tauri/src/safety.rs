@@ -1,7 +1,7 @@
 //! Safety guards — port of Python safety.py for later delete paths.
 //! Read-only phase: functions are unit-tested here for parity.
 
-/// Critical Windows service names that must never be deleted.
+/// Critical Windows service names that must never be deleted or disabled via manage IPC.
 pub fn critical_service_names() -> &'static [&'static str] {
     &[
         "eventlog",
@@ -20,7 +20,81 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "schedule",
         "spooler",
         "themes",
+        // Manage-path expansions (AR-02): core OS / security / session services.
+        "appinfo",
+        "profsvc",
+        "dcomlaunch",
+        "power",
+        "windefend",
+        "securityhealthservice",
+        "eventsystem",
+        "lsmsm",
+        "samss",
+        "netlogon",
+        "msiserver",
+        "rpceptmapper",
+        "gpsvc",
+        "iphlpsvc",
+        "nsi",
+        "sens",
+        "shellhwdetection",
+        "trkwks",
+        "wcmsvc",
+        "wlansvc",
+        "wudfsvc",
+        "mpssvc",
     ]
+}
+
+/// True when `name` is a critical system service (case-insensitive).
+pub fn is_critical_service(name: &str) -> bool {
+    let n = name.trim();
+    if n.is_empty() {
+        return true;
+    }
+    critical_service_names()
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(n))
+}
+
+/// Manage IPC may only write REG_BINARY under these StartupApproved roots.
+pub fn is_allowed_startup_approved_key(key_path: &str) -> bool {
+    let low = key_path.trim().replace('/', "\\").to_uppercase();
+    const ALLOWED: &[&str] = &[
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\PACKAGEDSTARTUP",
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\STARTUPFOLDER",
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\RUN",
+        r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\RUN",
+        r"HKLM64\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\RUN",
+        r"HKLM32\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\RUN",
+        r"HKLM\SOFTWARE\WOW6432NODE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\STARTUPAPPROVED\RUN",
+    ];
+    ALLOWED.iter().any(|a| low == *a)
+}
+
+/// Run / RunOnce keys that manage may enable/disable (StartupApproved companions).
+pub fn is_allowed_run_key(key_path: &str) -> bool {
+    let low = key_path.trim().replace('/', "\\").to_uppercase();
+    // Normalized HKLM64/HKLM32 → HKLM for comparison.
+    let low = low
+        .strip_prefix("HKLM64\\")
+        .map(|s| format!("HKLM\\{s}"))
+        .unwrap_or(low);
+    let low = low
+        .strip_prefix("HKLM32\\")
+        .map(|s| format!(r"HKLM\WOW6432NODE\{s}"))
+        .unwrap_or(low);
+    const ALLOWED: &[&str] = &[
+        r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN",
+        r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUNONCE",
+        r"HKLM\SOFTWARE\WOW6432NODE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN",
+        r"HKLM\SOFTWARE\WOW6432NODE\MICROSOFT\WINDOWS\CURRENTVERSION\RUNONCE",
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN",
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUNONCE",
+        r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\POLICIES\EXPLORER\RUN",
+        r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\POLICIES\EXPLORER\RUN",
+    ];
+    ALLOWED.iter().any(|a| low == *a)
 }
 
 fn normalize_hklm(key_path: &str) -> String {
@@ -255,6 +329,50 @@ mod tests {
             is_safe_to_delete_registry(r"HKLM64\SYSTEM\CurrentControlSet\Services\Winmgmt")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn critical_service_names_include_security_stack() {
+        assert!(is_critical_service("WinDefend"));
+        assert!(is_critical_service("windefend"));
+        assert!(is_critical_service("DcomLaunch"));
+        assert!(is_critical_service("Appinfo"));
+        assert!(is_critical_service("Power"));
+        assert!(!is_critical_service("DemoVendorHelper"));
+        assert!(
+            is_safe_to_delete_registry(r"HKLM64\SYSTEM\CurrentControlSet\Services\WinDefend")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn startup_approved_key_whitelist() {
+        assert!(is_allowed_startup_approved_key(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup"
+        ));
+        assert!(is_allowed_startup_approved_key(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+        ));
+        assert!(!is_allowed_startup_approved_key(
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        ));
+        assert!(!is_allowed_startup_approved_key(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe"
+        ));
+    }
+
+    #[test]
+    fn run_key_whitelist() {
+        assert!(is_allowed_run_key(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        ));
+        assert!(is_allowed_run_key(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        ));
+        assert!(!is_allowed_run_key(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+        ));
+        assert!(!is_allowed_run_key(r"HKLM\SOFTWARE\EvilCorp\Config"));
     }
 
     #[test]

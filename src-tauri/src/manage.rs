@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::safety::critical_service_names;
+use crate::safety::{is_allowed_run_key, is_allowed_startup_approved_key, is_critical_service};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManageItem {
@@ -132,10 +132,7 @@ fn list_auto_services() -> Vec<ManageItem> {
             if svc.contains('\\') {
                 continue;
             }
-            if critical_service_names()
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(&svc))
-            {
+            if is_critical_service(&svc) {
                 continue;
             }
             if !seen.insert(svc.to_lowercase()) {
@@ -262,10 +259,7 @@ pub fn list_services() -> Vec<ManageItem> {
             if svc.contains('\\') {
                 continue;
             }
-            if critical_service_names()
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(&svc))
-            {
+            if is_critical_service(&svc) {
                 continue;
             }
             let path = format!(r"{root}\{svc}");
@@ -465,23 +459,26 @@ fn split_csv_line(line: &str) -> Vec<String> {
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
     if let Some(svc) = location.strip_prefix("SVC::") {
         // Auto service → disable means Start=4; enable restores Start=2 (auto).
-        if svc.trim().is_empty() || svc.contains('\\') {
+        if svc.trim().is_empty() || svc.contains('\\') || svc.contains('/') {
             return Err("bad service name".into());
         }
-        if critical_service_names()
-            .iter()
-            .any(|c| c.eq_ignore_ascii_case(svc))
-        {
+        if is_critical_service(svc) {
             return Err("critical system service protected".into());
         }
         let start: u32 = if enabled { 2 } else { 4 };
         return crate::regops::write_service_start(svc, start);
     }
     if let Some(rest) = location.strip_prefix("PACKAGED::") {
-        // PACKAGED::<sa_key>::<value_name>
+        // PACKAGED::<sa_key>::<value_name> — only StartupApproved keys are writable.
         let Some((sa_key, vname)) = rest.rsplit_once("::") else {
             return Err("bad packaged startup location".into());
         };
+        if vname.trim().is_empty() || vname.contains('\\') || vname.contains('/') {
+            return Err("bad packaged startup value".into());
+        }
+        if !is_allowed_startup_approved_key(sa_key) {
+            return Err(format!("manage:protected_registry:{sa_key}"));
+        }
         let mut buf = [0u8; 12];
         buf[0] = if enabled { 0x02 } else { 0x03 };
         return crate::regops::write_reg_binary(sa_key, vname, &buf);
@@ -503,6 +500,12 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err("bad startup location".into());
     };
+    if !is_allowed_run_key(key) {
+        return Err(format!("manage:protected_registry:{key}"));
+    }
+    if vname.trim().is_empty() {
+        return Err("bad startup value name".into());
+    }
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
 
@@ -539,6 +542,9 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
     } else {
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     };
+    if !is_allowed_startup_approved_key(sa_key) {
+        return Err(format!("manage:protected_registry:{sa_key}"));
+    }
 
     let mut buf = [0u8; 12];
     buf[0] = if enabled { 0x02 } else { 0x03 };
@@ -547,13 +553,10 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
 
 /// Set service Start=4 (disabled) or 3 (manual) — not auto to avoid surprise.
 pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), String> {
-    if name.trim().is_empty() || name.contains('\\') {
+    if name.trim().is_empty() || name.contains('\\') || name.contains('/') {
         return Err("bad service name".into());
     }
-    if critical_service_names()
-        .iter()
-        .any(|c| c.eq_ignore_ascii_case(name))
-    {
+    if is_critical_service(name) {
         return Err(format!("manage:protected:{name}"));
     }
     let start: u32 = if disable { 4 } else { 3 };
@@ -603,9 +606,52 @@ mod tests {
     fn list_services_skips_critical() {
         let svcs = super::list_services();
         for s in &svcs {
-            assert!(!crate::safety::critical_service_names()
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(&s.name)));
+            assert!(!crate::safety::is_critical_service(&s.name));
+        }
+    }
+
+    #[test]
+    fn packaged_location_whitelist() {
+        let good = format!(
+            "PACKAGED::{}::PackageFamily!App",
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup"
+        );
+        // Good key is allowed to reach write_reg_binary — may fail later on missing value; policy check is first.
+        // Bad key must fail at policy gate before any registry write.
+        let bad = r"PACKAGED::HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run::Evil";
+        assert!(super::set_startup_enabled(bad, false).is_err());
+        let bad2 =
+            r"PACKAGED::HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe::x";
+        assert!(super::set_startup_enabled(bad2, false).is_err());
+        let _ = good;
+    }
+
+    #[test]
+    fn run_location_rejects_non_run_keys() {
+        let loc = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders::Startup";
+        assert!(super::set_startup_enabled(loc, false).is_err());
+        let loc2 = r"HKLM\SOFTWARE\EvilCorp\Config::payload";
+        assert!(super::set_startup_enabled(loc2, true).is_err());
+    }
+
+    #[test]
+    fn critical_services_rejected_by_manage() {
+        for name in [
+            "WinDefend",
+            "windefend",
+            "Appinfo",
+            "DcomLaunch",
+            "Power",
+            "ProfSvc",
+        ] {
+            assert!(
+                super::set_service_start_disabled(name, true).is_err(),
+                "expected {name} to be protected"
+            );
+            assert!(
+                super::set_startup_enabled(&format!("SVC::{name}"), false).is_err(),
+                "expected SVC::{name} to be protected"
+            );
         }
     }
 
