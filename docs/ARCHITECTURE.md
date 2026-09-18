@@ -200,7 +200,20 @@ CleanupItem {
 
 阈值：`SCORE_CONFIRMED = 90`，`SCORE_SUSPECTED_MIN = 30`。
 
-| score | confidence | risk |
+**分类权重（实际决策）**：部分证据类型会**覆盖** score→confidence 表，以产品安全策略为准：
+
+| 产出 | score | confidence | risk | 默认勾选 |
+|---|---|---|---|---|
+| 安装目录 / Uninstall 键 | 90 | confirmed | low | 是 |
+| 产品同名目录 exact / App Paths / 快捷方式 | 40–50 | **confirmed**（路径强关联） | low | 是 |
+| AppData / WebView 缓存名匹配 | 40 | **suspected** | medium | 否（需确认） |
+| SOFTWARE\{slug} | 40 | suspected | medium | 否 |
+| 服务 / 计划任务 / 驱动 | 40–45 | suspected | **high（强制）** | 否 |
+| TEMP | 30 | suspected | medium | 否 |
+
+前端默认勾选只看 `confidence/risk/shared/user_data`（`decision.ts::defaultSelectable`），**不直接看 score**。
+
+| score | confidence | risk（默认映射） |
 |---|---|---|
 | ≥ 90 | confirmed | low |
 | 30–89 | suspected | medium |

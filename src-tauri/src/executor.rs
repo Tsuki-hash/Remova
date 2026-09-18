@@ -304,7 +304,9 @@ pub fn run_full_cleanup(
     }
 
     let selected: Vec<&CleanupItem> = items.iter().collect();
-    if selected.is_empty() {
+    // Empty leftover set is valid when the user asked for official uninstall only
+    // (batch “no default-selectable residue” should still remove the app).
+    if selected.is_empty() && opts.skip_official_uninstall {
         return FullCleanupReport {
             app_name: app.name.clone(),
             dry_run: false,
@@ -433,14 +435,25 @@ pub fn run_full_cleanup(
                     });
                     continue;
                 }
-                // Service / task: try native delete first
+                // Service / task: try native delete first; surface native result in the report.
                 let low = it.path.to_uppercase();
+                let mut native_note = String::new();
                 if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
                     let svc = crate::regops::leaf_name(&it.path);
-                    let _ = crate::regops::sc_delete_service(&svc);
+                    let native_ok = crate::regops::sc_delete_service(&svc);
+                    native_note = if native_ok {
+                        format!("sc delete {svc}: ok")
+                    } else {
+                        format!("sc delete {svc}: failed or not found")
+                    };
                 } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
                     let tn = crate::regops::leaf_name(&it.path);
-                    let _ = crate::regops::schtasks_delete(&tn);
+                    let native_ok = crate::regops::schtasks_delete(&tn);
+                    native_note = if native_ok {
+                        format!("schtasks delete {tn}: ok")
+                    } else {
+                        format!("schtasks delete {tn}: failed or not found")
+                    };
                 }
                 let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
                     crate::regops::delete_value(k, v)
@@ -454,23 +467,38 @@ pub fn run_full_cleanup(
                             path: it.path.clone(),
                             kind: "registry".into(),
                             status: "deleted".into(),
-                            message: String::new(),
+                            message: native_note,
                         });
                     }
                     Err(e) => {
                         failed += 1;
-                        errors.push(format!("{}: {e}", it.path));
+                        let msg = if native_note.is_empty() {
+                            e.clone()
+                        } else {
+                            format!("{native_note}; {e}")
+                        };
+                        errors.push(format!("{}: {msg}", it.path));
                         details.push(ItemDetail {
                             path: it.path.clone(),
                             kind: "registry".into(),
                             status: "failed".into(),
-                            message: e,
+                            message: msg,
                         });
                     }
                 }
             }
             _ => {
                 let p = Path::new(&it.path);
+                if it.user_data {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "user_data red line".into(),
+                    });
+                    continue;
+                }
                 if !is_safe_fs(p) {
                     skipped += 1;
                     continue;
@@ -619,6 +647,8 @@ mod tests {
             evidence: vec![],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         }];
         let r = run_cleanup_dry("App", &items);
         assert!(r.dry_run);
@@ -638,6 +668,8 @@ mod tests {
             evidence: vec![],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         }];
         let r = run_cleanup_dry("App", &items);
         assert_eq!(r.skipped, 1);

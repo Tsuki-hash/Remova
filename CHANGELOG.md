@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AI commands surface model/network failures as `ai:*` errors instead of silent empty results
 - Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
 - Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
+- Cleanup report records `sc delete` / `schtasks delete` native results on service/task items (FN-05)
+- AppData / WebView name-match folders default to **suspected/medium** (not auto-selected) (BE-03)
+- ARCHITECTURE documents evidence-type confidence overrides vs score table
+- `batchEngine` unit tests cover ok / F-1 no-leftover uninstall / failed / cancel / invoke error
 
 ### Changed
 - Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
