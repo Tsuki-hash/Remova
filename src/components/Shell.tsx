@@ -55,26 +55,13 @@ export function Sidebar({
           minWidth: 0,
         }}
       >
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            overflow: "hidden",
-            flexShrink: 0,
-            background: "linear-gradient(145deg, #2563EB, #4F46E5)",
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          <img
-            src="/logo.png"
-            alt=""
-            width={32}
-            height={32}
-            style={{ display: "block", width: 32, height: 32 }}
-          />
-        </div>
+        <img
+          src="/logo.png"
+          alt=""
+          width={32}
+          height={32}
+          style={{ display: "block", width: 32, height: 32, flexShrink: 0 }}
+        />
         {!collapsed && (
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2 }}>Remova</div>

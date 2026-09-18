@@ -167,3 +167,49 @@ mod tests {
         assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
     }
 }
+
+const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
+
+/// Register Explorer right-click “Remova Deep Uninstall”.
+pub fn register_context_menu() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy().to_string();
+    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "Remova Deep Uninstall")?;
+    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "Icon", &format!("\"{exe}\""))?;
+    let cmd_key = format!(r"{CONTEXT_MENU_KEY}\command");
+    crate::regops::create_reg_sz(&cmd_key, "", &format!("\"{exe}\" --analyze \"%1\""))?;
+    Ok(())
+}
+
+pub fn unregister_context_menu() -> Result<(), String> {
+    crate::regops::delete_key(CONTEXT_MENU_KEY)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VerifyRow {
+    pub path: String,
+    pub kind: String,
+    pub still_there: bool,
+}
+
+/// SOP §7: re-check selected paths after cleanup (checklist evidence).
+pub fn verify_cleanup_leftovers(items: &[crate::scanner::CleanupItem]) -> Vec<VerifyRow> {
+    let mut out = Vec::new();
+    for it in items {
+        let still = match it.kind {
+            crate::scanner::ItemKind::Registry => {
+                let path = it.path.split('|').next().unwrap_or(&it.path);
+                crate::regscan::list_subkeys(path).len() + crate::regscan::list_values(path).len()
+                    > 0
+            }
+            crate::scanner::ItemKind::Path => crate::regops::scrub_path_entry_ok(&it.path),
+            _ => std::path::Path::new(&it.path).exists(),
+        };
+        out.push(VerifyRow {
+            path: it.path.clone(),
+            kind: format!("{:?}", it.kind).to_lowercase(),
+            still_there: still,
+        });
+    }
+    out
+}

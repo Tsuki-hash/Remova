@@ -190,6 +190,44 @@ export const cssStyles = {
     color: "var(--muted)",
     border: "1px solid var(--border)",
   },
+  /** Right detail / panel chrome (1.1 style tokens). */
+  panelShell: {
+    width: 340,
+    flexShrink: 0,
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    display: "flex",
+    flexDirection: "column" as const,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  sectionTitle: {
+    fontWeight: 700,
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  detailRow: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    padding: "7px 0",
+    borderBottom: "1px solid var(--border)",
+    fontSize: 12.5,
+  },
+  panelHeader: {
+    display: "flex",
+    gap: 12,
+    alignItems: "flex-start",
+    padding: "14px 14px 10px",
+    borderBottom: "1px solid var(--border)",
+  },
+  panelBody: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "auto",
+    padding: "12px 14px",
+  },
 };
 
 export const globalCss = `

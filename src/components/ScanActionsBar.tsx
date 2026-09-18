@@ -86,6 +86,7 @@ export function ScanActionsBar({
       >
         {L.cleanup} ({selectedPaths.size})
       </button>
+      {/* AI explain runs automatically after scan (decision layer); keep manual re-run if enabled */}
       {aiEnabled && (
         <button
           style={css.btnSm}
@@ -93,7 +94,7 @@ export function ScanActionsBar({
           title={L.aiSettingsHint}
           onClick={onAiExplain}
         >
-          {aiBusy ? L.aiExplaining : L.aiExplain}
+          {aiBusy ? L.aiExplaining : L.conclusionRefreshAi}
         </button>
       )}
     </div>

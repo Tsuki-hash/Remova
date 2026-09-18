@@ -17,7 +17,6 @@ function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): Installe
     list = list.filter((a) => (a.publisher || "").toLowerCase().includes(pub));
   }
   if (filter.size_gt_kb && filter.size_gt_kb > 0) {
-    // UI list may still use registry EstimatedSize; copilot filter uses that field only.
     list = list.filter((a) => a.estimated_size_kb >= filter.size_gt_kb!);
   }
   const after = (filter.installed_after || "").trim();
@@ -25,6 +24,63 @@ function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): Installe
     list = list.filter((a) => (a.install_date || "") >= after);
   }
   return list;
+}
+
+/** Offline keyword fallback when no model is configured (P0 Copilot always usable). */
+export function ruleParseFilter(apps: InstalledApp[], text: string): {
+  list: InstalledApp[];
+  intent: NlIntent;
+} {
+  const raw = text.trim();
+  const lower = raw.toLowerCase();
+  const words = lower
+    .split(/[\s,，、]+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2 && !/^(的|软件|找出|查找|卸载|清理|残留|相关|and|the|apps?)$/i.test(w));
+
+  let list = apps;
+  const nameLike = words.find((w) => apps.some((a) => a.name.toLowerCase().includes(w)));
+  if (nameLike) {
+    list = list.filter((a) => a.name.toLowerCase().includes(nameLike));
+  }
+  const pubLike = words.find((w) =>
+    list.some((a) => (a.publisher || "").toLowerCase().includes(w)),
+  );
+  if (pubLike) {
+    list = list.filter((a) => (a.publisher || "").toLowerCase().includes(pubLike));
+  }
+
+  let sizeGtKb: number | null = null;
+  const gb = lower.match(/(\d+(?:\.\d+)?)\s*g\s*b?/);
+  const mb = lower.match(/(\d+(?:\.\d+)?)\s*m\s*b?/);
+  if (gb) sizeGtKb = Math.round(Number(gb[1]) * 1024 * 1024);
+  else if (mb) sizeGtKb = Math.round(Number(mb[1]) * 1024);
+  if (sizeGtKb && sizeGtKb > 0) {
+    list = list.filter((a) => a.estimated_size_kb >= sizeGtKb!);
+  }
+
+  const action: NlIntent["action"] = /分析|analyze/i.test(raw)
+    ? "analyze"
+    : /批量|batch/i.test(raw)
+      ? "batch_uninstall"
+      : /强制|force/i.test(raw)
+        ? "force_clean"
+        : "list";
+
+  return {
+    list,
+    intent: {
+      action,
+      filter: {
+        name_like: nameLike || null,
+        publisher: pubLike || null,
+        size_gt_kb: sizeGtKb,
+        installed_after: null,
+      },
+      include_leftovers: /残留|leftover/i.test(raw),
+      note: raw,
+    },
+  };
 }
 
 export function CopilotPanel({
@@ -43,27 +99,27 @@ export function CopilotPanel({
   onForceClean: (app: InstalledApp) => void;
 }) {
   const L = t();
-  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<NlIntent | null>(null);
   const [matches, setMatches] = useState<InstalledApp[]>([]);
 
   const parse = async () => {
-    if (!aiEnabled) {
-      toast.info(L.copilotNeedAi);
-      return;
-    }
     const text = q.trim();
     if (!text) return;
     setBusy(true);
     setIntent(null);
     setMatches([]);
     try {
-      const parsed = (await api.aiParseIntent(
-        text,
-        apps.map((a) => a.name).slice(0, 40),
-      )) as NlIntent;
+      if (!aiEnabled) {
+        const { list, intent: ruleIntent } = ruleParseFilter(apps, text);
+        setIntent(ruleIntent);
+        setMatches(list);
+        if (list.length === 0) toast.info(L.copilotNoMatch);
+        else toast.info(L.conclusionSourceRule);
+        return;
+      }
+      const parsed = await api.aiParseIntent(text, apps.map((a) => a.name).slice(0, 40));
       const hit = applyFilter(apps, parsed.filter || {});
       setIntent(parsed);
       setMatches(hit);
@@ -87,95 +143,128 @@ export function CopilotPanel({
 
   return (
     <div style={{ marginBottom: 10, flexShrink: 0 }}>
-      <button
-        style={css.btnSm}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        {L.copilotOpen}
-      </button>
-      {open && (
-        <div
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span
           style={{
-            ...css.card,
-            marginTop: 8,
-            padding: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
+            fontSize: 11,
+            fontWeight: 650,
+            color: "var(--muted)",
+            letterSpacing: 0.2,
+            flexShrink: 0,
           }}
         >
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <input
-              style={{ ...css.input, flex: "1 1 240px", height: 34 }}
-              placeholder={L.copilotPlaceholder}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void parse();
-              }}
-            />
-            <button style={css.btnSm} disabled={busy || !q.trim()} onClick={() => void parse()}>
-              {busy ? L.copilotParsing : L.copilotParse}
-            </button>
-          </div>
-          {intent && (
-            <div
+          ✦ {L.copilotOpen}
+        </span>
+        <input
+          style={{ ...css.input, flex: "1 1 220px", height: 32, minWidth: 180 }}
+          placeholder={L.copilotInlinePlaceholder}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void parse();
+          }}
+          aria-label={L.copilotOpen}
+        />
+        <button
+          style={{ ...css.btnSm, height: 32 }}
+          disabled={busy || !q.trim()}
+          onClick={() => void parse()}
+        >
+          {busy ? L.copilotParsing : L.copilotParse}
+        </button>
+        {intent && (
+          <button
+            type="button"
+            style={{ ...css.btnSm, height: 32 }}
+            onClick={() => {
+              setIntent(null);
+              setMatches([]);
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {intent && (
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: "10px 12px",
+            background: "var(--surface-2)",
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            marginTop: 8,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 4, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span>
+              {L.copilotPlan} · {actionLabel(intent.action)}
+            </span>
+            <span
               style={{
+                fontSize: 10.5,
+                fontWeight: 650,
+                color: aiEnabled ? "var(--accent)" : "var(--muted)",
+                background: aiEnabled ? "var(--accent-soft)" : "var(--surface)",
                 border: "1px solid var(--border)",
-                borderRadius: 10,
-                padding: "10px 12px",
-                background: "var(--surface-2)",
-                fontSize: 12.5,
-                lineHeight: 1.5,
+                borderRadius: 999,
+                padding: "1px 7px",
               }}
             >
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                {L.copilotPlan} · {actionLabel(intent.action)}
-              </div>
-              <div style={{ color: "var(--muted)" }}>{intent.note || "—"}</div>
-              <div style={{ color: "var(--muted)", marginTop: 4 }}>
-                {L.colName}: {matches.length} / {apps.length}
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  flexWrap: "wrap",
-                  marginTop: 10,
-                }}
+              {aiEnabled ? L.conclusionSourceAi : L.conclusionSourceRule}
+            </span>
+          </div>
+          <div style={{ color: "var(--muted)" }}>{intent.note || "—"}</div>
+          <div style={{ color: "var(--muted)", marginTop: 4 }}>
+            {L.colName}: {matches.length} / {apps.length}
+            {matches.length > 0 && (
+              <span style={{ marginLeft: 8 }}>
+                {matches
+                  .slice(0, 4)
+                  .map((m) => m.name)
+                  .join(" · ")}
+                {matches.length > 4 ? " …" : ""}
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              marginTop: 10,
+            }}
+          >
+            <button
+              style={css.btnSm}
+              disabled={matches.length === 0}
+              onClick={() => onApplyFilter(matches, intent)}
+            >
+              {L.copilotApply}
+            </button>
+            {intent.action === "analyze" && matches[0] && (
+              <button style={css.btnSm} onClick={() => onAnalyze(matches[0])}>
+                {L.copilotRunAnalyze}
+              </button>
+            )}
+            {intent.action === "batch_uninstall" && matches.length > 0 && (
+              <button
+                style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
+                onClick={() => onBatch(matches, intent)}
               >
-                <button
-                  style={css.btnSm}
-                  disabled={matches.length === 0}
-                  onClick={() => onApplyFilter(matches, intent)}
-                >
-                  {L.copilotApply}
-                </button>
-                {intent.action === "analyze" && matches[0] && (
-                  <button style={css.btnSm} onClick={() => onAnalyze(matches[0])}>
-                    {L.copilotRunAnalyze}
-                  </button>
-                )}
-                {intent.action === "batch_uninstall" && matches.length > 0 && (
-                  <button
-                    style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
-                    onClick={() => onBatch(matches, intent)}
-                  >
-                    {L.copilotRunBatch}
-                  </button>
-                )}
-                {intent.action === "force_clean" && matches[0] && (
-                  <button
-                    style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
-                    onClick={() => onForceClean(matches[0])}
-                  >
-                    {L.copilotRunForce}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+                {L.copilotRunBatch}
+              </button>
+            )}
+            {intent.action === "force_clean" && matches[0] && (
+              <button
+                style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
+                onClick={() => onForceClean(matches[0])}
+              >
+                {L.copilotRunForce}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
