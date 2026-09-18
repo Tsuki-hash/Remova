@@ -63,19 +63,75 @@ fn safe_name(path: &str) -> String {
         .collect()
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PathSnapshot {
+    #[serde(default)]
+    pub items: Vec<PathSnapshotItem>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PathSnapshotItem {
+    pub entry: String,
+    /// Scopes that contained the entry at backup time (User / Machine).
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub user_path: String,
+    #[serde(default)]
+    pub machine_path: String,
+}
+
+fn path_snapshot_file(session: &Path) -> PathBuf {
+    session.join("path.json")
+}
+
+/// Snapshot a PATH leftover into the session. Never copies directories.
+fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
+    let entry = item.path.trim();
+    if entry.is_empty() {
+        return Err("empty path entry".into());
+    }
+    let user = crate::regops::read_path_scope_public("User").unwrap_or_default();
+    let machine = crate::regops::read_path_scope_public("Machine").unwrap_or_default();
+    let mut scopes = Vec::new();
+    if crate::regops::path_contains_entry(&user, entry) {
+        scopes.push("User".to_string());
+    }
+    if crate::regops::path_contains_entry(&machine, entry) {
+        scopes.push("Machine".to_string());
+    }
+
+    let meta_dir = session.join("files").join("_path");
+    fs::create_dir_all(&meta_dir).map_err(|e| e.to_string())?;
+    let meta = meta_dir.join(format!("{}.txt", safe_name(entry)));
+    fs::write(&meta, entry.as_bytes()).map_err(|e| e.to_string())?;
+
+    let pj = path_snapshot_file(session);
+    let mut snap: PathSnapshot = fs::read_to_string(&pj)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    // De-dupe by entry (normalized later on restore).
+    if !snap
+        .items
+        .iter()
+        .any(|i| i.entry.eq_ignore_ascii_case(entry))
+    {
+        snap.items.push(PathSnapshotItem {
+            entry: entry.to_string(),
+            scopes,
+            user_path: user,
+            machine_path: machine,
+        });
+        fs::write(&pj, serde_json::to_string_pretty(&snap).unwrap_or_default())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
     match item.kind {
-        ItemKind::Path => {
-            let dest = session
-                .join("files")
-                .join("_path")
-                .join(format!("{}.txt", safe_name(&item.path)));
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(&dest, item.path.as_bytes()).map_err(|e| e.to_string())?;
-            Ok(())
-        }
+        ItemKind::Path => backup_path_entry(item, session),
         ItemKind::Registry => {
             // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
             let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
@@ -192,6 +248,7 @@ fn backup_item_with_map(
     path_map: &mut std::collections::BTreeMap<String, String>,
 ) -> Result<(), String> {
     match item.kind {
+        ItemKind::Path => backup_path_entry(item, session),
         ItemKind::Registry => {
             // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
             let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
@@ -237,7 +294,7 @@ fn backup_item_with_map(
             }
             Ok(())
         }
-        _ => {
+        ItemKind::File | ItemKind::Dir => {
             let src = Path::new(&item.path);
             if !src.exists() {
                 return Ok(());
@@ -274,18 +331,7 @@ fn fnv1a64(s: &str) -> u64 {
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for e in fs::read_dir(src)? {
-        let e = e?;
-        let t = e.file_type()?;
-        let to = dest.join(e.file_name());
-        if t.is_dir() {
-            copy_dir(&e.path(), &to)?;
-        } else {
-            fs::copy(e.path(), &to)?;
-        }
-    }
-    Ok(())
+    crate::fsutil::copy_dir(src, dest)
 }
 
 #[cfg(test)]
@@ -326,8 +372,59 @@ mod tests {
             evidence: vec![],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         };
         assert!(backup_item(&item, &tmp).is_ok());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn path_backup_writes_snapshot_not_tree_copy() {
+        let _guard = lock_backup_env();
+        let tmp = std::env::temp_dir().join(format!("remova_path_bk_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("files")).unwrap();
+        fs::create_dir_all(tmp.join("registry")).unwrap();
+
+        // A PATH-shaped leftover that is also an existing directory (must NOT be tree-copied).
+        let path_dir = tmp.join("some_path_dir");
+        fs::create_dir_all(path_dir.join("nested")).unwrap();
+        fs::write(path_dir.join("nested/f.bin"), b"x").unwrap();
+
+        let item = CleanupItem {
+            path: path_dir.to_string_lossy().to_string(),
+            kind: ItemKind::Path,
+            score: 40,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "path".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let mut map = std::collections::BTreeMap::new();
+        backup_item_with_map(&item, &tmp, &mut map).unwrap();
+        assert!(map.is_empty(), "PATH kind must not enter path_map");
+        let pj = tmp.join("path.json");
+        assert!(pj.exists(), "path.json snapshot missing");
+        let raw = fs::read_to_string(&pj).unwrap();
+        let snap: PathSnapshot = serde_json::from_str(&raw).unwrap();
+        assert_eq!(snap.items.len(), 1);
+        assert_eq!(snap.items[0].entry, item.path);
+        // No recursive copy of the directory into files/
+        let files = tmp.join("files");
+        let copied: Vec<_> = fs::read_dir(&files)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            !copied.iter().any(|n| n.contains("nested")),
+            "PATH backup must not tree-copy directory contents: {copied:?}"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 }
