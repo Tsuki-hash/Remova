@@ -65,7 +65,11 @@ pub fn add_name(name: &str) -> Result<IgnoreList, String> {
 
 pub fn is_publisher_ignored(list: &IgnoreList, publisher: &str) -> bool {
     let p = publisher.trim();
-    p.is_empty() || list.publishers.iter().any(|x| x.eq_ignore_ascii_case(p))
+    // Unknown publisher must not be treated as ignored (would drop half the list).
+    if p.is_empty() {
+        return false;
+    }
+    list.publishers.iter().any(|x| x.eq_ignore_ascii_case(p))
 }
 
 pub fn is_name_ignored(list: &IgnoreList, name: &str) -> bool {
@@ -75,9 +79,29 @@ pub fn is_name_ignored(list: &IgnoreList, name: &str) -> bool {
 
 pub fn is_path_ignored(list: &IgnoreList, path: &str) -> bool {
     let p = path.replace('/', "\\").to_lowercase();
+    if p.is_empty() {
+        return false;
+    }
     list.paths
         .iter()
         .any(|x| p.starts_with(&x.replace('/', "\\").to_lowercase()))
+}
+
+/// Apply ignore rules to an installed-app row (AR-04 backend enforcement).
+pub fn is_app_ignored(
+    list: &IgnoreList,
+    name: &str,
+    publisher: &str,
+    install_location: &str,
+) -> bool {
+    is_name_ignored(list, name)
+        || is_publisher_ignored(list, publisher)
+        || (!install_location.trim().is_empty() && is_path_ignored(list, install_location))
+}
+
+/// True when a leftover path should be dropped from scan/orphan output.
+pub fn should_skip_leftover_path(list: &IgnoreList, path: &str) -> bool {
+    is_path_ignored(list, path)
 }
 
 pub fn add_path(path: &str) -> Result<IgnoreList, String> {
@@ -198,6 +222,31 @@ mod tests {
         assert!(is_publisher_ignored(&l, "microsoft corporation"));
         assert!(is_name_ignored(&l, "onedrive"));
         assert!(is_path_ignored(&l, r"C:\Program Files\Common Files\foo"));
+        assert!(!is_publisher_ignored(&l, "")); // empty publisher is not ignored
+        assert!(is_app_ignored(&l, "OneDrive", "Contoso", r"C:\other"));
+        assert!(is_app_ignored(
+            &l,
+            "Foo",
+            "Microsoft Corporation",
+            r"C:\other"
+        ));
+        assert!(is_app_ignored(
+            &l,
+            "Foo",
+            "Acme",
+            r"C:\Program Files\Common Files\bar"
+        ));
+        assert!(!is_app_ignored(
+            &l,
+            "7-Zip",
+            "Igor",
+            r"C:\Program Files\7-Zip"
+        ));
+        assert!(should_skip_leftover_path(
+            &l,
+            r"C:\Program Files\Common Files\Vendor\bin"
+        ));
+        assert!(!should_skip_leftover_path(&l, r"C:\Program Files\MyApp"));
         assert!(!is_name_ignored(&l, "7-Zip"));
     }
 

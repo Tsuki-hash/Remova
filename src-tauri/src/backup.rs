@@ -168,12 +168,10 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
                 return Err(format!("reg export failed for {}", item.path));
             }
             // Record the specific value name for Run items so restore knows what was targeted.
-            if item.path.contains('|') {
-                let meta = session
-                    .join("registry")
-                    .join(safe_name(&item.path))
-                    .join("value.txt");
-                let _ = fs::write(&meta, &item.path);
+            if let Some((key, vname)) = item.path.split_once('|') {
+                let dir = session.join("registry").join(safe_name(&item.path));
+                let _ = fs::write(dir.join("value.txt"), &item.path);
+                let _ = crate::regops::export_reg_value(key, vname, &dir.join("value.reg"));
             }
             Ok(())
         }
@@ -285,12 +283,12 @@ fn backup_item_with_map(
                 return Err(format!("reg export failed for {}", item.path));
             }
             // Record the specific value name for Run items so restore knows what was targeted.
-            if item.path.contains('|') {
-                let meta = session
-                    .join("registry")
-                    .join(safe_name(&item.path))
-                    .join("value.txt");
+            if let Some((key, vname)) = item.path.split_once('|') {
+                let dir = session.join("registry").join(safe_name(&item.path));
+                let meta = dir.join("value.txt");
                 let _ = fs::write(&meta, &item.path);
+                // AR-05: also write a single-value .reg so restore does not roll back siblings.
+                let _ = crate::regops::export_reg_value(key, vname, &dir.join("value.reg"));
             }
             Ok(())
         }

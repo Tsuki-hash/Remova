@@ -225,6 +225,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
 
 /// Unified filesystem safety gate (scanner + executor).
 /// Rejects protected prefixes, drive roots (`C:` / `C:\`), and shallow paths.
+/// Prefixes come from environment (SystemRoot / ProgramData / ProgramFiles…) with `c:\` fallbacks.
 pub fn is_safe_fs(p: &std::path::Path) -> bool {
     let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
     let trimmed = s.trim_end_matches('\\');
@@ -237,18 +238,56 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if comps < 4 {
         return false;
     }
-    let protected = [
-        r"c:\windows",
-        r"c:\windows.old",
-        r"c:\programdata\microsoft",
-        r"c:\program files\windowsapps",
-        r"c:\program files\common files\microsoft shared",
-        r"c:\program files (x86)\common files\microsoft shared",
-        r"c:\users\default",
-    ];
+    let protected = protected_fs_prefixes();
     !protected
         .iter()
         .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
+}
+
+fn env_dir_lower(name: &str) -> Option<String> {
+    std::env::var_os(name).map(|v| {
+        std::path::PathBuf::from(v)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_lowercase()
+            .trim_end_matches('\\')
+            .to_string()
+    })
+}
+
+/// Protected FS prefixes: hardcoded C-drive defaults + live environment roots (AR-03).
+pub fn protected_fs_prefixes() -> Vec<String> {
+    let mut out = vec![
+        r"c:\windows".to_string(),
+        r"c:\windows.old".to_string(),
+        r"c:\programdata\microsoft".to_string(),
+        r"c:\program files\windowsapps".to_string(),
+        r"c:\program files\common files\microsoft shared".to_string(),
+        r"c:\program files (x86)\common files\microsoft shared".to_string(),
+        r"c:\users\default".to_string(),
+    ];
+    if let Some(root) = env_dir_lower("SystemRoot") {
+        out.push(root.clone());
+        out.push(format!("{root}.old"));
+    }
+    if let Some(pd) = env_dir_lower("ProgramData") {
+        out.push(format!(r"{pd}\microsoft"));
+    }
+    if let Some(pf) = env_dir_lower("ProgramFiles") {
+        out.push(format!(r"{pf}\windowsapps"));
+        out.push(format!(r"{pf}\common files\microsoft shared"));
+    }
+    if let Some(pf86) = env_dir_lower("ProgramFiles(x86)") {
+        out.push(format!(r"{pf86}\common files\microsoft shared"));
+    }
+    if let Some(sd) = std::env::var_os("SystemDrive") {
+        let sd = sd.to_string_lossy().replace('/', "\\").to_lowercase();
+        let sd = sd.trim_end_matches('\\').to_string();
+        if sd.len() >= 2 {
+            out.push(format!(r"{sd}\users\default"));
+        }
+    }
+    out
 }
 
 /// Paths that are likely the user's own files (SOP red line) — never auto-delete.
@@ -299,6 +338,37 @@ mod tests {
     fn fs_rejects_protected() {
         assert!(!is_safe_fs(Path::new(r"C:\Windows\System32")));
         assert!(!is_safe_fs(Path::new(r"c:\programdata\microsoft\x")));
+    }
+
+    #[test]
+    fn fs_env_prefixes_include_system_root() {
+        let prefixes = protected_fs_prefixes();
+        assert!(prefixes.iter().any(|p| p.contains("windows")));
+        // SystemRoot on this machine (usually C:\Windows) must be present when env is set.
+        if let Ok(sr) = std::env::var("SystemRoot") {
+            let low = sr
+                .replace('/', "\\")
+                .to_lowercase()
+                .trim_end_matches('\\')
+                .to_string();
+            assert!(
+                prefixes.iter().any(|p| p == &low
+                    || p.starts_with(&format!("{low}\\"))
+                    || p == &format!("{low}.old")
+                    || low.starts_with(&format!("{p}\\"))
+                    || p.starts_with(&low)),
+                "SystemRoot {low} not reflected in {prefixes:?}"
+            );
+            // Deep path under SystemRoot is rejected.
+            let deep_s = format!(r"{sr}\System32\drivers\etc");
+            let deep = Path::new(&deep_s);
+            if deep.components().count() >= 4 {
+                assert!(
+                    !is_safe_fs(deep),
+                    "SystemRoot subtree must be protected: {deep:?}"
+                );
+            }
+        }
     }
 
     #[test]

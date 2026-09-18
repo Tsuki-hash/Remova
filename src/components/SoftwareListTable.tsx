@@ -134,7 +134,7 @@ export function SoftwareListTable({
               </td>
             </tr>
           )}
-          {virtualRows.length > 0 ? (
+          {virtualRows.length > 0 && (
             <>
               {virtualRows[0].start > 0 && (
                 <tr aria-hidden style={{ height: virtualRows[0].start }}>
@@ -152,8 +152,6 @@ export function SoftwareListTable({
                 ) : null;
               })()}
             </>
-          ) : (
-            filtered.map(renderRow)
           )}
         </tbody>
       </table>

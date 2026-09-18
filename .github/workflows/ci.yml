@@ -34,6 +34,12 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      - name: check versions
+        run: npm run check-versions
+
+      - name: frontend lint
+        run: npm run lint
+
       - name: frontend test
         run: npm test
 

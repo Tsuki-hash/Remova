@@ -98,6 +98,13 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
             if match_installed(installed, &p) {
                 continue;
             }
+            // AR-04: honor ignore path rules for orphan candidates.
+            if crate::ignore::should_skip_leftover_path(
+                &crate::ignore::load(),
+                &p.to_string_lossy(),
+            ) {
+                continue;
+            }
             if !looks_like_app_dir(&p) {
                 continue;
             }
@@ -117,12 +124,18 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 }],
                 shared: false,
                 user_data: false,
+                size_kb: None,
+                bucket: None,
             });
             if out.len() >= 80 {
+                crate::scanner::fill_item_sizes(&mut out);
+                crate::scanner::fill_item_buckets(&mut out, "");
                 return out;
             }
         }
     }
+    crate::scanner::fill_item_sizes(&mut out);
+    crate::scanner::fill_item_buckets(&mut out, "");
     out
 }
 
