@@ -64,12 +64,13 @@ export function useAppFilter({
       );
     }
     if (!sortCol) return list;
+    const kbOf = (a: InstalledApp) => sizeMap?.[a.install_location] || sizeOf(a);
     const s = [...list].sort((a, b) => {
       if (sortCol === "size") {
-        return sizeOf(a) - sizeOf(b);
+        return kbOf(a) - kbOf(b);
       }
       if (sortCol === "recommend") {
-        return recommendScore(b, sizeOf(b)) - recommendScore(a, sizeOf(a));
+        return recommendScore(b, kbOf(b)) - recommendScore(a, kbOf(a));
       }
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });

@@ -204,7 +204,7 @@ export function useAnalyzeFlow({
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setUninstallingKey, setError, busyRef],
+    [refreshApps, setSelected, setUninstallingKey, setError, busyRef, analyze, setUninstallStage],
   );
 
   const openAnalyzeFromDrawer = useCallback(

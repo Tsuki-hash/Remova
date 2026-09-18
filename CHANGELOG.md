@@ -38,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **FN-04**: auto-rescan leftovers after successful official uninstall (default on; toggle in More)
 - **PF-08**: route-level code-split for Software / Manage / More / Orphan pages
 - Cleanup delete loop extracted (`delete_cleanup_items`); migration scripts under `scripts/archive/`
+- Scan UI chrome in `useScanUiState`; i18n split `src/i18n/{zh,en,index}.ts`
+- MorePage chrome in `MoreToolCard` / `MoreSection`
+- ESLint exhaustive-deps cleaned (callback deps); lint exits 0
 - **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
 - ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
 - Residual/AI/Shell hooks expose `actions` API; App uses them for selection/clear/theme/lang/nav
