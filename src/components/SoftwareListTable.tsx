@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppRow } from "./AppRow";
 import type { SortCol } from "../hooks/useAppFilter";
+import type { CategoryId } from "./SoftwareToolbar";
 
 export function SoftwareListTable({
   filtered,
@@ -32,7 +33,7 @@ export function SoftwareListTable({
   filtered: InstalledApp[];
   loading: boolean;
   q: string;
-  category: string;
+  category: string | CategoryId;
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;

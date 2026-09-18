@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `batchEngine` unit tests cover ok / F-1 no-leftover uninstall / failed / cancel / invoke error
 
 ### Changed
+- **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
+- ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
 - Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
 - Stable software-list callbacks (`useCallback`) so `AppRow.memo` is not defeated
 - MorePage badges use i18n (`badgeNew` / `badgeRunning`)

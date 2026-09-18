@@ -8,10 +8,6 @@ import type {
 } from "./types";
 import { currentLang, loadLang, setLang, t } from "./i18n";
 import { cssStyles as css, globalCss } from "./styles";
-import {
-  BatchProgress,
-  BatchSummaryPanel,
-} from "./components/BatchPanels";
 import { formatError } from "./lib/format";
 import { applyTheme, saveNav, type NavId } from "./lib/theme";
 import { Shell } from "./components/Shell";
@@ -21,12 +17,6 @@ import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
-import { UninstallStageBar } from "./components/UninstallStageBar";
-import { CheckupPanel } from "./components/CheckupPanel";
-import { ReportPanel } from "./components/ReportPanel";
-import { IgnoreSuggestBar } from "./components/IgnoreSuggestBar";
-import { ScanLeftoversView } from "./components/ScanLeftoversView";
-import { SoftwareToolbar } from "./components/SoftwareToolbar";
 import { OrphanPage } from "./components/OrphanPage";
 import { toast } from "./lib/toast";
 import { defaultSelectable, isRecentInstall, summarizeLeftovers } from "./lib/decision";
@@ -41,14 +31,9 @@ import { useAppBoot, checkUpdateNow, toggleShellMenuApi } from "./hooks/useAppBo
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome, useResidualState } from "./hooks/useResidualState";
-import { CleanupConclusion } from "./components/CleanupConclusion";
-import { CopilotPanel } from "./components/CopilotPanel";
-import { SoftwareListTable } from "./components/SoftwareListTable";
-import { ScanActionsBar } from "./components/ScanActionsBar";
-import { SelectedAppCard } from "./components/SelectedAppCard";
-import { ErrorBanner, AiRiskBanner } from "./components/StatusBanners";
+import { SoftwarePage } from "./components/SoftwarePage";
+import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
-import { BatchActionBar } from "./components/BatchActionBar";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
 import { saveCloseMode, type CloseMode } from "./lib/closeMode";
@@ -666,247 +651,116 @@ export default function App() {
           />
         )}
         {nav === "software" && (
-          <>
-            <SoftwareToolbar
-              q={q}
-              category={category}
-              estimating={estimating}
-              scanning={scanning}
-              aiEnabled={aiEnabled}
-              onQuery={(v) => {
-                setQ(v);
-                setCopilotList(null);
-              }}
-              onCategory={setCategory}
-              onStopEstimate={() => void stopSizeEstimate()}
-              onOpenAi={() => goNav("more")}
-            />
-            {uninstallStage !== "idle" && <UninstallStageBar stage={uninstallStage} />}
-
-            {selected && !scan && (
-              <SelectedAppCard
-                selected={selected}
-                showDetail={showDetail}
-                onToggleDetail={() => setShowDetail((v) => !v)}
-              />
-            )}
-
-            {scan && ignoreSuggestions.length > 0 && (
-              <IgnoreSuggestBar
-                suggestions={ignoreSuggestions}
-                onApplied={(p, n) => {
-                  setIgnorePub(p);
-                  setIgnoreName(n);
-                  setIgnoreSuggestions([]);
-                }}
-                onDismiss={() => setIgnoreSuggestions([])}
-              />
-            )}
-
-            {scan && (
-              <ScanActionsBar
-                scan={scan}
-                scanning={scanning}
-                dryRunning={dryRunning}
-                residualFromUninstall={residualFromUninstall}
-                useOfficial={useOfficial}
-                aiEnabled={aiEnabled}
-                aiBusy={aiBusy}
-                selectedPaths={selectedPaths}
-                busy={busyRef.current}
-                onBack={closePreview}
-                onUseOfficial={setUseOfficial}
-                onDryRun={() => void dryRun()}
-                onCleanup={() => void handleCleanupConfirm()}
-                onAiExplain={() => void runAiExplain()}
-              />
-            )}
-
-            {aiRisk && scan && (
-              <AiRiskBanner risk={aiRisk} onDismiss={() => setAiRisk(null)} />
-            )}
-
-            {report && (
-              <ReportPanel
-                report={report}
-                aiEnabled={aiEnabled}
-                aiReportBusy={aiReportBusy}
-                aiReportNote={aiReportNote}
-                verifyRows={verifyRows}
-                onDismiss={() => setReport(null)}
-                onAiReportBusy={setAiReportBusy}
-                onAiReportNote={setAiReportNote}
-              />
-            )}
-
-            {checkupOpen && (
-              <CheckupPanel
-                stats={checkup}
-                scanning={scanning}
-                orphanCount={checkupOrphanCount}
-                onClose={() => setCheckupOpen(false)}
-                onOrphanScan={checkupOrphanScan}
-                onOpenOrphans={() => {
-                  setCheckupOpen(false);
-                  goNav("orphans");
-                }}
-              />
-            )}
-
-            {batching && batchTotal > 0 && (
-              <BatchProgress index={batchIndex} total={batchTotal} current={batchCurrent} />
-            )}
-
-            {showBatchSummary && batchResults.length > 0 && (
-              <BatchSummaryPanel
-                results={batchResults}
-                onRetryFailed={retryFailedBatch}
-                onDismiss={() => setShowBatchSummary(false)}
-              />
-            )}
-
-            {scan ? (
-              <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0, alignItems: "stretch" }}>
-                <ScanLeftoversView
-                  scan={scan}
-                  scanning={scanning}
-                  selectedPaths={selectedPaths}
-                  evidence={evidence}
-                  aiNotes={aiNotes}
-                  orphanLabel={L.orphanScan}
-                  kindFilter={kindFilter}
-                  filterApp={selected}
-                  onClearKindFilter={() => setKindFilter(null)}
-                  riskFilter={riskFilter}
-                  onClearRiskFilter={() => setRiskFilter(null)}
-                  conclusion={
-                    scan.app_name !== L.orphanScan && !scanning ? (
-                      <>
-                        <CleanupConclusion
-                          scan={scan}
-                          scanning={scanning}
-                          aiEnabled={aiEnabled}
-                          aiBusy={aiBusy}
-                          aiNote={aiSummaryNote}
-                          onCleanSafe={() => {
-                            setSelectedPaths(
-                              new Set(scan.items.filter(defaultSelectable).map((it) => it.path)),
-                            );
-                            setRiskFilter(null);
-                          }}
-                          onShowConfirm={() => {
-                            setKindFilter(null);
-                            setRiskFilter(riskFilter === "confirm" ? null : "confirm");
-                          }}
-                          onShowKeep={() => {
-                            setKindFilter(null);
-                            setRiskFilter(riskFilter === "keep" ? null : "keep");
-                          }}
-                          onExplain={() => void runAiExplain()}
-                          onOpenSettings={() => goNav("more")}
-                        />
-                        {!aiEnabled && !aiNudgeDismissed && scan.items.length > 0 && (
-                          <div
-                            style={{
-                              marginBottom: 10,
-                              padding: "8px 12px",
-                              border: "1px solid var(--border)",
-                              borderRadius: 8,
-                              background: "var(--surface-2)",
-                              display: "flex",
-                              gap: 10,
-                              alignItems: "center",
-                              fontSize: 12,
-                              color: "var(--muted)",
-                            }}
-                          >
-                            <span style={{ flex: 1 }}>{L.conclusionEnableAi}</span>
-                            <button
-                              style={{ ...css.btnSm, height: 28 }}
-                              onClick={() => goNav("more")}
-                            >
-                              {L.aiSettings}
-                            </button>
-                            <button
-                              style={{ ...css.btnGhost, height: 28 }}
-                              onClick={dismissAiNudge}
-                            >
-                              {L.cancel}
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    ) : null
-                  }
-                  onTogglePath={(path) =>
-                    setSelectedPaths((s) => {
-                      const n = new Set(s);
-                      if (n.has(path)) n.delete(path);
-                      else n.add(path);
-                      return n;
-                    })
-                  }
-                  onEvidence={setEvidence}
-                />
-                {selected && scan.app_name === selected.name && detailPanel}
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0, alignItems: "stretch" }}>
-                <div style={{ ...css.card, flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "10px 12px 0", flexShrink: 0 }}>
-                    <CopilotPanel
-                      apps={apps}
-                      aiEnabled={aiEnabled}
-                      onApplyFilter={(list) => {
-                        setCopilotList(list);
-                        setQ("");
-                        setCategoryState("all");
-                      }}
-                      onAnalyze={(app) => void analyze(app)}
-                      onBatch={(list) => {
-                        setMulti(new Set(list.map(appKey)));
-                        setCopilotList(list);
-                        toast.info(L.batchUninstall);
-                      }}
-                      onForceClean={(app) => void forceClean(app)}
-                    />
-                  </div>
-                  <SoftwareListTable
-                    filtered={filtered}
-                    loading={loading}
-                    q={q}
-                    category={category}
-                    sortCol={sortCol}
-                    sortDesc={sortDesc}
-                    selected={selected}
-                    multi={multi}
-                    uninstallingKey={uninstallingKey}
-                    appKey={appKey}
-                    sizeText={formatAppSize}
-                    sizeOf={sizeOf}
-                    sortBy={sortBy}
-                    selectApp={selectApp}
-                    startUninstall={listStartUninstall}
-                    analyze={listAnalyze}
-                    forceClean={listForceClean}
-                    doIgnoreApp={listIgnoreApp}
-                    doIgnorePublisher={listIgnorePublisher}
-                    toggleMulti={toggleMulti}
-                    setSelected={setSelected}
-                  />
-                  {multi.size > 0 && !scan && (
-                    <BatchActionBar
-                      count={multi.size}
-                      batching={batching}
-                      onCancelOrClear={() => (batching ? cancelBatch() : setMulti(new Set()))}
-                      onStart={() => void batchCleanup()}
-                    />
-                  )}
-                </div>
-                {detailPanel}
-              </div>
-            )}
-          </>
+          <SoftwarePage
+            apps={apps}
+            filtered={filtered}
+            loading={loading}
+            q={q}
+            category={category}
+            sortCol={sortCol}
+            sortDesc={sortDesc}
+            selected={selected}
+            multi={multi}
+            uninstallingKey={uninstallingKey}
+            formatAppSize={formatAppSize}
+            sizeOf={sizeOf}
+            sortBy={sortBy}
+            selectApp={selectApp}
+            setSelected={setSelected}
+            toggleMulti={toggleMulti}
+            listStartUninstall={listStartUninstall}
+            listAnalyze={listAnalyze}
+            listForceClean={listForceClean}
+            listIgnoreApp={listIgnoreApp}
+            listIgnorePublisher={listIgnorePublisher}
+            appKey={appKey}
+            setMulti={setMulti}
+            estimating={estimating}
+            scanning={scanning}
+            aiEnabled={aiEnabled}
+            uninstallStage={uninstallStage}
+            showDetail={showDetail}
+            onToggleDetail={() => setShowDetail((v) => !v)}
+            onQuery={(v) => {
+              setQ(v);
+              setCopilotList(null);
+            }}
+            onCategory={setCategory}
+            onStopEstimate={() => void stopSizeEstimate()}
+            onOpenAi={() => goNav("more")}
+            scan={scan}
+            selectedPaths={selectedPaths}
+            evidence={evidence}
+            setEvidence={setEvidence}
+            setSelectedPaths={setSelectedPaths}
+            ignoreSuggestions={ignoreSuggestions}
+            onIgnoreApplied={(pubs, names) => {
+              setIgnorePub(pubs);
+              setIgnoreName(names);
+              setIgnoreSuggestions([]);
+            }}
+            onDismissIgnore={() => setIgnoreSuggestions([])}
+            residualFromUninstall={residualFromUninstall}
+            useOfficial={useOfficial}
+            setUseOfficial={setUseOfficial}
+            aiBusy={aiBusy}
+            aiRisk={aiRisk}
+            setAiRisk={setAiRisk}
+            aiNotes={aiNotes}
+            aiSummaryNote={aiSummaryNote}
+            aiNudgeDismissed={aiNudgeDismissed}
+            onDismissAiNudge={dismissAiNudge}
+            dryRunning={dryRunning}
+            busy={dryRunning || batching || scanning || aiBusy}
+            onBack={closePreview}
+            onDryRun={() => void dryRun()}
+            onCleanup={() => void handleCleanupConfirm()}
+            onAiExplain={() => void runAiExplain()}
+            error={error}
+            setError={setError}
+            report={report}
+            setReport={setReport}
+            aiReportBusy={aiReportBusy}
+            aiReportNote={aiReportNote}
+            setAiReportBusy={setAiReportBusy}
+            setAiReportNote={setAiReportNote}
+            verifyRows={verifyRows}
+            checkup={checkup}
+            checkupOpen={checkupOpen}
+            setCheckupOpen={setCheckupOpen}
+            checkupOrphanCount={checkupOrphanCount}
+            checkupOrphanScan={checkupOrphanScan}
+            onGoOrphans={() => {
+              setCheckupOpen(false);
+              goNav("orphans");
+            }}
+            batching={batching}
+            batchIndex={batchIndex}
+            batchTotal={batchTotal}
+            batchCurrent={batchCurrent}
+            batchResults={batchResults}
+            showBatchSummary={showBatchSummary}
+            setShowBatchSummary={setShowBatchSummary}
+            retryFailedBatch={retryFailedBatch}
+            cancelBatch={cancelBatch}
+            batchCleanup={() => void batchCleanup()}
+            kindFilter={kindFilter}
+            setKindFilter={setKindFilter}
+            riskFilter={riskFilter}
+            setRiskFilter={setRiskFilter}
+            detailPanel={detailPanel}
+            onOpenSettings={() => goNav("more")}
+            onCopilotApplyFilter={(list) => {
+              setCopilotList(list);
+              setQ("");
+              setCategoryState("all");
+            }}
+            onCopilotBatch={(list) => {
+              setMulti(new Set(list.map(appKey)));
+              setCopilotList(list);
+              toast.info(L.batchUninstall);
+            }}
+          />
         )}
       </Shell>
     </>
