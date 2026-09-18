@@ -20,7 +20,9 @@ export type ShellState = {
 
 export type ShellAction =
   | { type: "theme/toggle" }
+  | { type: "theme/set"; theme: Theme }
   | { type: "lang/bump" }
+  | { type: "lang/set"; value: number }
   | { type: "nav/set"; nav: NavId }
   | { type: "shellMenu/set"; value: boolean }
   | { type: "closeMode/set"; value: CloseMode | null }
@@ -51,8 +53,12 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
   switch (action.type) {
     case "theme/toggle":
       return { ...state, theme: state.theme === "dark" ? "light" : "dark" };
+    case "theme/set":
+      return { ...state, theme: action.theme };
     case "lang/bump":
       return { ...state, langVer: state.langVer + 1 };
+    case "lang/set":
+      return { ...state, langVer: action.value };
     case "nav/set":
       return { ...state, nav: action.nav };
     case "shellMenu/set":

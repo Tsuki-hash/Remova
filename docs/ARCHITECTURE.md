@@ -28,12 +28,14 @@ scanner/         关联扫描（mod: types/score/analyze；fs_scans; reg_scans�
 shared.rs       共享运行库启发式（VC++/.NET/Common Files…）
 executor.rs     卸载命令解析、dry-run、真删流水线（user_data 硬拦）
 safety.rs       统一安全门禁：is_safe_fs / is_safe_to_delete_registry
+error.rs        RemovaError IPC：backup:* / restore:* / path:io / manage:* / safety:*
+constants.rs    产品常量（备份保留天数等）
 fsutil.rs       共享目录复制 + CSV 转义
-backup.rs       备份会话创建、文件复制、reg export
-restore.rs      会话列表与还原（path_map + reg import）
+backup.rs       备份会话创建、文件复制、reg export、PATH path.json
+restore.rs      会话列表与还原（path_map + path.json merge + value.reg 优先）
 regscan.rs      只读注册表助手（子键/值/DWORD/BINARY/默认值）
-regops.rs       写侧注册表（删键/删值/写 binary/service Start/sc/schtasks）
-manage.rs       启动项 / 服务 / 计划任务列表与启用禁用
+regops.rs       写侧注册表 / PATH scrub+restore（PATH_LOCK）/ schtasks/sc
+manage.rs       启动项 / 服务 / 计划任务列表与启用禁用（MANAGE_LOCK 写侧）
 sysops.rs       重启删、系统还原点、UAC 提权重启
 installmon.rs   安装前后快照差分
 orphans.rs      孤儿目录扫描
@@ -379,8 +381,9 @@ FullCleanupReport → history::append（非 dry_run）
 补充硬门禁：
 
 - 备份失败 → 整次 aborted（不进入 L3）
-- 关键服务名单（16 个）在 `safety::critical_service_names`，扫描、删除、manage 禁用全部拒绝
+- 关键服务名单在 `safety::critical_service_names`（动态列表，当前约 37 项，含 WinDefend/Appinfo 等），扫描、删除、manage 禁用全部拒绝
 - Store 系统包前缀黑名单在 `storeapps::is_blocked_package`，根本不进列表
+- 互斥：`CLEANUP_LOCK`（executor）/ `PATH_LOCK`（PATH scrub+restore）/ `MANAGE_LOCK`（manage 写侧）
 
 ---
 
@@ -424,15 +427,15 @@ set_startup_enabled(location, enabled)
 1. **路径规范化**：`/` → `\`，转小写；`trim_end_matches('\\')`。
 2. **拒绝盘根**：长度为 2 且以 `:` 结尾（`c:` / `c:\` / `d:\`）。
 3. **拒绝过浅路径**：`Path::components().count() < 4`。Windows 上即至少 `drive:\dir\file-or-dir`；`C:\foo` 拒绝，`C:\Program Files\MyApp` 允许。
-4. **拒绝保护前缀**（等于或以其为前缀）：
+4. **拒绝保护前缀**（等于或以其为前缀；来自 `SystemRoot` / `ProgramData` / `ProgramFiles` / `ProgramFiles(x86)` / `SystemDrive` 等环境变量，并以 `c:\` 静态列表兜底）：
 
-   - `c:\windows`
-   - `c:\windows.old`
-   - `c:\programdata\microsoft`
-   - `c:\program files\windowsapps`
-   - `c:\program files\common files\microsoft shared`
-   - `c:\program files (x86)\common files\microsoft shared`
-   - `c:\users\default`
+   - `{SystemRoot}`（默认 `c:\windows`）
+   - `{SystemDrive}\windows.old`（默认 `c:\windows.old`）
+   - `{ProgramData}\microsoft`
+   - `{ProgramFiles}\windowsapps`
+   - `{ProgramFiles}\common files\microsoft shared`
+   - `{ProgramFiles(x86)}\common files\microsoft shared`
+   - `{SystemDrive}\users\default`
 
 **姊妹门禁** `is_safe_to_delete_registry`（更细，按树段白名单）：
 
