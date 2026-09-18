@@ -61,6 +61,8 @@ const dict = {
     closeModeTray: "最小化到托盘",
     closeModeQuit: "退出程序",
     closeModeHint: "托盘模式下点关闭只隐藏窗口，可在托盘图标菜单中退出",
+    rescanAfterUninstall: "卸载后自动重新扫描",
+    rescanAfterUninstallHint: "官方卸载成功后自动深度扫描，查看是否产生新残留（默认开启）",
     closeToTrayHint: "已最小化到托盘，双击托盘图标可重新打开",
     closeChoiceTitle: "关闭 Remova？",
     closeChoiceBody: "可以最小化到系统托盘继续在后台运行，也可以完全退出程序。",
@@ -595,6 +597,9 @@ const dict = {
     closeModeTray: "Minimize to tray",
     closeModeQuit: "Quit app",
     closeModeHint: "In tray mode, close only hides the window; use the tray menu to quit",
+    rescanAfterUninstall: "Rescan after uninstall",
+    rescanAfterUninstallHint:
+      "Automatically deep-scan leftovers after official uninstall succeeds (default on)",
     closeToTrayHint: "Minimized to tray — double-click the tray icon to reopen",
     closeChoiceTitle: "Close Remova?",
     closeChoiceBody: "Minimize to the system tray and keep running in the background, or quit completely.",

@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Software list: removed virtualization full-map fallback when the virtual window is empty
 
 ### Fixed
+- Medium association gate: filesystem leftovers not related to the app are skipped at delete time (AR-10)
 - AI commands surface model/network failures as `ai:*` errors instead of silent empty results
 - Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
 - Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
@@ -34,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Empty leftover paths filtered before full cleanup abort check (AR-10 light)
 
 ### Changed
+- **FN-04**: auto-rescan leftovers after successful official uninstall (default on; toggle in More)
+- **PF-08**: route-level code-split for Software / Manage / More / Orphan pages
+- Cleanup delete loop extracted (`delete_cleanup_items`); migration scripts under `scripts/archive/`
 - **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
 - ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
 - Residual/AI/Shell hooks expose `actions` API; App uses them for selection/clear/theme/lang/nav
