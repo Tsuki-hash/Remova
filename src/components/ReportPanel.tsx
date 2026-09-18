@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { runAiReportSummary } from "../lib/aiNarrative";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -65,6 +66,35 @@ export function ReportPanel({
           }}
         >
           ✓ {L.safetyVaultBanner}
+        </div>
+      )}
+      {"deleted" in report && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            color: "var(--muted)",
+            borderLeft: "3px solid var(--accent)",
+            paddingLeft: 10,
+          }}
+        >
+          {L.reportNarrative(
+            report.deleted,
+            report.failed,
+            report.skipped,
+            Boolean("backup_dir" in report && report.backup_dir),
+          )}
+          <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 650 }}>
+            · {aiReportNote ? L.conclusionSourceAi : L.conclusionSourceRule}
+          </span>
+          <div style={{ marginTop: 4, fontWeight: 500 }}>
+            {report.failed > 0
+              ? L.reportNextFailed
+              : report.skipped > 0
+                ? L.reportNextSkipped
+                : L.reportNextOk}
+          </div>
         </div>
       )}
       {"deleted" in report &&
@@ -149,20 +179,7 @@ export function ReportPanel({
             onClick={async () => {
               onAiReportBusy(true);
               try {
-                const topFailed = (report.item_details || [])
-                  .filter((d) => d.status && d.status.toLowerCase().includes("fail"))
-                  .slice(0, 5)
-                  .map((d) => d.path);
-                const note = await api.aiSummarizeReport({
-                  appName: report.app_name,
-                  deleted: report.deleted,
-                  failed: report.failed,
-                  skipped: report.skipped,
-                  aborted: report.aborted,
-                  backupDir: report.backup_dir || "",
-                  restorePointOk: report.restore_point_ok,
-                  topFailed,
-                });
+                const note = await runAiReportSummary(report);
                 onAiReportNote(note);
                 if (!note) toast.error(L.aiFailed);
               } catch {
