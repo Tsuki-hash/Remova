@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration
 - ScanActions `busy` uses state expression (`dryRunning||batching||scanning||aiBusy`) instead of `busyRef.current` during render
+- Residual/AI hooks expose `actions` API (togglePath, selectDefaultItems, clearResidualScan, clearAiScanState, …)
+- Testing Library + jsdom: confirm store, CleanupConclusion, hooks actions unit tests
 - Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
 - Stable software-list callbacks (`useCallback`) so `AppRow.memo` is not defeated
 - MorePage badges use i18n (`badgeNew` / `badgeRunning`)
