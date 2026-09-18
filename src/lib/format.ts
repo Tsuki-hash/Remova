@@ -58,6 +58,27 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (kind === "not_found") return L.errElevateNotFound;
     return L.errElevateFailed(code);
   }
+  // RemovaError IPC: `code::message` (BE-01)
+  const ipc = raw.trim().split("::");
+  if (ipc.length >= 2 && ipc[0].includes(":")) {
+    const code = ipc[0].toLowerCase();
+    const name = ipc.slice(1).join("::").trim();
+    if (code === "manage:protected" || code === "manage:protected_registry") {
+      return name ? L.errServiceProtectedNamed(name) : L.errServiceProtected;
+    }
+    if (code === "manage:bad_name") {
+      return L.errServiceKey(name || "?");
+    }
+    if (code === "safety:protected") {
+      return L.errServiceProtected;
+    }
+    if (code === "backup:failed" || code === "restore:failed") {
+      return L.errCleanupFailed(name || code);
+    }
+    if (code.startsWith("ai:")) {
+      return L.aiFailed;
+    }
+  }
   // manage:<kind>:<name>
   const mg = raw.trim().match(/^manage:(access_denied|open_failed|write_failed|protected):(.*)$/i);
   if (mg) {
@@ -69,8 +90,25 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errServiceKey(name);
     }
   }
+  // open_path:* from open_path_in_explorer
+  if (raw === "open_path:empty" || raw.startsWith("open_path:empty:")) {
+    return L.errOpenPathEmpty;
+  }
+  if (raw === "open_path:not_found" || raw.startsWith("open_path:not_found:")) {
+    return L.errOpenPathMissing;
+  }
+  if (raw.startsWith("open_path:failed")) {
+    return L.errOpenPathFailed;
+  }
   const detail = raw.replace(/^Error:\s*/i, "").trim() || raw;
   const low = detail.toLowerCase();
+  if (
+    low.includes("os error 2") ||
+    low.includes("系统找不到指定的文件") ||
+    low.includes("the system cannot find the file")
+  ) {
+    return L.errOpenPathMissing;
+  }
   if (low.includes("critical system service protected") || low.includes("critical service")) {
     return L.errServiceProtected;
   }

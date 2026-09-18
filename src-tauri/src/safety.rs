@@ -101,10 +101,10 @@ pub fn is_allowed_run_key(key_path: &str) -> bool {
 pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
     let n = name.trim();
     if n.is_empty() || n.contains('\\') || n.contains('/') {
-        return Err("bad service name".into());
+        return Err(crate::error::manage_err("bad_name", "bad service name").to_ipc());
     }
     if is_critical_service(n) {
-        return Err(format!("manage:protected:{n}"));
+        return Err(crate::error::manage_err("protected", n).to_ipc());
     }
     Ok(())
 }
@@ -115,12 +115,12 @@ pub fn allow_manage_reg_write(
 ) -> Result<(), String> {
     if require_startup_approved {
         if !is_allowed_startup_approved_key(key_path) {
-            return Err(format!("manage:protected_registry:{key_path}"));
+            return Err(crate::error::manage_err("protected_registry", key_path).to_ipc());
         }
         return Ok(());
     }
     if !is_allowed_run_key(key_path) && !is_allowed_startup_approved_key(key_path) {
-        return Err(format!("manage:protected_registry:{key_path}"));
+        return Err(crate::error::manage_err("protected_registry", key_path).to_ipc());
     }
     Ok(())
 }
