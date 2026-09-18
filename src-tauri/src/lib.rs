@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod apps;
 pub mod backup;
+pub mod constants;
 pub mod dirsize;
 pub mod error;
 pub mod executor;
@@ -381,12 +382,12 @@ async fn run_full_cleanup(
 
 #[tauri::command]
 fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
-    Ok(history::load(200))
+    Ok(history::load(crate::constants::HISTORY_LIST_CAP))
 }
 
 #[tauri::command]
 fn export_history_csv() -> Result<String, String> {
-    let entries = history::load(500);
+    let entries = history::load(crate::constants::HISTORY_CSV_CAP);
     let mut out = String::from("app_name,deleted,failed,skipped,aborted,backup_dir,created_at\n");
     for e in entries {
         out.push_str(&format!(
@@ -668,7 +669,7 @@ fn monitor_diff_to_items(
 pub fn run() {
     // One-shot Safety Vault retention (not on list/read paths).
     std::thread::spawn(|| {
-        let _ = restore::prune_old_sessions(7);
+        let _ = restore::prune_old_sessions(crate::constants::BACKUP_RETENTION_DAYS);
     });
     let builder = tauri::Builder::default()
         // Focus the existing window when a second launch happens
