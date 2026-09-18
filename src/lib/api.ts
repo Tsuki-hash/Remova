@@ -2,12 +2,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AiConfigView,
+  AiExplainInput,
   AiExplainOutput,
   CleanupItem,
   CleanupReport,
   FullCleanupReport,
+  HistoryEntry,
   IgnoreSuggestion,
   InstalledApp,
+  ManageItem,
+  NlIntent,
   OfficialUninstallResult,
   ScanResult,
 } from "../types";
@@ -40,6 +44,10 @@ export const api = {
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: () => invoke("elevate_restart"),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),
+  checkGithubLatest: () =>
+    invoke<{ version: string; url: string; download_url?: string | null } | null>(
+      "check_github_latest",
+    ),
   getAiConfig: () => invoke<AiConfigView>("get_ai_config"),
   saveAiConfig: (args: {
     enabled: boolean;
@@ -51,13 +59,13 @@ export const api = {
   }) => invoke<AiConfigView>("save_ai_config", args),
   aiRiskBrief: (request: Record<string, unknown>) =>
     invoke<string | null>("ai_risk_brief", { request }),
-  aiExplain: (appName: string, publisher: string, items: unknown[]) =>
+  aiExplain: (appName: string, publisher: string, items: AiExplainInput[]) =>
     invoke<AiExplainOutput[]>("ai_explain_items", { appName, publisher, items }),
   aiSummarizeReport: (request: Record<string, unknown>) =>
     invoke<string | null>("ai_summarize_report", { request }),
   aiParseIntent: (text: string, appNames: string[]) =>
-    invoke<unknown>("ai_parse_intent", { text, appNames }),
-  history: () => invoke<unknown[]>("list_cleanup_history"),
+    invoke<NlIntent>("ai_parse_intent", { text, appNames }),
+  history: () => invoke<HistoryEntry[]>("list_cleanup_history"),
   exportHistoryCsv: () => invoke<string>("export_history_csv"),
   backupSessions: () => invoke<BackupSession[]>("list_backup_sessions"),
   deleteBackupSession: (name: string) => invoke("delete_backup_session", { name }),
@@ -86,9 +94,9 @@ export const api = {
     invoke("set_service_start_disabled", { name, disable }),
   setTaskEnabled: (name: string, enabled: boolean) =>
     invoke("set_task_enabled", { name, enabled }),
-  listStartupItems: () => invoke<unknown[]>("list_startup_items"),
-  listServices: () => invoke<unknown[]>("list_services"),
-  listScheduledTasks: () => invoke<unknown[]>("list_scheduled_tasks"),
+  listStartupItems: () => invoke<ManageItem[]>("list_startup_items"),
+  listServices: () => invoke<ManageItem[]>("list_services"),
+  listScheduledTasks: () => invoke<ManageItem[]>("list_scheduled_tasks"),
   appIconData: (displayIcon: string | null | undefined) =>
     invoke<string | null>("app_icon_data", { displayIcon: displayIcon ?? null }),
 };

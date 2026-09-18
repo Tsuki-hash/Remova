@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::safety::{is_allowed_run_key, is_allowed_startup_approved_key, is_critical_service};
+use crate::safety::{
+    allow_manage_reg_write, allow_manage_service_write, is_allowed_startup_approved_key,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManageItem {
@@ -132,7 +134,7 @@ fn list_auto_services() -> Vec<ManageItem> {
             if svc.contains('\\') {
                 continue;
             }
-            if is_critical_service(&svc) {
+            if crate::safety::is_critical_service(&svc) {
                 continue;
             }
             if !seen.insert(svc.to_lowercase()) {
@@ -259,7 +261,7 @@ pub fn list_services() -> Vec<ManageItem> {
             if svc.contains('\\') {
                 continue;
             }
-            if is_critical_service(&svc) {
+            if crate::safety::is_critical_service(&svc) {
                 continue;
             }
             let path = format!(r"{root}\{svc}");
@@ -458,33 +460,23 @@ fn split_csv_line(line: &str) -> Vec<String> {
 /// Binary layout (12 bytes): byte0 = 0x02 enabled / 0x03 disabled.
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
     if let Some(svc) = location.strip_prefix("SVC::") {
-        // Auto service → disable means Start=4; enable restores Start=2 (auto).
-        if svc.trim().is_empty() || svc.contains('\\') || svc.contains('/') {
-            return Err("bad service name".into());
-        }
-        if is_critical_service(svc) {
-            return Err("critical system service protected".into());
-        }
+        allow_manage_service_write(svc)?;
         let start: u32 = if enabled { 2 } else { 4 };
         return crate::regops::write_service_start(svc, start);
     }
     if let Some(rest) = location.strip_prefix("PACKAGED::") {
-        // PACKAGED::<sa_key>::<value_name> — only StartupApproved keys are writable.
         let Some((sa_key, vname)) = rest.rsplit_once("::") else {
             return Err("bad packaged startup location".into());
         };
         if vname.trim().is_empty() || vname.contains('\\') || vname.contains('/') {
             return Err("bad packaged startup value".into());
         }
-        if !is_allowed_startup_approved_key(sa_key) {
-            return Err(format!("manage:protected_registry:{sa_key}"));
-        }
+        allow_manage_reg_write(sa_key, true)?;
         let mut buf = [0u8; 12];
         buf[0] = if enabled { 0x02 } else { 0x03 };
         return crate::regops::write_reg_binary(sa_key, vname, &buf);
     }
     if let Some(rest) = location.strip_prefix("FOLDER::") {
-        // FOLDER::<dir>::<file>
         let Some((dir, fname)) = rest.rsplit_once("::") else {
             return Err("bad startup folder location".into());
         };
@@ -494,26 +486,21 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
             .unwrap_or(fname)
             .trim_end_matches(".remova-disabled")
             .to_string();
-        let _ = dir; // enable flag is per-user StartupApproved, not per-folder path
+        let _ = dir;
         return write_startup_folder_approved(&stem, enabled);
     }
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err("bad startup location".into());
     };
-    if !is_allowed_run_key(key) {
-        return Err(format!("manage:protected_registry:{key}"));
-    }
+    allow_manage_reg_write(key, false)?;
     if vname.trim().is_empty() {
         return Err("bad startup value name".into());
     }
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
-
-    // Migrate legacy rename-based disable back to original name first.
     if cur_disabled {
         crate::regops::rename_reg_value(key, vname, base)?;
     }
-
     write_startup_approved(key, base, enabled)
 }
 
@@ -545,6 +532,7 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
     if !is_allowed_startup_approved_key(sa_key) {
         return Err(format!("manage:protected_registry:{sa_key}"));
     }
+    allow_manage_reg_write(sa_key, true)?;
 
     let mut buf = [0u8; 12];
     buf[0] = if enabled { 0x02 } else { 0x03 };
@@ -553,12 +541,7 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
 
 /// Set service Start=4 (disabled) or 3 (manual) — not auto to avoid surprise.
 pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), String> {
-    if name.trim().is_empty() || name.contains('\\') || name.contains('/') {
-        return Err("bad service name".into());
-    }
-    if is_critical_service(name) {
-        return Err(format!("manage:protected:{name}"));
-    }
+    allow_manage_service_write(name)?;
     let start: u32 = if disable { 4 } else { 3 };
     crate::regops::write_service_start(name, start)
 }

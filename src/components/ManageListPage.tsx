@@ -8,7 +8,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { useManageList, type ManageTabId } from "../lib/useManageList";
 import { looksMicrosoft } from "../lib/manageFilter";
-import type { ManageItem } from "./ManagePanel";
+import type { ManageItem } from "../types";
 
 export type ManagePageTab = ManageTabId;
 

@@ -6,8 +6,10 @@ import {
   decisionChips,
   defaultSelectable,
   groupByOrigin,
+  isKeepItem,
   isRecommendedCleanup,
   isRecentInstall,
+  isSuggestItem,
   leftoverReasonLine,
   originLabel,
   parseInstallDate,
@@ -151,6 +153,18 @@ describe("defaultSelectable", () => {
     expect(defaultSelectable(item({ user_data: true }))).toBe(false);
     expect(defaultSelectable(item({ risk: "high" }))).toBe(false);
     expect(defaultSelectable(item({ confidence: "suspected" }))).toBe(false);
+  });
+});
+
+describe("isKeepItem / isSuggestItem", () => {
+  it("partitions non-default items into keep vs suggest", () => {
+    expect(isKeepItem(item({ risk: "high" }))).toBe(true);
+    expect(isKeepItem(item({ shared: true }))).toBe(true);
+    expect(isKeepItem(item({ user_data: true }))).toBe(true);
+    expect(isKeepItem(item({ confidence: "suspected" }))).toBe(false);
+    expect(isSuggestItem(item({ confidence: "suspected" }))).toBe(true);
+    expect(isSuggestItem(item({ risk: "high" }))).toBe(false);
+    expect(isSuggestItem(item())).toBe(false);
   });
 });
 

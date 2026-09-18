@@ -97,6 +97,34 @@ pub fn is_allowed_run_key(key_path: &str) -> bool {
     ALLOWED.iter().any(|a| low == *a)
 }
 
+/// Unified write-policy for manage IPC (AR-06 light): critical service + startup-approved keys.
+pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
+    let n = name.trim();
+    if n.is_empty() || n.contains('\\') || n.contains('/') {
+        return Err("bad service name".into());
+    }
+    if is_critical_service(n) {
+        return Err(format!("manage:protected:{n}"));
+    }
+    Ok(())
+}
+
+pub fn allow_manage_reg_write(
+    key_path: &str,
+    require_startup_approved: bool,
+) -> Result<(), String> {
+    if require_startup_approved {
+        if !is_allowed_startup_approved_key(key_path) {
+            return Err(format!("manage:protected_registry:{key_path}"));
+        }
+        return Ok(());
+    }
+    if !is_allowed_run_key(key_path) && !is_allowed_startup_approved_key(key_path) {
+        return Err(format!("manage:protected_registry:{key_path}"));
+    }
+    Ok(())
+}
+
 fn normalize_hklm(key_path: &str) -> String {
     let low = key_path.replace('/', "\\").to_uppercase();
     let low = low
@@ -429,6 +457,23 @@ mod tests {
         assert!(!is_allowed_startup_approved_key(
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe"
         ));
+    }
+
+    #[test]
+    fn manage_policy_helpers() {
+        assert!(allow_manage_service_write("WinDefend").is_err());
+        assert!(allow_manage_service_write("DemoVendorHelper").is_ok());
+        assert!(allow_manage_reg_write(r"HKLM\SOFTWARE\Evil\Config", false).is_err());
+        assert!(allow_manage_reg_write(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup",
+            true
+        )
+        .is_ok());
+        assert!(allow_manage_reg_write(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            false
+        )
+        .is_ok());
     }
 
     #[test]

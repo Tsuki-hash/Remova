@@ -17,10 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Registry value restore**: Run-style `key|Value` backups write `value.reg`; restore prefers single-value import
 - Software list: removed virtualization full-map fallback when the virtual window is empty
 
+### Fixed
+- AI commands surface model/network failures as `ai:*` errors instead of silent empty results
+- Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
+- Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
+
 ### Changed
 - Frontend DRY: `lib/aiNarrative` shared by App + ReportPanel; single `AppDetailPanel` instance for list/scan
 - Stable software-list callbacks (`useCallback`) so `AppRow.memo` is not defeated
 - MorePage badges use i18n (`badgeNew` / `badgeRunning`)
+- `NlIntent` single type (AiNlIntent alias); leftover filter uses `isKeepItem`/`isSuggestItem`
 - Docs index baseline aligned to package version **1.1.0**; CHANGELOG Unreleased de-duplicated against 1.1.0
 - `.gitignore`: track live docs (`ARCHITECTURE` / `USER-GUIDE` / `product/`); keep `docs/reviews`, `docs/compose`, `docs/archive` private
 - ARCHITECTURE command table synced with `generate_handler!` (removed ghost `restore_latest_backup`; added AI/verify/backup session commands)
