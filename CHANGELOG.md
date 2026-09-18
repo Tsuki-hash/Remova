@@ -27,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `batchEngine` unit tests cover ok / F-1 no-leftover uninstall / failed / cancel / invoke error
 - MSI uninstall command only when `msiexec` present or string is a bare `{GUID}` (BE-04)
 - `list_backup_sessions` runs on the blocking pool (no longer sync on the command thread)
+- `backup_item` delegates to production `backup_item_with_map` (AR-08 partial)
+- Backup `path_map.json` write failure counts as backup fail and aborts cleanup (BE-07)
+- Shared `fsutil::fnv1a64`; magic numbers centralized in `constants.rs` (BE-05/06)
+- Cleanup backup stage extracted to `try_backup_phase` (AR-07 partial)
+- Empty leftover paths filtered before full cleanup abort check (AR-10 light)
 
 ### Changed
 - **SoftwarePage** extracted from App (FE-02): software nav UI lives in `components/SoftwarePage.tsx`; App is shell + state orchestration

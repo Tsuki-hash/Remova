@@ -130,86 +130,27 @@ fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
 }
 
 pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
-    match item.kind {
-        ItemKind::Path => backup_path_entry(item, session),
-        ItemKind::Registry => {
-            // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
-            let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
-                parent
-            } else {
-                item.path.as_str()
-            };
-            let dest = session
-                .join("registry")
-                .join(safe_name(&item.path))
-                .join("export.reg");
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let (alias, rest) = export_path
-                .split_once('\\')
-                .ok_or_else(|| "bad key".to_string())?;
-            let hive = match alias.to_uppercase().as_str() {
-                "HKLM64" | "HKLM32" | "HKLM" => "HKLM",
-                "HKCU" => "HKCU",
-                _ => return Err(format!("unsupported hive {alias}")),
-            };
-            let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-            cmd.args([
-                "export",
-                &format!("{hive}\\{rest}"),
-                &dest.to_string_lossy(),
-                "/y",
-                reg_view_flag(export_path),
-            ]);
-            crate::regops::hide_console(&mut cmd);
-            let out = cmd.output().map_err(|e| e.to_string())?;
-            if !out.status.success() {
-                return Err(format!("reg export failed for {}", item.path));
-            }
-            // Record the specific value name for Run items so restore knows what was targeted.
-            if let Some((key, vname)) = item.path.split_once('|') {
-                let dir = session.join("registry").join(safe_name(&item.path));
-                let _ = fs::write(dir.join("value.txt"), &item.path);
-                let _ = crate::regops::export_reg_value(key, vname, &dir.join("value.reg"));
-            }
-            Ok(())
-        }
-        _ => {
-            let src = Path::new(&item.path);
-            if !src.exists() {
-                return Ok(());
-            }
-            let digest = format!("{:x}", fnv1a64(&item.path));
-            let name = src
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "item".into());
-            let rel = format!("{digest}_{name}");
-            let dest = session.join("files").join(&rel);
-            if src.is_dir() {
-                copy_dir(src, &dest).map_err(|e| e.to_string())?;
-            } else {
-                if let Some(p) = dest.parent() {
-                    fs::create_dir_all(p).map_err(|e| e.to_string())?;
-                }
-                fs::copy(src, &dest).map_err(|e| e.to_string())?;
-            }
-            // path map
-            let map_path = session.join("files").join("path_map.json");
-            let mut map: std::collections::BTreeMap<String, String> = fs::read_to_string(&map_path)
+    let mut map = std::collections::BTreeMap::new();
+    backup_item_with_map(item, session, &mut map)?;
+    // Persist map for file/dir items when called as a one-shot API.
+    if !map.is_empty() {
+        let map_path = session.join("files").join("path_map.json");
+        let mut existing: std::collections::BTreeMap<String, String> =
+            fs::read_to_string(&map_path)
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
-            map.insert(rel, item.path.clone());
-            fs::write(
-                &map_path,
-                serde_json::to_string_pretty(&map).unwrap_or_default(),
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(())
+        existing.extend(map);
+        if let Some(p) = map_path.parent() {
+            let _ = fs::create_dir_all(p);
         }
+        fs::write(
+            &map_path,
+            serde_json::to_string_pretty(&existing).unwrap_or_default(),
+        )
+        .map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
 
 pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<String>) {
@@ -232,10 +173,14 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
         }
     }
     if !path_map.is_empty() {
-        let _ = fs::write(
+        // BE-07: path_map write failure must abort cleanup (restore depends on it).
+        if let Err(e) = fs::write(
             &map_path,
             serde_json::to_string_pretty(&path_map).unwrap_or_default(),
-        );
+        ) {
+            fail += 1;
+            errors.push(format!("path_map write failed: {e}"));
+        }
     }
     (ok, fail, errors)
 }
@@ -297,7 +242,7 @@ fn backup_item_with_map(
             if !src.exists() {
                 return Ok(());
             }
-            let digest = format!("{:x}", fnv1a64(&item.path));
+            let digest = format!("{:x}", crate::fsutil::fnv1a64(&item.path));
             let name = src
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -316,16 +261,6 @@ fn backup_item_with_map(
             Ok(())
         }
     }
-}
-
-fn fnv1a64(s: &str) -> u64 {
-    // FNV-1a 64 — unique enough for backup names (not crypto)
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {

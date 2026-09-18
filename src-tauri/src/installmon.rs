@@ -23,18 +23,27 @@ fn monitor_state_path() -> PathBuf {
 }
 
 fn roots() -> Vec<PathBuf> {
+    // Tighter than full Program Files: common install roots only (A-8).
     let mut v = vec![];
-    for e in [
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "LOCALAPPDATA",
-        "PROGRAMDATA",
-    ] {
+    for e in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
         if let Ok(p) = std::env::var(e) {
             v.push(PathBuf::from(p));
         }
     }
     v
+}
+
+fn is_noise_path(p: &str) -> bool {
+    let low = p.to_lowercase().replace('/', "\\");
+    low.contains("\\temp\\")
+        || low.contains("\\tmp\\")
+        || low.contains("\\cache\\")
+        || low.contains("\\caches\\")
+        || low.ends_with(".log")
+        || low.ends_with(".tmp")
+        || low.contains("\\logs\\")
+        || low.contains("\\crashdumps\\")
+        || low.contains("\\telemetry\\")
 }
 
 fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
@@ -60,7 +69,7 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
 
 fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
-    let mut budget = 80_000usize;
+    let mut budget = crate::constants::INSTALLMON_PATH_BUDGET;
     for r in roots() {
         walk_names(&r, &mut files, &mut budget);
     }
@@ -134,6 +143,7 @@ pub fn end() -> Result<MonitorDiff, String> {
 
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
 /// Paths added during a monitored install are strong evidence → Confirmed/Low.
+/// Noise (cache/temp/log) is demoted to Suspected/Medium so it is not auto-selected as "safe".
 pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupItem> {
     use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
     let mut items = Vec::new();
@@ -144,21 +154,40 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
         } else {
             ItemKind::File
         };
+        let noisy = is_noise_path(f);
         items.push(CleanupItem {
             path: f.clone(),
             kind,
-            score: 70,
-            confidence: Confidence::Confirmed,
-            risk: RiskLevel::Low,
-            reason: "Install monitor: new path".into(),
+            score: if noisy { 40 } else { 70 },
+            confidence: if noisy {
+                Confidence::Suspected
+            } else {
+                Confidence::Confirmed
+            },
+            risk: if noisy {
+                RiskLevel::Medium
+            } else {
+                RiskLevel::Low
+            },
+            reason: if noisy {
+                "Install monitor: cache/log-like path".into()
+            } else {
+                "Install monitor: new path".into()
+            },
             evidence: vec![Evidence {
                 code: "install_monitor".into(),
-                label: "Added during monitored install".into(),
-                weight: 70,
+                label: if noisy {
+                    "Added during install (likely cache/temp)".into()
+                } else {
+                    "Added during monitored install".into()
+                },
+                weight: if noisy { 40 } else { 70 },
                 detail: String::new(),
             }],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         });
     }
     for r in &diff.added_reg_values {
@@ -177,8 +206,12 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
             }],
             shared: false,
             user_data: false,
+            size_kb: None,
+            bucket: None,
         });
     }
+    crate::scanner::fill_item_sizes(&mut items);
+    crate::scanner::fill_item_buckets(&mut items, "");
     items
 }
 

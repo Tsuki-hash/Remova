@@ -378,7 +378,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         }
         items.sort_by_key(|a| a.name.to_lowercase());
         items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
-        items.truncate(500);
+        items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
         items
     }
 }

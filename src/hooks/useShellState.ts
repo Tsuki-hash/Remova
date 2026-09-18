@@ -21,10 +21,7 @@ export function useShellState() {
   const [showDetail, setShowDetail] = useState(true);
 
   const toggleTheme = useCallback(() => {
-    setTheme((th) => {
-      const next: Theme = th === "dark" ? "light" : "dark";
-      return next;
-    });
+    setTheme((th) => (th === "dark" ? "light" : "dark"));
   }, []);
 
   const toggleLang = useCallback(() => {
