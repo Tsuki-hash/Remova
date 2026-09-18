@@ -36,6 +36,7 @@ export function useCleanupHandlers({
   multi,
   flow,
   refreshApps,
+  onAfterCleanup,
   busyRef,
 }: {
   L: Strings;
@@ -50,6 +51,8 @@ export function useCleanupHandlers({
   multi: Set<string>;
   flow: CleanupFlowSetters;
   refreshApps: () => Promise<void>;
+  /** FN-04: auto re-analyze after successful official uninstall + cleanup. */
+  onAfterCleanup?: (app: InstalledApp, report: FullCleanupReport) => void;
   busyRef: { current: boolean };
 }) {
   const {
@@ -158,6 +161,9 @@ export function useCleanupHandlers({
           .verifyLeftovers(items)
           .then((rows) => setVerifyRows(rows))
           .catch(() => {});
+        if (fr.uninstall_ok && !fr.aborted && selected) {
+          onAfterCleanup?.(selected, fr);
+        }
       }
       setResidualFromUninstall(false);
       void refreshApps();
@@ -176,6 +182,7 @@ export function useCleanupHandlers({
     residualFromUninstall,
     useOfficial,
     L,
+    onAfterCleanup,
     setReport,
     setLastReport,
     setAiReportNote,

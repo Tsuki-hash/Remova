@@ -10,6 +10,10 @@ import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
 import { AiSettingsPanel } from "./AiSettingsPanel";
 import type { CloseMode } from "../lib/closeMode";
+import {
+  loadRescanAfterUninstall,
+  saveRescanAfterUninstall,
+} from "../lib/rescanPref";
 import type { FullCleanupReport, InstalledApp } from "../types";
 
 type ToolId =
@@ -235,6 +239,7 @@ export function MorePage({
 }) {
   const L = t();
   const [openTool, setOpenTool] = useState<ToolId | null>(null);
+  const [rescanOn, setRescanOn] = useState(() => loadRescanAfterUninstall());
   const [history, setHistory] = useState<
     {
       app_name: string;
@@ -526,6 +531,30 @@ export function MorePage({
 
       <Section title={L.closeMode} hint={L.closeModeHint}>
         <div style={{ gridColumn: "1 / -1" }}>
+          <label
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              marginBottom: 12,
+              fontSize: 13,
+              color: "var(--fg)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rescanOn}
+              onChange={(e) => {
+                setRescanOn(e.target.checked);
+                saveRescanAfterUninstall(e.target.checked);
+              }}
+            />
+            <span style={{ fontWeight: 600 }}>{L.rescanAfterUninstall}</span>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              {L.rescanAfterUninstallHint}
+            </span>
+          </label>
           <div
             style={{
               display: "inline-flex",
