@@ -1,23 +1,28 @@
-import { useCallback, useReducer } from "react";
+import { useCallback, useMemo, useReducer, useRef } from "react";
 import type { CleanupItem, FullCleanupReport, IgnoreSuggestion } from "../types";
 import type { VerifyRow } from "../lib/api";
 import { initialResidualState, residualReducer } from "./reducers/residual";
 
+export type { VerifyRow };
+
 /** Residual / ignore / monitor state + actions (domain reducer). */
 export function useResidualState() {
   const [state, dispatch] = useReducer(residualReducer, undefined, initialResidualState);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const togglePath = useCallback((path: string) => {
     dispatch({ type: "selection/toggle", path });
   }, []);
+
+  /** True React functional updates (FE-P0a). */
   const setSelectedPaths = useCallback(
     (updater: Set<string> | ((s: Set<string>) => Set<string>)) => {
       if (typeof updater === "function") {
-        // Functional updates are applied via toggle/clear elsewhere; rare path.
-        dispatch({ type: "selection/clear" });
-        return;
+        dispatch({ type: "selection/update", updater });
+      } else {
+        dispatch({ type: "selection/set", paths: updater });
       }
-      dispatch({ type: "selection/set", paths: updater });
     },
     [],
   );
@@ -49,22 +54,8 @@ export function useResidualState() {
     dispatch({ type: "residualFromUninstall/set", value });
   }, []);
 
-  return {
-    selectedPaths: state.selectedPaths,
-    setSelectedPaths,
-    evidence: state.evidence,
-    setEvidence,
-    ignoreSuggestions: state.ignoreSuggestions,
-    setIgnoreSuggestions,
-    lastReport: state.lastReport,
-    setLastReport,
-    monitoring: state.monitoring,
-    setMonitoring,
-    monitorDiff: state.monitorDiff,
-    setMonitorDiff,
-    residualFromUninstall: state.residualFromUninstall,
-    setResidualFromUninstall,
-    actions: {
+  const actions = useMemo(
+    () => ({
       togglePath,
       selectDefaultItems,
       clearSelection,
@@ -76,8 +67,50 @@ export function useResidualState() {
       setMonitoring,
       setMonitorDiff,
       setResidualFromUninstall,
-    },
-  };
-}
+    }),
+    [
+      togglePath,
+      selectDefaultItems,
+      clearSelection,
+      clearIgnoreSuggestions,
+      clearResidualScan,
+      setEvidence,
+      setIgnoreSuggestions,
+      setLastReport,
+      setMonitoring,
+      setMonitorDiff,
+      setResidualFromUninstall,
+    ],
+  );
 
-export type { VerifyRow };
+  return useMemo(
+    () => ({
+      selectedPaths: state.selectedPaths,
+      setSelectedPaths,
+      evidence: state.evidence,
+      setEvidence,
+      ignoreSuggestions: state.ignoreSuggestions,
+      setIgnoreSuggestions,
+      lastReport: state.lastReport,
+      setLastReport,
+      monitoring: state.monitoring,
+      setMonitoring,
+      monitorDiff: state.monitorDiff,
+      setMonitorDiff,
+      residualFromUninstall: state.residualFromUninstall,
+      setResidualFromUninstall,
+      actions,
+    }),
+    [
+      state,
+      setSelectedPaths,
+      setEvidence,
+      setIgnoreSuggestions,
+      setLastReport,
+      setMonitoring,
+      setMonitorDiff,
+      setResidualFromUninstall,
+      actions,
+    ],
+  );
+}

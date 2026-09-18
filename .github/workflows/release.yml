@@ -78,5 +78,4 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             Remova-portable-win-x64.zip
-          body_path: CHANGELOG.md
           generate_release_notes: true

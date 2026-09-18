@@ -32,8 +32,8 @@ export type BackupSession = { name: string; size_kb: number; created_at: string 
 export const api = {
   listApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   analyze: (app: InstalledApp) => invoke<ScanResult>("analyze_associations", { app }),
-  dryRun: (appName: string, items: CleanupItem[]) =>
-    invoke<CleanupReport>("run_cleanup_dry_run", { appName, items }),
+  dryRun: (app: InstalledApp, items: CleanupItem[]) =>
+    invoke<CleanupReport>("run_cleanup_dry_run", { app, items }),
   fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions) =>
     invoke<FullCleanupReport>("run_full_cleanup", { app, items, options }),
   officialUninstall: (app: InstalledApp) =>

@@ -127,7 +127,11 @@ export function MorePage({
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
       icon: monitoring ? "■" : "●",
-      action: onToggleMonitor,
+      action: () => {
+        void onToggleMonitor();
+        // FE-P0b: open monitor panel after stop when a diff exists (parent updates props async).
+        tools.setOpenTool("monitor");
+      },
       accent: monitoring,
       badge: monitoring ? L.badgeRunning : undefined,
     },
@@ -319,7 +323,7 @@ export function MorePage({
           onClose={rest.closeRestore}
         />
       )}
-      {openTool === "monitor" && monitorDiff && (
+      {monitorDiff && (
         <MonitorPanel
           diff={monitorDiff}
           onToCleanup={onMonitorToCleanup}

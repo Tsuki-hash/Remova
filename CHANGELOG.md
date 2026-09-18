@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **P0**: functional React updaters for `setMulti` / `setSelectedPaths` (residual checkbox & batch multi)
+- **P0**: More-page install-monitor diff panel always visible when `monitorDiff` exists
+- **P0**: orphan cleanup AR-10 — `CleanupSource`/orphan flow uses `is_safe_fs` only (no fake slug gate)
+- dry-run shares delete gates: user_data / shared / ignore / AR-10 association
+- PATH read failure no longer falls back to process `PATH`
+- value.reg export failure aborts backup (no silent whole-key restore)
+- manage `set_task_enabled` rejects `\Microsoft\Windows\*` system tasks
+- executor skips `shared` leftovers and ignore-list paths at delete time
+- cleanup + PATH scrub process mutex; appCore reducer single-sourced
+- FN-04 rescan wired after cleanup; single ErrorBanner on software page
+- public docs index no longer links private `docs/reviews` paths
+
+### Changed
+- ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count as dynamic list
+- Release notes no longer dump the entire CHANGELOG body
+- Domain reducers / MorePage hooks / i18n split / SoftwarePage (see prior Unreleased items)
+
+### Fixed
 - **PATH leftover Safety Vault**: production backup now snapshots PATH segments to `path.json` (no silent no-op / accidental directory tree copy)
 - PATH restore merges missing segments back into User/Machine PATH (does not overwrite the whole environment)
 - **Manage IPC safety**: PackagedStartup writes restricted to StartupApproved keys; Run locations must map to known Run/RunOnce keys

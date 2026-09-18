@@ -20,6 +20,7 @@ export type ResidualAction =
   | { type: "selection/toggle"; path: string }
   | { type: "selection/set"; paths: Set<string> }
   | { type: "selection/defaultItems"; items: CleanupItem[] }
+  | { type: "selection/update"; updater: (s: Set<string>) => Set<string> }
   | { type: "selection/clear" }
   | { type: "evidence/set"; value: string | null }
   | { type: "ignore/set"; value: IgnoreSuggestion[] }
@@ -59,6 +60,8 @@ export function residualReducer(state: ResidualState, action: ResidualAction): R
           action.items.filter(defaultSelectable).map((it) => it.path),
         ),
       };
+    case "selection/update":
+      return { ...state, selectedPaths: action.updater(state.selectedPaths) };
     case "selection/clear":
       return { ...state, selectedPaths: new Set() };
     case "evidence/set":

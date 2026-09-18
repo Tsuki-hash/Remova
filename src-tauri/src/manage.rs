@@ -550,6 +550,11 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
         return Err("empty task".into());
     }
+    // S-02: mirror list-side filter — never disable Microsoft\Windows system tasks.
+    let low = task_name.replace('/', "\\").to_lowercase();
+    if low.starts_with("\\microsoft\\windows\\") || low.starts_with("microsoft\\windows\\") {
+        return Err(crate::error::manage_err("protected_task", task_name).to_ipc());
+    }
     #[cfg(not(windows))]
     {
         let _ = (task_name, enabled);
@@ -615,6 +620,14 @@ mod tests {
         assert!(super::set_startup_enabled(loc, false).is_err());
         let loc2 = r"HKLM\SOFTWARE\EvilCorp\Config::payload";
         assert!(super::set_startup_enabled(loc2, true).is_err());
+    }
+
+    #[test]
+    fn system_scheduled_task_write_rejected() {
+        assert!(
+            super::set_task_enabled(r"\Microsoft\Windows\Defrag\ScheduledDefrag", false).is_err()
+        );
+        assert!(super::set_task_enabled("Microsoft\\Windows\\Update", true).is_err());
     }
 
     #[test]
