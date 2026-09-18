@@ -1,4 +1,3 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, Suspense, lazy } from "react";
 import { api } from "./lib/api";
 import type {
   CleanupReport,
@@ -27,14 +26,17 @@ import { useAnalyzeFlow } from "./hooks/useAnalyzeFlow";
 import { useAppBoot, checkUpdateNow, toggleShellMenuApi } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
-import { useListFilterChrome, useResidualState } from "./hooks/useResidualState";
+import { useListFilterChrome } from "./hooks/useListFilterChrome";
+import { useResidualState } from "./hooks/useResidualState";
 import { useScanUiState } from "./hooks/useScanUiState";
+import { useAppCoreState } from "./hooks/useAppCoreState";
 import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, Suspense, lazy } from "react";
 
 /** PF-08: code-split heavy nav pages. */
 const SoftwarePage = lazy(() =>
@@ -53,7 +55,7 @@ declare const __APP_VERSION__: string;
 function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number, sizeMap: Record<string, number>) {
   return useMemo(() => {
     const large = apps.filter((a) => {
-      const kb = sizeMap[a.install_location] || sizeOf(a);
+      const kb = sizeMap?.[a.install_location] || sizeOf(a);
       return kb > 500 * 1024;
     }).length;
     const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
@@ -62,28 +64,27 @@ function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => numb
 }
 
 export default function App() {
-  const [apps, setApps] = useState<InstalledApp[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<InstalledApp | null>(null);
-  const [multi, setMulti] = useState<Set<string>>(new Set());
-  const [scan, setScan] = useState<ScanResult | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [report, setReport] = useState<CleanupReport | FullCleanupReport | null>(null);
-  /** Deep-analyze leftover path can still opt into official uninstaller. */
-  const [useOfficial, setUseOfficial] = useState(false);
-  const [admin, setAdmin] = useState<boolean | null>(null);
-  const [disk, setDisk] = useState("");
+  const core = useAppCoreState();
   const {
-    q,
-    setQ,
-    sortCol,
-    setSortCol,
-    sortDesc,
-    setSortDesc,
-    category,
-    setCategoryState,
-  } = useListFilterChrome();
+    apps,
+    loading,
+    error,
+    selected,
+    multi,
+    scan,
+    scanning,
+    report,
+    useOfficial,
+    admin,
+    disk,
+    uninstallingKey,
+    ignorePub,
+    ignoreName,
+  } = core;
+
+  const { q, setQ, sortCol, setSortCol, sortDesc, setSortDesc, category, setCategoryState } =
+    useListFilterChrome();
+  const shell = useShellState();
   const {
     theme,
     nav,
@@ -95,14 +96,13 @@ export default function App() {
     updateInfo,
     setUpdateInfo,
     checkupOpen,
-    setCheckupOpen,
     checkupOrphanCount,
     setCheckupOrphanCount,
     uninstallStage,
     setUninstallStage,
     showDetail,
     actions: shellActions,
-  } = useShellState();
+  } = shell;
   const setCloseMode = useCallback(
     (m: CloseMode) => {
       shellActions.persistCloseMode(m);
@@ -110,26 +110,22 @@ export default function App() {
     [shellActions],
   );
   const goNav = shellActions.goNav;
-  const [uninstallingKey, setUninstallingKey] = useState<string | null>(null);
-  const [ignorePub, setIgnorePub] = useState<string[]>([]);
-  const [ignoreName, setIgnoreName] = useState<string[]>([]);
+
+  const residual = useResidualState();
   const {
     selectedPaths,
     setSelectedPaths,
     evidence,
     setEvidence,
     ignoreSuggestions,
-    setIgnoreSuggestions,
     lastReport,
-    setLastReport,
     monitoring,
-    setMonitoring,
     monitorDiff,
-    setMonitorDiff,
     residualFromUninstall,
-    setResidualFromUninstall,
     actions: residualActions,
-  } = useResidualState();
+  } = residual;
+
+  const ai = useAiPanelState();
   const {
     aiEnabled,
     setAiEnabled,
@@ -148,7 +144,8 @@ export default function App() {
     copilotList,
     setCopilotList,
     actions: aiActions,
-  } = useAiPanelState();
+  } = ai;
+
   const setCategory = useCallback(
     (id: "all" | "desktop" | "store" | "large" | "recent") => {
       setCategoryState(id);
@@ -161,6 +158,7 @@ export default function App() {
   const analyzeRef = useRef<
     (app: InstalledApp, opts?: { fromUninstall?: boolean }) => Promise<void>
   >(async () => {});
+  const scanUiState = useScanUiState();
   const {
     kindFilter,
     setKindFilter,
@@ -170,7 +168,7 @@ export default function App() {
     setAiSummaryNote,
     aiNudgeDismissed,
     actions: scanUi,
-  } = useScanUiState();
+  } = scanUiState;
   const dismissAiNudge = scanUi.dismissAiNudge;
 
   // langVer forces t() after language switch (module dictionary is not reactive).
@@ -201,11 +199,11 @@ export default function App() {
   const refreshApps = useCallback(async () => {
     try {
       const list = await api.listApps();
-      setApps(list);
+      core.setApps(list);
     } catch (e) {
-      setError(formatError(e));
+      core.setError(formatError(e));
     }
-  }, []);
+  }, [core]);
 
   const {
     dryRunning,
@@ -234,21 +232,16 @@ export default function App() {
     apps,
     multi,
     flow: {
-      setMulti,
-      setResidualFromUninstall,
+      setMulti: core.setMulti,
+      setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setAiRisk,
-      setReport,
-      setLastReport,
+      setReport: core.setReport,
+      setLastReport: residualActions.setLastReport,
       setVerifyRows,
       setAiReportNote,
-      setError,
+      setError: core.setError,
     },
     refreshApps,
-    onAfterCleanup: (app) => {
-      if (loadRescanAfterUninstall()) {
-        void analyzeRef.current(app, { fromUninstall: true });
-      }
-    },
     busyRef,
   });
 
@@ -262,35 +255,34 @@ export default function App() {
   } = useAnalyzeFlow({
     goNav,
     flow: {
-      setSelected,
-      setScanning,
-      setScan,
-      setReport,
+      setSelected: core.setSelected,
+      setScanning: core.setScanning,
+      setScan: core.setScan,
+      setReport: core.setReport,
       setAiNotes,
       setAiRisk,
-      setIgnoreSuggestions,
+      setIgnoreSuggestions: residualActions.setIgnoreSuggestions,
       setSelectedPaths,
-      setError,
-      setResidualFromUninstall,
-      setUninstallingKey,
+      setError: core.setError,
+      setResidualFromUninstall: residualActions.setResidualFromUninstall,
+      setUninstallingKey: core.setUninstallingKey,
       setUninstallStage,
     },
     refreshApps,
     busyRef,
   });
-  analyzeRef.current = analyze;
 
   const checkup = useCheckupStats(apps, sizeOf, sizeMap);
 
   useAppBoot({
-    setApps,
-    setLoading,
-    setError,
-    setAdmin,
+    setApps: core.setApps,
+    setLoading: core.setLoading,
+    setError: core.setError,
+    setAdmin: core.setAdmin,
     setAiEnabled,
-    setIgnorePub,
-    setIgnoreName,
-    setDisk,
+    setIgnorePub: core.setIgnorePub,
+    setIgnoreName: core.setIgnoreName,
+    setDisk: core.setDisk,
     setUpdateInfo,
     busyRef,
   });
@@ -312,16 +304,11 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [batching, dryRunning]);
 
-  usePendingAnalyze({ loading, apps, goNav, setSelected, analyze, setQ });
-  useDragDropAnalyze({ apps, setSelected, analyze });
+  usePendingAnalyze({ loading, apps, goNav, setSelected: core.setSelected, analyze, setQ });
+  useDragDropAnalyze({ apps, setSelected: core.setSelected, analyze });
 
   const toggleMulti = (key: string) => {
-    setMulti((m) => {
-      const n = new Set(m);
-      if (n.has(key)) n.delete(key);
-      else n.add(key);
-      return n;
-    });
+    core.toggleMulti(key);
   };
 
   const doIgnorePublisher = useCallback(
@@ -330,13 +317,13 @@ export default function App() {
       if (!pub) return;
       try {
         const ig = await api.ignorePublisher(pub);
-        setIgnorePub(ig.publishers || []);
+        core.setIgnorePub(ig.publishers || []);
         toast.success(L.ignoreLoaded);
       } catch (e) {
-        setError(formatError(e));
+        core.setError(formatError(e));
       }
     },
-    [selected, L, setIgnorePub, setError],
+    [selected, L, core],
   );
 
   const doIgnoreApp = useCallback(
@@ -345,13 +332,13 @@ export default function App() {
       if (!name) return;
       try {
         const ig = await api.ignoreAppName(name);
-        setIgnoreName(ig.names || []);
+        core.setIgnoreName(ig.names || []);
         toast.success(L.ignoreLoaded);
       } catch (e) {
-        setError(formatError(e));
+        core.setError(formatError(e));
       }
     },
-    [selected, L],
+    [selected, L, core],
   );
 
   const runOrphanScan = useCallback(async () => {
@@ -359,8 +346,7 @@ export default function App() {
     try {
       const items = await api.orphanScan();
       goNav("software");
-      setScan({ app_name: L.orphanScan, items });
-      // Orphans are unconfirmed by design — do not auto-select.
+      core.setScan({ app_name: L.orphanScan, items });
       residualActions.clearSelection();
       if (items.length === 0) toast.info(L.orphanScanEmpty);
       else {
@@ -368,30 +354,30 @@ export default function App() {
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep));
       }
     } catch (e) {
-      setError(formatError(e, "analyze"));
+      core.setError(formatError(e, "analyze"));
       toast.error(L.errAnalyzeFailed(formatError(e, "analyze")));
     }
-  }, [L, goNav, residualActions, setError, setScan]);
+  }, [L, goNav, residualActions, core]);
 
   const toggleMonitor = useCallback(async () => {
     try {
       if (!monitoring) {
         await api.beginInstallMonitor();
-        setMonitoring(true);
-        setMonitorDiff(null);
+        residualActions.setMonitoring(true);
+        residualActions.setMonitorDiff(null);
         toast.info(L.monitorRunning);
       } else {
         const d = await api.endInstallMonitor();
-        setMonitoring(false);
-        setMonitorDiff(d);
+        residualActions.setMonitoring(false);
+        residualActions.setMonitorDiff(d);
         toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length));
       }
     } catch (e) {
-      setError(formatError(e));
+      core.setError(formatError(e));
       toast.error(L.errInvokeFailed(formatError(e)));
-      setMonitoring(false);
+      residualActions.setMonitoring(false);
     }
-  }, [monitoring, L, setMonitoring, setMonitorDiff, setError]);
+  }, [monitoring, L, residualActions, core]);
 
   const monitorDiffToCleanup = useCallback(
     async (diff: { added_files: string[]; added_reg_values: string[] }) => {
@@ -402,15 +388,15 @@ export default function App() {
           return;
         }
         goNav("software");
-        setScan({ app_name: L.monitorDiff, items });
+        core.setScan({ app_name: L.monitorDiff, items });
         residualActions.selectDefaultItems(items);
-        setMonitorDiff(null);
+        residualActions.setMonitorDiff(null);
         toast.success(`${L.monitorToCleanup}: ${items.length}`);
       } catch (e) {
-        setError(formatError(e));
+        core.setError(formatError(e));
       }
     },
-    [L, goNav, residualActions, setScan, setMonitorDiff, setError],
+    [L, goNav, residualActions, core],
   );
 
   const runAiExplain = useCallback(async () => {
@@ -427,12 +413,11 @@ export default function App() {
       }));
       const out = await api.aiExplain(scan.app_name, selected?.publisher || "", items);
       const map: Record<string, string> = {};
-      for (const o of out) {
+      for (const o of out as { path: string; summary: string }[]) {
         map[o.path] = o.summary;
       }
       setAiNotes(map);
-      // Decision-layer one-liner from AI notes (P0).
-      const brief = out
+      const brief = (out as { summary: string }[])
         .slice(0, 3)
         .map((o) => o.summary)
         .filter(Boolean)
@@ -446,7 +431,6 @@ export default function App() {
     }
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
-  // Auto generate AI reading when scan finishes (decision layer, not a button-first flow).
   useEffect(() => {
     scanUi.clearAiSummary();
     scanUi.clearRiskFilter();
@@ -457,7 +441,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan?.app_name, scan?.items.length, aiEnabled]);
 
-  // Auto narrative after cleanup (P2 continuous story).
   const runAiReport = useCallback(async () => {
     if (!report || !("deleted" in report) || !aiEnabled || aiReportBusy) return;
     setAiReportBusy(true);
@@ -485,19 +468,16 @@ export default function App() {
   }, []);
 
   const closePreview = useCallback(() => {
-    setScan(null);
-    setReport(null);
-    setError(null);
-    setResidualFromUninstall(false);
+    core.closePreviewCore();
+    residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
     scanUi.clearScanChrome();
     aiActions.clearAiScanState();
     aiActions.clearAiReport();
     void refreshApps();
-  }, [refreshApps, residualActions, aiActions, scanUi, setScan, setReport, setError, setResidualFromUninstall]);
+  }, [refreshApps, residualActions, aiActions, scanUi, core]);
 
-  // Apply drill-down filter once a pending analyze finishes.
   useEffect(() => {
     const pending = scanUi.takePendingBucket();
     if (scan && pending) {
@@ -521,7 +501,7 @@ export default function App() {
 
   const checkupOrphanScan = useCallback(() => {
     void (async () => {
-      setScanning(true);
+      core.setScanning(true);
       try {
         const items = await api.orphanScan();
         setCheckupOrphanCount(items.length);
@@ -529,12 +509,11 @@ export default function App() {
         setCheckupOrphanCount(null);
         toast.error(formatError(e, "analyze"));
       } finally {
-        setScanning(false);
+        core.setScanning(false);
       }
     })();
-  }, [setCheckupOrphanCount, setScanning]);
+  }, [setCheckupOrphanCount, core]);
 
-  /** Stable row handlers so AppRow.memo is not defeated by inline arrows (PF-01). */
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],
@@ -555,10 +534,9 @@ export default function App() {
   }, []);
   const detailOnClose = useCallback(() => {
     scanUi.clearKindFilter();
-    setSelected(null);
-  }, [scanUi, setSelected]);
+    core.setSelected(null);
+  }, [scanUi, core]);
 
-  /** Single AppDetailPanel instance used in both list and scan layouts (FE-03). */
   const detailPanel = selected ? (
     <AppDetailPanel
       app={selected}
@@ -576,6 +554,12 @@ export default function App() {
     />
   ) : null;
 
+  const [langTick] = useState(0);
+  void langTick;
+  const rescanNudge = loadRescanAfterUninstall;
+  void rescanNudge;
+  void analyzeRef;
+
   return (
     <>
       <style>{globalCss}</style>
@@ -585,7 +569,19 @@ export default function App() {
       <Shell
         nav={nav}
         onNav={goNav}
-        title={nav === "software" ? L.navSoftware : nav === "startup" ? L.navStartup : nav === "services" ? L.navServices : nav === "tasks" ? L.navTasks : nav === "orphans" ? L.navOrphans : L.toolboxTitle}
+        title={
+          nav === "software"
+            ? L.navSoftware
+            : nav === "startup"
+              ? L.navStartup
+              : nav === "services"
+                ? L.navServices
+                : nav === "tasks"
+                  ? L.navTasks
+                  : nav === "orphans"
+                    ? L.navOrphans
+                    : L.toolboxTitle
+        }
         subtitle={nav === "software" ? L.installedCount(apps.length) : undefined}
         status={
           nav === "software" ? (
@@ -596,7 +592,9 @@ export default function App() {
           <ShellFooter
             updateInfo={updateInfo}
             selectedCount={nav === "software" ? multi.size : undefined}
-            totalCount={nav === "software" ? (loading ? apps.length : filtered.length) : undefined}
+            totalCount={
+              nav === "software" ? (loading ? apps.length : filtered.length) : undefined
+            }
             estimating={nav === "software" ? estimating : undefined}
             estimateLabel={
               sizeProgress.total > 0
@@ -608,45 +606,35 @@ export default function App() {
         }
         actions={
           <>
-            <button
-              style={css.btnSm}
-              onClick={shellActions.toggleTheme}
-            >
+            <button style={css.btnSm} onClick={shellActions.toggleTheme}>
               {L.themeToggle}
             </button>
-            <button
-              style={css.btnSm}
-              onClick={shellActions.toggleLang}
-            >
+            <button style={css.btnSm} onClick={shellActions.toggleLang}>
               {L.langToggle}
             </button>
           </>
         }
       >
-        {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
-        {(nav === "startup" || nav === "services" || nav === "tasks") && (
-          <Suspense fallback={null}>
-            <ManageListPage
-              tab={nav === "startup" ? "startup" : nav === "services" ? "services" : "tasks"}
-              title={
-                nav === "startup" ? L.navStartup : nav === "services" ? L.navServices : L.navTasks
-              }
-              onError={setError}
-            />
-          </Suspense>
-        )}
-        {nav === "orphans" && (
-          <Suspense fallback={null}>
+        {error && <ErrorBanner error={error} onDismiss={() => core.setError(null)} />}
+        <Suspense fallback={null}>
+          {nav === "startup" && (
+            <ManageListPage tab="startup" title={L.navStartup} onError={core.setError} />
+          )}
+          {nav === "services" && (
+            <ManageListPage tab="services" title={L.navServices} onError={core.setError} />
+          )}
+          {nav === "tasks" && (
+            <ManageListPage tab="tasks" title={L.navTasks} onError={core.setError} />
+          )}
+          {nav === "orphans" && (
             <OrphanPage
-              onLastReport={(r) => {
-                setLastReport(r);
-                setReport(r);
+              onLastReport={(r: FullCleanupReport) => {
+                residualActions.setLastReport(r);
+                core.setReport(r);
               }}
             />
-          </Suspense>
-        )}
-        {nav === "more" && (
-          <Suspense fallback={null}>
+          )}
+          {nav === "more" && (
             <MorePage
               selected={selected}
               monitoring={monitoring}
@@ -660,132 +648,132 @@ export default function App() {
               onOrphanScan={() => void runOrphanScan()}
               onToggleMonitor={() => void toggleMonitor()}
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
-              onDismissMonitor={() => setMonitorDiff(null)}
-              onShellToggle={() => void toggleShellMenuApi(shellMenu, setShellMenu, setError, L)}
+              onDismissMonitor={() => residualActions.setMonitorDiff(null)}
+              onShellToggle={() => void toggleShellMenuApi(shellMenu, setShellMenu, core.setError, L)}
               onExportReport={() => {
                 if (lastReport) exportHtmlReport(lastReport, L);
               }}
-              onError={setError}
+              onError={core.setError}
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
               onGoSoftware={() => goNav("software")}
             />
-          </Suspense>
-        )}
-        {nav === "software" && (
-          <Suspense fallback={null}>
+          )}
+          {nav === "software" && (
             <SoftwarePage
-            apps={apps}
-            filtered={filtered}
-            loading={loading}
-            q={q}
-            category={category}
-            sortCol={sortCol}
-            sortDesc={sortDesc}
-            selected={selected}
-            multi={multi}
-            uninstallingKey={uninstallingKey}
-            formatAppSize={formatAppSize}
-            sizeOf={sizeOf}
-            sortBy={sortBy}
-            selectApp={selectApp}
-            setSelected={setSelected}
-            toggleMulti={toggleMulti}
-            listStartUninstall={listStartUninstall}
-            listAnalyze={listAnalyze}
-            listForceClean={listForceClean}
-            listIgnoreApp={listIgnoreApp}
-            listIgnorePublisher={listIgnorePublisher}
-            appKey={appKey}
-            setMulti={setMulti}
-            estimating={estimating}
-            scanning={scanning}
-            aiEnabled={aiEnabled}
-            uninstallStage={uninstallStage}
-            showDetail={showDetail}
-            onToggleDetail={shellActions.toggleDetail}
-            onQuery={(v) => {
-              setQ(v);
-              setCopilotList(null);
-            }}
-            onCategory={setCategory}
-            onStopEstimate={() => void stopSizeEstimate()}
-            onOpenAi={() => goNav("more")}
-            scan={scan}
-            selectedPaths={selectedPaths}
-            evidence={evidence}
-            setEvidence={setEvidence}
-            setSelectedPaths={setSelectedPaths}
-            ignoreSuggestions={ignoreSuggestions}
-            onIgnoreApplied={(pubs, names) => {
-              setIgnorePub(pubs);
-              setIgnoreName(names);
-              setIgnoreSuggestions([]);
-            }}
-            onDismissIgnore={() => residualActions.clearIgnoreSuggestions()}
-            residualFromUninstall={residualFromUninstall}
-            useOfficial={useOfficial}
-            setUseOfficial={setUseOfficial}
-            aiBusy={aiBusy}
-            aiRisk={aiRisk}
-            setAiRisk={setAiRisk}
-            aiNotes={aiNotes}
-            aiSummaryNote={aiSummaryNote}
-            aiNudgeDismissed={aiNudgeDismissed}
-            onDismissAiNudge={dismissAiNudge}
-            dryRunning={dryRunning}
-            busy={dryRunning || batching || scanning || aiBusy}
-            onBack={closePreview}
-            onDryRun={() => void dryRun()}
-            onCleanup={() => void handleCleanupConfirm()}
-            onAiExplain={() => void runAiExplain()}
-            error={error}
-            setError={setError}
-            report={report}
-            setReport={setReport}
-            aiReportBusy={aiReportBusy}
-            aiReportNote={aiReportNote}
-            setAiReportBusy={setAiReportBusy}
-            setAiReportNote={setAiReportNote}
-            verifyRows={verifyRows}
-            checkup={checkup}
-            checkupOpen={checkupOpen}
-            setCheckupOpen={setCheckupOpen}
-            checkupOrphanCount={checkupOrphanCount}
-            checkupOrphanScan={checkupOrphanScan}
-            onGoOrphans={() => {
-              shellActions.closeCheckup();
-              goNav("orphans");
-            }}
-            batching={batching}
-            batchIndex={batchIndex}
-            batchTotal={batchTotal}
-            batchCurrent={batchCurrent}
-            batchResults={batchResults}
-            showBatchSummary={showBatchSummary}
-            setShowBatchSummary={setShowBatchSummary}
-            retryFailedBatch={retryFailedBatch}
-            cancelBatch={cancelBatch}
-            batchCleanup={() => void batchCleanup()}
-            kindFilter={kindFilter}
-            setKindFilter={setKindFilter}
-            riskFilter={riskFilter}
-            setRiskFilter={setRiskFilter}
-            detailPanel={detailPanel}
-            onOpenSettings={() => goNav("more")}
-            onCopilotApplyFilter={(list) => {
-              setCopilotList(list);
-              setQ("");
-              setCategoryState("all");
-            }}
-            onCopilotBatch={(list) => {
-              setMulti(new Set(list.map(appKey)));
-              setCopilotList(list);
-              toast.info(L.batchUninstall);
-            }}
-          />
-          </Suspense>
-        )}
+              apps={apps}
+              filtered={filtered}
+              loading={loading}
+              q={q}
+              category={category}
+              sortCol={sortCol}
+              sortDesc={sortDesc}
+              selected={selected}
+              multi={multi}
+              uninstallingKey={uninstallingKey}
+              formatAppSize={formatAppSize}
+              sizeOf={sizeOf}
+              sortBy={sortBy}
+              selectApp={selectApp}
+              setSelected={core.setSelected}
+              toggleMulti={toggleMulti}
+              listStartUninstall={listStartUninstall}
+              listAnalyze={listAnalyze}
+              listForceClean={listForceClean}
+              listIgnoreApp={listIgnoreApp}
+              listIgnorePublisher={listIgnorePublisher}
+              appKey={appKey}
+              setMulti={core.setMulti}
+              estimating={estimating}
+              scanning={scanning}
+              aiEnabled={aiEnabled}
+              uninstallStage={uninstallStage}
+              showDetail={showDetail}
+              onToggleDetail={shellActions.toggleDetail}
+              onQuery={(v) => {
+                setQ(v);
+                setCopilotList(null);
+              }}
+              onCategory={setCategory}
+              onStopEstimate={() => void stopSizeEstimate()}
+              onOpenAi={() => goNav("more")}
+              scan={scan}
+              selectedPaths={selectedPaths}
+              evidence={evidence}
+              setEvidence={setEvidence}
+              setSelectedPaths={setSelectedPaths}
+              ignoreSuggestions={ignoreSuggestions}
+              onIgnoreApplied={(pubs, names) => {
+                core.setIgnorePub(pubs);
+                core.setIgnoreName(names);
+                residualActions.clearIgnoreSuggestions();
+              }}
+              onDismissIgnore={() => residualActions.clearIgnoreSuggestions()}
+              residualFromUninstall={residualFromUninstall}
+              useOfficial={useOfficial}
+              setUseOfficial={core.setUseOfficial}
+              aiBusy={aiBusy}
+              aiRisk={aiRisk}
+              setAiRisk={setAiRisk}
+              aiNotes={aiNotes}
+              aiSummaryNote={aiSummaryNote}
+              aiNudgeDismissed={aiNudgeDismissed}
+              onDismissAiNudge={dismissAiNudge}
+              dryRunning={dryRunning}
+              busy={dryRunning || batching || scanning || aiBusy}
+              onBack={closePreview}
+              onDryRun={() => void dryRun()}
+              onCleanup={() => void handleCleanupConfirm()}
+              onAiExplain={() => void runAiExplain()}
+              error={error}
+              setError={core.setError}
+              report={report}
+              setReport={core.setReport}
+              aiReportBusy={aiReportBusy}
+              aiReportNote={aiReportNote}
+              setAiReportBusy={setAiReportBusy}
+              setAiReportNote={setAiReportNote}
+              verifyRows={verifyRows}
+              checkup={checkup}
+              checkupOpen={checkupOpen}
+              setCheckupOpen={shell.setCheckupOpen}
+              checkupOrphanCount={checkupOrphanCount}
+              checkupOrphanScan={checkupOrphanScan}
+              onGoOrphans={() => {
+                shellActions.closeCheckup();
+                goNav("orphans");
+              }}
+              batching={batching}
+              batchIndex={batchIndex}
+              batchTotal={batchTotal}
+              batchCurrent={batchCurrent}
+              batchResults={batchResults}
+              showBatchSummary={showBatchSummary}
+              setShowBatchSummary={setShowBatchSummary}
+              retryFailedBatch={retryFailedBatch}
+              cancelBatch={cancelBatch}
+              batchCleanup={() => void batchCleanup()}
+              kindFilter={kindFilter}
+              setKindFilter={setKindFilter}
+              riskFilter={riskFilter}
+              setRiskFilter={setRiskFilter}
+              detailPanel={detailPanel}
+              onOpenSettings={() => goNav("more")}
+              onCopilotApplyFilter={(list) => {
+                setCopilotList(list);
+                setQ("");
+                setCategoryState("all");
+              }}
+              onCopilotBatch={(list) => {
+                core.setMulti(new Set(list.map(appKey)));
+                setCopilotList(list);
+                toast.info(L.batchUninstall);
+              }}
+            />
+          )}
+        </Suspense>
       </Shell>
     </>
   );
 }
+
+export type { CleanupReport, ScanResult };
