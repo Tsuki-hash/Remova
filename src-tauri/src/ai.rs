@@ -267,12 +267,7 @@ pub fn sanitize_path(path: &str, allow_full: bool) -> String {
 }
 
 fn fnv1a64(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
+    crate::fsutil::fnv1a64(s)
 }
 
 struct CacheEntry {
@@ -482,7 +477,10 @@ pub fn explain_items(
     }
 
     // Cap batch size for cost control; remaining items are explained in later calls.
-    let batch: Vec<&ExplainInput> = pending.iter().take(12).collect();
+    let batch: Vec<&ExplainInput> = pending
+        .iter()
+        .take(crate::constants::AI_EXPLAIN_MAX_ITEMS)
+        .collect();
     let payload: Vec<serde_json::Value> = batch
         .iter()
         .map(|it| {

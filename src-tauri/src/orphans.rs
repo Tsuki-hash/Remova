@@ -127,7 +127,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 size_kb: None,
                 bucket: None,
             });
-            if out.len() >= 80 {
+            if out.len() >= crate::constants::ORPHAN_RESULT_CAP {
                 crate::scanner::fill_item_sizes(&mut out);
                 crate::scanner::fill_item_buckets(&mut out, "");
                 return out;

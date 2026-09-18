@@ -31,8 +31,8 @@ import { useAppBoot, checkUpdateNow, toggleShellMenuApi } from "./hooks/useAppBo
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome, useResidualState } from "./hooks/useResidualState";
-import { SoftwarePage } from "./components/SoftwarePage";
 import { ErrorBanner } from "./components/StatusBanners";
+import { SoftwarePage } from "./components/SoftwarePage";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";

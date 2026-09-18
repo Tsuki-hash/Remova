@@ -209,7 +209,8 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
             let rest: Vec<String> = parts.cloned().collect();
             match std::process::Command::new(&exe).args(&rest).spawn() {
                 Ok(mut child) => {
-                    let timeout = std::time::Duration::from_secs(300);
+                    let timeout =
+                        std::time::Duration::from_secs(crate::constants::UNINSTALL_TIMEOUT_SECS);
                     let start = std::time::Instant::now();
                     loop {
                         match child.try_wait() {
@@ -280,6 +281,83 @@ pub struct FullCleanupReport {
     pub item_details: Vec<ItemDetail>,
 }
 
+/// Stage 1: restore point + Safety Vault backup.
+enum BackupOutcome {
+    Ready {
+        backup_dir: String,
+        restore_point_ok: bool,
+        restore_point_msg: String,
+    },
+    Abort(Box<FullCleanupReport>),
+}
+
+fn try_backup_phase(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    opts: &FullCleanupOptions,
+) -> BackupOutcome {
+    if !opts.backup_enabled {
+        return BackupOutcome::Ready {
+            backup_dir: String::new(),
+            restore_point_ok: false,
+            restore_point_msg: String::new(),
+        };
+    }
+    let mut restore_point_ok = false;
+    let mut restore_point_msg = String::new();
+    if opts.restore_point {
+        let (rp_ok, rp_msg) = crate::sysops::create_restore_point(&format!(
+            "Remova: {}",
+            app.name.chars().take(40).collect::<String>()
+        ));
+        restore_point_ok = rp_ok;
+        restore_point_msg = rp_msg;
+    }
+    match crate::backup::create_session(&app.name) {
+        Ok(session) => {
+            let backup_dir = session.to_string_lossy().to_string();
+            let (_ok, fail, errors) = crate::backup::backup_items(items, &session);
+            if fail > 0 {
+                return BackupOutcome::Abort(Box::new(FullCleanupReport {
+                    app_name: app.name.clone(),
+                    dry_run: false,
+                    backup_dir,
+                    uninstall_ok: false,
+                    uninstall_message: format!("backup failed for {fail} item(s); aborted"),
+                    deleted: 0,
+                    failed: 0,
+                    skipped: 0,
+                    aborted: true,
+                    restore_point_ok,
+                    restore_point_msg,
+                    errors,
+                    item_details: vec![],
+                }));
+            }
+            BackupOutcome::Ready {
+                backup_dir,
+                restore_point_ok,
+                restore_point_msg,
+            }
+        }
+        Err(e) => BackupOutcome::Abort(Box::new(FullCleanupReport {
+            app_name: app.name.clone(),
+            dry_run: false,
+            backup_dir: String::new(),
+            uninstall_ok: false,
+            uninstall_message: format!("backup session failed: {e}"),
+            deleted: 0,
+            failed: 0,
+            skipped: 0,
+            aborted: true,
+            restore_point_ok,
+            restore_point_msg,
+            errors: vec![e.to_string()],
+            item_details: vec![],
+        })),
+    }
+}
+
 /// Full cleanup: optional backup → official uninstall → residual delete.
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
@@ -305,7 +383,10 @@ pub fn run_full_cleanup(
         };
     }
 
-    let selected: Vec<&CleanupItem> = items.iter().collect();
+    let selected: Vec<&CleanupItem> = items
+        .iter()
+        .filter(|it| !it.path.trim().is_empty())
+        .collect();
     // Empty leftover set is valid when the user asked for official uninstall only
     // (batch “no default-selectable residue” should still remove the app).
     if selected.is_empty() && opts.skip_official_uninstall {
@@ -326,59 +407,18 @@ pub fn run_full_cleanup(
         };
     }
 
-    let mut backup_dir = String::new();
-    let mut restore_point_ok = false;
-    let mut restore_point_msg = String::new();
-    if opts.backup_enabled {
-        if opts.restore_point {
-            let (rp_ok, rp_msg) = crate::sysops::create_restore_point(&format!(
-                "Remova: {}",
-                app.name.chars().take(40).collect::<String>()
-            ));
-            restore_point_ok = rp_ok;
-            restore_point_msg = rp_msg;
-        }
-        match crate::backup::create_session(&app.name) {
-            Ok(session) => {
-                backup_dir = session.to_string_lossy().to_string();
-                let (_ok, fail, errors) = crate::backup::backup_items(items, &session);
-                if fail > 0 {
-                    return FullCleanupReport {
-                        app_name: app.name.clone(),
-                        dry_run: false,
-                        backup_dir,
-                        uninstall_ok: false,
-                        uninstall_message: format!("backup failed for {fail} item(s); aborted"),
-                        deleted: 0,
-                        failed: 0,
-                        skipped: 0,
-                        aborted: true,
-                        restore_point_ok,
-                        restore_point_msg,
-                        errors,
-                        item_details: vec![],
-                    };
-                }
-            }
-            Err(e) => {
-                return FullCleanupReport {
-                    app_name: app.name.clone(),
-                    dry_run: false,
-                    backup_dir: String::new(),
-                    uninstall_ok: false,
-                    uninstall_message: format!("backup session failed: {e}"),
-                    deleted: 0,
-                    failed: 0,
-                    skipped: 0,
-                    aborted: true,
-                    restore_point_ok,
-                    restore_point_msg,
-                    errors: vec![e.to_string()],
-                    item_details: vec![],
-                };
-            }
-        }
-    }
+    let (mut backup_dir, mut restore_point_ok, mut restore_point_msg) =
+        match try_backup_phase(app, items, opts) {
+            BackupOutcome::Ready {
+                backup_dir,
+                restore_point_ok,
+                restore_point_msg,
+            } => (backup_dir, restore_point_ok, restore_point_msg),
+            BackupOutcome::Abort(report) => return *report,
+        };
+    let _ = &mut backup_dir;
+    let _ = &mut restore_point_ok;
+    let _ = &mut restore_point_msg;
 
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
