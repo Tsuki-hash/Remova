@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { UpdateInfo } from "../lib/updateCheck";
 import type { CloseMode } from "../lib/closeMode";
 import type { NavId, Theme } from "../lib/theme";
 import type { UninstallStage } from "../components/UninstallStageBar";
-import { loadCloseMode } from "../lib/closeMode";
-import { loadNav, loadTheme } from "../lib/theme";
+import { loadCloseMode, saveCloseMode } from "../lib/closeMode";
+import { loadNav, loadTheme, saveNav } from "../lib/theme";
+import { currentLang, setLang } from "../i18n";
 
-/** Shell / nav / theme chrome state extracted from App (A-1). */
+/** Shell / nav / theme chrome state + actions extracted from App (A-1). */
 export function useShellState() {
   const [theme, setTheme] = useState<Theme>(loadTheme());
   const [nav, setNav] = useState<NavId>(loadNav());
@@ -18,6 +19,34 @@ export function useShellState() {
   const [checkupOrphanCount, setCheckupOrphanCount] = useState<number | null>(null);
   const [uninstallStage, setUninstallStage] = useState<UninstallStage>("idle");
   const [showDetail, setShowDetail] = useState(true);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((th) => {
+      const next: Theme = th === "dark" ? "light" : "dark";
+      return next;
+    });
+  }, []);
+
+  const toggleLang = useCallback(() => {
+    const next = currentLang() === "zh" ? "en" : "zh";
+    setLang(next);
+    setLangVer((v) => v + 1);
+  }, []);
+
+  const goNav = useCallback((n: NavId) => {
+    setNav(n);
+    saveNav(n);
+  }, []);
+
+  const persistCloseMode = useCallback((m: CloseMode) => {
+    setCloseModeState(m);
+    saveCloseMode(m);
+  }, []);
+
+  const toggleDetail = useCallback(() => setShowDetail((v) => !v), []);
+
+  const openCheckup = useCallback(() => setCheckupOpen(true), []);
+  const closeCheckup = useCallback(() => setCheckupOpen(false), []);
 
   return {
     theme,
@@ -40,5 +69,14 @@ export function useShellState() {
     setUninstallStage,
     showDetail,
     setShowDetail,
+    actions: {
+      toggleTheme,
+      toggleLang,
+      goNav,
+      persistCloseMode,
+      toggleDetail,
+      openCheckup,
+      closeCheckup,
+    },
   };
 }
