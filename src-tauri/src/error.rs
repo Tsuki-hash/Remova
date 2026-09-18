@@ -59,6 +59,34 @@ pub fn restore_err(msg: impl Into<String>) -> RemovaError {
     RemovaError::new("restore:failed", msg)
 }
 
+pub fn backup_path_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("backup:path", msg)
+}
+
+pub fn backup_reg_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("backup:registry", msg)
+}
+
+pub fn backup_value_reg_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("backup:value_reg", msg)
+}
+
+pub fn restore_path_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("restore:path", msg)
+}
+
+pub fn restore_reg_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("restore:registry", msg)
+}
+
+pub fn path_io_err(msg: impl Into<String>) -> RemovaError {
+    RemovaError::new("path:io", msg)
+}
+
+pub fn exec_err(code: &str, msg: impl Into<String>) -> RemovaError {
+    RemovaError::new(format!("exec:{code}"), msg)
+}
+
 /// Split IPC error string into `(code, message)` when formatted as `code::message`.
 pub fn split_ipc(s: &str) -> (&str, &str) {
     match s.split_once("::") {
@@ -89,5 +117,12 @@ mod tests {
         assert!(manage_err("protected", "svc")
             .to_ipc()
             .starts_with("manage:protected::"));
+        assert!(backup_value_reg_err("x")
+            .to_ipc()
+            .starts_with("backup:value_reg::"));
+        assert!(path_io_err("y").to_ipc().starts_with("path:io::"));
+        assert!(exec_err("shared_skip", "z")
+            .to_ipc()
+            .starts_with("exec:shared_skip::"));
     }
 }

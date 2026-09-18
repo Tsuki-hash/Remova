@@ -89,7 +89,7 @@ fn path_snapshot_file(session: &Path) -> PathBuf {
 fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
     let entry = item.path.trim();
     if entry.is_empty() {
-        return Err("empty path entry".into());
+        return Err(crate::error::backup_path_err("empty path entry").to_ipc());
     }
     let user = crate::regops::read_path_scope_public("User").unwrap_or_default();
     let machine = crate::regops::read_path_scope_public("Machine").unwrap_or_default();
@@ -208,11 +208,15 @@ fn backup_item_with_map(
             }
             let (alias, rest) = export_path
                 .split_once('\\')
-                .ok_or_else(|| "bad key".to_string())?;
+                .ok_or_else(|| crate::error::backup_reg_err("bad key").to_ipc())?;
             let hive = match alias.to_uppercase().as_str() {
                 "HKLM64" | "HKLM32" | "HKLM" => "HKLM",
                 "HKCU" => "HKCU",
-                _ => return Err(format!("unsupported hive {alias}")),
+                _ => {
+                    return Err(
+                        crate::error::backup_reg_err(format!("unsupported hive {alias}")).to_ipc(),
+                    )
+                }
             };
             let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
             cmd.args([
@@ -223,22 +227,39 @@ fn backup_item_with_map(
                 reg_view_flag(export_path),
             ]);
             crate::regops::hide_console(&mut cmd);
-            let out = cmd.output().map_err(|e| e.to_string())?;
+            let out = cmd.output().map_err(|e| {
+                crate::error::backup_reg_err(format!("reg export failed for {}: {e}", item.path))
+                    .to_ipc()
+            })?;
             if !out.status.success() {
-                return Err(format!("reg export failed for {}", item.path));
+                return Err(crate::error::backup_reg_err(format!(
+                    "reg export failed for {}",
+                    item.path
+                ))
+                .to_ipc());
             }
             // Record the specific value name for Run items so restore knows what was targeted.
             if let Some((key, vname)) = item.path.split_once('|') {
                 let dir = session.join("registry").join(safe_name(&item.path));
                 let meta = dir.join("value.txt");
-                fs::write(&meta, &item.path).map_err(|e| e.to_string())?;
+                fs::write(&meta, &item.path)
+                    .map_err(|e| crate::error::backup_reg_err(e.to_string()).to_ipc())?;
                 // S-04: value.reg must succeed so restore can be single-value (not whole key).
                 match crate::regops::export_reg_value(key, vname, &dir.join("value.reg")) {
                     Ok(true) => {}
                     Ok(false) => {
-                        return Err(format!("value.reg export missing for {}", item.path));
+                        return Err(crate::error::backup_value_reg_err(format!(
+                            "value.reg export missing for {}",
+                            item.path
+                        ))
+                        .to_ipc());
                     }
-                    Err(e) => return Err(format!("value.reg export failed: {e}")),
+                    Err(e) => {
+                        return Err(crate::error::backup_value_reg_err(format!(
+                            "value.reg export failed: {e}"
+                        ))
+                        .to_ipc())
+                    }
                 }
             }
             Ok(())

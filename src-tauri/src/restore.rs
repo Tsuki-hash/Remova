@@ -6,7 +6,7 @@ use std::process::Command;
 
 pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     if !session.is_dir() {
-        return Err("session not found".into());
+        return Err(crate::error::restore_err("session not found").to_ipc());
     }
     let mut messages = vec![];
 
@@ -47,7 +47,13 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
                 Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
                 Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                Err(e) => return Err(format!("PATH restore failed for {}: {e}", it.entry)),
+                Err(e) => {
+                    return Err(crate::error::restore_path_err(format!(
+                        "PATH restore failed for {}: {e}",
+                        it.entry
+                    ))
+                    .to_ipc())
+                }
             }
         }
     }
@@ -75,7 +81,11 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 if out.status.success() {
                     messages.push(format!("imported {}", target.display()));
                 } else {
-                    return Err(format!("reg import failed {}", target.display()));
+                    return Err(crate::error::restore_reg_err(format!(
+                        "reg import failed {}",
+                        target.display()
+                    ))
+                    .to_ipc());
                 }
             }
         }

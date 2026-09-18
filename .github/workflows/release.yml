@@ -45,19 +45,21 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
+      - name: frontend typecheck tests
+        run: npm run typecheck:tests
+
       - name: frontend tests
         run: npm test
+
+      - name: command table vs generate_handler
+        run: pwsh -NoProfile -File scripts/check-commands.ps1
 
       - name: tauri build
         run: npx tauri build
 
       - name: package portable zip
         shell: pwsh
-        run: |
-          $exe = Get-ChildItem src-tauri/target/release/remova.exe -ErrorAction Stop
-          New-Item -ItemType Directory -Force -Path dist-portable | Out-Null
-          Copy-Item $exe.FullName dist-portable/Remova.exe
-          Compress-Archive -Path dist-portable/* -DestinationPath Remova-portable-win-x64.zip -Force
+        run: npm run package:portable
 
       - name: upload NSIS installer
         uses: actions/upload-artifact@v4
@@ -77,5 +79,5 @@ jobs:
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-            Remova-portable-win-x64.zip
+            src-tauri/target/release/bundle/portable/*.zip
           generate_release_notes: true

@@ -11,7 +11,7 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "typecheck:tests": "tsc -p tsconfig.vitest.json --noEmit",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
-    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
+    "package:portable": "pwsh -NoProfile -File scripts/package-portable.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
