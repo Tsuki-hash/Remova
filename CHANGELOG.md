@@ -9,35 +9,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - **P0**: functional React updaters for `setMulti` / `setSelectedPaths` (residual checkbox & batch multi)
 - **P0**: More-page install-monitor diff panel always visible when `monitorDiff` exists
-- **P0**: orphan cleanup AR-10 — `CleanupSource`/orphan flow uses `is_safe_fs` only (no fake slug gate)
+- **P0**: orphan cleanup AR-10 — orphan flow uses `is_safe_fs` only (no fake slug gate)
 - dry-run shares delete gates: user_data / shared / ignore / AR-10 association
-- PATH read failure no longer falls back to process `PATH`
-- value.reg export failure aborts backup (no silent whole-key restore)
+- PATH read failure no longer falls back to process `PATH` (structured `path:io` IPC)
+- value.reg export failure aborts backup (no silent whole-key restore; `backup:value_reg`)
 - manage `set_task_enabled` rejects `\Microsoft\Windows\*` system tasks
 - executor skips `shared` leftovers and ignore-list paths at delete time
 - cleanup + PATH scrub process mutex; appCore reducer single-sourced
 - FN-04 rescan wired after cleanup; single ErrorBanner on software page
 - public docs index no longer links private `docs/reviews` paths
+- **AR-10 (R2-11)**: name/publisher slug gate keeps fail-closed — min token length 5, generic English stopwords rejected, name-slug hits require install root when `install_location` is empty
+- **S-08 smoke**: injectable PATH mock covers backup → `path.json` → scrub → merge restore (no system PATH mutation); value.reg missing export fails backup with structured code
+- **RemovaError (R2-10)**: backup/restore/PATH critical paths emit `backup:*` / `restore:*` / `path:io` codes; frontend `formatError` maps them
+- **PATH leftover Safety Vault**: production backup snapshots PATH segments to `path.json` (no tree copy); restore merges missing segments only
+- **Manage IPC safety**: PackagedStartup writes restricted to StartupApproved keys; Run locations must map to known Run/RunOnce keys
+- Expanded critical service names for manage disable/list
+- **`is_safe_fs`**: protected prefixes include SystemRoot / ProgramData / ProgramFiles / SystemDrive
+- **Ignore rules enforced in backend**; registry value restore prefers `value.reg`
+- Medium association gate: unrelated filesystem leftovers skipped at delete time (AR-10)
+- AI commands surface model/network failures as `ai:*` instead of silent empty results
 
 ### Changed
-- ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count as dynamic list
+- ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count dynamic
 - Release notes no longer dump the entire CHANGELOG body
-- Domain reducers / MorePage hooks / i18n split / SoftwarePage (see prior Unreleased items)
+- Domain reducers / MorePage hooks / i18n split / SoftwarePage
+- **Docs (D-08)**: PARITY/PRODUCT-GAPS/ACCEPTANCE link paths fixed; acceptance notes historical v0.1.0 + current baseline **1.1.0**
+- **CI (D-09)**: `typecheck:tests` + `scripts/check-commands.ps1` (generate_handler! vs ARCHITECTURE §3); portable zip unified via `pwsh` + `scripts/package-portable.ps1`
 
-### Fixed
-- **PATH leftover Safety Vault**: production backup now snapshots PATH segments to `path.json` (no silent no-op / accidental directory tree copy)
-- PATH restore merges missing segments back into User/Machine PATH (does not overwrite the whole environment)
-- **Manage IPC safety**: PackagedStartup writes restricted to StartupApproved keys; Run locations must map to known Run/RunOnce keys
-- Expanded critical service names for manage disable/list (WinDefend, Appinfo, DcomLaunch, Power, ProfSvc, …)
-- `exportHtmlReport` unit test now exercises the real export function (was a local mock)
-- **`is_safe_fs`**: protected prefixes include `SystemRoot` / `ProgramData` / `ProgramFiles` / `SystemDrive` (not only `c:\`)
-- **Ignore rules enforced in backend**: list/scan/orphans consume publisher/name/path rules; empty publisher no longer treated as ignored
-- **Registry value restore**: Run-style `key|Value` backups write `value.reg`; restore prefers single-value import
-- Software list: removed virtualization full-map fallback when the virtual window is empty
-
-### Fixed
-- Medium association gate: filesystem leftovers not related to the app are skipped at delete time (AR-10)
-- AI commands surface model/network failures as `ai:*` errors instead of silent empty results
 - Scan leftover risk-filter chips show real confirm/keep counts (was hardcoded 0)
 - Dead frontend components removed (`RelationGraph` / `RelationOverview`); `ManageItem` type lives in `types.ts`
 - Cleanup report records `sc delete` / `schtasks delete` native results on service/task items (FN-05)

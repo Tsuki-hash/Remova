@@ -1,10 +1,10 @@
 # Remova-next vs Python Remova 对齐清单
 
-**迁移状态（2026-09-11）**：真机验收 **A–G 通过**；列表 **100%**；快捷方式/TEMP/Software 键/预览勾选/证据/会话还原/关窗确认已补齐。见 `MIGRATION.md`。
+**迁移状态（2026-09-11）**：真机验收 **A–G 通过**；列表 **100%**；快捷方式/TEMP/Software 键/预览勾选/证据/会话还原/关窗确认已补齐。迁移过程见本地 `docs/archive/`（不进公开仓）。
 
 **列表实测（2026-09-11）**：Python 232 = Rust 232，**intersection 232，coverage 100%**（`scripts/compare_lists.py`）。
 
-**验收清单**：见 `docs/ACCEPTANCE.md`（已勾选）。
+**验收清单**：见 `docs/product/ACCEPTANCE.md`（已勾选；历史验收基线 v0.1.0，当前文档基线 **1.1.0**）。
 
 | 能力 | Python (Trash) | Remova-next | 备注 |
 |---|:---:|:---:|---|

@@ -403,7 +403,76 @@ fn powershell_exe() -> String {
     format!(r"{windir}\System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
+/// Test-only PATH I/O mock (S-08): production path is untouched when inactive.
+#[cfg(test)]
+pub(crate) mod path_mock {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static STATE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    static FAIL_READ: Mutex<bool> = Mutex::new(false);
+
+    pub fn install(user: &str, machine: &str) {
+        let mut map = HashMap::new();
+        map.insert("User".to_string(), user.to_string());
+        map.insert("Machine".to_string(), machine.to_string());
+        *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(map);
+        *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+
+    pub fn set_fail_read(v: bool) {
+        *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+
+    pub fn clear() {
+        *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+
+    pub fn active() -> bool {
+        STATE.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    pub fn read(scope: &str) -> Result<String, String> {
+        if *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) {
+            return Err(format!("read Path {scope} failed"));
+        }
+        let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.as_ref().expect("path mock not installed");
+        Ok(map.get(scope).cloned().unwrap_or_default())
+    }
+
+    pub fn write(scope: &str, value: &str) -> Result<(), String> {
+        let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.as_mut().expect("path mock not installed");
+        map.insert(scope.to_string(), value.to_string());
+        Ok(())
+    }
+
+    pub fn get(scope: &str) -> String {
+        STATE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|m| m.get(scope))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Serialize tests that install/use/clear the process-wide PATH mock.
+    pub fn lock_mock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 fn read_path_scope(scope: &str) -> Result<String, String> {
+    #[cfg(test)]
+    {
+        if path_mock::active() {
+            return path_mock::read(scope);
+        }
+    }
     use std::process::Command;
     let ps = format!("[Environment]::GetEnvironmentVariable('Path','{scope}')");
     let mut cmd = Command::new(powershell_exe());
@@ -412,7 +481,7 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
     let out = cmd.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         // S-03: never fall back to process PATH — that can corrupt User/Machine PATH.
-        return Err(format!("read Path {scope} failed"));
+        return Err(crate::error::path_io_err(format!("read Path {scope} failed")).to_ipc());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -423,6 +492,12 @@ pub fn read_path_scope_public(scope: &str) -> Result<String, String> {
 }
 
 pub(crate) fn write_path_scope(scope: &str, value: &str) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        if path_mock::active() {
+            return path_mock::write(scope, value);
+        }
+    }
     use std::process::Command;
     let mut child_cmd = Command::new(powershell_exe());
     child_cmd.env("REMOVA_PATH_VALUE", value).args([

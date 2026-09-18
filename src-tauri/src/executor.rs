@@ -435,9 +435,28 @@ pub fn is_orphan_flow(app: &crate::apps::InstalledApp) -> bool {
             && app.quiet_uninstall_string.trim().is_empty())
 }
 
+/// Generic English tokens that create AR-10 false positives on short path segments.
+const AR10_NAME_STOPWORDS: &[&str] = &[
+    "app", "tool", "free", "pro", "data", "user", "file", "setup", "client", "server", "service",
+    "manager", "helper", "plugin", "update", "code", "edit",
+];
+
+fn ar10_name_slug_ok(slug: &str) -> bool {
+    let s = slug.trim().to_lowercase();
+    s.len() >= 5 && !AR10_NAME_STOPWORDS.contains(&s.as_str())
+}
+
+fn ar10_in_install_root(low: &str) -> bool {
+    low.contains("\\appdata\\")
+        || low.contains("\\programdata\\")
+        || low.contains("\\program files")
+        || low.contains("\\program files (x86)")
+}
+
 /// Medium association gate (AR-10): file/dir leftovers must look related to the app.
 /// Registry/PATH items are gated by safety/PATH scrub instead.
 /// Orphan flow (S-01): skip slug matching — items already come from orphan scan + safety.
+/// R2-11: keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
         return false;
@@ -458,29 +477,33 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 .replace('/', "\\")
                 .trim_end_matches('\\')
                 .to_lowercase();
-            if !install.is_empty() {
+            let install_empty = install.is_empty();
+            if !install_empty {
                 let inst = install.as_str();
                 if low == inst || low.starts_with(&format!("{inst}\\")) {
                     return true;
                 }
             }
             let slugs = crate::scanner::slugify(&app.name);
-            if slugs
+            let name_hit = slugs
                 .iter()
-                .filter(|s| s.len() >= 4)
-                .any(|s| low.contains(&s.to_lowercase()))
-            {
-                return true;
+                .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()));
+            if name_hit {
+                // With a known install location a name hit is a useful secondary signal.
+                // Without one, only trust name hits under common install roots (fail-closed).
+                if !install_empty || ar10_in_install_root(&low) {
+                    return true;
+                }
             }
             let pub_slugs = crate::scanner::slugify(&app.publisher);
             if !pub_slugs.is_empty()
                 && pub_slugs
                     .iter()
-                    .filter(|s| s.len() >= 6)
+                    .filter(|s| {
+                        s.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&s.to_lowercase().as_str())
+                    })
                     .any(|s| low.contains(&s.to_lowercase()))
-                && (low.contains("\\appdata\\")
-                    || low.contains("\\programdata\\")
-                    || low.contains("\\program files"))
+                && ar10_in_install_root(&low)
             {
                 return true;
             }
@@ -823,6 +846,44 @@ mod tests {
         it.kind = ItemKind::Registry;
         it.path = r"HKCU\Software\Demo".into();
         assert!(path_associated_with_app(&app, &it));
+    }
+
+    #[test]
+    fn ar10_rejects_generic_short_slug_false_positives() {
+        let app = crate::apps::InstalledApp {
+            name: "Code".into(),
+            version: "1".into(),
+            publisher: "Microsoft".into(),
+            install_location: r"C:\Program Files\Code".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let it = CleanupItem {
+            path: r"C:\Users\a\AppData\Local\Temp\code-cache".into(),
+            kind: ItemKind::Dir,
+            score: 40,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            size_kb: None,
+            bucket: None,
+        };
+        // "code" is a stopword / too short — not enough by itself outside install root match.
+        assert!(!path_associated_with_app(&app, &it));
+        // Install-location prefix still passes.
+        let ok = CleanupItem {
+            path: r"C:\Program Files\Code\bin\code.exe".into(),
+            ..it.clone()
+        };
+        assert!(path_associated_with_app(&app, &ok));
     }
 
     #[test]
