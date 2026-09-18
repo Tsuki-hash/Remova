@@ -95,42 +95,49 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 
 - **async + `spawn_blocking`**：会阻塞的 IO / 注册表 / 扫描 / 删除。不阻塞 webview 事件循环。
 - **sync**：纯读、本地缓存、极轻操作，直接在命令线程执行。
+- **唯一源**：命令是否注册以 `src-tauri/src/lib.rs` 的 `tauri::generate_handler![...]` 为准（2026-09-18 回填）。
 
-### 3.1 列表与图标
+### 3.1 列表 / 图标 / 更新
 
 | 命令 | 线程 | 返回 |
 |---|---|---|
-| `list_installed_apps` | async / blocking | `Vec<InstalledApp>` |
+| `list_installed_apps` | async / blocking | `Vec<InstalledApp>`（后端应用 ignore 规则） |
 | `app_icon_data` | async / blocking | `Option<String>`（`data:image/png;base64,...`） |
 | `begin_size_estimate` | sync | `()` 清除取消标志 |
 | `estimate_dir_size_kb` | async / blocking | `i64`（KB） |
 | `cancel_size_estimate` | sync | `()` 置取消标志 |
+| `check_github_latest` | async / blocking | `Option<LatestReleaseInfo>` |
 
 ### 3.2 分析与清理
 
 | 命令 | 线程 | 返回 |
 |---|---|---|
-| `analyze_associations` | async / blocking | `ScanResult` |
+| `analyze_associations` | async / blocking | `ScanResult`（path ignore 过滤） |
 | `run_cleanup_dry_run` | async / blocking | `CleanupReport` |
 | `run_full_cleanup` | async / blocking | `FullCleanupReport`（内含 history.append） |
+| `run_official_uninstall` | async / blocking | `OfficialUninstallResult` |
 
 ### 3.3 备份 / 还原 / 历史
 
 | 命令 | 线程 | 返回 |
 |---|---|---|
-| `restore_latest_backup` | async / blocking | `Vec<String>` 消息 |
 | `list_restore_sessions` | sync | `Vec<String>` 会话名 |
-| `restore_session_by_name` | async / blocking | `Vec<String>` |
+| `list_backup_sessions` | sync | `Vec<BackupSession {name,size_kb,created_at}>` |
+| `delete_backup_session` | async / blocking | `()` |
+| `restore_session_by_name` | async / blocking | `Vec<String>`（文件 path_map；PATH path.json merge；注册表 value.reg 优先，否则 export.reg） |
 | `list_cleanup_history` | sync | `Vec<HistoryEntry>`（最多 200） |
 | `export_history_csv` | sync | `String` CSV（最多 500 行） |
 
-### 3.4 系统 / 权限
+> 历史文档中的 `restore_latest_backup` **已不存在**，勿再引用。
+
+### 3.4 系统 / 权限 / 路径
 
 | 命令 | 线程 | 返回 |
 |---|---|---|
-| `is_elevated` | sync | `bool`（OpenProcessToken + TokenElevation） |
-| `disk_usage` | sync | `DiskInfo { free_gb, total_gb }`（SystemDrive） |
-| `elevate_restart` | sync | `Result<(), String>`（ShellExecuteW runas） |
+| `is_elevated` | sync | `bool` |
+| `disk_usage` | sync | `DiskInfo { free_gb, total_gb }` |
+| `elevate_restart` | async / blocking | `Result<(), String>` |
+| `open_path_in_explorer` | sync | 稳定错误码 `open_path:empty\|not_found\|failed` |
 
 ### 3.5 管理（启动项 / 服务 / 任务）
 
@@ -139,21 +146,34 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 | `list_startup_items` | async / blocking | `Vec<ManageItem>` |
 | `list_services` | async / blocking | `Vec<ManageItem>` |
 | `list_scheduled_tasks` | async / blocking | `Vec<ManageItem>` |
-| `set_startup_enabled` | async / blocking | `()` |
-| `set_service_start_disabled` | async / blocking | `()` |
+| `set_startup_enabled` | async / blocking | `()`（PACKAGED/Run 键白名单 + critical 服务） |
+| `set_service_start_disabled` | async / blocking | `()`（critical 服务拒绝） |
 | `set_task_enabled` | async / blocking | `()` |
 
-`ManageItem`: `{ name, detail, location, enabled }`。启动项 `location` 形如 `HKCU\...\Run::ValueName`。
+`ManageItem`: `{ name, detail, location, enabled }`。
 
-### 3.6 杂项工具
+### 3.6 忽略 / 孤儿 / 安装监控
 
 | 命令 | 线程 | 返回 |
 |---|---|---|
-| `register_context_menu` / `unregister_context_menu` | sync | `()` |
 | `load_ignore` / `ignore_publisher` / `ignore_app_name` | sync | `IgnoreList` |
-| `scan_orphan_leftovers` | async / blocking | `Vec<CleanupItem>` |
-| `begin_install_monitor` | async / blocking | `()` |
-| `end_install_monitor` | async / blocking | `MonitorDiff` |
+| `suggest_ignore_rules` / `apply_ignore_suggestions` | sync | `Vec<IgnoreSuggestion>` / `IgnoreList` |
+| `scan_orphan_leftovers` | async / blocking | `Vec<CleanupItem>`（path ignore 过滤） |
+| `verify_cleanup_leftovers` | async / blocking | `Vec<VerifyRow>` |
+| `begin_install_monitor` / `end_install_monitor` | async / blocking | `()` / `MonitorDiff` |
+| `monitor_diff_to_items` | async / blocking | `Vec<CleanupItem>` |
+| `take_pending_analyze` | sync | `Option<String>`（右键菜单待分析路径） |
+| `register_context_menu` / `unregister_context_menu` | sync | `()` |
+
+### 3.7 AI（默认关闭，不执行删除）
+
+| 命令 | 线程 | 返回 |
+|---|---|---|
+| `get_ai_config` / `save_ai_config` | sync | `AiConfigView`（Key 不回传） |
+| `ai_risk_brief` | async / blocking | `Option<String>` |
+| `ai_explain_items` | async / blocking | `Vec<AiExplainOutput>` |
+| `ai_summarize_report` | async / blocking | `Option<String>` |
+| `ai_parse_intent` | async / blocking | `AiNlIntent` |
 
 ---
 
@@ -162,15 +182,19 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 ### 4.1 类型
 
 ```ts
-// src/types.ts ↔ scanner.rs
+// src/types.ts ↔ scanner/mod.rs
 CleanupItem {
   path: string
-  kind: "file" | "dir" | "registry"
+  kind: "file" | "dir" | "registry" | "path"
   score: number            // clamp(-200, 120)
   confidence: "confirmed" | "suspected"
   risk: "low" | "medium" | "high"
   reason: string
   evidence: Evidence[]     // { code, label, weight, detail }
+  shared?: boolean
+  user_data?: boolean
+  size_kb?: number | null
+  bucket?: string | null
 }
 ```
 

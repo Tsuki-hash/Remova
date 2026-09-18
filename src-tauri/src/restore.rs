@@ -57,16 +57,25 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     if reg_root.is_dir() {
         for e in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
             let e = e.map_err(|e| e.to_string())?;
+            // AR-05: prefer single-value restore when value.reg exists (Run values etc.).
+            let value_reg = e.path().join("value.reg");
             let export = e.path().join("export.reg");
-            if export.exists() {
+            let target = if value_reg.exists() {
+                Some(value_reg)
+            } else if export.exists() {
+                Some(export)
+            } else {
+                None
+            };
+            if let Some(target) = target {
                 let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-                cmd.args(["import", &export.to_string_lossy()]);
+                cmd.args(["import", &target.to_string_lossy()]);
                 crate::regops::hide_console(&mut cmd);
                 let out = cmd.output().map_err(|e| e.to_string())?;
                 if out.status.success() {
-                    messages.push(format!("imported {}", export.display()));
+                    messages.push(format!("imported {}", target.display()));
                 } else {
-                    return Err(format!("reg import failed {}", export.display()));
+                    return Err(format!("reg import failed {}", target.display()));
                 }
             }
         }

@@ -236,6 +236,112 @@ pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> 
     Ok(changed)
 }
 
+/// Export a single registry value to a .reg file (AR-05 value-level restore).
+/// `key_path` uses Remova aliases (HKCU / HKLM64 / HKLM32). Best-effort: Ok(false) if missing.
+pub fn export_reg_value(
+    key_path: &str,
+    value_name: &str,
+    dest: &std::path::Path,
+) -> Result<bool, String> {
+    let value_name = value_name.trim();
+    if value_name.is_empty() {
+        return Err("empty value name".into());
+    }
+    let (alias, rest) = key_path
+        .split_once('\\')
+        .ok_or_else(|| "bad key".to_string())?;
+    let (hive, view) = match alias.to_uppercase().as_str() {
+        "HKLM64" | "HKLM" => ("HKEY_LOCAL_MACHINE", "/reg:64"),
+        "HKLM32" => ("HKEY_LOCAL_MACHINE", "/reg:32"),
+        "HKCU" => ("HKEY_CURRENT_USER", "/reg:64"),
+        other => return Err(format!("unsupported hive {other}")),
+    };
+    let key_win = format!(r"{hive}\{rest}");
+    use std::process::Command;
+    let mut cmd = Command::new(sys_tool("reg.exe"));
+    cmd.args(["query", &key_win, "/v", value_name, view]);
+    hide_console(&mut cmd);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Ok(false);
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Typical line: `    value_name    REG_SZ    C:\path\app.exe`
+    let mut reg_type = String::new();
+    let mut data_raw = String::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("HKEY_") {
+            continue;
+        }
+        // Split on whitespace runs; value name may contain spaces — find REG_* token.
+        if let Some(idx) = t.find("REG_") {
+            let (left, right) = t.split_at(idx);
+            let mut parts = right.splitn(2, char::is_whitespace);
+            let ty = parts.next().unwrap_or("").to_string();
+            let data = parts.next().unwrap_or("").trim().to_string();
+            let _vname = left.trim();
+            reg_type = ty;
+            data_raw = data;
+            break;
+        }
+    }
+    if reg_type.is_empty() {
+        return Ok(false);
+    }
+    let key_reg = format!("[{key_win}]");
+    let body = match reg_type.as_str() {
+        "REG_DWORD" => {
+            // data like 0x2
+            let n = u32::from_str_radix(data_raw.trim_start_matches("0x"), 16)
+                .or_else(|_| data_raw.trim().parse::<u32>())
+                .unwrap_or(0);
+            format!("\"{value_name}\"=dword:{n:08x}")
+        }
+        "REG_QWORD" => {
+            let n = u64::from_str_radix(data_raw.trim_start_matches("0x"), 16).unwrap_or(0);
+            let bytes = n.to_le_bytes();
+            let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            format!("\"{value_name}\"=hex(b):{}", hex.join(","))
+        }
+        "REG_BINARY" => {
+            // reg query prints hex bytes space-separated
+            let hex: Vec<String> = data_raw
+                .split_whitespace()
+                .map(|s| s.trim_start_matches("0x").to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            format!("\"{value_name}\"=hex:{}", hex.join(","))
+        }
+        _ => {
+            // REG_SZ / REG_EXPAND_SZ — escape backslashes for .reg
+            let esc = data_raw.replace('\\', "\\\\").replace('"', "\\\"");
+            if reg_type == "REG_EXPAND_SZ" {
+                format!("\"{value_name}\"=hex(2):{}", utf16_hex_expand(&data_raw))
+            } else {
+                format!("\"{value_name}\"=\"{esc}\"")
+            }
+        }
+    };
+    let reg = format!("Windows Registry Editor Version 5.00\r\n\r\n{key_reg}\r\n{body}\r\n");
+    if let Some(p) = dest.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(dest, reg).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn utf16_hex_expand(s: &str) -> String {
+    let mut bytes: Vec<String> = Vec::new();
+    for u in s.encode_utf16() {
+        bytes.push(format!("{:02x}", u & 0xff));
+        bytes.push(format!("{:02x}", (u >> 8) & 0xff));
+    }
+    bytes.push("00".into());
+    bytes.push("00".into());
+    bytes.join(",")
+}
+
 /// Remove one PATH segment from User and Machine environments (exact match only).
 /// Returns Ok(true) if at least one scope changed.
 pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
@@ -538,5 +644,36 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_eq!(a, super::normalize_path_entry(r"C:\Python3\"));
+    }
+
+    #[test]
+    fn merge_path_entry_dedupes_and_appends() {
+        assert_eq!(super::merge_path_entry(r"C:\a;C:\b", r"C:\b"), None);
+        assert_eq!(
+            super::merge_path_entry(r"C:\a", r"C:\b"),
+            Some(r"C:\a;C:\b".to_string())
+        );
+        assert!(super::path_contains_entry(r"C:\a;C:\b\", r"c:\b"));
+        assert!(!super::path_contains_entry(r"C:\a", r"C:\b"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn export_reg_value_writes_reg_or_false() {
+        let tmp = std::env::temp_dir().join(format!("remova_value_reg_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dest = tmp.join("value.reg");
+        let r = super::export_reg_value(r"HKCU\Environment", "PATH", &dest);
+        match r {
+            Ok(true) => {
+                let s = std::fs::read_to_string(&dest).unwrap();
+                assert!(s.contains("Windows Registry Editor"));
+                assert!(s.to_uppercase().contains("ENVIRONMENT"));
+            }
+            Ok(false) => {}
+            Err(e) => panic!("export_reg_value: {e}"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
