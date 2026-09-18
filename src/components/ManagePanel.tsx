@@ -1,13 +1,9 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
+import type { ManageItem } from "../types";
 
 export type ManageTab = "startup" | "services" | "tasks";
-export type ManageItem = {
-  name: string;
-  detail: string;
-  location: string;
-  enabled: boolean;
-};
+export type { ManageItem };
 
 export function ManagePanel({
   tab,

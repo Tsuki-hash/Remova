@@ -5,6 +5,7 @@ pub mod apps;
 pub mod backup;
 pub mod dirsize;
 pub mod executor;
+pub mod fsutil;
 pub mod history;
 pub mod icon;
 pub mod ignore;
@@ -43,15 +44,24 @@ fn begin_size_estimate() {
 
 /// Estimate on-disk size of an install location (KB).
 /// Runs on the blocking pool so large trees do not freeze the webview.
+/// Result is zeroed if the estimate batch was cancelled / superseded.
 #[tauri::command]
 async fn estimate_dir_size_kb(path: String) -> Result<i64, String> {
     let path = path.trim().to_string();
     if path.is_empty() {
         return Ok(0);
     }
-    tauri::async_runtime::spawn_blocking(move || dirsize::walk_size_kb(std::path::Path::new(&path)))
-        .await
-        .map_err(|e| e.to_string())
+    let gen = dirsize::current_batch();
+    tauri::async_runtime::spawn_blocking(move || {
+        let kb = dirsize::walk_size_kb(std::path::Path::new(&path));
+        if dirsize::batch_stale(gen) {
+            0
+        } else {
+            kb
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Cancel in-flight directory size walks (they return 0).
@@ -60,20 +70,119 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-/// Open Explorer at a path (backup dir, install location).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LatestReleaseInfo {
+    pub version: String,
+    pub url: String,
+    pub download_url: Option<String>,
+}
+
+/// Fetch GitHub latest release from the Rust side (avoids WebView CORS / CSP issues).
+#[tauri::command]
+async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(8))
+            .build();
+        let resp = agent
+            .get("https://api.github.com/repos/Tsuki-hash/Remova/releases/latest")
+            .set("Accept", "application/vnd.github+json")
+            .set("User-Agent", "Remova")
+            .call()
+            .map_err(|e| e.to_string())?;
+        let body = resp.into_string().map_err(|e| e.to_string())?;
+        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        let tag = v
+            .get("tag_name")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim_start_matches('v')
+            .to_string();
+        if tag.is_empty() {
+            return Ok(None);
+        }
+        let url = v
+            .get("html_url")
+            .and_then(|t| t.as_str())
+            .unwrap_or("https://github.com/Tsuki-hash/Remova/releases")
+            .to_string();
+        let mut download_url = None;
+        if let Some(assets) = v.get("assets").and_then(|a| a.as_array()) {
+            for a in assets {
+                let name = a
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let link = a
+                    .get("browser_download_url")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+                if name.ends_with(".exe") && name.contains("setup") && !link.is_empty() {
+                    download_url = Some(link.to_string());
+                    break;
+                }
+            }
+        }
+        Ok(Some(LatestReleaseInfo {
+            version: tag,
+            url,
+            download_url,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Open Explorer at a path (backup dir, install location) or a browser URL.
+/// Stable errors: `open_path:empty` | `open_path:not_found` | `open_path:failed`.
 #[tauri::command]
 fn open_path_in_explorer(path: String) -> Result<(), String> {
-    let path = path.trim();
+    let path = path.trim().trim_matches('"').trim();
     if path.is_empty() {
-        return Err("empty path".into());
+        return Err("open_path:empty".into());
+    }
+    // HTTP(S) updates: launch default browser via `start`.
+    if path.starts_with("http://") || path.starts_with("https://") {
+        use std::process::Command;
+        let mut cmd = Command::new(regops::sys_tool("cmd.exe"));
+        cmd.args(["/C", "start", "", path]);
+        regops::hide_console(&mut cmd);
+        return cmd
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| "open_path:failed".to_string());
+    }
+    let p = std::path::Path::new(path);
+    if !p.exists() {
+        return Err("open_path:not_found".into());
     }
     use std::process::Command;
-    let explorer = regops::sys_tool("explorer.exe");
-    Command::new(explorer)
-        .arg(path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let is_file = p.is_file();
+    let mut last_err: Option<std::io::Error> = None;
+    for explorer in [
+        regops::sys_tool("explorer.exe"),
+        "explorer.exe".to_string(),
+        "explorer".to_string(),
+    ] {
+        let mut cmd = Command::new(&explorer);
+        if is_file {
+            // Single argument form so Explorer selects the file in its parent.
+            cmd.arg(format!("/select,{path}"));
+        } else {
+            cmd.arg(path);
+        }
+        regops::hide_console(&mut cmd);
+        match cmd.spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(match last_err {
+        Some(e) if e.kind() == std::io::ErrorKind::NotFound => "open_path:not_found".into(),
+        Some(e) => format!("open_path:failed:{}", e),
+        None => "open_path:failed".into(),
+    })
 }
 
 #[tauri::command]
@@ -113,9 +222,11 @@ async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>, St
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request).ok())
+    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
+        .map(Some)
+        .map_err(|e| format!("ai:risk_brief:{e}"))
 }
 
 #[tauri::command]
@@ -129,10 +240,11 @@ async fn ai_explain_items(
         return Ok(vec![]);
     }
     tauri::async_runtime::spawn_blocking(move || {
-        ai::explain_items(&cfg, &app_name, &publisher, &items).unwrap_or_default()
+        ai::explain_items(&cfg, &app_name, &publisher, &items)
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("ai:explain:{e}"))
 }
 
 #[tauri::command]
@@ -141,9 +253,11 @@ async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option<Str
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request).ok())
+    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
+        .map(Some)
+        .map_err(|e| format!("ai:summarize:{e}"))
 }
 
 #[tauri::command]
@@ -275,13 +389,13 @@ fn export_history_csv() -> Result<String, String> {
     let mut out = String::from("app_name,deleted,failed,skipped,aborted,backup_dir,created_at\n");
     for e in entries {
         out.push_str(&format!(
-            "\"{}\",{},{},{},{},\"{}\",{}\n",
-            e.app_name.replace('"', "'"),
+            "{},{},{},{},{},{},{}\n",
+            fsutil::csv_escape(&e.app_name),
             e.deleted,
             e.failed,
             e.skipped,
             e.aborted,
-            e.backup_dir,
+            fsutil::csv_escape(&e.backup_dir),
             e.created_at
         ));
     }
@@ -461,26 +575,16 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
     Ok(if s.is_empty() { None } else { Some(s) })
 }
 
-const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
-
 #[tauri::command]
 async fn register_context_menu() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let exe = exe.to_string_lossy().to_string();
-        crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "Remova Deep Uninstall")?;
-        crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "Icon", &format!("\"{exe}\""))?;
-        let cmd_key = format!(r"{CONTEXT_MENU_KEY}\command");
-        crate::regops::create_reg_sz(&cmd_key, "", &format!("\"{exe}\" --analyze \"%1\""))?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(sysops::register_context_menu)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn unregister_context_menu() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| crate::regops::delete_key(CONTEXT_MENU_KEY))
+    tauri::async_runtime::spawn_blocking(sysops::unregister_context_menu)
         .await
         .map_err(|e| e.to_string())?
 }
@@ -526,41 +630,14 @@ async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
     .map_err(|e| e.to_string())
 }
 
-#[derive(serde::Serialize)]
-struct VerifyRow {
-    path: String,
-    kind: String,
-    still_there: bool,
-}
-
 /// SOP §7: re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
     items: Vec<scanner::CleanupItem>,
-) -> Result<Vec<VerifyRow>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut out = Vec::new();
-        for it in items {
-            let still = match it.kind {
-                scanner::ItemKind::Registry => {
-                    let path = it.path.split('|').next().unwrap_or(&it.path);
-                    crate::regscan::list_subkeys(path).len()
-                        + crate::regscan::list_values(path).len()
-                        > 0
-                }
-                scanner::ItemKind::Path => crate::regops::scrub_path_entry_ok(&it.path),
-                _ => std::path::Path::new(&it.path).exists(),
-            };
-            out.push(VerifyRow {
-                path: it.path,
-                kind: format!("{:?}", it.kind).to_lowercase(),
-                still_there: still,
-            });
-        }
-        out
-    })
-    .await
-    .map_err(|e| e.to_string())
+) -> Result<Vec<sysops::VerifyRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || sysops::verify_cleanup_leftovers(&items))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -590,7 +667,7 @@ pub fn run() {
     std::thread::spawn(|| {
         let _ = restore::prune_old_sessions(7);
     });
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Focus the existing window when a second launch happens
         // (e.g. Explorer context menu while Remova is already open).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -608,10 +685,13 @@ pub fn run() {
             let show_i = MenuItem::with_id(app, "show", "打开 Remova", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出 Remova", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .expect("default window icon required for tray");
+            let icon = match app.default_window_icon().cloned() {
+                Some(i) => i,
+                None => {
+                    eprintln!("[remova] default window icon missing — tray disabled");
+                    return Ok(());
+                }
+            };
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip("Remova")
@@ -653,6 +733,7 @@ pub fn run() {
             cancel_size_estimate,
             begin_size_estimate,
             open_path_in_explorer,
+            check_github_latest,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,
@@ -691,7 +772,12 @@ pub fn run() {
             ai_explain_items,
             ai_summarize_report,
             ai_parse_intent
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        ]);
+    match builder.run(tauri::generate_context!()) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("[remova] failed to run: {e}");
+            std::process::exit(1);
+        }
+    }
 }

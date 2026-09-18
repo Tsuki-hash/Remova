@@ -174,8 +174,18 @@ export type LeftoverSummary = {
 /** Safe = confirmed, not high risk, not shared, not user data. Keep = high risk or shared. */
 export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
   if (defaultSelectable(it)) return "safe";
-  if (it.risk === "high" || it.shared || it.user_data) return "keep";
+  if (isKeepItem(it)) return "keep";
   return "suggest";
+}
+
+/** Keep bucket predicate (high risk / shared / user data) — single source for UI filters. */
+export function isKeepItem(it: CleanupItem): boolean {
+  return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
+}
+
+/** Suggest = not default-selectable and not keep. */
+export function isSuggestItem(it: CleanupItem): boolean {
+  return !defaultSelectable(it) && !isKeepItem(it);
 }
 
 /** Single source of truth: should this leftover be pre-checked for cleanup? */

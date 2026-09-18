@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { formatError } from "./format";
-import type { ManageItem } from "../components/ManagePanel";
+import type { ManageItem } from "../types";
 
 export type ManageTabId = "startup" | "services" | "tasks";
 

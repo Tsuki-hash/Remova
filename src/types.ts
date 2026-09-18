@@ -30,6 +30,10 @@ export type CleanupItem = {
   shared?: boolean;
   /** Likely user documents/downloads — never auto-select (SOP). */
   user_data?: boolean;
+  /** Best-effort size in KB (file/dir only; null/omitted for registry/path). */
+  size_kb?: number | null;
+  /** Display bucket from backend (programFiles/configFiles/…). */
+  bucket?: string | null;
 };
 
 export type ScanResult = {
@@ -99,6 +103,7 @@ export type NlFilter = {
   installed_after?: string | null;
 };
 
+/** Copilot / AI intent payload (single type for frontend + IPC). */
 export type NlIntent = {
   action: "list" | "analyze" | "batch_uninstall" | "force_clean" | string;
   filter: NlFilter;
@@ -106,8 +111,39 @@ export type NlIntent = {
   note: string;
 };
 
+/** @deprecated Use NlIntent */
+export type AiNlIntent = NlIntent;
+
 export type IgnoreSuggestion = {
   kind: string;
   value: string;
   reason: string;
+};
+
+export type HistoryEntry = {
+  app_name: string;
+  deleted: number;
+  failed: number;
+  skipped: number;
+  aborted: boolean;
+  dry_run: boolean;
+  backup_dir: string;
+  created_at: string;
+};
+
+export type ManageItem = {
+  name: string;
+  detail: string;
+  location: string;
+  enabled: boolean;
+};
+
+/** Matches ai.rs ExplainInput (string enums for IPC). */
+export type AiExplainInput = {
+  path: string;
+  kind: string;
+  confidence: string;
+  risk: string;
+  reason: string;
+  evidence_labels: string[];
 };
