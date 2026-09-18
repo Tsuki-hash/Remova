@@ -196,14 +196,25 @@ export default function App() {
     setSortDesc,
   });
 
+  const coreSetApps = core.setApps;
+  const coreSetError = core.setError;
   const refreshApps = useCallback(async () => {
     try {
       const list = await api.listApps();
-      core.setApps(list);
+      coreSetApps(list);
     } catch (e) {
-      core.setError(formatError(e));
+      coreSetError(formatError(e));
     }
-  }, [core]);
+  }, [coreSetApps, coreSetError]);
+
+  const onAfterCleanup = useCallback(
+    (app: InstalledApp) => {
+      // FN-04: re-analyze after cleanup when user preference is on.
+      if (!loadRescanAfterUninstall()) return;
+      void analyzeRef.current(app, { fromUninstall: true });
+    },
+    [],
+  );
 
   const {
     dryRunning,
@@ -242,6 +253,7 @@ export default function App() {
       setError: core.setError,
     },
     refreshApps,
+    onAfterCleanup,
     busyRef,
   });
 
@@ -271,6 +283,10 @@ export default function App() {
     refreshApps,
     busyRef,
   });
+
+  useEffect(() => {
+    analyzeRef.current = analyze;
+  }, [analyze]);
 
   const checkup = useCheckupStats(apps, sizeOf, sizeMap);
 
@@ -615,8 +631,16 @@ export default function App() {
           </>
         }
       >
-        {error && <ErrorBanner error={error} onDismiss={() => core.setError(null)} />}
-        <Suspense fallback={null}>
+        {error && nav !== "software" && (
+          <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
+        )}
+        <Suspense
+          fallback={
+            <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>
+              {L.estimatingSizes || "…"}
+            </div>
+          }
+        >
           {nav === "startup" && (
             <ManageListPage tab="startup" title={L.navStartup} onError={core.setError} />
           )}

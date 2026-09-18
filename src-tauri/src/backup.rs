@@ -231,9 +231,15 @@ fn backup_item_with_map(
             if let Some((key, vname)) = item.path.split_once('|') {
                 let dir = session.join("registry").join(safe_name(&item.path));
                 let meta = dir.join("value.txt");
-                let _ = fs::write(&meta, &item.path);
-                // AR-05: also write a single-value .reg so restore does not roll back siblings.
-                let _ = crate::regops::export_reg_value(key, vname, &dir.join("value.reg"));
+                fs::write(&meta, &item.path).map_err(|e| e.to_string())?;
+                // S-04: value.reg must succeed so restore can be single-value (not whole key).
+                match crate::regops::export_reg_value(key, vname, &dir.join("value.reg")) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(format!("value.reg export missing for {}", item.path));
+                    }
+                    Err(e) => return Err(format!("value.reg export failed: {e}")),
+                }
             }
             Ok(())
         }

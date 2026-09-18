@@ -342,9 +342,12 @@ fn utf16_hex_expand(s: &str) -> String {
     bytes.join(",")
 }
 
+static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Remove one PATH segment from User and Machine environments (exact match only).
 /// Returns Ok(true) if at least one scope changed.
 pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
+    let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let needle = normalize_path_entry(entry);
     if needle.is_empty() {
         return Err("empty path entry".into());
@@ -408,7 +411,8 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
     hide_console(&mut cmd);
     let out = cmd.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return std::env::var("PATH").map_err(|e| e.to_string());
+        // S-03: never fall back to process PATH — that can corrupt User/Machine PATH.
+        return Err(format!("read Path {scope} failed"));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
