@@ -112,6 +112,9 @@ export function useCleanupHandlers({
         if (report.aborted) {
           toast.error(report.uninstall_message || L.errCleanupFailed("aborted"));
           setError(report.uninstall_message || L.errCleanupFailed("aborted"));
+          setLastReport(report);
+          setVerifyRows(null);
+          setAiReportNote(null);
           return;
         }
         toast.success(
@@ -127,7 +130,7 @@ export function useCleanupHandlers({
         setForceBusy(false);
       }
     },
-    [selected, forceBusy, L, refreshApps, setError, setLastReport, busyRef],
+    [selected, forceBusy, L, refreshApps, setError, setLastReport, busyRef, setVerifyRows, setAiReportNote],
   );
 
   const dryRun = useCallback(async () => {
@@ -182,6 +185,8 @@ export function useCleanupHandlers({
         toast.error(msg);
         setError(msg);
         setLastReport(fr);
+        setVerifyRows(null);
+        setAiReportNote(null);
         setResidualFromUninstall(false);
         void refreshApps();
         return;

@@ -227,13 +227,7 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
         let ok = decision.is_allow()
             && match it.kind {
                 ItemKind::File | ItemKind::Dir => Path::new(&it.path).exists(),
-                ItemKind::Path => {
-                    path_entry_in_system_path(&it.path) || {
-                        // Legacy dry without app: still require gate + non-empty; PATH presence
-                        // unknown without probe — treat allow + empty skip as missing.
-                        !it.path.trim().is_empty()
-                    }
-                }
+                ItemKind::Path => path_entry_in_system_path(&it.path),
                 _ => true,
             };
         if !ok {
@@ -438,7 +432,7 @@ fn try_backup_phase(
             let backup_dir = session.to_string_lossy().to_string();
             // A-N2 / S-N1: only backup items that pass the cleanup gate.
             let ignore = crate::ignore::load();
-            let source = crate::policy::CleanupSource::Uninstall;
+            let source = cleanup_source_from_opts(opts);
             let allow: Vec<CleanupItem> = items
                 .iter()
                 .filter(|it| {
@@ -531,29 +525,9 @@ pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     crate::regops::leaf_name(reg_path)
 }
 
-/// True when a PATH leftover segment is present in the process PATH string (dry-run probe).
+/// True when a PATH leftover segment is present in User/Machine PATH (same source as scrub).
 fn path_entry_in_system_path(entry: &str) -> bool {
-    let Ok(raw) = std::env::var("PATH") else {
-        return false;
-    };
-    let needle = entry
-        .trim()
-        .trim_matches('"')
-        .replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase();
-    if needle.is_empty() {
-        return false;
-    }
-    raw.replace('/', "\\")
-        .split(';')
-        .map(|s| {
-            s.trim()
-                .trim_matches('"')
-                .trim_end_matches('\\')
-                .to_lowercase()
-        })
-        .any(|s| s == needle)
+    crate::regops::scrub_path_entry_ok(entry)
 }
 
 fn guid_in_text(s: &str) -> Option<String> {

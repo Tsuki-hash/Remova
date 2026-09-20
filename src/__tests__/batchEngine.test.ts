@@ -125,7 +125,7 @@ describe("runBatchCleanup", () => {
     expect(fullCleanup).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ backup_enabled: false }),
+      expect.objectContaining({ backup_enabled: false, cleanup_source: "uninstall" }),
     );
     fullCleanup.mockClear();
     await runBatchCleanup([app("A")], true, keyOf, makeCb(), true);
