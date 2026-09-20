@@ -294,34 +294,52 @@ mod tests {
     #[test]
     fn path_scrub_rejects_system_entries() {
         let ignore = crate::ignore::IgnoreList::default();
+        // Always-dangerous PATH segments (env-independent).
         for p in [
             r"C:\Windows\System32",
             r"C:\Windows",
             r"c:\windows\system32\wbem\",
             "",
             r"C:",
-            r"%SystemRoot%\System32",
-            r"%ProgramFiles%\Vendor\Tool",
+            r"C:\Program Files\DemoApp\bin\..\..\..\Windows",
         ] {
             let it = item(p, ItemKind::Path);
             let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
             assert!(!d.is_allow(), "expected skip for PATH entry {p}");
         }
-        let ok = item(r"C:\Vendor\Tool\bin", ItemKind::Path);
-        assert!(gate_cleanup_item(None, &ok, CleanupSource::Uninstall, &ignore).is_allow());
-        // S-2: vendor PATH under Program Files must not be blanket-denied when env is set.
-        let vendor_pf = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
-        let d = gate_cleanup_item(None, &vendor_pf, CleanupSource::Uninstall, &ignore);
-        assert!(
-            d.is_allow(),
-            "ProgramFiles vendor PATH should allow, got {d:?}"
-        );
-        // S-4 traversal in PATH skipped.
-        let trav = item(
-            r"C:\Program Files\DemoApp\bin\..\..\..\Windows",
-            ItemKind::Path,
-        );
-        assert!(!gate_cleanup_item(None, &trav, CleanupSource::Uninstall, &ignore).is_allow());
+        // Env-expanded system subtrees (SystemRoot/ProgramFiles are set on CI Windows).
+        if std::env::var("SystemRoot").is_ok() || std::env::var("windir").is_ok() {
+            let it = item(r"%SystemRoot%\System32", ItemKind::Path);
+            let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
+            assert!(!d.is_allow(), "expected skip for %SystemRoot%\\System32");
+        }
+        // Always-allowed vendor PATH (literal; not under system trees).
+        for p in [
+            r"C:\Vendor\Tool\bin",
+            r"C:\Program Files\DemoApp\bin",
+            r"D:\Games\Tool\bin",
+        ] {
+            let it = item(p, ItemKind::Path);
+            let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
+            assert!(
+                d.is_allow(),
+                "expected allow for vendor PATH {p}, got {d:?}"
+            );
+        }
+        // %ProgramFiles%\Vendor\* is allowed only when ProgramFiles expands (S-2, not blanket deny).
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            if pf.trim().len() > 2 {
+                let it = item(r"%ProgramFiles%\Vendor\Tool", ItemKind::Path);
+                let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
+                assert!(
+                    d.is_allow(),
+                    "expanded ProgramFiles vendor PATH should allow, got {d:?}"
+                );
+            }
+        }
+        let it = item(r"%ProgramFiles%\WindowsApps", ItemKind::Path);
+        let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
+        assert!(!d.is_allow(), "WindowsApps PATH must skip");
     }
 
     #[test]
@@ -358,6 +376,11 @@ mod tests {
         let related = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
         assert!(
             gate_cleanup_item(Some(&a), &related, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        // Vendor PATH under Program Files is not system-danger (S-2) — still needs association when app known.
+        let pf_vendor = item(r"C:\Program Files\UnrelatedVendor\bin", ItemKind::Path);
+        assert!(
+            !gate_cleanup_item(Some(&a), &pf_vendor, CleanupSource::Uninstall, &ignore).is_allow()
         );
         // Orphan source still allows non-associated PATH (safety gate only).
         let orphan_app = app("孤儿扫描", "");
