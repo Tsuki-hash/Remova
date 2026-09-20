@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Cleanup backup is **opt-in**: confirm dialogs offer an unchecked “create safety backup” option; default cleanup/batch/orphan/force-clean paths no longer force `backup_enabled: true`
+- Cleanup gate: PATH danger check expands `%VAR%`; Registry/Path leftovers require app association when an installed app is known; optional `cleanup_source` on full cleanup; backup abort surfaces as failure; restore point decoupled from backup; public docs match optional-backup behavior
 - CI (engineering): npm + rustc dependency caches; `clippy --all-targets` (lib + tests); frontend `dist` smoke after build; release portable zip smoke (`Remova.exe` / `PORTABLE.txt` / WebView2 / version)
 - ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count dynamic
 - Release notes no longer dump the entire CHANGELOG body

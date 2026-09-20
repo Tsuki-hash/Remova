@@ -403,6 +403,10 @@ export const dict = {
       `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}，且不创建备份（删除后一般无法从 Remova 还原）。确认？`,
     cleanupConfirmVault: (n: number, official: boolean) =>
       `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不备份；如需可恢复请勾选安全备份。确认？`,
+    cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不创建备份；如需可在下方勾选「清理前创建安全备份」。确认？`,
+    noBackupThisRun: "本次清理未创建安全备份（备份为可选项）",
+    restorePointSkipped: "本次未创建还原点",
     confirmSharedSelected:
       "所选项中包含共享运行库（可能被其它软件使用）。确认了解风险后再继续。",
     leftoverSummaryTitle: "残留概况",

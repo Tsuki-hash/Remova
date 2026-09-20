@@ -246,6 +246,18 @@ pub struct FullCleanupOptions {
     /// Create a Windows restore point (tests set false to avoid real side effects).
     #[serde(default = "default_true")]
     pub restore_point: bool,
+    /// uninstall | orphan | monitor | copilot — default uninstall (S-R4-07).
+    #[serde(default)]
+    pub cleanup_source: Option<String>,
+}
+
+pub fn cleanup_source_from_opts(opts: &FullCleanupOptions) -> crate::policy::CleanupSource {
+    match opts.cleanup_source.as_deref() {
+        Some("orphan") => crate::policy::CleanupSource::Orphan,
+        Some("monitor") => crate::policy::CleanupSource::Monitor,
+        Some("copilot") => crate::policy::CleanupSource::Copilot,
+        _ => crate::policy::CleanupSource::Uninstall,
+    }
 }
 
 fn default_true() -> bool {
@@ -357,13 +369,6 @@ fn try_backup_phase(
     items: &[CleanupItem],
     opts: &FullCleanupOptions,
 ) -> BackupOutcome {
-    if !opts.backup_enabled {
-        return BackupOutcome::Ready {
-            backup_dir: String::new(),
-            restore_point_ok: false,
-            restore_point_msg: String::new(),
-        };
-    }
     let mut restore_point_ok = false;
     let mut restore_point_msg = String::new();
     if opts.restore_point {
@@ -373,6 +378,14 @@ fn try_backup_phase(
         ));
         restore_point_ok = rp_ok;
         restore_point_msg = rp_msg;
+    }
+    // Backup session is optional (product opt-in). Restore point stays decoupled (S-R4-05).
+    if !opts.backup_enabled {
+        return BackupOutcome::Ready {
+            backup_dir: String::new(),
+            restore_point_ok,
+            restore_point_msg,
+        };
     }
     match crate::backup::create_session(&app.name) {
         Ok(session) => {
@@ -456,16 +469,59 @@ fn ar10_in_install_root(low: &str) -> bool {
         || low.contains("\\program files (x86)")
 }
 
-/// Medium association gate (AR-10): file/dir leftovers must look related to the app.
-/// Registry/PATH items are gated by safety/PATH scrub instead.
-/// Orphan flow (S-01): skip slug matching — items already come from orphan scan + safety.
+fn guid_in_text(s: &str) -> Option<String> {
+    let low = s.to_lowercase();
+    let start = low.find('{')?;
+    let end = low[start..].find('}')? + start;
+    let g = &s[start..=end];
+    if g.len() >= 38 {
+        Some(g.to_lowercase())
+    } else {
+        None
+    }
+}
+
+/// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
+fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
+    if is_orphan_flow(app) {
+        return true;
+    }
+    let low = item.path.replace('/', "\\").to_lowercase();
+    let reason = item.reason.to_lowercase();
+    let install = app
+        .install_location
+        .trim()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase();
+    if !install.is_empty() && (low.contains(&install) || reason.contains(&install)) {
+        return true;
+    }
+    if let Some(guid) = guid_in_text(&app.registry_key) {
+        if low.contains(&guid) {
+            return true;
+        }
+    }
+    let pub_low = app.publisher.trim().to_lowercase();
+    if pub_low.len() >= 4 && (low.contains(&pub_low) || reason.contains(&pub_low)) {
+        return true;
+    }
+    let slugs = crate::scanner::slugify(&app.name);
+    slugs.iter().any(|s| {
+        ar10_name_slug_ok(s)
+            && (low.contains(&s.to_lowercase()) || reason.contains(&s.to_lowercase()))
+    })
+}
+
+/// Medium association gate (AR-10): leftovers must look related to the app.
+/// Orphan/monitor sources skip association at the policy layer.
 /// R2-11: keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
         return false;
     }
     match item.kind {
-        ItemKind::Registry | ItemKind::Path => true,
+        ItemKind::Registry | ItemKind::Path => non_fs_associated_with_app(app, item),
         ItemKind::File | ItemKind::Dir => {
             let path = item.path.replace('/', "\\");
             let low = path.to_lowercase();
@@ -521,11 +577,6 @@ struct DeleteOutcome {
     skipped: u32,
     errors: Vec<String>,
     details: Vec<ItemDetail>,
-}
-
-/// Stage 2: residual delete loop (AR-07 extracted).
-fn delete_cleanup_items(app: &crate::apps::InstalledApp, items: &[CleanupItem]) -> DeleteOutcome {
-    delete_cleanup_items_source(app, items, crate::policy::CleanupSource::Uninstall)
 }
 
 fn delete_cleanup_items_source(
@@ -699,7 +750,7 @@ pub fn run_full_cleanup(
 ) -> FullCleanupReport {
     let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if opts.dry_run {
-        let dry = run_cleanup_dry_for_app(app, items);
+        let dry = run_cleanup_dry_for_app_source(app, items, cleanup_source_from_opts(opts));
         return FullCleanupReport {
             app_name: dry.app_name,
             dry_run: true,
@@ -762,7 +813,7 @@ pub fn run_full_cleanup(
         uninstall_message = official.message;
     }
 
-    let del = delete_cleanup_items(app, items);
+    let del = delete_cleanup_items_source(app, items, cleanup_source_from_opts(opts));
 
     FullCleanupReport {
         app_name: app.name.clone(),
@@ -820,8 +871,15 @@ mod tests {
         it.path = r"C:\Program Files\UnrelatedVendor\Tool\bin.exe".into();
         assert!(!path_associated_with_app(&app, &it));
         it.kind = ItemKind::Registry;
-        it.path = r"HKCU\Software\Demo".into();
+        it.path = r"HKCU\Software\DemoApp\Config".into();
         assert!(path_associated_with_app(&app, &it));
+        it.path = r"HKCU\Software\UnrelatedVendor\Thing".into();
+        assert!(!path_associated_with_app(&app, &it));
+        it.kind = ItemKind::Path;
+        it.path = r"C:\Program Files\DemoApp\bin".into();
+        assert!(path_associated_with_app(&app, &it));
+        it.path = r"D:\OtherApp\bin".into();
+        assert!(!path_associated_with_app(&app, &it));
     }
 
     #[test]
@@ -1075,6 +1133,7 @@ mod tests {
                 skip_official_uninstall: true,
                 backup_enabled: false,
                 restore_point: false,
+                cleanup_source: None,
             },
         );
         assert_eq!(report.deleted, 0);

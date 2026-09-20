@@ -57,7 +57,19 @@ export async function runBatchCleanup(
           dry_run: false,
           skip_official_uninstall: !useOfficial,
           backup_enabled: backupEnabled,
+          cleanup_source: "uninstall",
         });
+        if (report.aborted && items.length) {
+          // S-R4-06: backup/session abort must not look like success.
+          results.push({
+            key,
+            name: app.name,
+            status: "failed",
+            detail: report.uninstall_message || formatError("cleanup aborted", "cleanup"),
+          });
+          cb.onResults([...results]);
+          continue;
+        }
         if (report.aborted && !items.length && !useOfficial) {
           results.push({ key, name: app.name, status: "skipped", detail: "" });
           okKeys.add(key);

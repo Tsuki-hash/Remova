@@ -21,6 +21,8 @@ export type FullCleanupOptions = {
   skip_official_uninstall: boolean;
   backup_enabled: boolean;
   restore_point?: boolean;
+  /** Gate source: uninstall | orphan | monitor | copilot */
+  cleanup_source?: "uninstall" | "orphan" | "monitor" | "copilot";
 };
 
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };

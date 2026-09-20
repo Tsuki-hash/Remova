@@ -403,6 +403,20 @@ export default function App() {
           return;
         }
         goNav("software");
+        const monApp: InstalledApp = {
+          name: L.monitorDiff,
+          version: "",
+          publisher: "",
+          install_location: "",
+          uninstall_string: "",
+          quiet_uninstall_string: "",
+          source: "Monitor",
+          registry_key: "",
+          estimated_size_kb: 0,
+          install_date: "",
+          display_icon: "",
+        };
+        core.setSelected(monApp);
         core.setScan({ app_name: L.monitorDiff, items });
         residualActions.selectDefaultItems(items);
         residualActions.setMonitorDiff(null);
