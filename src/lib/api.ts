@@ -97,6 +97,9 @@ export const api = {
     invoke("set_startup_enabled", { location, enabled }),
   setServiceStartDisabled: (name: string, disable: boolean) =>
     invoke("set_service_start_disabled", { name, disable }),
+  /** Stop/start a Windows service (not the same as disable start type). */
+  setServiceRunning: (name: string, run: boolean) =>
+    invoke("set_service_running", { name, run }),
   setTaskEnabled: (name: string, enabled: boolean) =>
     invoke("set_task_enabled", { name, enabled }),
   listStartupItems: () => invoke<ManageItem[]>("list_startup_items"),

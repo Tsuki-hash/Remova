@@ -12,20 +12,24 @@ export function SoftwareToolbar({
   estimating,
   scanning,
   aiEnabled,
+  smartFilterOpen,
   onQuery,
   onCategory,
   onStopEstimate,
   onOpenAi,
+  onToggleSmartFilter,
 }: {
   q: string;
   category: CategoryId;
   estimating: boolean;
   scanning: boolean;
   aiEnabled: boolean;
+  smartFilterOpen: boolean;
   onQuery: (v: string) => void;
   onCategory: (id: CategoryId) => void;
   onStopEstimate: () => void;
   onOpenAi: () => void;
+  onToggleSmartFilter: () => void;
 }) {
   const L = t();
   const [guideOpen, setGuideOpen] = useState(false);
@@ -69,11 +73,32 @@ export function SoftwareToolbar({
       />
       <button
         type="button"
+        onClick={onToggleSmartFilter}
+        title={L.smartFilterHint}
+        aria-expanded={smartFilterOpen}
+        style={{
+          height: 32,
+          padding: "0 12px",
+          borderRadius: 8,
+          border: `1px solid ${smartFilterOpen ? "var(--accent)" : "var(--border)"}`,
+          background: smartFilterOpen ? "var(--accent-soft)" : "var(--surface)",
+          color: smartFilterOpen ? "var(--accent)" : "var(--fg)",
+          fontSize: 12,
+          fontWeight: 650,
+          cursor: "pointer",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {smartFilterOpen ? L.smartFilterOpen : L.smartFilter}
+      </button>
+      <button
+        type="button"
         onClick={onOpenAi}
         title={aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
         style={{
           height: 32,
-          padding: "0 12px",
+          width: 32,
           borderRadius: 8,
           border: `1px solid ${aiEnabled ? "var(--accent)" : "var(--border)"}`,
           background: aiEnabled ? "var(--accent-soft)" : "var(--surface)",
@@ -82,10 +107,9 @@ export function SoftwareToolbar({
           fontWeight: 650,
           cursor: "pointer",
           flexShrink: 0,
-          whiteSpace: "nowrap",
         }}
       >
-        {aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
+        ✦
       </button>
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {(
