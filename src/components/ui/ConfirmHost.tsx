@@ -2,9 +2,10 @@ import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "r
 import { t } from "../../i18n";
 import {
   getConfirm,
+  getConfirmChecked,
+  setConfirmChecked,
   settleConfirm,
   subscribeConfirm,
-  type ConfirmOptions,
 } from "../../lib/confirm";
 
 function HoldButton({
@@ -97,9 +98,13 @@ function HoldButton({
   );
 }
 
-function ConfirmBody({ opts }: { opts: ConfirmOptions }) {
+function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>> }) {
   const L = t();
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
+  const [checked, setChecked] = useState(getConfirmChecked());
+  useEffect(() => {
+    setConfirmChecked(checked);
+  }, [checked]);
   return (
     <div
       role="dialog"
@@ -129,6 +134,27 @@ function ConfirmBody({ opts }: { opts: ConfirmOptions }) {
         >
           {opts.message}
         </div>
+      )}
+      {opts.checkbox && (
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            fontSize: 12.5,
+            color: "var(--fg)",
+            cursor: "pointer",
+            userSelect: "none" as const,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => setChecked(e.target.checked)}
+            style={{ marginTop: 2, accentColor: "var(--accent)" }}
+          />
+          <span style={{ lineHeight: 1.45 }}>{opts.checkbox.label}</span>
+        </label>
       )}
       <div
         style={{

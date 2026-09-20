@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
-import { requestConfirm } from "../lib/confirm";
+import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
 import { appKey } from "../lib/appKey";
@@ -77,15 +77,18 @@ export function useCleanupHandlers({
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const batchCancelRef = useRef(false);
 
+  const backupEnabledRef = useRef(false);
+
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
       const target = appOverride ?? selected;
       if (!target || forceBusy) return;
-      const ok = await requestConfirm({
+      const { ok, checked } = await requestConfirmEx({
         title: L.forceClean,
         message: `${prettyAppName(target.name, target.source)}\n${L.forceCleanHint}`,
         confirmLabel: L.forceClean,
         danger: true,
+        checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
       setForceBusy(true);
@@ -100,7 +103,7 @@ export function useCleanupHandlers({
         const report = await api.fullCleanup(target, items, {
           dry_run: false,
           skip_official_uninstall: true,
-          backup_enabled: true,
+          backup_enabled: checked,
         });
         toast.success(
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
@@ -143,7 +146,7 @@ export function useCleanupHandlers({
         // Residual cleanup after official uninstall never re-runs official uninstaller.
         // Deep-analyze path may still opt in via the checkbox.
         skip_official_uninstall: residualFromUninstall || !useOfficial,
-        backup_enabled: true,
+        backup_enabled: backupEnabledRef.current,
       });
       setReport(r);
       if (r && typeof r === "object" && "deleted" in r) {
@@ -202,7 +205,7 @@ export function useCleanupHandlers({
       toast.info(L.cleanup);
       return;
     }
-    let message = L.cleanupConfirmVault(
+    let message = L.cleanupConfirmNoBackup(
       n,
       residualFromUninstall || useOfficial,
     );
@@ -243,13 +246,16 @@ export function useCleanupHandlers({
         // non-blocking
       }
     }
-    const ok = await requestConfirm({
+    const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
       message,
       confirmLabel: L.cleanup,
       danger: true,
+      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
     });
-    if (ok) void execReal();
+    if (!ok) return;
+    backupEnabledRef.current = checked;
+    void execReal();
   }, [
     scan,
     selected,
@@ -271,33 +277,40 @@ export function useCleanupHandlers({
         toast.info(L.selectRowHint);
         return;
       }
-      const ok = await requestConfirm({
+      const { ok, checked } = await requestConfirmEx({
         title: L.batchUninstall,
         message: L.batchConfirm(queue.length, batchUseOfficial),
         confirmLabel: L.batchUninstall,
         danger: true,
+        checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
       setBatchTotal(queue.length);
       try {
-        await runBatchCleanup(queue, batchUseOfficial, appKey, {
-          onIndex: setBatchIndex,
-          onCurrent: setBatchCurrent,
-          onResults: setBatchResults,
-          onShowSummary: setShowBatchSummary,
-          onSetBatching: setBatching,
-          onDoneKeys: (keys) => {
-            // FE-P0a: remove finished keys without clearing failed multi selections.
-            setMulti((m) => {
-              const okSet = new Set(keys);
-              const n = new Set(m);
-              for (const k of okSet) n.delete(k);
-              return n;
-            });
+        await runBatchCleanup(
+          queue,
+          batchUseOfficial,
+          appKey,
+          {
+            onIndex: setBatchIndex,
+            onCurrent: setBatchCurrent,
+            onResults: setBatchResults,
+            onShowSummary: setShowBatchSummary,
+            onSetBatching: setBatching,
+            onDoneKeys: (keys) => {
+              // FE-P0a: remove finished keys without clearing failed multi selections.
+              setMulti((m) => {
+                const okSet = new Set(keys);
+                const n = new Set(m);
+                for (const k of okSet) n.delete(k);
+                return n;
+              });
+            },
+            cancelRef: batchCancelRef,
+            busyRef,
           },
-          cancelRef: batchCancelRef,
-          busyRef,
-        });
+          checked,
+        );
       } catch (e) {
         setError(formatError(e, "cleanup"));
       }

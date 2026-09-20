@@ -23,6 +23,8 @@ export async function runBatchCleanup(
   useOfficial: boolean,
   appKey: (a: InstalledApp) => string,
   cb: BatchCallbacks,
+  /** Opt-in backup from the batch confirm checkbox; default off. */
+  backupEnabled = false,
 ) {
   const L = t();
   if (!queue.length) {
@@ -54,7 +56,7 @@ export async function runBatchCleanup(
         const report = await api.fullCleanup(app, items, {
           dry_run: false,
           skip_official_uninstall: !useOfficial,
-          backup_enabled: true,
+          backup_enabled: backupEnabled,
         });
         if (report.aborted && !items.length && !useOfficial) {
           results.push({ key, name: app.name, status: "skipped", detail: "" });
