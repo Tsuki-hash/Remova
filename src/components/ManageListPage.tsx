@@ -322,7 +322,13 @@ export function ManageListPage({
                       {tab === "startup"
                         ? startupSourceLabel(it, L)
                         : tab === "services"
-                          ? `${L.manageStartType}: ${startTypeLabel(it, L)}${it.path || it.detail ? ` · ${it.path || it.detail}` : ""}`
+                          ? [
+                              it.source_label || it.name,
+                              `${L.manageStartType}: ${startTypeLabel(it, L)}`,
+                              it.path || it.detail || it.location,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")
                           : it.detail || it.location}
                     </div>
                     {tab === "tasks" && (
@@ -402,6 +408,7 @@ export function ManageListPage({
                           color: it.running ? "var(--danger)" : "var(--accent)",
                         }}
                         disabled={busy}
+                        title={it.running ? L.confirmStopService(it.name) : L.confirmStartService(it.name)}
                         onClick={() => void setRunning(it, !it.running)}
                       >
                         {it.running ? L.manageStop : L.manageStartBtn}
@@ -415,6 +422,11 @@ export function ManageListPage({
                         color: it.enabled ? "var(--muted)" : "var(--accent)",
                       }}
                       disabled={busy}
+                      title={
+                        tab === "services" && it.enabled
+                          ? L.confirmDisableServiceVsStop(it.name)
+                          : undefined
+                      }
                       onClick={() => void setEnabled(it, !it.enabled)}
                     >
                       {it.enabled ? L.manageDisable : L.manageEnable}
