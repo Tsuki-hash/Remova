@@ -58,7 +58,7 @@ export const dict = {
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Continue?`,
     cleanupConfirm: (n: number, official: boolean) =>
-      `Backup and clean ${n} items${official ? " with official uninstaller" : ""}. Confirm?`,
+      `Clean ${n} items${official ? " with official uninstaller" : ""} (no backup by default). Confirm?`,
     restoreConfirm: "Restore files and registry from latest backup?",
     noHistory: "No records",
     historyTitle: "Cleanup history",
@@ -139,7 +139,7 @@ export const dict = {
     manageReload: "Reload",
     manageClose: "Close manage",
     forceClean: "Force clean leftovers",
-    forceCleanHint: "Skips the official uninstaller and cleans confirmed leftovers only (backup first).",
+    forceCleanHint: "Skips the official uninstaller and cleans confirmed leftovers only (backup optional).",
     shellMenu: "Register context menu",
     shellMenuOn: "Context menu registered",
     shellUnregister: "Unregister context menu",
@@ -374,11 +374,11 @@ export const dict = {
     modeDeep: "Deep uninstall",
     modeDeepHint: "Official uninstaller, then scan and clean leftovers (recommended)",
     modeForce: "Force clean",
-    modeForceHint: "Skip official uninstaller; clean confirmed leftovers (backup first)",
+    modeForceHint: "Skip official uninstaller; clean confirmed leftovers (backup optional)",
     navOrphans: "Orphans",
     orphanPageHint: "Scan leftover folders with no matching install entry; review by origin before cleaning",
     safetyVaultTitle: "Safety Vault",
-    safetyVaultHint: "Backed up before cleanup; kept 7 days by default, then auto-pruned",
+    safetyVaultHint: "Cleanup backup is optional; sessions kept 7 days by default, then auto-pruned",
     checkupFlowHint: "Count software and scan suspected orphans. Only computed data is shown.",
     checkupStepApps: "Installed apps",
     checkupStepLarge: "Large (≥500MB)",
@@ -393,14 +393,20 @@ export const dict = {
     sortRecommend: "Recommended",
     drawerDeepUninstall: "Deep uninstall",
     drawerDeepHint:
-      "Runs the official uninstaller, then scans leftovers. A safety backup is created first — restore from More → Restore.",
+      "Runs the official uninstaller, then scans leftovers. Optional safety backup before cleanup — restore from More → Restore.",
     drawerOfficial: "Official only",
     drawerOfficialHint: "Run the app's official uninstaller only; no leftover scan",
     drawerAnalyze: "Preview links",
     drawerAnalyzeHint: "Analyze files / registry / services without uninstalling",
-    safetyVaultBanner: "Backed up before cleanup — restore from More → Restore if needed",
-    cleanupConfirmVault: (n: number, official: boolean) =>
+    safetyVaultBanner: "Safety backup created — restore from More → Restore if needed",
+    confirmBackupBeforeCleanup:
+      "Create a safety backup before cleanup (restore from More → Restore)",
+    cleanupConfirmWithBackup: (n: number, official: boolean) =>
       `Will create a safety backup, then clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Restore from More → Restore if needed. Continue?`,
+    cleanupConfirmNoBackup: (n: number, official: boolean) =>
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""} with NO backup (usually not restorable from Remova). Continue?`,
+    cleanupConfirmVault: (n: number, official: boolean) =>
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Backup is optional — check it if you want restore. Continue?`,
     confirmSharedSelected:
       "Selection includes shared runtimes that other apps may use. Confirm you understand the risk.",
     leftoverSummaryTitle: "Leftover overview",

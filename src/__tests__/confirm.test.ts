@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getConfirm,
+  getConfirmChecked,
   requestConfirm,
+  requestConfirmEx,
   settleConfirm,
+  setConfirmChecked,
   subscribeConfirm,
 } from "../lib/confirm";
 
 describe("confirm store", () => {
   afterEach(() => {
     if (getConfirm()) settleConfirm(false);
+    setConfirmChecked(false);
   });
 
   it("requestConfirm publishes options and resolves true on settle", async () => {
@@ -45,5 +49,36 @@ describe("confirm store", () => {
     settleConfirm(false);
     void p;
     unsub();
+  });
+
+  it("requestConfirmEx defaults checkbox to unchecked", async () => {
+    const p = requestConfirmEx({
+      title: "backup",
+      checkbox: { label: "Create safety backup" },
+    });
+    expect(getConfirmChecked()).toBe(false);
+    settleConfirm(true);
+    await expect(p).resolves.toEqual({ ok: true, checked: false });
+  });
+
+  it("requestConfirmEx returns checked state when user opts in", async () => {
+    const p = requestConfirmEx({
+      title: "backup2",
+      checkbox: { label: "Create safety backup", defaultChecked: true },
+    });
+    expect(getConfirmChecked()).toBe(true);
+    setConfirmChecked(false);
+    setConfirmChecked(true);
+    settleConfirm(true);
+    await expect(p).resolves.toEqual({ ok: true, checked: true });
+  });
+
+  it("cancel ignores checkbox", async () => {
+    const p = requestConfirmEx({
+      title: "backup3",
+      checkbox: { label: "Create safety backup", defaultChecked: true },
+    });
+    settleConfirm(false);
+    await expect(p).resolves.toEqual({ ok: false, checked: false });
   });
 });
