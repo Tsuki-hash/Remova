@@ -227,6 +227,7 @@ export const dict = {
     orphanGroupMeta: (count: number, safe: number, suggest: number, keep: number) =>
       `${count} 项 · 可清理 ${safe} · 确认 ${suggest} · 保留 ${keep}`,
     orphanNoOwnerHint: "无法确认归属软件，建议逐项确认后再清理",
+    orphanReasonDefault: "疑似残留目录：无对应安装记录",
     orphanEvidenceTitle: "判断依据",
     orphanRiskLabel: "风险",
     orphanRiskLow: "低",
@@ -242,6 +243,9 @@ export const dict = {
     orphanScanProgress: "正在扫描孤儿残留…",
     orphanExpandEvidence: "判断依据",
     orphanCollapseEvidence: "收起",
+    detailExpectScan: "点「深度卸载」后：官方卸载 → 自动扫描残留 → 你确认后再清理。",
+    linkedEmptyTitle: "关联项目",
+    reportClosedLoopTitle: "闭环",
     batchDetail: (deleted: number, failed: number) => `成功 ${deleted} · 失败 ${failed}`,
     histRow: (deleted: number, failed: number) => `${deleted} 成功 / ${failed} 失败`,
     deleteSession: "删除",

@@ -7,23 +7,61 @@ fn slug_tokens(name: &str) -> Vec<String> {
     crate::scanner::slugify(name)
 }
 
-/// Heuristic: directory looks like an app leftover if it has an exe or many files.
-fn looks_like_app_dir(p: &std::path::Path) -> bool {
+/// Heuristic stats for orphan candidate dirs (feeds judgment evidence).
+fn dir_shape(p: &std::path::Path) -> (usize, bool, bool) {
     let Ok(rd) = std::fs::read_dir(p) else {
-        return false;
+        return (0, false, false);
     };
     let mut files = 0;
     let mut has_exe = false;
+    let mut has_config = false;
     for e in rd.flatten().take(40) {
         let n = e.file_name().to_string_lossy().to_lowercase();
         if n.ends_with(".exe") || n.ends_with(".msi") {
             has_exe = true;
         }
+        if n.ends_with(".dll") || n.ends_with(".dat") || n.ends_with(".db") || n.ends_with(".json") || n.ends_with(".ini") || n.ends_with(".xml") {
+            has_config = true;
+        }
         if e.path().is_file() {
             files += 1;
         }
     }
+    (files, has_exe, has_config)
+}
+
+/// Heuristic: directory looks like an app leftover if it has an exe or many files.
+fn looks_like_app_dir(p: &std::path::Path) -> bool {
+    let (files, has_exe, _) = dir_shape(p);
     has_exe || files >= 3
+}
+
+fn scan_root_label(path: &str) -> Option<&'static str> {
+    let p = path.replace('/', "\\").to_lowercase();
+    if p.contains("\\program files (x86)\\") {
+        return Some("Program Files (x86)");
+    }
+    if p.contains("\\program files\\") {
+        return Some("Program Files");
+    }
+    if p.contains("\\appdata\\local\\") || p.contains("\\appdata\\roaming\\") {
+        return Some("AppData");
+    }
+    if p.contains("\\programdata\\") {
+        return Some("ProgramData");
+    }
+    None
+}
+
+fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
+    let meta = std::fs::metadata(p).ok()?;
+    let modified = meta.modified().ok()?;
+    let age = std::time::SystemTime::now()
+        .duration_since(modified)
+        .ok()?
+        .as_secs()
+        / 86_400;
+    Some(age as i64)
 }
 
 fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
@@ -109,6 +147,53 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             let score = SCORE_SUSPECTED_MIN + 10;
+            let (files, has_exe, has_config) = dir_shape(&p);
+            let mut evidence = vec![Evidence {
+                code: "orphan_no_owner".into(),
+                label: "No matching uninstall entry".into(),
+                weight: score,
+                detail: format!("folder `{name}` not matched to installed software"),
+            }];
+            if has_exe {
+                evidence.push(Evidence {
+                    code: "orphan_has_exe".into(),
+                    label: "Contains executable".into(),
+                    weight: 10,
+                    detail: "found .exe/.msi under folder".into(),
+                });
+            } else if files >= 3 {
+                evidence.push(Evidence {
+                    code: "orphan_many_files".into(),
+                    label: "Multi-file app-like folder".into(),
+                    weight: 5,
+                    detail: format!("{files} files in top level"),
+                });
+            }
+            if has_config {
+                evidence.push(Evidence {
+                    code: "orphan_has_config".into(),
+                    label: "Contains config/data files".into(),
+                    weight: 4,
+                    detail: "dll/dat/db/json/ini/xml present".into(),
+                });
+            }
+            if let Some(root) = scan_root_label(&p.to_string_lossy()) {
+                evidence.push(Evidence {
+                    code: "orphan_root".into(),
+                    label: "Install-root location".into(),
+                    weight: 2,
+                    detail: root.into(),
+                });
+            }
+            if let Some(days) = last_write_age_days(&p) {
+                evidence.push(Evidence {
+                    code: "orphan_mtime".into(),
+                    label: "Last write age".into(),
+                    weight: 0,
+                    detail: format!("{days} day(s) ago"),
+                });
+            }
+            // Orphans stay Suspected/Medium — never auto-select; user must confirm.
             out.push(CleanupItem {
                 path: p.to_string_lossy().to_string(),
                 kind: ItemKind::Dir,
@@ -116,12 +201,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 confidence: Confidence::Suspected,
                 risk: RiskLevel::Medium,
                 reason: "Orphan app-like folder (no matching uninstall entry)".into(),
-                evidence: vec![Evidence {
-                    code: "orphan_dir".into(),
-                    label: "Folder not matched to installed software".into(),
-                    weight: score,
-                    detail: name,
-                }],
+                evidence,
                 shared: false,
                 user_data: false,
                 size_kb: None,

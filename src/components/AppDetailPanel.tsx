@@ -99,7 +99,7 @@ export function AppDetailPanel({
       </div>
 
       <div style={css.panelBody}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
           <button
             style={{
               ...css.btn,
@@ -175,6 +175,16 @@ export function AppDetailPanel({
             )}
           </div>
         </div>
+        <div
+          style={{
+            marginBottom: 12,
+            fontSize: 11.5,
+            color: "var(--muted)",
+            lineHeight: 1.45,
+          }}
+        >
+          {L.deepUninstallExpect}
+        </div>
 
         <div style={css.sectionTitle}>{L.basicInfo}</div>
         <div style={{ ...css.card, padding: "4px 10px", marginBottom: 14 }}>
@@ -210,8 +220,8 @@ export function AppDetailPanel({
 
         <div style={css.sectionTitle}>{L.linkedItems}</div>
         {buckets.length === 0 ? (
-          <div style={{ ...css.muted, marginBottom: 12, fontSize: 12 }}>
-            {L.drawerAnalyzeHint}
+          <div style={{ ...css.muted, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
+            {L.linkedNotScanned || L.drawerAnalyzeHint}
             <div style={{ marginTop: 8 }}>
               <button style={{ ...css.btnGhost, height: 30 }} onClick={() => onAnalyze(app)}>
                 {L.drawerAnalyze}
