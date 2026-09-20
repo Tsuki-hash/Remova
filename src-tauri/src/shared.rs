@@ -62,6 +62,18 @@ pub fn is_shared_item(name: &str, path: &str, reason: &str) -> bool {
         return true;
     }
     let p = lower(&path.replace('/', "\\"));
+    let trimmed = p.trim_end_matches('\\');
+    // Exact shared-runtime roots (no trailing segment).
+    const ROOTS: &[&str] = &[
+        r"c:\program files\common files",
+        r"c:\program files (x86)\common files",
+    ];
+    if ROOTS.contains(&trimmed) {
+        return true;
+    }
+    if trimmed.ends_with(r"\common files") || trimmed.ends_with(r"\microsoft shared") {
+        return true;
+    }
     if SHARED_PATH_MARKERS.iter().any(|m| p.contains(m)) {
         // System32 only when reason/evidence already suggests leftover association
         // (avoid flagging random System32 hits from aggressive scanners).
@@ -94,6 +106,27 @@ mod tests {
         assert!(is_shared_item(
             "Shared Component",
             r"C:\Program Files\Common Files\Acme\lib.dll",
+            ""
+        ));
+    }
+
+    #[test]
+    fn flags_exact_common_files_roots() {
+        // S-R4-02: exact roots without trailing segment.
+        assert!(is_shared_item("", r"C:\Program Files\Common Files", ""));
+        assert!(is_shared_item(
+            "",
+            r"C:\Program Files (x86)\Common Files",
+            ""
+        ));
+        assert!(is_shared_item(
+            "",
+            r"C:\Program Files\Common Files\Microsoft Shared",
+            ""
+        ));
+        assert!(is_shared_item(
+            "",
+            r"C:\Program Files\Common Files\Microsoft Shared\",
             ""
         ));
     }

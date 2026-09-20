@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Cleanup gate: exact user profile red-line roots (`Documents`/`Desktop`/`Downloads`/…) and `Common Files` roots are skipped server-side even when IPC flags claim otherwise; public profile folders and Common Files protected in `is_safe_fs`
 - Cleanup gate (P0): server-side recompute of `user_data` / sync-conflict / `shared` — forged IPC flags cannot delete Documents/Downloads/etc.
 - Cleanup gate (P0): PATH scrub rejects system entries (`Windows`/`System32`/PowerShell…)
 - `setMulti` functional updates resolved inside the reducer (no lost concurrent updaters)

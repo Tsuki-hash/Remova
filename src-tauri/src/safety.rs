@@ -289,9 +289,14 @@ pub fn protected_fs_prefixes() -> Vec<String> {
         r"c:\windows.old".to_string(),
         r"c:\programdata\microsoft".to_string(),
         r"c:\program files\windowsapps".to_string(),
+        r"c:\program files\common files".to_string(),
         r"c:\program files\common files\microsoft shared".to_string(),
+        r"c:\program files (x86)\common files".to_string(),
         r"c:\program files (x86)\common files\microsoft shared".to_string(),
         r"c:\users\default".to_string(),
+        r"c:\users\public\documents".to_string(),
+        r"c:\users\public\desktop".to_string(),
+        r"c:\users\public\downloads".to_string(),
     ];
     if let Some(root) = env_dir_lower("SystemRoot") {
         out.push(root.clone());
@@ -302,9 +307,11 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     }
     if let Some(pf) = env_dir_lower("ProgramFiles") {
         out.push(format!(r"{pf}\windowsapps"));
+        out.push(format!(r"{pf}\common files"));
         out.push(format!(r"{pf}\common files\microsoft shared"));
     }
     if let Some(pf86) = env_dir_lower("ProgramFiles(x86)") {
+        out.push(format!(r"{pf86}\common files"));
         out.push(format!(r"{pf86}\common files\microsoft shared"));
     }
     if let Some(sd) = std::env::var_os("SystemDrive") {
@@ -312,6 +319,9 @@ pub fn protected_fs_prefixes() -> Vec<String> {
         let sd = sd.trim_end_matches('\\').to_string();
         if sd.len() >= 2 {
             out.push(format!(r"{sd}\users\default"));
+            out.push(format!(r"{sd}\users\public\documents"));
+            out.push(format!(r"{sd}\users\public\desktop"));
+            out.push(format!(r"{sd}\users\public\downloads"));
         }
     }
     out
@@ -320,6 +330,7 @@ pub fn protected_fs_prefixes() -> Vec<String> {
 /// Paths that are likely the user's own files (SOP red line) — never auto-delete.
 pub fn is_user_data_path(p: &str) -> bool {
     let low = p.replace('/', "\\").to_lowercase();
+    let trimmed = low.trim_end_matches('\\');
     if low.contains(r"\my documents") {
         return true;
     }
@@ -332,7 +343,28 @@ pub fn is_user_data_path(p: &str) -> bool {
         r"\music\",
         r"\onedrive\",
     ];
-    markers.iter().any(|m| low.contains(m))
+    if markers.iter().any(|m| low.contains(m)) {
+        return true;
+    }
+    // Exact profile / public red-line roots (no trailing segment): last path segment match.
+    // e.g. C:\Users\me\Documents, C:\Users\Public\Downloads
+    const SEGMENTS: &[&str] = &[
+        "documents",
+        "my documents",
+        "desktop",
+        "downloads",
+        "pictures",
+        "videos",
+        "music",
+        "onedrive",
+    ];
+    let last = trimmed.rsplit('\\').next().unwrap_or("");
+    if !SEGMENTS.contains(&last) {
+        return false;
+    }
+    // Require a Users-style prefix so random non-profile ...\Documents trees stay
+    // governed by association/other gates rather than a global name ban.
+    trimmed.contains(r"\users\") || trimmed.contains(r"\user\")
 }
 
 /// Sync-conflict style folders often hold real user files.
@@ -402,6 +434,35 @@ mod tests {
     fn fs_allows_normal_install() {
         assert!(is_safe_fs(Path::new(r"C:\Program Files\MyApp")));
         assert!(is_safe_fs(Path::new(r"D:\Games\SomeGame")));
+    }
+
+    #[test]
+    fn user_data_exact_profile_roots_flagged() {
+        // S-R4-01: exact red-line roots without trailing segment.
+        for p in [
+            r"C:\Users\a\Documents",
+            r"C:\Users\a\Documents\",
+            r"c:\users\a\desktop",
+            r"C:\Users\a\Downloads",
+            r"C:\Users\Public\Documents",
+            r"C:\Users\Public\Downloads",
+            r"D:\Users\b\Pictures",
+        ] {
+            assert!(is_user_data_path(p), "expected user_data for {p}");
+        }
+        assert!(is_user_data_path(
+            r"C:\Users\a\Documents\App\Config\file.txt"
+        ));
+        assert!(!is_user_data_path(r"C:\Program Files\MyApp"));
+    }
+
+    #[test]
+    fn fs_rejects_common_files_and_public_roots() {
+        assert!(!is_safe_fs(Path::new(r"C:\Program Files\Common Files")));
+        assert!(!is_safe_fs(Path::new(
+            r"C:\Program Files (x86)\Common Files"
+        )));
+        assert!(!is_safe_fs(Path::new(r"C:\Users\Public\Documents")));
     }
 
     #[test]

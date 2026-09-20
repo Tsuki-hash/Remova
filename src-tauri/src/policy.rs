@@ -189,6 +189,29 @@ mod tests {
             gate_cleanup_item(None, &forged_ud, CleanupSource::Uninstall, &ignore),
             GateDecision::Skip("user_data red line")
         );
+        // S-R4-01: exact profile roots without trailing segment.
+        for root in [
+            r"C:\Users\a\Documents",
+            r"C:\Users\a\Downloads",
+            r"C:\Users\Public\Documents",
+        ] {
+            let it = item(root, ItemKind::Dir);
+            assert!(
+                !gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore).is_allow(),
+                "exact user_data root must skip: {root}"
+            );
+        }
+        // S-R4-02: exact Common Files root.
+        for root in [
+            r"C:\Program Files\Common Files",
+            r"C:\Program Files (x86)\Common Files",
+        ] {
+            let it = item(root, ItemKind::Dir);
+            assert!(
+                !gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore).is_allow(),
+                "exact shared root must skip: {root}"
+            );
+        }
         // Client says shared=false but path looks shared → must skip.
         let forged_sh = item(
             r"C:\Program Files\Common Files\Vendor\redist",
