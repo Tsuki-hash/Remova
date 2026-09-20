@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.1.0] - 2026-09-20
 
-### Highlights (REDESIGN)
+### Highlights
 - **Deep-uninstall UX loop**: software row → detail panel → rich confirm → official uninstaller → auto-scan → classify → you confirm → optional backup → cleanup → report
 - **System-item semantics**: startup shows enabled/disabled; services split run state vs start type (stop ≠ disable, with `set_service_running` IPC); tasks show last/next run
 - **Orphan trust**: expandable judgment evidence, bulk select safe/review only, page-level scan status, single-channel toast
@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Risk tiers** on cleanup / force-clean / orphan confirms; force-clean analyzes first
 
 ### Added
-- **Deep-uninstall UX loop (REDESIGN)**: rich uninstall confirm (official → scan → classify → confirm → optional backup); five-stage progress bar (`identify/official/scan/analyze/report`); report close-out line after full cleanup
+- **Deep-uninstall UX loop**: rich uninstall confirm (official → scan → classify → confirm → optional backup); five-stage progress bar (`identify/official/scan/analyze/report`); report close-out line after full cleanup
 - Software list density: publisher DN collapsed via `prettyPublisher`; at most one high-signal chip per row
 - Right detail panel trust copy: linked-item empty state + deep-uninstall expectation under primary action
 - **ManageItem status fields** (optional IPC): `kind` / `running` / `start_type` / `source_label` / `last_run` / `next_run` / `path`
@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Services show run state + start type; tasks show last/next run when available
 - Manage list icons neutral gray; blue reserved for action/status/selection
 - Analyze/uninstall toasts use `analyze-flow` channel (no stacked scan/done pair)
-- README product positioning documents the deep-uninstall loop; `docs/product/REDESIGN.md` tracked
+- README product positioning documents the deep-uninstall loop
 - Toolbar ⓘ guide describes the full deep-uninstall path
 - Cleanup backup is **opt-in**: confirm dialogs offer an unchecked “create safety backup” option; default cleanup/batch/orphan/force-clean paths no longer force `backup_enabled: true`
 
