@@ -17,10 +17,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Release build artifacts are large; cache registry/git deps only via default key.
+          cache-targets: "false"
 
       - name: npm ci
         run: npm ci
@@ -34,8 +42,8 @@ jobs:
         run: cargo fmt --check
         working-directory: src-tauri
 
-      - name: cargo clippy
-        run: cargo clippy --lib -- -D warnings
+      - name: cargo clippy (lib + tests)
+        run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
       - name: cargo test
@@ -60,6 +68,10 @@ jobs:
       - name: package portable zip
         shell: pwsh
         run: npm run package:portable
+
+      - name: portable zip smoke
+        shell: pwsh
+        run: npm run smoke:portable
 
       - name: upload NSIS installer
         uses: actions/upload-artifact@v4
