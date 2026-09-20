@@ -20,11 +20,13 @@ npm test           # vitest
 cd src-tauri
 cargo test --lib
 cargo fmt --check
-cargo clippy --lib -- -D warnings
+cargo clippy --all-targets -- -D warnings
 
 # Full app
 npx tauri dev
 npx tauri build
+npm run smoke:dist      # after npm run build
+npm run smoke:portable  # after package:portable
 ```
 
 ## Conventions
