@@ -62,6 +62,12 @@ jobs:
       - name: command table vs generate_handler
         run: pwsh -NoProfile -File scripts/check-commands.ps1
 
+      - name: frontend build + dist smoke
+        run: npm run build
+
+      - name: frontend dist smoke
+        run: npm run smoke:dist
+
       - name: tauri build
         run: npx tauri build
 

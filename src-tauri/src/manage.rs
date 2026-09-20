@@ -552,7 +552,7 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     };
     if !is_allowed_startup_approved_key(sa_key) {
-        return Err(format!("manage:protected_registry:{sa_key}"));
+        return Err(crate::error::manage_err("protected_registry", sa_key).to_ipc());
     }
     allow_manage_reg_write(sa_key, true)?;
 

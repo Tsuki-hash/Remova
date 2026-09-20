@@ -8,15 +8,12 @@ import { toast } from "../lib/toast";
 import { cleanupProgress } from "../lib/decision";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
-/** Single source: backend verify_cleanup_leftovers rows. */
-export type ReportVerifyRow = VerifyRow;
-
 type Props = {
   report: CleanupReport | FullCleanupReport;
   aiEnabled: boolean;
   aiReportBusy: boolean;
   aiReportNote: string | null;
-  verifyRows: ReportVerifyRow[] | null;
+  verifyRows: VerifyRow[] | null;
   onDismiss: () => void;
   onAiReportBusy: (v: boolean) => void;
   onAiReportNote: (v: string | null) => void;
@@ -92,6 +89,9 @@ export function ReportPanel({
             report.skipped,
             Boolean("backup_dir" in report && report.backup_dir),
           )}
+          {"delayed" in report && report.delayed ? (
+            <span style={{ marginLeft: 6 }}>· {L.reportDelayedNote(report.delayed)}</span>
+          ) : null}
           <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 650 }}>
             · {aiReportNote ? L.conclusionSourceAi : L.conclusionSourceRule}
           </span>
