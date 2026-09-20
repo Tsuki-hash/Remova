@@ -18,7 +18,7 @@ export function useMoreTools(opts: {
     (run: () => void) => {
       const L = t();
       if (!selected) {
-        toast.info(L.selectRowHint);
+        toast.info(L.moreSelectedNeedHint || L.selectRowHint);
         onGoSoftware();
         return;
       }

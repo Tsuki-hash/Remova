@@ -249,6 +249,23 @@ mod tests {
         assert!(!match_installed(&installed, p2));
     }
 
+    #[test]
+    fn orphan_evidence_builder_includes_no_owner_and_shape() {
+        let tmp = std::env::temp_dir().join(format!("remova_orphan_ev_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("app.exe"), b"mz").unwrap();
+        std::fs::write(tmp.join("config.json"), b"{}").unwrap();
+        assert!(looks_like_app_dir(&tmp));
+        let (files, has_exe, has_config) = dir_shape(&tmp);
+        assert!(has_exe);
+        assert!(has_config);
+        assert!(files >= 2);
+        let path_str = r"C:\Program Files\FakeVendor\Leaf".to_string();
+        assert_eq!(scan_root_label(&path_str), Some("Program Files"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[cfg(windows)]
     #[test]
     fn scan_orphans_runs() {
@@ -257,6 +274,11 @@ mod tests {
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
             assert!(it.path.len() > 3);
+            assert!(!it.evidence.is_empty(), "orphan items must carry judgment evidence");
+            assert!(it
+                .evidence
+                .iter()
+                .any(|e| e.code == "orphan_no_owner" || e.code == "orphan_dir"));
         }
     }
 }
