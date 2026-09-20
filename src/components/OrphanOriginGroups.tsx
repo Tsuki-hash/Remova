@@ -107,7 +107,10 @@ export function OrphanOriginGroups({
                           <span style={{ color: chip.color, fontWeight: 650, marginRight: 8 }}>
                             {chip.label}
                           </span>
-                          {it.reason || L.orphanNoOwnerHint}
+                          {(it.reason || "").toLowerCase().includes("orphan") ||
+                          (it.reason || "").toLowerCase().includes("leftover")
+                            ? L.orphanReasonDefault
+                            : it.reason || L.orphanNoOwnerHint}
                         </span>
                       </span>
                       <button

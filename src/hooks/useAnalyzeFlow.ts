@@ -79,10 +79,11 @@ export function useAnalyzeFlow({
         setError(null);
         toast.success(
           t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),
+          { channel: "analyze-flow", ttl: 3000 },
         );
       } catch (e) {
         setError(formatError(e, "analyze"));
-        toast.error(t().errAnalyzeFailed(formatError(e, "analyze")));
+        toast.error(t().errAnalyzeFailed(formatError(e, "analyze")), { channel: "analyze-flow" });
       } finally {
         setScanning(false);
       }
@@ -146,6 +147,7 @@ export function useAnalyzeFlow({
         }
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
+          toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
           await analyze(app, { fromUninstall: true });
           setUninstallStage("analyze");
           await new Promise((resolve) => setTimeout(resolve, 320));
@@ -158,7 +160,7 @@ export function useAnalyzeFlow({
       } catch (e) {
         setUninstallStage("idle");
         setError(formatError(e, "cleanup"));
-        toast.error(strings.errCleanupFailed(formatError(e, "cleanup")));
+        toast.error(strings.errCleanupFailed(formatError(e, "cleanup")), { channel: "analyze-flow" });
       } finally {
         busyRef.current = false;
         setUninstallingKey(null);
