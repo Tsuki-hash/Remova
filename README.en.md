@@ -35,7 +35,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches** |
 | **Plain language** | Why each leftover belongs (or why it is kept); Safe · Review · Keep buckets |
 | **User-data red line** | Documents / Downloads / sync-conflict folders are never auto-selected |
-| **Safety Vault** | Auto-backup before clean; 7-day session retention; open backup from report/history |
+| **Safety Vault** | **Optional** backup before clean (unchecked by default); 7-day retention; open existing backups from report/history |
 | **Verified clean** | Post-clean checklist (paths / registry / PATH) |
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin |
 | AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
@@ -58,7 +58,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 4. **Report** counts + progress + Safety Vault note + verify checklist  
 
 ### Clean & backup
-- Dry-run first; backup before every real clean  
+- Dry-run first; real clean can opt into a safety backup (**unchecked by default**)  
 - Shared runtimes (VC++ / .NET, …) unchecked by default  
 - Backup root: `%PROGRAMDATA%\Remova\Backup\`
 

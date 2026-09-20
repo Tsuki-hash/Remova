@@ -329,56 +329,29 @@ FullCleanupReport → history::append（非 dry_run）
 2. `path.json` → **merge** 缺失 PATH 段（不整环境覆盖；User/Machine 按 scopes）  
 3. Registry：存在 `value.reg` 则 **单值 import**；否则 `export.reg`  
 
-**门禁**：backup 任一项 fail → cleanup aborted；`path_map` / `value.reg` 写失败计入 fail。
+**门禁**：backup 任一项 fail → cleanup aborted（仅当启用备份时）；`path_map` / `value.reg` 写失败计入 fail。备份为**可选**（前端确认框默认不勾；`backup_enabled=false` 时不建会话，还原点仍可单独尝试）。
+
+**实现要点**：文件命名用 FNV-1a 64（非加密，仅去重）；`path_map.json` 为路径映射；注册表 `key|ValueName` 导出父键 + `value.reg` 单值优先；`HKLM64/32` → reg.exe 视图已归一化。
 
 ### 6.x AR-10 关联与来源
 
 | 来源 | 关联策略 |
 |---|---|
-| 正常卸载（有 install_location） | install 前缀 / slug / publisher 启发式 |
-| **孤儿（app.source=Orphan 或空 install+registry）** | 仅 `is_safe_fs`，不再用假 slug |
-| dry-run | 与真删共用：user_data / shared / ignore / AR-10 / safety |
+| 正常卸载（有 install_location） | File/Dir：install 前缀 / slug / publisher；**Registry/Path：轻量关联（install / GUID / publisher / slug / reason），失败 Skip** |
+| **孤儿 / 监控（source=Orphan/Monitor 或空 install+registry）** | 仅 user_data/shared/ignore/PATH danger/`is_safe_fs`，不做产品名关联 |
+| dry-run | 与真删共用 gate；`cleanup_source` 经 `FullCleanupOptions` 传入 |
 
 ### 8.x `is_safe_fs` 保护前缀
 
-环境变量生成 + `c:\` 兜底：`SystemRoot`、`SystemRoot.old`、`ProgramData\Microsoft`、`ProgramFiles(x86)\WindowsApps`、`…\Microsoft Shared`、`SystemDrive\Users\Default` 等（见 `safety::protected_fs_prefixes`）。
+环境变量生成 + `c:\` 兜底：`SystemRoot`、`ProgramData\Microsoft`、`ProgramFiles*\WindowsApps`、`…\Common Files`（根）、`…\Microsoft Shared`、`Users\Public\Documents/Desktop/Downloads`、`SystemDrive\Users\Default` 等（见 `safety::protected_fs_prefixes`）。
 
-**关键服务名单**：动态，见 `safety::critical_service_names()`（约 30+，含 WinDefend/Appinfo/DcomLaunch 等；文档勿写死数量）。
+**关键服务名单**：动态，见 `safety::critical_service_names()`（勿写死数量）。
 
 **manage 任务写侧**：拒绝 `\Microsoft\Windows\*` 前缀（`manage:protected_task`）。
 
-**IPC 错误**：`RemovaError` 形如 `code::message`（如 `manage:protected::Name`）；前端 `formatError` 兼容旧 `manage:kind:name`。
+**IPC 错误**：`RemovaError` 形如 `code::message`；前端 `formatError` 兼容旧 `manage:kind:name`。
 
 **模块补全（前端）**：`hooks/reducers/*`、`useMore*`、`src/i18n/{zh,en,index}.ts`（`src/i18n.ts` 为 re-export）、`SoftwarePage`。
-
----
-
-根目录：`%PROGRAMDATA%\Remova\Backup\`
-
-```
-{unix_ts}_{safe_app_name}/          # safe: 字母数字与 -_ . 空格，其余 → _，最长 60
-├── files/
-│   ├── {fnv64}_{original_name}    # 文件副本，或整目录递归复制
-│   └── path_map.json              # { "fnv64_name": "C:\\原路径", ... }
-└── registry/
-    └── {safe_name_of_item_path}/  # \ → __，去掉 : * ? " < > |，最长 180
-        ├── export.reg             # reg export /y（/reg:32 或 /reg:64）
-        └── value.txt              # 仅当 path 含 |（Run 值）时写入完整 path
-```
-
-要点：
-
-- **文件**：`md5_short` 实为 FNV-1a 64（非加密），仅用于命名去重；`path_map.json` 是 BTreeMap，restore 用它把 `files/<rel>` 写回原路径。
-- **注册表**：`key|ValueName` 项导出**父键**（`export.reg`），并在 `value.txt` 记录 `key|ValueName`，便于还原时定位；整键项直接导出该键。
-- **视图**：路径含 `HKLM32` 或 `WOW6432Node` → `reg export /reg:32`，否则 `/reg:64`。
-- **hive 映射**：`HKLM64|HKLM32|HKLM` → `HKLM`；`HKCU` → `HKCU`。
-- **中止条件**：`backup_items` 任一项 fail&gt;0 → `run_full_cleanup` 返回 `aborted=true`，不执行删除。
-
-还原（`restore::restore_session`）：
-
-1. 读 `path_map.json`，目录递归拷回，文件 `fs::copy` 回原路径（会覆盖）。
-2. 遍历 `registry/*/export.reg`，`reg import`；任一失败立即 Err。
-3. 返回消息列表。
 
 历史：`%PROGRAMDATA%\Remova\history.jsonl`，一行一个 JSON `HistoryEntry`。
 

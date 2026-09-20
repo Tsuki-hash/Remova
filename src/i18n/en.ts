@@ -407,6 +407,10 @@ export const dict = {
       `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""} with NO backup (usually not restorable from Remova). Continue?`,
     cleanupConfirmVault: (n: number, official: boolean) =>
       `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Backup is optional — check it if you want restore. Continue?`,
+    cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. No backup by default; check “Create a safety backup before cleanup” below if needed. Continue?`,
+    noBackupThisRun: "No safety backup was created for this cleanup (backup is optional)",
+    restorePointSkipped: "No restore point was created this run",
     confirmSharedSelected:
       "Selection includes shared runtimes that other apps may use. Confirm you understand the risk.",
     leftoverSummaryTitle: "Leftover overview",

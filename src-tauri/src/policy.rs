@@ -45,9 +45,37 @@ impl GateDecision {
     }
 }
 
+/// Expand `%VAR%` environment references in a PATH segment (gate-time only).
+fn expand_path_env(entry: &str) -> String {
+    let mut out = String::with_capacity(entry.len());
+    let bytes: Vec<char> = entry.chars().collect();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == '%' {
+            if let Some(end) = bytes[i + 1..].iter().position(|c| *c == '%') {
+                let name: String = bytes[i + 1..i + 1 + end].iter().collect();
+                if name.is_empty() {
+                    out.push('%');
+                    i += 1;
+                    continue;
+                }
+                if let Ok(val) = std::env::var(&name) {
+                    out.push_str(&val);
+                    i += end + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 /// PATH segments that must never be scrubbed (system PATH).
 fn is_dangerous_path_entry(entry: &str) -> bool {
-    let s = entry
+    let expanded = expand_path_env(entry);
+    let s = expanded
         .trim()
         .trim_matches('"')
         .replace('/', "\\")
@@ -60,17 +88,51 @@ fn is_dangerous_path_entry(entry: &str) -> bool {
     if s.ends_with(':') || !s.contains('\\') {
         return true;
     }
-    let danger = [
-        r"c:\windows",
-        r"c:\windows\system32",
-        r"c:\windows\system32\wbem",
-        r"c:\windows\system32\windowspowershell\v1.0",
-        r"c:\windows\system32\openssh",
-        r"c:\program files\powershell",
-        r"c:\program files\powershell\7",
-        r"c:\program files (x86)\powershell",
-        r"c:\programdata\microsoft\windows\start menu\programs\startup",
+    // After env expansion, reject any segment still containing unexpanded % or system roots.
+    if s.contains('%') {
+        return true;
+    }
+    let mut danger: Vec<String> = vec![
+        r"c:\windows".into(),
+        r"c:\windows\system32".into(),
+        r"c:\windows\system32\wbem".into(),
+        r"c:\windows\system32\windowspowershell\v1.0".into(),
+        r"c:\windows\system32\openssh".into(),
+        r"c:\program files\powershell".into(),
+        r"c:\program files\powershell\7".into(),
+        r"c:\program files (x86)\powershell".into(),
+        r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
+    for (env_name, suffixes) in [
+        ("SystemRoot", [r"\windows".to_string(), String::new()]),
+        ("windir", [r"\windows".to_string(), String::new()]),
+        (
+            "ProgramFiles",
+            [r"\program files".to_string(), String::new()],
+        ),
+        (
+            "ProgramFiles(x86)",
+            [r"\program files (x86)".to_string(), String::new()],
+        ),
+        ("ProgramData", [r"\programdata".to_string(), String::new()]),
+    ] {
+        if let Ok(val) = std::env::var(env_name) {
+            let low = val
+                .replace('/', "\\")
+                .to_lowercase()
+                .trim_end_matches('\\')
+                .to_string();
+            if low.len() > 2 {
+                danger.push(low);
+            }
+        }
+        for suf in suffixes {
+            if !suf.is_empty() {
+                // hardcoded companions already in list; keep loop shape simple
+                let _ = suf;
+            }
+        }
+    }
     danger
         .iter()
         .any(|d| s == *d || s.starts_with(&format!("{d}\\")))
@@ -121,15 +183,12 @@ pub fn gate_cleanup_item(
     }
 
     if let Some(app) = app {
-        if matches!(item.kind, ItemKind::File | ItemKind::Dir) {
-            let orphan = source == CleanupSource::Orphan
-                || source == CleanupSource::Monitor
-                || crate::executor::is_orphan_flow(app);
-            if orphan {
-                // Orphan/monitor: safety already applied; association is not product-name based.
-            } else if !crate::executor::path_associated_with_app(app, item) {
-                return GateDecision::Skip("path not associated with app");
-            }
+        let orphan = source == CleanupSource::Orphan
+            || source == CleanupSource::Monitor
+            || crate::executor::is_orphan_flow(app);
+        if !orphan && !crate::executor::path_associated_with_app(app, item) {
+            // S-R4-03: Registry/Path also require a light association when app is known.
+            return GateDecision::Skip("path not associated with app");
         }
     }
     GateDecision::Allow
@@ -232,6 +291,8 @@ mod tests {
             r"c:\windows\system32\wbem\",
             "",
             r"C:",
+            r"%SystemRoot%\System32",
+            r"%ProgramFiles%\Vendor\Tool",
         ] {
             let it = item(p, ItemKind::Path);
             let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
@@ -239,6 +300,35 @@ mod tests {
         }
         let ok = item(r"C:\Vendor\Tool\bin", ItemKind::Path);
         assert!(gate_cleanup_item(None, &ok, CleanupSource::Uninstall, &ignore).is_allow());
+    }
+
+    #[test]
+    fn registry_path_require_app_association() {
+        let ignore = crate::ignore::IgnoreList::default();
+        let a = app("DemoApp", r"C:\Program Files\DemoApp");
+        // Unrelated PATH / registry with real app context → skip (S-R4-03).
+        let other_path = item(r"D:\TotallyOther\bin", ItemKind::Path);
+        assert!(
+            !gate_cleanup_item(Some(&a), &other_path, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        let other_reg = item(r"HKCU\Software\OtherVendor\Thing", ItemKind::Registry);
+        assert!(
+            !gate_cleanup_item(Some(&a), &other_reg, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        // Related PATH under install root → allow.
+        let related = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
+        assert!(
+            gate_cleanup_item(Some(&a), &related, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        // Orphan source still allows non-associated PATH (safety gate only).
+        let orphan_app = app("孤儿扫描", "");
+        assert!(gate_cleanup_item(
+            Some(&orphan_app),
+            &other_path,
+            CleanupSource::Orphan,
+            &ignore
+        )
+        .is_allow());
     }
 
     #[test]
@@ -255,7 +345,7 @@ mod tests {
                 ud
             },
             item(r"C:\Windows\System32", ItemKind::Path),
-            item(r"C:\Vendor\Tool", ItemKind::Path),
+            item(r"C:\Program Files\DemoApp\bin", ItemKind::Path),
         ];
         for it in &items {
             let dry = gate_cleanup_item(Some(&a), it, CleanupSource::Uninstall, &ignore);
@@ -279,6 +369,7 @@ mod tests {
         assert!(
             !gate_cleanup_item(Some(&a), &items[3], CleanupSource::Uninstall, &ignore).is_allow()
         );
+        // Related PATH under install root (S-R4-03 association).
         assert!(
             gate_cleanup_item(Some(&a), &items[4], CleanupSource::Uninstall, &ignore).is_allow()
         );
@@ -358,6 +449,16 @@ mod tests {
         // Related install path allows.
         let ok = item(r"C:\Program Files\DemoApp\bin\x.exe", ItemKind::File);
         assert!(gate_cleanup_item(Some(&a), &ok, CleanupSource::Uninstall, &ignore).is_allow());
+        // Related PATH under install root allows (S-R4-03 association).
+        let ok_path = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
+        assert!(
+            gate_cleanup_item(Some(&a), &ok_path, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        // Unrelated registry fails association.
+        let bad_reg = item(r"HKCU\Software\UnrelatedApp\Config", ItemKind::Registry);
+        assert!(
+            !gate_cleanup_item(Some(&a), &bad_reg, CleanupSource::Uninstall, &ignore).is_allow()
+        );
     }
 
     #[test]

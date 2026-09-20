@@ -104,7 +104,16 @@ export function useCleanupHandlers({
           dry_run: false,
           skip_official_uninstall: true,
           backup_enabled: checked,
+          cleanup_source:
+            target.source === "Orphan" || target.source === "Monitor"
+              ? (target.source.toLowerCase() as "orphan" | "monitor")
+              : "uninstall",
         });
+        if (report.aborted) {
+          toast.error(report.uninstall_message || L.errCleanupFailed("aborted"));
+          setError(report.uninstall_message || L.errCleanupFailed("aborted"));
+          return;
+        }
         toast.success(
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
         );
@@ -147,8 +156,24 @@ export function useCleanupHandlers({
         // Deep-analyze path may still opt in via the checkbox.
         skip_official_uninstall: residualFromUninstall || !useOfficial,
         backup_enabled: backupEnabledRef.current,
+        cleanup_source:
+          selected.source === "Monitor"
+            ? "monitor"
+            : selected.source === "Orphan"
+              ? "orphan"
+              : "uninstall",
       });
       setReport(r);
+      if (r && typeof r === "object" && "aborted" in r && r.aborted) {
+        const fr = r as FullCleanupReport;
+        const msg = fr.uninstall_message || L.errCleanupFailed("aborted");
+        toast.error(msg);
+        setError(msg);
+        setLastReport(fr);
+        setResidualFromUninstall(false);
+        void refreshApps();
+        return;
+      }
       if (r && typeof r === "object" && "deleted" in r) {
         setLastReport(r as FullCleanupReport);
         setAiReportNote(null);
@@ -205,7 +230,7 @@ export function useCleanupHandlers({
       toast.info(L.cleanup);
       return;
     }
-    let message = L.cleanupConfirmNoBackup(
+    let message = L.cleanupConfirmOptionalBackup(
       n,
       residualFromUninstall || useOfficial,
     );

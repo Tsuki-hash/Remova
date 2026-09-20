@@ -51,25 +51,30 @@ export function ReportPanel({
           ×
         </button>
       </div>
-      {"backup_dir" in report && report.backup_dir && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: "6px 10px",
-            borderRadius: 8,
-            background: "var(--ok)",
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 600,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            width: "fit-content",
-          }}
-        >
-          ✓ {L.safetyVaultBanner}
-        </div>
-      )}
+      {"backup_dir" in report &&
+        (report.backup_dir ? (
+          <div
+            style={{
+              marginTop: 8,
+              padding: "6px 10px",
+              borderRadius: 8,
+              background: "var(--ok)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              width: "fit-content",
+            }}
+          >
+            ✓ {L.safetyVaultBanner}
+          </div>
+        ) : !report.dry_run ? (
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+            {L.noBackupThisRun}
+          </div>
+        ) : null)}
       {"deleted" in report && (
         <div
           style={{
@@ -243,11 +248,19 @@ export function ReportPanel({
         <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
           <span
             style={{
-              color: report.restore_point_ok ? "var(--ok)" : "var(--warn)",
+              color: report.restore_point_ok
+                ? "var(--ok)"
+                : report.restore_point_msg
+                  ? "var(--warn)"
+                  : "var(--muted)",
               fontWeight: 600,
             }}
           >
-            {report.restore_point_ok ? L.restorePointOk : L.restorePointFail}
+            {report.restore_point_ok
+              ? L.restorePointOk
+              : report.restore_point_msg
+                ? L.restorePointFail
+                : L.restorePointSkipped}
           </span>
           {report.restore_point_msg ? ` — ${report.restore_point_msg}` : ""}
         </div>
