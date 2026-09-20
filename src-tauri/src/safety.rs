@@ -248,7 +248,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     ];
     for pref in protected {
         if low == pref || low.starts_with(&format!("{pref}\\")) {
-            return Err("protected registry prefix".into());
+            return Err(crate::error::safety_err("protected registry prefix").to_ipc());
         }
     }
 

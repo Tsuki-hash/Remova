@@ -97,7 +97,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
     };
   }, [apps, loading]);
 
-  const stopSizeEstimate = async () => {
+  const stopSizeEstimate = useCallback(async () => {
     sizeCancelRef.current = true;
     setEstimating(false);
     try {
@@ -105,7 +105,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
     } catch {
       // ignore
     }
-  };
+  }, []);
 
   return { estimating, sizeMap, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize };
 }

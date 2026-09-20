@@ -370,7 +370,7 @@ export const dict = {
     modeOfficial: "普通卸载",
     modeOfficialHint: "只运行软件自带卸载程序",
     modeDeep: "深度卸载",
-    modeDeepHint: "官方卸载后自动扫描并清理残留（推荐）",
+    modeDeepHint: "官方卸载后自动扫描残留；清理时备份为可选项（默认不勾）",
     modeForce: "强制清理",
     modeForceHint: "跳过官方卸载器，清理已确认残留（备份可选）",
     navOrphans: "孤儿残留",
@@ -398,15 +398,16 @@ export const dict = {
     safetyVaultBanner: "已创建安全备份；出问题可在「更多 → 还原备份」恢复",
     confirmBackupBeforeCleanup: "清理前创建安全备份（可在「更多 → 还原备份」恢复）",
     cleanupConfirmWithBackup: (n: number, official: boolean) =>
-      `将先创建安全备份，再清理 ${n} 项${official ? "并调用官方卸载器" : ""}。出问题可在「更多 → 还原备份」恢复。确认？`,
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}（备份可选）。确认？`,
     cleanupConfirmNoBackup: (n: number, official: boolean) =>
-      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}，且不创建备份（删除后一般无法从 Remova 还原）。确认？`,
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}（默认不创建备份）。确认？`,
     cleanupConfirmVault: (n: number, official: boolean) =>
-      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不备份；如需可恢复请勾选安全备份。确认？`,
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。备份为可选项。确认？`,
     cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
       `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不创建备份；如需可在下方勾选「清理前创建安全备份」。确认？`,
     noBackupThisRun: "本次清理未创建安全备份（备份为可选项）",
     restorePointSkipped: "本次未创建还原点",
+    reportDelayedNote: (n: number) => `另有 ${n} 项已调度重启后删除`,
     confirmSharedSelected:
       "所选项中包含共享运行库（可能被其它软件使用）。确认了解风险后再继续。",
     leftoverSummaryTitle: "残留概况",
