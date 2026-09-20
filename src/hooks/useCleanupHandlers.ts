@@ -260,6 +260,9 @@ export function useCleanupHandlers({
     if (riskBits.length) {
       message = `${message}\n\n⚠ ${riskBits.slice(0, 2).join("\n")}`;
     }
+    if (picked.some((it) => /\\common files\\/i.test(it.path))) {
+      message = `${message}\n\n⚠ ${L.confirmCommonFilesHint}`;
+    }
     if (aiEnabled && selected && aiRisk) {
       message = `${message}\n\n${L.aiRiskTitle}: ${aiRisk.slice(0, 160)}`;
     } else if (aiEnabled && selected) {

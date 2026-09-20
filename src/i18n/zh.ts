@@ -410,6 +410,8 @@ export const dict = {
     reportDelayedNote: (n: number) => `另有 ${n} 项已调度重启后删除`,
     confirmSharedSelected:
       "所选项中包含共享运行库（可能被其它软件使用）。确认了解风险后再继续。",
+    confirmCommonFilesHint:
+      "所选路径位于 Common Files（共享组件目录），请确认确与该软件相关后再清理。",
     leftoverSummaryTitle: "残留概况",
     bucketSafe: "可安全清理",
     bucketSuggest: "建议确认",
