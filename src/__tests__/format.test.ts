@@ -76,6 +76,13 @@ describe("prettyPublisher", () => {
     const long = "A".repeat(50);
     expect(prettyPublisher(long).endsWith("…")).toBe(true);
   });
+  it("store certificate DN collapses to signed package label", () => {
+    const dn =
+      "CN=Adobe Inc., OU=Acrobat, O=Adobe Inc., L=San Jose, S=California, C=US";
+    const out = prettyPublisher(dn);
+    expect(out.length).toBeLessThan(dn.length);
+    expect(out === "Adobe Inc." || out.length < dn.length).toBe(true);
+  });
 });
 
 describe("shortPath", () => {

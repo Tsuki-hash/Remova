@@ -1,11 +1,17 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 
-export type UninstallStage = "idle" | "identify" | "official" | "scan" | "report";
+export type UninstallStage =
+  | "idle"
+  | "identify"
+  | "official"
+  | "scan"
+  | "analyze"
+  | "report";
 
 type ActiveStage = Exclude<UninstallStage, "idle">;
 
-const ORDER: ActiveStage[] = ["identify", "official", "scan", "report"];
+const ORDER: ActiveStage[] = ["identify", "official", "scan", "analyze", "report"];
 
 /** Visible four-stage deep-uninstall progress (report §5). */
 export function UninstallStageBar({
@@ -21,6 +27,7 @@ export function UninstallStageBar({
     identify: L.stageIdentify,
     official: L.stageOfficial,
     scan: L.stageScanLeftover,
+    analyze: L.stageAnalyzeLinked,
     report: L.stageDoneReport,
   };
   const idx = ORDER.indexOf(stage as ActiveStage);
@@ -80,7 +87,7 @@ export function UninstallStageBar({
           </span>
         );
       })}
-      {stage === "scan" && (
+      {(stage === "scan" || stage === "analyze") && (
         <div className="remova-progress" style={{ flex: "1 1 80px", minWidth: 60 }} aria-hidden />
       )}
       {detail && <span style={{ ...css.muted, flex: "1 1 120px" }}>{detail}</span>}

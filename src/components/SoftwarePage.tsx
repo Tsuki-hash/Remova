@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -135,6 +135,7 @@ export type SoftwarePageProps = {
 /** Software nav page: toolbar + scan/cleanup + list (extracted from App, FE-02). */
 export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
+  const [smartFilterOpen, setSmartFilterOpen] = useState(false);
   return (
     <>
       <SoftwareToolbar
@@ -143,10 +144,12 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         estimating={p.estimating}
         scanning={p.scanning}
         aiEnabled={p.aiEnabled}
+        smartFilterOpen={smartFilterOpen}
         onQuery={p.onQuery}
         onCategory={p.onCategory}
         onStopEstimate={p.onStopEstimate}
         onOpenAi={p.onOpenAi}
+        onToggleSmartFilter={() => setSmartFilterOpen((v) => !v)}
       />
       {p.uninstallStage !== "idle" && <UninstallStageBar stage={p.uninstallStage} />}
 
@@ -325,14 +328,16 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
             }}
           >
             <div style={{ padding: "10px 12px 0", flexShrink: 0 }}>
-              <CopilotPanel
-                apps={p.apps}
-                aiEnabled={p.aiEnabled}
-                onApplyFilter={p.onCopilotApplyFilter}
-                onAnalyze={(app) => p.listAnalyze(app)}
-                onBatch={p.onCopilotBatch}
-                onForceClean={(app) => p.listForceClean(app)}
-              />
+              {smartFilterOpen && (
+                <CopilotPanel
+                  apps={p.apps}
+                  aiEnabled={p.aiEnabled}
+                  onApplyFilter={p.onCopilotApplyFilter}
+                  onAnalyze={(app) => p.listAnalyze(app)}
+                  onBatch={p.onCopilotBatch}
+                  onForceClean={(app) => p.listForceClean(app)}
+                />
+              )}
             </div>
             <SoftwareListTable
               filtered={p.filtered}
@@ -368,7 +373,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               />
             )}
           </div>
-          {p.detailPanel}
+          {p.selected ? p.detailPanel : null}
         </div>
       )}
     </>

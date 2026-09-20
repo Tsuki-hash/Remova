@@ -573,6 +573,13 @@ async fn set_service_start_disabled(name: String, disable: bool) -> Result<(), S
 }
 
 #[tauri::command]
+async fn set_service_running(name: String, run: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || manage::set_service_running(&name, run))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || manage::set_task_enabled(&name, enabled))
         .await
@@ -771,6 +778,7 @@ pub fn run() {
             list_scheduled_tasks,
             set_startup_enabled,
             set_service_start_disabled,
+            set_service_running,
             set_task_enabled,
             register_context_menu,
             unregister_context_menu,

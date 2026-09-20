@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { api } from "../lib/api";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
-import { groupByOrigin, summarizeLeftovers, defaultSelectable } from "../lib/decision";
+import { groupByOrigin, summarizeLeftovers, defaultSelectable, bucketItem } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
+
+const ORPHAN_CHANNEL = "orphan-scan";
 
 /** First-class orphan leftovers page (report §9 / FE-N5). */
 export function OrphanPage({
@@ -22,27 +24,36 @@ export function OrphanPage({
   const [items, setItems] = useState<CleanupItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
+
+  const selectedMeta = useMemo(() => {
+    if (!items) return "";
+    const picked = items.filter((it) => selected.has(it.path));
+    const kb = picked.reduce((sum, it) => sum + (it.size_kb || 0), 0);
+    return L.orphanSelectedMeta(picked.length, kb > 0 ? formatSize(kb) : "");
+  }, [items, selected, L]);
 
   const scan = async () => {
     if (busy) return;
     setBusy(true);
-    toast.info(L.orphanScanning);
+    toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL, sticky: true });
     try {
       const list = await api.orphanScan();
       setItems(list);
       // FE-N5: same default-selection predicate as analyze/cleanup.
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
-      if (list.length === 0) toast.info(L.orphanScanEmpty);
-      else {
-        const s = summarizeLeftovers(list);
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep));
-      }
+      const s = summarizeLeftovers(list);
+      setLastScanLabel(
+        list.length === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${s.total}`,
+      );
+      if (list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
+      else toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel: ORPHAN_CHANNEL, ttl: 3000 });
     } catch (e) {
       const msg = formatError(e, "analyze");
       onError?.(msg);
-      toast.error(msg);
+      toast.error(msg, { channel: ORPHAN_CHANNEL });
     } finally {
       setBusy(false);
     }
@@ -99,12 +110,39 @@ export function OrphanPage({
     }
   };
 
+  const selectBucket = (bucket: "safe" | "suggest") => {
+    if (!items) return;
+    const paths = items.filter((it) => bucketItem(it) === bucket).map((it) => it.path);
+    setSelected((prev) => {
+      const n = new Set(prev);
+      for (const p of paths) n.add(p);
+      return n;
+    });
+  };
+
+  const toggleMany = (paths: string[], select: boolean) => {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      for (const p of paths) {
+        if (select) n.add(p);
+        else n.delete(p);
+      }
+      return n;
+    });
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0, flex: 1 }}>
       <div style={{ ...css.card, padding: 12, fontSize: 13, flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <strong style={{ fontSize: 14 }}>{L.navOrphans}</strong>
           <span style={css.muted}>{L.orphanPageHint}</span>
+          {busy && (
+            <span style={{ ...css.muted, fontWeight: 600, color: "var(--accent)" }}>
+              {L.orphanScanProgress}
+            </span>
+          )}
+          {!busy && lastScanLabel && <span style={css.muted}>{lastScanLabel}</span>}
           <button
             style={{ ...css.btn, marginLeft: "auto", height: 32 }}
             disabled={busy}
@@ -113,10 +151,65 @@ export function OrphanPage({
             {busy ? L.orphanScanning : L.orphanScan}
           </button>
         </div>
+        {busy && (
+          <div
+            className="remova-progress"
+            style={{ marginTop: 10, height: 6, borderRadius: 999 }}
+            aria-hidden
+          />
+        )}
       </div>
       {items && (
-        <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <div
+          style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        >
           <LeftoverSummaryBar summary={summary} scanning={busy} />
+          {items.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--border)",
+                background: "var(--surface)",
+                fontSize: 12.5,
+                flexShrink: 0,
+              }}
+            >
+              <button style={{ ...css.btnGhost, height: 28 }} onClick={() => selectBucket("safe")}>
+                {L.orphanSelectSafe}
+              </button>
+              <button
+                style={{ ...css.btnGhost, height: 28 }}
+                onClick={() => selectBucket("suggest")}
+              >
+                {L.orphanSelectSuggest}
+              </button>
+              <span style={{ ...css.muted, fontWeight: 600 }}>{selectedMeta}</span>
+              <button
+                style={{ ...css.btnGhost, height: 28 }}
+                onClick={() => setSelected(new Set())}
+                disabled={selected.size === 0}
+              >
+                {L.cancel}
+              </button>
+              <button
+                style={{
+                  ...css.btn,
+                  marginLeft: "auto",
+                  height: 32,
+                  background: selected.size ? "var(--danger)" : undefined,
+                  color: selected.size ? "#fff" : undefined,
+                }}
+                disabled={busy || selected.size === 0}
+                onClick={() => void cleanSelected()}
+              >
+                {`${L.cleanup}${selected.size ? ` (${selected.size})` : ""}`}
+              </button>
+            </div>
+          )}
           <div style={{ ...css.scroll, padding: 12 }}>
             {items.length === 0 ? (
               <div style={css.muted}>{L.orphanScanEmpty}</div>
@@ -132,35 +225,10 @@ export function OrphanPage({
                     return n;
                   })
                 }
+                onToggleMany={toggleMany}
               />
             )}
           </div>
-          {selected.size > 0 && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 12px",
-                borderTop: "1px solid var(--border)",
-                background: "var(--surface-2)",
-              }}
-            >
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-                {L.cleanup} · {selected.size}
-              </span>
-              <button style={css.btnGhost} onClick={() => setSelected(new Set())}>
-                {L.cancel}
-              </button>
-              <button
-                style={{ ...css.btn, marginLeft: "auto", background: "var(--danger)", color: "#fff" }}
-                disabled={busy}
-                onClick={() => void cleanSelected()}
-              >
-                {`${L.cleanup} (${selected.size})`}
-              </button>
-            </div>
-          )}
         </div>
       )}
     </div>

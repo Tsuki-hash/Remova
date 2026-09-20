@@ -3,11 +3,11 @@ import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
-import { requestConfirm } from "../lib/confirm";
+import { requestConfirm, requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
 import { appKey } from "../lib/appKey";
-import { loadRescanAfterUninstall } from "../lib/rescanPref";
+import { loadRescanAfterUninstall, saveRescanAfterUninstall } from "../lib/rescanPref";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 
@@ -107,13 +107,26 @@ export function useAnalyzeFlow({
       if (busyRef.current) return;
       const strings = t();
       const label = prettyAppName(app.name, app.source);
-      const ok = await requestConfirm({
-        title: strings.uninstallFlowDeep,
-        message: `${strings.uninstallConfirm(label)}\n\n${strings.drawerDeepHint}`,
+      const steps = [
+        strings.uninstallFlowStepOfficial,
+        strings.uninstallFlowStepScan,
+        strings.uninstallFlowStepAnalyze,
+        strings.uninstallFlowStepConfirm,
+        strings.uninstallFlowStepBackup,
+      ];
+      const defaultRescan = loadRescanAfterUninstall();
+      const { ok, checked } = await requestConfirmEx({
+        title: strings.uninstallConfirmDeepTitle || strings.uninstallFlowDeep,
+        message: `${strings.uninstallConfirmDeepBody(label)}\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
         confirmLabel: strings.drawerDeepUninstall,
+        checkbox: {
+          label: strings.uninstallRescanAfter,
+          defaultChecked: defaultRescan,
+        },
       });
       if (!ok) return;
       if (busyRef.current) return;
+      saveRescanAfterUninstall(checked);
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
@@ -121,10 +134,8 @@ export function useAnalyzeFlow({
       busyRef.current = true;
       try {
         setUninstallStage("identify");
-        toast.info(strings.stageIdentify);
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 280));
         setUninstallStage("official");
-        toast.info(strings.stageOfficial);
         const r = await api.officialUninstall(app);
         if (!r.had_command) {
           toast.info(strings.uninstallNoCmd);
@@ -133,12 +144,13 @@ export function useAnalyzeFlow({
         } else {
           toast.error(`${strings.uninstallFail}: ${r.message}`);
         }
-        if (r.had_command && r.ok) {
+        if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
-          toast.info(strings.stageScanLeftover);
           await analyze(app, { fromUninstall: true });
+          setUninstallStage("analyze");
+          await new Promise((resolve) => setTimeout(resolve, 320));
           setUninstallStage("report");
-          setTimeout(() => setUninstallStage("idle"), 2500);
+          setTimeout(() => setUninstallStage("idle"), 2200);
         } else {
           setUninstallStage("idle");
         }
@@ -196,6 +208,8 @@ export function useAnalyzeFlow({
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
           await analyze(app, { fromUninstall: true });
+          setUninstallStage("analyze");
+          await new Promise((resolve) => setTimeout(resolve, 280));
           setUninstallStage("report");
           setTimeout(() => setUninstallStage("idle"), 2000);
         }
