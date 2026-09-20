@@ -269,6 +269,10 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
+    // S-7B: exact Common Files roots are never deletable (vendor subpaths via policy association).
+    if crate::shared::is_common_files_root(trimmed) {
+        return false;
+    }
     // Shallow: must be at least `drive:\dir\file-or-dir` (4 components on Windows).
     let comps = p.components().count();
     if comps < 4 {
@@ -298,9 +302,8 @@ pub fn protected_fs_prefixes() -> Vec<String> {
         r"c:\windows.old".to_string(),
         r"c:\programdata\microsoft".to_string(),
         r"c:\program files\windowsapps".to_string(),
-        r"c:\program files\common files".to_string(),
+        // S-7B: protect Microsoft Shared subtree; Common Files vendor subpaths need association (policy).
         r"c:\program files\common files\microsoft shared".to_string(),
-        r"c:\program files (x86)\common files".to_string(),
         r"c:\program files (x86)\common files\microsoft shared".to_string(),
         r"c:\users\default".to_string(),
         r"c:\users\public\documents".to_string(),
@@ -316,11 +319,9 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     }
     if let Some(pf) = env_dir_lower("ProgramFiles") {
         out.push(format!(r"{pf}\windowsapps"));
-        out.push(format!(r"{pf}\common files"));
         out.push(format!(r"{pf}\common files\microsoft shared"));
     }
     if let Some(pf86) = env_dir_lower("ProgramFiles(x86)") {
-        out.push(format!(r"{pf86}\common files"));
         out.push(format!(r"{pf86}\common files\microsoft shared"));
     }
     if let Some(sd) = std::env::var_os("SystemDrive") {
@@ -480,6 +481,13 @@ mod tests {
             r"C:\Program Files (x86)\Common Files"
         )));
         assert!(!is_safe_fs(Path::new(r"C:\Users\Public\Documents")));
+        // S-7B: Microsoft Shared subtree still protected; bare vendor CF dir is not FS-protected.
+        assert!(!is_safe_fs(Path::new(
+            r"C:\Program Files\Common Files\Microsoft Shared\X"
+        )));
+        assert!(is_safe_fs(Path::new(
+            r"C:\Program Files\Common Files\Acme\Component"
+        )));
     }
 
     #[test]

@@ -162,10 +162,8 @@ pub fn gate_cleanup_item(
     if crate::safety::looks_like_sync_conflict(&item.path) {
         return GateDecision::Skip("user_data red line");
     }
-    if item.shared
-        || crate::shared::is_shared_item(&item.reason, &item.path, &item.reason)
-        || crate::shared::is_shared_item("", &item.path, "")
-    {
+    // S-7B hard shared: client flag, name tokens, CF roots, Microsoft Shared, non-CF markers.
+    if item.shared || crate::shared::is_hard_shared_item(&item.reason, &item.path, &item.reason) {
         return GateDecision::Skip("shared runtime");
     }
     if crate::ignore::should_skip_leftover_path(ignore, &item.path) {
@@ -195,10 +193,22 @@ pub fn gate_cleanup_item(
         let orphan = source == CleanupSource::Orphan
             || source == CleanupSource::Monitor
             || crate::executor::is_orphan_flow(app);
+        // S-7B: Common Files vendor subpaths require real app association (fail-closed otherwise).
+        if matches!(item.kind, ItemKind::File | ItemKind::Dir)
+            && crate::shared::is_common_files_vendor_path(&item.path)
+            && (orphan || !crate::executor::path_associated_with_app(app, item))
+        {
+            return GateDecision::Skip("shared runtime");
+        }
         if !orphan && !crate::executor::path_associated_with_app(app, item) {
             // S-R4-03: Registry/Path also require a light association when app is known.
             return GateDecision::Skip("path not associated with app");
         }
+    } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
+        && crate::shared::is_common_files_vendor_path(&item.path)
+    {
+        // No app context — cannot prove vendor ownership.
+        return GateDecision::Skip("shared runtime");
     }
     GateDecision::Allow
 }
@@ -209,7 +219,7 @@ pub use crate::safety::{
     allow_manage_reg_write, allow_manage_service_write, critical_service_names, is_allowed_run_key,
     is_allowed_startup_approved_key, is_critical_service, is_safe_fs, is_safe_to_delete_registry,
 };
-pub use crate::shared::is_shared_item;
+pub use crate::shared::{is_common_files_vendor_path, is_hard_shared_item, is_shared_item};
 
 #[cfg(test)]
 mod tests {
@@ -280,6 +290,23 @@ mod tests {
                 "exact shared root must skip: {root}"
             );
         }
+        // S-7B: Microsoft Shared hard skip; CF vendor needs association.
+        let ms = item(
+            r"C:\Program Files\Common Files\Microsoft Shared\VxOps",
+            ItemKind::Dir,
+        );
+        assert!(
+            !gate_cleanup_item(None, &ms, CleanupSource::Uninstall, &ignore).is_allow(),
+            "Microsoft Shared must skip"
+        );
+        let vendor = item(
+            r"C:\Program Files\Common Files\Vendor\redist",
+            ItemKind::Dir,
+        );
+        assert!(
+            !gate_cleanup_item(None, &vendor, CleanupSource::Uninstall, &ignore).is_allow(),
+            "CF vendor without app context must skip"
+        );
         // Client says shared=false but path looks shared → must skip.
         let forged_sh = item(
             r"C:\Program Files\Common Files\Vendor\redist",
@@ -289,6 +316,40 @@ mod tests {
             gate_cleanup_item(None, &forged_sh, CleanupSource::Uninstall, &ignore),
             GateDecision::Skip("shared runtime")
         );
+    }
+
+    #[test]
+    fn common_files_vendor_allows_only_with_association() {
+        let ignore = crate::ignore::IgnoreList::default();
+        let a = app("DemoApp", r"C:\Program Files\DemoApp");
+        // Unassociated CF vendor → skip.
+        let un = item(
+            r"C:\Program Files\Common Files\OtherVendor\cache",
+            ItemKind::Dir,
+        );
+        assert!(!gate_cleanup_item(Some(&a), &un, CleanupSource::Uninstall, &ignore).is_allow());
+        // Associated via publisher/slug path segment → allow (S-7B).
+        let mut assoc = item(
+            r"C:\Program Files\Common Files\DemoApp\plugins",
+            ItemKind::Dir,
+        );
+        assoc.reason = "install".into();
+        assert!(
+            gate_cleanup_item(Some(&a), &assoc, CleanupSource::Uninstall, &ignore).is_allow(),
+            "associated CF vendor path should allow"
+        );
+        // Orphan never gets CF vendor allow.
+        let orphan_app = app("孤儿扫描", "");
+        assert!(
+            !gate_cleanup_item(Some(&orphan_app), &assoc, CleanupSource::Orphan, &ignore)
+                .is_allow()
+        );
+        // Microsoft Shared still hard skip even with association-shaped path.
+        let ms = item(
+            r"C:\Program Files\Common Files\Microsoft Shared\DemoApp",
+            ItemKind::Dir,
+        );
+        assert!(!gate_cleanup_item(Some(&a), &ms, CleanupSource::Uninstall, &ignore).is_allow());
     }
 
     #[test]
