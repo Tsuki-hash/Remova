@@ -45,7 +45,7 @@ export const dict = {
     nonAdmin: "Not admin",
     disk: "Disk",
     guided:
-      "Click a row for details; Uninstall runs the official uninstaller then scans leftovers. Advanced tools live under More.",
+      "Deep uninstall loop: click a row for details → Uninstall → official uninstaller → auto-scan leftovers → classify → you confirm → optional backup → clean. Orphans/system items are in nav; advanced tools under More.",
     closeGuide: "Got it",
     versionNew: "New version available",
     versionDownload: "Download",
