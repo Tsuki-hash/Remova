@@ -163,10 +163,11 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 | `list_services` | async / blocking | `Vec<ManageItem>` |
 | `list_scheduled_tasks` | async / blocking | `Vec<ManageItem>` |
 | `set_startup_enabled` | async / blocking | `()`（PACKAGED/Run 键白名单 + critical 服务） |
-| `set_service_start_disabled` | async / blocking | `()`（critical 服务拒绝） |
+| `set_service_start_disabled` | async / blocking | `()`（critical 服务拒绝；改启动类型 4/3） |
+| `set_service_running` | async / blocking | `()`（`sc start/stop`；停止 ≠ 禁用启动类型） |
 | `set_task_enabled` | async / blocking | `()` |
 
-`ManageItem`: `{ name, detail, location, enabled }`。
+`ManageItem`: `{ name, detail, location, enabled, kind?, running?, start_type?, source_label?, last_run?, next_run?, path? }`（后四类字段可选，serde 可缺省）。
 
 ### 3.6 忽略 / 孤儿 / 安装监控
 
