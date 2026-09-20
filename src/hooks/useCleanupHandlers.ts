@@ -5,7 +5,7 @@ import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { defaultSelectable } from "../lib/decision";
+import { defaultSelectable, maxRiskOf, riskTierLabel } from "../lib/decision";
 import { appKey } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
 import type { BatchItemResult } from "../components/BatchPanels";
@@ -83,14 +83,6 @@ export function useCleanupHandlers({
     async (appOverride?: InstalledApp) => {
       const target = appOverride ?? selected;
       if (!target || forceBusy) return;
-      const { ok, checked } = await requestConfirmEx({
-        title: L.forceClean,
-        message: `${prettyAppName(target.name, target.source)}\n${L.forceCleanHint}`,
-        confirmLabel: L.forceClean,
-        danger: true,
-        checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
-      });
-      if (!ok) return;
       setForceBusy(true);
       busyRef.current = true;
       try {
@@ -100,6 +92,14 @@ export function useCleanupHandlers({
           toast.info(L.toastForceCleanEmpty);
           return;
         }
+        const { ok, checked } = await requestConfirmEx({
+          title: L.forceClean,
+          message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}\n${L.forceCleanHint}`,
+          confirmLabel: L.forceClean,
+          danger: true,
+          checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
+        });
+        if (!ok) return;
         const report = await api.fullCleanup(target, items, {
           dry_run: false,
           skip_official_uninstall: true,
@@ -248,11 +248,11 @@ export function useCleanupHandlers({
       toast.info(L.cleanup);
       return;
     }
-    let message = L.cleanupConfirmOptionalBackup(
+    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
+    let message = `${L.riskTierPrefix(riskTierLabel(maxRiskOf(picked), L))}\n${L.cleanupConfirmOptionalBackup(
       n,
       residualFromUninstall || useOfficial,
-    );
-    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
+    )}`;
     const riskBits: string[] = [];
     if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
     if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);

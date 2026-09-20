@@ -188,6 +188,25 @@ export function isKeepItem(it: CleanupItem): boolean {
   return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
 }
 
+export type RiskTier = "low" | "medium" | "high";
+
+/** Highest risk among picked items — used to label confirms. */
+export function maxRiskOf(items: CleanupItem[]): RiskTier {
+  if (items.some((it) => it.risk === "high")) return "high";
+  if (items.some((it) => it.risk === "medium")) return "medium";
+  return "low";
+}
+
+export function riskTierLabel(
+  tier: RiskTier,
+  L: { riskTierSafe: string; riskTierLow: string; riskTierMedium: string; riskTierHigh: string },
+): string {
+  if (tier === "high") return L.riskTierHigh;
+  if (tier === "medium") return L.riskTierMedium;
+  // Safe only when nothing is medium/high — callers pass maxRisk so low ≈ low-risk items only.
+  return L.riskTierLow;
+}
+
 /** Suggest = not default-selectable and not keep. */
 export function isSuggestItem(it: CleanupItem): boolean {
   return !defaultSelectable(it) && !isKeepItem(it);

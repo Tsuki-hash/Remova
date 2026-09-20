@@ -11,9 +11,11 @@ import {
   isRecentInstall,
   isSuggestItem,
   leftoverReasonLine,
+  maxRiskOf,
   originLabel,
   parseInstallDate,
   recommendScore,
+  riskTierLabel,
   summarizeLeftovers,
 } from "../lib/decision";
 import type { CleanupItem, InstalledApp } from "../types";
@@ -84,6 +86,25 @@ describe("decisionChips compact", () => {
       { compact: true },
     );
     expect(chips[0]?.id).toBe("no-uninstall");
+  });
+});
+
+describe("maxRiskOf / riskTierLabel", () => {
+  const riskL = {
+    riskTierSafe: "安全",
+    riskTierLow: "低风险",
+    riskTierMedium: "中风险",
+    riskTierHigh: "高风险",
+  };
+  it("picks highest risk among items", () => {
+    expect(maxRiskOf([item({ risk: "low" }), item({ risk: "medium" })])).toBe("medium");
+    expect(maxRiskOf([item({ risk: "high" }), item({ risk: "low" })])).toBe("high");
+    expect(maxRiskOf([])).toBe("low");
+  });
+  it("maps tier labels", () => {
+    expect(riskTierLabel("high", riskL)).toBe("高风险");
+    expect(riskTierLabel("medium", riskL)).toBe("中风险");
+    expect(riskTierLabel("low", riskL)).toBe("低风险");
   });
 });
 

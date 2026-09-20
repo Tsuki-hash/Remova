@@ -88,7 +88,7 @@ describe("CleanupConclusion", () => {
         onExplain={() => {}}
       />,
     );
-    expect(screen.getByText("AI 解读")).toBeTruthy();
+    expect(screen.getByText("智能解读")).toBeTruthy();
     expect(screen.getByText(/建议清理安装目录/)).toBeTruthy();
     cleanup();
   });
