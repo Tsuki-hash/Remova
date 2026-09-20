@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Deep-uninstall UX loop (REDESIGN)**: rich uninstall confirm (official → scan → classify → confirm → optional backup); five-stage progress bar (`identify/official/scan/analyze/report`); report close-out line after full cleanup
+- Software list density: publisher DN collapsed via `prettyPublisher`; at most one high-signal chip per row
+- Right detail panel trust copy: linked-item empty state + deep-uninstall expectation under primary action
+- **ManageItem status fields** (optional IPC): `kind` / `running` / `start_type` / `source_label` / `last_run` / `next_run` / `path`
+- **Service stop/start IPC** (`set_service_running` + `sc start/stop`) — stop ≠ disable start type; confirm dialogs distinguish the two
+- Orphan leftovers: expandable judgment evidence (no-owner / exe / multi-file / config / install-root / mtime age); bulk select safe/review; page-level scan progress; single-channel toast
+- Risk-tier labels on cleanup / force-clean / orphan confirm dialogs (`maxRiskOf` / `riskTierLabel`); force-clean analyzes first, then confirms
+- Toolbox hierarchy: Everyday / Advanced / System & help; unselected-app context banner
+- Smart-filter collapse on software toolbar (AI demoted from page hero to capability)
+
+### Changed
+- AI copy demoted: 「AI 详细说明/助手」→「模型设置 / 智能解释 / 智能筛选」; chips show model ready/not set
+- Startup list shows 已启用/已禁用 + source (registry/folder/store/service), not 「运行中」
+- Services show run state + start type; tasks show last/next run when available
+- Manage list icons neutral gray; blue reserved for action/status/selection
+- Analyze/uninstall toasts use `analyze-flow` channel (no stacked scan/done pair)
+- README product positioning documents the deep-uninstall loop; `docs/product/REDESIGN.md` tracked
+- Toolbar ⓘ guide describes the full deep-uninstall path
+
 ### Fixed
 - Cleanup gate: exact user profile red-line roots (`Documents`/`Desktop`/`Downloads`/…) and `Common Files` roots are skipped server-side even when IPC flags claim otherwise; public profile folders and Common Files protected in `is_safe_fs`
 - Cleanup gate (P0): server-side recompute of `user_data` / sync-conflict / `shared` — forged IPC flags cannot delete Documents/Downloads/etc.
