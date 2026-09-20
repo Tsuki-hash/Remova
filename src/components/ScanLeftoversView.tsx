@@ -189,11 +189,13 @@ export function ScanLeftoversView({
       >
         {it.risk === "high"
           ? L.riskHigh
-          : it.confidence === "confirmed"
-            ? L.confirmed
-            : it.score >= 30
-              ? L.suspected
-              : L.low}
+          : it.risk === "medium"
+            ? L.riskMedium
+            : it.confidence === "confirmed"
+              ? L.confirmed
+              : it.score >= 30
+                ? L.suspected
+                : L.low}
       </div>
       <div>
         <button
