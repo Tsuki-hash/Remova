@@ -1,6 +1,6 @@
 # Remova 文档索引
 
-> 更新：2026-09-18 · 当前版本 **1.1.0**（与 `package.json` / `Cargo.toml` / `tauri.conf.json` 一致）
+> 更新：2026-09-20 · 当前版本 **1.1.0**（与 `package.json` / `Cargo.toml` / `tauri.conf.json` 一致）
 
 ## 必读（活文档）
 
