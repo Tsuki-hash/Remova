@@ -56,7 +56,7 @@ export const dict = {
     themeToggle: "Dark/Light",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
-      `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Continue?`,
+      `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,
     cleanupConfirm: (n: number, official: boolean) =>
       `Clean ${n} items${official ? " with official uninstaller" : ""} (no backup by default). Confirm?`,
     restoreConfirm: "Restore files and registry from latest backup?",

@@ -146,6 +146,7 @@ export function useCleanupHandlers({
 
   const execReal = useCallback(async () => {
     if (!scan || !selected) return;
+    if (busyRef.current) return;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     busyRef.current = true;
     setDryRunning(true);
@@ -199,6 +200,7 @@ export function useCleanupHandlers({
       setError(formatError(e, "cleanup"));
       toast.error(L.errCleanupFailed(formatError(e, "cleanup")));
     } finally {
+      backupEnabledRef.current = false;
       busyRef.current = false;
       setDryRunning(false);
     }
@@ -302,6 +304,7 @@ export function useCleanupHandlers({
         toast.info(L.selectRowHint);
         return;
       }
+      if (busyRef.current || batching) return;
       const { ok, checked } = await requestConfirmEx({
         title: L.batchUninstall,
         message: L.batchConfirm(queue.length, batchUseOfficial),
@@ -312,6 +315,7 @@ export function useCleanupHandlers({
       if (!ok) return;
       setBatchTotal(queue.length);
       try {
+        busyRef.current = true;
         await runBatchCleanup(
           queue,
           batchUseOfficial,
@@ -340,7 +344,7 @@ export function useCleanupHandlers({
         setError(formatError(e, "cleanup"));
       }
     },
-    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial],
+    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching],
   );
 
   const cancelBatch = useCallback(() => {

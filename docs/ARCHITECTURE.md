@@ -441,7 +441,7 @@ set_startup_enabled(location, enabled)
 - 图标缓存：`Map<displayIcon, dataUrl|null>` + inflight 去重。
 - 占用估算：2 个并发 worker，路径去重，`begin_size_estimate` → 逐个 `estimate_dir_size_kb` → 可 `cancel_size_estimate`。
 - 主题：CSS 变量 + `localStorage.remova_theme`。
-- 语言：`src/i18n.ts` 字典（zh / en）。
+- 语言：`src/i18n/{zh,en,index}.ts` 字典（zh / en，编译期 key 对齐）。
 - 关窗保护：batching 或 dryRunning 时 `beforeunload` 拦截；Tauri `onCloseRequested` 在 busy 时 confirm。
 - 版本检查：前端请求 GitHub Releases latest。
 

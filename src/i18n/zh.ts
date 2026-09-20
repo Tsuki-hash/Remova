@@ -65,7 +65,7 @@ export const dict = {
     closeChoiceRemember: "记住我的选择，不再询问",
     langToggle: "English",
     batchConfirm: (n: number, official?: boolean) =>
-      `将对 ${n} 个已选软件依次分析并清理「确定」项（跳过高风险）${official ? "，并调用官方卸载器" : ""}。继续？`,
+      `将对 ${n} 个已选软件依次分析并清理「确定」项（跳过高风险）${official ? "，并调用官方卸载器" : ""}。备份为确认框可选项（默认不勾，对整批生效）。继续？`,
     cleanupConfirm: (n: number, official: boolean) =>
       `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}（默认不备份）。确认？`,
     restoreConfirm: "将从最近备份还原文件与注册表。继续？",

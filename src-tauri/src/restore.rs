@@ -98,7 +98,7 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
     crate::fsutil::copy_dir(src, dest)
 }
 
-/// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else both.
+/// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else User only.
 fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
     if !item.scopes.is_empty() {
         return item.scopes.clone();
@@ -111,8 +111,8 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
         out.push("Machine".into());
     }
     if out.is_empty() {
+        // S-R4-10: never silently write Machine PATH when backup has no scope evidence.
         out.push("User".into());
-        out.push("Machine".into());
     }
     out
 }
@@ -328,10 +328,8 @@ mod tests {
             user_path: String::new(),
             machine_path: String::new(),
         };
-        assert_eq!(
-            super::path_restore_scopes(&none),
-            vec!["User".to_string(), "Machine".to_string()]
-        );
+        // S-R4-10: no evidence → User only.
+        assert_eq!(super::path_restore_scopes(&none), vec!["User".to_string()]);
     }
 
     #[test]

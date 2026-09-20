@@ -161,6 +161,32 @@ pub fn run_cleanup_dry_for_app_source(
             });
             continue;
         }
+        // S-R4-08: align dry-run outcome probes with full delete.
+        match it.kind {
+            ItemKind::File | ItemKind::Dir => {
+                if !Path::new(&it.path).exists() {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "path missing".into(),
+                    });
+                    continue;
+                }
+            }
+            ItemKind::Path if !path_entry_in_system_path(&it.path) => {
+                skipped += 1;
+                details.push(ItemDetail {
+                    path: it.path.clone(),
+                    kind: "path".into(),
+                    status: "skipped".into(),
+                    message: "not found in PATH".into(),
+                });
+                continue;
+            }
+            _ => {}
+        }
         deleted_planned += 1;
         details.push(ItemDetail {
             path: it.path.clone(),
@@ -201,6 +227,13 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
         let ok = decision.is_allow()
             && match it.kind {
                 ItemKind::File | ItemKind::Dir => Path::new(&it.path).exists(),
+                ItemKind::Path => {
+                    path_entry_in_system_path(&it.path) || {
+                        // Legacy dry without app: still require gate + non-empty; PATH presence
+                        // unknown without probe — treat allow + empty skip as missing.
+                        !it.path.trim().is_empty()
+                    }
+                }
                 _ => true,
             };
         if !ok {
@@ -210,7 +243,17 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
                 message: if decision.is_allow() {
-                    "failed safety gate".into()
+                    if matches!(it.kind, ItemKind::File | ItemKind::Dir)
+                        && !Path::new(&it.path).exists()
+                    {
+                        "path missing".into()
+                    } else if matches!(it.kind, ItemKind::Path)
+                        && !path_entry_in_system_path(&it.path)
+                    {
+                        "not found in PATH".into()
+                    } else {
+                        "failed safety gate".into()
+                    }
                 } else {
                     decision.message().to_string()
                 },
@@ -469,6 +512,45 @@ fn ar10_in_install_root(low: &str) -> bool {
         || low.contains("\\program files (x86)")
 }
 
+/// Full scheduled-task name from a TaskCache\Tree registry path (S-R4-11).
+pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
+    let low = reg_path.replace('/', "\\");
+    let marker = r"\TaskCache\Tree\";
+    if let Some(pos) = low.to_lowercase().find(&marker.to_lowercase()) {
+        let rest = &low[pos + marker.len()..];
+        let rest = rest.trim_matches('\\');
+        if !rest.is_empty() {
+            return format!(r"\{rest}");
+        }
+    }
+    crate::regops::leaf_name(reg_path)
+}
+
+/// True when a PATH leftover segment is present in the process PATH string (dry-run probe).
+fn path_entry_in_system_path(entry: &str) -> bool {
+    let Ok(raw) = std::env::var("PATH") else {
+        return false;
+    };
+    let needle = entry
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    raw.replace('/', "\\")
+        .split(';')
+        .map(|s| {
+            s.trim()
+                .trim_matches('"')
+                .trim_end_matches('\\')
+                .to_lowercase()
+        })
+        .any(|s| s == needle)
+}
+
 fn guid_in_text(s: &str) -> Option<String> {
     let low = s.to_lowercase();
     let start = low.find('{')?;
@@ -646,7 +728,8 @@ fn delete_cleanup_items_source(
                         format!("sc delete {svc}: failed or not found")
                     };
                 } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
-                    let tn = crate::regops::leaf_name(&it.path);
+                    // S-R4-11: use full task path from TaskCache tree when possible.
+                    let tn = task_full_name_from_reg_path(&it.path);
                     let native_ok = crate::regops::schtasks_delete(&tn);
                     native_note = if native_ok {
                         format!("schtasks delete {tn}: ok")
@@ -836,6 +919,20 @@ pub fn run_full_cleanup(
 mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
+
+    #[test]
+    fn task_full_name_from_taskcache_tree() {
+        assert_eq!(
+            task_full_name_from_reg_path(
+                r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\Vendor\Foo\MyTask"
+            ),
+            r"\Vendor\Foo\MyTask"
+        );
+        assert_eq!(
+            task_full_name_from_reg_path(r"HKLM\...\TaskCache\Tree\Simple"),
+            r"\Simple"
+        );
+    }
 
     #[test]
     fn path_association_medium_gate() {
