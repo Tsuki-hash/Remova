@@ -229,6 +229,7 @@ export const dict = {
     orphanGroupMeta: (count: number, safe: number, suggest: number, keep: number) =>
       `${count} items · clean ${safe} · review ${suggest} · keep ${keep}`,
     orphanNoOwnerHint: "Owner unknown — review each item before cleaning",
+    orphanReasonDefault: "Orphan folder: no matching install record",
     orphanEvidenceTitle: "Why classified",
     orphanRiskLabel: "Risk",
     orphanRiskLow: "Low",
@@ -244,6 +245,10 @@ export const dict = {
     orphanScanProgress: "Scanning orphan leftovers…",
     orphanExpandEvidence: "Evidence",
     orphanCollapseEvidence: "Collapse",
+    detailExpectScan:
+      "Deep uninstall runs: official uninstaller → auto-scan leftovers → you confirm cleanup.",
+    linkedEmptyTitle: "Linked items",
+    reportClosedLoopTitle: "Loop",
     batchDetail: (deleted: number, failed: number) => `ok ${deleted} · failed ${failed}`,
     histRow: (deleted: number, failed: number) => `${deleted} ok / ${failed} failed`,
     deleteSession: "Delete",

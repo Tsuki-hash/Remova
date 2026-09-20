@@ -71,6 +71,11 @@ export function SelectedAppCard({
           </span>
         </div>
       )}
+      {showDetail && (
+        <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 12, lineHeight: 1.45 }}>
+          {L.deepUninstallExpect}
+        </div>
+      )}
     </div>
   );
 }
