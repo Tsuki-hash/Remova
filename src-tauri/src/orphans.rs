@@ -20,7 +20,13 @@ fn dir_shape(p: &std::path::Path) -> (usize, bool, bool) {
         if n.ends_with(".exe") || n.ends_with(".msi") {
             has_exe = true;
         }
-        if n.ends_with(".dll") || n.ends_with(".dat") || n.ends_with(".db") || n.ends_with(".json") || n.ends_with(".ini") || n.ends_with(".xml") {
+        if n.ends_with(".dll")
+            || n.ends_with(".dat")
+            || n.ends_with(".db")
+            || n.ends_with(".json")
+            || n.ends_with(".ini")
+            || n.ends_with(".xml")
+        {
             has_config = true;
         }
         if e.path().is_file() {
@@ -274,7 +280,10 @@ mod tests {
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
             assert!(it.path.len() > 3);
-            assert!(!it.evidence.is_empty(), "orphan items must carry judgment evidence");
+            assert!(
+                !it.evidence.is_empty(),
+                "orphan items must carry judgment evidence"
+            );
             assert!(it
                 .evidence
                 .iter()
