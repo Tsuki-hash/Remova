@@ -475,10 +475,10 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     }
     if let Some(rest) = location.strip_prefix("PACKAGED::") {
         let Some((sa_key, vname)) = rest.rsplit_once("::") else {
-            return Err("bad packaged startup location".into());
+            return Err(crate::error::manage_err("bad_name", "packaged location").to_ipc());
         };
         if vname.trim().is_empty() || vname.contains('\\') || vname.contains('/') {
-            return Err("bad packaged startup value".into());
+            return Err(crate::error::manage_err("bad_name", "packaged value").to_ipc());
         }
         allow_manage_reg_write(sa_key, true)?;
         let mut buf = [0u8; 12];
@@ -488,7 +488,7 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     }
     if let Some(rest) = location.strip_prefix("FOLDER::") {
         let Some((dir, fname)) = rest.rsplit_once("::") else {
-            return Err("bad startup folder location".into());
+            return Err(crate::error::manage_err("bad_name", "startup folder location").to_ipc());
         };
         // S-09: only allow write when dir is one of the known Startup folders.
         let dir_norm = dir.replace('/', "\\");
@@ -511,11 +511,11 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         return write_startup_folder_approved(&stem, enabled);
     }
     let Some((key, vname)) = location.rsplit_once("::") else {
-        return Err("bad startup location".into());
+        return Err(crate::error::manage_err("bad_name", "startup location").to_ipc());
     };
     allow_manage_reg_write(key, false)?;
     if vname.trim().is_empty() {
-        return Err("bad startup value name".into());
+        return Err(crate::error::manage_err("bad_name", "startup value").to_ipc());
     }
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
@@ -571,7 +571,7 @@ pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), Strin
 
 pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
-        return Err("empty task".into());
+        return Err(crate::error::manage_err("bad_name", "task").to_ipc());
     }
     let _guard = lock_manage();
     // S-02: mirror list-side filter — never disable Microsoft\Windows system tasks.
