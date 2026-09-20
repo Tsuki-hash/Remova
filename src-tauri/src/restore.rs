@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(root, tmp);
         let now = 1_700_000_000u64;
         let old = root.join(format!("{}_prune_test_old", now - 30 * 24 * 3600));
-        let fresh = root.join(format!("{}_prune_test_fresh", now - 1 * 24 * 3600));
+        let fresh = root.join(format!("{}_prune_test_fresh", now - 24 * 3600));
         let _ = fs::create_dir_all(&old);
         let _ = fs::create_dir_all(&fresh);
         let removed = super::prune_old_sessions_at(7, Some(now));

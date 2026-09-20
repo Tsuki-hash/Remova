@@ -746,8 +746,10 @@ mod tests {
 
     #[test]
     fn config_view_hides_key() {
-        let mut c = AiConfig::default();
-        c.api_key = "sk-secret".into();
+        let c = AiConfig {
+            api_key: "sk-secret".into(),
+            ..Default::default()
+        };
         let v = AiConfigView::from(&c);
         assert!(v.has_api_key);
         assert!(!serde_json::to_string(&v).unwrap().contains("sk-secret"));

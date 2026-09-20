@@ -14,17 +14,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: cargo fmt
         run: cargo fmt --check
         working-directory: src-tauri
 
-      - name: cargo clippy
-        run: cargo clippy --lib -- -D warnings
+      - name: cargo clippy (lib + tests)
+        run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
       - name: cargo test
@@ -48,6 +54,9 @@ jobs:
 
       - name: frontend build
         run: npm run build
+
+      - name: frontend dist smoke
+        run: npm run smoke:dist
 
       - name: command table vs generate_handler
         run: pwsh -NoProfile -File scripts/check-commands.ps1

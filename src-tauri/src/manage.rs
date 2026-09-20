@@ -714,7 +714,7 @@ mod tests {
         let header = r#""HostName","TaskName","Next Run Time","Status","Logon Mode","Last Run Time","Last Result","Author","Task To Run","Start In","Comment","Scheduled Task State""#;
         let row = r#""MYLAPTOP","\Vendor\Cleanup","N/A","Ready","Interactive only","N/A","0","Vendor","C:\tools\cleanup.exe","C:\","Cleanup temp","Enabled""#;
         let cols = super::split_csv_line(row);
-        assert_eq!(cols.get(0).map(String::as_str), Some("MYLAPTOP"));
+        assert_eq!(cols.first().map(String::as_str), Some("MYLAPTOP"));
         assert_eq!(cols.get(1).map(String::as_str), Some(r"\Vendor\Cleanup"));
         assert_eq!(cols.get(3).map(String::as_str), Some("Ready"));
         assert_eq!(
