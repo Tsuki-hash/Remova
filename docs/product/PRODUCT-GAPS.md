@@ -22,7 +22,7 @@
 | 已安装列表 | HKLM64 / HKLM32 / HKCU Uninstall |
 | 深度分析 | 安装目录、快捷方式、TEMP、Software 键、App Paths、Run、服务、计划任务 |
 | 证据与分级 | score + confirmed/suspected + risk；默认只勾确定非高风险 |
-| 清理链路 | dry-run → 备份 → 真删 + safety；可选官方卸载器；失败可 MoveFileEx 重启删 |
+| 清理链路 | dry-run → **可选备份（默认关）** → 真删 + safety；可选官方卸载器；失败可 MoveFileEx 重启删 |
 | 还原 / 历史 | 备份会话、清理历史、CSV |
 | 其它 | 批量清理、主题、中英、磁盘空间、提权重启、图标、安装日期 |
 

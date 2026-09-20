@@ -136,6 +136,18 @@ describe("runBatchCleanup", () => {
     );
   });
 
+  it("maps cleanup abort to failed when items were present (S-R4-06)", async () => {
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    fullCleanup.mockResolvedValue(
+      report({ deleted: 0, failed: 0, aborted: true, uninstall_message: "backup failed" }),
+    );
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("failed");
+    expect(String(last?.detail)).toContain("backup");
+  });
+
   it("still runs official uninstall when no default-selectable leftovers (F-1)", async () => {
     analyze.mockResolvedValue(
       scan("B", [item("C:\\x", { confidence: "suspected", risk: "medium" })]),

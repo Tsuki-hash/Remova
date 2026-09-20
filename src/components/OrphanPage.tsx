@@ -53,7 +53,7 @@ export function OrphanPage({
     const picked = items.filter((it) => selected.has(it.path));
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: L.cleanupConfirmNoBackup(picked.length, false),
+      message: L.cleanupConfirmOptionalBackup(picked.length, false),
       confirmLabel: L.cleanup,
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
@@ -78,7 +78,14 @@ export function OrphanPage({
         dry_run: false,
         skip_official_uninstall: true,
         backup_enabled: checked,
+        cleanup_source: "orphan",
       });
+      if (report.aborted) {
+        const msg = report.uninstall_message || formatError("cleanup aborted", "cleanup");
+        onError?.(msg);
+        toast.error(msg);
+        return;
+      }
       onLastReport(report);
       toast.success(L.batchDetail(report.deleted, report.failed));
       await scan();
