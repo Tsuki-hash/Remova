@@ -153,7 +153,7 @@ export function CopilotPanel({
             flexShrink: 0,
           }}
         >
-          ✦ {L.copilotOpen}
+          ✦ {L.smartFilter}
         </span>
         <input
           style={{ ...css.input, flex: "1 1 220px", height: 32, minWidth: 180 }}
@@ -163,7 +163,7 @@ export function CopilotPanel({
           onKeyDown={(e) => {
             if (e.key === "Enter") void parse();
           }}
-          aria-label={L.copilotOpen}
+          aria-label={L.smartFilter}
         />
         <button
           style={{ ...css.btnSm, height: 32 }}

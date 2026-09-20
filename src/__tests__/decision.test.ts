@@ -61,6 +61,47 @@ function item(partial: Partial<CleanupItem> = {}): CleanupItem {
   };
 }
 
+describe("decisionChips compact", () => {
+  it("keeps at most one high-signal chip on list rows", () => {
+    const chips = decisionChips(
+      app({
+        estimated_size_kb: 3 * 1024 * 1024,
+        install_date: "20260101",
+        source: "Store",
+      }),
+      3 * 1024 * 1024,
+      { ...L, chipRecommend: "推荐清理" },
+      { compact: true, now: Date.now() },
+    );
+    expect(chips.length).toBeLessThanOrEqual(1);
+  });
+
+  it("prefers no-uninstall warning when command is missing", () => {
+    const chips = decisionChips(
+      app({ uninstall_string: "", quiet_uninstall_string: "" }),
+      3 * 1024 * 1024,
+      { ...L, chipRecommend: "推荐清理" },
+      { compact: true },
+    );
+    expect(chips[0]?.id).toBe("no-uninstall");
+  });
+});
+
+describe("summarizeLeftovers / defaultSelectable", () => {
+  it("does not default-select keep/suggest buckets", () => {
+    const list = [
+      item({ path: "C:\\safe", confidence: "confirmed", risk: "low" }),
+      item({ path: "C:\\shared", confidence: "confirmed", risk: "low", shared: true }),
+      item({ path: "C:\\user", confidence: "suspected", risk: "medium", user_data: true }),
+      item({ path: "C:\\high", confidence: "confirmed", risk: "high" }),
+    ];
+    const s = summarizeLeftovers(list);
+    expect(s.safe).toBe(1);
+    expect(s.keep).toBe(3);
+    expect(list.filter(defaultSelectable).map((i) => i.path)).toEqual(["C:\\safe"]);
+  });
+});
+
 describe("parseInstallDate", () => {
   it("parses yyyymmdd", () => {
     const d = parseInstallDate("20240115");

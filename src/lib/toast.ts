@@ -9,6 +9,8 @@ export type ToastItem = {
   message: string;
   sticky?: boolean;
   detail?: string;
+  /** Progress/status channel — only one toast per channel at a time. */
+  channel?: string;
 };
 
 type Listener = () => void;
@@ -22,7 +24,16 @@ function emit() {
   for (const l of listeners) l();
 }
 
-function push(kind: ToastKind, message: string, opts?: { sticky?: boolean; detail?: string }) {
+function push(
+  kind: ToastKind,
+  message: string,
+  opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
+) {
+  if (opts?.channel) {
+    for (const prev of items.filter((i) => i.channel === opts.channel)) {
+      dismissToast(prev.id);
+    }
+  }
   const id = seq++;
   const item: ToastItem = {
     id,
@@ -30,13 +41,12 @@ function push(kind: ToastKind, message: string, opts?: { sticky?: boolean; detai
     message,
     sticky: opts?.sticky,
     detail: opts?.detail,
+    channel: opts?.channel,
   };
   items = [...items, item].slice(-5);
   if (!item.sticky) {
-    timers.set(
-      id,
-      setTimeout(() => dismissToast(id), kind === "error" ? 6000 : 4000),
-    );
+    const ttl = opts?.ttl ?? (kind === "error" ? 6000 : kind === "success" && opts?.channel ? 3000 : 4000);
+    timers.set(id, setTimeout(() => dismissToast(id), ttl));
   }
   emit();
   return id;
@@ -53,13 +63,22 @@ export function dismissToast(id: number) {
 }
 
 export const toast = {
-  success(message: string, opts?: { sticky?: boolean; detail?: string }) {
+  success(
+    message: string,
+    opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
+  ) {
     return push("success", message, opts);
   },
-  error(message: string, opts?: { sticky?: boolean; detail?: string }) {
+  error(
+    message: string,
+    opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
+  ) {
     return push("error", message, { sticky: true, ...opts });
   },
-  info(message: string, opts?: { sticky?: boolean; detail?: string }) {
+  info(
+    message: string,
+    opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
+  ) {
     return push("info", message, opts);
   },
   dismiss(id: number) {

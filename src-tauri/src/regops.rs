@@ -129,6 +129,40 @@ pub fn hide_console(cmd: &mut std::process::Command) {
 #[cfg(not(windows))]
 pub fn hide_console(_cmd: &mut std::process::Command) {}
 
+/// Stop or start a Windows service via sc.exe (process state, not Start type).
+pub fn sc_set_service_running(svc_name: &str, run: bool) -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (svc_name, run);
+        Err("not windows".into())
+    }
+    #[cfg(windows)]
+    {
+        if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
+            return Err(crate::error::manage_err("bad_name", "service name").to_ipc());
+        }
+        use std::process::Command;
+        let sc = sys_tool("sc.exe");
+        let arg = if run { "start" } else { "stop" };
+        let mut cmd = Command::new(&sc);
+        cmd.args([arg, svc_name]);
+        hide_console(&mut cmd);
+        match cmd.output() {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => {
+                let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                let msg = if msg.is_empty() {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                } else {
+                    msg
+                };
+                Err(msg)
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
 /// Best-effort: stop/delete Windows service via sc.exe.
 pub fn sc_delete_service(svc_name: &str) -> bool {
     if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
