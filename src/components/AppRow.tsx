@@ -4,7 +4,7 @@ import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppIcon } from "./AppIcon";
-import { prettyAppName } from "../lib/format";
+import { prettyAppName, prettyPublisher } from "../lib/format";
 import { decisionChips, type DecisionChip } from "../lib/decision";
 
 function chipStyle(c: DecisionChip) {
@@ -258,10 +258,10 @@ function AppRowImpl({
             >
               {[
                 a.source === "Store" ? L.chipStore : L.chipDesktop,
-                a.publisher || "",
+                prettyPublisher(a.publisher),
                 a.install_date || "",
               ]
-                .filter(Boolean)
+                .filter((s) => s && s !== "—")
                 .join(" · ")}
             </div>
             {chips.length > 0 && (

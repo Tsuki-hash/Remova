@@ -133,9 +133,14 @@ export function decisionChips(
       title: `${sizeKb} KB`,
     });
   }
-  // List rows: only high-signal tags (density refactor).
+  // List rows: at most one high-signal chip — full metadata lives in detail panel.
   if (compact) {
-    return out.slice(0, 2);
+    const priority = ["no-uninstall", "recommend", "large"] as const;
+    for (const id of priority) {
+      const hit = out.find((c) => c.id === id);
+      if (hit) return [hit];
+    }
+    return [];
   }
   if (isRecentInstall(app.install_date, recentDays, now)) {
     out.push({

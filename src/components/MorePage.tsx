@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { cssStyles as css } from "../styles";
 import { prettyAppName } from "../lib/format";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
@@ -64,7 +65,6 @@ export function MorePage({
       desc: L.historyHint,
       icon: "⏱",
       action: () => void hist.loadHistory().then(() => tools.setOpenTool("history")),
-      accent: true,
     },
     {
       id: "restore",
@@ -72,7 +72,6 @@ export function MorePage({
       desc: L.restoreHint,
       icon: "↩",
       action: () => void rest.loadRestore().then(() => tools.setOpenTool("restore")),
-      accent: true,
     },
     {
       id: "csv",
@@ -120,7 +119,6 @@ export function MorePage({
       desc: L.orphanScanHint,
       icon: "⌕",
       action: onOrphanScan,
-      accent: true,
     },
     {
       id: "monitor",
@@ -132,7 +130,6 @@ export function MorePage({
         // FE-P0b: open monitor panel after stop when a diff exists (parent updates props async).
         tools.setOpenTool("monitor");
       },
-      accent: monitoring,
       badge: monitoring ? L.badgeRunning : undefined,
     },
     {
@@ -142,6 +139,9 @@ export function MorePage({
       icon: "☰",
       action: onShellToggle,
     },
+  ];
+
+  const help: ToolItem[] = [
     {
       id: "ai",
       title: L.aiSettings,
@@ -181,53 +181,30 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 650,
-            letterSpacing: 0.3,
-            color: "var(--muted)",
-            textTransform: "uppercase" as const,
-          }}
-        >
-          {L.selectedAppChip}
-        </span>
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            height: 30,
-            padding: "0 12px",
-            borderRadius: 999,
-            border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
-            background: selected ? "var(--accent-soft)" : "var(--surface)",
-            color: selected ? "var(--accent)" : "var(--muted)",
-            fontSize: 12.5,
-            fontWeight: 600,
-            maxWidth: 360,
-          }}
-        >
-          <span className="ell">{selectedLabel}</span>
-          {!selected && (
-            <button
-              type="button"
-              onClick={onGoSoftware}
-              style={{
-                border: "none",
-                background: "transparent",
-                color: "var(--accent)",
-                cursor: "pointer",
-                fontWeight: 650,
-                fontSize: 12,
-                padding: 0,
-              }}
-            >
+      <div
+        style={{
+          ...css.card,
+          padding: "10px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          fontSize: 13,
+        }}
+      >
+        {selected ? (
+          <>
+            <span style={{ ...css.muted, fontSize: 12 }}>{L.selectedAppChip}</span>
+            <strong>{selectedLabel}</strong>
+          </>
+        ) : (
+          <>
+            <span style={{ color: "var(--muted)" }}>{L.moreSelectedNeedHint}</span>
+            <button style={{ ...css.btnSm, height: 28, marginLeft: "auto" }} onClick={onGoSoftware}>
               {L.goToSoftware}
             </button>
-          )}
-        </span>
+          </>
+        )}
       </div>
 
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
@@ -238,6 +215,12 @@ export function MorePage({
 
       <Section title={L.moreSectionAdvanced} hint={L.moreSectionAdvancedHint}>
         {advanced.map((c) => (
+          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+        ))}
+      </Section>
+
+      <Section title={L.moreSectionHelp} hint={L.moreSectionHelpHint}>
+        {help.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
         ))}
       </Section>

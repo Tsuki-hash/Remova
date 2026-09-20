@@ -1,7 +1,7 @@
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { prettyAppName, sourceLabel } from "../lib/format";
+import { prettyAppName, prettyPublisher, sourceLabel } from "../lib/format";
 
 /** Compact selected-app strip shown above the scan/list when no leftover preview. */
 export function SelectedAppCard({
@@ -49,7 +49,7 @@ export function SelectedAppCard({
           }}
         >
           <span className="ell" style={{ color: "var(--muted)", maxWidth: 280 }} title={selected.publisher}>
-            {L.detailPublisher}: {selected.publisher || "—"}
+            {L.detailPublisher}: {prettyPublisher(selected.publisher)}
           </span>
           <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>
             {L.detailVersion}: {selected.version || "—"}

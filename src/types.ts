@@ -133,11 +133,25 @@ export type HistoryEntry = {
   created_at: string;
 };
 
+export type ManageStartType = "auto" | "manual" | "disabled" | "other";
+export type ManageKind = "startup" | "service" | "task";
+
 export type ManageItem = {
   name: string;
   detail: string;
   location: string;
   enabled: boolean;
+  /** Which manage tab this row belongs to (presentation). */
+  kind?: ManageKind | null;
+  /** Live process/service run state — not the same as enabled/start type. */
+  running?: boolean | null;
+  /** Service Start type only. */
+  start_type?: ManageStartType | null;
+  /** Startup source: registry / folder / store / service. */
+  source_label?: string | null;
+  last_run?: string | null;
+  next_run?: string | null;
+  path?: string | null;
 };
 
 /** Matches ai.rs ExplainInput (string enums for IPC). */

@@ -6,12 +6,80 @@ use crate::safety::{
     allow_manage_reg_write, allow_manage_service_write, is_allowed_startup_approved_key,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ManageItem {
     pub name: String,
     pub detail: String,
     pub location: String,
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+fn manage_row(
+    name: String,
+    detail: String,
+    location: String,
+    enabled: bool,
+) -> ManageItem {
+    ManageItem {
+        name,
+        detail,
+        location,
+        enabled,
+        ..Default::default()
+    }
+}
+
+fn start_type_label(start: u32) -> &'static str {
+    match start {
+        2 => "auto",
+        3 => "manual",
+        4 => "disabled",
+        _ => "other",
+    }
+}
+
+/// One `sc query` pass for active service names (lowercase).
+#[cfg(windows)]
+fn query_running_service_names() -> std::collections::HashSet<String> {
+    use std::process::Command;
+    let mut set = std::collections::HashSet::new();
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let mut cmd = Command::new(format!(r"{windir}\System32\sc.exe"));
+    cmd.args(["query", "type=", "service", "state=", "active"]);
+    crate::regops::hide_console(&mut cmd);
+    let Ok(out) = cmd.output() else {
+        return set;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("SERVICE_NAME:") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                set.insert(name.to_ascii_lowercase());
+            }
+        }
+    }
+    set
+}
+
+#[cfg(not(windows))]
+fn query_running_service_names() -> std::collections::HashSet<String> {
+    std::collections::HashSet::new()
 }
 
 const RUN_KEYS: &[(&str, &str, &str)] = &[
@@ -67,11 +135,11 @@ pub fn list_startup_items() -> Vec<ManageItem> {
             // Prefer StartupApproved flag; fall back to legacy rename suffix.
             let enabled = startup_approved_enabled(&key, &display)
                 .unwrap_or(!vname.ends_with(".remova-disabled"));
-            out.push(ManageItem {
-                name: display,
-                detail: vdata.chars().take(160).collect(),
-                location: format!("{key}::{vname}"),
-                enabled,
+            out.push({
+                let mut it = manage_row(display, vdata.chars().take(160).collect(), format!("{key}::{vname}"), enabled);
+                it.kind = Some("startup".into());
+                it.source_label = Some("Registry".into());
+                it
             });
         }
     }
@@ -99,11 +167,17 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                 .to_string();
             let enabled = startup_folder_enabled(&stem)
                 .unwrap_or(!fname.to_lowercase().contains(".remova-disabled"));
-            out.push(ManageItem {
-                name: stem,
-                detail: path.display().to_string(),
-                location: format!("FOLDER::{folder}::{fname}"),
-                enabled,
+            out.push({
+                let mut it = manage_row(
+                    stem,
+                    path.display().to_string(),
+                    format!("FOLDER::{folder}::{fname}"),
+                    enabled,
+                );
+                it.kind = Some("startup".into());
+                it.source_label = Some("Startup folder".into());
+                it.path = Some(path.display().to_string());
+                it
             });
         }
     }
@@ -152,11 +226,19 @@ fn list_auto_services() -> Vec<ManageItem> {
             let display_name = crate::regscan::read_string(&path, "DisplayName")
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| svc.clone());
-            out.push(ManageItem {
-                name: display_name,
-                detail: format!("自动服务 · {svc}"),
-                location: format!("SVC::{svc}"),
-                enabled: true,
+            out.push({
+                let mut it = manage_row(
+                    display_name,
+                    format!("Service auto-start · {svc}"),
+                    format!("SVC::{svc}"),
+                    true,
+                );
+                it.kind = Some("startup".into());
+                it.source_label = Some("Service".into());
+                it.running = Some(true);
+                it.start_type = Some("auto".into());
+                it.path = Some(svc.clone());
+                it
             });
         }
     }
@@ -178,11 +260,16 @@ fn list_packaged_startup() -> Vec<ManageItem> {
             .unwrap_or(true);
         // Resolve display name from SystemAppData when possible.
         let display = resolve_packaged_display_name(&vname).unwrap_or_else(|| vname.clone());
-        out.push(ManageItem {
-            name: display,
-            detail: format!("Store · {vname}"),
-            location: format!("PACKAGED::{sa}::{vname}"),
-            enabled,
+        out.push({
+            let mut it = manage_row(
+                display,
+                format!("Store · {vname}"),
+                format!("PACKAGED::{sa}::{vname}"),
+                enabled,
+            );
+            it.kind = Some("startup".into());
+            it.source_label = Some("Store".into());
+            it
         });
     }
     out
@@ -257,6 +344,7 @@ fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
 
 pub fn list_services() -> Vec<ManageItem> {
     let mut out = Vec::new();
+    let running_names = query_running_service_names();
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
         ("HKLM32", r"SYSTEM\CurrentControlSet\Services"),
@@ -289,22 +377,21 @@ pub fn list_services() -> Vec<ManageItem> {
             let desc = crate::regscan::read_string(&path, "Description")
                 .filter(|s| !s.is_empty())
                 .unwrap_or_default();
-            let start_label = match start {
-                2 => "Auto",
-                3 => "Manual",
-                4 => "Disabled",
-                _ => "Other",
-            };
+            let start_label = start_type_label(start);
             let detail = if desc.is_empty() {
-                format!("{display_name} · {start_label}")
+                display_name.clone()
             } else {
-                format!("{start_label} · {desc}")
+                desc.chars().take(160).collect()
             };
-            out.push(ManageItem {
-                name: svc,
-                detail,
-                location: path,
-                enabled,
+            let running = running_names.contains(&svc.to_lowercase());
+            out.push({
+                let mut it = manage_row(svc.clone(), detail, path.clone(), enabled);
+                it.kind = Some("service".into());
+                it.running = Some(running);
+                it.start_type = Some(start_label.to_string());
+                it.path = Some(path);
+                it.source_label = Some(display_name);
+                it
             });
         }
     }
@@ -356,6 +443,8 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             let status = cols.get(IDX_STATUS).cloned().unwrap_or_default();
             let run = cols.get(IDX_RUN).cloned().unwrap_or_default();
             let comment = cols.get(IDX_COMMENT).cloned().unwrap_or_default();
+            let next_run = cols.get(2).cloned().unwrap_or_default();
+            let last_run = cols.get(5).cloned().unwrap_or_default();
             let disabled_markers = [
                 "disabled",
                 "已禁用",
@@ -376,11 +465,12 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
                 status.clone()
             };
             let location = name.clone();
-            items.push(ManageItem {
-                name,
-                detail,
-                location,
-                enabled,
+            items.push({
+                let mut it = manage_row(name, detail, location, enabled);
+                it.kind = Some("task".into());
+                it.next_run = Some(next_run).filter(|s| !s.is_empty() && s != "N/A");
+                it.last_run = Some(last_run).filter(|s| !s.is_empty() && s != "N/A");
+                it
             });
         }
         items.sort_by_key(|a| a.name.to_lowercase());
@@ -567,6 +657,13 @@ pub fn set_service_start_disabled(name: &str, disable: bool) -> Result<(), Strin
     let start: u32 = if disable { 4 } else { 3 };
     let _guard = lock_manage();
     crate::regops::write_service_start(name, start)
+}
+
+/// Stop/start the service process — distinct from start-type enable/disable.
+pub fn set_service_running(name: &str, run: bool) -> Result<(), String> {
+    allow_manage_service_write(name)?;
+    let _guard = lock_manage();
+    crate::regops::sc_set_service_running(name, run)
 }
 
 pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
