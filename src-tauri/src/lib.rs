@@ -382,6 +382,7 @@ async fn run_full_cleanup(
             report.deleted,
             report.failed,
             report.skipped,
+            report.delayed,
             report.aborted,
             report.dry_run,
             &report.backup_dir,
@@ -400,14 +401,16 @@ fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
 #[tauri::command]
 fn export_history_csv() -> Result<String, String> {
     let entries = history::load(crate::constants::HISTORY_CSV_CAP);
-    let mut out = String::from("app_name,deleted,failed,skipped,aborted,backup_dir,created_at\n");
+    let mut out =
+        String::from("app_name,deleted,failed,skipped,delayed,aborted,backup_dir,created_at\n");
     for e in entries {
         out.push_str(&format!(
-            "{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{}\n",
             fsutil::csv_escape(&e.app_name),
             e.deleted,
             e.failed,
             e.skipped,
+            e.delayed,
             e.aborted,
             fsutil::csv_escape(&e.backup_dir),
             e.created_at

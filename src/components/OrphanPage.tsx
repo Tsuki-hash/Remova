@@ -84,6 +84,7 @@ export function OrphanPage({
         const msg = report.uninstall_message || formatError("cleanup aborted", "cleanup");
         onError?.(msg);
         toast.error(msg);
+        onLastReport(report);
         return;
       }
       onLastReport(report);

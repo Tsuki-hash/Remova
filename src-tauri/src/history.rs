@@ -10,6 +10,8 @@ pub struct HistoryEntry {
     pub deleted: u32,
     pub failed: u32,
     pub skipped: u32,
+    #[serde(default)]
+    pub delayed: u32,
     pub aborted: bool,
     pub dry_run: bool,
     pub backup_dir: String,
@@ -21,11 +23,13 @@ fn history_path() -> PathBuf {
     PathBuf::from(pd).join("Remova").join("history.jsonl")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append(
     app_name: &str,
     deleted: u32,
     failed: u32,
     skipped: u32,
+    delayed: u32,
     aborted: bool,
     dry_run: bool,
     backup_dir: &str,
@@ -38,6 +42,7 @@ pub fn append(
         deleted,
         failed,
         skipped,
+        delayed,
         aborted,
         dry_run,
         backup_dir: backup_dir.into(),
@@ -92,6 +97,7 @@ mod tests {
             deleted: 1,
             failed: 0,
             skipped: 0,
+            delayed: 0,
             aborted: false,
             dry_run: false,
             backup_dir: String::new(),
