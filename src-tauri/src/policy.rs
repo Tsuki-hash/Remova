@@ -84,12 +84,12 @@ fn is_dangerous_path_entry(entry: &str) -> bool {
     if s.is_empty() || s.len() <= 3 {
         return true;
     }
-    // Drive root or bare relative junk
-    if s.ends_with(':') || !s.contains('\\') {
+    // Drive root, relative junk, or unexpanded env
+    if s.ends_with(':') || !s.contains('\\') || s.contains('%') {
         return true;
     }
-    // After env expansion, reject any segment still containing unexpanded % or system roots.
-    if s.contains('%') {
+    // Reject path traversal in PATH segments (S-4 class).
+    if s.split('\\').any(|seg| seg == ".." || seg == ".") {
         return true;
     }
     let mut danger: Vec<String> = vec![
@@ -103,34 +103,43 @@ fn is_dangerous_path_entry(entry: &str) -> bool {
         r"c:\program files (x86)\powershell".into(),
         r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
-    for (env_name, suffixes) in [
-        ("SystemRoot", [r"\windows".to_string(), String::new()]),
-        ("windir", [r"\windows".to_string(), String::new()]),
-        (
-            "ProgramFiles",
-            [r"\program files".to_string(), String::new()],
-        ),
-        (
-            "ProgramFiles(x86)",
-            [r"\program files (x86)".to_string(), String::new()],
-        ),
-        ("ProgramData", [r"\programdata".to_string(), String::new()]),
-    ] {
-        if let Ok(val) = std::env::var(env_name) {
-            let low = val
-                .replace('/', "\\")
-                .to_lowercase()
-                .trim_end_matches('\\')
-                .to_string();
-            if low.len() > 2 {
-                danger.push(low);
-            }
+    // Env roots: only system PATH-shaped subtrees — not entire ProgramFiles/ProgramData (S-2).
+    if let Ok(sr) = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")) {
+        let root = sr
+            .replace('/', "\\")
+            .to_lowercase()
+            .trim_end_matches('\\')
+            .to_string();
+        if root.len() > 2 {
+            danger.push(root.clone());
+            danger.push(format!(r"{root}\system32"));
+            danger.push(format!(r"{root}\syswow64"));
+            danger.push(format!(r"{root}\system32\wbem"));
+            danger.push(format!(r"{root}\system32\windowspowershell\v1.0"));
+            danger.push(format!(r"{root}\system32\openssh"));
         }
-        for suf in suffixes {
-            if !suf.is_empty() {
-                // hardcoded companions already in list; keep loop shape simple
-                let _ = suf;
-            }
+    }
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        let low = pf
+            .replace('/', "\\")
+            .to_lowercase()
+            .trim_end_matches('\\')
+            .to_string();
+        if low.len() > 2 {
+            danger.push(format!(r"{low}\windowsapps"));
+            danger.push(format!(r"{low}\powershell"));
+            danger.push(format!(r"{low}\powershell\7"));
+        }
+    }
+    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
+        let low = pf86
+            .replace('/', "\\")
+            .to_lowercase()
+            .trim_end_matches('\\')
+            .to_string();
+        if low.len() > 2 {
+            danger.push(format!(r"{low}\windowsapps"));
+            danger.push(format!(r"{low}\powershell"));
         }
     }
     danger
@@ -300,6 +309,36 @@ mod tests {
         }
         let ok = item(r"C:\Vendor\Tool\bin", ItemKind::Path);
         assert!(gate_cleanup_item(None, &ok, CleanupSource::Uninstall, &ignore).is_allow());
+        // S-2: vendor PATH under Program Files must not be blanket-denied when env is set.
+        let vendor_pf = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
+        let d = gate_cleanup_item(None, &vendor_pf, CleanupSource::Uninstall, &ignore);
+        assert!(
+            d.is_allow(),
+            "ProgramFiles vendor PATH should allow, got {d:?}"
+        );
+        // S-4 traversal in PATH skipped.
+        let trav = item(
+            r"C:\Program Files\DemoApp\bin\..\..\..\Windows",
+            ItemKind::Path,
+        );
+        assert!(!gate_cleanup_item(None, &trav, CleanupSource::Uninstall, &ignore).is_allow());
+    }
+
+    #[test]
+    fn registry_path_ignore_forged_reason() {
+        let ignore = crate::ignore::IgnoreList::default();
+        let a = app("DemoApp", r"C:\Program Files\DemoApp");
+        let mut it = item(r"D:\Unrelated\App\bin", ItemKind::Path);
+        it.reason = format!("belongs to {}", a.install_location);
+        assert!(
+            !gate_cleanup_item(Some(&a), &it, CleanupSource::Uninstall, &ignore).is_allow(),
+            "forged reason must not associate"
+        );
+        let trav = item(
+            r"C:\Program Files\DemoApp\..\..\Windows\System32",
+            ItemKind::File,
+        );
+        assert!(!gate_cleanup_item(Some(&a), &trav, CleanupSource::Uninstall, &ignore).is_allow());
     }
 
     #[test]

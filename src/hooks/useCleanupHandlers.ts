@@ -135,7 +135,14 @@ export function useCleanupHandlers({
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     setDryRunning(true);
     try {
-      const r = await api.dryRun(selected, items);
+      const r = await api.dryRun(selected, items, {
+        cleanup_source:
+          selected.source === "Monitor"
+            ? "monitor"
+            : selected.source === "Orphan"
+              ? "orphan"
+              : "uninstall",
+      });
       setReport(r);
     } catch (e) {
       setError(formatError(e, "cleanup"));
@@ -155,7 +162,11 @@ export function useCleanupHandlers({
         dry_run: false,
         // Residual cleanup after official uninstall never re-runs official uninstaller.
         // Deep-analyze path may still opt in via the checkbox.
-        skip_official_uninstall: residualFromUninstall || !useOfficial,
+        skip_official_uninstall:
+          residualFromUninstall ||
+          !useOfficial ||
+          selected.source === "Monitor" ||
+          selected.source === "Orphan",
         backup_enabled: backupEnabledRef.current,
         cleanup_source:
           selected.source === "Monitor"
