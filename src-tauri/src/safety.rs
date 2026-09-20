@@ -265,6 +265,10 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if trimmed.len() == 2 && trimmed.ends_with(':') {
         return false;
     }
+    // S-4: reject path traversal segments before any prefix comparison.
+    if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
     // Shallow: must be at least `drive:\dir\file-or-dir` (4 components on Windows).
     let comps = p.components().count();
     if comps < 4 {
@@ -433,6 +437,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fs_rejects_path_traversal() {
+        assert!(!is_safe_fs(Path::new(
+            r"C:\Program Files\DemoApp\..\..\..\Windows\System32\x"
+        )));
+        assert!(!is_safe_fs(Path::new(r"C:\Users\a\Documents\..\Windows")));
     }
 
     #[test]

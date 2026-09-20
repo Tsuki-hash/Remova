@@ -43,6 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cleanup gate: PATH danger check expands `%VAR%`; Registry/Path leftovers require app association when an installed app is known; optional `cleanup_source` on full cleanup; backup abort surfaces as failure; restore point decoupled from backup; public docs match optional-backup behavior
 - Dry-run counts align with full delete (missing File/Dir and absent PATH segments skipped); manage rejects `Microsoft*` service writes; PATH restore without scope evidence defaults to User only; scheduled-task native delete uses full TaskCache path; confirm/busy edge cases tightened
 - IPC error codes on remaining safety/manage write paths; cleanup reports count reboot-delayed deletes separately from `deleted`; release pipeline smokes frontend dist; frontend dead confirm strings removed
+- Cleanup gate: reject `..` path segments; PATH danger limited to system-shaped trees (not entire ProgramFiles); association ignores client `reason`; dry-run IPC accepts `cleanup_source`; Monitor/Orphan cleanup always skips official uninstaller
 - CI (engineering): npm + rustc dependency caches; `clippy --all-targets` (lib + tests); frontend `dist` smoke after build; release portable zip smoke (`Remova.exe` / `PORTABLE.txt` / WebView2 / version)
 - ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count dynamic
 - Release notes no longer dump the entire CHANGELOG body
