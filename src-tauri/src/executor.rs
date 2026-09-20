@@ -511,6 +511,60 @@ fn ar10_in_install_root(low: &str) -> bool {
         || low.contains("\\program files (x86)")
 }
 
+/// First path segment under a Common Files root (vendor folder name).
+pub fn common_files_vendor_segment(path: &str) -> Option<String> {
+    let p = path.replace('/', "\\").to_lowercase();
+    let idx = p.find(r"\common files\")?;
+    let rest = &p[idx + r"\common files\".len()..];
+    let seg = rest.split('\\').next().unwrap_or("").trim();
+    if seg.is_empty() || seg == "." || seg == ".." {
+        return None;
+    }
+    Some(seg.to_string())
+}
+
+/// S-7R1: CF vendor association — vendor **directory segment** equals install prefix
+/// under Common Files, or equals a strong name/publisher slug (segment equality).
+pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool {
+    if is_orphan_flow(app) {
+        return false;
+    }
+    let Some(vendor_seg) = common_files_vendor_segment(path) else {
+        return false;
+    };
+    let low = path.replace('/', "\\").to_lowercase();
+    if low.split('\\').any(|s| s == ".." || s == ".") {
+        return false;
+    }
+    let install = app
+        .install_location
+        .trim()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase();
+    if !install.is_empty() {
+        if low == install || low.starts_with(&format!(r"{install}\")) {
+            return true;
+        }
+        if let Some(inst_vendor) = common_files_vendor_segment(&install) {
+            if inst_vendor == vendor_seg {
+                return true;
+            }
+        }
+    }
+    let slugs = crate::scanner::slugify(&app.name);
+    if slugs
+        .iter()
+        .any(|s| ar10_name_slug_ok(s) && s.to_lowercase() == vendor_seg)
+    {
+        return true;
+    }
+    crate::scanner::slugify(&app.publisher).iter().any(|s| {
+        let sl = s.to_lowercase();
+        sl.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&sl.as_str()) && sl == vendor_seg
+    })
+}
+
 /// Full scheduled-task name from a TaskCache\Tree registry path (S-R4-11).
 pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     let low = reg_path.replace('/', "\\");
@@ -928,6 +982,54 @@ mod tests {
             task_full_name_from_reg_path(r"HKLM\...\TaskCache\Tree\Simple"),
             r"\Simple"
         );
+    }
+
+    #[test]
+    fn cf_vendor_segment_and_association() {
+        assert_eq!(
+            common_files_vendor_segment(r"C:\Program Files\Common Files\Acme\lib.dll").as_deref(),
+            Some("acme")
+        );
+        assert_eq!(
+            common_files_vendor_segment(r"C:\Program Files\DemoApp"),
+            None
+        );
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            version: "1".into(),
+            publisher: "Acme Corp".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        // vendor_seg == app name slug
+        assert!(cf_vendor_associated(
+            &app,
+            r"C:\Program Files\Common Files\DemoApp\plugins"
+        ));
+        // substring hit in a *deeper* segment must not associate (S7-R1)
+        assert!(!cf_vendor_associated(
+            &app,
+            r"C:\Program Files\Common Files\Acme\demo_backup"
+        ));
+        // install under same CF vendor folder
+        let cf_app = crate::apps::InstalledApp {
+            install_location: r"C:\Program Files\Common Files\Acme\Libs".into(),
+            ..app.clone()
+        };
+        assert!(cf_vendor_associated(
+            &cf_app,
+            r"C:\Program Files\Common Files\Acme\Extra"
+        ));
+        assert!(!cf_vendor_associated(
+            &app,
+            r"C:\Program Files\Common Files\Acme\x"
+        ));
     }
 
     #[test]
