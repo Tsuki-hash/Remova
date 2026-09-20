@@ -45,7 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - IPC error codes on remaining safety/manage write paths; cleanup reports count reboot-delayed deletes separately from `deleted`; release pipeline smokes frontend dist; frontend dead confirm strings removed
 - Cleanup gate: reject `..` path segments; PATH danger limited to system-shaped trees (not entire ProgramFiles); association ignores client `reason`; dry-run IPC accepts `cleanup_source`; Monitor/Orphan cleanup always skips official uninstaller
 - Dry-run PATH probe uses the same registry PATH source as scrub; backup filter honors cleanup source; abort reports clear verify/AI notes; history records delayed deletes; manage bad-name errors use structured IPC codes
-- Shared leftovers: Common Files **roots** and `Microsoft Shared` stay hard-blocked; vendor subpaths under Common Files may be cleaned only with strong install association (orphan/unrelated paths still skipped)
+- Shared leftovers: Common Files **roots** and `Microsoft Shared` stay hard-blocked; vendor subpaths under Common Files may be cleaned only when the **vendor directory segment** matches install/name/publisher (not arbitrary path substrings); confirm dialog warns when Common Files paths are selected
 - CI (engineering): npm + rustc dependency caches; `clippy --all-targets` (lib + tests); frontend `dist` smoke after build; release portable zip smoke (`Remova.exe` / `PORTABLE.txt` / WebView2 / version)
 - ARCHITECTURE: path.json/value.reg restore order, is_safe_fs env prefixes, critical service count dynamic
 - Release notes no longer dump the entire CHANGELOG body

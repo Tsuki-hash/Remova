@@ -414,6 +414,8 @@ export const dict = {
     reportDelayedNote: (n: number) => `${n} item(s) scheduled for delete on reboot`,
     confirmSharedSelected:
       "Selection includes shared runtimes that other apps may use. Confirm you understand the risk.",
+    confirmCommonFilesHint:
+      "Selected paths are under Common Files (shared component directories). Confirm they belong to this app before cleaning.",
     leftoverSummaryTitle: "Leftover overview",
     bucketSafe: "Safe to clean",
     bucketSuggest: "Review first",

@@ -193,15 +193,21 @@ pub fn gate_cleanup_item(
         let orphan = source == CleanupSource::Orphan
             || source == CleanupSource::Monitor
             || crate::executor::is_orphan_flow(app);
-        // S-7B: Common Files vendor subpaths require real app association (fail-closed otherwise).
+        // Compute association once (S7-R2).
+        let fs_assoc = if orphan {
+            false
+        } else {
+            crate::executor::path_associated_with_app(app, item)
+        };
+        // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
         if matches!(item.kind, ItemKind::File | ItemKind::Dir)
             && crate::shared::is_common_files_vendor_path(&item.path)
-            && (orphan || !crate::executor::path_associated_with_app(app, item))
         {
-            return GateDecision::Skip("shared runtime");
-        }
-        if !orphan && !crate::executor::path_associated_with_app(app, item) {
-            // S-R4-03: Registry/Path also require a light association when app is known.
+            if orphan || !crate::executor::cf_vendor_associated(app, &item.path) {
+                return GateDecision::Skip("shared runtime");
+            }
+        } else if !orphan && !fs_assoc {
+            // S-R4-03: Registry/Path / non-CF FS also require association when app is known.
             return GateDecision::Skip("path not associated with app");
         }
     } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
@@ -328,28 +334,49 @@ mod tests {
             ItemKind::Dir,
         );
         assert!(!gate_cleanup_item(Some(&a), &un, CleanupSource::Uninstall, &ignore).is_allow());
-        // Associated via publisher/slug path segment → allow (S-7B).
-        let mut assoc = item(
+        // Associated via vendor **segment** equal to app name slug → allow (S-7B/R1).
+        let assoc = item(
             r"C:\Program Files\Common Files\DemoApp\plugins",
             ItemKind::Dir,
         );
-        assoc.reason = "install".into();
         assert!(
             gate_cleanup_item(Some(&a), &assoc, CleanupSource::Uninstall, &ignore).is_allow(),
             "associated CF vendor path should allow"
         );
-        // Orphan never gets CF vendor allow.
+        // Deeper segment merely *contains* name slug → must skip (S7-R1).
+        let loose = item(
+            r"C:\Program Files\Common Files\Acme\demo_backup",
+            ItemKind::Dir,
+        );
+        assert!(
+            !gate_cleanup_item(Some(&a), &loose, CleanupSource::Uninstall, &ignore).is_allow(),
+            "substring-only CF path must not allow"
+        );
+        // Orphan / Monitor never get CF vendor allow.
         let orphan_app = app("孤儿扫描", "");
         assert!(
             !gate_cleanup_item(Some(&orphan_app), &assoc, CleanupSource::Orphan, &ignore)
                 .is_allow()
         );
+        assert!(!gate_cleanup_item(Some(&a), &assoc, CleanupSource::Monitor, &ignore).is_allow());
         // Microsoft Shared still hard skip even with association-shaped path.
         let ms = item(
             r"C:\Program Files\Common Files\Microsoft Shared\DemoApp",
             ItemKind::Dir,
         );
         assert!(!gate_cleanup_item(Some(&a), &ms, CleanupSource::Uninstall, &ignore).is_allow());
+        // item.shared=true still hard-skips CF vendor.
+        let mut forged = assoc.clone();
+        forged.shared = true;
+        assert!(
+            !gate_cleanup_item(Some(&a), &forged, CleanupSource::Uninstall, &ignore).is_allow()
+        );
+        // dry ≡ full for CF vendor items (single gate).
+        for it in [&un, &assoc, &loose] {
+            let d = gate_cleanup_item(Some(&a), it, CleanupSource::Uninstall, &ignore);
+            let f = gate_cleanup_item(Some(&a), it, CleanupSource::Uninstall, &ignore);
+            assert_eq!(d, f, "dry/full mismatch {}", it.path);
+        }
     }
 
     #[test]
