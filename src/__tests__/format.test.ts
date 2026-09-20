@@ -52,7 +52,7 @@ describe("formatError manage codes", () => {
     expect(formatError("manage:protected::WinDefend")).toContain("关键服务");
     expect(formatError("manage:protected::WinDefend")).toContain("WinDefend");
     expect(formatError("manage:protected_registry::HKLM\\SOFTWARE\\Evil")).toContain("关键服务");
-    expect(formatError("ai:explain::timeout")).toContain("智能说明");
+    expect(formatError("ai:explain::timeout")).toContain("智能解释");
     expect(formatError("backup:failed::disk full")).toBeTruthy();
   });
 });

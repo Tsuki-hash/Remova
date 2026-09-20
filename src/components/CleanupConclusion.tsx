@@ -157,7 +157,7 @@ export function CleanupConclusion({
                   onClick={onOpenSettings}
                   title={L.aiSettingsHint}
                 >
-                  {L.aiDisabledChip} · {L.conclusionEnableAi}
+                  {L.conclusionEnableAi}
                 </button>
               )
             )}
