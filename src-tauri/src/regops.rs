@@ -147,7 +147,8 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
     matches!(out, Ok(o) if o.status.success())
 }
 
-/// Best-effort: schtasks /delete for a task leaf name.
+/// Best-effort: schtasks /delete for a task path or leaf name.
+/// Prefer full TaskCache tree remainder (`\Vendor\Foo\Task`) when provided.
 pub fn schtasks_delete(task_name: &str) -> bool {
     if task_name.is_empty() || task_name.contains('"') {
         return false;

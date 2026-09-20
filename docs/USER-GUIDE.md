@@ -202,7 +202,7 @@ Store / MSIX 包出现在同一列表，来源列显示 `Store`。
 ### 5.2 服务
 
 - 列出 `HKLM64/32\SYSTEM\CurrentControlSet\Services` 顶层键
-- 关键系统服务（eventlog、winmgmt、bits、spooler 等 16 个）不出现、不可操作
+- 关键系统服务（eventlog、winmgmt、bits、spooler 等，见代码动态名单）不出现或不可写操作；`Microsoft*` 服务写侧同样拒绝
 - **禁用** 将 `Start` 设为 4；**启用** 设为 3（手动），不会擅自改成自动，避免意外拉起
 
 ### 5.3 计划任务

@@ -105,6 +105,11 @@ pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
     if is_critical_service(n) {
         return Err(crate::error::manage_err("protected", n).to_ipc());
     }
+    // S-R4-09: mirror task-side Microsoft protection on service writes (list still allowed).
+    let low = n.to_lowercase();
+    if low.starts_with("microsoft") || low.starts_with("ms ") {
+        return Err(crate::error::manage_err("protected", n).to_ipc());
+    }
     Ok(())
 }
 
@@ -523,6 +528,9 @@ mod tests {
     fn manage_policy_helpers() {
         assert!(allow_manage_service_write("WinDefend").is_err());
         assert!(allow_manage_service_write("DemoVendorHelper").is_ok());
+        // S-R4-09: Microsoft-prefixed services are write-protected even if not critical.
+        assert!(allow_manage_service_write("MicrosoftEdgeUpdate").is_err());
+        assert!(allow_manage_service_write("microsoft some svc").is_err());
         assert!(allow_manage_reg_write(r"HKLM\SOFTWARE\Evil\Config", false).is_err());
         assert!(allow_manage_reg_write(
             r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup",
