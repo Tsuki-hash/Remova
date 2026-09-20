@@ -117,6 +117,25 @@ describe("runBatchCleanup", () => {
     expect(cb.busyRef.current).toBe(false);
   });
 
+  it("defaults backup_enabled to false and honors opt-in true", async () => {
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    fullCleanup.mockResolvedValue(report({ deleted: 1, failed: 0 }));
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    expect(fullCleanup).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ backup_enabled: false }),
+    );
+    fullCleanup.mockClear();
+    await runBatchCleanup([app("A")], true, keyOf, makeCb(), true);
+    expect(fullCleanup).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ backup_enabled: true }),
+    );
+  });
+
   it("still runs official uninstall when no default-selectable leftovers (F-1)", async () => {
     analyze.mockResolvedValue(
       scan("B", [item("C:\\x", { confidence: "suspected", risk: "medium" })]),

@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
-import { requestConfirm } from "../lib/confirm";
+import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
@@ -51,11 +51,12 @@ export function OrphanPage({
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
-    const ok = await requestConfirm({
+    const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: L.cleanupConfirmVault(picked.length, false),
+      message: L.cleanupConfirmNoBackup(picked.length, false),
       confirmLabel: L.cleanup,
       danger: true,
+      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
     });
     if (!ok) return;
     setBusy(true);
@@ -76,7 +77,7 @@ export function OrphanPage({
       const report = await api.fullCleanup(app, picked, {
         dry_run: false,
         skip_official_uninstall: true,
-        backup_enabled: true,
+        backup_enabled: checked,
       });
       onLastReport(report);
       toast.success(L.batchDetail(report.deleted, report.failed));

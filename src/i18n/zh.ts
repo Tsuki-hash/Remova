@@ -67,7 +67,7 @@ export const dict = {
     batchConfirm: (n: number, official?: boolean) =>
       `将对 ${n} 个已选软件依次分析并清理「确定」项（跳过高风险）${official ? "，并调用官方卸载器" : ""}。继续？`,
     cleanupConfirm: (n: number, official: boolean) =>
-      `将备份并清理 ${n} 项${official ? "并调用官方卸载器" : ""}。确认？`,
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}（默认不备份）。确认？`,
     restoreConfirm: "将从最近备份还原文件与注册表。继续？",
     noHistory: "暂无记录",
     historyTitle: "清理历史",
@@ -148,7 +148,7 @@ export const dict = {
     manageReload: "刷新",
     manageClose: "关闭管理",
     forceClean: "强制清理残留",
-    forceCleanHint: "将跳过官方卸载器，仅清理已确认的残留项（会先备份）。",
+    forceCleanHint: "将跳过官方卸载器，仅清理已确认的残留项（备份为可选项）。",
     shellMenu: "注册右键菜单",
     shellMenuOn: "已注册右键菜单",
     shellUnregister: "取消右键菜单",
@@ -372,11 +372,11 @@ export const dict = {
     modeDeep: "深度卸载",
     modeDeepHint: "官方卸载后自动扫描并清理残留（推荐）",
     modeForce: "强制清理",
-    modeForceHint: "跳过官方卸载器，清理已确认残留（先备份）",
+    modeForceHint: "跳过官方卸载器，清理已确认残留（备份可选）",
     navOrphans: "孤儿残留",
     orphanPageHint: "扫描已无对应安装记录的残留目录，按来源分组后可安全清理",
     safetyVaultTitle: "删除保险箱",
-    safetyVaultHint: "清理前自动备份；默认保留 7 天，过期会话会自动清理",
+    safetyVaultHint: "清理备份为可选；创建后的会话默认保留 7 天，过期会自动清理",
     checkupFlowHint: "统计软件环境并扫描疑似孤儿残留；结果只展示可计算数据。",
     checkupStepApps: "已安装软件",
     checkupStepLarge: "大体积（≥500MB）",
@@ -390,14 +390,19 @@ export const dict = {
     sortRecommend: "推荐清理",
     drawerDeepUninstall: "开始深度卸载",
     drawerDeepHint:
-      "先调用官方卸载程序，完成后自动扫描残留；清理前会自动创建安全备份，可在「更多 → 还原备份」中恢复。",
+      "先调用官方卸载程序，完成后自动扫描残留；清理前可选择是否创建安全备份，备份可在「更多 → 还原备份」中恢复。",
     drawerOfficial: "仅官方卸载",
     drawerOfficialHint: "只运行软件自带的卸载程序，不扫描残留",
     drawerAnalyze: "先看关联",
     drawerAnalyzeHint: "不卸载，仅分析文件 / 注册表 / 服务等关联项",
-    safetyVaultBanner: "清理前会自动备份；出问题可在「更多 → 还原备份」恢复",
-    cleanupConfirmVault: (n: number, official: boolean) =>
+    safetyVaultBanner: "已创建安全备份；出问题可在「更多 → 还原备份」恢复",
+    confirmBackupBeforeCleanup: "清理前创建安全备份（可在「更多 → 还原备份」恢复）",
+    cleanupConfirmWithBackup: (n: number, official: boolean) =>
       `将先创建安全备份，再清理 ${n} 项${official ? "并调用官方卸载器" : ""}。出问题可在「更多 → 还原备份」恢复。确认？`,
+    cleanupConfirmNoBackup: (n: number, official: boolean) =>
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}，且不创建备份（删除后一般无法从 Remova 还原）。确认？`,
+    cleanupConfirmVault: (n: number, official: boolean) =>
+      `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不备份；如需可恢复请勾选安全备份。确认？`,
     confirmSharedSelected:
       "所选项中包含共享运行库（可能被其它软件使用）。确认了解风险后再继续。",
     leftoverSummaryTitle: "残留概况",
