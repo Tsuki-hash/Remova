@@ -1,5 +1,5 @@
 # Package a portable Remova zip from the built release binary.
-# Usage: pwsh -File scripts/package-portable.ps1
+# Usage: pwsh -NoProfile -File scripts/package-portable.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root "src-tauri\target\release\remova.exe"
@@ -13,14 +13,18 @@ $stage = Join-Path $outDir "Remova-$ver"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item $exe (Join-Path $stage "Remova.exe")
-# Optional runtime note for portable users
+# D-N1: portable runtime notes (WebView2 + backups + no installer)
 @"
-Remova $ver portable
-- Double-click Remova.exe (no install).
+Remova $ver portable (x64)
+- Double-click Remova.exe (no install). Prefer NSIS/MSI for Start menu entry.
+- Runtime: Microsoft Edge WebView2 Runtime must already be installed (Windows 10/11 usually include it).
+  If the app fails to start, install WebView2 from Microsoft and retry.
 - Backups: %PROGRAMDATA%\Remova\Backup
-- Prefer the NSIS/MSI installer for Start menu & uninstaller.
+- Version in this package: $ver
 "@ | Set-Content -Path (Join-Path $stage "PORTABLE.txt") -Encoding utf8
 $zip = Join-Path $outDir "Remova_${ver}_x64-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path "$stage\*" -DestinationPath $zip
+# Clean stage after zip to avoid leftover unversioned trees (D-N1).
+Remove-Item $stage -Recurse -Force
 Write-Host "Wrote $zip"

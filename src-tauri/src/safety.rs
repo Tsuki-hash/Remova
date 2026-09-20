@@ -224,7 +224,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     }
     for root in run_roots {
         if low == root {
-            return Err("run root protected".into());
+            return Err(crate::error::safety_err("run root protected").to_ipc());
         }
     }
 

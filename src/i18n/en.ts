@@ -321,6 +321,7 @@ export const dict = {
     sourceHklm64: "System 64-bit",
     sourceHklm32: "System 32-bit",
     sourceStore: "Microsoft Store",
+    signedPackage: "Signed package",
     toolboxTitle: "Toolbox",
     searchStartup: "Search startup name…",
     searchServices: "Search service / description…",

@@ -11,7 +11,7 @@ import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import type { BatchItemResult } from "../components/BatchPanels";
-import type { ReportVerifyRow } from "../components/ReportPanel";
+import type { VerifyRow } from "../lib/api";
 import type { SoftwarePageProps } from "../components/SoftwarePage";
 import type { Strings } from "../i18n";
 import { appKey } from "../lib/appKey";
@@ -66,7 +66,7 @@ export type SoftwareControllerInput = {
   aiReportNote: string | null;
   setAiReportBusy: (v: boolean) => void;
   setAiReportNote: (v: string | null) => void;
-  verifyRows: ReportVerifyRow[] | null;
+  verifyRows: VerifyRow[] | null;
   checkup: { total: number; large: number; recent: number };
   checkupOpen: boolean;
   checkupOrphanCount: number | null;
@@ -204,7 +204,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         aiReportNote: input.aiReportNote,
         setAiReportBusy: input.setAiReportBusy,
         setAiReportNote: input.setAiReportNote,
-        verifyRows: input.verifyRows as ReportVerifyRow[] | null,
+        verifyRows: input.verifyRows,
         checkup: input.checkup,
         checkupOpen: input.checkupOpen,
         setCheckupOpen: shell.setCheckupOpen,

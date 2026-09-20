@@ -319,6 +319,7 @@ export const dict = {
     sourceHklm64: "系统 64 位",
     sourceHklm32: "系统 32 位",
     sourceStore: "Microsoft Store",
+    signedPackage: "签名包",
     toolboxTitle: "工具箱",
     searchStartup: "搜索启动项名称…",
     searchServices: "搜索服务名 / 说明…",

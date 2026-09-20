@@ -22,6 +22,29 @@ describe("FE-P0a functional setters", () => {
     expect(result.current.multi.has("c")).toBe(true);
   });
 
+  it("setMulti consecutive functional updates do not drop (FE-N1)", () => {
+    const { result } = renderHook(() => useAppCoreState());
+    act(() => result.current.setMulti(new Set(["a", "b"])));
+    act(() =>
+      result.current.setMulti((m) => {
+        const n = new Set(m);
+        n.delete("a");
+        return n;
+      }),
+    );
+    act(() =>
+      result.current.setMulti((m) => {
+        const n = new Set(m);
+        n.add("z");
+        return n;
+      }),
+    );
+    expect(result.current.multi.has("a")).toBe(false);
+    expect(result.current.multi.has("b")).toBe(true);
+    expect(result.current.multi.has("z")).toBe(true);
+    expect(result.current.multi.size).toBe(2);
+  });
+
   it("setSelectedPaths functional update toggles without clearing all", () => {
     const { result } = renderHook(() => useResidualState());
     act(() => result.current.setSelectedPaths(new Set(["p1", "p2"])));

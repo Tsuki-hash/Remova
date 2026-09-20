@@ -24,11 +24,11 @@ export function useAppCoreState() {
     [],
   );
   const toggleMulti = useCallback((key: string) => dispatch({ type: "multi/toggle", key }), []);
-  /** Supports React functional updaters (FE-P0a). */
+  /** Supports React functional updaters inside the reducer (FE-N1). */
   const setMulti = useCallback(
     (updater: Set<string> | ((m: Set<string>) => Set<string>)) => {
       if (typeof updater === "function") {
-        dispatch({ type: "multi/set", value: updater(stateRef.current.multi) });
+        dispatch({ type: "multi/update", updater });
       } else {
         dispatch({ type: "multi/set", value: updater });
       }

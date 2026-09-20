@@ -7,7 +7,7 @@ export function prettyPublisher(raw: string): string {
   if (/^CN=/i.test(s) || s.includes(", O=") || s.includes(",OU=")) {
     const cn = /CN=([^,]+)/i.exec(s)?.[1]?.trim();
     if (cn && !/^[0-9a-f-]{20,}$/i.test(cn) && cn.length <= 48) return cn;
-    return "Signed package";
+    return t().signedPackage || "Signed package";
   }
   return s.length > 42 ? `${s.slice(0, 40)}…` : s;
 }
@@ -16,7 +16,7 @@ export function prettyAppName(name: string, source: string): string {
   const n = (name || "").trim();
   if (!n) return "—";
   if (source === "Store" && /^[0-9a-f]{6,}(\.[0-9a-f]+)+$/i.test(n)) {
-    return `Store app · ${n.slice(0, 8)}…`;
+    return `${t().sourceStore || "Microsoft Store"} · ${n.slice(0, 8)}…`;
   }
   return n;
 }

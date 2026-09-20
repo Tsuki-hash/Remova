@@ -11,17 +11,24 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   const sizeCache = useRef(new Map<string, number>());
   const sizeCancelRef = useRef(false);
 
-  const sizeOf = useCallback((a: InstalledApp): number => {
-    if (a.estimated_size_kb > 0) return a.estimated_size_kb;
-    return sizeCache.current.get(a.install_location) ?? 0;
-  }, []);
+  const sizeOf = useCallback(
+    (a: InstalledApp): number => {
+      if (a.estimated_size_kb > 0) return a.estimated_size_kb;
+      return sizeMap[a.install_location] ?? sizeCache.current.get(a.install_location) ?? 0;
+    },
+    [sizeMap],
+  );
 
-  const formatAppSize = useCallback((a: InstalledApp): string => {
-    if (a.estimated_size_kb > 0) return formatSize(a.estimated_size_kb);
-    const est = sizeCache.current.get(a.install_location) ?? 0;
-    if (est > 0) return `~${formatSize(est)}`;
-    return "—";
-  }, []);
+  const formatAppSize = useCallback(
+    (a: InstalledApp): string => {
+      if (a.estimated_size_kb > 0) return formatSize(a.estimated_size_kb);
+      const est =
+        sizeMap[a.install_location] ?? sizeCache.current.get(a.install_location) ?? 0;
+      if (est > 0) return `~${formatSize(est)}`;
+      return "—";
+    },
+    [sizeMap],
+  );
 
   useEffect(() => {
     if (loading || apps.length === 0) return;

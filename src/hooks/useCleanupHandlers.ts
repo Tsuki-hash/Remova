@@ -195,7 +195,13 @@ export function useCleanupHandlers({
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
   const handleCleanupConfirm = useCallback(async () => {
     if (!scan) return;
+    if (busyRef.current) return;
     const n = selectedPaths.size;
+    if (n === 0) {
+      // FE-N3: never confirm an empty cleanup set.
+      toast.info(L.cleanup);
+      return;
+    }
     let message = L.cleanupConfirmVault(
       n,
       residualFromUninstall || useOfficial,
@@ -255,6 +261,7 @@ export function useCleanupHandlers({
     L,
     setAiRisk,
     execReal,
+    busyRef,
   ]);
 
   const batchCleanup = useCallback(

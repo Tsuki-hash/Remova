@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Cleanup gate (P0): server-side recompute of `user_data` / sync-conflict / `shared` — forged IPC flags cannot delete Documents/Downloads/etc.
+- Cleanup gate (P0): PATH scrub rejects system entries (`Windows`/`System32`/PowerShell…)
+- `setMulti` functional updates resolved inside the reducer (no lost concurrent updaters)
+- Uninstall / official-uninstall entry points reject re-entry while busy; empty leftover selection cannot confirm cleanup
+- Backup only processes items that pass the cleanup gate; skipped items failing backup do not abort
+- PATH restore takes `PATH_LOCK`; `reg.exe` writes translate `HKLM64`/`HKLM32` hive aliases
+- SVC enable/disable uses manual (3)/disabled (4) + `MANAGE_LOCK`; full delete counts already-missing File/Dir as skipped (not deleted)
+- Orphan page: default-safe selection + error banner hook; shell/AI hooks return stable identities for memo
 - **P0**: functional React updaters for `setMulti` / `setSelectedPaths` (residual checkbox & batch multi)
 - **P0**: More-page install-monitor diff panel always visible when `monitorDiff` exists
 - **P0**: orphan cleanup AR-10 — orphan flow uses `is_safe_fs` only (no fake slug gate)
@@ -54,8 +62,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `fsutil::fnv1a64`; magic numbers centralized in `constants.rs` (BE-05/06)
 - Cleanup backup stage extracted to `try_backup_phase` (AR-07 partial)
 - Empty leftover paths filtered before full cleanup abort check (AR-10 light)
-
-### Changed
 - **Domain reducers** (`src/hooks/reducers/`): shell / residual / aiPanel / scanUi / listFilter / appCore — App state via `useReducer` actions
 - MorePage business hooks: `useMoreHistory` / `useMoreRestore` / `useMoreTools`
 - Scan UI chrome in `useScanUiState`; i18n split `src/i18n/{zh,en,index}.ts`
