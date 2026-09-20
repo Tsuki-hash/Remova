@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import type { InstalledApp } from "../types";
 import type { VerifyRow } from "../lib/api";
 import { aiPanelReducer, initialAiPanelState } from "./reducers/aiPanel";
@@ -38,24 +38,8 @@ export function useAiPanelState() {
   }, []);
   const clearCopilotFilter = useCallback(() => dispatch({ type: "copilot/set", value: null }), []);
 
-  return {
-    aiEnabled: state.aiEnabled,
-    setAiEnabled,
-    aiBusy: state.aiBusy,
-    setAiBusy,
-    aiNotes: state.aiNotes,
-    setAiNotes,
-    aiRisk: state.aiRisk,
-    setAiRisk,
-    aiReportNote: state.aiReportNote,
-    setAiReportNote,
-    aiReportBusy: state.aiReportBusy,
-    setAiReportBusy,
-    verifyRows: state.verifyRows,
-    setVerifyRows,
-    copilotList: state.copilotList,
-    setCopilotList,
-    actions: {
+  const actions = useMemo(
+    () => ({
       clearAiScanState,
       clearAiReport,
       applyCopilotFilter,
@@ -67,6 +51,60 @@ export function useAiPanelState() {
       setAiReportNote,
       setAiReportBusy,
       setVerifyRows,
-    },
-  };
+    }),
+    [
+      clearAiScanState,
+      clearAiReport,
+      applyCopilotFilter,
+      clearCopilotFilter,
+      setAiEnabled,
+      setAiBusy,
+      setAiNotes,
+      setAiRisk,
+      setAiReportNote,
+      setAiReportBusy,
+      setVerifyRows,
+    ],
+  );
+
+  return useMemo(
+    () => ({
+      aiEnabled: state.aiEnabled,
+      setAiEnabled,
+      aiBusy: state.aiBusy,
+      setAiBusy,
+      aiNotes: state.aiNotes,
+      setAiNotes,
+      aiRisk: state.aiRisk,
+      setAiRisk,
+      aiReportNote: state.aiReportNote,
+      setAiReportNote,
+      aiReportBusy: state.aiReportBusy,
+      setAiReportBusy,
+      verifyRows: state.verifyRows,
+      setVerifyRows,
+      copilotList: state.copilotList,
+      setCopilotList,
+      actions,
+    }),
+    [
+      state.aiEnabled,
+      state.aiBusy,
+      state.aiNotes,
+      state.aiRisk,
+      state.aiReportNote,
+      state.aiReportBusy,
+      state.verifyRows,
+      state.copilotList,
+      setAiEnabled,
+      setAiBusy,
+      setAiNotes,
+      setAiRisk,
+      setAiReportNote,
+      setAiReportBusy,
+      setVerifyRows,
+      setCopilotList,
+      actions,
+    ],
+  );
 }

@@ -29,6 +29,7 @@ export type AppCoreAction =
   | { type: "selected/set"; value: InstalledApp | null }
   | { type: "multi/toggle"; key: string }
   | { type: "multi/set"; value: Set<string> }
+  | { type: "multi/update"; updater: (m: Set<string>) => Set<string> }
   | { type: "multi/removeKeys"; keys: string[] }
   | { type: "multi/clear" }
   | { type: "scan/set"; value: ScanResult | null }
@@ -79,6 +80,8 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
     }
     case "multi/set":
       return { ...state, multi: action.value };
+    case "multi/update":
+      return { ...state, multi: action.updater(state.multi) };
     case "multi/removeKeys": {
       const okSet = new Set(action.keys);
       const n = new Set(state.multi);

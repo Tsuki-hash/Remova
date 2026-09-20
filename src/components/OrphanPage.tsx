@@ -7,14 +7,16 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
-import { groupByOrigin, summarizeLeftovers } from "../lib/decision";
+import { groupByOrigin, summarizeLeftovers, defaultSelectable } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
 
-/** First-class orphan leftovers page (report §9). */
+/** First-class orphan leftovers page (report §9 / FE-N5). */
 export function OrphanPage({
   onLastReport,
+  onError,
 }: {
   onLastReport: (r: FullCleanupReport) => void;
+  onError?: (e: string | null) => void;
 }) {
   const L = t();
   const [items, setItems] = useState<CleanupItem[] | null>(null);
@@ -24,26 +26,30 @@ export function OrphanPage({
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
   const scan = async () => {
+    if (busy) return;
     setBusy(true);
     toast.info(L.orphanScanning);
     try {
       const list = await api.orphanScan();
       setItems(list);
-      setSelected(new Set());
+      // FE-N5: same default-selection predicate as analyze/cleanup.
+      setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       if (list.length === 0) toast.info(L.orphanScanEmpty);
       else {
         const s = summarizeLeftovers(list);
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep));
       }
     } catch (e) {
-      toast.error(formatError(e, "analyze"));
+      const msg = formatError(e, "analyze");
+      onError?.(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
   };
 
   const cleanSelected = async () => {
-    if (!items || selected.size === 0) return;
+    if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
     const ok = await requestConfirm({
       title: L.cleanup,
@@ -76,7 +82,9 @@ export function OrphanPage({
       toast.success(L.batchDetail(report.deleted, report.failed));
       await scan();
     } catch (e) {
-      toast.error(formatError(e, "cleanup"));
+      const msg = formatError(e, "cleanup");
+      onError?.(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

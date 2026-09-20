@@ -104,6 +104,7 @@ export function useAnalyzeFlow({
 
   const startUninstall = useCallback(
     async (app: InstalledApp) => {
+      if (busyRef.current) return;
       const strings = t();
       const label = prettyAppName(app.name, app.source);
       const ok = await requestConfirm({
@@ -112,6 +113,7 @@ export function useAnalyzeFlow({
         confirmLabel: strings.drawerDeepUninstall,
       });
       if (!ok) return;
+      if (busyRef.current) return;
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
@@ -171,6 +173,7 @@ export function useAnalyzeFlow({
 
   const openOfficialOnly = useCallback(
     async (app: InstalledApp) => {
+      if (busyRef.current) return;
       const strings = t();
       const label = prettyAppName(app.name, app.source);
       const ok = await requestConfirm({
@@ -179,6 +182,7 @@ export function useAnalyzeFlow({
         confirmLabel: strings.drawerOfficial,
       });
       if (!ok) return;
+      if (busyRef.current) return;
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);

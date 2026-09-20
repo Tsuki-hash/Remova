@@ -1,6 +1,5 @@
 //! Uninstall command parsing and dry-run cleanup planning (Phase 2).
 
-use crate::safety::is_safe_to_delete_registry;
 use crate::scanner::{CleanupItem, ItemKind};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -128,10 +127,6 @@ fn split_win_args(s: &str) -> Vec<String> {
     out
 }
 
-fn is_safe_fs(p: &Path) -> bool {
-    crate::safety::is_safe_fs(p)
-}
-
 /// Process-wide lock so batch + manual cleanup cannot race PATH/backup (S-08).
 static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -187,26 +182,38 @@ pub fn run_cleanup_dry_for_app_source(
     }
 }
 
-/// Dry-run cleanup: validate items and report what would happen. Never deletes.
+/// Legacy dry-run without app context — still shares policy safety/user_data gates (A-N3).
+/// Prefer `run_cleanup_dry_for_app` when an InstalledApp is known.
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
+    let ignore = crate::ignore::load();
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
     let errors = vec![];
     let mut details = vec![];
 
     for it in items {
-        let ok = match it.kind {
-            ItemKind::Registry => is_safe_to_delete_registry(&it.path).is_ok(),
-            ItemKind::Path => !it.path.trim().is_empty(),
-            _ => is_safe_fs(Path::new(&it.path)) && Path::new(&it.path).exists(),
-        };
+        let decision = crate::policy::gate_cleanup_item(
+            None,
+            it,
+            crate::policy::CleanupSource::Uninstall,
+            &ignore,
+        );
+        let ok = decision.is_allow()
+            && match it.kind {
+                ItemKind::File | ItemKind::Dir => Path::new(&it.path).exists(),
+                _ => true,
+            };
         if !ok {
             skipped += 1;
             details.push(ItemDetail {
                 path: it.path.clone(),
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
-                message: "failed safety gate".into(),
+                message: if decision.is_allow() {
+                    "failed safety gate".into()
+                } else {
+                    decision.message().to_string()
+                },
             });
             continue;
         }
@@ -219,7 +226,6 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
         });
     }
 
-    let _ = app_name;
     CleanupReport {
         app_name: app_name.to_string(),
         dry_run: true,
@@ -371,7 +377,17 @@ fn try_backup_phase(
     match crate::backup::create_session(&app.name) {
         Ok(session) => {
             let backup_dir = session.to_string_lossy().to_string();
-            let (_ok, fail, errors) = crate::backup::backup_items(items, &session);
+            // A-N2 / S-N1: only backup items that pass the cleanup gate.
+            let ignore = crate::ignore::load();
+            let source = crate::policy::CleanupSource::Uninstall;
+            let allow: Vec<CleanupItem> = items
+                .iter()
+                .filter(|it| {
+                    crate::policy::gate_cleanup_item(Some(app), it, source, &ignore).is_allow()
+                })
+                .cloned()
+                .collect();
+            let (_ok, fail, errors) = crate::backup::backup_items(&allow, &session);
             if fail > 0 {
                 return BackupOutcome::Abort(Box::new(FullCleanupReport {
                     app_name: app.name.clone(),
@@ -621,12 +637,21 @@ fn delete_cleanup_items_source(
             }
             _ => {
                 let p = Path::new(&it.path);
+                // S-N6: a path that is already gone is not a successful delete.
+                if !p.exists() {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "path missing".into(),
+                    });
+                    continue;
+                }
                 let res = if p.is_dir() {
                     std::fs::remove_dir_all(p)
-                } else if p.exists() {
-                    std::fs::remove_file(p)
                 } else {
-                    Ok(())
+                    std::fs::remove_file(p)
                 };
                 match res {
                     Ok(()) => {
@@ -1010,5 +1035,53 @@ mod tests {
         let r = run_cleanup_dry("App", &items);
         assert_eq!(r.skipped, 1);
         assert_eq!(r.deleted_planned, 0);
+    }
+
+    #[test]
+    fn missing_path_is_skipped_not_deleted() {
+        // S-N6: full delete must not count non-existent File/Dir as deleted.
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DemoApp}"
+                .into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let items = vec![CleanupItem {
+            path: r"C:\Program Files\DemoApp\missing\gone.bin".into(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            size_kb: None,
+            bucket: None,
+        }];
+        let report = crate::executor::run_full_cleanup(
+            &app,
+            &items,
+            &crate::executor::FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: false,
+                restore_point: false,
+            },
+        );
+        assert_eq!(report.deleted, 0);
+        assert_eq!(report.skipped, 1);
+        assert!(report
+            .item_details
+            .iter()
+            .any(|d| d.status == "skipped" && d.message.contains("path missing")));
     }
 }

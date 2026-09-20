@@ -217,6 +217,7 @@ pub fn merge_path_entry(path_value: &str, entry: &str) -> Option<String> {
 /// Restore one PATH segment into the given scopes when missing (Safety Vault).
 /// Returns Ok(true) if at least one scope was updated.
 pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> {
+    let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
     let targets: Vec<&str> = if scopes.is_empty() {
         vec!["User", "Machine"]
@@ -581,6 +582,27 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
 }
 
 /// Write REG_SZ under `key_path` (creates key tree via `reg add` fallback).
+fn normalize_reg_exe_hive(key_path: &str) -> String {
+    let (alias, rest) = match key_path.split_once('\\') {
+        Some(p) => p,
+        None => return key_path.to_string(),
+    };
+    let alias_up = alias.to_uppercase();
+    let hive = match alias_up.as_str() {
+        "HKLM64" | "HKLM32" | "HKLM" => "HKLM",
+        "HKCU" => "HKCU",
+        other => other,
+    };
+    // HKLM32 → WOW6432NODE view under HKLM when path is not already under WOW6432NODE.
+    if alias_up == "HKLM32" {
+        let low = rest.to_uppercase();
+        if !low.contains("WOW6432NODE") {
+            return format!(r"HKLM\WOW6432NODE\{rest}");
+        }
+    }
+    format!("{hive}\\{rest}")
+}
+
 pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -591,7 +613,9 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
     {
         use std::process::Command;
         // Prefer reg.exe for reliable key creation under HKCU\Software\Classes\*\shell
-        let mut args = vec!["add".to_string(), key_path.to_string(), "/f".to_string()];
+        // S-N4: translate Remova hive aliases (HKLM64/32 → HKLM / WOW6432NODE) for reg.exe.
+        let exe_key = normalize_reg_exe_hive(key_path);
+        let mut args = vec!["add".to_string(), exe_key, "/f".to_string()];
         if !value_name.is_empty() {
             args.push("/v".into());
             args.push(value_name.into());
@@ -625,10 +649,11 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
     {
         use std::process::Command;
         // reg.exe REG_BINARY takes hex without 0x, e.g. 02000000...
+        let exe_key = normalize_reg_exe_hive(key_path);
         let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
         let mut args = vec![
             "add".to_string(),
-            key_path.to_string(),
+            exe_key.clone(),
             "/f".to_string(),
             "/v".into(),
             value_name.to_string(),
@@ -641,7 +666,7 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
         if value_name.is_empty() {
             args = vec![
                 "add".into(),
-                key_path.into(),
+                exe_key,
                 "/f".into(),
                 "/ve".into(),
                 "/t".into(),
@@ -705,6 +730,22 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hive_alias_normalized_for_reg_exe() {
+        assert_eq!(
+            super::normalize_reg_exe_hive(r"HKLM64\SOFTWARE\Foo"),
+            r"HKLM\SOFTWARE\Foo"
+        );
+        assert_eq!(
+            super::normalize_reg_exe_hive(r"HKLM32\SOFTWARE\Foo"),
+            r"HKLM\WOW6432NODE\SOFTWARE\Foo"
+        );
+        assert_eq!(
+            super::normalize_reg_exe_hive(r"HKCU\Software\Bar"),
+            r"HKCU\Software\Bar"
+        );
+    }
+
     #[test]
     fn normalize_path_entry_strips_quotes_and_slash() {
         assert_eq!(

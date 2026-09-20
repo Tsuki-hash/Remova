@@ -11,7 +11,7 @@ import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
-import type { ReportVerifyRow } from "./ReportPanel";
+import type { VerifyRow } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { defaultSelectable } from "../lib/decision";
@@ -103,7 +103,7 @@ export type SoftwarePageProps = {
   aiReportNote: string | null;
   setAiReportBusy: (v: boolean) => void;
   setAiReportNote: (v: string | null) => void;
-  verifyRows: ReportVerifyRow[] | null;
+  verifyRows: VerifyRow[] | null;
   checkup: { total: number; large: number; recent: number };
   checkupOpen: boolean;
   setCheckupOpen: (v: boolean) => void;

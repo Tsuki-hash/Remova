@@ -31,7 +31,7 @@ import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, Suspense, lazy } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { useSoftwareController } from "./hooks/useSoftwareController";
 
 /** PF-08: code-split heavy nav pages. */
@@ -484,14 +484,16 @@ export default function App() {
 
   const closePreview = useCallback(() => {
     core.closePreviewCore();
+    core.setUseOfficial(false);
     residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
     scanUi.clearScanChrome();
     aiActions.clearAiScanState();
     aiActions.clearAiReport();
+    setShowBatchSummary(false);
     void refreshApps();
-  }, [refreshApps, residualActions, aiActions, scanUi, core]);
+  }, [refreshApps, residualActions, aiActions, scanUi, core, setShowBatchSummary]);
 
   useEffect(() => {
     const pending = scanUi.takePendingBucket();
@@ -585,12 +587,6 @@ export default function App() {
       setKindFilter,
     ],
   );
-
-  const [langTick] = useState(0);
-  void langTick;
-  const rescanNudge = loadRescanAfterUninstall;
-  void rescanNudge;
-  void analyzeRef;
 
   const softwareProps = useSoftwareController({
     apps,
@@ -757,6 +753,7 @@ export default function App() {
                 residualActions.setLastReport(r);
                 core.setReport(r);
               }}
+              onError={core.setError}
             />
           )}
           {nav === "more" && (
