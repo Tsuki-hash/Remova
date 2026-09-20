@@ -28,12 +28,7 @@ pub struct ManageItem {
     pub path: Option<String>,
 }
 
-fn manage_row(
-    name: String,
-    detail: String,
-    location: String,
-    enabled: bool,
-) -> ManageItem {
+fn manage_row(name: String, detail: String, location: String, enabled: bool) -> ManageItem {
     ManageItem {
         name,
         detail,
@@ -136,7 +131,12 @@ pub fn list_startup_items() -> Vec<ManageItem> {
             let enabled = startup_approved_enabled(&key, &display)
                 .unwrap_or(!vname.ends_with(".remova-disabled"));
             out.push({
-                let mut it = manage_row(display, vdata.chars().take(160).collect(), format!("{key}::{vname}"), enabled);
+                let mut it = manage_row(
+                    display,
+                    vdata.chars().take(160).collect(),
+                    format!("{key}::{vname}"),
+                    enabled,
+                );
                 it.kind = Some("startup".into());
                 it.source_label = Some("Registry".into());
                 it
