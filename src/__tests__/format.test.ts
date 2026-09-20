@@ -59,7 +59,9 @@ describe("formatError manage codes", () => {
 
 describe("prettyAppName", () => {
   it("store GUID shortened", () => {
-    expect(prettyAppName("5e869a0b1c2d3e4f.a1b2c3d4e5f67890", "Store")).toContain("Store app");
+    const out = prettyAppName("5e869a0b1c2d3e4f.a1b2c3d4e5f67890", "Store");
+    expect(out).toContain("5e869a0b");
+    expect(out).toContain("Store");
   });
   it("normal name passthrough", () => {
     expect(prettyAppName("Visual Studio Code", "HKLM64")).toBe("Visual Studio Code");

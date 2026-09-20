@@ -10,7 +10,7 @@
 | 层 | 技术 |
 |---|---|
 | Shell | Tauri 2（`remova` crate，lib name `remova_lib`） |
-| UI | React 19 + TypeScript + Vite；i18n 为 `src/i18n.ts` 字典 |
+| UI | React 19 + TypeScript + Vite；i18n 为 `src/i18n/{zh,en,index}.ts`（`index` 编译期 key 对齐） |
 | 后端 | Rust 2021，`windows` crate 0.58（Registry / WinRT / GDI / Shell / Restore） |
 | 额外依赖 | `serde` / `serde_json` / `png`（图标 PNG 编码） |
 | 辅助 bin | `src/bin/list_apps.rs`（CLI 列表对比） |
@@ -138,7 +138,7 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 | 命令 | 线程 | 返回 |
 |---|---|---|
 | `list_restore_sessions` | sync | `Vec<String>` 会话名 |
-| `list_backup_sessions` | sync | `Vec<BackupSession {name,size_kb,created_at}>` |
+| `list_backup_sessions` | async / blocking | `Vec<BackupSession {name,size_kb,created_at}>` |
 | `delete_backup_session` | async / blocking | `()` |
 | `restore_session_by_name` | async / blocking | `Vec<String>`（文件 path_map；PATH path.json merge；注册表 value.reg 优先，否则 export.reg） |
 | `list_cleanup_history` | sync | `Vec<HistoryEntry>`（最多 200） |

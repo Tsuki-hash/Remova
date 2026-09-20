@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import type { VerifyRow } from "../lib/api";
 import { runAiReportSummary } from "../lib/aiNarrative";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -7,7 +8,8 @@ import { toast } from "../lib/toast";
 import { cleanupProgress } from "../lib/decision";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
-export type ReportVerifyRow = { path: string; kind: string; still_there: boolean };
+/** Single source: backend verify_cleanup_leftovers rows. */
+export type ReportVerifyRow = VerifyRow;
 
 type Props = {
   report: CleanupReport | FullCleanupReport;

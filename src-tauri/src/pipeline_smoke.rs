@@ -6,7 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::apps::InstalledApp;
-use crate::executor::{run_cleanup_dry, run_full_cleanup, FullCleanupOptions};
+use crate::executor::{
+    run_cleanup_dry, run_cleanup_dry_for_app, run_full_cleanup, FullCleanupOptions,
+};
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
 
 fn tmp_root() -> PathBuf {
@@ -77,8 +79,8 @@ fn pipeline_dry_run_backup_delete_restore() {
     let app = fake_app("RemovaPipelineSmoke", &loc);
     let items = vec![file_item(&loc)];
 
-    // 1) Dry-run: planned, nothing deleted
-    let dry = run_cleanup_dry(&app.name, &items);
+    // 1) Dry-run (app-aware policy gate): planned, nothing deleted
+    let dry = run_cleanup_dry_for_app(&app, &items);
     assert!(dry.dry_run);
     assert_eq!(dry.deleted_planned, 1);
     assert_eq!(dry.skipped, 0);
