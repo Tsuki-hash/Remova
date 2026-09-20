@@ -218,7 +218,7 @@ Store / MSIX 包出现在同一列表，来源列显示 `Store`。
 
 扫描 Program Files、Program Files(x86)、LOCALAPPDATA、PROGRAMDATA 下的顶层目录：
 
-- 排除 Windows / WindowsApps / Common Files / Microsoft / Package Cache / Windows Kits / dotnet 等系统与缓存目录
+- 排除 Windows / WindowsApps / Common Files 根与 Microsoft Shared / Microsoft / Package Cache / Windows Kits / dotnet 等系统与缓存目录（Common Files 下与已安装软件**强关联**的 vendor 残留可在分析结果中出现，仍需确认；孤儿扫描不会放行这些路径）
 - 排除能匹配到已安装软件路径或名称的目录
 - 只保留「像应用目录」的（含 exe/msi，或至少 3 个文件）
 - 输出为「疑似 / 中风险」`CleanupItem`，上限 80 条
