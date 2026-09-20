@@ -185,6 +185,29 @@ export function CopilotPanel({
           </button>
         )}
       </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        <span style={{ ...css.muted, fontSize: 11.5 }}>{L.smartFilterExamplesTitle}</span>
+        {[
+          L.smartFilterExample1,
+          L.smartFilterExample2,
+          L.smartFilterExample3,
+          L.smartFilterExample4,
+        ].map((ex) => (
+          <button
+            key={ex}
+            type="button"
+            style={{
+              ...css.chip,
+              fontFamily: "inherit",
+              cursor: "pointer",
+              background: "var(--surface)",
+            }}
+            onClick={() => setQ(ex)}
+          >
+            {ex}
+          </button>
+        ))}
+      </div>
       {intent && (
         <div
           style={{
