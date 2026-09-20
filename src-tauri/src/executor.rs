@@ -569,19 +569,22 @@ fn guid_in_text(s: &str) -> Option<String> {
 }
 
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
+/// S-3: never trust client `reason` — path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if is_orphan_flow(app) {
         return true;
     }
     let low = item.path.replace('/', "\\").to_lowercase();
-    let reason = item.reason.to_lowercase();
+    if low.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
     let install = app
         .install_location
         .trim()
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase();
-    if !install.is_empty() && (low.contains(&install) || reason.contains(&install)) {
+    if !install.is_empty() && low.contains(&install) {
         return true;
     }
     if let Some(guid) = guid_in_text(&app.registry_key) {
@@ -590,14 +593,13 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         }
     }
     let pub_low = app.publisher.trim().to_lowercase();
-    if pub_low.len() >= 4 && (low.contains(&pub_low) || reason.contains(&pub_low)) {
+    if pub_low.len() >= 4 && low.contains(&pub_low) {
         return true;
     }
     let slugs = crate::scanner::slugify(&app.name);
-    slugs.iter().any(|s| {
-        ar10_name_slug_ok(s)
-            && (low.contains(&s.to_lowercase()) || reason.contains(&s.to_lowercase()))
-    })
+    slugs
+        .iter()
+        .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()))
 }
 
 /// Medium association gate (AR-10): leftovers must look related to the app.
@@ -605,6 +607,15 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
 /// R2-11: keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
+        return false;
+    }
+    // S-4: traversal segments never associate.
+    if item
+        .path
+        .replace('/', "\\")
+        .split('\\')
+        .any(|seg| seg == ".." || seg == ".")
+    {
         return false;
     }
     match item.kind {

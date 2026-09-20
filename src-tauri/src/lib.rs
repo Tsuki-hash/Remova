@@ -345,10 +345,19 @@ async fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
 async fn run_cleanup_dry_run(
     app: InstalledApp,
     items: Vec<CleanupItem>,
+    cleanup_source: Option<String>,
 ) -> Result<CleanupReport, String> {
-    tauri::async_runtime::spawn_blocking(move || executor::run_cleanup_dry_for_app(&app, &items))
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = match cleanup_source.as_deref() {
+            Some("orphan") => crate::policy::CleanupSource::Orphan,
+            Some("monitor") => crate::policy::CleanupSource::Monitor,
+            Some("copilot") => crate::policy::CleanupSource::Copilot,
+            _ => crate::policy::CleanupSource::Uninstall,
+        };
+        executor::run_cleanup_dry_for_app_source(&app, &items, source)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
