@@ -48,15 +48,12 @@ const OrphanPage = lazy(() =>
 
 declare const __APP_VERSION__: string;
 
-function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number, sizeMap: Record<string, number>) {
+function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number) {
   return useMemo(() => {
-    const large = apps.filter((a) => {
-      const kb = sizeMap?.[a.install_location] || sizeOf(a);
-      return kb > 500 * 1024;
-    }).length;
+    const large = apps.filter((a) => sizeOf(a) > 500 * 1024).length;
     const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
     return { total: apps.length, large, recent };
-  }, [apps, sizeOf, sizeMap]);
+  }, [apps, sizeOf]);
 }
 
 export default function App() {
@@ -284,7 +281,7 @@ export default function App() {
     analyzeRef.current = analyze;
   }, [analyze]);
 
-  const checkup = useCheckupStats(apps, sizeOf, sizeMap);
+  const checkup = useCheckupStats(apps, sizeOf);
 
   useAppBoot({
     setApps: core.setApps,

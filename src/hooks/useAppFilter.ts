@@ -15,7 +15,6 @@ export function useAppFilter({
   sizeOf,
   ignorePub,
   ignoreName,
-  sizeMap,
   setSortCol,
   setSortDesc,
 }: {
@@ -28,7 +27,7 @@ export function useAppFilter({
   sizeOf: (a: InstalledApp) => number;
   ignorePub: string[];
   ignoreName: string[];
-  /** Size estimates fill async; include so large/sort recompute when they land. */
+  /** Unused: sizeOf already prefers sizeMap (FE-R4-10). */
   sizeMap?: Record<string, number>;
   setSortCol: (c: SortCol) => void;
   setSortDesc: (updater: boolean | ((d: boolean) => boolean)) => void;
@@ -64,7 +63,7 @@ export function useAppFilter({
       );
     }
     if (!sortCol) return list;
-    const kbOf = (a: InstalledApp) => sizeMap?.[a.install_location] || sizeOf(a);
+    const kbOf = (a: InstalledApp) => sizeOf(a);
     const s = [...list].sort((a, b) => {
       if (sortCol === "size") {
         return kbOf(a) - kbOf(b);
@@ -75,7 +74,7 @@ export function useAppFilter({
       return (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase());
     });
     return sortDesc ? s.reverse() : s;
-  }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, sizeMap, ignorePub, ignoreName, category]);
+  }, [apps, copilotList, deferredQ, sortCol, sortDesc, sizeOf, ignorePub, ignoreName, category]);
 
   const sortBy = useCallback(
     (col: "name" | "size" | "recommend") => {

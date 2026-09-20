@@ -68,6 +68,8 @@ export type FullCleanupReport = {
   deleted: number;
   failed: number;
   skipped: number;
+  /** Reboot-delayed deletes (not in `deleted`). */
+  delayed?: number;
   aborted: boolean;
   restore_point_ok: boolean;
   restore_point_msg: string;

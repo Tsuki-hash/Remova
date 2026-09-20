@@ -390,6 +390,9 @@ pub struct FullCleanupReport {
     pub deleted: u32,
     pub failed: u32,
     pub skipped: u32,
+    /// Reboot-delayed deletes (not counted in `deleted`) — S-R4-13.
+    #[serde(default)]
+    pub delayed: u32,
     pub aborted: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,
@@ -454,6 +457,7 @@ fn try_backup_phase(
                     deleted: 0,
                     failed: 0,
                     skipped: 0,
+                    delayed: 0,
                     aborted: true,
                     restore_point_ok,
                     restore_point_msg,
@@ -476,6 +480,7 @@ fn try_backup_phase(
             deleted: 0,
             failed: 0,
             skipped: 0,
+            delayed: 0,
             aborted: true,
             restore_point_ok,
             restore_point_msg,
@@ -657,6 +662,7 @@ struct DeleteOutcome {
     deleted: u32,
     failed: u32,
     skipped: u32,
+    delayed: u32,
     errors: Vec<String>,
     details: Vec<ItemDetail>,
 }
@@ -669,6 +675,7 @@ fn delete_cleanup_items_source(
     let mut deleted = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
+    let mut delayed = 0u32;
     let mut errors = vec![];
     let mut details = vec![];
     let ignore = crate::ignore::load();
@@ -800,7 +807,7 @@ fn delete_cleanup_items_source(
                     Err(_e) => {
                         // try schedule delete on reboot for locked files
                         if crate::sysops::schedule_delete_on_reboot(&it.path) {
-                            deleted += 1;
+                            delayed += 1;
                             details.push(ItemDetail {
                                 path: it.path.clone(),
                                 kind: format!("{:?}", it.kind).to_lowercase(),
@@ -820,6 +827,7 @@ fn delete_cleanup_items_source(
         deleted,
         failed,
         skipped,
+        delayed,
         errors,
         details,
     }
@@ -843,6 +851,7 @@ pub fn run_full_cleanup(
             deleted: dry.deleted_planned,
             failed: 0,
             skipped: dry.skipped,
+            delayed: 0,
             aborted: false,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -867,6 +876,7 @@ pub fn run_full_cleanup(
             deleted: 0,
             failed: 0,
             skipped: 0,
+            delayed: 0,
             aborted: true,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -907,6 +917,7 @@ pub fn run_full_cleanup(
         deleted: del.deleted,
         failed: del.failed,
         skipped: del.skipped,
+        delayed: del.delayed,
         aborted: false,
         restore_point_ok,
         restore_point_msg,

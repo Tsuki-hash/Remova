@@ -372,7 +372,7 @@ export const dict = {
     modeOfficial: "Official only",
     modeOfficialHint: "Run the app's official uninstaller only",
     modeDeep: "Deep uninstall",
-    modeDeepHint: "Official uninstaller, then scan and clean leftovers (recommended)",
+    modeDeepHint: "Official uninstaller, then scan leftovers; backup before clean is optional (unchecked by default)",
     modeForce: "Force clean",
     modeForceHint: "Skip official uninstaller; clean confirmed leftovers (backup optional)",
     navOrphans: "Orphans",
@@ -402,15 +402,16 @@ export const dict = {
     confirmBackupBeforeCleanup:
       "Create a safety backup before cleanup (restore from More → Restore)",
     cleanupConfirmWithBackup: (n: number, official: boolean) =>
-      `Will create a safety backup, then clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Restore from More → Restore if needed. Continue?`,
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""} (backup optional). Confirm?`,
     cleanupConfirmNoBackup: (n: number, official: boolean) =>
-      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""} with NO backup (usually not restorable from Remova). Continue?`,
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""} (no backup by default). Confirm?`,
     cleanupConfirmVault: (n: number, official: boolean) =>
-      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Backup is optional — check it if you want restore. Continue?`,
+      `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. Backup is optional. Continue?`,
     cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
       `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. No backup by default; check “Create a safety backup before cleanup” below if needed. Continue?`,
     noBackupThisRun: "No safety backup was created for this cleanup (backup is optional)",
     restorePointSkipped: "No restore point was created this run",
+    reportDelayedNote: (n: number) => `${n} item(s) scheduled for delete on reboot`,
     confirmSharedSelected:
       "Selection includes shared runtimes that other apps may use. Confirm you understand the risk.",
     leftoverSummaryTitle: "Leftover overview",
