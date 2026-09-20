@@ -4,7 +4,14 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-20
+
+### Highlights (REDESIGN)
+- **Deep-uninstall UX loop**: software row → detail panel → rich confirm → official uninstaller → auto-scan → classify → you confirm → optional backup → cleanup → report
+- **System-item semantics**: startup shows enabled/disabled; services split run state vs start type (stop ≠ disable, with `set_service_running` IPC); tasks show last/next run
+- **Orphan trust**: expandable judgment evidence, bulk select safe/review only, page-level scan status, single-channel toast
+- **AI demoted to capability**: smart filter collapse + model settings wording (not a page hero)
+- **Risk tiers** on cleanup / force-clean / orphan confirms; force-clean analyzes first
 
 ### Added
 - **Deep-uninstall UX loop (REDESIGN)**: rich uninstall confirm (official → scan → classify → confirm → optional backup); five-stage progress bar (`identify/official/scan/analyze/report`); report close-out line after full cleanup
@@ -15,7 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Orphan leftovers: expandable judgment evidence (no-owner / exe / multi-file / config / install-root / mtime age); bulk select safe/review; page-level scan progress; single-channel toast
 - Risk-tier labels on cleanup / force-clean / orphan confirm dialogs (`maxRiskOf` / `riskTierLabel`); force-clean analyzes first, then confirms
 - Toolbox hierarchy: Everyday / Advanced / System & help; unselected-app context banner
-- Smart-filter collapse on software toolbar (AI demoted from page hero to capability)
+- Smart-filter collapse on software toolbar (AI demoted from page hero to capability) + example chips
+- **AI decision layer**: auto cleanup conclusion after scan (rule-first, AI-labeled when configured); conclusion actions (clean suggested / review / why-keep)
 
 ### Changed
 - AI copy demoted: 「AI 详细说明/助手」→「模型设置 / 智能解释 / 智能筛选」; chips show model ready/not set
@@ -25,9 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Analyze/uninstall toasts use `analyze-flow` channel (no stacked scan/done pair)
 - README product positioning documents the deep-uninstall loop; `docs/product/REDESIGN.md` tracked
 - Toolbar ⓘ guide describes the full deep-uninstall path
+- Cleanup backup is **opt-in**: confirm dialogs offer an unchecked “create safety backup” option; default cleanup/batch/orphan/force-clean paths no longer force `backup_enabled: true`
 
 ### Fixed
-- Cleanup gate: exact user profile red-line roots (`Documents`/`Desktop`/`Downloads`/…) and `Common Files` roots are skipped server-side even when IPC flags claim otherwise; public profile folders and Common Files protected in `is_safe_fs`
+- Cleanup gate: exact user profile red-line roots (`Documents`/`Desktop`/`Downloads`/…) and `Common Files` roots are skipped server-side even when IPC flags claim otherwise
 - Cleanup gate (P0): server-side recompute of `user_data` / sync-conflict / `shared` — forged IPC flags cannot delete Documents/Downloads/etc.
 - Cleanup gate (P0): PATH scrub rejects system entries (`Windows`/`System32`/PowerShell…)
 - `setMulti` functional updates resolved inside the reducer (no lost concurrent updaters)
@@ -113,9 +122,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI/Release: version consistency script + frontend lint; Release runs fmt/clippy and attaches CHANGELOG body
 - ESLint flat config + `npm run lint`; `typecheck:tests` via `tsconfig.vitest.json`
 
-## [1.1.0] - 2026-09-17
-
-### Added
+### Added (earlier 1.1.0 batch)
 - **AI decision layer**: auto cleanup conclusion after scan (rule-first, AI-labeled when configured); conclusion actions (clean suggested / review / why-keep)
 - Copilot on the software list (NL plan → filter / analyze / batch with confirm; offline keyword fallback)
 - Report fixed narrative + “next step” lines; auto AI report reading when enabled
