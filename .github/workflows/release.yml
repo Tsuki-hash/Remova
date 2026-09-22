@@ -46,8 +46,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
-      - name: cargo test
-        run: cargo test --lib
+      - name: cargo test (lib + bins)
+        run: cargo test --workspace
         working-directory: src-tauri
 
       - name: frontend lint
@@ -101,4 +101,5 @@ jobs:
           # Prefer curated notes under docs/release-notes/<tag>.md; else CHANGELOG section; else auto notes.
           body_path: ${{ hashFiles(format('docs/release-notes/{0}.md', github.ref_name)) != '' && format('docs/release-notes/{0}.md', github.ref_name) || '' }}
           generate_release_notes: ${{ hashFiles(format('docs/release-notes/{0}.md', github.ref_name)) == '' }}
-          fail_on_unmatched_files: false
+          # a renamed/moved bundle must fail the job, not publish an asset-less Release.
+          fail_on_unmatched_files: true
