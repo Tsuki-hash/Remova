@@ -1,5 +1,6 @@
 import type { UpdateInfo } from "../lib/updateCheck";
 import { openUpdateDownload } from "../lib/updateCheck";
+import { api } from "../lib/api";
 import { t } from "../i18n";
 
 const linkBtn = {
@@ -70,11 +71,9 @@ export function ShellFooter({
           title={updateInfo.downloadUrl || updateInfo.url}
           onClick={() => {
             const target = updateInfo.downloadUrl || updateInfo.url;
-            if (updateInfo.downloadUrl) {
-              void openUpdateDownload(updateInfo).catch(() => window.open(target, "_blank"));
-            } else {
-              window.open(target, "_blank");
-            }
+            void api.openPath(target).catch(() => {
+              if (updateInfo.downloadUrl) void openUpdateDownload(updateInfo);
+            });
           }}
         >
           {L.versionNew} v{updateInfo.version} → {L.versionDownload}

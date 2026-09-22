@@ -193,6 +193,8 @@ export function Shell({
             flexDirection: "column",
             padding: "10px 14px 10px",
             overflow: "hidden",
+            // Banners must never be squashed by the page's flex:1 child.
+            rowGap: 0,
           }}
         >
           {children}
