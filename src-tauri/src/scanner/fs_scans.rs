@@ -145,9 +145,12 @@ pub(super) fn scan_shortcuts(
     if let Some(pu) = std::env::var_os("PUBLIC") {
         roots.push(PathBuf::from(pu).join("Desktop"));
     }
-    roots.push(PathBuf::from(
-        r"C:\ProgramData\Microsoft\Windows\Start Menu",
-    ));
+    // resolve from the environment so a non-C system drive is still scanned;
+    // the literal path is only the last-resort fallback.
+    let program_data = std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    roots.push(program_data.join(r"Microsoft\Windows\Start Menu"));
 
     for root in roots {
         if !root.exists() {

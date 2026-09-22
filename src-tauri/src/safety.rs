@@ -337,6 +337,15 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
+/// Delete-grade gate on top of [`is_safe_fs`]: also rejects the user-data and sync-conflict red
+/// lines. Scanner proposal filtering keeps using [`is_safe_fs`] so those items are still surfaced
+/// (flagged `user_data`) for the "why we kept this" explanation instead of vanishing. Any code that
+/// is about to *remove* something must call this instead of [`is_safe_fs`].
+pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy();
+    is_safe_fs(p) && !is_user_data_path(&s) && !looks_like_sync_conflict(&s)
+}
+
 /// Paths that are likely the user's own files (SOP red line) — never auto-delete.
 pub fn is_user_data_path(p: &str) -> bool {
     let low = p.replace('/', "\\").to_lowercase();
@@ -487,6 +496,32 @@ mod tests {
         )));
         assert!(is_safe_fs(Path::new(
             r"C:\Program Files\Common Files\Acme\Component"
+        )));
+    }
+
+    #[test]
+    fn delete_gate_adds_user_data_red_lines_to_shape_gate() {
+        // the shape gate still passes these (so the scanner can surface + explain them),
+        // but the delete-grade gate must reject them.
+        for p in [
+            r"C:\Users\a\Documents",
+            r"C:\Users\a\Downloads\setup.msi",
+            r"C:\Users\a\Desktop\keep",
+            r"C:\Users\a\Documents\坚果云同步冲突\x",
+        ] {
+            assert!(
+                is_safe_fs(Path::new(p)),
+                "shape gate should still propose {p} for the kept-list explanation"
+            );
+            assert!(
+                !is_safe_fs_for_delete(Path::new(p)),
+                "delete gate must reject {p}"
+            );
+        }
+        // Ordinary install paths pass both.
+        assert!(is_safe_fs_for_delete(Path::new(r"C:\Program Files\MyApp")));
+        assert!(is_safe_fs_for_delete(Path::new(
+            r"C:\Users\a\AppData\Roaming\MyApp"
         )));
     }
 

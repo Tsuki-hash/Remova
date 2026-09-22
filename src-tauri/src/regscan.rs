@@ -23,10 +23,9 @@ fn parse_alias(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
     }
 }
 
+// Shared Windows string helpers live in `fsutil`.
 #[cfg(windows)]
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
+use crate::fsutil::{to_wide, wstring_from_reg_data};
 
 /// App Paths subkeys named like `exe_name` under HKLM64 / HKLM32 / HKCU.
 pub fn find_app_paths(exe_name: &str) -> Vec<String> {
@@ -376,21 +375,4 @@ pub fn read_string_default(key: &str) -> Option<String> {
             Some(wstring_from_reg_data(&buf[..len as usize]))
         }
     }
-}
-
-#[cfg(windows)]
-fn wstring_from_reg_data(data: &[u8]) -> String {
-    if data.len() < 2 {
-        return String::new();
-    }
-    let mut u16s = Vec::new();
-    let mut i = 0;
-    while i + 1 < data.len() {
-        u16s.push(u16::from_le_bytes([data[i], data[i + 1]]));
-        i += 2;
-    }
-    while u16s.last().copied() == Some(0) {
-        u16s.pop();
-    }
-    String::from_utf16_lossy(&u16s)
 }
