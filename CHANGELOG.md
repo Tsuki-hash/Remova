@@ -45,8 +45,10 @@ Stability, safety and release-engineering fixes on top of 1.1.0. No new features
 - CI: `push` restricted to `main` with a `concurrency` group that cancels superseded runs, explicit
   `permissions: contents: read`, and `cargo test --workspace` so bin targets are covered
 - Release: a missing bundle artifact now fails the workflow instead of publishing an asset-less Release
-- `check-versions` additionally asserts the `docs/README.md` marker is present and that the newest
-  CHANGELOG section equals the package version, and takes `-ExpectedVersion` as a real parameter
+- Release text is generated from the tag's own CHANGELOG section, and a missing or empty section fails
+  the job rather than falling back to auto-generated notes
+- `check-versions` asserts the newest CHANGELOG section equals the package version and takes
+  `-ExpectedVersion` as a real parameter
 - `gen_icons.py` takes the source image (and optional icons dir) as arguments instead of hardcoded
   machine paths; `smoke-dist.ps1` guards `.Count` for Windows PowerShell compatibility
 - Dead frontend surface removed (`stateRef` copies, `removeDoneKeys`/`clearMulti` and their reducer
@@ -54,9 +56,12 @@ Stability, safety and release-engineering fixes on top of 1.1.0. No new features
   results are narrowed with type guards instead of `as` casts
 - Shared Windows string helpers (`to_wide`, `wstring_from_reg_data`) consolidated into `fsutil`;
   update-check URLs centralized in `constants.rs`
-- Docs: `cargo test --workspace` in README/README.en/ARCHITECTURE/CONTRIBUTING, PowerShell 7 documented
-  as a required tool, stale "1.0.1" labels dropped, ARCHITECTURE state-domain table updated for the
-  derived `lastReport` and the delete-grade gate
+- Docs: `cargo test --workspace` in README/README.en/CONTRIBUTING, PowerShell 7 documented as a required
+  tool, stale "1.0.1" labels dropped
+- **Documentation is no longer shipped inside this repository** — the public repo carries the READMEs,
+  `CONTRIBUTING.md` and this changelog; the Release body is the matching changelog section. The check
+  that compared registered commands against an internal command table is now a local-only tool and
+  skips when that file is absent
 
 ## [1.1.0] - 2026-09-20
 

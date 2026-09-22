@@ -1,4 +1,4 @@
-# check-versions.ps1 — package / Cargo / tauri.conf (and docs index + CHANGELOG) must match.
+# check-versions.ps1 — package / Cargo / tauri.conf and the newest CHANGELOG section must match.
 # Usage: pwsh scripts/check-versions.ps1 [-ExpectedVersion "1.1.0"]
 # When GITHUB_REF_NAME is v*, tag version must match package.json.
 
@@ -34,21 +34,6 @@ if (-not $expected -and $env:GITHUB_REF_NAME -match '^v(.+)$') {
 }
 if ($expected -and $pkg -ne $expected) {
     $errors += "version $pkg != expected $expected"
-}
-
-# docs/README.md must state the current version — a missing marker is a silent no-op today,
-# so treat "file present but unparsable" as a failure.
-$docsReadme = "docs/README.md"
-if (Test-Path $docsReadme) {
-    $txt = Get-Content -Raw $docsReadme
-    if ($txt -match '当前版本\s*\*\*([0-9]+\.[0-9]+\.[0-9]+)\*\*') {
-        $docsVer = $Matches[1]
-        if ($docsVer -ne $pkg) {
-            $errors += "docs/README.md ($docsVer) != package.json ($pkg)"
-        }
-    } else {
-        $errors += "docs/README.md has no 'current version' marker to verify"
-    }
 }
 
 # The newest CHANGELOG section must be the released version.
