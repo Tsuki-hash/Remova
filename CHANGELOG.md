@@ -37,6 +37,11 @@ Stability, safety and release-engineering fixes on top of 1.1.0. No new features
   match is skipped rather than guessed
 
 ### Changed
+- **Backend structure**: `executor.rs` split into `executor/{mod,uninstall,preview,pipeline}.rs` and
+  leftover↔app association moved out of it into `association.rs`, so `policy` consumes boolean
+  verdicts instead of weighing evidence itself; `lib.rs` sheds its self-contained command groups into
+  `commands/{update,ai_cmd,history_cmd,backup_cmd,manage_cmd,context_menu,ignore_cmd}.rs`
+  (code-only moves — no behavior change; `check-commands` still reports 46 = 46)
 - CI: `push` restricted to `main` with a `concurrency` group that cancels superseded runs, explicit
   `permissions: contents: read`, and `cargo test --workspace` so bin targets are covered
 - Release: a missing bundle artifact now fails the workflow instead of publishing an asset-less Release
