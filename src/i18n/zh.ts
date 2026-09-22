@@ -301,7 +301,9 @@ export const dict = {
     badgeShared: "共享",
     sharedHint: "可能是其它软件共用的运行库，默认不勾选",
     badgeUserData: "用户数据",
+    badgeUserLibrary: "应用数据",
     userDataHint: "可能是文档/下载/同步目录，默认不勾选；确认是缓存后再清理",
+    userLibraryHint: "用户库中的应用数据（可能含存档），确认后再清理",
     verifyChecklist: "清理后复核",
     verifyStillThere: "仍存在",
     verifyGone: "已清除",
@@ -474,6 +476,8 @@ export const dict = {
     reportDelayedNote: (n: number) => `另有 ${n} 项已调度重启后删除`,
     confirmSharedSelected:
       "所选项中包含共享运行库（可能被其它软件使用）。确认了解风险后再继续。",
+    confirmUserLibrarySelected:
+      "所选项中包含用户库中的应用数据（可能含存档/个人文件）。确认后再清理。",
     confirmCommonFilesHint:
       "所选路径位于 Common Files（共享组件目录），请确认确与该软件相关后再清理。",
     leftoverSummaryTitle: "残留概况",

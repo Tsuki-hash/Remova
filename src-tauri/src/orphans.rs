@@ -108,6 +108,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
         }
     }
     let mut out = Vec::new();
+    let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
     for root in roots {
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
@@ -200,8 +201,10 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 });
             }
             // Orphans stay Suspected/Medium 鈥?never auto-select; user must confirm.
+            let path_str = p.to_string_lossy().to_string();
+            scanned.insert(path_str.clone());
             out.push(CleanupItem {
-                path: p.to_string_lossy().to_string(),
+                path: path_str,
                 kind: ItemKind::Dir,
                 score,
                 confidence: Confidence::Suspected,
@@ -217,13 +220,37 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
             if out.len() >= crate::constants::ORPHAN_RESULT_CAP {
                 crate::scanner::fill_item_sizes(&mut out);
                 crate::scanner::fill_item_buckets(&mut out, "");
+                remember_orphan_paths(&scanned);
                 return out;
             }
         }
     }
     crate::scanner::fill_item_sizes(&mut out);
     crate::scanner::fill_item_buckets(&mut out, "");
+    remember_orphan_paths(&scanned);
     out
+}
+
+/// Server-side allow-list of paths from the latest `scan_orphans` (S-R6-01).
+static ORPHAN_PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn orphan_paths() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    ORPHAN_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
+    if let Ok(mut g) = orphan_paths().lock() {
+        *g = paths.clone();
+    }
+}
+
+/// True when `path` came from the most recent orphan scan in this process.
+pub fn was_recent_orphan_path(path: &str) -> bool {
+    orphan_paths()
+        .lock()
+        .map(|g| g.contains(path))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

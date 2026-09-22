@@ -125,7 +125,7 @@ export function CopilotPanel({
       setMatches(hit);
       if (hit.length === 0) toast.info(L.copilotNoMatch);
     } catch (e) {
-      toast.error(`${L.aiFailed}: ${formatError(e)}`);
+      toast.error(formatError(e));
     } finally {
       setBusy(false);
     }

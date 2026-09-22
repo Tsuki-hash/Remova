@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import { t } from "../i18n";
@@ -55,6 +55,15 @@ export function useAnalyzeFlow({
   } = flow;
   const analyzeSeqRef = useRef(0);
   const analyzingRef = useRef(false);
+  /** F-R6-11: stage idle timers must be cleared on unmount / replacement. */
+  const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearStageTimer = useCallback(() => {
+    if (stageTimerRef.current !== null) {
+      clearTimeout(stageTimerRef.current);
+      stageTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearStageTimer, [clearStageTimer]);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
       // only the newest request may write scan state, and only it may clear the spinner.
@@ -92,7 +101,7 @@ export function useAnalyzeFlow({
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return;
         setError(formatError(e, "analyze"));
-        toast.error(t().errAnalyzeFailed(formatError(e, "analyze")), { channel: "analyze-flow" });
+        toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
       } finally {
         if (seq === analyzeSeqRef.current) {
           analyzingRef.current = false;
@@ -164,15 +173,17 @@ export function useAnalyzeFlow({
           setUninstallStage("analyze");
           await new Promise((resolve) => setTimeout(resolve, 320));
           setUninstallStage("report");
-          setTimeout(() => setUninstallStage("idle"), 2200);
+          clearStageTimer();
+          stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2200);
         } else {
           setUninstallStage("idle");
         }
         await refreshApps();
       } catch (e) {
+        clearStageTimer();
         setUninstallStage("idle");
         setError(formatError(e, "cleanup"));
-        toast.error(strings.errCleanupFailed(formatError(e, "cleanup")), { channel: "analyze-flow" });
+        toast.error(formatError(e, "cleanup"), { channel: "analyze-flow" });
       } finally {
         busyRef.current = false;
         setUninstallingKey(null);
@@ -187,6 +198,7 @@ export function useAnalyzeFlow({
       setUninstallStage,
       setError,
       busyRef,
+      clearStageTimer,
     ],
   );
 
@@ -225,18 +237,19 @@ export function useAnalyzeFlow({
           setUninstallStage("analyze");
           await new Promise((resolve) => setTimeout(resolve, 280));
           setUninstallStage("report");
-          setTimeout(() => setUninstallStage("idle"), 2000);
+          clearStageTimer();
+          stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
         }
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
-        toast.error(strings.errCleanupFailed(formatError(e, "cleanup")));
+        toast.error(formatError(e, "cleanup"));
       } finally {
         busyRef.current = false;
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setUninstallingKey, setError, busyRef, analyze, setUninstallStage],
+    [refreshApps, setSelected, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer],
   );
 
   const openAnalyzeFromDrawer = useCallback(

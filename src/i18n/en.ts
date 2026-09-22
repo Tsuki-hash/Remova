@@ -304,7 +304,9 @@ export const dict = {
     badgeShared: "Shared",
     sharedHint: "May be a runtime shared by other apps — unchecked by default",
     badgeUserData: "User data",
+    badgeUserLibrary: "App data",
     userDataHint: "May be Documents/Downloads/sync — unchecked by default; confirm cache before cleaning",
+    userLibraryHint: "App data under a user library (may include saves) — confirm before cleaning",
     verifyChecklist: "Post-clean verify",
     verifyStillThere: "Still present",
     verifyGone: "Removed",
@@ -480,6 +482,8 @@ export const dict = {
     reportDelayedNote: (n: number) => `${n} item(s) scheduled for delete on reboot`,
     confirmSharedSelected:
       "Selection includes shared runtimes that other apps may use. Confirm you understand the risk.",
+    confirmUserLibrarySelected:
+      "Selection includes app data under a user library (may contain saves/personal files). Confirm before cleaning.",
     confirmCommonFilesHint:
       "Selected paths are under Common Files (shared component directories). Confirm they belong to this app before cleaning.",
     leftoverSummaryTitle: "Leftover overview",

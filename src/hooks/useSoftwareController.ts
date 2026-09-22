@@ -70,6 +70,7 @@ export type SoftwareControllerInput = {
   checkup: { total: number; large: number; recent: number };
   checkupOpen: boolean;
   checkupOrphanCount: number | null;
+  checkupOrphanBusy: boolean;
   batchIndex: number;
   batchTotal: number;
   batchCurrent: string;
@@ -209,6 +210,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         checkupOpen: input.checkupOpen,
         setCheckupOpen: shell.setCheckupOpen,
         checkupOrphanCount: input.checkupOrphanCount,
+        checkupOrphanBusy: input.checkupOrphanBusy,
         checkupOrphanScan: input.checkupOrphanScan,
         onGoOrphans: () => {
           shellActions.closeCheckup();
@@ -294,6 +296,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.checkup,
       input.checkupOpen,
       input.checkupOrphanCount,
+      input.checkupOrphanBusy,
       input.batchIndex,
       input.batchTotal,
       input.batchCurrent,

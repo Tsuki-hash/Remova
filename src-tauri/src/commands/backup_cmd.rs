@@ -27,3 +27,18 @@ pub async fn restore_session_by_name(name: String) -> Result<Vec<String>, String
         .await
         .map_err(|e| e.to_string())?
 }
+
+#[cfg(test)]
+mod tests {
+    // R-R6-07: command-layer boundary coverage.
+
+    #[test]
+    fn delete_backup_session_rejects_dot_and_empty() {
+        // S-R6-04 / command boundary: `"."` / empty must never wipe the backup root.
+        assert!(crate::restore::delete_session_by_name("").is_err());
+        assert!(crate::restore::delete_session_by_name(".").is_err());
+        assert!(crate::restore::delete_session_by_name("..").is_err());
+        assert!(crate::restore::delete_session_by_name("a/b").is_err());
+        assert!(crate::restore::delete_session_by_name("a\\b").is_err());
+    }
+}
