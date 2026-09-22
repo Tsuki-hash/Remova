@@ -1,4 +1,4 @@
-﻿//! Filesystem association scans (shortcuts, TEMP, WebView, cross-drive).
+//! Filesystem association scans (shortcuts, TEMP, WebView, cross-drive).
 
 use super::*;
 
@@ -48,7 +48,8 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
                     detail: p.to_string_lossy().chars().take(120).collect(),
                 }],
                 shared: false,
-                user_data: false, user_library: false,
+                user_data: false,
+                user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -122,7 +123,8 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                     detail: fname.to_string(),
                 }],
                 shared: false,
-                user_data: false, user_library: false,
+                user_data: false,
+                user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -229,7 +231,8 @@ fn walk_shortcuts(
                 detail: stem.to_string(),
             }],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -286,7 +289,8 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                     .to_string(),
             }],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         });
