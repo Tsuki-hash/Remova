@@ -1,12 +1,16 @@
-# Compare Tauri generate_handler! commands vs ARCHITECTURE.md §3 command tables.
+# Compare Tauri generate_handler! commands vs the ARCHITECTURE.md §3 command tables.
+# Local-only check: docs/ is no longer committed, so on a CI checkout this exits 0 without verifying.
 # Usage: pwsh -NoProfile -File scripts/check-commands.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PsscriptRoot
 $lib = Join-Path $root "src-tauri\src\lib.rs"
 $arch = Join-Path $root "docs\ARCHITECTURE.md"
 
+if (-not (Test-Path $arch)) {
+  Write-Host "SKIP: docs/ARCHITECTURE.md is not present (docs tree is local-only) - nothing to compare."
+  exit 0
+}
 if (-not (Test-Path $lib)) { Write-Error "missing $lib" }
-if (-not (Test-Path $arch)) { Write-Error "missing $arch" }
 
 $libText = Get-Content $lib -Raw
 if ($libText -notmatch 'generate_handler!\s*\[([\s\S]*?)\]') {
