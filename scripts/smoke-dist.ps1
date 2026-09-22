@@ -17,8 +17,8 @@ $assets = Join-Path $dist "assets"
 if (-not (Test-Path $assets)) {
   Write-Error "smoke-dist FAILED: missing $assets"
 }
-$js = Get-ChildItem $assets -Filter "index-*.js" -File -ErrorAction SilentlyContinue
-if (-not $js -or $js.Count -lt 1) {
+$js = @(Get-ChildItem $assets -Filter "index-*.js" -File -ErrorAction SilentlyContinue)
+if ($js.Count -lt 1) {
   Write-Error "smoke-dist FAILED: no assets/index-*.js main chunk"
 }
 Write-Host "smoke-dist OK: $($js[0].Name) + index.html" -ForegroundColor Green
