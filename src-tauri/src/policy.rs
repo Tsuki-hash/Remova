@@ -183,7 +183,7 @@ pub fn gate_cleanup_item(
             }
         }
         ItemKind::File | ItemKind::Dir => {
-            if !crate::safety::is_safe_fs(std::path::Path::new(&item.path)) {
+            if !crate::safety::is_safe_fs_for_delete(std::path::Path::new(&item.path)) {
                 return GateDecision::Skip("failed safety gate");
             }
         }
@@ -223,7 +223,8 @@ pub fn gate_cleanup_item(
 
 pub use crate::safety::{
     allow_manage_reg_write, allow_manage_service_write, critical_service_names, is_allowed_run_key,
-    is_allowed_startup_approved_key, is_critical_service, is_safe_fs, is_safe_to_delete_registry,
+    is_allowed_startup_approved_key, is_critical_service, is_safe_fs, is_safe_fs_for_delete,
+    is_safe_to_delete_registry,
 };
 pub use crate::shared::{is_common_files_vendor_path, is_hard_shared_item, is_shared_item};
 
