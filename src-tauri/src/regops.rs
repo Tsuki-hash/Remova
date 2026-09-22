@@ -82,7 +82,17 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
 }
 
 /// Delete a value under `key` (Run|Name).
+/// S-R7-04: intrinsic secondary gate — protected registry trees/values are refused here
+/// even if the caller skipped `is_safe_to_delete_registry`.
 pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
+    let combined = if value_name.trim().is_empty() {
+        key_path.to_string()
+    } else {
+        format!("{key_path}|{value_name}")
+    };
+    if let Err(e) = crate::safety::is_safe_to_delete_registry(&combined) {
+        return Err(format!("registry delete blocked: {e}"));
+    }
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name);
@@ -255,11 +265,12 @@ pub fn merge_path_entry(path_value: &str, entry: &str) -> Option<String> {
 
 /// Restore one PATH segment into the given scopes when missing (Safety Vault).
 /// Returns Ok(true) if at least one scope was updated.
+/// S-R7-05: empty scopes restore to User only — never silently write Machine PATH.
 pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> {
     let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
     let targets: Vec<&str> = if scopes.is_empty() {
-        vec!["User", "Machine"]
+        vec!["User"]
     } else {
         scopes.to_vec()
     };
@@ -825,6 +836,37 @@ mod tests {
         // S-R6-06: PATH scrub refuses system segments even without caller checks.
         assert!(super::scrub_path_entry(r"C:\Windows\System32").is_err());
         assert!(super::scrub_path_entry(r"C:\Windows").is_err());
+    }
+
+    #[test]
+    fn delete_value_intrinsic_gate_blocks_protected() {
+        // S-R7-04: value delete refuses protected trees even without caller checks.
+        assert!(
+            super::delete_value(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend", "Start")
+                .is_err()
+        );
+        assert!(
+            super::delete_value(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "").is_err()
+        );
+        assert!(super::delete_value(
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            "DisplayName"
+        )
+        .is_err());
+        // Run value-level shape is allowed by the safety gate (actual OS delete is best-effort).
+        // Use a non-existent Run value name so the OS call fails safely after the gate.
+        let r = super::delete_value(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "RemovaNoSuchValue_Test",
+        );
+        // Gate passed (not a "registry delete blocked" error); OS may report delete failure.
+        match r {
+            Ok(()) => {}
+            Err(e) => assert!(
+                !e.contains("registry delete blocked"),
+                "gate must allow Run value shape, got {e}"
+            ),
+        }
     }
 
     #[test]
