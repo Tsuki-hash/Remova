@@ -47,6 +47,24 @@ pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Decode a REG_SZ / REG_EXPAND_SZ UTF-16LE blob, trimming the trailing NUL.
+#[cfg(windows)]
+pub fn wstring_from_reg_data(data: &[u8]) -> String {
+    if data.len() < 2 {
+        return String::new();
+    }
+    let mut u16s: Vec<u16> = Vec::with_capacity(data.len() / 2);
+    let mut i = 0;
+    while i + 1 < data.len() {
+        u16s.push(u16::from_le_bytes([data[i], data[i + 1]]));
+        i += 2;
+    }
+    while u16s.last().copied() == Some(0) {
+        u16s.pop();
+    }
+    String::from_utf16_lossy(&u16s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

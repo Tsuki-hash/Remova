@@ -104,25 +104,73 @@ fn extract_guid(s: &str) -> Option<String> {
     }
 }
 
+/// `CommandLineToArgvW`-compatible splitting: honours doubled quotes (`""` → one
+/// literal quote) and backslash-before-quote escapes (`\"`), which a naive quote toggle dropped.
 fn split_win_args(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
+    let ch: Vec<char> = s.chars().collect();
+    let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut in_quotes = false;
-    let chars = s.chars().peekable();
-    for c in chars {
-        match c {
-            '"' => in_quotes = !in_quotes,
-            ' ' | '\t' if !in_quotes => {
-                if !cur.is_empty() {
-                    out.push(cur.trim_matches('"').to_string());
-                    cur.clear();
-                }
-            }
-            _ => cur.push(c),
+    let mut seen = false;
+    let mut backs = 0usize;
+    let mut i = 0usize;
+    while i < ch.len() {
+        let c = ch[i];
+        if c == '\\' {
+            backs += 1;
+            i += 1;
+            continue;
         }
+        if c == '"' {
+            if backs > 0 {
+                cur.push_str(&"\\".repeat(backs / 2));
+                if backs % 2 == 1 {
+                    cur.push('"');
+                    seen = true;
+                } else {
+                    in_quotes = !in_quotes;
+                    seen = true;
+                }
+                backs = 0;
+                i += 1;
+                continue;
+            }
+            if in_quotes && ch.get(i + 1) == Some(&'"') {
+                cur.push('"');
+                seen = true;
+                i += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+            seen = true;
+            i += 1;
+            continue;
+        }
+        if (c == ' ' || c == '\t') && !in_quotes {
+            if backs > 0 {
+                cur.push_str(&"\\".repeat(backs));
+                backs = 0;
+            }
+            if seen {
+                out.push(std::mem::take(&mut cur));
+                seen = false;
+            }
+            i += 1;
+            continue;
+        }
+        if backs > 0 {
+            cur.push_str(&"\\".repeat(backs));
+            backs = 0;
+        }
+        cur.push(c);
+        seen = true;
+        i += 1;
     }
-    if !cur.is_empty() {
-        out.push(cur.trim_matches('"').to_string());
+    if backs > 0 {
+        cur.push_str(&"\\".repeat(backs));
+    }
+    if seen || !cur.is_empty() {
+        out.push(cur);
     }
     out
 }
@@ -654,7 +702,8 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
             if is_orphan_flow(app) {
                 // S-01: orphan leftovers have no product install_location; allow any FS path
                 // that passes the shared safety gate (still user-confirmed in UI).
-                return crate::safety::is_safe_fs(std::path::Path::new(&item.path));
+                // delete-grade gate, so the red lines apply even without policy context.
+                return crate::safety::is_safe_fs_for_delete(std::path::Path::new(&item.path));
             }
             let install = app
                 .install_location
@@ -1214,6 +1263,37 @@ mod tests {
                 .unwrap();
         assert_eq!(cmd[0], r"C:\Program Files\App\uninst.exe");
         assert!(cmd.iter().any(|x| x == "/S"));
+    }
+
+    #[test]
+    fn split_win_args_follows_windows_quoting_rules() {
+        assert_eq!(
+            split_win_args("C:\\a\\uninst.exe /S /v"),
+            vec!["C:\\a\\uninst.exe", "/S", "/v"]
+        );
+        // A space inside quotes stays in one token.
+        assert_eq!(
+            split_win_args("C:\\a.exe --log=\"C:\\My Logs\\x.txt\" --q"),
+            vec!["C:\\a.exe", "--log=C:\\My Logs\\x.txt", "--q"]
+        );
+        // Doubled quotes inside a quoted run collapse to one literal quote.
+        assert_eq!(
+            split_win_args("\"C:\\a\\un \"\"weird\"\" inst.exe\""),
+            vec!["C:\\a\\un \"weird\" inst.exe"]
+        );
+        // A backslash before a quote escapes it instead of closing the run.
+        assert_eq!(split_win_args("\"C:\\p\\\" x\""), vec!["C:\\p\" x"]);
+        // An even run of backslashes halves and still closes the quote.
+        assert_eq!(
+            split_win_args("\"C:\\tools\\\\\" /S"),
+            vec!["C:\\tools\\", "/S"]
+        );
+        // An explicitly empty quoted argument survives.
+        assert_eq!(
+            split_win_args("C:\\a.exe \"\" /S"),
+            vec!["C:\\a.exe", "", "/S"]
+        );
+        assert!(split_win_args("   ").is_empty());
     }
 
     #[test]
