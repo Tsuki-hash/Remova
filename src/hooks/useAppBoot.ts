@@ -5,7 +5,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import { compareSemver } from "../semver";
-import { checkLatestRelease, RELEASES_URL, type UpdateInfo } from "../lib/updateCheck";
+import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
 import { consumeQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
 import type { InstalledApp } from "../types";
 
@@ -157,27 +157,18 @@ export async function checkUpdateNow(
   try {
     const info = await checkLatestRelease();
     if (!info) {
+      // Only report failure — do not navigate (separate "Open Releases" action exists).
       toast.error(L.versionCheckFailed);
-      // Network / GitHub unreachable: still open Releases so the action is useful.
-      try {
-        await api.openPath(RELEASES_URL);
-        toast.info(L.openReleasesToast);
-      } catch {
-        window.open(RELEASES_URL, "_blank");
-      }
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
       setUpdateInfo(info);
       toast.success(`${L.versionNew}: v${info.version}`);
-      if (info.downloadUrl) {
-        try {
-          await api.openPath(info.downloadUrl);
-        } catch {
-          window.open(info.url, "_blank");
-        }
-      } else {
-        window.open(info.url, "_blank");
+      const target = info.downloadUrl || info.url;
+      try {
+        await api.openPath(target);
+      } catch {
+        toast.error(L.versionCheckFailed);
       }
     } else {
       toast.success(L.versionUpToDate(__APP_VERSION__));

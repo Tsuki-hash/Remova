@@ -1,6 +1,8 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { prettyAppName } from "../lib/format";
+import { api } from "../lib/api";
+import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
@@ -161,7 +163,13 @@ export function MorePage({
       title: L.openReleases,
       desc: L.openReleasesHint,
       icon: "↗",
-      action: () => window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank"),
+      action: () => {
+        // window.open is blocked in the Tauri webview — open via backend ShellExecute.
+        void api
+          .openPath("https://github.com/Tsuki-hash/Remova/releases")
+          .then(() => toast.info(L.openReleasesToast))
+          .catch(() => toast.error(L.errOpenPathFailed));
+      },
     },
   ];
 
