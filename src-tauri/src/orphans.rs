@@ -239,17 +239,27 @@ fn orphan_paths() -> &'static std::sync::Mutex<std::collections::HashSet<String>
     ORPHAN_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+/// F-R7-02: normalize allow-list keys so case / trailing `\` / slash style cannot bypass.
+fn normalize_orphan_key(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim()
+        .trim_matches('"')
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
 fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
     if let Ok(mut g) = orphan_paths().lock() {
-        *g = paths.clone();
+        *g = paths.iter().map(|p| normalize_orphan_key(p)).collect();
     }
 }
 
 /// True when `path` came from the most recent orphan scan in this process.
 pub fn was_recent_orphan_path(path: &str) -> bool {
+    let key = normalize_orphan_key(path);
     orphan_paths()
         .lock()
-        .map(|g| g.contains(path))
+        .map(|g| g.contains(&key))
         .unwrap_or(false)
 }
 
@@ -298,6 +308,21 @@ mod tests {
         let path_str = r"C:\Program Files\FakeVendor\Leaf".to_string();
         assert_eq!(scan_root_label(&path_str), Some("Program Files"));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn orphan_allow_list_normalizes_case_and_trailing_slash() {
+        // F-R7-02: case / trailing `\` / slash style must not bypass the allow-list.
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(r"C:\Program Files\SomeVendor\App".to_string());
+        remember_orphan_paths(&set);
+        assert!(was_recent_orphan_path(r"C:\Program Files\SomeVendor\App"));
+        assert!(was_recent_orphan_path(r"c:\program files\somevendor\app"));
+        assert!(was_recent_orphan_path(r"C:\Program Files\SomeVendor\App\"));
+        assert!(was_recent_orphan_path(r"C:/Program Files/SomeVendor/App"));
+        assert!(!was_recent_orphan_path(r"C:\Program Files\Other\App"));
+        assert!(!was_recent_orphan_path(r"C:\Program Files\SomeVendor"));
     }
 
     #[cfg(windows)]

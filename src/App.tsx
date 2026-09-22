@@ -4,13 +4,12 @@ import { loadLang, t } from "./i18n";
 import { cssStyles as css, globalCss } from "./styles";
 import { formatError } from "./lib/format";
 import { applyTheme } from "./lib/theme";
+import { navSubtitle, navTitle } from "./lib/appNav";
 import { Shell } from "./components/Shell";
 import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
-import { toast } from "./lib/toast";
-import { isRecentInstall, summarizeLeftovers } from "./lib/decision";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey } from "./lib/appKey";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
@@ -25,10 +24,11 @@ import { useListFilterChrome } from "./hooks/useListFilterChrome";
 import { useResidualState } from "./hooks/useResidualState";
 import { useScanUiState } from "./hooks/useScanUiState";
 import { useAppCoreState } from "./hooks/useAppCoreState";
+import { useAppChrome, useCheckupStats } from "./hooks/useAppChrome";
+import { useAiScanNarrative } from "./hooks/useAiScanNarrative";
 import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
-import { runAiReportSummary } from "./lib/aiNarrative";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
 import {
@@ -37,7 +37,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   Suspense,
   lazy,
 } from "react";
@@ -56,14 +55,6 @@ const OrphanPage = lazy(() =>
 );
 
 declare const __APP_VERSION__: string;
-
-function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number) {
-  return useMemo(() => {
-    const large = apps.filter((a) => sizeOf(a) > 500 * 1024).length;
-    const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
-    return { total: apps.length, large, recent };
-  }, [apps, sizeOf]);
-}
 
 export default function App() {
   const core = useAppCoreState();
@@ -110,7 +101,6 @@ export default function App() {
     setUpdateInfo,
     checkupOpen,
     checkupOrphanCount,
-    setCheckupOrphanCount,
     uninstallStage,
     setUninstallStage,
     showDetail,
@@ -123,8 +113,6 @@ export default function App() {
     },
     [shellActions],
   );
-  /** F-R6-08: orphan checkup scan has its own spinner (never the analyze spinner). */
-  const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const goNav = shellActions.goNav;
 
   // stable action bags for the software controller — the whole `core`/`shell` objects
@@ -329,6 +317,55 @@ export default function App() {
 
   const checkup = useCheckupStats(apps, sizeOf);
 
+  // F-R7-03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
+  const {
+    checkupOrphanBusy,
+    elevate,
+    openPathSafe,
+    doIgnorePublisher,
+    doIgnoreApp,
+    runOrphanScan,
+    toggleMonitor,
+    monitorDiffToCleanup,
+    checkupOrphanScan,
+  } = useAppChrome({
+    L,
+    selected,
+    monitoring,
+    goNav,
+    flow: {
+      setIgnorePub: core.setIgnorePub,
+      setIgnoreName: core.setIgnoreName,
+      setError: core.setError,
+      setScan: core.setScan,
+      setSelected: core.setSelected,
+    },
+    residual: {
+      clearSelection: residualActions.clearSelection,
+      setMonitoring: residualActions.setMonitoring,
+      setMonitorDiff: residualActions.setMonitorDiff,
+      selectDefaultItems: residualActions.selectDefaultItems,
+    },
+    setCheckupOrphanCount: shell.setCheckupOrphanCount,
+  });
+
+  const { runAiExplain } = useAiScanNarrative({
+    scan,
+    selected,
+    report,
+    aiEnabled,
+    aiBusy,
+    aiReportBusy,
+    L,
+    setAiBusy,
+    setAiNotes,
+    setAiSummaryNote,
+    setAiReportBusy,
+    setAiReportNote,
+    scanUi: { clearAiSummary: scanUi.clearAiSummary, clearRiskFilter: scanUi.clearRiskFilter },
+    aiActions: { clearAiScanState: aiActions.clearAiScanState },
+  });
+
   useAppBoot({
     setApps: core.setApps,
     setLoading: core.setLoading,
@@ -368,183 +405,6 @@ export default function App() {
     },
     [coreToggleMulti],
   );
-
-  const doIgnorePublisher = useCallback(
-    async (appOverride?: InstalledApp) => {
-      const pub = (appOverride ?? selected)?.publisher;
-      if (!pub) return;
-      try {
-        const ig = await api.ignorePublisher(pub);
-        core.setIgnorePub(ig.publishers || []);
-        toast.success(L.ignoreLoaded);
-      } catch (e) {
-        core.setError(formatError(e));
-      }
-    },
-    [selected, L, core],
-  );
-
-  const doIgnoreApp = useCallback(
-    async (appOverride?: InstalledApp) => {
-      const name = (appOverride ?? selected)?.name;
-      if (!name) return;
-      try {
-        const ig = await api.ignoreAppName(name);
-        core.setIgnoreName(ig.names || []);
-        toast.success(L.ignoreLoaded);
-      } catch (e) {
-        core.setError(formatError(e));
-      }
-    },
-    [selected, L, core],
-  );
-
-  const runOrphanScan = useCallback(async () => {
-    toast.info(L.orphanScanning);
-    try {
-      const items = await api.orphanScan();
-      goNav("software");
-      core.setScan({ app_name: L.orphanScan, items });
-      residualActions.clearSelection();
-      if (items.length === 0) toast.info(L.orphanScanEmpty);
-      else {
-        const s = summarizeLeftovers(items);
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep));
-      }
-    } catch (e) {
-      core.setError(formatError(e, "analyze"));
-      toast.error(formatError(e, "analyze"));
-    }
-  }, [L, goNav, residualActions, core]);
-
-  const toggleMonitor = useCallback(async () => {
-    try {
-      if (!monitoring) {
-        await api.beginInstallMonitor();
-        residualActions.setMonitoring(true);
-        residualActions.setMonitorDiff(null);
-        toast.info(L.monitorRunning);
-      } else {
-        const d = await api.endInstallMonitor();
-        residualActions.setMonitoring(false);
-        residualActions.setMonitorDiff(d);
-        toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length));
-      }
-    } catch (e) {
-      core.setError(formatError(e));
-      toast.error(formatError(e));
-      residualActions.setMonitoring(false);
-    }
-  }, [monitoring, L, residualActions, core]);
-
-  const monitorDiffToCleanup = useCallback(
-    async (diff: { added_files: string[]; added_reg_values: string[] }) => {
-      try {
-        const items = await api.monitorDiffToItems(diff);
-        if (!items.length) {
-          toast.info(L.monitorNoSnap);
-          return;
-        }
-        goNav("software");
-        const monApp: InstalledApp = {
-          name: L.monitorDiff,
-          version: "",
-          publisher: "",
-          install_location: "",
-          uninstall_string: "",
-          quiet_uninstall_string: "",
-          source: "Monitor",
-          registry_key: "",
-          estimated_size_kb: 0,
-          install_date: "",
-          display_icon: "",
-        };
-        core.setSelected(monApp);
-        core.setScan({ app_name: L.monitorDiff, items });
-        residualActions.selectDefaultItems(items);
-        residualActions.setMonitorDiff(null);
-        toast.success(`${L.monitorToCleanup}: ${items.length}`);
-      } catch (e) {
-        core.setError(formatError(e));
-      }
-    },
-    [L, goNav, residualActions, core],
-  );
-
-  const aiExplainSeqRef = useRef(0);
-  const runAiExplain = useCallback(async () => {
-    if (!scan || !aiEnabled || aiBusy) return;
-    const seq = ++aiExplainSeqRef.current;
-    setAiBusy(true);
-    try {
-      const items = scan.items.slice(0, 12).map((it) => ({
-        path: it.path,
-        kind: String(it.kind),
-        confidence: String(it.confidence),
-        risk: String(it.risk),
-        reason: it.reason,
-        evidence_labels: (it.evidence || []).map((e) => e.label).filter(Boolean),
-      }));
-      const out = await api.aiExplain(scan.app_name, selected?.publisher || "", items);
-      if (seq !== aiExplainSeqRef.current) return;
-      const map: Record<string, string> = {};
-      for (const o of out) {
-        map[o.path] = o.summary;
-      }
-      setAiNotes(map);
-      const brief = out
-        .slice(0, 3)
-        .map((o) => o.summary)
-        .filter(Boolean)
-        .join(" ");
-      setAiSummaryNote(brief || null);
-      if (!out.length) toast.info(L.aiDisabledHint);
-    } catch {
-      if (seq === aiExplainSeqRef.current) toast.error(L.aiFailed);
-    } finally {
-      if (seq === aiExplainSeqRef.current) setAiBusy(false);
-    }
-  }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
-
-  useEffect(() => {
-    scanUi.clearAiSummary();
-    scanUi.clearRiskFilter();
-    aiActions.clearAiScanState();
-    if (scan && scan.items.length > 0 && aiEnabled) {
-      void runAiExplain();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scan?.app_name, scan?.items.length, aiEnabled]);
-
-  const aiReportSeqRef = useRef(0);
-  const runAiReport = useCallback(async () => {
-    if (!report || !("deleted" in report) || !aiEnabled || aiReportBusy) return;
-    const seq = ++aiReportSeqRef.current;
-    setAiReportBusy(true);
-    try {
-      const note = await runAiReportSummary(report);
-      // F-R6-06: only the newest report summary may write aiReportNote.
-      if (seq !== aiReportSeqRef.current) return;
-      setAiReportNote(note);
-    } catch {
-      // rule narrative still shown
-    } finally {
-      if (seq === aiReportSeqRef.current) setAiReportBusy(false);
-    }
-  }, [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote]);
-
-  useEffect(() => {
-    if (report && aiEnabled) void runAiReport();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, aiEnabled]);
-
-  const elevate = useCallback(async () => {
-    try {
-      await api.elevateRestart();
-    } catch (e) {
-      toast.error(formatError(e, "elevate"));
-    }
-  }, []);
 
   const closePreview = useCallback(() => {
     coreClosePreview();
@@ -588,22 +448,6 @@ export default function App() {
     [scan, selected, analyze, scanUi, setKindFilter],
   );
 
-  const checkupOrphanScan = useCallback(() => {
-    // F-R6-08: independent spinner — never touch the analyze `scanning` flag.
-    void (async () => {
-      setCheckupOrphanBusy(true);
-      try {
-        const items = await api.orphanScan();
-        setCheckupOrphanCount(items.length);
-      } catch (e) {
-        setCheckupOrphanCount(null);
-        toast.error(formatError(e, "analyze"));
-      } finally {
-        setCheckupOrphanBusy(false);
-      }
-    })();
-  }, [setCheckupOrphanCount, setCheckupOrphanBusy]);
-
   // a scan in progress absorbs new row-analyze requests (ref keeps the callback stable).
   const scanningRef = useRef(false);
   useEffect(() => {
@@ -626,13 +470,6 @@ export default function App() {
     (a: InstalledApp) => void doIgnorePublisher(a),
     [doIgnorePublisher],
   );
-  const openPathSafe = useCallback(async (path: string) => {
-    try {
-      await api.openPath(path);
-    } catch (e) {
-      toast.error(formatError(e));
-    }
-  }, []);
   const detailOnClose = useCallback(() => {
     scanUi.clearKindFilter();
     coreSetSelected(null);
@@ -767,20 +604,8 @@ export default function App() {
       <Shell
         nav={nav}
         onNav={goNav}
-        title={
-          nav === "software"
-            ? L.navSoftware
-            : nav === "startup"
-              ? L.navStartup
-              : nav === "services"
-                ? L.navServices
-                : nav === "tasks"
-                  ? L.navTasks
-                  : nav === "orphans"
-                    ? L.navOrphans
-                    : L.toolboxTitle
-        }
-        subtitle={nav === "software" ? L.installedCount(apps.length) : undefined}
+        title={navTitle(nav, L)}
+        subtitle={navSubtitle(nav, L, apps.length)}
         status={
           nav === "software" ? (
             <ShellStatus disk={disk} admin={admin} onElevate={() => void elevate()} />
