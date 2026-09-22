@@ -112,7 +112,7 @@ npm test
 
 # 后端
 cd src-tauri
-cargo test --lib
+cargo test --workspace
 
 # 开发运行
 npx tauri dev
@@ -167,7 +167,7 @@ Remova/
 欢迎 Issue 与 Pull Request：
 
 1. Fork 并创建功能分支
-2. 运行 `cargo test --lib` 与 `npm test`
+2. 运行 `cargo test --workspace` 与 `npm test`
 3. 使用 Conventional Commits（`feat:` / `fix:` / `docs:` …）
 4. 用户可见变更请更新 `CHANGELOG.md`
 
