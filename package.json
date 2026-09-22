@@ -11,9 +11,11 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "typecheck:tests": "tsc -p tsconfig.vitest.json --noEmit",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
+    "check-commands": "pwsh -NoProfile -File scripts/check-commands.ps1",
     "package:portable": "pwsh -NoProfile -File scripts/package-portable.ps1",
     "smoke:dist": "pwsh -NoProfile -File scripts/smoke-dist.ps1",
     "smoke:portable": "pwsh -NoProfile -File scripts/smoke-portable.ps1",
+    "smoke:app": "pwsh -NoProfile -File scripts/smoke-app.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -11,7 +11,7 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <section style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
       <header
         style={{
           display: "flex",

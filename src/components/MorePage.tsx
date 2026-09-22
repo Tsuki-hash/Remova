@@ -174,9 +174,8 @@ export function MorePage({
       style={{
         flex: 1,
         minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
+        // Not a flex column: children default to shrink:1 and squash the top card.
+        display: "block",
         overflow: "auto",
         paddingRight: 2,
       }}
@@ -190,6 +189,7 @@ export function MorePage({
           gap: 10,
           flexWrap: "wrap",
           fontSize: 13,
+          marginBottom: 18,
         }}
       >
         {selected ? (

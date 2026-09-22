@@ -54,6 +54,9 @@ jobs:
       - name: check versions
         run: npm run check-versions
 
+      - name: check commands
+        run: npm run check-commands
+
       - name: frontend lint
         run: npm run lint
 
