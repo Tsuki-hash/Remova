@@ -27,3 +27,6 @@ desktop.ini
 # Credentials must never be committed
 .env
 .env.*
+
+# Local demo pages (never track)
+flow-compare.html
