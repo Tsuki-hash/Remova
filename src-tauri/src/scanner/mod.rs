@@ -1,4 +1,4 @@
-﻿//! Read-only association scanner (Phase 1) 閳?parity-oriented port of Python association.
+//! Read-only association scanner (Phase 1) 閳?parity-oriented port of Python association.
 
 use crate::safety::is_safe_to_delete_registry;
 use serde::{Deserialize, Serialize};
@@ -339,7 +339,8 @@ pub(crate) fn push_item(
         reason,
         evidence,
         shared: false,
-        user_data: false, user_library: false,
+        user_data: false,
+        user_library: false,
         size_kb,
         bucket: None,
     });
@@ -430,7 +431,8 @@ pub fn analyze_associations(
                     detail: root.to_string_lossy().to_string(),
                 }],
                 shared: false,
-                user_data: false, user_library: false,
+                user_data: false,
+                user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -520,7 +522,8 @@ pub fn analyze_associations(
                     detail: file_name.to_string(),
                 }],
                 shared: false,
-                user_data: false, user_library: false,
+                user_data: false,
+                user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -543,7 +546,8 @@ pub fn analyze_associations(
                 detail: registry_key.to_string(),
             }],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -577,7 +581,8 @@ pub fn analyze_associations(
                                 detail: target,
                             }],
                             shared: false,
-                            user_data: false, user_library: false,
+                            user_data: false,
+                            user_library: false,
                             size_kb: None,
                             bucket: None,
                         });
@@ -748,7 +753,8 @@ mod tests {
             reason: "test".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         }];

@@ -1,4 +1,4 @@
-﻿//! Explicit install-monitor snapshots (P2-1). User starts/stops; no driver.
+//! Explicit install-monitor snapshots (P2-1). User starts/stops; no driver.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -185,7 +185,8 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 detail: String::new(),
             }],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -205,7 +206,8 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 detail: String::new(),
             }],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         });
