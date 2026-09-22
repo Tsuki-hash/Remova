@@ -284,7 +284,10 @@ pub fn scrub_cloud_text(s: &str) -> String {
         let mut j = i;
         while j < sc.len()
             && !sc[j].is_whitespace()
-            && !matches!(sc[j], ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '（' | '）')
+            && !matches!(
+                sc[j],
+                ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '（' | '）'
+            )
         {
             j += 1;
         }
@@ -884,9 +887,15 @@ mod tests {
         );
         assert!(!s.contains("alice"), "{s}");
         assert!(!s.contains("AppData\\Local\\Acme\\App"), "{s}");
-        assert!(s.contains("AppData") || s.contains("Tool") || s.contains("App"), "{s}");
+        assert!(
+            s.contains("AppData") || s.contains("Tool") || s.contains("App"),
+            "{s}"
+        );
         // Non-path free text is preserved.
-        assert_eq!(scrub_cloud_text("Shell/Classes leftover: Foo"), "Shell/Classes leftover: Foo");
+        assert_eq!(
+            scrub_cloud_text("Shell/Classes leftover: Foo"),
+            "Shell/Classes leftover: Foo"
+        );
     }
 
     #[test]
