@@ -2,8 +2,18 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# one run per ref, newest wins (PR pushes previously ran the full suite twice).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# this job only reads the repo and runs tests.
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -33,8 +43,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
-      - name: cargo test
-        run: cargo test --lib
+      - name: cargo test (lib + bins)
+        run: cargo test --workspace
         working-directory: src-tauri
 
       - name: npm ci
