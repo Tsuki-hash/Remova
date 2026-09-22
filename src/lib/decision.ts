@@ -248,12 +248,50 @@ export function summarizeLeftovers(items: CleanupItem[]): LeftoverSummary {
 /** Human one-line reason for a leftover row (falls back to backend reason). */
 export function leftoverReasonLine(
   it: CleanupItem,
-  L: { reasonBelongs: string; reasonShared: string; reasonHigh: string; reasonSuspect: string },
+  L: {
+    reasonBelongs: string;
+    reasonShared: string;
+    reasonHigh: string;
+    reasonSuspect: string;
+    reasonUserData: string;
+  },
 ): string {
+  if (it.user_data) return L.reasonUserData;
   if (it.shared) return L.reasonShared;
   if (it.risk === "high") return L.reasonHigh;
   if (it.confidence === "confirmed") return L.reasonBelongs;
   return L.reasonSuspect;
+}
+
+/** Labels for backend gate skip codes shown in cleanup report details. */
+export type GateReasonLabels = {
+  reasonUserData: string;
+  reasonShared: string;
+  reasonIgnored: string;
+  reasonPathProtected: string;
+  reasonSafetyGate: string;
+  reasonNotAssociated: string;
+  reasonPathMissing: string;
+  reasonNotInPath: string;
+  reasonRebootDelete: string;
+};
+
+/** Map policy/executor skip codes to user-facing Chinese/English copy. */
+export function gateReasonText(message: string, L: GateReasonLabels): string {
+  const m = (message || "").toLowerCase();
+  if (!m) return message;
+  if (m.includes("user_data") || m.includes("user data") || m.includes("sync conflict") || m.includes("sync_conflict")) {
+    return L.reasonUserData;
+  }
+  if (m.includes("shared runtime") || m === "shared") return L.reasonShared;
+  if (m.includes("ignored")) return L.reasonIgnored;
+  if (m.includes("protected path")) return L.reasonPathProtected;
+  if (m.includes("safety gate") || m.includes("failed safety")) return L.reasonSafetyGate;
+  if (m.includes("not associated")) return L.reasonNotAssociated;
+  if (m.includes("path missing")) return L.reasonPathMissing;
+  if (m.includes("not found in path")) return L.reasonNotInPath;
+  if (m.includes("reboot delete")) return L.reasonRebootDelete;
+  return message;
 }
 
 /** Last path segment as a human "origin" hint (folder name, not full path). */

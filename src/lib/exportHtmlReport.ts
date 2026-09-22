@@ -1,4 +1,5 @@
 import { escapeHtml } from "./format";
+import { gateReasonText } from "./decision";
 import { currentLang } from "../i18n";
 import type { FullCleanupReport } from "../types";
 
@@ -14,13 +15,22 @@ type Strings = {
   reportMessage: string;
   reportAborted: string;
   reportBackup: string;
+  reasonUserData: string;
+  reasonShared: string;
+  reasonIgnored: string;
+  reasonPathProtected: string;
+  reasonSafetyGate: string;
+  reasonNotAssociated: string;
+  reasonPathMissing: string;
+  reasonNotInPath: string;
+  reasonRebootDelete: string;
 };
 
 export function exportHtmlReport(r: FullCleanupReport, L: Strings) {
   const rows = (r.item_details || [])
     .map(
       (d) =>
-        `<tr><td>${escapeHtml(d.kind)}</td><td>${escapeHtml(d.status)}</td><td>${escapeHtml(d.path)}</td><td>${escapeHtml(d.message)}</td></tr>`,
+        `<tr><td>${escapeHtml(d.kind)}</td><td>${escapeHtml(d.status)}</td><td>${escapeHtml(d.path)}</td><td>${escapeHtml(gateReasonText(d.message, L))}</td></tr>`,
     )
     .join("\n");
   // the document language and labels follow the UI locale, not a hardcoded zh.

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Releases / 下载
+    url: https://github.com/Tsuki-hash/Remova/releases
+    about: 安装包与版本说明（简体中文）
