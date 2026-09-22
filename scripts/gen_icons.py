@@ -1,15 +1,17 @@
-from PIL import Image
+"""Regenerate src-tauri icon set from a single square-ish source PNG.
+
+Usage: python scripts/gen_icons.py <source.png> [icons_dir]
+`icons_dir` defaults to <repo>/src-tauri/icons. Requires Pillow.
+"""
+
+import sys
 from pathlib import Path
 
-src = Path(r"D:\迅雷下载\绘制应用图标高清版.png")
-im = Image.open(src).convert("RGBA")
-print("src", im.size)
-w, h = im.size
-side = max(w, h)
-canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
-canvas.paste(im, ((side - w) // 2, (side - h) // 2), im)
-icons = Path(r"D:\Agent-Project\XiaomiMiMoProjects\Remova-next\src-tauri\icons")
-sizes = {
+from PIL import Image
+
+DEFAULT_ICONS = Path(__file__).resolve().parent.parent / "src-tauri" / "icons"
+
+SIZES = {
     "icon.png": 512,
     "32x32.png": 32,
     "128x128.png": 128,
@@ -27,16 +29,40 @@ sizes = {
     "StoreLogo.png": 50,
     "icon_clean.png": 256,
 }
-for name, s in sizes.items():
-    canvas.resize((s, s), Image.Resampling.LANCZOS).save(icons / name, "PNG", optimize=True)
-    print("wrote", name, s)
-canvas.save(
-    icons / "icon.ico",
-    format="ICO",
-    sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
-)
-print("wrote icon.ico")
-pub = Path(r"D:\Agent-Project\XiaomiMiMoProjects\Remova-next\public")
-pub.mkdir(exist_ok=True)
-canvas.resize((128, 128), Image.Resampling.LANCZOS).save(pub / "logo.png", "PNG")
-print("wrote public/logo.png")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 1:
+        print(__doc__)
+        return 2
+    src = Path(argv[0])
+    icons = Path(argv[1]) if len(argv) > 1 else DEFAULT_ICONS
+    if not src.is_file():
+        print(f"source image not found: {src}")
+        return 1
+    icons.mkdir(parents=True, exist_ok=True)
+
+    im = Image.open(src).convert("RGBA")
+    print("src", im.size)
+    w, h = im.size
+    side = max(w, h)
+    canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
+    canvas.paste(im, ((side - w) // 2, (side - h) // 2), im)
+    for name, s in SIZES.items():
+        canvas.resize((s, s), Image.Resampling.LANCZOS).save(icons / name, "PNG", optimize=True)
+        print("wrote", name, s)
+    canvas.save(
+        icons / "icon.ico",
+        format="ICO",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
+    print("wrote icon.ico")
+    pub = icons.parent.parent / "public"
+    pub.mkdir(parents=True, exist_ok=True)
+    canvas.resize((128, 128), Image.Resampling.LANCZOS).save(pub / "logo.png", "PNG")
+    print("wrote public/logo.png")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
