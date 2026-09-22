@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
@@ -53,20 +53,29 @@ export function SoftwareListTable({
 }) {
   const L = t();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const ensureSelected = useCallback(
+    (app: InstalledApp) => {
+      if (!selected) setSelected(app);
+    },
+    [selected, setSelected],
+  );
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => listScrollRef.current,
-    estimateSize: () => 44,
+    estimateSize: () => 56,
     overscan: 12,
+    getItemKey: (index) => filtered[index] ? appKey(filtered[index]) : index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
 
-  const renderRow = (a: InstalledApp) => {
+  const renderRow = (a: InstalledApp, index: number) => {
     const key = appKey(a);
     return (
       <AppRow
         key={key}
+        index={index}
+        rowRef={rowVirtualizer.measureElement}
         app={a}
         rowKey={key}
         selected={selected?.registry_key === a.registry_key && selected.name === a.name}
@@ -81,9 +90,7 @@ export function SoftwareListTable({
         onIgnoreApp={doIgnoreApp}
         onIgnorePub={doIgnorePublisher}
         onToggleMulti={toggleMulti}
-        onEnsureSelected={(app) => {
-          if (!selected) setSelected(app);
-        }}
+        onEnsureSelected={ensureSelected}
       />
     );
   };
@@ -141,7 +148,7 @@ export function SoftwareListTable({
                   <td colSpan={4} style={{ padding: 0, border: "none" }} />
                 </tr>
               )}
-              {virtualRows.map((vr) => renderRow(filtered[vr.index]))}
+              {virtualRows.map((vr) => renderRow(filtered[vr.index], vr.index))}
               {(() => {
                 const last = virtualRows[virtualRows.length - 1];
                 const pad = totalSize - last.end;

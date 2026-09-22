@@ -16,7 +16,6 @@ export type CleanupFlowSetters = {
   setResidualFromUninstall: (v: boolean) => void;
   setAiRisk: (v: string | null) => void;
   setReport: (r: CleanupReport | FullCleanupReport | null) => void;
-  setLastReport: (r: FullCleanupReport | null) => void;
   setVerifyRows: (rows: { path: string; kind: string; still_there: boolean }[] | null) => void;
   setAiReportNote: (v: string | null) => void;
   setError: (e: string | null) => void;
@@ -60,7 +59,6 @@ export function useCleanupHandlers({
     setResidualFromUninstall,
     setAiRisk,
     setReport,
-    setLastReport,
     setVerifyRows,
     setAiReportNote,
     setError,
@@ -78,6 +76,8 @@ export function useCleanupHandlers({
   const batchCancelRef = useRef(false);
 
   const backupEnabledRef = useRef(false);
+  /**: invalidates an in-flight verify probe when a newer cleanup starts. */
+  const verifySeqRef = useRef(0);
 
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
@@ -112,7 +112,7 @@ export function useCleanupHandlers({
         if (report.aborted) {
           toast.error(report.uninstall_message || L.errCleanupFailed("aborted"));
           setError(report.uninstall_message || L.errCleanupFailed("aborted"));
-          setLastReport(report);
+          setReport(report);
           setVerifyRows(null);
           setAiReportNote(null);
           return;
@@ -120,7 +120,7 @@ export function useCleanupHandlers({
         toast.success(
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
         );
-        setLastReport(report);
+        setReport(report);
         void refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
@@ -130,7 +130,7 @@ export function useCleanupHandlers({
         setForceBusy(false);
       }
     },
-    [selected, forceBusy, L, refreshApps, setError, setLastReport, busyRef, setVerifyRows, setAiReportNote],
+    [selected, forceBusy, L, refreshApps, setError, setReport, busyRef, setVerifyRows, setAiReportNote],
   );
 
   const dryRun = useCallback(async () => {
@@ -158,6 +158,7 @@ export function useCleanupHandlers({
     if (!scan || !selected) return;
     if (busyRef.current) return;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
+    verifySeqRef.current += 1;
     busyRef.current = true;
     setDryRunning(true);
     try {
@@ -179,36 +180,33 @@ export function useCleanupHandlers({
               : "uninstall",
       });
       setReport(r);
-      if (r && typeof r === "object" && "aborted" in r && r.aborted) {
-        const fr = r as FullCleanupReport;
-        const msg = fr.uninstall_message || L.errCleanupFailed("aborted");
+      if (r.aborted) {
+        const msg = r.uninstall_message || L.errCleanupFailed("aborted");
         toast.error(msg);
         setError(msg);
-        setLastReport(fr);
         setVerifyRows(null);
         setAiReportNote(null);
         setResidualFromUninstall(false);
         void refreshApps();
         return;
       }
-      if (r && typeof r === "object" && "deleted" in r) {
-        setLastReport(r as FullCleanupReport);
-        setAiReportNote(null);
-        setVerifyRows(null);
-        const fr = r as FullCleanupReport;
-        if (fr.failed > 0) {
-          toast.error(L.batchDetail(fr.deleted, fr.failed));
-        } else {
-          toast.success(L.batchDetail(fr.deleted, fr.failed));
-        }
-        // SOP checklist: re-probe cleaned paths
-        void api
-          .verifyLeftovers(items)
-          .then((rows) => setVerifyRows(rows))
-          .catch(() => {});
-        if (fr.uninstall_ok && !fr.aborted && selected) {
-          onAfterCleanup?.(selected, fr);
-        }
+      setAiReportNote(null);
+      setVerifyRows(null);
+      if (r.failed > 0) {
+        toast.error(L.batchDetail(r.deleted, r.failed));
+      } else {
+        toast.success(L.batchDetail(r.deleted, r.failed));
+      }
+      // SOP checklist: re-probe cleaned paths
+      const vseq = ++verifySeqRef.current;
+      void api
+        .verifyLeftovers(items)
+        .then((rows) => {
+          if (vseq === verifySeqRef.current) setVerifyRows(rows);
+        })
+        .catch(() => {});
+      if (r.uninstall_ok && selected) {
+        onAfterCleanup?.(selected, r);
       }
       setResidualFromUninstall(false);
       void refreshApps();
@@ -230,7 +228,6 @@ export function useCleanupHandlers({
     L,
     onAfterCleanup,
     setReport,
-    setLastReport,
     setAiReportNote,
     setVerifyRows,
     setResidualFromUninstall,
@@ -380,7 +377,6 @@ export function useCleanupHandlers({
   }, [batchResults, setMulti]);
 
   return {
-    forceBusy,
     dryRunning,
     batching,
     batchIndex,
@@ -391,7 +387,6 @@ export function useCleanupHandlers({
     setShowBatchSummary,
     forceClean,
     dryRun,
-    execReal,
     handleCleanupConfirm,
     batchCleanup,
     cancelBatch,

@@ -40,6 +40,9 @@ type Props = {
   onIgnorePub: (app: InstalledApp) => void;
   onToggleMulti: (key: string) => void;
   onEnsureSelected: (app: InstalledApp) => void;
+  /** Virtualizer plumbing: data-index + measure ref. */
+  index: number;
+  rowRef?: (el: HTMLTableRowElement | null) => void;
 };
 
 function RowMenu({
@@ -200,6 +203,8 @@ function AppRowImpl({
   onIgnorePub,
   onToggleMulti,
   onEnsureSelected,
+  index,
+  rowRef,
 }: Props) {
   const L = t();
   const a = app;
@@ -209,6 +214,8 @@ function AppRowImpl({
   const chips = decisionChips(a, sizeKb, L, { compact: true });
   return (
     <tr
+      ref={rowRef}
+      data-index={index}
       onClick={() => onSelect(a)}
       title={[
         prettyAppName(a.name, a.source),

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 import { toast } from "../lib/toast";
@@ -61,6 +61,13 @@ export function useDragDropAnalyze({
   setSelected: (a: InstalledApp) => void;
   analyze: (a: InstalledApp) => void;
 }) {
+  // read the latest inputs through a ref so the webview channel is subscribed once
+  // instead of being torn down and rebuilt every time the app list changes.
+  const latest = useRef({ apps, setSelected, analyze });
+  useEffect(() => {
+    latest.current = { apps, setSelected, analyze };
+  }, [apps, setSelected, analyze]);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -73,6 +80,7 @@ export function useDragDropAnalyze({
           const path = (event.payload.paths || [])[0];
           if (!path) return;
           const norm = path.replace(/\//g, "\\").toLowerCase();
+          const { apps, setSelected, analyze } = latest.current;
           const hit =
             apps.find((a) => {
               const loc = (a.install_location || "").replace(/\//g, "\\").toLowerCase();
@@ -96,6 +104,5 @@ export function useDragDropAnalyze({
       cancelled = true;
       unlisten?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apps]);
+  }, []);
 }

@@ -105,16 +105,20 @@ export type NlFilter = {
   installed_after?: string | null;
 };
 
-/** Copilot / AI intent payload (single type for frontend + IPC). */
+/** Copilot / AI intent actions the UI knows how to plan for. */
+export type NlIntentAction = "list" | "analyze" | "batch_uninstall" | "force_clean";
+
+/**
+ * Copilot / AI intent payload (single type for frontend + IPC).
+ * The `action` crosses a model boundary, so an unrecognised value must stay representable —
+ * `NlIntentAction | (string & {})` keeps literal autocomplete without claiming any string is valid.
+ */
 export type NlIntent = {
-  action: "list" | "analyze" | "batch_uninstall" | "force_clean" | string;
+  action: NlIntentAction | (string & {});
   filter: NlFilter;
   include_leftovers: boolean;
   note: string;
 };
-
-/** @deprecated Use NlIntent */
-export type AiNlIntent = NlIntent;
 
 export type IgnoreSuggestion = {
   kind: string;

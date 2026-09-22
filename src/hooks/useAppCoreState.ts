@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -13,8 +13,6 @@ export type { VerifyRow };
 /** App core domain state via shared appCore reducer (single source, A-01). */
 export function useAppCoreState() {
   const [state, dispatch] = useReducer(appCoreReducer, undefined, initialAppCoreState);
-  const stateRef = useRef(state);
-  stateRef.current = state;
 
   const setApps = useCallback((value: InstalledApp[]) => dispatch({ type: "apps/set", value }), []);
   const setLoading = useCallback((value: boolean) => dispatch({ type: "loading/set", value }), []);
@@ -35,10 +33,6 @@ export function useAppCoreState() {
     },
     [],
   );
-  const removeDoneKeys = useCallback((keys: string[]) => {
-    dispatch({ type: "multi/removeKeys", keys });
-  }, []);
-  const clearMulti = useCallback(() => dispatch({ type: "multi/clear" }), []);
   const setScan = useCallback(
     (value: ScanResult | null) => dispatch({ type: "scan/set", value }),
     [],
@@ -71,8 +65,6 @@ export function useAppCoreState() {
       setSelected,
       toggleMulti,
       setMulti,
-      removeDoneKeys,
-      clearMulti,
       setScan,
       setScanning,
       setReport,
@@ -92,8 +84,6 @@ export function useAppCoreState() {
       setSelected,
       toggleMulti,
       setMulti,
-      removeDoneKeys,
-      clearMulti,
       setScan,
       setScanning,
       setReport,
