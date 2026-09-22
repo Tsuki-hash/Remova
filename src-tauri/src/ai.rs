@@ -99,7 +99,7 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let mut out = c.clone();
-    out.api_key = encrypt_stored_key(&c.api_key);
+    out.api_key = encrypt_stored_key(&c.api_key)?;
     let s = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
     std::fs::write(&p, s).map_err(|e| e.to_string())
 }
@@ -126,15 +126,16 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// DPAPI-protect the API key at rest (SEC-A1). Falls back to plaintext if unavailable.
+/// DPAPI-protect the API key at rest (SEC-A1).
+/// Returns `Err` instead of silently persisting a plaintext key.
 #[cfg(windows)]
-fn encrypt_stored_key(key: &str) -> String {
+fn encrypt_stored_key(key: &str) -> Result<String, String> {
     let raw = key.as_bytes();
     if raw.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if key.starts_with(KEY_PREFIX) {
-        return key.to_string();
+        return Ok(key.to_string());
     }
     unsafe {
         use windows::Win32::Security::Cryptography::{
@@ -155,20 +156,20 @@ fn encrypt_stored_key(key: &str) -> String {
             &mut out_blob,
         );
         if ok.is_err() {
-            return key.to_string();
+            return Err("ai:encrypt_failed".to_string());
         }
         let enc = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
         // CryptProtectData allocates pbData via LocalAlloc (NEW-C).
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
-        format!("{KEY_PREFIX}{}", to_hex(&enc))
+        Ok(format!("{KEY_PREFIX}{}", to_hex(&enc)))
     }
 }
 
 #[cfg(not(windows))]
-fn encrypt_stored_key(key: &str) -> String {
-    key.to_string()
+fn encrypt_stored_key(key: &str) -> Result<String, String> {
+    Ok(key.to_string())
 }
 
 #[cfg(windows)]
@@ -507,15 +508,39 @@ pub fn explain_items(
         serde_json::from_str(&cleaned).map_err(|e| format!("ai json: {e} | {cleaned}"))?;
 
     // Match back by sanitized path (CODE-3) — never rely on array index alone.
+    // two distinct paths can sanitize to the same string; when they do we cannot prove
+    // which one the model meant, so fail closed (no explanation) instead of mis-attributing one.
+    let mut san_to_orig: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (idx, b) in batch.iter().enumerate() {
+        san_to_orig
+            .entry(sanitize_path(&b.path, cfg.allow_cloud_paths))
+            .or_default()
+            .push(idx);
+    }
+    let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for p in parsed.iter() {
         let san = sanitize_path(&p.path, cfg.allow_cloud_paths);
-        let Some(orig) = batch
-            .iter()
-            .find(|b| sanitize_path(&b.path, cfg.allow_cloud_paths) == san || b.path == p.path)
-            .map(|b| (*b).clone())
-        else {
+        let candidates = match san_to_orig.get(&san) {
+            Some(v) if v.len() == 1 => v.clone(),
+            // Ambiguous after sanitization: only safe if the echoed path is verbatim unique.
+            Some(v) => v
+                .iter()
+                .filter(|i| batch[**i].path == p.path)
+                .copied()
+                .collect(),
+            None => batch
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.path == p.path)
+                .map(|(i, _)| i)
+                .collect(),
+        };
+        let Some(idx) = candidates.iter().copied().find(|i| !consumed.contains(i)) else {
             continue;
         };
+        consumed.insert(idx);
+        let orig = &batch[idx];
         let item = ExplainOutput {
             path: orig.path.clone(),
             summary: p.summary.clone(),
@@ -736,12 +761,17 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_key_wraps_when_possible() {
-        // May fall back to plaintext outside DPAPI contexts; must not panic.
+    fn encrypt_key_wraps_or_fails_without_plaintext_write() {
+        // on failure the caller gets Err (never a silently plaintext-encrypted blob).
         let e = encrypt_stored_key("sk-abc");
-        assert!(!e.is_empty());
-        let d = decrypt_stored_key(&e);
-        assert!(d == "sk-abc" || e == "sk-abc");
+        match e {
+            Ok(wrapped) => {
+                assert!(!wrapped.is_empty());
+                assert_eq!(decrypt_stored_key(&wrapped), "sk-abc");
+            }
+            Err(code) => assert_eq!(code, "ai:encrypt_failed"),
+        }
+        assert_eq!(encrypt_stored_key("").unwrap(), "");
     }
 
     #[test]
