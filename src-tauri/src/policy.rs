@@ -192,18 +192,18 @@ pub fn gate_cleanup_item(
     if let Some(app) = app {
         let orphan = source == CleanupSource::Orphan
             || source == CleanupSource::Monitor
-            || crate::executor::is_orphan_flow(app);
+            || crate::association::is_orphan_flow(app);
         // Compute association once (S7-R2).
         let fs_assoc = if orphan {
             false
         } else {
-            crate::executor::path_associated_with_app(app, item)
+            crate::association::path_associated_with_app(app, item)
         };
         // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
         if matches!(item.kind, ItemKind::File | ItemKind::Dir)
             && crate::shared::is_common_files_vendor_path(&item.path)
         {
-            if orphan || !crate::executor::cf_vendor_associated(app, &item.path) {
+            if orphan || !crate::association::cf_vendor_associated(app, &item.path) {
                 return GateDecision::Skip("shared runtime");
             }
         } else if !orphan && !fs_assoc {
