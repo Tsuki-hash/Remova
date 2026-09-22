@@ -102,8 +102,10 @@ fn guid_in_text(s: &str) -> Option<String> {
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
 /// S-3: never trust client `reason` 鈥?path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
+    // S-R7-01: orphan-shaped apps must not claim arbitrary leftovers as associated.
+    // Policy enforces the server-side orphan allow-list separately.
     if is_orphan_flow(app) {
-        return true;
+        return false;
     }
     let low = item.path.replace('/', "\\").to_lowercase();
     if low.split('\\').any(|seg| seg == ".." || seg == ".") {
@@ -154,11 +156,10 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
         ItemKind::File | ItemKind::Dir => {
             let path = item.path.replace('/', "\\");
             let low = path.to_lowercase();
+            // S-R7-01: orphan-shaped apps must not claim arbitrary FS paths as associated.
+            // The orphan allow-list lives in policy (`was_recent_orphan_path`), not here.
             if is_orphan_flow(app) {
-                // S-01: orphan leftovers have no product install_location; allow any FS path
-                // that passes the shared safety gate (still user-confirmed in UI).
-                // delete-grade gate, so the red lines apply even without policy context.
-                return crate::safety::is_safe_fs_for_delete(std::path::Path::new(&item.path));
+                return false;
             }
             let install = app
                 .install_location
@@ -390,7 +391,9 @@ mod tests {
     fn orphan_flow_uses_safety_not_slug() {
         let app = orphan_app();
         assert!(is_orphan_flow(&app));
-        assert!(path_associated_with_app(
+        // S-R7-01: orphan-shaped apps must NOT claim arbitrary FS/non-FS paths as associated.
+        // The server-side orphan allow-list is enforced at the policy layer.
+        assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Program Files\SomeVendor\Tool", ItemKind::Dir)
         ));
@@ -398,15 +401,21 @@ mod tests {
             &app,
             &probe(r"C:\Windows", ItemKind::Dir)
         ));
-        // the delete-grade gate also covers the orphan branch:
-        // library **roots** stay blocked; library subpaths may be cleaned when safety passes.
         assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\Documents", ItemKind::Dir)
         ));
-        assert!(path_associated_with_app(
+        assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\Documents\work", ItemKind::Dir)
+        ));
+        assert!(!path_associated_with_app(
+            &app,
+            &probe(r"HKCU\Software\Unrelated\Thing", ItemKind::Registry)
+        ));
+        assert!(!path_associated_with_app(
+            &app,
+            &probe(r"D:\Other\bin", ItemKind::Path)
         ));
         // A real app that merely lacks an install_location is not an orphan flow.
         let reg_only = InstalledApp {
