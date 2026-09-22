@@ -494,6 +494,7 @@ export const dict = {
     reasonHigh: "High risk — confirm before deleting",
     reasonSuspect: "Possible leftover — review before cleaning",
     reasonUserData: "User data — not deleted by default",
+    reasonUserLibrary: "App data under a user library (may include saves) — confirm before cleaning",
     reasonIgnored: "On the ignore list — skipped",
     reasonPathProtected: "System PATH entry — protected",
     reasonSafetyGate: "Failed the delete safety gate — skipped",

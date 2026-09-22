@@ -1,4 +1,4 @@
-//! File / registry backup before cleanup.
+﻿//! File / registry backup before cleanup.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::fs;
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn session_dir_shape() {
-        // do not create on disk in unit test — just path builder logic via create
+        // do not create on disk in unit test 鈥?just path builder logic via create
         let _ = backup_root();
     }
 
@@ -331,7 +331,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         };
@@ -361,7 +361,7 @@ mod tests {
             reason: "path".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         };

@@ -1,4 +1,4 @@
-//! Leftover↔app association (AR-10 / S-R4-03 / S-7R1).
+//! Leftover鈫攁pp association (AR-10 / S-R4-03 / S-7R1).
 //!
 //! Answers one question: *does this leftover plausibly belong to this app?* `policy` consumes the
 //! boolean verdicts; it deliberately knows nothing about how the evidence is weighed, so the
@@ -45,7 +45,7 @@ pub fn common_files_vendor_segment(path: &str) -> Option<String> {
     Some(seg.to_string())
 }
 
-/// S-7R1: CF vendor association — vendor **directory segment** equals install prefix
+/// S-7R1: CF vendor association 鈥?vendor **directory segment** equals install prefix
 /// under Common Files, or equals a strong name/publisher slug (segment equality).
 pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool {
     if is_orphan_flow(app) {
@@ -100,7 +100,7 @@ fn guid_in_text(s: &str) -> Option<String> {
 }
 
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
-/// S-3: never trust client `reason` — path / registry / publisher signals only.
+/// S-3: never trust client `reason` 鈥?path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if is_orphan_flow(app) {
         return true;
@@ -225,7 +225,7 @@ mod tests {
 
     fn orphan_app() -> InstalledApp {
         InstalledApp {
-            name: "孤儿扫描".into(),
+            name: "瀛ゅ効鎵弿".into(),
             version: String::new(),
             publisher: String::new(),
             install_location: String::new(),
@@ -249,7 +249,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         }
@@ -373,7 +373,7 @@ mod tests {
             install_location: r"C:\Program Files\Code".into(),
             ..demo_app()
         };
-        // "code" is a stopword / too short — not enough by itself outside install root match.
+        // "code" is a stopword / too short 鈥?not enough by itself outside install root match.
         assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\AppData\Local\Temp\code-cache", ItemKind::Dir)
@@ -397,8 +397,13 @@ mod tests {
             &app,
             &probe(r"C:\Windows", ItemKind::Dir)
         ));
-        // the delete-grade gate also covers the orphan branch.
+        // the delete-grade gate also covers the orphan branch:
+        // library **roots** stay blocked; library subpaths may be cleaned when safety passes.
         assert!(!path_associated_with_app(
+            &app,
+            &probe(r"C:\Users\a\Documents", ItemKind::Dir)
+        ));
+        assert!(path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\Documents\work", ItemKind::Dir)
         ));
