@@ -63,6 +63,30 @@ pub fn add_name(name: &str) -> Result<IgnoreList, String> {
     Ok(l)
 }
 
+/// Remove one publisher from the whitelist (undo ignore).
+pub fn remove_publisher(name: &str) -> Result<IgnoreList, String> {
+    let mut l = load();
+    let n = name.trim();
+    if n.is_empty() {
+        return Err("empty publisher".into());
+    }
+    l.publishers.retain(|x| !x.eq_ignore_ascii_case(n));
+    save(&l)?;
+    Ok(l)
+}
+
+/// Remove one app name from the whitelist (undo ignore).
+pub fn remove_name(name: &str) -> Result<IgnoreList, String> {
+    let mut l = load();
+    let n = name.trim();
+    if n.is_empty() {
+        return Err("empty name".into());
+    }
+    l.names.retain(|x| !x.eq_ignore_ascii_case(n));
+    save(&l)?;
+    Ok(l)
+}
+
 pub fn is_publisher_ignored(list: &IgnoreList, publisher: &str) -> bool {
     let p = publisher.trim();
     // Unknown publisher must not be treated as ignored (would drop half the list).

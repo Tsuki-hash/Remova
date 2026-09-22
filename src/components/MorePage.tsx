@@ -1,12 +1,11 @@
 import { t } from "../i18n";
-import { cssStyles as css } from "../styles";
-import { prettyAppName } from "../lib/format";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
 import { AiSettingsPanel } from "./AiSettingsPanel";
+import { WhitelistPanel } from "./WhitelistPanel";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolItem } from "./MoreToolCard";
@@ -66,21 +65,21 @@ export function MorePage({
       title: L.history,
       desc: L.historyHint,
       icon: "⏱",
-      action: () => void hist.loadHistory().then(() => tools.setOpenTool("history")),
+      action: () => {
+        // Open the panel first so the click always has visible feedback.
+        tools.setOpenTool("history");
+        void hist.loadHistory();
+      },
     },
     {
       id: "restore",
       title: L.restore,
       desc: L.restoreHint,
       icon: "↩",
-      action: () => void rest.loadRestore().then(() => tools.setOpenTool("restore")),
-    },
-    {
-      id: "csv",
-      title: L.exportCsv,
-      desc: L.exportCsvHint,
-      icon: "↓",
-      action: () => void hist.exportCsv(),
+      action: () => {
+        tools.setOpenTool("restore");
+        void rest.loadRestore();
+      },
     },
     ...(lastReport
       ? [
@@ -96,13 +95,10 @@ export function MorePage({
       : []),
     {
       id: "ignore",
-      title: L.ignorePub,
-      desc: selected
-        ? `${L.ignorePublisherHint} · ${prettyAppName(selected.name, selected.source)}`
-        : L.ignorePublisherHint,
+      title: L.appWhitelist,
+      desc: L.appWhitelistHint,
       icon: "∅",
-      action: () => tools.requireSelection(onIgnorePublisher),
-      needsSelection: true,
+      action: () => tools.setOpenTool("ignore"),
     },
   ];
 
@@ -184,6 +180,47 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
+      {openTool === "history" && (
+        <HistoryPanel
+          history={hist.history}
+          histQ={hist.histQ}
+          setHistQ={hist.setHistQ}
+          onClose={() => {
+            hist.closeHistory();
+            tools.setOpenTool(null);
+          }}
+        />
+      )}
+      {openTool === "restore" && (
+        <RestorePanel
+          sessions={rest.sessions}
+          pick={rest.restorePick}
+          setPick={rest.setRestorePick}
+          busy={rest.restoreBusy}
+          msgs={rest.restoreMsgs}
+          onRun={() => void rest.runRestore()}
+          onDelete={(name) => void rest.deleteSession(name)}
+          onClose={() => {
+            rest.closeRestore();
+            tools.setOpenTool(null);
+          }}
+        />
+      )}
+      {openTool === "ignore" && (
+        <WhitelistPanel
+          onClose={() => tools.setOpenTool(null)}
+          onError={onError}
+          onIgnorePublisher={onIgnorePublisher}
+        />
+      )}
+      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
+      {monitorDiff && (
+        <MonitorPanel
+          diff={monitorDiff}
+          onToCleanup={onMonitorToCleanup}
+          onDismiss={onDismissMonitor}
+        />
+      )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
         {common.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
@@ -262,35 +299,6 @@ export function MorePage({
           </div>
         </div>
       </Section>
-
-      {openTool === "history" && (
-        <HistoryPanel
-          history={hist.history}
-          histQ={hist.histQ}
-          setHistQ={hist.setHistQ}
-          onClose={hist.closeHistory}
-        />
-      )}
-      {openTool === "restore" && (
-        <RestorePanel
-          sessions={rest.sessions}
-          pick={rest.restorePick}
-          setPick={rest.setRestorePick}
-          busy={rest.restoreBusy}
-          msgs={rest.restoreMsgs}
-          onRun={() => void rest.runRestore()}
-          onDelete={(name) => void rest.deleteSession(name)}
-          onClose={rest.closeRestore}
-        />
-      )}
-      {monitorDiff && (
-        <MonitorPanel
-          diff={monitorDiff}
-          onToCleanup={onMonitorToCleanup}
-          onDismiss={onDismissMonitor}
-        />
-      )}
-      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
     </div>
   );
 }
