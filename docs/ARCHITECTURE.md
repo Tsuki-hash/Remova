@@ -20,15 +20,21 @@
 ## 2. 模块地图（`src-tauri/src`）
 
 ```
-lib.rs          Tauri 命令层 + base64 编码；invoke_handler 注册
+lib.rs          Tauri 命令层（含进程级静态状态）+ invoke_handler 注册
+commands/       按域拆出的命令包装层（update / ai_cmd / history_cmd / backup_cmd / manage_cmd / context_menu / ignore_cmd）
 main.rs         入口，调用 remova_lib::run()
 apps.rs         已安装软件枚举（Uninstall 注册表 + Store 合并）
+association.rs  残留项 ↔ 应用的关联判定（AR-10 / S-7R1 / S-R4-03），只输出布尔结论
 storeapps.rs    WinRT PackageManager 枚举 MSIX/Store 包
 scanner/         关联扫描（mod: types/score/analyze；fs_scans; reg_scans）
 shared.rs       共享运行库启发式（VC++/.NET/Common Files…）
-executor.rs     卸载命令解析、dry-run、真删（经 policy 门禁）
+executor/       卸载与清理流水线
+  mod.rs        共享类型（CleanupReport / ItemDetail / FullCleanupOptions / FullCleanupReport）+ 再导出
+  uninstall.rs  卸载命令解析（build_uninstall_command / split_win_args）+ 官方卸载器启动
+  preview.rs    dry-run 预览（与真删共用门禁，不写盘）
+  pipeline.rs   备份阶段 + 逐项删除 + run_full_cleanup 编排（CLEANUP_LOCK）
 policy.rs       CleanupSource + gate_cleanup_item；safety/manage/shared 门禁门面
-safety.rs       统一安全门禁：is_safe_fs / is_safe_to_delete_registry
+safety.rs       统一安全门禁：is_safe_fs / is_safe_fs_for_delete / is_safe_to_delete_registry
 error.rs        RemovaError IPC：backup:* / restore:* / path:io / manage:* / safety:*
 constants.rs    产品常量（备份保留天数等）
 fsutil.rs       共享目录复制 + CSV 转义
@@ -54,8 +60,9 @@ ai.rs           AI 编排：配置、脱敏、chat、缓存、意图解析（默
 | `apps` | `InstalledApp`, `scan_installed_apps` | 三个 Uninstall 源 + `storeapps::scan_store_apps`；过滤 KB / Update；解析 InstallDate、DisplayIcon |
 | `storeapps` | `scan_store_apps` | `PackageManager.FindPackagesByUserSecurityId("")`；`uninstall_string = remova-store:<FullName>`；屏蔽框架/系统包前缀 |
 | `scanner` | `CleanupItem`, `analyze_associations` | 证据加权 → score → confidence/risk；score &lt; 30 丢弃 |
-| `executor` | `run_cleanup_dry`, `run_full_cleanup`, `build_uninstall_command` | dry-run 只校验；full：备份 → 卸载器 → 逐项删 |
-| `safety` | `is_safe_fs`, `is_safe_to_delete_registry`, `critical_service_names` | 扫描与执行共用 |
+| `executor/{uninstall,preview,pipeline}` | `run_cleanup_dry`, `run_full_cleanup`, `build_uninstall_command` | dry-run 只校验；full：备份 → 卸载器 → 逐项删 |
+| `association` | `path_associated_with_app`, `cf_vendor_associated`, `is_orphan_flow` | 残留 ↔ 应用关联判定，`policy` 消费其布尔结论 |
+| `safety` | `is_safe_fs`, `is_safe_fs_for_delete`, `is_safe_to_delete_registry`, `critical_service_names` | 扫描用形状门；删除路径必须用删除级门 |
 | `backup` / `restore` | `create_session`, `backup_item`, `restore_session` | 见 §5 |
 | `manage` | `set_startup_enabled` 等 | StartupApproved 设计见 §7 |
 | `installmon` | `begin` / `end` → `MonitorDiff` | 预算 80k 路径；差分取前 200 文件 / 100 注册表项 |
@@ -410,7 +417,9 @@ set_startup_enabled(location, enabled)
 ## 8. 统一 `is_safe_fs` 规则
 
 定义：`safety::is_safe_fs(p: &Path) -> bool`  
-调用方：`scanner`（薄封装）、`executor`（dry-run 与真删）。
+调用方：`scanner`（薄封装，产出候选）、`association`（孤儿流走 `is_safe_fs_for_delete`）。
+删除路径统一经 `policy::gate_cleanup_item` → `is_safe_fs_for_delete`（= 本门 ∧ 非用户数据红线 ∧
+非同步冲突），不要直接调本函数决定是否删除。
 
 规则（全部 AND，任一失败即 false）：
 
