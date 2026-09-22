@@ -639,7 +639,9 @@ export default function App() {
         }
       >
         {error && nav !== "software" && (
-          <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
+          <div style={{ flexShrink: 0, overflow: "visible" }}>
+            <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
+          </div>
         )}
         <Suspense
           fallback={
