@@ -54,6 +54,24 @@ export function sourceLabel(source: string, L: { sourceHkcu: string; sourceHklm6
 
 export type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
 
+/**
+ * RemovaError IPC uses `code::message`. Only known domain prefixes qualify (F-R6-09)
+ * so strings like `PACKAGED::HKLM\...::Evil` or `error: foo::bar` are not misparsed.
+ */
+const IPC_CODE_PREFIXES = [
+  "safety:",
+  "manage:",
+  "backup:",
+  "restore:",
+  "path:",
+  "exec:",
+  "ai:",
+] as const;
+
+function isKnownIpcCode(code: string): boolean {
+  return IPC_CODE_PREFIXES.some((p) => code.startsWith(p));
+}
+
 /** Stable backend error codes → user-facing text. */
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   const L = t();
@@ -67,9 +85,9 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (kind === "not_found") return L.errElevateNotFound;
     return L.errElevateFailed(code);
   }
-  // RemovaError IPC: `code::message` (BE-01)
+  // RemovaError IPC: `code::message` (BE-01) — code must be a known domain prefix.
   const ipc = raw.trim().split("::");
-  if (ipc.length >= 2 && ipc[0].includes(":")) {
+  if (ipc.length >= 2 && isKnownIpcCode(ipc[0].toLowerCase().trim())) {
     const code = ipc[0].toLowerCase();
     const name = ipc.slice(1).join("::").trim();
     if (code === "manage:protected" || code === "manage:protected_registry") {

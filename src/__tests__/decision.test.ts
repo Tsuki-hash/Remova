@@ -218,6 +218,18 @@ describe("leftoverReasonLine / gateReasonText", () => {
     expect(gateReasonText("reboot delete", L)).toBe(L.reasonRebootDelete);
     expect(gateReasonText("something else", L)).toBe("something else");
   });
+
+  it("gateReasonText maps common Chinese backend copy (F-R6-09)", () => {
+    expect(gateReasonText("用户数据，默认不删", L)).toBe(L.reasonUserData);
+    expect(gateReasonText("共享运行库/安装缓存目录", L)).toBe(L.reasonShared);
+    expect(gateReasonText("已在忽略列表中，跳过", L)).toBe(L.reasonIgnored);
+    expect(gateReasonText("系统 PATH 条目，受保护", L)).toBe(L.reasonPathProtected);
+    expect(gateReasonText("未通过删除安全门，跳过", L)).toBe(L.reasonSafetyGate);
+    expect(gateReasonText("与当前软件无可靠关联，跳过", L)).toBe(L.reasonNotAssociated);
+    expect(gateReasonText("路径已不存在", L)).toBe(L.reasonPathMissing);
+    expect(gateReasonText("PATH 中已不存在该条目", L)).toBe(L.reasonNotInPath);
+    expect(gateReasonText("已安排重启后删除", L)).toBe(L.reasonRebootDelete);
+  });
 });
 
 describe("groupByOrigin", () => {

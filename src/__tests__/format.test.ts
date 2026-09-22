@@ -56,6 +56,21 @@ describe("formatError manage codes", () => {
     expect(formatError("backup:failed::disk full")).toBeTruthy();
   });
 
+  it("does not misparse :: outside known IPC code prefixes (F-R6-09)", () => {
+    // PACKAGED location strings use `::` but are not RemovaError IPC.
+    const packaged = formatError(
+      "PACKAGED::HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run::Evil",
+    );
+    expect(packaged).not.toContain("关键服务");
+    expect(packaged).toContain("PACKAGED");
+    // Generic `foo: bar :: detail` is not a known code either.
+    const weird = formatError("error: something :: detail");
+    expect(weird).not.toContain("关键服务");
+    expect(weird).toContain("something");
+    // Known prefixes still map.
+    expect(formatError("manage:bad_name::svc")).toBeTruthy();
+  });
+
   it("maps safety:protected to path protection, not service copy", () => {
     expect(formatError("safety:protected::")).toContain("受保护");
     expect(formatError("safety:protected::")).not.toContain("服务");

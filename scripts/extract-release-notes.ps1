@@ -41,7 +41,9 @@ if ($lines[$start] -match '^## \[[0-9.]+\]\s*-?\s*(.*)$') {
 if ($end - $start -gt 1) { $body += $lines[($start + 1)..($end - 1)] }
 
 $text = ($body -join "`n").Trim()
-if (-not $text) {
+# R-R6-01: a heading alone is not a Release body — require real section content.
+$rest = ($body | Select-Object -Skip 1) -join "`n"
+if (-not $text -or -not $rest.Trim()) {
   Write-Error "CHANGELOG '## [$ver]' section is empty - refusing to publish an empty Release body."
 }
 

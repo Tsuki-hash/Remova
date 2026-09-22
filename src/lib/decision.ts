@@ -1,4 +1,4 @@
-/** Decision chips & leftover risk buckets — only use data we already have. */
+/** Decision chips & leftover risk buckets 鈥?only use data we already have. */
 import type { CleanupItem, InstalledApp } from "../types";
 
 export type ChipTone = "accent" | "warn" | "muted" | "danger" | "ok";
@@ -73,7 +73,7 @@ export function isRecommendedCleanup(
   return false;
 }
 
-/** Fact-only health label — never claims leftovers without a scan. */
+/** Fact-only health label 鈥?never claims leftovers without a scan. */
 export function appHealth(
   app: InstalledApp,
   sizeKb: number,
@@ -84,7 +84,7 @@ export function appHealth(
   return { id: "ok", label: L.healthOk };
 }
 
-/** Factual cleanup progress from report counters — no marketing 100%. */
+/** Factual cleanup progress from report counters 鈥?no marketing 100%. */
 export function cleanupProgress(deleted: number, failed: number, skipped: number): {
   handled: number;
   total: number;
@@ -97,7 +97,7 @@ export function cleanupProgress(deleted: number, failed: number, skipped: number
   return { handled, total, pct, complete: failed === 0 && total > 0 };
 }
 
-/** 1–3 chips under the app name; never invent usage we do not track. */
+/** 1鈥? chips under the app name; never invent usage we do not track. */
 export function decisionChips(
   app: InstalledApp,
   sizeKb: number,
@@ -133,7 +133,7 @@ export function decisionChips(
       title: `${sizeKb} KB`,
     });
   }
-  // List rows: at most one high-signal chip — full metadata lives in detail panel.
+  // List rows: at most one high-signal chip 鈥?full metadata lives in detail panel.
   if (compact) {
     const priority = ["no-uninstall", "recommend", "large"] as const;
     for (const id of priority) {
@@ -183,14 +183,14 @@ export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
   return "suggest";
 }
 
-/** Keep bucket predicate (high risk / shared / user data) — single source for UI filters. */
+/** Keep bucket predicate (high risk / shared / user data) 鈥?single source for UI filters. */
 export function isKeepItem(it: CleanupItem): boolean {
   return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
 }
 
 export type RiskTier = "low" | "medium" | "high";
 
-/** Highest risk among picked items — used to label confirms. */
+/** Highest risk among picked items 鈥?used to label confirms. */
 export function maxRiskOf(items: CleanupItem[]): RiskTier {
   if (items.some((it) => it.risk === "high")) return "high";
   if (items.some((it) => it.risk === "medium")) return "medium";
@@ -203,7 +203,7 @@ export function riskTierLabel(
 ): string {
   if (tier === "high") return L.riskTierHigh;
   if (tier === "medium") return L.riskTierMedium;
-  // Safe only when nothing is medium/high — callers pass maxRisk so low ≈ low-risk items only.
+  // Safe only when nothing is medium/high 鈥?callers pass maxRisk so low 鈮?low-risk items only.
   return L.riskTierLow;
 }
 
@@ -281,7 +281,8 @@ export type GateReasonLabels = {
 
 /** Map policy/executor skip codes to user-facing Chinese/English copy. */
 export function gateReasonText(message: string, L: GateReasonLabels): string {
-  const m = (message || "").toLowerCase();
+  const raw = message || "";
+  const m = raw.toLowerCase();
   if (!m) return message;
   if (m.includes("user_data") || m.includes("user data") || m.includes("sync conflict") || m.includes("sync_conflict")) {
     return L.reasonUserData;
@@ -294,6 +295,30 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
   if (m.includes("path missing")) return L.reasonPathMissing;
   if (m.includes("not found in path")) return L.reasonNotInPath;
   if (m.includes("reboot delete")) return L.reasonRebootDelete;
+  // F-R6-09: common Chinese backend / reason copy (same buckets as the codes above).
+  if (raw.includes("用户数据") || raw.includes("用户资料")) return L.reasonUserData;
+  if (raw.includes("共享运行") || raw.includes("共享组件") || raw.includes("共享库")) {
+    return L.reasonShared;
+  }
+  if (raw.includes("忽略列表") || raw.includes("已在忽略") || raw.includes("已忽略")) {
+    return L.reasonIgnored;
+  }
+  if (raw.includes("系统 PATH") || raw.includes("PATH 条目") || raw.includes("受保护路径") || raw.includes("受保护的路径")) {
+    return L.reasonPathProtected;
+  }
+  if (raw.includes("安全门") || raw.includes("删除安全")) return L.reasonSafetyGate;
+  if (raw.includes("无可靠关联") || raw.includes("未关联") || raw.includes("关联不上")) {
+    return L.reasonNotAssociated;
+  }
+  if (raw.includes("路径不存在") || raw.includes("路径已不存在") || raw.includes("路径缺失")) {
+    return L.reasonPathMissing;
+  }
+  if (raw.includes("PATH 中已不存在") || raw.includes("PATH 已不存在") || raw.includes("不在 PATH")) {
+    return L.reasonNotInPath;
+  }
+  if (raw.includes("重启后删除") || raw.includes("已安排重启") || raw.includes("重启删除")) {
+    return L.reasonRebootDelete;
+  }
   return message;
 }
 
@@ -303,13 +328,13 @@ export function originLabel(path: string): string {
     .replace(/\//g, "\\")
     .split("\\")
     .filter((s) => s && !/^[A-Za-z]:$/.test(s));
-  if (parts.length === 0) return path || "—";
+  if (parts.length === 0) return path || "-";
   let last = parts[parts.length - 1];
-  // File path → use parent folder as the origin hint.
+  // File path 鈫?use parent folder as the origin hint.
   if (parts.length >= 2 && /\.[A-Za-z0-9]{1,12}$/.test(last) && !last.startsWith(".")) {
     last = parts[parts.length - 2];
   }
-  return last || path || "—";
+  return last || path || "-";
 }
 
 export type OriginGroup = {
@@ -323,7 +348,7 @@ export type OriginGroup = {
 
 /**
  * Group leftovers by path leaf (suspected software folder).
- * Orphans have no uninstall entry — never invent a product name.
+ * Orphans have no uninstall entry 鈥?never invent a product name.
  */
 export function groupByOrigin(items: CleanupItem[]): OriginGroup[] {
   const map = new Map<string, CleanupItem[]>();

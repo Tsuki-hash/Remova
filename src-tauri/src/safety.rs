@@ -105,9 +105,16 @@ pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
     if is_critical_service(n) {
         return Err(crate::error::manage_err("protected", n).to_ipc());
     }
-    // S-R4-09: mirror task-side Microsoft protection on service writes (list still allowed).
+    // S-R4-09 / S-R6-08: Microsoft-family services (MSMQ, MsSqlServer, Microsoft*, MS *).
     let low = n.to_lowercase();
-    if low.starts_with("microsoft") || low.starts_with("ms ") {
+    if low.starts_with("microsoft")
+        || low.starts_with("ms ")
+        || low == "msmq"
+        || low.starts_with("mssql")
+        || low.starts_with("msdtc")
+        || low.starts_with("mspq")
+        || low.starts_with("mstee")
+    {
         return Err(crate::error::manage_err("protected", n).to_ipc());
     }
     Ok(())
@@ -210,7 +217,8 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    // Run/RunOnce values: key|ValueName only, never the key itself
+    // Run/RunOnce values: key|ValueName only, never the key itself.
+    // Empty ValueName (`…\Run|`) must NOT authorize deleting the whole Run key.
     let run_roots = [
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUN",
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUNONCE",
@@ -219,13 +227,18 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUN",
         "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUNONCE",
     ];
-    if let Some((key, _val)) = key_path.rsplit_once('|') {
+    if let Some((key, val)) = key_path.rsplit_once('|') {
+        if val.trim().is_empty() {
+            return Err(crate::error::safety_err("registry value name must not be empty").to_ipc());
+        }
         let key_low = normalize_hklm(key);
         for root in run_roots {
             if key_low == root {
                 return Ok(());
             }
         }
+        // Non-Run `key|Value` falls through to the same key-tree rules below
+        // (Uninstall|Name, App Paths|Name, …).
     }
     for root in run_roots {
         if low == root {
@@ -260,6 +273,10 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
 /// Prefixes come from environment (SystemRoot / ProgramData / ProgramFiles…) with `c:\` fallbacks.
 pub fn is_safe_fs(p: &std::path::Path) -> bool {
     let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
+    // S-R6-05: extended-length / 8.3 shapes must not slip past prefix matching.
+    if is_abnormal_path_shape(&s) {
+        return false;
+    }
     let trimmed = s.trim_end_matches('\\');
     // Drive root: "c:" or "c:\"
     if trimmed.len() == 2 && trimmed.ends_with(':') {
@@ -337,6 +354,34 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
+/// True when the path uses an abnormal Windows shape that can bypass prefix/segment matching:
+/// extended-length / device prefixes (`\\?\`, `\\.\`) or 8.3 short-name segments (`NAME~1`).
+/// S-R6-05: these must never be treated as ordinary safe paths or non-library paths.
+pub fn is_abnormal_path_shape(p: &str) -> bool {
+    let s = p.replace('/', "\\");
+    // Extended-length / device / UNC-device prefixes anywhere in the path.
+    if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
+        return true;
+    }
+    // 8.3 short-name segment shape: `NAME~DIGITS` optionally followed by an extension.
+    for seg in s.split('\\') {
+        let low = seg.to_ascii_lowercase();
+        let Some(tilde) = low.find('~') else {
+            continue;
+        };
+        let rest = &low[tilde + 1..];
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            continue;
+        }
+        let after = &rest[digits..];
+        if after.is_empty() || after.starts_with('.') {
+            return true;
+        }
+    }
+    false
+}
+
 /// Delete-grade gate on top of [`is_safe_fs`]: also rejects the user-data and sync-conflict red
 /// lines. Scanner proposal filtering keeps using [`is_safe_fs`] so those items are still surfaced
 /// (flagged `user_data`) for the "why we kept this" explanation instead of vanishing. Any code that
@@ -350,6 +395,10 @@ pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
 /// Never delete these. Subfolders under a library (e.g. `Documents\<App>`, updater caches)
 /// are **not** red-lined — they may be cleaned when associated. See [`is_user_library_path`].
 pub fn is_user_data_path(p: &str) -> bool {
+    // S-R6-05: `\\?\` / 8.3 shapes must not bypass the library-root red line.
+    if is_abnormal_path_shape(p) {
+        return true;
+    }
     let low = p.replace('/', "\\").to_lowercase();
     let trimmed = low.trim_end_matches('\\');
     // Exact profile / public library roots (last path segment match).
@@ -393,12 +442,38 @@ pub fn is_user_library_path(p: &str) -> bool {
 }
 
 /// Sync-conflict style folders often hold real user files.
+/// S-R6-11: segment-aware — a bare `conflict` substring (`MyConflictApp`) must not match.
 pub fn looks_like_sync_conflict(p: &str) -> bool {
     let low = p.replace('/', "\\").to_lowercase();
-    low.contains("同步冲突")
-        || low.contains("conflict")
-        || low.contains("sync_conflict")
-        || low.contains("sync conflict")
+    if low.contains("同步冲突") {
+        return true;
+    }
+    for seg in low.split('\\') {
+        let s = seg.trim();
+        if s.is_empty() {
+            continue;
+        }
+        // Exact conflict folder names.
+        if s == "conflict" || s == "conflicts" || s == "sync_conflict" || s == "sync conflict" {
+            return true;
+        }
+        // Known sync-client conflict naming.
+        if s.contains("conflicted copy")
+            || s.starts_with("sync_conflict")
+            || s.starts_with("sync conflict")
+        {
+            return true;
+        }
+        // `name - conflict` / `name (conflict…)` / `name_conflict` / `name.conflict`
+        if s.ends_with(" - conflict")
+            || s.ends_with("_conflict")
+            || s.ends_with(".conflict")
+            || s.contains(" (conflict")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -667,6 +742,12 @@ mod tests {
         let root = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         assert!(is_safe_to_delete_registry(root).is_err());
         assert!(is_safe_to_delete_registry(&format!("{root}|DemoApp")).is_ok());
+        // S-R6-02: empty value name must not authorize deleting the whole key.
+        assert!(is_safe_to_delete_registry(&format!("{root}|")).is_err());
+        assert!(is_safe_to_delete_registry(&format!("{root}| ")).is_err());
+        let run_root = r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN";
+        assert!(is_safe_to_delete_registry(&format!("{run_root}|Demo")).is_ok());
+        assert!(is_safe_to_delete_registry(&format!("{run_root}|")).is_err());
     }
 
     #[test]
@@ -698,5 +779,40 @@ mod tests {
             r"C:\Users\a\Documents\坚果云同步冲突"
         ));
         assert!(!super::looks_like_sync_conflict(r"C:\ProgramData\App"));
+        // S-R6-11: bare `conflict` substring must not match ordinary product names.
+        assert!(!super::looks_like_sync_conflict(
+            r"C:\Program Files\MyConflictApp"
+        ));
+        assert!(!super::looks_like_sync_conflict(
+            r"C:\Program Files\ConflictResolution\bin"
+        ));
+        assert!(super::looks_like_sync_conflict(
+            r"C:\Users\a\Documents\conflict\save.dat"
+        ));
+        assert!(super::looks_like_sync_conflict(
+            r"C:\Users\a\Documents\report (conflicted copy 2024).docx"
+        ));
+    }
+
+    #[test]
+    fn abnormal_path_shape_rejected() {
+        // S-R6-05: extended-length / 8.3 shapes cannot enter safe / non-user-data results.
+        assert!(super::is_abnormal_path_shape(r"\\?\C:\Program Files\App"));
+        assert!(super::is_abnormal_path_shape(r"\\.\C:\Program Files\App"));
+        assert!(super::is_abnormal_path_shape(r"C:\PROGRA~1\App"));
+        assert!(super::is_abnormal_path_shape(r"C:\Users\Aaron\DOCUME~1"));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\Users\Aaron\DOCUME~1\file.txt"
+        ));
+        assert!(!super::is_abnormal_path_shape(r"C:\Program Files\App"));
+        assert!(!super::is_abnormal_path_shape(r"C:\Users\Aaron\Documents"));
+        // `~` not followed by digits is not an 8.3 shape.
+        assert!(!super::is_abnormal_path_shape(r"C:\foo~bar\baz"));
+        assert!(!super::is_safe_fs(Path::new(
+            r"\\?\C:\Windows\System32\evil"
+        )));
+        assert!(!super::is_safe_fs(Path::new(r"C:\PROGRA~1\App")));
+        assert!(super::is_user_data_path(r"C:\Users\Aaron\DOCUME~1"));
+        assert!(super::is_user_data_path(r"\\?\C:\Users\Aaron\Documents"));
     }
 }

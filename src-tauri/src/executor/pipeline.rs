@@ -200,8 +200,13 @@ fn delete_cleanup_items_source(
                         format!("schtasks delete {tn}: failed or not found")
                     };
                 }
-                let res = if let Some((k, v)) = crate::regops::split_value_path(&it.path) {
-                    crate::regops::delete_value(k, v)
+                // `key|Value` must resolve to a non-empty value name; a trailing `|`
+                // must never fall through to deleting the whole key (Run root!).
+                let res = if it.path.contains('|') {
+                    match crate::regops::split_value_path(&it.path) {
+                        Some((k, v)) => crate::regops::delete_value(k, v),
+                        None => Err("registry value name must not be empty".into()),
+                    }
                 } else {
                     crate::regops::delete_key(&it.path)
                 };
@@ -356,10 +361,32 @@ pub fn run_full_cleanup(
 
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
+    let mut uninstall_had_command = false;
     if !opts.skip_official_uninstall {
         let official = run_official_uninstall(app);
         uninstall_ok = official.ok;
         uninstall_message = official.message;
+        uninstall_had_command = official.had_command;
+    }
+    // S-R6-07: when a vendor uninstaller existed and failed, do not silently wipe leftovers —
+    // the main program may still be half-installed. Force-clean / skip_official remains available.
+    if uninstall_had_command && !uninstall_ok {
+        return FullCleanupReport {
+            app_name: app.name.clone(),
+            dry_run: false,
+            backup_dir,
+            uninstall_ok,
+            uninstall_message,
+            deleted: 0,
+            failed: 0,
+            skipped: 0,
+            delayed: 0,
+            aborted: true,
+            restore_point_ok,
+            restore_point_msg,
+            errors: vec!["official uninstaller failed; leftover cleanup skipped".into()],
+            item_details: vec![],
+        };
     }
 
     let del = delete_cleanup_items_source(app, items, cleanup_source_from_opts(opts));

@@ -82,9 +82,15 @@ pub fn is_path_ignored(list: &IgnoreList, path: &str) -> bool {
     if p.is_empty() {
         return false;
     }
-    list.paths
-        .iter()
-        .any(|x| p.starts_with(&x.replace('/', "\\").to_lowercase()))
+    list.paths.iter().any(|x| {
+        let pref = x.replace('/', "\\").to_lowercase();
+        if pref.is_empty() {
+            return false;
+        }
+        // S-R6-12: prefix match only on path-segment boundaries (`C:\Foo` must not
+        // swallow `C:\Foobar\...`).
+        p == pref || p.starts_with(&format!("{pref}\\"))
+    })
 }
 
 /// Apply ignore rules to an installed-app row (AR-04 backend enforcement).
@@ -271,5 +277,16 @@ mod tests {
         let mut l = IgnoreList::default();
         l.paths.push(r"C:\ProgramData\Package Cache".into());
         assert!(is_path_ignored(&l, r"C:\ProgramData\Package Cache\x"));
+    }
+
+    #[test]
+    fn path_ignore_requires_segment_boundary() {
+        // S-R6-12: `C:\Foo` must not swallow `C:\Foobar`.
+        let mut l = IgnoreList::default();
+        l.paths.push(r"C:\Program Files\Vendor".into());
+        assert!(is_path_ignored(&l, r"C:\Program Files\Vendor"));
+        assert!(is_path_ignored(&l, r"C:\Program Files\Vendor\bin\tool.exe"));
+        assert!(!is_path_ignored(&l, r"C:\Program Files\VendorExtra\bin"));
+        assert!(!is_path_ignored(&l, r"C:\Program Files\Vendor2"));
     }
 }

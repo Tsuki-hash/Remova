@@ -23,6 +23,17 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 continue;
             }
             let dest = PathBuf::from(&original);
+            // S-R6-03: never restore into red-line / system-shaped destinations.
+            // A tampered path_map.json must not become an arbitrary-write primitive.
+            if original.trim().is_empty()
+                || !crate::safety::is_safe_fs_for_delete(&dest)
+                || crate::safety::looks_like_sync_conflict(&original)
+            {
+                return Err(crate::error::restore_err(format!(
+                    "refusing to restore into protected path: {original}"
+                ))
+                .to_ipc());
+            }
             if src.is_dir() {
                 copy_dir(&src, &dest).map_err(|e| format!("{original}: {e}"))?;
             } else {
@@ -225,10 +236,24 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
 
 /// Delete one backup session by name. Path-traversal guarded.
 pub fn delete_session_by_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
+    // Reject `.`, `..`, separators, and anything that is not a real session folder name
+    // (`YYYYMMDD-HHMMSS-…`). `backup_root().join(".")` is the backup root itself.
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(':')
+    {
         return Err("invalid session name".into());
     }
     let path = crate::backup::backup_root().join(name);
+    // Defense-in-depth: resolved folder must stay under backup_root and look like a session.
+    let root = crate::backup::backup_root();
+    if !path.starts_with(&root) || path == root {
+        return Err("invalid session name".into());
+    }
     if !path.is_dir() {
         return Err("session not found".into());
     }

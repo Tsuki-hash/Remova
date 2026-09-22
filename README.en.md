@@ -76,8 +76,8 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | Artifact | Notes |
 |---|---|
 | `Remova_*_x64-setup.exe` | NSIS installer (recommended) |
-| `Remova_*_x64_en-US.msi` | MSI installer |
-| `Remova.exe` | Semi-portable trial (see note) |
+| `Remova_*_x64_zh-CN.msi` | MSI installer |
+| `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
 Requires Windows 10 / 11 (x64).
 

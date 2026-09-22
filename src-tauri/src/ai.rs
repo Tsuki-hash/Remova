@@ -89,7 +89,12 @@ pub fn load_config() -> AiConfig {
         return AiConfig::default();
     };
     let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
+    let raw_key = c.api_key.clone();
     c.api_key = decrypt_stored_key(&c.api_key);
+    // S-R6-09: migrate a legacy plaintext key to DPAPI at rest on first load.
+    if !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX) {
+        let _ = save_config(&c);
+    }
     c
 }
 
@@ -218,6 +223,86 @@ fn decrypt_stored_key(stored: &str) -> String {
     stored.to_string()
 }
 
+/// S-R6-10: replace the Windows profile-name segment after `Users\` with `*`.
+/// ASCII case-insensitive so index alignment with the original string is preserved.
+pub fn mask_profile_usernames(s: &str) -> String {
+    let sc: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < sc.len() {
+        // Path-segment `users` (leading or after a separator).
+        let at_users = i + 5 <= sc.len()
+            && sc[i..i + 5]
+                .iter()
+                .zip("users".chars())
+                .all(|(a, b)| a.to_ascii_lowercase() == b)
+            && (i == 0 || sc[i - 1] == '\\' || sc[i - 1] == '/')
+            && (i + 5 >= sc.len() || sc[i + 5] == '\\' || sc[i + 5] == '/');
+        if !at_users {
+            out.push(sc[i]);
+            i += 1;
+            continue;
+        }
+        // Keep the `Users` segment and its separator; mask the next segment.
+        out.extend(sc[i..i + 5].iter());
+        if i + 5 < sc.len() {
+            out.push(sc[i + 5]);
+            let mut j = i + 6;
+            while j < sc.len() && sc[j] != '\\' && sc[j] != '/' {
+                j += 1;
+            }
+            if j > i + 6 {
+                out.push('*');
+            }
+            i = j;
+        } else {
+            i += 5;
+        }
+    }
+    out
+}
+
+/// Free text (reason / evidence) scrubbed before any cloud upload (S-R6-10):
+/// profile names masked, absolute path tokens reduced via [`sanitize_path`].
+pub fn scrub_cloud_text(s: &str) -> String {
+    let masked = mask_profile_usernames(s);
+    let sc: Vec<char> = masked.chars().collect();
+    let mut out = String::with_capacity(masked.len());
+    let mut i = 0usize;
+    while i < sc.len() {
+        let is_path_start = (sc[i].is_ascii_alphabetic()
+            && i + 2 < sc.len()
+            && sc[i + 1] == ':'
+            && (sc[i + 2] == '\\' || sc[i + 2] == '/'))
+            || (sc[i] == '\\' && i + 1 < sc.len() && sc[i + 1] == '\\');
+        if !is_path_start {
+            out.push(sc[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i;
+        while j < sc.len()
+            && !sc[j].is_whitespace()
+            && !matches!(sc[j], ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '（' | '）')
+        {
+            j += 1;
+        }
+        // Trim trailing sentence punctuation from the token.
+        while j > start && matches!(sc[j - 1], '.' | ',' | ';' | ':' | ')' | ']' | '}') {
+            j -= 1;
+        }
+        let token: String = sc[start..j].iter().collect();
+        if token.contains('\\') || token.contains('/') {
+            out.push_str(&sanitize_path(&token, false));
+        } else {
+            out.push_str(&token);
+        }
+        i = j;
+    }
+    out
+}
+
 /// Reduce a path to vendor/product-ish tokens; drop usernames and deep trees.
 pub fn sanitize_path(path: &str, allow_full: bool) -> String {
     let p = path.replace('/', "\\");
@@ -257,7 +342,9 @@ pub fn sanitize_path(path: &str, allow_full: bool) -> String {
             }
         }
     }
-    let parts: Vec<&str> = p.split('\\').filter(|s| !s.is_empty()).collect();
+    // Fallback last-segment reduction must never surface a profile name (S-R6-10).
+    let masked = mask_profile_usernames(&p);
+    let parts: Vec<&str> = masked.split('\\').filter(|s| !s.is_empty()).collect();
     if parts.len() >= 2 {
         format!("{}\\{}", parts[parts.len() - 2], parts[parts.len() - 1])
     } else if let Some(last) = parts.last() {
@@ -490,8 +577,13 @@ pub fn explain_items(
                 "kind": it.kind,
                 "confidence": it.confidence,
                 "risk": it.risk,
-                "reason": it.reason,
-                "evidence": it.evidence_labels,
+                // S-R6-10: free text never goes to the cloud raw (usernames / deep paths).
+                "reason": scrub_cloud_text(&it.reason),
+                "evidence": it
+                    .evidence_labels
+                    .iter()
+                    .map(|e| scrub_cloud_text(e))
+                    .collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -743,6 +835,58 @@ mod tests {
         let s = sanitize_path(p, true);
         assert!(s.contains("Users\\*\\") || s.contains("Users\\*\\"), "{s}");
         assert!(!s.contains("alice"), "{s}");
+    }
+
+    #[test]
+    fn sanitize_fallback_never_leaks_username() {
+        // S-R6-10: last-segment reduction used to surface `alice\secret`.
+        for p in [
+            r"C:\Users\alice\secret",
+            r"C:\Users\alice",
+            r"C:/Users/alice/secret",
+            r"\\?\C:\Users\alice\Desktop\tool",
+            r"C:\Users\alice\Documents\MyApp\data",
+        ] {
+            let s = sanitize_path(p, false);
+            assert!(!s.contains("alice"), "{p} → {s}");
+            let s = sanitize_path(p, true);
+            assert!(!s.contains("alice"), "full {p} → {s}");
+        }
+    }
+
+    #[test]
+    fn mask_profile_usernames_keeps_rest() {
+        assert_eq!(
+            mask_profile_usernames(r"C:\Users\bob\AppData\Local"),
+            r"C:\Users\*\AppData\Local"
+        );
+        assert_eq!(mask_profile_usernames(r"C:\Users\bob"), r"C:\Users\*");
+        assert_eq!(
+            mask_profile_usernames(r"see C:\Users\bob\x and D:\Work"),
+            r"see C:\Users\*\x and D:\Work"
+        );
+        // A `Users` path segment still masks the next name (privacy-safe).
+        assert_eq!(
+            mask_profile_usernames(r"C:\Corp\Users\Public"),
+            r"C:\Corp\Users\*"
+        );
+        // `Users` glued into another token is left alone.
+        assert_eq!(
+            mask_profile_usernames(r"C:\EndUsers\Public"),
+            r"C:\EndUsers\Public"
+        );
+    }
+
+    #[test]
+    fn scrub_cloud_text_masks_paths_and_names() {
+        let s = scrub_cloud_text(
+            r"Product dir under C:\Users\alice\AppData\Local\Acme\App deep path; also E:\Vendor\Tool\bin\x.dll",
+        );
+        assert!(!s.contains("alice"), "{s}");
+        assert!(!s.contains("AppData\\Local\\Acme\\App"), "{s}");
+        assert!(s.contains("AppData") || s.contains("Tool") || s.contains("App"), "{s}");
+        // Non-path free text is preserved.
+        assert_eq!(scrub_cloud_text("Shell/Classes leftover: Foo"), "Shell/Classes leftover: Foo");
     }
 
     #[test]
