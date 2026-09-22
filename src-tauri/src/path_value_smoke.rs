@@ -1,4 +1,4 @@
-﻿//! S-08: PATH / value.reg chain smoke with injectable PATH mock (never touches system PATH).
+//! S-08: PATH / value.reg chain smoke with injectable PATH mock (never touches system PATH).
 
 use std::fs;
 
@@ -15,7 +15,8 @@ fn path_item(entry: &str) -> CleanupItem {
         reason: "path".into(),
         evidence: vec![],
         shared: false,
-        user_data: false, user_library: false,
+        user_data: false,
+        user_library: false,
         size_kb: None,
         bucket: None,
     }
@@ -115,7 +116,8 @@ fn value_reg_missing_export_fails_backup_with_structured_code() {
         reason: "run".into(),
         evidence: vec![],
         shared: false,
-        user_data: false, user_library: false,
+        user_data: false,
+        user_library: false,
         size_kb: None,
         bucket: None,
     };

@@ -1,4 +1,4 @@
-﻿//! Orphan leftover directory scan (P2-2) 鈥?no matching installed app.
+//! Orphan leftover directory scan (P2-2) 鈥?no matching installed app.
 
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel, SCORE_SUSPECTED_MIN};
@@ -209,7 +209,8 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 reason: "Orphan app-like folder (no matching uninstall entry)".into(),
                 evidence,
                 shared: false,
-                user_data: false, user_library: false,
+                user_data: false,
+                user_library: false,
                 size_kb: None,
                 bucket: None,
             });
