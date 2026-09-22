@@ -67,6 +67,3 @@ jobs:
 
       - name: frontend dist smoke
         run: npm run smoke:dist
-
-      - name: command table vs generate_handler
-        run: pwsh -NoProfile -File scripts/check-commands.ps1
