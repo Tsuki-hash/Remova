@@ -79,16 +79,18 @@ hooks/             useSizeEstimate / useAnalyzeFlow / useCleanupHandlers / useAp
 
 **安全谓词单一来源**：是否默认勾选一律 `decision.ts::defaultSelectable`（confirmed && !high && !shared && !user_data）。禁止在组件内复制该条件。
 
-**CleanupItem（1.0.1）**：`path` / `kind`（file|dir|registry|path）/ score / confidence / risk / reason / evidence / shared / user_data / **`size_kb?: Option<u64>`**（仅 file/dir；限长目录求和，超限 None）。
+**CleanupItem**：`path` / `kind`（file|dir|registry|path）/ score / confidence / risk / reason / evidence / shared / user_data / **`size_kb?: Option<u64>`**（仅 file/dir；限长目录求和，超限 None）。
 
 **清理门禁单一源（A-02）**：`policy::gate_cleanup_item` + `CleanupSource`；dry-run 与真删共用。`policy` 再导出 `safety`/`manage`/`shared` 门禁入口。
+
+**删除级门禁**：File/Dir 走 `safety::is_safe_fs_for_delete`（= `is_safe_fs` ∧ 非用户数据红线 ∧ 非同步冲突），供门禁与孤儿关联共用；扫描器仍用形状级 `is_safe_fs` 产出候选，好让红线项以「为什么保留」可见而不是凭空消失。
 
 **前端状态域边界（A-03）**：
 
 | 状态 | 归属 | 用途 |
 |---|---|---|
 | `appCore.report` | `useAppCoreState` | 当前 Cleanup/Full 报告 → ReportPanel |
-| `residual.lastReport` | `useResidualState` | **仅 Full** 清理后的残留/校验/export HTML |
+| `appCore.lastReport` | `useAppCoreState` | 最近一次**已完成 Full** 清理报告（export HTML / More 页）；由 `report/set` **派生**，无第二写入方 |
 | `scanUi` | `useScanUiState` | 扫描页 UI（证据、勾选、busy） |
 | `aiPanel` | `useAiPanelState` | AI 设置 / 风险 / 解释 / verify 行 |
 
@@ -464,7 +466,7 @@ set_startup_enabled(location, enabled)
 
 ```powershell
 cd src-tauri
-cargo test --lib
+cargo test --workspace
 ```
 
 覆盖：安全门禁、slugify / 评分、卸载命令解析、dry-run 计数、备份/还原回环、CSV 解析、服务过滤、目录体积、PNG 签名等。  

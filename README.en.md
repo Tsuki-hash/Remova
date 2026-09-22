@@ -105,7 +105,7 @@ npm test
 
 # Backend
 cd src-tauri
-cargo test --lib
+cargo test --workspace
 
 # Dev app
 npx tauri dev
@@ -160,7 +160,7 @@ Remova/
 Issues and PRs are welcome:
 
 1. Fork and open a feature branch
-2. Run `cargo test --lib` and `npm test`
+2. Run `cargo test --workspace` and `npm test`
 3. Use Conventional Commits (`feat:`, `fix:`, `docs:`, …)
 4. Update `CHANGELOG.md` for user-visible changes
 
