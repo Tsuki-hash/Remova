@@ -679,12 +679,14 @@ mod tests {
 
     #[test]
     fn user_data_paths_flagged() {
-        assert!(super::is_user_data_path(
-            r"C:\Users\a\Documents"
-        ));
+        assert!(super::is_user_data_path(r"C:\Users\a\Documents"));
         assert!(super::is_user_data_path(r"C:\Users\a\Downloads"));
-        assert!(!super::is_user_data_path(r"C:\Users\a\Documents\App\file.txt"));
-        assert!(super::is_user_library_path(r"C:\Users\a\Documents\App\file.txt"));
+        assert!(!super::is_user_data_path(
+            r"C:\Users\a\Documents\App\file.txt"
+        ));
+        assert!(super::is_user_library_path(
+            r"C:\Users\a\Documents\App\file.txt"
+        ));
         assert!(!super::is_user_data_path(r"C:\Users\a\Downloads\x.msi"));
         assert!(super::is_user_library_path(r"C:\Users\a\Downloads\x.msi"));
         assert!(!super::is_user_data_path(r"C:\Program Files\App\bin.exe"));

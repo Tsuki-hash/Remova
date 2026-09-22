@@ -1,4 +1,4 @@
-﻿//! Dry-run (preview-only) cleanup plan 鈥?shares the real delete gates, writes nothing.
+//! Dry-run (preview-only) cleanup plan 鈥?shares the real delete gates, writes nothing.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
@@ -170,7 +170,8 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         }];
@@ -191,7 +192,8 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         }];
