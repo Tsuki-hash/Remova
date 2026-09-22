@@ -488,6 +488,7 @@ export const dict = {
     reasonHigh: "高风险，请确认后再决定",
     reasonSuspect: "疑似残留，建议确认后清理",
     reasonUserData: "用户数据，默认不删",
+    reasonUserLibrary: "用户库中的应用数据（可能含存档），确认后再清",
     reasonIgnored: "已在忽略列表中，跳过",
     reasonPathProtected: "系统 PATH 条目，受保护",
     reasonSafetyGate: "未通过删除安全门，跳过",

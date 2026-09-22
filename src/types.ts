@@ -30,6 +30,8 @@ export type CleanupItem = {
   shared?: boolean;
   /** Likely user documents/downloads — never auto-select (SOP). */
   user_data?: boolean;
+  /** Under a user library folder but not the root — confirm only, never default-select. */
+  user_library?: boolean;
   /** Best-effort size in KB (file/dir only; null/omitted for registry/path). */
   size_kb?: number | null;
   /** Display bucket from backend (programFiles/configFiles/…). */

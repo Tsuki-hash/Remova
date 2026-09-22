@@ -1,4 +1,4 @@
-//! Registry association scans (PATH, shell, drivers, software keys, services, tasks).
+﻿//! Registry association scans (PATH, shell, drivers, software keys, services, tasks).
 
 use super::*;
 
@@ -51,7 +51,7 @@ pub(super) fn scan_path_env(
                     detail: e.chars().take(120).collect(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -59,7 +59,7 @@ pub(super) fn scan_path_env(
     }
 }
 
-/// Shell extension / CLSID / ProgID leftovers (SOP 搂2鈶?.
+/// Shell extension / CLSID / ProgID leftovers (SOP 鎼?閳?.
 pub(super) fn scan_shell_extensions(
     name_slugs: &[String],
     install_low: &str,
@@ -97,7 +97,7 @@ pub(super) fn scan_shell_extensions(
                     detail: leaf,
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -141,7 +141,7 @@ pub(super) fn scan_shell_extensions(
                         detail: def.chars().take(80).collect(),
                     }],
                     shared: false,
-                    user_data: false,
+                    user_data: false, user_library: false,
                     size_kb: None,
                     bucket: None,
                 });
@@ -150,7 +150,7 @@ pub(super) fn scan_shell_extensions(
     }
 }
 
-/// Kernel/file-system drivers under Services (Type=1) (SOP 搂2鈶?.
+/// Kernel/file-system drivers under Services (Type=1) (SOP 鎼?閳?.
 pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
@@ -192,7 +192,7 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
                 detail: image.chars().take(120).collect(),
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -233,7 +233,7 @@ pub(super) fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupI
                     detail: slug.clone(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -285,7 +285,7 @@ pub(super) fn scan_services(
                 detail: image.chars().take(120).collect(),
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -331,7 +331,7 @@ pub(super) fn scan_scheduled_tasks(
                 detail: top,
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });

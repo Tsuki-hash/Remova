@@ -218,7 +218,8 @@ export function defaultSelectable(it: CleanupItem): boolean {
     it.confidence === "confirmed" &&
     it.risk !== "high" &&
     !it.shared &&
-    !it.user_data
+    !it.user_data &&
+    !it.user_library
   );
 }
 
@@ -254,9 +255,11 @@ export function leftoverReasonLine(
     reasonHigh: string;
     reasonSuspect: string;
     reasonUserData: string;
+    reasonUserLibrary: string;
   },
 ): string {
   if (it.user_data) return L.reasonUserData;
+  if (it.user_library) return L.reasonUserLibrary;
   if (it.shared) return L.reasonShared;
   if (it.risk === "high") return L.reasonHigh;
   if (it.confidence === "confirmed") return L.reasonBelongs;

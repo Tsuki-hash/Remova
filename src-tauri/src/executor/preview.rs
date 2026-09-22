@@ -1,4 +1,4 @@
-//! Dry-run (preview-only) cleanup plan — shares the real delete gates, writes nothing.
+﻿//! Dry-run (preview-only) cleanup plan 鈥?shares the real delete gates, writes nothing.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
@@ -83,7 +83,7 @@ pub fn run_cleanup_dry_for_app_source(
     }
 }
 
-/// Legacy dry-run without app context — still shares policy safety/user_data gates (A-N3).
+/// Legacy dry-run without app context 鈥?still shares policy safety/user_data gates (A-N3).
 /// Prefer `run_cleanup_dry_for_app` when an InstalledApp is known.
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
     let ignore = crate::ignore::load();
@@ -170,7 +170,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         }];
@@ -191,7 +191,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         }];

@@ -1,4 +1,4 @@
-//! Read-only association scanner (Phase 1) 鈥?parity-oriented port of Python association.
+﻿//! Read-only association scanner (Phase 1) 閳?parity-oriented port of Python association.
 
 use crate::safety::is_safe_to_delete_registry;
 use serde::{Deserialize, Serialize};
@@ -49,16 +49,20 @@ pub struct CleanupItem {
     pub risk: RiskLevel,
     pub reason: String,
     pub evidence: Vec<Evidence>,
-    /// Shared runtime / redistributable — default do-not-select.
+    /// Shared runtime / redistributable 鈥?default do-not-select.
     #[serde(default)]
     pub shared: bool,
-    /// Likely user documents / downloads / sync folders — never auto-select (SOP red line).
+    /// Library roots / sync-conflict red line 鈥?never delete.
     #[serde(default)]
     pub user_data: bool,
+    /// Under a user library folder (Documents/Downloads/鈥? but not the root 鈥?confirm,
+    /// never default-select; cleanable when associated.
+    #[serde(default)]
+    pub user_library: bool,
     /// Best-effort size in KB for file/dir leftovers only (None for registry/path or when bounded walk hits a cap).
     #[serde(default)]
     pub size_kb: Option<u64>,
-    /// Display bucket for the detail panel (program_files / config_files / …).
+    /// Display bucket for the detail panel (program_files / config_files / 鈥?.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -335,7 +339,7 @@ pub(crate) fn push_item(
         reason,
         evidence,
         shared: false,
-        user_data: false,
+        user_data: false, user_library: false,
         size_kb,
         bucket: None,
     });
@@ -426,7 +430,7 @@ pub fn analyze_associations(
                     detail: root.to_string_lossy().to_string(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -516,7 +520,7 @@ pub fn analyze_associations(
                     detail: file_name.to_string(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -539,13 +543,13 @@ pub fn analyze_associations(
                 detail: registry_key.to_string(),
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });
     }
 
-    // 4. App Paths 鈥?only when install location verifies
+    // 4. App Paths 閳?only when install location verifies
     if let Some(install) = install.as_ref() {
         let install_str = install.to_string_lossy().to_lowercase();
         if !install_str.is_empty() {
@@ -573,7 +577,7 @@ pub fn analyze_associations(
                                 detail: target,
                             }],
                             shared: false,
-                            user_data: false,
+                            user_data: false, user_library: false,
                             size_kb: None,
                             bucket: None,
                         });
@@ -632,10 +636,10 @@ pub fn analyze_associations(
         }
     }
 
-    // 6. Windows services (suspected / high 鈥?display only)
+    // 6. Windows services (suspected / high 閳?display only)
     reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
 
-    // 7. Scheduled tasks (suspected / high 鈥?display only)
+    // 7. Scheduled tasks (suspected / high 閳?display only)
     reg_scans::scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
@@ -657,9 +661,12 @@ pub fn analyze_associations(
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
         {
-            // Frontend i18n renders the user-data hint (ARCH-4) 鈥?keep reason English-neutral.
+            // Frontend i18n renders the user-data hint (ARCH-4) 閳?keep reason English-neutral.
             it.user_data = true;
             it.risk = RiskLevel::High;
+        } else if crate::safety::is_user_library_path(&it.path) {
+            // Library subpath (Documents/<App>, Downloads/pkg, 鈥? 鈥?confirm, never default-select.
+            it.user_library = true;
         }
     }
 
@@ -741,7 +748,7 @@ mod tests {
             reason: "test".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         }];
