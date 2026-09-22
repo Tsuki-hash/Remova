@@ -26,7 +26,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             // S-R6-03: never restore into red-line / system-shaped destinations.
             // A tampered path_map.json must not become an arbitrary-write primitive.
             if original.trim().is_empty()
-                || !crate::safety::is_safe_fs_for_delete(&dest)
+                || !crate::safety::is_safe_restore_target(&dest)
                 || crate::safety::looks_like_sync_conflict(&original)
             {
                 return Err(crate::error::restore_err(format!(
