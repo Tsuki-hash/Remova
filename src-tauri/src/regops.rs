@@ -22,10 +22,9 @@ fn parse(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
     }
 }
 
+// Shared Windows string helper lives in `fsutil`.
 #[cfg(windows)]
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
+use crate::fsutil::to_wide;
 
 /// Delete registry key tree. Caller must have run safety checks.
 /// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
