@@ -1,6 +1,10 @@
-# check-versions.ps1 — package / Cargo / tauri.conf (and optional docs index) must match.
-# Usage: pwsh scripts/check-versions.ps1 [-Expected "1.1.0"]
+# check-versions.ps1 — package / Cargo / tauri.conf (and docs index + CHANGELOG) must match.
+# Usage: pwsh scripts/check-versions.ps1 [-ExpectedVersion "1.1.0"]
 # When GITHUB_REF_NAME is v*, tag version must match package.json.
+
+# NOTE: PowerShell variable names are case-INSENSITIVE — `$Expected` and `$expected` would be the
+# same variable, silently discarding the bound parameter. Keep these names distinct.
+param([string]$ExpectedVersion = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -24,7 +28,7 @@ if ($pkg -ne $cargo) { $errors += "package.json ($pkg) != Cargo.toml ($cargo)" }
 if ($pkg -ne $tauri) { $errors += "package.json ($pkg) != tauri.conf.json ($tauri)" }
 
 $expected = $null
-if ($args.Count -ge 1 -and $args[0]) { $expected = $args[0] }
+if ($ExpectedVersion) { $expected = $ExpectedVersion }
 if (-not $expected -and $env:GITHUB_REF_NAME -match '^v(.+)$') {
     $expected = $Matches[1]
 }
@@ -32,7 +36,8 @@ if ($expected -and $pkg -ne $expected) {
     $errors += "version $pkg != expected $expected"
 }
 
-# docs/README.md may state current version — warn only if present and mismatched
+# docs/README.md must state the current version — a missing marker is a silent no-op today,
+# so treat "file present but unparsable" as a failure.
 $docsReadme = "docs/README.md"
 if (Test-Path $docsReadme) {
     $txt = Get-Content -Raw $docsReadme
@@ -40,6 +45,24 @@ if (Test-Path $docsReadme) {
         $docsVer = $Matches[1]
         if ($docsVer -ne $pkg) {
             $errors += "docs/README.md ($docsVer) != package.json ($pkg)"
+        }
+    } else {
+        $errors += "docs/README.md has no 'current version' marker to verify"
+    }
+}
+
+# The newest CHANGELOG section must be the released version.
+if (Test-Path "CHANGELOG.md") {
+    $cl = Get-Content "CHANGELOG.md"
+    $head = $cl | Where-Object { $_ -match '^## \[(v?)([0-9]+\.[0-9]+\.[0-9]+)\]' } | Select-Object -First 1
+    if (-not $head) {
+        $errors += "CHANGELOG.md has no '## [x.y.z]' section"
+    } elseif ($head -notmatch '\[([0-9]+\.[0-9]+\.[0-9]+)\]') {
+        $errors += "CHANGELOG.md newest section unparsable: $head"
+    } else {
+        $clVer = $Matches[1]
+        if ($clVer -ne $pkg) {
+            $errors += "CHANGELOG newest section [$clVer] != package.json ($pkg)"
         }
     }
 }
