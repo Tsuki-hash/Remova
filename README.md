@@ -83,8 +83,8 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | 安装包 | 说明 |
 |---|---|
 | `Remova_*_x64-setup.exe` | NSIS 安装程序（推荐） |
-| `Remova_*_x64_en-US.msi` | MSI 安装程序 |
-| `Remova.exe` | 便携试用（见下方说明） |
+| `Remova_*_x64_zh-CN.msi` | MSI 安装程序 |
+| `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
 系统要求：Windows 10 / 11（x64）。
 

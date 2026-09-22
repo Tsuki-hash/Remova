@@ -10,14 +10,15 @@ export type CheckupStats = {
 /** Full software checkup panel (counts only; no fake health score). */
 export function CheckupPanel({
   stats,
-  scanning,
+  orphanScanning,
   orphanCount,
   onClose,
   onOrphanScan,
   onOpenOrphans,
 }: {
   stats: CheckupStats;
-  scanning: boolean;
+  /** F-R6-08: orphan scan spinner is independent of the analyze spinner. */
+  orphanScanning: boolean;
   orphanCount: number | null;
   onClose: () => void;
   onOrphanScan: () => void;
@@ -65,7 +66,7 @@ export function CheckupPanel({
               label: L.checkupStepOrphan,
               value:
                 orphanCount === null
-                  ? scanning
+                  ? orphanScanning
                     ? "…"
                     : "—"
                   : String(orphanCount),
@@ -106,8 +107,8 @@ export function CheckupPanel({
           </div>
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
-          <button style={css.btnGhost} disabled={scanning} onClick={onOrphanScan}>
-            {scanning ? L.orphanScanning : L.checkupRunOrphan}
+          <button style={css.btnGhost} disabled={orphanScanning} onClick={onOrphanScan}>
+            {orphanScanning ? L.orphanScanning : L.checkupRunOrphan}
           </button>
           <button
             style={{ ...css.btn, opacity: orphanCount && orphanCount > 0 ? 1 : 0.5 }}

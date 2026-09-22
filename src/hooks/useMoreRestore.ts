@@ -59,7 +59,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       toast.success(L.restoreResult);
     } catch (e) {
       setRestoreMsgs([formatError(e)]);
-      toast.error(L.errInvokeFailed(formatError(e)));
+      toast.error(formatError(e));
     } finally {
       setRestoreBusy(false);
     }

@@ -29,7 +29,12 @@ use crate::fsutil::to_wide;
 /// Delete registry key tree. Caller must have run safety checks.
 /// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
 /// Parent needs DELETE + enumerate/query/set rights (MSDN RegDeleteTreeW).
+/// S-R6-06: intrinsic secondary gate — protected registry trees are refused here even if
+/// the caller skipped `is_safe_to_delete_registry`.
 pub fn delete_key(key_path: &str) -> Result<(), String> {
+    if let Err(e) = crate::safety::is_safe_to_delete_registry(key_path) {
+        return Err(format!("registry delete blocked: {e}"));
+    }
     #[cfg(not(windows))]
     {
         let _ = key_path;
@@ -381,7 +386,12 @@ static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Remove one PATH segment from User and Machine environments (exact match only).
 /// Returns Ok(true) if at least one scope changed.
+/// S-R6-06: intrinsic secondary gate — system PATH segments are refused here even if
+/// the caller skipped `is_dangerous_path_entry`.
 pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
+    if crate::policy::is_dangerous_path_entry(entry) {
+        return Err("protected PATH entry".into());
+    }
     let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let needle = normalize_path_entry(entry);
     if needle.is_empty() {
@@ -798,6 +808,23 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_eq!(a, super::normalize_path_entry(r"C:\Python3\"));
+    }
+
+    #[test]
+    fn delete_key_intrinsic_gate_blocks_protected() {
+        // S-R6-06: write primitive refuses protected trees even without caller checks.
+        assert!(super::delete_key(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend").is_err());
+        assert!(super::delete_key(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").is_err());
+        assert!(
+            super::delete_key(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall").is_err()
+        );
+    }
+
+    #[test]
+    fn scrub_path_entry_intrinsic_gate_blocks_system() {
+        // S-R6-06: PATH scrub refuses system segments even without caller checks.
+        assert!(super::scrub_path_entry(r"C:\Windows\System32").is_err());
+        assert!(super::scrub_path_entry(r"C:\Windows").is_err());
     }
 
     #[test]

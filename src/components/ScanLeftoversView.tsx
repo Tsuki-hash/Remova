@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { memo, useMemo, useRef, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -15,6 +15,154 @@ import {
 import { filterItemsByBucket, linkedBucketLabelKey } from "../lib/linkedItems";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
+
+type LeftoverRowProps = {
+  it: CleanupItem;
+  checked: boolean;
+  note: string | undefined;
+  onTogglePath: (path: string) => void;
+  onEvidence: (text: string | null) => void;
+};
+
+/** F-R6-10: memoized row so virtual-list parent re-renders skip unchanged items. */
+const LeftoverRow = memo(function LeftoverRow({
+  it,
+  checked,
+  note,
+  onTogglePath,
+  onEvidence,
+}: LeftoverRowProps) {
+  const L = t();
+  const reasonLine = leftoverReasonLine(it, L);
+  const noted = Boolean(note);
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "28px 1fr 120px 90px 40px",
+        gap: 8,
+        alignItems: "start",
+        padding: "10px 14px",
+        borderBottom: "1px solid var(--border)",
+        boxShadow: it.risk === "high"
+          ? "inset 3px 0 0 var(--danger)"
+          : noted
+            ? "inset 3px 0 0 var(--accent)"
+            : undefined,
+        background: noted ? "var(--accent-soft)" : undefined,
+      }}
+    >
+      <div>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => onTogglePath(it.path)}
+        />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <span className="ell" style={{ display: "block", fontSize: 12.5 }} title={it.path}>
+          {it.path}
+        </span>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.4 }}>
+          {reasonLine}
+          {it.reason && it.reason !== reasonLine ? ` · ${it.reason}` : ""}
+        </div>
+        {note && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "var(--accent)",
+              marginTop: 2,
+              lineHeight: 1.4,
+              fontWeight: 500,
+            }}
+          >
+            ✦ {note}
+            <span style={{ opacity: 0.75, color: "var(--muted)" }}> · {L.aiDisclaimer}</span>
+          </div>
+        )}
+      </div>
+      <div>
+        <span style={css.sourceBadge}>{it.kind}</span>
+        {it.shared && (
+          <span
+            style={{
+              ...css.sourceBadge,
+              marginLeft: 6,
+              color: "var(--warn)",
+              borderColor: "var(--warn)",
+            }}
+            title={L.sharedHint}
+          >
+            {L.badgeShared}
+          </span>
+        )}
+        {it.user_data && (
+          <span
+            style={{
+              ...css.sourceBadge,
+              marginLeft: 6,
+              color: "var(--danger)",
+              borderColor: "var(--danger)",
+            }}
+            title={L.userDataHint}
+          >
+            {L.badgeUserData}
+          </span>
+        )}
+        {it.user_library && (
+          <span
+            style={{
+              ...css.sourceBadge,
+              marginLeft: 6,
+              color: "var(--mid, #FFB020)",
+              borderColor: "var(--mid, #FFB020)",
+            }}
+            title={L.userLibraryHint}
+          >
+            {L.badgeUserLibrary}
+          </span>
+        )}
+      </div>
+      <div
+        style={{
+          color:
+            it.risk === "high"
+              ? "var(--danger)"
+              : it.confidence === "confirmed"
+                ? "var(--ok)"
+                : "var(--warn)",
+          fontWeight: 600,
+          fontSize: 12,
+        }}
+      >
+        {it.risk === "high"
+          ? L.riskHigh
+          : it.risk === "medium"
+            ? L.riskMedium
+            : it.confidence === "confirmed"
+              ? L.confirmed
+              : it.score >= 30
+                ? L.suspected
+                : L.low}
+      </div>
+      <div>
+        <button
+          style={{ ...css.btnGhost, height: 28, width: 32, padding: 0 }}
+          onClick={() =>
+            onEvidence(
+              it.evidence
+                .map((e) => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
+                .join("\n") || it.reason,
+            )
+          }
+        >
+          ⓘ
+        </button>
+      </div>
+    </div>
+  );
+});
 
 type Props = {
   scan: ScanResult;
@@ -95,125 +243,6 @@ export function ScanLeftoversView({
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
-
-  const renderRow = (it: CleanupItem) => {
-    const noted = Boolean(aiNotes[it.path]);
-    return (
-    <div
-      key={it.path}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "28px 1fr 120px 90px 40px",
-        gap: 8,
-        alignItems: "start",
-        padding: "10px 14px",
-        borderBottom: "1px solid var(--border)",
-        boxShadow: it.risk === "high"
-          ? "inset 3px 0 0 var(--danger)"
-          : noted
-            ? "inset 3px 0 0 var(--accent)"
-            : undefined,
-        background: noted ? "var(--accent-soft)" : undefined,
-      }}
-    >
-      <div>
-        <input
-          type="checkbox"
-          checked={selectedPaths.has(it.path)}
-          onChange={() => onTogglePath(it.path)}
-        />
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <span className="ell" style={{ display: "block", fontSize: 12.5 }} title={it.path}>
-          {it.path}
-        </span>
-        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.4 }}>
-          {leftoverReasonLine(it, L)}
-          {it.reason && it.reason !== leftoverReasonLine(it, L) ? ` · ${it.reason}` : ""}
-        </div>
-        {aiNotes[it.path] && (
-          <div
-            style={{
-              fontSize: 11.5,
-              color: "var(--accent)",
-              marginTop: 2,
-              lineHeight: 1.4,
-              fontWeight: 500,
-            }}
-          >
-            ✦ {aiNotes[it.path]}
-            <span style={{ opacity: 0.75, color: "var(--muted)" }}> · {L.aiDisclaimer}</span>
-          </div>
-        )}
-      </div>
-      <div>
-        <span style={css.sourceBadge}>{it.kind}</span>
-        {it.shared && (
-          <span
-            style={{
-              ...css.sourceBadge,
-              marginLeft: 6,
-              color: "var(--warn)",
-              borderColor: "var(--warn)",
-            }}
-            title={L.sharedHint}
-          >
-            {L.badgeShared}
-          </span>
-        )}
-        {it.user_data && (
-          <span
-            style={{
-              ...css.sourceBadge,
-              marginLeft: 6,
-              color: "var(--danger)",
-              borderColor: "var(--danger)",
-            }}
-            title={L.userDataHint}
-          >
-            {L.badgeUserData}
-          </span>
-        )}
-      </div>
-      <div
-        style={{
-          color:
-            it.risk === "high"
-              ? "var(--danger)"
-              : it.confidence === "confirmed"
-                ? "var(--ok)"
-                : "var(--warn)",
-          fontWeight: 600,
-          fontSize: 12,
-        }}
-      >
-        {it.risk === "high"
-          ? L.riskHigh
-          : it.risk === "medium"
-            ? L.riskMedium
-            : it.confidence === "confirmed"
-              ? L.confirmed
-              : it.score >= 30
-                ? L.suspected
-                : L.low}
-      </div>
-      <div>
-        <button
-          style={{ ...css.btnGhost, height: 28, width: 32, padding: 0 }}
-          onClick={() =>
-            onEvidence(
-              it.evidence
-                .map((e) => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
-                .join("\n") || it.reason,
-            )
-          }
-        >
-          ⓘ
-        </button>
-      </div>
-    </div>
-    );
-  };
 
   return (
     <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -317,7 +346,13 @@ export function ScanLeftoversView({
                     transform: `translateY(${vr.start}px)`,
                   }}
                 >
-                  {renderRow(it)}
+                  <LeftoverRow
+                    it={it}
+                    checked={selectedPaths.has(it.path)}
+                    note={aiNotes[it.path]}
+                    onTogglePath={onTogglePath}
+                    onEvidence={onEvidence}
+                  />
                 </div>
               );
             })}

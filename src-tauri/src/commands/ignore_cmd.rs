@@ -32,3 +32,21 @@ pub fn apply_ignore_suggestions(
 ) -> Result<ignore::IgnoreList, String> {
     ignore::apply_suggestions(&suggestions)
 }
+
+#[cfg(test)]
+mod tests {
+    // R-R6-07: command-layer boundary coverage (was zero).
+
+    #[test]
+    fn ignore_publisher_rejects_blank_name() {
+        // Empty / whitespace publisher must never become an ignore rule.
+        assert!(super::ignore_publisher("   ".to_string()).is_err());
+        assert!(super::ignore_publisher("".to_string()).is_err());
+    }
+
+    #[test]
+    fn ignore_app_name_rejects_blank_name() {
+        assert!(super::ignore_app_name("".to_string()).is_err());
+        assert!(super::ignore_app_name("\t".to_string()).is_err());
+    }
+}
