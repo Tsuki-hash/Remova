@@ -173,10 +173,6 @@ export function MorePage({
     },
   ];
 
-  const selectedLabel = selected
-    ? prettyAppName(selected.name, selected.source)
-    : L.moreSelectedNone;
-
   return (
     <div
       style={{
@@ -188,33 +184,6 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
-      <div
-        style={{
-          ...css.card,
-          padding: "10px 14px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
-          fontSize: 13,
-          marginBottom: 18,
-        }}
-      >
-        {selected ? (
-          <>
-            <span style={{ ...css.muted, fontSize: 12 }}>{L.selectedAppChip}</span>
-            <strong>{selectedLabel}</strong>
-          </>
-        ) : (
-          <>
-            <span style={{ color: "var(--muted)" }}>{L.moreSelectedNeedHint}</span>
-            <button style={{ ...css.btnSm, height: 28, marginLeft: "auto" }} onClick={onGoSoftware}>
-              {L.goToSoftware}
-            </button>
-          </>
-        )}
-      </div>
-
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
         {common.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
