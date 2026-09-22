@@ -1,4 +1,4 @@
-//! Full-pipeline smoke test: dry-run → backup → delete → restore.
+﻿//! Full-pipeline smoke test: dry-run 鈫?backup 鈫?delete 鈫?restore.
 //! Uses a temp directory only; never touches real uninstall keys or ProgramData backup root
 //! except through explicit session paths we create under temp.
 
@@ -55,7 +55,7 @@ fn file_item(path: &str) -> CleanupItem {
             detail: String::new(),
         }],
         shared: false,
-        user_data: false,
+        user_data: false, user_library: false,
         size_kb: None,
         bucket: None,
     }
@@ -71,7 +71,7 @@ fn pipeline_dry_run_backup_delete_restore() {
     std::env::set_var("REMOVA_BACKUP_DIR", &bak);
     let app_dir = root.join("FakeApp");
     fs::create_dir_all(app_dir.join("bin")).unwrap();
-    // Avoid a `.exe` name in %TEMP% — Defender can quarantine mid-test and flake backup.
+    // Avoid a `.exe` name in %TEMP% 鈥?Defender can quarantine mid-test and flake backup.
     fs::write(app_dir.join("bin").join("app.bin"), b"fake-binary").unwrap();
     fs::write(app_dir.join("readme.txt"), b"hello remova").unwrap();
     let loc = app_dir.to_string_lossy().to_string();
@@ -86,7 +86,7 @@ fn pipeline_dry_run_backup_delete_restore() {
     assert_eq!(dry.skipped, 0);
     assert!(app_dir.exists(), "dry-run must not delete");
 
-    // 2) Full cleanup with backup (skip official uninstaller — no uninstall string)
+    // 2) Full cleanup with backup (skip official uninstaller 鈥?no uninstall string)
     let report = run_full_cleanup(
         &app,
         &items,
@@ -139,7 +139,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         },
@@ -152,7 +152,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         },

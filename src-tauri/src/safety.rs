@@ -346,27 +346,13 @@ pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
     is_safe_fs(p) && !is_user_data_path(&s) && !looks_like_sync_conflict(&s)
 }
 
-/// Paths that are likely the user's own files (SOP red line) — never auto-delete.
+/// Red line: the user's library **roots** (Documents/Downloads/…) and sync-conflict trees.
+/// Never delete these. Subfolders under a library (e.g. `Documents\<App>`, updater caches)
+/// are **not** red-lined — they may be cleaned when associated. See [`is_user_library_path`].
 pub fn is_user_data_path(p: &str) -> bool {
     let low = p.replace('/', "\\").to_lowercase();
     let trimmed = low.trim_end_matches('\\');
-    if low.contains(r"\my documents") {
-        return true;
-    }
-    let markers = [
-        r"\documents\",
-        r"\desktop\",
-        r"\downloads\",
-        r"\pictures\",
-        r"\videos\",
-        r"\music\",
-        r"\onedrive\",
-    ];
-    if markers.iter().any(|m| low.contains(m)) {
-        return true;
-    }
-    // Exact profile / public red-line roots (no trailing segment): last path segment match.
-    // e.g. C:\Users\me\Documents, C:\Users\Public\Downloads
+    // Exact profile / public library roots (last path segment match).
     const SEGMENTS: &[&str] = &[
         "documents",
         "my documents",
@@ -381,9 +367,29 @@ pub fn is_user_data_path(p: &str) -> bool {
     if !SEGMENTS.contains(&last) {
         return false;
     }
-    // Require a Users-style prefix so random non-profile ...\Documents trees stay
+    // Require a Users-style prefix so non-profile ...\Documents trees stay
     // governed by association/other gates rather than a global name ban.
     trimmed.contains(r"\users\") || trimmed.contains(r"\user\")
+}
+
+/// Path sits **under** a user library folder but is not the root itself. Cleanable when
+/// associated; never default-selected (may hold saves / personal files).
+pub fn is_user_library_path(p: &str) -> bool {
+    if is_user_data_path(p) {
+        return false;
+    }
+    let low = p.replace('/', "\\").to_lowercase();
+    let markers = [
+        r"\my documents\",
+        r"\documents\",
+        r"\desktop\",
+        r"\downloads\",
+        r"\pictures\",
+        r"\videos\",
+        r"\music\",
+        r"\onedrive\",
+    ];
+    (low.contains(r"\users\") || low.contains(r"\user\")) && markers.iter().any(|m| low.contains(m))
 }
 
 /// Sync-conflict style folders often hold real user files.
@@ -465,7 +471,7 @@ mod tests {
 
     #[test]
     fn user_data_exact_profile_roots_flagged() {
-        // S-R4-01: exact red-line roots without trailing segment.
+        // Red line = library roots only (last segment + Users prefix).
         for p in [
             r"C:\Users\a\Documents",
             r"C:\Users\a\Documents\",
@@ -477,8 +483,20 @@ mod tests {
         ] {
             assert!(is_user_data_path(p), "expected user_data for {p}");
         }
-        assert!(is_user_data_path(
+        // Library subpaths are cleanable when associated (not the red line).
+        assert!(!is_user_data_path(
             r"C:\Users\a\Documents\App\Config\file.txt"
+        ));
+        assert!(is_user_library_path(
+            r"C:\Users\a\Documents\App\Config\file.txt"
+        ));
+        assert!(!is_user_data_path(r"C:\Users\a\Downloads\x.msi"));
+        // AppData / updater caches are ordinary leftovers.
+        assert!(!is_user_data_path(
+            r"C:\Users\a\AppData\Local\Acme\updater\pkg.exe"
+        ));
+        assert!(!is_user_library_path(
+            r"C:\Users\a\AppData\Local\Acme\updater\pkg.exe"
         ));
         assert!(!is_user_data_path(r"C:\Program Files\MyApp"));
     }
@@ -501,12 +519,10 @@ mod tests {
 
     #[test]
     fn delete_gate_adds_user_data_red_lines_to_shape_gate() {
-        // the shape gate still passes these (so the scanner can surface + explain them),
-        // but the delete-grade gate must reject them.
+        // Library roots and sync-conflict trees: shape gate still surfaces them for
+        // the kept-list explanation, but the delete-grade gate must reject them.
         for p in [
             r"C:\Users\a\Documents",
-            r"C:\Users\a\Downloads\setup.msi",
-            r"C:\Users\a\Desktop\keep",
             r"C:\Users\a\Documents\坚果云同步冲突\x",
         ] {
             assert!(
@@ -518,7 +534,16 @@ mod tests {
                 "delete gate must reject {p}"
             );
         }
-        // Ordinary install paths pass both.
+        // Library subpaths and updater caches are cleanable when associated.
+        assert!(is_safe_fs_for_delete(Path::new(
+            r"C:\Users\a\Documents\App\Config"
+        )));
+        assert!(is_safe_fs_for_delete(Path::new(
+            r"C:\Users\a\Downloads\setup.msi"
+        )));
+        assert!(is_safe_fs_for_delete(Path::new(
+            r"C:\Users\a\AppData\Local\Acme\updater\pkg.exe"
+        )));
         assert!(is_safe_fs_for_delete(Path::new(r"C:\Program Files\MyApp")));
         assert!(is_safe_fs_for_delete(Path::new(
             r"C:\Users\a\AppData\Roaming\MyApp"
@@ -655,9 +680,13 @@ mod tests {
     #[test]
     fn user_data_paths_flagged() {
         assert!(super::is_user_data_path(
-            r"C:\Users\a\Documents\App\file.txt"
+            r"C:\Users\a\Documents"
         ));
-        assert!(super::is_user_data_path(r"C:\Users\a\Downloads\x.msi"));
+        assert!(super::is_user_data_path(r"C:\Users\a\Downloads"));
+        assert!(!super::is_user_data_path(r"C:\Users\a\Documents\App\file.txt"));
+        assert!(super::is_user_library_path(r"C:\Users\a\Documents\App\file.txt"));
+        assert!(!super::is_user_data_path(r"C:\Users\a\Downloads\x.msi"));
+        assert!(super::is_user_library_path(r"C:\Users\a\Downloads\x.msi"));
         assert!(!super::is_user_data_path(r"C:\Program Files\App\bin.exe"));
     }
 
