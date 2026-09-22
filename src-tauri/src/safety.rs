@@ -355,27 +355,21 @@ pub fn protected_fs_prefixes() -> Vec<String> {
 }
 
 /// True when the path uses an abnormal Windows shape that can bypass prefix/segment matching:
-/// extended-length / device prefixes (`\\?\`, `\\.\`) or 8.3 short-name segments (`NAME~1`).
-/// S-R6-05: these must never be treated as ordinary safe paths or non-library paths.
+/// extended-length / device prefixes (`\\?\`, `\\.\`) or **known protected** 8.3 short names
+/// (`PROGRA~1`, `DOCUME~1`, …). Generic profile short names (`Users\RUNNER~1\…`) stay legal.
 pub fn is_abnormal_path_shape(p: &str) -> bool {
     let s = p.replace('/', "\\");
-    // Extended-length / device / UNC-device prefixes anywhere in the path.
     if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
         return true;
     }
-    // 8.3 short-name segment shape: `NAME~DIGITS` optionally followed by an extension.
+    const SHORTS: &[&str] = &[
+        "progra~1", "progra~2", "docume~1", "mydocu~1", "downlo~1", "applic~1", "locals~1",
+        "shared~1", "public~1",
+    ];
     for seg in s.split('\\') {
         let low = seg.to_ascii_lowercase();
-        let Some(tilde) = low.find('~') else {
-            continue;
-        };
-        let rest = &low[tilde + 1..];
-        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-        if digits == 0 {
-            continue;
-        }
-        let after = &rest[digits..];
-        if after.is_empty() || after.starts_with('.') {
+        let base = low.split('.').next().unwrap_or(&low);
+        if SHORTS.contains(&base) {
             return true;
         }
     }
