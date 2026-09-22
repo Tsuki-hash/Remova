@@ -1,4 +1,4 @@
-﻿//! Backup 鈫?official uninstall 鈫?per-item delete.
+//! Backup 鈫?official uninstall 鈫?per-item delete.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
@@ -426,7 +426,8 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         }];
