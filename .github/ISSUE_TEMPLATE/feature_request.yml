@@ -1,0 +1,37 @@
+name: 功能建议
+description: 对深度卸载、安全门禁、报告、系统项管理等的建议
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remova 定位是「可解释、可回滚的深度卸载」。浏览器插件清理、系统垃圾全家桶等不在主路径内。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决什么问题
+      description: 你在什么场景下卡住或不满意
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望能力
+      description: 希望 Remova 怎么做
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 现在的替代做法
+      description: 你目前如何绕过（若有）
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: 当前使用的 Remova 版本
+      placeholder: 例如：1.1.1
+    validations:
+      required: false

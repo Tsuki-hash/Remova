@@ -155,6 +155,9 @@ export const dict = {
     errServiceProtected: "This service is protected by the system and cannot be disabled",
     errServiceProtectedNamed: (name: string) =>
       `"${name}" is a critical system service and is protected — Remova will not disable it.`,
+    errPathProtected: "This path is protected (system location or user data) — Remova will not delete it",
+    errPathProtectedNamed: (name: string) =>
+      `"${name}" is protected (system location, user data, or sync-conflict folder) — Remova will not delete it.`,
     errAccessAdmin: "Access denied: run Remova as administrator and try again",
     errAccessAdminNamed: (name: string) =>
       `Access denied: you do not have permission to change "${name}". This usually requires administrator rights. Restart as admin and try again.`,
@@ -352,7 +355,7 @@ export const dict = {
       `Deleted ${deleted}, failed ${failed}, skipped ${skipped}${backup ? "; Safety Vault backup written — restore under More" : ""}.`,
     reportNextOk: "Next: uninstall another app, or restore from More → Restore backup if needed.",
     reportNextFailed: "Next: failures are often locked files or admin rights. Close apps and retry, or restart as admin.",
-    reportNextSkipped: "Next: skipped items are often shared components or user data. Select manually if still needed.",
+    reportNextSkipped: "Next: skipped items are often shared components, user-data red lines, or safety-gate blocks. See item details for the reason; decide manually for anything under user data.",
     reportFlowDone: "Deep uninstall finished: official uninstall → leftover scan → you confirmed cleanup.",
     copilotInlinePlaceholder: "What to clean? e.g. Adobe over 2GB",
     aiEnabledChip: "Model ready",
@@ -490,6 +493,14 @@ export const dict = {
     reasonShared: "Possible shared component — kept by default",
     reasonHigh: "High risk — confirm before deleting",
     reasonSuspect: "Possible leftover — review before cleaning",
+    reasonUserData: "User data — not deleted by default",
+    reasonIgnored: "On the ignore list — skipped",
+    reasonPathProtected: "System PATH entry — protected",
+    reasonSafetyGate: "Failed the delete safety gate — skipped",
+    reasonNotAssociated: "No reliable link to this app — skipped",
+    reasonPathMissing: "Path no longer exists",
+    reasonNotInPath: "Entry no longer present in PATH",
+    reasonRebootDelete: "Scheduled for delete on reboot",
     stageIdentify: "Identify install",
     stageOfficial: "Launch official uninstaller",
     stageScanLeftover: "Scan files & registry",

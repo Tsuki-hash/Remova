@@ -10,6 +10,7 @@ import {
   isRecommendedCleanup,
   isRecentInstall,
   isSuggestItem,
+  gateReasonText,
   leftoverReasonLine,
   maxRiskOf,
   originLabel,
@@ -31,6 +32,14 @@ const L = {
   reasonShared: "可能是共享组件，默认保留",
   reasonHigh: "高风险，请确认后再决定",
   reasonSuspect: "疑似残留，建议确认后清理",
+  reasonUserData: "用户数据，默认不删",
+  reasonIgnored: "已在忽略列表中，跳过",
+  reasonPathProtected: "系统 PATH 条目，受保护",
+  reasonSafetyGate: "未通过删除安全门，跳过",
+  reasonNotAssociated: "与当前软件无可靠关联，跳过",
+  reasonPathMissing: "路径已不存在",
+  reasonNotInPath: "PATH 中已不存在该条目",
+  reasonRebootDelete: "已安排重启后删除",
 };
 
 function app(partial: Partial<InstalledApp> = {}): InstalledApp {
@@ -183,12 +192,26 @@ describe("summarizeLeftovers", () => {
   });
 });
 
-describe("leftoverReasonLine", () => {
-  it("prefers shared / high over confirmed", () => {
+describe("leftoverReasonLine / gateReasonText", () => {
+  it("leftoverReasonLine prefers user_data then shared/high/confirmed", () => {
+    expect(leftoverReasonLine(item({ user_data: true }), L)).toBe(L.reasonUserData);
     expect(leftoverReasonLine(item({ shared: true }), L)).toBe(L.reasonShared);
     expect(leftoverReasonLine(item({ risk: "high" }), L)).toBe(L.reasonHigh);
     expect(leftoverReasonLine(item(), L)).toBe(L.reasonBelongs);
     expect(leftoverReasonLine(item({ confidence: "suspected" }), L)).toBe(L.reasonSuspect);
+  });
+
+  it("gateReasonText maps delete-gate skip codes to user copy", () => {
+    expect(gateReasonText("user_data red line", L)).toBe(L.reasonUserData);
+    expect(gateReasonText("shared runtime", L)).toBe(L.reasonShared);
+    expect(gateReasonText("ignored path", L)).toBe(L.reasonIgnored);
+    expect(gateReasonText("protected PATH entry", L)).toBe(L.reasonPathProtected);
+    expect(gateReasonText("failed safety gate", L)).toBe(L.reasonSafetyGate);
+    expect(gateReasonText("path not associated with app", L)).toBe(L.reasonNotAssociated);
+    expect(gateReasonText("path missing", L)).toBe(L.reasonPathMissing);
+    expect(gateReasonText("not found in PATH", L)).toBe(L.reasonNotInPath);
+    expect(gateReasonText("reboot delete", L)).toBe(L.reasonRebootDelete);
+    expect(gateReasonText("something else", L)).toBe("something else");
   });
 });
 

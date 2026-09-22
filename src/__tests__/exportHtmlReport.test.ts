@@ -14,6 +14,15 @@ const L = {
   reportMessage: "说明",
   reportAborted: "已中止",
   reportBackup: "备份",
+  reasonUserData: "用户数据，默认不删",
+  reasonShared: "可能是共享组件，默认保留",
+  reasonIgnored: "已在忽略列表中，跳过",
+  reasonPathProtected: "系统 PATH 条目，受保护",
+  reasonSafetyGate: "未通过删除安全门，跳过",
+  reasonNotAssociated: "与当前软件无可靠关联，跳过",
+  reasonPathMissing: "路径已不存在",
+  reasonNotInPath: "PATH 中已不存在该条目",
+  reasonRebootDelete: "已安排重启后删除",
 };
 
 function report(partial: Partial<FullCleanupReport> = {}): FullCleanupReport {

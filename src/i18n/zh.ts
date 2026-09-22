@@ -164,6 +164,9 @@ export const dict = {
     errServiceProtected: "该服务受系统保护，不能禁用",
     errServiceProtectedNamed: (name: string) =>
       `「${name}」是系统关键服务，Remova 会保护它，不能禁用。`,
+    errPathProtected: "该路径受保护（系统目录或用户数据），Remova 不会删除",
+    errPathProtectedNamed: (name: string) =>
+      `「${name}」受保护（系统目录、用户数据或同步冲突目录），Remova 不会删除。`,
     errAccessAdmin: "权限不足：请以管理员身份运行 Remova 后再试",
     errAccessAdminNamed: (name: string) =>
       `权限不足：没有权限修改「${name}」。这通常需要管理员权限。点「以管理员重启」后再试。`,
@@ -348,7 +351,7 @@ export const dict = {
       `本次删除 ${deleted} 项，失败 ${failed}，跳过 ${skipped}${backup ? "；已写入安全备份，可在「更多 → 还原备份」恢复" : ""}。`,
     reportNextOk: "下一步：可返回列表继续卸载；误删可在「更多 → 还原备份」恢复。",
     reportNextFailed: "下一步：失败项常因文件占用或权限。关闭相关程序后重试，或以管理员重启 Remova。",
-    reportNextSkipped: "下一步：跳过多为共享组件或用户数据。确认后可在列表手动勾选再清理。",
+    reportNextSkipped: "下一步：跳过多为共享组件、用户数据红线或安全门拦截。可在明细中查看原因；用户数据请手动确认后再决定。",
     reportFlowDone: "深度卸载流程已完成：官方卸载 → 残留扫描 → 你确认后清理。",
     copilotInlinePlaceholder: "想清理什么？例如：大于 2GB 的 Adobe",
     aiEnabledChip: "模型已配置",
@@ -484,6 +487,14 @@ export const dict = {
     reasonShared: "可能是共享组件，默认保留",
     reasonHigh: "高风险，请确认后再决定",
     reasonSuspect: "疑似残留，建议确认后清理",
+    reasonUserData: "用户数据，默认不删",
+    reasonIgnored: "已在忽略列表中，跳过",
+    reasonPathProtected: "系统 PATH 条目，受保护",
+    reasonSafetyGate: "未通过删除安全门，跳过",
+    reasonNotAssociated: "与当前软件无可靠关联，跳过",
+    reasonPathMissing: "路径已不存在",
+    reasonNotInPath: "PATH 中已不存在该条目",
+    reasonRebootDelete: "已安排重启后删除",
     stageIdentify: "识别安装信息",
     stageOfficial: "启动官方卸载程序",
     stageScanLeftover: "扫描文件与注册表",
