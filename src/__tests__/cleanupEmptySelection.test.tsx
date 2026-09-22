@@ -58,7 +58,6 @@ const flow: CleanupFlowSetters = {
   setResidualFromUninstall: noop,
   setAiRisk: noop,
   setReport: noop,
-  setLastReport: noop,
   setVerifyRows: noop,
   setAiReportNote: noop,
   setError: noop,

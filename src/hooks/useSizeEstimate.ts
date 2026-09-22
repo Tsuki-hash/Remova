@@ -39,9 +39,15 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
           .map((a) => a.install_location.trim()),
       ),
     ].filter((p) => !sizeCache.current.has(p));
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      // a re-run whose paths are all cached must not leave the footer spinner on.
+      setEstimating(false);
+      setSizeProgress({ done: 0, total: 0 });
+      return;
+    }
 
     let disposed = false;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
     sizeCancelRef.current = false;
     setEstimating(true);
     const total = pending.length;
@@ -50,7 +56,6 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     (async () => {
       let done = 0;
-      let flushTimer: ReturnType<typeof setTimeout> | null = null;
       let pendingFlush: Record<string, number> = {};
       const flush = () => {
         const batch = pendingFlush;
@@ -84,6 +89,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
       await Promise.all(workers);
       if (flushTimer) {
         clearTimeout(flushTimer);
+        flushTimer = null;
         flush();
       }
       if (!disposed) {
@@ -94,6 +100,11 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     return () => {
       disposed = true;
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      setEstimating(false);
     };
   }, [apps, loading]);
 
@@ -107,5 +118,5 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
     }
   }, []);
 
-  return { estimating, sizeMap, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize };
+  return { estimating, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize };
 }

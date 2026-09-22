@@ -14,6 +14,12 @@ export type AppCoreState = {
   scan: ScanResult | null;
   scanning: boolean;
   report: CleanupReport | FullCleanupReport | null;
+  /**
+   * Last completed *full* cleanup. Derived from `report` by the reducer so the two can
+   * never describe different apps. Kept across `preview/close` on purpose: the More page can still
+   * export/report the cleanup the user just performed.
+   */
+  lastReport: FullCleanupReport | null;
   useOfficial: boolean;
   admin: boolean | null;
   disk: string;
@@ -30,8 +36,6 @@ export type AppCoreAction =
   | { type: "multi/toggle"; key: string }
   | { type: "multi/set"; value: Set<string> }
   | { type: "multi/update"; updater: (m: Set<string>) => Set<string> }
-  | { type: "multi/removeKeys"; keys: string[] }
-  | { type: "multi/clear" }
   | { type: "scan/set"; value: ScanResult | null }
   | { type: "scanning/set"; value: boolean }
   | { type: "report/set"; value: CleanupReport | FullCleanupReport | null }
@@ -53,6 +57,7 @@ export function initialAppCoreState(): AppCoreState {
     scan: null,
     scanning: false,
     report: null,
+    lastReport: null,
     useOfficial: false,
     admin: null,
     disk: "",
@@ -60,6 +65,12 @@ export function initialAppCoreState(): AppCoreState {
     ignorePub: [],
     ignoreName: [],
   };
+}
+
+function isCompletedFullReport(
+  value: CleanupReport | FullCleanupReport,
+): value is FullCleanupReport {
+  return "deleted" in value && !value.dry_run && !value.aborted;
 }
 
 export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppCoreState {
@@ -82,20 +93,20 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
       return { ...state, multi: action.value };
     case "multi/update":
       return { ...state, multi: action.updater(state.multi) };
-    case "multi/removeKeys": {
-      const okSet = new Set(action.keys);
-      const n = new Set(state.multi);
-      for (const k of okSet) n.delete(k);
-      return { ...state, multi: n };
-    }
-    case "multi/clear":
-      return { ...state, multi: new Set() };
     case "scan/set":
       return { ...state, scan: action.value };
     case "scanning/set":
       return { ...state, scanning: action.value };
-    case "report/set":
-      return { ...state, report: action.value };
+    case "report/set": {
+      const value = action.value;
+      // `lastReport` is derived here and nowhere else — one writer, no drift.
+      const isFull = value !== null && isCompletedFullReport(value);
+      return {
+        ...state,
+        report: value,
+        lastReport: isFull ? value : state.lastReport,
+      };
+    }
     case "useOfficial/set":
       return { ...state, useOfficial: action.value };
     case "admin/set":

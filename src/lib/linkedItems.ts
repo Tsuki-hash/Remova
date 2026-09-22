@@ -132,7 +132,16 @@ export function filterItemsByBucket(
   return items.filter((it) => classifyItem(it, app) === bucket);
 }
 
-export function linkedBucketLabelKey(id: LinkedBucketId): string {
+/** Keys into the i18n `Strings` record — typed so callers index without a cast. */
+export type LinkedBucketLabelKey =
+  | "linkedProgramFiles"
+  | "linkedConfigFiles"
+  | "linkedRegistry"
+  | "linkedShortcuts"
+  | "linkedStartup"
+  | "linkedOther";
+
+export function linkedBucketLabelKey(id: LinkedBucketId): LinkedBucketLabelKey {
   switch (id) {
     case "programFiles":
       return "linkedProgramFiles";
