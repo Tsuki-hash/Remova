@@ -189,12 +189,11 @@ export function Shell({
           style={{
             flex: 1,
             minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
+            // block + own scroll: flex-column children were being height-shrunk
+            // (squashing banners and pushing tool panels off-screen).
+            display: "block",
+            overflow: "auto",
             padding: "10px 14px 10px",
-            overflow: "hidden",
-            // Banners must never be squashed by the page's flex:1 child.
-            rowGap: 0,
           }}
         >
           {children}
