@@ -33,6 +33,7 @@ const L = {
   reasonHigh: "高风险，请确认后再决定",
   reasonSuspect: "疑似残留，建议确认后清理",
   reasonUserData: "用户数据，默认不删",
+  reasonUserLibrary: "用户库中的应用数据（可能含存档），确认后再清",
   reasonIgnored: "已在忽略列表中，跳过",
   reasonPathProtected: "系统 PATH 条目，受保护",
   reasonSafetyGate: "未通过删除安全门，跳过",
@@ -193,12 +194,16 @@ describe("summarizeLeftovers", () => {
 });
 
 describe("leftoverReasonLine / gateReasonText", () => {
-  it("leftoverReasonLine prefers user_data then shared/high/confirmed", () => {
+  it("leftoverReasonLine prefers user_data then library/shared/high/confirmed", () => {
     expect(leftoverReasonLine(item({ user_data: true }), L)).toBe(L.reasonUserData);
+    expect(leftoverReasonLine(item({ user_library: true }), L)).toBe(L.reasonUserLibrary);
     expect(leftoverReasonLine(item({ shared: true }), L)).toBe(L.reasonShared);
     expect(leftoverReasonLine(item({ risk: "high" }), L)).toBe(L.reasonHigh);
     expect(leftoverReasonLine(item(), L)).toBe(L.reasonBelongs);
     expect(leftoverReasonLine(item({ confidence: "suspected" }), L)).toBe(L.reasonSuspect);
+    // library paths are never default-selected (confirm bucket)
+    expect(defaultSelectable(item({ user_library: true, confidence: "confirmed" }))).toBe(false);
+    expect(isSuggestItem(item({ user_library: true, confidence: "confirmed" }))).toBe(true);
   });
 
   it("gateReasonText maps delete-gate skip codes to user copy", () => {
