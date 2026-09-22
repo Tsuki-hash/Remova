@@ -1,4 +1,4 @@
-﻿//! Full-pipeline smoke test: dry-run 鈫?backup 鈫?delete 鈫?restore.
+//! Full-pipeline smoke test: dry-run 鈫?backup 鈫?delete 鈫?restore.
 //! Uses a temp directory only; never touches real uninstall keys or ProgramData backup root
 //! except through explicit session paths we create under temp.
 
@@ -55,7 +55,8 @@ fn file_item(path: &str) -> CleanupItem {
             detail: String::new(),
         }],
         shared: false,
-        user_data: false, user_library: false,
+        user_data: false,
+        user_library: false,
         size_kb: None,
         bucket: None,
     }
@@ -139,7 +140,8 @@ fn pipeline_skips_protected_and_shallow_paths() {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         },
@@ -152,7 +154,8 @@ fn pipeline_skips_protected_and_shallow_paths() {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false, user_library: false,
+            user_data: false,
+            user_library: false,
             size_kb: None,
             bucket: None,
         },
