@@ -45,7 +45,8 @@ function push(
   };
   items = [...items, item].slice(-5);
   if (!item.sticky) {
-    const ttl = opts?.ttl ?? (kind === "error" ? 6000 : kind === "success" && opts?.channel ? 3000 : 4000);
+    // Auto-dismiss quickly (3s); sticky remains opt-in for rare blocking alerts.
+    const ttl = opts?.ttl ?? 3000;
     timers.set(id, setTimeout(() => dismissToast(id), ttl));
   }
   emit();
@@ -73,7 +74,8 @@ export const toast = {
     message: string,
     opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
   ) {
-    return push("error", message, { sticky: true, ...opts });
+    // Errors auto-dismiss like other toasts (3s); pass sticky only when action is required.
+    return push("error", message, opts);
   },
   info(
     message: string,
