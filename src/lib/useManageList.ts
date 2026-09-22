@@ -5,7 +5,7 @@ import type { ManageItem } from "../types";
 
 export type ManageTabId = "startup" | "services" | "tasks";
 
-const LIST_FN: Record<ManageTabId, () => Promise<unknown[]>> = {
+const LIST_FN: Record<ManageTabId, () => Promise<ManageItem[]>> = {
   startup: api.listStartupItems,
   services: api.listServices,
   tasks: api.listScheduledTasks,
@@ -18,8 +18,7 @@ export function useManageList(tab: ManageTabId, onError?: (msg: string) => void)
   const reload = useCallback(async () => {
     setBusy(true);
     try {
-      const list = (await LIST_FN[tab]()) as ManageItem[];
-      setItems(list);
+      setItems(await LIST_FN[tab]());
     } catch (e) {
       onError?.(formatError(e));
     } finally {

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import { t } from "../i18n";
@@ -53,8 +53,13 @@ export function useAnalyzeFlow({
     setUninstallingKey,
     setUninstallStage,
   } = flow;
+  const analyzeSeqRef = useRef(0);
+  const analyzingRef = useRef(false);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
+      // only the newest request may write scan state, and only it may clear the spinner.
+      const seq = ++analyzeSeqRef.current;
+      analyzingRef.current = true;
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
       setSelected(app);
@@ -67,12 +72,15 @@ export function useAnalyzeFlow({
       const t0 = performance.now();
       try {
         const r = await api.analyze(app);
+        if (seq !== analyzeSeqRef.current) return;
         setScan(r);
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
           void api
             .suggestIgnoreRules(app.publisher, sharedPaths)
-            .then((sugs) => setIgnoreSuggestions(sugs || []))
+            .then((sugs) => {
+              if (seq === analyzeSeqRef.current) setIgnoreSuggestions(sugs || []);
+            })
             .catch(() => {});
         }
         setSelectedPaths(new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
@@ -82,10 +90,14 @@ export function useAnalyzeFlow({
           { channel: "analyze-flow", ttl: 3000 },
         );
       } catch (e) {
+        if (seq !== analyzeSeqRef.current) return;
         setError(formatError(e, "analyze"));
         toast.error(t().errAnalyzeFailed(formatError(e, "analyze")), { channel: "analyze-flow" });
       } finally {
-        setScanning(false);
+        if (seq === analyzeSeqRef.current) {
+          analyzingRef.current = false;
+          setScanning(false);
+        }
       }
     },
     [
@@ -229,6 +241,7 @@ export function useAnalyzeFlow({
 
   const openAnalyzeFromDrawer = useCallback(
     (app: InstalledApp) => {
+      if (analyzingRef.current) return;
       void analyze(app);
     },
     [analyze],
