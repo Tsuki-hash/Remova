@@ -33,17 +33,11 @@ export function useAiPanelState() {
   }, []);
   const clearAiScanState = useCallback(() => dispatch({ type: "scanAi/clear" }), []);
   const clearAiReport = useCallback(() => dispatch({ type: "reportAi/clear" }), []);
-  const applyCopilotFilter = useCallback((list: InstalledApp[]) => {
-    dispatch({ type: "copilot/set", value: list });
-  }, []);
-  const clearCopilotFilter = useCallback(() => dispatch({ type: "copilot/set", value: null }), []);
 
   const actions = useMemo(
     () => ({
       clearAiScanState,
       clearAiReport,
-      applyCopilotFilter,
-      clearCopilotFilter,
       setAiEnabled,
       setAiBusy,
       setAiNotes,
@@ -55,8 +49,6 @@ export function useAiPanelState() {
     [
       clearAiScanState,
       clearAiReport,
-      applyCopilotFilter,
-      clearCopilotFilter,
       setAiEnabled,
       setAiBusy,
       setAiNotes,

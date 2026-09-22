@@ -67,12 +67,24 @@ export default function App() {
     scan,
     scanning,
     report,
+    lastReport,
     useOfficial,
     admin,
     disk,
     uninstallingKey,
     ignorePub,
     ignoreName,
+    // reducer setters are individually stable; alias them so memo deps stay constant.
+    setSelected: coreSetSelected,
+    setMulti: coreSetMulti,
+    setIgnorePub: coreSetIgnorePub,
+    setIgnoreName: coreSetIgnoreName,
+    setUseOfficial: coreSetUseOfficial,
+    setError: coreSetError,
+    setReport: coreSetReport,
+    setScanning: coreSetScanning,
+    toggleMulti: coreToggleMulti,
+    closePreviewCore: coreClosePreview,
   } = core;
 
   const { q, setQ, sortCol, setSortCol, sortDesc, setSortDesc, category, setCategoryState } =
@@ -94,6 +106,7 @@ export default function App() {
     uninstallStage,
     setUninstallStage,
     showDetail,
+    setCheckupOpen: shellSetCheckupOpen,
     actions: shellActions,
   } = shell;
   const setCloseMode = useCallback(
@@ -104,6 +117,33 @@ export default function App() {
   );
   const goNav = shellActions.goNav;
 
+  // stable action bags for the software controller — the whole `core`/`shell` objects
+  // change identity on every unrelated state update and would defeat SoftwarePage's memo.
+  const coreActions = useMemo(
+    () => ({
+      setSelected: coreSetSelected,
+      setMulti: coreSetMulti,
+      setIgnorePub: coreSetIgnorePub,
+      setIgnoreName: coreSetIgnoreName,
+      setUseOfficial: coreSetUseOfficial,
+      setError: coreSetError,
+      setReport: coreSetReport,
+    }),
+    [
+      coreSetSelected,
+      coreSetMulti,
+      coreSetIgnorePub,
+      coreSetIgnoreName,
+      coreSetUseOfficial,
+      coreSetError,
+      coreSetReport,
+    ],
+  );
+  const shellCheckup = useMemo(
+    () => ({ setCheckupOpen: shellSetCheckupOpen }),
+    [shellSetCheckupOpen],
+  );
+
   const residual = useResidualState();
   const {
     selectedPaths,
@@ -111,7 +151,6 @@ export default function App() {
     evidence,
     setEvidence,
     ignoreSuggestions,
-    lastReport,
     monitoring,
     monitorDiff,
     residualFromUninstall,
@@ -171,7 +210,7 @@ export default function App() {
   }, [langVer]);
   const deferredQ = useDeferredValue(q);
 
-  const { estimating, sizeMap, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize } =
+  const { estimating, sizeProgress, stopSizeEstimate, sizeOf, formatAppSize } =
     useSizeEstimate(apps, loading);
 
   const { filtered, sortBy } = useAppFilter({
@@ -184,13 +223,11 @@ export default function App() {
     sizeOf,
     ignorePub,
     ignoreName,
-    sizeMap,
     setSortCol,
     setSortDesc,
   });
 
   const coreSetApps = core.setApps;
-  const coreSetError = core.setError;
   const refreshApps = useCallback(async () => {
     try {
       const list = await api.listApps();
@@ -240,7 +277,6 @@ export default function App() {
       setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setAiRisk,
       setReport: core.setReport,
-      setLastReport: residualActions.setLastReport,
       setVerifyRows,
       setAiReportNote,
       setError: core.setError,
@@ -318,9 +354,9 @@ export default function App() {
 
   const toggleMulti = useCallback(
     (key: string) => {
-      core.toggleMulti(key);
+      coreToggleMulti(key);
     },
-    [core],
+    [coreToggleMulti],
   );
 
   const doIgnorePublisher = useCallback(
@@ -425,8 +461,10 @@ export default function App() {
     [L, goNav, residualActions, core],
   );
 
+  const aiExplainSeqRef = useRef(0);
   const runAiExplain = useCallback(async () => {
     if (!scan || !aiEnabled || aiBusy) return;
+    const seq = ++aiExplainSeqRef.current;
     setAiBusy(true);
     try {
       const items = scan.items.slice(0, 12).map((it) => ({
@@ -438,12 +476,13 @@ export default function App() {
         evidence_labels: (it.evidence || []).map((e) => e.label).filter(Boolean),
       }));
       const out = await api.aiExplain(scan.app_name, selected?.publisher || "", items);
+      if (seq !== aiExplainSeqRef.current) return;
       const map: Record<string, string> = {};
-      for (const o of out as { path: string; summary: string }[]) {
+      for (const o of out) {
         map[o.path] = o.summary;
       }
       setAiNotes(map);
-      const brief = (out as { summary: string }[])
+      const brief = out
         .slice(0, 3)
         .map((o) => o.summary)
         .filter(Boolean)
@@ -451,9 +490,9 @@ export default function App() {
       setAiSummaryNote(brief || null);
       if (!out.length) toast.info(L.aiDisabledHint);
     } catch {
-      toast.error(L.aiFailed);
+      if (seq === aiExplainSeqRef.current) toast.error(L.aiFailed);
     } finally {
-      setAiBusy(false);
+      if (seq === aiExplainSeqRef.current) setAiBusy(false);
     }
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
@@ -494,8 +533,8 @@ export default function App() {
   }, []);
 
   const closePreview = useCallback(() => {
-    core.closePreviewCore();
-    core.setUseOfficial(false);
+    coreClosePreview();
+    coreActions.setUseOfficial(false);
     residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
@@ -504,7 +543,15 @@ export default function App() {
     aiActions.clearAiReport();
     setShowBatchSummary(false);
     void refreshApps();
-  }, [refreshApps, residualActions, aiActions, scanUi, core, setShowBatchSummary]);
+  }, [
+    refreshApps,
+    residualActions,
+    aiActions,
+    scanUi,
+    coreClosePreview,
+    coreActions,
+    setShowBatchSummary,
+  ]);
 
   useEffect(() => {
     const pending = scanUi.takePendingBucket();
@@ -529,7 +576,7 @@ export default function App() {
 
   const checkupOrphanScan = useCallback(() => {
     void (async () => {
-      core.setScanning(true);
+      coreSetScanning(true);
       try {
         const items = await api.orphanScan();
         setCheckupOrphanCount(items.length);
@@ -537,16 +584,27 @@ export default function App() {
         setCheckupOrphanCount(null);
         toast.error(formatError(e, "analyze"));
       } finally {
-        core.setScanning(false);
+        coreSetScanning(false);
       }
     })();
-  }, [setCheckupOrphanCount, core]);
+  }, [setCheckupOrphanCount, coreSetScanning]);
 
+  // a scan in progress absorbs new row-analyze requests (ref keeps the callback stable).
+  const scanningRef = useRef(false);
+  useEffect(() => {
+    scanningRef.current = scanning;
+  }, [scanning]);
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],
   );
-  const listAnalyze = useCallback((a: InstalledApp) => void analyze(a), [analyze]);
+  const listAnalyze = useCallback(
+    (a: InstalledApp) => {
+      if (scanningRef.current) return;
+      void analyze(a);
+    },
+    [analyze],
+  );
   const listForceClean = useCallback((a: InstalledApp) => void forceClean(a), [forceClean]);
   const listIgnoreApp = useCallback((a: InstalledApp) => void doIgnoreApp(a), [doIgnoreApp]);
   const listIgnorePublisher = useCallback(
@@ -562,8 +620,8 @@ export default function App() {
   }, []);
   const detailOnClose = useCallback(() => {
     scanUi.clearKindFilter();
-    core.setSelected(null);
-  }, [scanUi, core]);
+    coreSetSelected(null);
+  }, [scanUi, coreSetSelected]);
 
   const detailPanel = useMemo(
     () =>
@@ -664,9 +722,9 @@ export default function App() {
     riskFilter,
     setRiskFilter,
     detailPanel,
-    core,
+    core: coreActions,
     residualActions,
-    shell,
+    shell: shellCheckup,
     shellActions,
     setCategory,
     stopSizeEstimate,
@@ -745,7 +803,7 @@ export default function App() {
         <Suspense
           fallback={
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>
-              {L.estimatingSizes || "…"}
+              {L.loadingPage}
             </div>
           }
         >
@@ -761,7 +819,7 @@ export default function App() {
           {nav === "orphans" && (
             <OrphanPage
               onLastReport={(r: FullCleanupReport) => {
-                residualActions.setLastReport(r);
+                // lastReport is derived from report by the reducer.
                 core.setReport(r);
               }}
               onError={core.setError}

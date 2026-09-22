@@ -1,4 +1,4 @@
-import type { CleanupItem, FullCleanupReport, IgnoreSuggestion } from "../../types";
+import type { CleanupItem, IgnoreSuggestion } from "../../types";
 import { defaultSelectable } from "../../lib/decision";
 
 export type MonitorDiffState = {
@@ -10,7 +10,6 @@ export type ResidualState = {
   selectedPaths: Set<string>;
   evidence: string | null;
   ignoreSuggestions: IgnoreSuggestion[];
-  lastReport: FullCleanupReport | null;
   monitoring: boolean;
   monitorDiff: MonitorDiffState;
   residualFromUninstall: boolean;
@@ -25,7 +24,6 @@ export type ResidualAction =
   | { type: "evidence/set"; value: string | null }
   | { type: "ignore/set"; value: IgnoreSuggestion[] }
   | { type: "ignore/clear" }
-  | { type: "lastReport/set"; value: FullCleanupReport | null }
   | { type: "monitoring/set"; value: boolean }
   | { type: "monitorDiff/set"; value: MonitorDiffState }
   | { type: "residualFromUninstall/set"; value: boolean }
@@ -36,7 +34,6 @@ export function initialResidualState(): ResidualState {
     selectedPaths: new Set(),
     evidence: null,
     ignoreSuggestions: [],
-    lastReport: null,
     monitoring: false,
     monitorDiff: null,
     residualFromUninstall: false,
@@ -70,8 +67,6 @@ export function residualReducer(state: ResidualState, action: ResidualAction): R
       return { ...state, ignoreSuggestions: action.value };
     case "ignore/clear":
       return { ...state, ignoreSuggestions: [] };
-    case "lastReport/set":
-      return { ...state, lastReport: action.value };
     case "monitoring/set":
       return { ...state, monitoring: action.value };
     case "monitorDiff/set":
