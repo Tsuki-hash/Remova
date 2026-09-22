@@ -558,6 +558,8 @@ pub fn run() {
             commands::ignore_cmd::load_ignore,
             commands::ignore_cmd::ignore_publisher,
             commands::ignore_cmd::ignore_app_name,
+            commands::ignore_cmd::unignore_publisher,
+            commands::ignore_cmd::unignore_app_name,
             commands::ignore_cmd::suggest_ignore_rules,
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,
