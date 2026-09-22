@@ -90,7 +90,7 @@ async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> {
             .timeout(std::time::Duration::from_secs(8))
             .build();
         let resp = agent
-            .get("https://api.github.com/repos/Tsuki-hash/Remova/releases/latest")
+            .get(crate::constants::GITHUB_LATEST_RELEASE_API)
             .set("Accept", "application/vnd.github+json")
             .set("User-Agent", "Remova")
             .call()
@@ -109,7 +109,7 @@ async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> {
         let url = v
             .get("html_url")
             .and_then(|t| t.as_str())
-            .unwrap_or("https://github.com/Tsuki-hash/Remova/releases")
+            .unwrap_or(crate::constants::GITHUB_RELEASES_PAGE)
             .to_string();
         let mut download_url = None;
         if let Some(assets) = v.get("assets").and_then(|a| a.as_array()) {
