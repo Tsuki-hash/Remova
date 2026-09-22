@@ -1,4 +1,4 @@
-//! S-08: PATH / value.reg chain smoke with injectable PATH mock (never touches system PATH).
+﻿//! S-08: PATH / value.reg chain smoke with injectable PATH mock (never touches system PATH).
 
 use std::fs;
 
@@ -15,7 +15,7 @@ fn path_item(entry: &str) -> CleanupItem {
         reason: "path".into(),
         evidence: vec![],
         shared: false,
-        user_data: false,
+        user_data: false, user_library: false,
         size_kb: None,
         bucket: None,
     }
@@ -66,7 +66,7 @@ fn path_backup_scrub_restore_merge_chain() {
         "Machine PATH untouched when entry was User-only"
     );
 
-    // Restore merges missing segment only — never whole-env overwrite.
+    // Restore merges missing segment only 鈥?never whole-env overwrite.
     let restored = crate::regops::restore_path_entry(r"C:\Vendor\Tool", &["User"]).unwrap();
     assert!(restored);
     let user2 = path_mock::get("User");
@@ -105,7 +105,7 @@ fn value_reg_missing_export_fails_backup_with_structured_code() {
     let _lock = path_mock::lock_mock();
     path_mock::clear();
     let session = tmp_session("valuereg");
-    // Non-existent Run value: export_reg_value returns Ok(false) → backup must fail (S-04).
+    // Non-existent Run value: export_reg_value returns Ok(false) 鈫?backup must fail (S-04).
     let item = CleanupItem {
         path: r"HKCU\Software\RemovaS08NoSuchKey|NoSuchValue".into(),
         kind: ItemKind::Registry,
@@ -115,7 +115,7 @@ fn value_reg_missing_export_fails_backup_with_structured_code() {
         reason: "run".into(),
         evidence: vec![],
         shared: false,
-        user_data: false,
+        user_data: false, user_library: false,
         size_kb: None,
         bucket: None,
     };
@@ -132,7 +132,7 @@ fn restore_prefers_value_reg_path_when_present() {
     // Pure layout check: restore import target selection prefers value.reg.
     // Full registry import is environment-dependent; we assert file layout contract only.
     let session = tmp_session("restore_layout");
-    // Windows forbids '|' in file names — use the same sanitization style as backup::safe_name.
+    // Windows forbids '|' in file names 鈥?use the same sanitization style as backup::safe_name.
     let dir = session.join("registry").join("HKCU__Software__App_Run");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
