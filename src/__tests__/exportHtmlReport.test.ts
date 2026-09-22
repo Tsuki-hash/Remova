@@ -8,6 +8,12 @@ const L = {
   batchOk: "成功",
   batchFailed: "失败",
   batchSkipped: "跳过",
+  reportKind: "类型",
+  reportStatus: "结果",
+  reportPath: "路径",
+  reportMessage: "说明",
+  reportAborted: "已中止",
+  reportBackup: "备份",
 };
 
 function report(partial: Partial<FullCleanupReport> = {}): FullCleanupReport {
@@ -106,7 +112,11 @@ describe("exportHtmlReport (real module)", () => {
     expect(captured.html).toContain("a &amp; b");
     expect(captured.html).not.toContain("<script>");
     expect(captured.html).toContain("清理");
-    expect(captured.html).toContain("backup: C:\\bak");
+    expect(captured.html).toContain("备份: C:\\bak");
+    // labels come from the passed strings, not hardcoded English.
+    expect(captured.html).toContain("<th>类型</th>");
+    expect(captured.html).toContain("<th>结果</th>");
+    expect(captured.html).toMatch(/<html lang="(zh|zh-CN|en)">/);
   });
 
   it("shows dry-run label and aborted marker", async () => {
@@ -126,7 +136,7 @@ describe("exportHtmlReport (real module)", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(captured.html).toContain("演练");
-    expect(captured.html).toContain("aborted");
+    expect(captured.html).toContain("已中止");
     expect(captured.download).toBe("remova-report-X.html");
   });
 });

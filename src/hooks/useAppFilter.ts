@@ -27,8 +27,6 @@ export function useAppFilter({
   sizeOf: (a: InstalledApp) => number;
   ignorePub: string[];
   ignoreName: string[];
-  /** Unused: sizeOf already prefers sizeMap (FE-R4-10). */
-  sizeMap?: Record<string, number>;
   setSortCol: (c: SortCol) => void;
   setSortDesc: (updater: boolean | ((d: boolean) => boolean)) => void;
 }) {

@@ -83,8 +83,7 @@ export function ScanLeftoversView({
   const filterLabel = useMemo(() => {
     if (!kindFilter) return null;
     const key = linkedBucketLabelKey(kindFilter);
-    const rec = L as unknown as Record<string, string>;
-    return rec[key] || L.linkedOther;
+    return L[key];
   }, [kindFilter, L]);
 
   const rowVirtualizer = useVirtualizer({
@@ -92,6 +91,7 @@ export function ScanLeftoversView({
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 72,
     overscan: 8,
+    getItemKey: (index) => displayItems[index]?.path ?? index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
@@ -294,7 +294,7 @@ export function ScanLeftoversView({
           <span>✓</span>
           <span>{L.colLocation}</span>
           <span>{L.colSource}</span>
-          <span>{L.confirmed}</span>
+          <span>{L.colConfidence}</span>
           <span>ⓘ</span>
         </div>
         {displayItems.length === 0 ? (
@@ -307,12 +307,13 @@ export function ScanLeftoversView({
               return (
                 <div
                   key={it.path}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={vr.index}
                   style={{
                     position: "absolute",
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: vr.size,
                     transform: `translateY(${vr.start}px)`,
                   }}
                 >

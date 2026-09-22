@@ -84,11 +84,13 @@ export function useAppBoot({
       .catch(() => {});
     // Context menu --analyze handoff runs after apps load (see nav-assist hooks)
     // Custom chrome: close → tray (default) or quit; busy still asks first.
+    let unlistenClose: (() => void) | null = null;
+    let chromeDisposed = false;
     void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
-        await win.onCloseRequested(async (event) => {
+        const unlisten = await win.onCloseRequested(async (event) => {
           // Tauri requires preventDefault SYNCHRONOUSLY or the window may
           // close before async policy/dialog runs (X appeared dead after choice).
           event.preventDefault();
@@ -126,12 +128,17 @@ export function useAppBoot({
             }
           }
         });
+        // the effect may already be gone when the dynamic import resolved.
+        if (chromeDisposed) unlisten();
+        else unlistenClose = unlisten;
       } catch {
         // not in tauri
       }
     })();
     return () => {
       cancelled = true;
+      chromeDisposed = true;
+      unlistenClose?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

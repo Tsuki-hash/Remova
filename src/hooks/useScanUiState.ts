@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import { initialScanUiState, scanUiReducer } from "./reducers/scanUi";
 
@@ -35,15 +35,35 @@ export function useScanUiState() {
     dispatch({ type: "aiNudge/dismiss" });
   }, []);
 
-  return {
-    kindFilter: state.kindFilter,
-    setKindFilter,
-    riskFilter: state.riskFilter,
-    setRiskFilter,
-    aiSummaryNote: state.aiSummaryNote,
-    setAiSummaryNote,
-    aiNudgeDismissed: state.aiNudgeDismissed,
-    actions: {
+  // stable object identity — SoftwarePage memo depends on this bag.
+  return useMemo(
+    () => ({
+      kindFilter: state.kindFilter,
+      setKindFilter,
+      riskFilter: state.riskFilter,
+      setRiskFilter,
+      aiSummaryNote: state.aiSummaryNote,
+      setAiSummaryNote,
+      aiNudgeDismissed: state.aiNudgeDismissed,
+      actions: {
+        clearKindFilter,
+        clearRiskFilter,
+        clearAiSummary,
+        setPendingBucket,
+        takePendingBucket,
+        toggleRiskFilter,
+        clearScanChrome,
+        dismissAiNudge,
+      },
+    }),
+    [
+      state.kindFilter,
+      state.riskFilter,
+      state.aiSummaryNote,
+      state.aiNudgeDismissed,
+      setKindFilter,
+      setRiskFilter,
+      setAiSummaryNote,
       clearKindFilter,
       clearRiskFilter,
       clearAiSummary,
@@ -52,6 +72,6 @@ export function useScanUiState() {
       toggleRiskFilter,
       clearScanChrome,
       dismissAiNudge,
-    },
-  };
+    ],
+  );
 }
