@@ -116,8 +116,8 @@ Stability, safety and release-engineering fixes on top of 1.1.0. No new features
 - Route-level code-split for Software / Manage / More / Orphan pages; ScanActions `busy` uses a state expression instead of a ref during render
 - `Safety IPC`: registry path gates emit `safety:protected::*` codes
 - **CI**: npm + rustc dependency caches; `clippy --all-targets`; ESLint flat config + `npm run lint`; `typecheck:tests`; `scripts/check-commands.ps1`; frontend `dist` smoke; release portable zip smoke; version consistency script; Release attaches CHANGELOG body
-- **Docs**: PARITY/PRODUCT-GAPS/ACCEPTANCE link paths fixed; acceptance notes historical v0.1.0 + current baseline **1.1.0**; docs index aligned to package version; CHANGELOG Unreleased de-duplicated; ARCHITECTURE restore order + env prefixes + dynamic service count documented
-- `.gitignore`: track live docs (`ARCHITECTURE` / `USER-GUIDE` / `product/`); keep `docs/reviews`, `docs/compose`, `docs/archive` private; release notes no longer dump the whole CHANGELOG body
+- **Docs**: internal planning-doc link paths fixed; acceptance notes historical v0.1.0 + current baseline **1.1.0**; docs index aligned to package version; CHANGELOG Unreleased de-duplicated; ARCHITECTURE restore order + env prefixes + dynamic service count documented
+- `.gitignore`: track the user-facing docs; keep working notes and release-planning drafts private; release notes no longer dump the whole CHANGELOG body
 - Portable zip unified via `pwsh` + `scripts/package-portable.ps1`
 
 ### Fixed
@@ -148,8 +148,8 @@ Stability, safety and release-engineering fixes on top of 1.1.0. No new features
 - `list_backup_sessions` runs on the blocking pool (no longer sync on the command thread); `backup_item` delegates to production `backup_item_with_map`; cleanup backup stage extracted to `try_backup_phase`; shared `fsutil::fnv1a64` with magic numbers centralized in `constants.rs`
 - Testing Library + jsdom coverage: confirm store, CleanupConclusion, hooks actions; `batchEngine` covers ok / no-leftover uninstall / failed / cancel / invoke error
 - ESLint exhaustive-deps cleaned; lint exits 0
-- Public docs index no longer links private `docs/reviews` paths; USER-GUIDE AI entry is 「详细说明」 with conclusion card + Copilot documented
-- ARCHITECTURE command table synced with `generate_handler!` (removed ghost `restore_latest_backup`; added AI/verify/backup session commands); PRODUCT-GAPS / ARCHITECTURE / USER-GUIDE aligned with shipped features
+- Public docs index no longer links private working-note paths; USER-GUIDE AI entry is 「详细说明」 with conclusion card + Copilot documented
+- ARCHITECTURE command table synced with `generate_handler!` (removed ghost `restore_latest_backup`; added AI/verify/backup session commands); ARCHITECTURE / USER-GUIDE aligned with shipped features
 
 ### Security
 - Cleanup executor enforces the user-data red line even if a path slips past scan-time marking
