@@ -55,6 +55,13 @@ describe("formatError manage codes", () => {
     expect(formatError("ai:explain::timeout")).toContain("智能解释");
     expect(formatError("backup:failed::disk full")).toBeTruthy();
   });
+
+  it("maps safety:protected to path protection, not service copy", () => {
+    expect(formatError("safety:protected::")).toContain("受保护");
+    expect(formatError("safety:protected::")).not.toContain("服务");
+    expect(formatError("safety:protected::C:\\Users\\me\\Documents")).toContain("Documents");
+    expect(formatError("safety:protected::C:\\Users\\me\\Documents")).not.toContain("关键服务");
+  });
 });
 
 describe("prettyAppName", () => {

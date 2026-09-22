@@ -5,7 +5,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
-import { cleanupProgress } from "../lib/decision";
+import { cleanupProgress, gateReasonText } from "../lib/decision";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
 type Props = {
@@ -240,7 +240,7 @@ export function ReportPanel({
           {report.item_details.slice(0, 50).map((d, i) => (
             <div key={i} className="ell" title={d.path}>
               [{d.status}] {d.path}
-              {d.message ? ` — ${d.message}` : ""}
+              {d.message ? ` — ${gateReasonText(d.message, L)}` : ""}
             </div>
           ))}
           {report.item_details.length > 50 && <div>… +{report.item_details.length - 50}</div>}
