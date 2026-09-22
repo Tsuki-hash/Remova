@@ -81,6 +81,8 @@ export const api = {
     invoke<IgnoreLists>("apply_ignore_suggestions", { suggestions }),
   ignorePublisher: (name: string) => invoke<IgnoreLists>("ignore_publisher", { name }),
   ignoreAppName: (name: string) => invoke<IgnoreLists>("ignore_app_name", { name }),
+  unignorePublisher: (name: string) => invoke<IgnoreLists>("unignore_publisher", { name }),
+  unignoreAppName: (name: string) => invoke<IgnoreLists>("unignore_app_name", { name }),
   loadIgnore: () => invoke<IgnoreLists>("load_ignore"),
   diskUsage: () => invoke<DiskUsage>("disk_usage"),
   beginSizeEstimate: () => invoke("begin_size_estimate"),
