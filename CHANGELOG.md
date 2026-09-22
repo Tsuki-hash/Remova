@@ -6,62 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.1.1] - 2026-09-21
 
-Stability, safety and release-engineering fixes on top of 1.1.0. No new features.
+稳定性、安全纵深与发布可靠性补丁。**无新功能**，主流程与 1.1.0 相同。
 
-### Fixed
-- **Analyze / AI-explain / verify race**: a slower scan for a previously selected app can no longer
-  overwrite the current app's leftover list, checkbox set, or AI notes; the scan spinner is cleared
-  only by the newest request
-- Leftover list scroll alignment: software rows are now measured dynamically instead of assuming a
-  44 px row, and the scan list no longer clips rows taller than 72 px
-- Software list rendering: stable row callbacks plus memoized scan-UI/controller action bags stop the
-  whole page re-rendering every ~80 ms during size estimation
-- `lastReport` is derived from `report` in one reducer instead of being written from four places, so
-  the More-page HTML export can no longer describe a different app than the one on screen
-- Size-estimate footer spinner can no longer stick on "estimating" after a refresh, and its pending
-  flush timer is cancelled on unmount
-- Uninstall command lines with doubled quotes (`""`) or escaped quotes (`\"`) are split with Windows
-  `CommandLineToArgvW` rules instead of a naive quote toggle
-- HTML report language and column labels follow the UI locale instead of hardcoding Chinese; route
-  loading fallback no longer says "Estimating sizes"; the leftover confidence column header no longer
-  reuses the "Confirm" button label
+### 亮点
 
-### Security
-- Anything that deletes a file or directory now goes through a delete-grade gate that also rejects the
-  user-data and sync-conflict red lines, so a future caller cannot reach `is_safe_fs` alone
-- AI API key is never persisted when DPAPI encryption fails — the save now errors instead of silently
-  writing plaintext
-- Orphan-flow path association uses the delete-grade gate; shortcut scan roots come from `ProgramData`
-  instead of a hardcoded `C:\ProgramData`
-- AI explanations are no longer attached by sanitized path alone: an ambiguous or already-consumed
-  match is skipped rather than guessed
+- **分析结果更稳**：快速切换软件时，残留列表、勾选和智能说明不会再被上一次扫描覆盖；导出的 HTML 报告始终对应你正在看的软件
+- **大列表更顺**：软件列表与残留列表按实际行高对齐，长列表滚到底不再错位或裁剪；估算体积时操作更跟手
+- **删除更保守**：用户数据、同步冲突等红线路径即使被勾上也不会被删，报告会记为「跳过」并说明原因
+- **安装包发布更可靠**：安装产物缺失时发布会直接失败，不会再出现「有版本页、没有安装包」
 
-### Changed
-- **Backend structure**: `executor.rs` split into `executor/{mod,uninstall,preview,pipeline}.rs` and
-  leftover↔app association moved out of it into `association.rs`, so `policy` consumes boolean
-  verdicts instead of weighing evidence itself; `lib.rs` sheds its self-contained command groups into
-  `commands/{update,ai_cmd,history_cmd,backup_cmd,manage_cmd,context_menu,ignore_cmd}.rs`
-  (code-only moves — no behavior change; `check-commands` still reports 46 = 46)
-- CI: `push` restricted to `main` with a `concurrency` group that cancels superseded runs, explicit
-  `permissions: contents: read`, and `cargo test --workspace` so bin targets are covered
-- Release: a missing bundle artifact now fails the workflow instead of publishing an asset-less Release
-- Release text is generated from the tag's own CHANGELOG section, and a missing or empty section fails
-  the job rather than falling back to auto-generated notes
-- `check-versions` asserts the newest CHANGELOG section equals the package version and takes
-  `-ExpectedVersion` as a real parameter
-- `gen_icons.py` takes the source image (and optional icons dir) as arguments instead of hardcoded
-  machine paths; `smoke-dist.ps1` guards `.Count` for Windows PowerShell compatibility
-- Dead frontend surface removed (`stateRef` copies, `removeDoneKeys`/`clearMulti` and their reducer
-  arms, Copilot filter duplicates, deprecated `AiNlIntent`, unused `useAppFilter` parameter) and IPC
-  results are narrowed with type guards instead of `as` casts
-- Shared Windows string helpers (`to_wide`, `wstring_from_reg_data`) consolidated into `fsutil`;
-  update-check URLs centralized in `constants.rs`
-- Docs: `cargo test --workspace` in README/README.en/CONTRIBUTING, PowerShell 7 documented as a required
-  tool, stale "1.0.1" labels dropped
-- **Documentation is no longer shipped inside this repository** — the public repo carries the READMEs,
-  `CONTRIBUTING.md` and this changelog; the Release body is the matching changelog section. The check
-  that compared registered commands against an internal command table is now a local-only tool and
-  skips when that file is absent
+### 行为变化（相对 1.1.0，有意收紧）
+
+以下三处**可能让你觉得「以前能清、现在清不掉」**——这是保护策略，不是坏了：
+
+1. **用户数据 / 同步冲突红线**  
+   Documents、Downloads、同步冲突目录等用户数据路径，任何删除入口都会拒绝；报告明细里记为跳过，并写明原因（例如「用户数据，默认不删」）。
+
+2. **Common Files 只认厂商目录段**  
+   位于 `Common Files` 下的残留，只有当**厂商目录名**与软件安装名 / 发布者匹配时才会关联可清；任意子串命中不再算关联。`Common Files` 等共享根目录仍然禁止清理。
+
+3. **智能说明宁缺毋错**  
+   路径脱敏后若无法唯一对应到某条残留，该项不再显示智能说明（而不是显示可能错配的说明）。
+
+### 修复
+
+- 深度分析 / 智能说明 / 清理复核的并发竞态：慢返回不会覆盖当前软件的结果，加载态只由最新请求结束
+- 软件列表滚动对齐与残留列表裁剪；体积估算期间整页高频重刷
+- 「更多」页导出的 HTML 报告可能描述成另一台软件
+- 体积估算角标可能一直停在「估算中」
+- 含 `""` 或 `\"` 的卸载命令行拆参错误，官方卸载器可能拉起失败
+- HTML 报告语言与表头跟随界面语言；若干加载文案与表头歧义
+
+### 安全
+
+- 删除文件或目录一律经过删除级安全门（含用户数据与同步冲突红线），不依赖调用方自觉
+- 系统加密失败时不再明文保存 AI API Key，改为保存失败并提示
+- 孤儿清理关联同样走删除级安全门；快捷方式扫描覆盖非 C 盘系统数据目录
+- 智能说明回填歧义时跳过，不猜测对应项
+
+### 变更
+
+- 清理报告明细中的跳过原因改为可读说明（用户数据 / 共享组件 / 未关联 / 安全门等）
+- 发布正文取自本变更日志的对应版本节；缺节或空节会直接导致发布失败，而不是退回自动生成的提交列表
+- 安装包缺失时发布工作流失败，而不是发出没有资产的 Release
+- 内部模块整理与测试加固，对外功能接口不变
+- 公开仓库不再附带完整文档树；说明以 README、本变更日志与应用内提示为准
 
 ## [1.1.0] - 2026-09-20
 

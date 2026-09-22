@@ -79,7 +79,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errServiceKey(name || "?");
     }
     if (code === "safety:protected") {
-      return L.errServiceProtected;
+      return name ? L.errPathProtectedNamed(name) : L.errPathProtected;
     }
     if (
       code === "backup:failed" ||
