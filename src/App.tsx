@@ -31,7 +31,16 @@ import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { runAiReportSummary } from "./lib/aiNarrative";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
 import { type CloseMode } from "./lib/closeMode";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, Suspense, lazy } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  Suspense,
+  lazy,
+} from "react";
 import { useSoftwareController } from "./hooks/useSoftwareController";
 
 /** PF-08: code-split heavy nav pages. */
@@ -82,7 +91,6 @@ export default function App() {
     setUseOfficial: coreSetUseOfficial,
     setError: coreSetError,
     setReport: coreSetReport,
-    setScanning: coreSetScanning,
     toggleMulti: coreToggleMulti,
     closePreviewCore: coreClosePreview,
   } = core;
@@ -115,6 +123,8 @@ export default function App() {
     },
     [shellActions],
   );
+  /** F-R6-08: orphan checkup scan has its own spinner (never the analyze spinner). */
+  const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const goNav = shellActions.goNav;
 
   // stable action bags for the software controller — the whole `core`/`shell` objects
@@ -403,7 +413,7 @@ export default function App() {
       }
     } catch (e) {
       core.setError(formatError(e, "analyze"));
-      toast.error(L.errAnalyzeFailed(formatError(e, "analyze")));
+      toast.error(formatError(e, "analyze"));
     }
   }, [L, goNav, residualActions, core]);
 
@@ -422,7 +432,7 @@ export default function App() {
       }
     } catch (e) {
       core.setError(formatError(e));
-      toast.error(L.errInvokeFailed(formatError(e)));
+      toast.error(formatError(e));
       residualActions.setMonitoring(false);
     }
   }, [monitoring, L, residualActions, core]);
@@ -506,16 +516,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan?.app_name, scan?.items.length, aiEnabled]);
 
+  const aiReportSeqRef = useRef(0);
   const runAiReport = useCallback(async () => {
     if (!report || !("deleted" in report) || !aiEnabled || aiReportBusy) return;
+    const seq = ++aiReportSeqRef.current;
     setAiReportBusy(true);
     try {
       const note = await runAiReportSummary(report);
+      // F-R6-06: only the newest report summary may write aiReportNote.
+      if (seq !== aiReportSeqRef.current) return;
       setAiReportNote(note);
     } catch {
       // rule narrative still shown
     } finally {
-      setAiReportBusy(false);
+      if (seq === aiReportSeqRef.current) setAiReportBusy(false);
     }
   }, [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote]);
 
@@ -575,8 +589,9 @@ export default function App() {
   );
 
   const checkupOrphanScan = useCallback(() => {
+    // F-R6-08: independent spinner — never touch the analyze `scanning` flag.
     void (async () => {
-      coreSetScanning(true);
+      setCheckupOrphanBusy(true);
       try {
         const items = await api.orphanScan();
         setCheckupOrphanCount(items.length);
@@ -584,10 +599,10 @@ export default function App() {
         setCheckupOrphanCount(null);
         toast.error(formatError(e, "analyze"));
       } finally {
-        coreSetScanning(false);
+        setCheckupOrphanBusy(false);
       }
     })();
-  }, [setCheckupOrphanCount, coreSetScanning]);
+  }, [setCheckupOrphanCount, setCheckupOrphanBusy]);
 
   // a scan in progress absorbs new row-analyze requests (ref keeps the callback stable).
   const scanningRef = useRef(false);
@@ -709,6 +724,7 @@ export default function App() {
     checkup,
     checkupOpen,
     checkupOrphanCount,
+    checkupOrphanBusy,
     batchIndex,
     batchTotal,
     batchCurrent,

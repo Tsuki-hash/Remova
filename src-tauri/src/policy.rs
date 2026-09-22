@@ -73,7 +73,8 @@ fn expand_path_env(entry: &str) -> String {
 }
 
 /// PATH segments that must never be scrubbed (system PATH).
-fn is_dangerous_path_entry(entry: &str) -> bool {
+/// Public so write primitives can apply an intrinsic secondary gate (S-R6-06).
+pub fn is_dangerous_path_entry(entry: &str) -> bool {
     let expanded = expand_path_env(entry);
     let s = expanded
         .trim()
@@ -198,9 +199,12 @@ pub fn gate_cleanup_item(
     }
 
     if let Some(app) = app {
-        let orphan = source == CleanupSource::Orphan
-            || source == CleanupSource::Monitor
-            || crate::association::is_orphan_flow(app);
+        // S-R6-01: client cleanup_source alone must not disable association.
+        // Skip association only for server-scanned orphan paths on orphan-shaped apps.
+        let client_orphan = matches!(source, CleanupSource::Orphan | CleanupSource::Monitor);
+        let orphan = client_orphan
+            && crate::association::is_orphan_flow(app)
+            && crate::orphans::was_recent_orphan_path(&item.path);
         // Compute association once (S7-R2).
         let fs_assoc = if orphan {
             false
@@ -208,10 +212,12 @@ pub fn gate_cleanup_item(
             crate::association::path_associated_with_app(app, item)
         };
         // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
+        // Orphan/Monitor never get CF vendor allow (shared runtime).
         if matches!(item.kind, ItemKind::File | ItemKind::Dir)
             && crate::shared::is_common_files_vendor_path(&item.path)
         {
-            if orphan || !crate::association::cf_vendor_associated(app, &item.path) {
+            if client_orphan || orphan || !crate::association::cf_vendor_associated(app, &item.path)
+            {
                 return GateDecision::Skip("shared runtime");
             }
         } else if !orphan && !fs_assoc {
@@ -223,6 +229,11 @@ pub fn gate_cleanup_item(
     {
         // No app context 鈥?cannot prove vendor ownership.
         return GateDecision::Skip("shared runtime");
+    } else if matches!(source, CleanupSource::Orphan | CleanupSource::Monitor) {
+        // Orphan/Monitor without app: only paths from the last server-side orphan scan.
+        if !crate::orphans::was_recent_orphan_path(&item.path) {
+            return GateDecision::Skip("path not associated with app");
+        }
     }
     GateDecision::Allow
 }

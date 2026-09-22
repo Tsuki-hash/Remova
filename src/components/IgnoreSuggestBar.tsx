@@ -44,7 +44,7 @@ export function IgnoreSuggestBar({
             onApplied(ig.publishers || [], ig.names || []);
             toast.success(L.ignoreSuggestDone);
           } catch (e) {
-            toast.error(L.errInvokeFailed(formatError(e)));
+            toast.error(formatError(e));
           }
         }}
       >

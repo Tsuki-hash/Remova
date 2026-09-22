@@ -78,6 +78,10 @@ export function useCleanupHandlers({
   const backupEnabledRef = useRef(false);
   /**: invalidates an in-flight verify probe when a newer cleanup starts. */
   const verifySeqRef = useRef(0);
+  /** F-R6-05: only the latest dry-run may write its report. */
+  const dryRunSeqRef = useRef(0);
+  /** F-R6-07: invalidates force-clean's internal analyze when a newer one starts. */
+  const forceAnalyzeSeqRef = useRef(0);
 
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
@@ -85,16 +89,26 @@ export function useCleanupHandlers({
       if (!target || forceBusy) return;
       setForceBusy(true);
       busyRef.current = true;
+      const aseq = ++forceAnalyzeSeqRef.current;
       try {
         const r = await api.analyze(target);
+        // F-R6-07: a newer force-clean/analyze started while this one was in flight.
+        if (aseq !== forceAnalyzeSeqRef.current) return;
         const items = r.items.filter(defaultSelectable);
         if (!items.length) {
           toast.info(L.toastForceCleanEmpty);
           return;
         }
+        // F-R6-04: surface user_library / shared risks in the force-clean confirm too.
+        const forceRiskBits: string[] = [];
+        if (items.some((it) => it.risk === "high")) forceRiskBits.push(L.conclusionHighRiskHint);
+        if (items.some((it) => it.user_data)) forceRiskBits.push(L.conclusionUserDataHint);
+        if (items.some((it) => it.user_library)) forceRiskBits.push(L.confirmUserLibrarySelected);
+        if (items.some((it) => it.shared)) forceRiskBits.push(L.confirmSharedSelected);
+        const forceRiskNote = forceRiskBits.length ? `\n\n⚠ ${forceRiskBits.join("\n")}` : "";
         const { ok, checked } = await requestConfirmEx({
           title: L.forceClean,
-          message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}\n${L.forceCleanHint}`,
+          message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}${forceRiskNote}\n${L.forceCleanHint}`,
           confirmLabel: L.forceClean,
           danger: true,
           checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
@@ -124,7 +138,7 @@ export function useCleanupHandlers({
         void refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
-        toast.error(L.errCleanupFailed(formatError(e, "cleanup")));
+        toast.error(formatError(e, "cleanup"));
       } finally {
         busyRef.current = false;
         setForceBusy(false);
@@ -135,7 +149,10 @@ export function useCleanupHandlers({
 
   const dryRun = useCallback(async () => {
     if (!scan || !selected) return;
+    // F-R6-05: never overlap dry-run with another busy cleanup/uninstall.
+    if (busyRef.current) return;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
+    const seq = ++dryRunSeqRef.current;
     setDryRunning(true);
     try {
       const r = await api.dryRun(selected, items, {
@@ -146,13 +163,15 @@ export function useCleanupHandlers({
               ? "orphan"
               : "uninstall",
       });
+      if (seq !== dryRunSeqRef.current) return;
       setReport(r);
     } catch (e) {
+      if (seq !== dryRunSeqRef.current) return;
       setError(formatError(e, "cleanup"));
     } finally {
-      setDryRunning(false);
+      if (seq === dryRunSeqRef.current) setDryRunning(false);
     }
-  }, [scan, selected, selectedPaths, setReport, setError]);
+  }, [scan, selected, selectedPaths, setReport, setError, busyRef]);
 
   const execReal = useCallback(async () => {
     if (!scan || !selected) return;
@@ -212,7 +231,7 @@ export function useCleanupHandlers({
       void refreshApps();
     } catch (e) {
       setError(formatError(e, "cleanup"));
-      toast.error(L.errCleanupFailed(formatError(e, "cleanup")));
+      toast.error(formatError(e, "cleanup"));
     } finally {
       backupEnabledRef.current = false;
       busyRef.current = false;
@@ -251,11 +270,13 @@ export function useCleanupHandlers({
       residualFromUninstall || useOfficial,
     )}`;
     const riskBits: string[] = [];
-    if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
-    if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);
     if (picked.some((it) => it.risk === "high")) riskBits.push(L.conclusionHighRiskHint);
+    if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);
+    if (picked.some((it) => it.user_library)) riskBits.push(L.confirmUserLibrarySelected);
+    if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
     if (riskBits.length) {
-      message = `${message}\n\n⚠ ${riskBits.slice(0, 2).join("\n")}`;
+      // Never truncate: high-risk must stay visible (F-R6-01).
+      message = `${message}\n\n⚠ ${riskBits.join("\n")}`;
     }
     if (picked.some((it) => /\\common files\\/i.test(it.path))) {
       message = `${message}\n\n⚠ ${L.confirmCommonFilesHint}`;

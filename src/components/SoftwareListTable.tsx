@@ -53,11 +53,15 @@ export function SoftwareListTable({
 }) {
   const L = t();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  // F-R6-10: read `selected` via ref so `ensureSelected` stays referentially stable
+  // and does not punch a hole through AppRow's memo when selection changes.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const ensureSelected = useCallback(
     (app: InstalledApp) => {
-      if (!selected) setSelected(app);
+      if (!selectedRef.current) setSelected(app);
     },
-    [selected, setSelected],
+    [setSelected],
   );
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,

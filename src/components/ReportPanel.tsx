@@ -177,7 +177,7 @@ export function ReportPanel({
               try {
                 await api.openPath(report.backup_dir);
               } catch (e) {
-                toast.error(L.errInvokeFailed(formatError(e)));
+                toast.error(formatError(e));
               }
             }}
           >

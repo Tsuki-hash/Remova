@@ -151,9 +151,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cleanup executor enforces the user-data red line even if a path slips past scan-time marking
 - AI key stored via DPAPI and never returned to the frontend; cloud payloads pass through `sanitize_path`
 
-[1.1.1]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.1
-[1.1.0]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.0
-
 ## [1.0.0] - 2026-09-16
 
 First public release.
@@ -175,4 +172,7 @@ First public release.
 - Shared-runtime selections require explicit confirmation
 - System paths and critical services are blocked from cleanup
 
+<!-- R-R6-08: link definitions live at the bottom of the file (Keep a Changelog). -->
+[1.1.1]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.1
+[1.1.0]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.0.0

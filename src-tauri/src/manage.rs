@@ -437,7 +437,8 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
                 continue;
             }
             let lower = name.to_lowercase();
-            if lower.starts_with("\\microsoft\\windows\\") {
+            // S-R6-13: protect the whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
+            if lower.starts_with("\\microsoft\\") {
                 continue;
             }
             let status = cols.get(IDX_STATUS).cloned().unwrap_or_default();
@@ -671,9 +672,9 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
         return Err(crate::error::manage_err("bad_name", "task").to_ipc());
     }
     let _guard = lock_manage();
-    // S-02: mirror list-side filter — never disable Microsoft\Windows system tasks.
+    // S-02 / S-R6-13: mirror list-side filter — never disable `\Microsoft\` system tasks.
     let low = task_name.replace('/', "\\").to_lowercase();
-    if low.starts_with("\\microsoft\\windows\\") || low.starts_with("microsoft\\windows\\") {
+    if low.starts_with("\\microsoft\\") || low.starts_with("microsoft\\") {
         return Err(crate::error::manage_err("protected_task", task_name).to_ipc());
     }
     #[cfg(not(windows))]
@@ -749,6 +750,12 @@ mod tests {
             super::set_task_enabled(r"\Microsoft\Windows\Defrag\ScheduledDefrag", false).is_err()
         );
         assert!(super::set_task_enabled("Microsoft\\Windows\\Update", true).is_err());
+        // S-R6-13: whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
+        assert!(
+            super::set_task_enabled(r"\Microsoft\Office\Office Automatic Updates", false).is_err()
+        );
+        assert!(super::set_task_enabled(r"\Microsoft\EdgeUpdate\UpdateTask", true).is_err());
+        assert!(super::set_task_enabled("/Microsoft/OneDrive/Update", false).is_err());
     }
 
     #[test]

@@ -101,7 +101,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
       setApiKey("");
       toast.success(L.aiSaved);
     } catch (e) {
-      toast.error(L.errInvokeFailed(formatError(e)));
+      toast.error(formatError(e));
     } finally {
       setBusy(false);
     }
