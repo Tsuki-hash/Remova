@@ -1,4 +1,4 @@
-//! Backup → official uninstall → per-item delete.
+﻿//! Backup 鈫?official uninstall 鈫?per-item delete.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
@@ -289,7 +289,7 @@ fn delete_cleanup_items_source(
     }
 }
 
-/// Full cleanup: optional backup → official uninstall → residual delete.
+/// Full cleanup: optional backup 鈫?official uninstall 鈫?residual delete.
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
@@ -321,7 +321,7 @@ pub fn run_full_cleanup(
         .filter(|it| !it.path.trim().is_empty())
         .collect();
     // Empty leftover set is valid when the user asked for official uninstall only
-    // (batch “no default-selectable residue” should still remove the app).
+    // (batch 鈥渘o default-selectable residue鈥?should still remove the app).
     if selected.is_empty() && opts.skip_official_uninstall {
         return FullCleanupReport {
             app_name: app.name.clone(),
@@ -426,7 +426,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         }];

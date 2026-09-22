@@ -1,4 +1,4 @@
-//! Filesystem association scans (shortcuts, TEMP, WebView, cross-drive).
+﻿//! Filesystem association scans (shortcuts, TEMP, WebView, cross-drive).
 
 use super::*;
 
@@ -48,7 +48,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
                     detail: p.to_string_lossy().chars().take(120).collect(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -57,7 +57,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
 }
 
 /// Whether a LOCALAPPDATA/APPDATA child dir name looks like a product WebView2/Electron
-/// mask. Name match is REQUIRED 鈥?a folder that merely contains EBWebView is not evidence (SEC-2).
+/// mask. Name match is REQUIRED 閳?a folder that merely contains EBWebView is not evidence (SEC-2).
 pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> bool {
     let low = dir_name.to_lowercase();
     if !low.ends_with(".exe") && !low.contains("ebwebview") {
@@ -95,7 +95,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Name match is REQUIRED 鈥?WebView2 folder alone is not evidence (SEC-2).
+            // Name match is REQUIRED 閳?WebView2 folder alone is not evidence (SEC-2).
             if !webview_mask_matches(fname, name_slugs) {
                 continue;
             }
@@ -107,7 +107,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                 path: p.to_string_lossy().to_string(),
                 kind: ItemKind::Dir,
                 score: 40,
-                // AppData / WebView caches are name-match only — require user confirm (BE-03).
+                // AppData / WebView caches are name-match only 鈥?require user confirm (BE-03).
                 confidence: Confidence::Suspected,
                 risk: RiskLevel::Medium,
                 reason: if has_web {
@@ -122,7 +122,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                     detail: fname.to_string(),
                 }],
                 shared: false,
-                user_data: false,
+                user_data: false, user_library: false,
                 size_kb: None,
                 bucket: None,
             });
@@ -229,7 +229,7 @@ fn walk_shortcuts(
                 detail: stem.to_string(),
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });
@@ -286,7 +286,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                     .to_string(),
             }],
             shared: false,
-            user_data: false,
+            user_data: false, user_library: false,
             size_kb: None,
             bucket: None,
         });
