@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useReducer, useRef } from "react";
-import type { CleanupItem, FullCleanupReport, IgnoreSuggestion } from "../types";
+import { useCallback, useMemo, useReducer } from "react";
+import type { CleanupItem, IgnoreSuggestion } from "../types";
 import type { VerifyRow } from "../lib/api";
 import { initialResidualState, residualReducer } from "./reducers/residual";
 
@@ -8,8 +8,6 @@ export type { VerifyRow };
 /** Residual / ignore / monitor state + actions (domain reducer). */
 export function useResidualState() {
   const [state, dispatch] = useReducer(residualReducer, undefined, initialResidualState);
-  const stateRef = useRef(state);
-  stateRef.current = state;
 
   const togglePath = useCallback((path: string) => {
     dispatch({ type: "selection/toggle", path });
@@ -38,9 +36,6 @@ export function useResidualState() {
   const setIgnoreSuggestions = useCallback((value: IgnoreSuggestion[]) => {
     dispatch({ type: "ignore/set", value });
   }, []);
-  const setLastReport = useCallback((value: FullCleanupReport | null) => {
-    dispatch({ type: "lastReport/set", value });
-  }, []);
   const setMonitoring = useCallback((value: boolean) => {
     dispatch({ type: "monitoring/set", value });
   }, []);
@@ -63,7 +58,6 @@ export function useResidualState() {
       clearResidualScan,
       setEvidence,
       setIgnoreSuggestions,
-      setLastReport,
       setMonitoring,
       setMonitorDiff,
       setResidualFromUninstall,
@@ -76,7 +70,6 @@ export function useResidualState() {
       clearResidualScan,
       setEvidence,
       setIgnoreSuggestions,
-      setLastReport,
       setMonitoring,
       setMonitorDiff,
       setResidualFromUninstall,
@@ -91,8 +84,6 @@ export function useResidualState() {
       setEvidence,
       ignoreSuggestions: state.ignoreSuggestions,
       setIgnoreSuggestions,
-      lastReport: state.lastReport,
-      setLastReport,
       monitoring: state.monitoring,
       setMonitoring,
       monitorDiff: state.monitorDiff,
@@ -106,7 +97,6 @@ export function useResidualState() {
       setSelectedPaths,
       setEvidence,
       setIgnoreSuggestions,
-      setLastReport,
       setMonitoring,
       setMonitorDiff,
       setResidualFromUninstall,
