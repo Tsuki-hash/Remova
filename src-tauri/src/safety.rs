@@ -391,14 +391,50 @@ pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
     is_safe_fs(p) && !is_user_data_path(&s) && !looks_like_sync_conflict(&s)
 }
 
+/// Restore target gate: write-back must not hit library roots, sync-conflict trees, or
+/// protected system prefixes. Unlike delete, 8.3 profile names (`Users\RUNNER~1\…`) are
+/// legitimate restore destinations (S-R6-03 + CI temp homes).
+pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
+    let s = p.to_string_lossy();
+    if s.trim().is_empty() {
+        return false;
+    }
+    if looks_like_sync_conflict(&s) || is_user_data_path(&s) {
+        return false;
+    }
+    if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
+        return false;
+    }
+    let low = s.replace('/', "\\").to_lowercase();
+    let trimmed = low.trim_end_matches('\\');
+    if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
+    // Reuse delete-adjacent system roots without the 8.3 ban.
+    if trimmed.len() == 2 && trimmed.ends_with(':') {
+        return false;
+    }
+    let protected = [
+        r"\windows",
+        r"\program files",
+        r"\program files (x86)",
+        r"\programdata\microsoft",
+    ];
+    for pref in protected {
+        if trimmed == pref || trimmed.starts_with(&format!("{pref}\\")) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Red line: the user's library **roots** (Documents/Downloads/…) and sync-conflict trees.
 /// Never delete these. Subfolders under a library (e.g. `Documents\<App>`, updater caches)
 /// are **not** red-lined — they may be cleaned when associated. See [`is_user_library_path`].
 pub fn is_user_data_path(p: &str) -> bool {
-    // S-R6-05: `\\?\` / 8.3 shapes must not bypass the library-root red line.
-    if is_abnormal_path_shape(p) {
-        return true;
-    }
+    // Library-root red line is based on segment names. Abnormal `\\?\` / 8.3 shapes are
+    // rejected by `is_safe_fs` for deletes; they must not mark every `Users\RUNNER~1\…`
+    // as user_data or restores into CI/profile temp homes become impossible.
     let low = p.replace('/', "\\").to_lowercase();
     let trimmed = low.trim_end_matches('\\');
     // Exact profile / public library roots (last path segment match).
@@ -812,7 +848,10 @@ mod tests {
             r"\\?\C:\Windows\System32\evil"
         )));
         assert!(!super::is_safe_fs(Path::new(r"C:\PROGRA~1\App")));
-        assert!(super::is_user_data_path(r"C:\Users\Aaron\DOCUME~1"));
+        // 8.3 library short-names are blocked by is_safe_fs, not the user_data segment list.
+        assert!(!super::is_user_data_path(r"C:\Users\Aaron\DOCUME~1"));
+        assert!(!super::is_safe_fs(Path::new(r"C:\Users\Aaron\DOCUME~1")));
+        assert!(super::is_safe_fs(Path::new(r"C:\Users\Aaron\Documents")));
         assert!(super::is_user_data_path(r"\\?\C:\Users\Aaron\Documents"));
     }
 }
