@@ -14,7 +14,9 @@ if ($libText -notmatch 'generate_handler!\s*\[([\s\S]*?)\]') {
 }
 $handlerBlock = $Matches[1]
 $codeCmds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($m in [regex]::Matches($handlerBlock, '(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*,?\s*$')) {
+# Handler entries may be bare (`check_github_latest,`) or module-qualified
+# (`commands::update::check_github_latest,`) — compare on the final segment.
+foreach ($m in [regex]::Matches($handlerBlock, '(?m)^\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)\s*,?\s*$')) {
   $null = $codeCmds.Add($m.Groups[1].Value)
 }
 

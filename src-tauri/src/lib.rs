@@ -2,7 +2,9 @@
 
 pub mod ai;
 pub mod apps;
+pub mod association;
 pub mod backup;
+pub mod commands;
 pub mod constants;
 pub mod dirsize;
 pub mod error;
@@ -30,7 +32,6 @@ pub mod sysops;
 
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
-use history::HistoryEntry;
 use scanner::{CleanupItem, ScanResult};
 use tauri::Manager;
 
@@ -75,71 +76,6 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct LatestReleaseInfo {
-    pub version: String,
-    pub url: String,
-    pub download_url: Option<String>,
-}
-
-/// Fetch GitHub latest release from the Rust side (avoids WebView CORS / CSP issues).
-#[tauri::command]
-async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(std::time::Duration::from_secs(8))
-            .build();
-        let resp = agent
-            .get(crate::constants::GITHUB_LATEST_RELEASE_API)
-            .set("Accept", "application/vnd.github+json")
-            .set("User-Agent", "Remova")
-            .call()
-            .map_err(|e| e.to_string())?;
-        let body = resp.into_string().map_err(|e| e.to_string())?;
-        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-        let tag = v
-            .get("tag_name")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .trim_start_matches('v')
-            .to_string();
-        if tag.is_empty() {
-            return Ok(None);
-        }
-        let url = v
-            .get("html_url")
-            .and_then(|t| t.as_str())
-            .unwrap_or(crate::constants::GITHUB_RELEASES_PAGE)
-            .to_string();
-        let mut download_url = None;
-        if let Some(assets) = v.get("assets").and_then(|a| a.as_array()) {
-            for a in assets {
-                let name = a
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                let link = a
-                    .get("browser_download_url")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("");
-                if name.ends_with(".exe") && name.contains("setup") && !link.is_empty() {
-                    download_url = Some(link.to_string());
-                    break;
-                }
-            }
-        }
-        Ok(Some(LatestReleaseInfo {
-            version: tag,
-            url,
-            download_url,
-        }))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Open Explorer at a path (backup dir, install location) or a browser URL.
 /// Stable errors: `open_path:empty` | `open_path:not_found` | `open_path:failed`.
 #[tauri::command]
 fn open_path_in_explorer(path: String) -> Result<(), String> {
@@ -188,92 +124,6 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
         Some(e) => format!("open_path:failed:{}", e),
         None => "open_path:failed".into(),
     })
-}
-
-#[tauri::command]
-fn get_ai_config() -> Result<ai::AiConfigView, String> {
-    Ok(ai::AiConfigView::from(&ai::load_config()))
-}
-
-/// Save AI settings. Empty `api_key` keeps the stored key unchanged.
-#[tauri::command]
-fn save_ai_config(
-    enabled: bool,
-    provider: String,
-    base_url: String,
-    model: String,
-    allow_cloud_paths: bool,
-    api_key: Option<String>,
-) -> Result<ai::AiConfigView, String> {
-    let mut c = ai::load_config();
-    c.enabled = enabled;
-    c.provider = provider;
-    c.base_url = base_url;
-    c.model = model;
-    c.allow_cloud_paths = allow_cloud_paths;
-    if let Some(k) = api_key {
-        let k = k.trim().to_string();
-        if !k.is_empty() {
-            c.api_key = k;
-        }
-    }
-    ai::save_config(&c)?;
-    Ok(ai::AiConfigView::from(&c))
-}
-
-#[tauri::command]
-async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>, String> {
-    let cfg = ai::load_config();
-    if !cfg.enabled {
-        return Ok(None);
-    }
-    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request))
-        .await
-        .map_err(|e| e.to_string())?
-        .map(Some)
-        .map_err(|e| format!("ai:risk_brief:{e}"))
-}
-
-#[tauri::command]
-async fn ai_explain_items(
-    app_name: String,
-    publisher: String,
-    items: Vec<ai::ExplainInput>,
-) -> Result<Vec<ai::ExplainOutput>, String> {
-    let cfg = ai::load_config();
-    if !cfg.enabled {
-        return Ok(vec![]);
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        ai::explain_items(&cfg, &app_name, &publisher, &items)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| format!("ai:explain:{e}"))
-}
-
-#[tauri::command]
-async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option<String>, String> {
-    let cfg = ai::load_config();
-    if !cfg.enabled {
-        return Ok(None);
-    }
-    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request))
-        .await
-        .map_err(|e| e.to_string())?
-        .map(Some)
-        .map_err(|e| format!("ai:summarize:{e}"))
-}
-
-#[tauri::command]
-async fn ai_parse_intent(text: String, app_names: Vec<String>) -> Result<ai::NlIntent, String> {
-    let cfg = ai::load_config();
-    if !cfg.enabled {
-        return Err("ai disabled".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || ai::parse_nl_intent(&cfg, &text, &app_names))
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
@@ -394,32 +244,6 @@ async fn run_full_cleanup(
 }
 
 #[tauri::command]
-fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
-    Ok(history::load(crate::constants::HISTORY_LIST_CAP))
-}
-
-#[tauri::command]
-fn export_history_csv() -> Result<String, String> {
-    let entries = history::load(crate::constants::HISTORY_CSV_CAP);
-    let mut out =
-        String::from("app_name,deleted,failed,skipped,delayed,aborted,backup_dir,created_at\n");
-    for e in entries {
-        out.push_str(&format!(
-            "{},{},{},{},{},{},{},{}\n",
-            fsutil::csv_escape(&e.app_name),
-            e.deleted,
-            e.failed,
-            e.skipped,
-            e.delayed,
-            e.aborted,
-            fsutil::csv_escape(&e.backup_dir),
-            e.created_at
-        ));
-    }
-    Ok(out)
-}
-
-#[tauri::command]
 fn is_elevated() -> Result<bool, String> {
     #[cfg(windows)]
     {
@@ -512,81 +336,6 @@ async fn elevate_restart() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_restore_sessions() -> Result<Vec<String>, String> {
-    Ok(restore::list_session_names())
-}
-
-#[tauri::command]
-async fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String> {
-    tauri::async_runtime::spawn_blocking(restore::list_session_info)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn delete_backup_session(name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || restore::delete_session_by_name(&name))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || restore::restore_by_name(&name))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn list_startup_items() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_startup_items)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn list_services() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_services)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn list_scheduled_tasks() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_scheduled_tasks)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn set_startup_enabled(location: String, enabled: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || manage::set_startup_enabled(&location, enabled))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn set_service_start_disabled(name: String, disable: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || manage::set_service_start_disabled(&name, disable))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn set_service_running(name: String, run: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || manage::set_service_running(&name, run))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || manage::set_task_enabled(&name, enabled))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 fn take_pending_analyze() -> Result<Option<String>, String> {
     let local = std::env::var_os("LOCALAPPDATA").ok_or("no LOCALAPPDATA")?;
     let p = std::path::PathBuf::from(local)
@@ -599,51 +348,6 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
     let _ = std::fs::remove_file(&p);
     let s = s.trim().to_string();
     Ok(if s.is_empty() { None } else { Some(s) })
-}
-
-#[tauri::command]
-async fn register_context_menu() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(sysops::register_context_menu)
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn unregister_context_menu() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(sysops::unregister_context_menu)
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-fn load_ignore() -> Result<ignore::IgnoreList, String> {
-    Ok(ignore::load())
-}
-
-#[tauri::command]
-fn ignore_publisher(name: String) -> Result<ignore::IgnoreList, String> {
-    ignore::add_publisher(&name)
-}
-
-#[tauri::command]
-fn ignore_app_name(name: String) -> Result<ignore::IgnoreList, String> {
-    ignore::add_name(&name)
-}
-
-/// Rule-based ignore suggestions from leftover paths (shared runtimes).
-#[tauri::command]
-fn suggest_ignore_rules(
-    publisher: String,
-    paths: Vec<String>,
-) -> Result<Vec<ignore::IgnoreSuggestion>, String> {
-    Ok(ignore::suggest_from_leftovers(&publisher, &paths))
-}
-
-#[tauri::command]
-fn apply_ignore_suggestions(
-    suggestions: Vec<ignore::IgnoreSuggestion>,
-) -> Result<ignore::IgnoreList, String> {
-    ignore::apply_suggestions(&suggestions)
 }
 
 #[tauri::command]
@@ -759,46 +463,46 @@ pub fn run() {
             cancel_size_estimate,
             begin_size_estimate,
             open_path_in_explorer,
-            check_github_latest,
+            commands::update::check_github_latest,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,
             run_official_uninstall,
-            list_cleanup_history,
-            export_history_csv,
+            commands::history_cmd::list_cleanup_history,
+            commands::history_cmd::export_history_csv,
             is_elevated,
             disk_usage,
             elevate_restart,
-            list_restore_sessions,
-            list_backup_sessions,
-            delete_backup_session,
-            restore_session_by_name,
-            list_startup_items,
-            list_services,
-            list_scheduled_tasks,
-            set_startup_enabled,
-            set_service_start_disabled,
-            set_service_running,
-            set_task_enabled,
-            register_context_menu,
-            unregister_context_menu,
-            load_ignore,
-            ignore_publisher,
-            ignore_app_name,
-            suggest_ignore_rules,
-            apply_ignore_suggestions,
+            commands::backup_cmd::list_restore_sessions,
+            commands::backup_cmd::list_backup_sessions,
+            commands::backup_cmd::delete_backup_session,
+            commands::backup_cmd::restore_session_by_name,
+            commands::manage_cmd::list_startup_items,
+            commands::manage_cmd::list_services,
+            commands::manage_cmd::list_scheduled_tasks,
+            commands::manage_cmd::set_startup_enabled,
+            commands::manage_cmd::set_service_start_disabled,
+            commands::manage_cmd::set_service_running,
+            commands::manage_cmd::set_task_enabled,
+            commands::context_menu::register_context_menu,
+            commands::context_menu::unregister_context_menu,
+            commands::ignore_cmd::load_ignore,
+            commands::ignore_cmd::ignore_publisher,
+            commands::ignore_cmd::ignore_app_name,
+            commands::ignore_cmd::suggest_ignore_rules,
+            commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,
             monitor_diff_to_items,
             take_pending_analyze,
-            get_ai_config,
-            save_ai_config,
-            ai_risk_brief,
-            ai_explain_items,
-            ai_summarize_report,
-            ai_parse_intent
+            commands::ai_cmd::get_ai_config,
+            commands::ai_cmd::save_ai_config,
+            commands::ai_cmd::ai_risk_brief,
+            commands::ai_cmd::ai_explain_items,
+            commands::ai_cmd::ai_summarize_report,
+            commands::ai_cmd::ai_parse_intent
         ]);
     match builder.run(tauri::generate_context!()) {
         Ok(()) => {}
