@@ -5,7 +5,7 @@ import { WindowControls } from "./WindowControls";
 
 const NAV_ICONS: Record<NavId, string> = {
   software: "▣",
-  startup: "⚡",
+  startup: "startup",
   services: "⚙",
   tasks: "⏱",
   orphans: "◎",
