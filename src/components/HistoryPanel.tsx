@@ -104,7 +104,7 @@ export function HistoryPanel({
                       : ""}
                   </div>
                 </div>
-                {h.backup_dir ? (
+                {(h.backup_dir || "").trim() ? (
                   <button
                     style={{ ...css.btnSm, height: 28 }}
                     title={h.backup_dir}
@@ -112,7 +112,9 @@ export function HistoryPanel({
                   >
                     {L.openBackupDir}
                   </button>
-                ) : null}
+                ) : (
+                  <span style={{ ...css.muted, fontSize: 12 }}>{L.noBackupThisRun}</span>
+                )}
               </div>
             ))}
           </div>
