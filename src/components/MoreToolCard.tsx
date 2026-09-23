@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { t } from "../i18n";
 import type { InstalledApp } from "../types";
+import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
 export type ToolId =
   | "history"
@@ -24,7 +25,7 @@ export type ToolItem = {
   id: ToolId;
   title: string;
   desc: string;
-  icon: string;
+  icon: ToolIconName;
   action: () => void;
   needsSelection?: boolean;
   accent?: boolean;
@@ -94,7 +95,7 @@ export function ToolCard({
         }}
         aria-hidden
       >
-        {item.icon}
+        <ToolGlyph name={item.icon} />
       </span>
       <span style={{ minWidth: 0, flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
