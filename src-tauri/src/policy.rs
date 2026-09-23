@@ -42,8 +42,9 @@ impl CleanupSource {
 
     fn allow_ok(&self, path: &str) -> bool {
         match self {
-            CleanupSource::Orphan | CleanupSource::Monitor => {
-                crate::orphans::was_recent_orphan_path(path)
+            CleanupSource::Orphan => crate::orphans::was_recent_orphan_path(path),
+            CleanupSource::Monitor => {
+                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Monitor, path)
             }
             CleanupSource::Installer => {
                 crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Installer, path)
@@ -197,12 +198,13 @@ pub fn gate_cleanup_item(
     }
     // Library subpaths (Documents/<App>, …) may be cleaned only with a proven link to the
     // app (or in scoped scans: orphan/monitor/installer). Never free-standing leftovers.
+    // Always enforce for non-scoped sources — a forged install_location must not unlock libraries.
     if crate::safety::is_user_library_path(&item.path)
         && !matches!(
             source,
             CleanupSource::Orphan | CleanupSource::Monitor | CleanupSource::Installer
         )
-        && app.is_none()
+        && (app.is_none() || !crate::association::path_associated_with_app(app.unwrap(), item))
     {
         return GateDecision::Skip("path not associated with app");
     }
