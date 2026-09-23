@@ -17,7 +17,6 @@ export function MorePage({
   monitoring,
   monitorDiff,
   lastReport,
-  shellMenu,
   closeMode,
   onCloseModeChange,
   onForceClean,
@@ -26,7 +25,6 @@ export function MorePage({
   onToggleMonitor,
   onMonitorToCleanup,
   onDismissMonitor,
-  onShellToggle,
   onExportReport,
   onError,
   onCheckUpdate,
@@ -36,7 +34,6 @@ export function MorePage({
   monitoring: boolean;
   monitorDiff: { added_files: string[]; added_reg_values: string[] } | null;
   lastReport: FullCleanupReport | null;
-  shellMenu: boolean;
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
   onForceClean: () => void;
@@ -45,7 +42,6 @@ export function MorePage({
   onToggleMonitor: () => void;
   onMonitorToCleanup: () => void;
   onDismissMonitor: () => void;
-  onShellToggle: () => void;
   onExportReport: () => void;
   onError: (msg: string) => void;
   onCheckUpdate: () => void;
@@ -127,13 +123,6 @@ export function MorePage({
         tools.setOpenTool("monitor");
       },
       badge: monitoring ? L.badgeRunning : undefined,
-    },
-    {
-      id: "shell",
-      title: shellMenu ? L.shellUnregister : L.shellMenu,
-      desc: shellMenu ? L.shellUnregisterHint : L.shellMenuHint,
-      icon: "☰",
-      action: onShellToggle,
     },
   ];
 
