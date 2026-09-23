@@ -484,13 +484,25 @@ pub fn run() {
             let show_i = MenuItem::with_id(app, "show", "打开 Remova", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出 Remova", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-            let icon = match app.default_window_icon().cloned() {
-                Some(i) => i,
-                None => {
-                    eprintln!("[remova] default window icon missing — tray disabled");
-                    return Ok(());
-                }
+            // Prefer dedicated 32×32 transparent PNG for the tray (crisp at 16–32 px).
+            let icon = match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
+                Ok(i) => i,
+                Err(_) => match app.default_window_icon().cloned() {
+                    Some(i) => i,
+                    None => {
+                        eprintln!("[remova] tray icon missing — tray disabled");
+                        return Ok(());
+                    }
+                },
             };
+            // Taskbar / alt-tab: larger raster so high-DPI does not upscale a 32px glyph.
+            if let Ok(big) =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
+            {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_icon(big);
+                }
+            }
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip("Remova")
