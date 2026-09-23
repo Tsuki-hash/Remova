@@ -97,19 +97,35 @@ pub fn top_dir_sizes() -> Vec<DirSizeRow> {
     out
 }
 
+/// True when `path` is under one of the radar's well-known system roots.
+fn under_radar_roots(path: &str) -> bool {
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let drive = drive.trim_end_matches('\\').to_uppercase();
+    let norm = path.replace('/', "\\").trim_end_matches('\\').to_uppercase();
+    for leaf in [
+        "USERS",
+        "PROGRAM FILES",
+        "PROGRAM FILES (X86)",
+        "PROGRAMDATA",
+        "WINDOWS",
+    ] {
+        let root = format!("{drive}\\{leaf}");
+        if norm == root || norm.starts_with(&format!("{root}\\")) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Immediate children of `path` ranked by size (for drill-down).
 pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
     let p = PathBuf::from(path.trim());
     if path.trim().is_empty() || !p.is_dir() {
         return Err("not a directory".into());
     }
-    // Only allow drill-down under system-drive well-known roots (read-only safety).
-    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
-    let drive = drive.trim_end_matches('\\').to_uppercase();
-    let prefix = format!("{drive}\\");
-    let norm = p.to_string_lossy().replace('/', "\\");
-    if !norm.to_uppercase().starts_with(&prefix) {
-        return Err("path outside system drive".into());
+    // Only allow drill-down under well-known system roots (read-only safety).
+    if !under_radar_roots(&p.to_string_lossy()) {
+        return Err("path outside radar roots".into());
     }
     Ok(child_rows(&p))
 }
@@ -133,5 +149,14 @@ mod tests {
     fn list_dir_children_rejects_blank() {
         assert!(list_dir_children("").is_err());
         assert!(list_dir_children("   ").is_err());
+    }
+
+    #[test]
+    fn under_radar_roots_whitelist() {
+        assert!(super::under_radar_roots(r"C:\Users\a\Documents"));
+        assert!(super::under_radar_roots(r"C:\Program Files\App"));
+        assert!(super::under_radar_roots(r"C:\Windows\Temp"));
+        assert!(!super::under_radar_roots(r"C:\Games\Steam"));
+        assert!(!super::under_radar_roots(r"D:\Data"));
     }
 }
