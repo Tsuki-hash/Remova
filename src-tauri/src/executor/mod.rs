@@ -45,7 +45,7 @@ pub struct FullCleanupOptions {
     /// Create a Windows restore point (tests set false to avoid real side effects).
     #[serde(default = "default_true")]
     pub restore_point: bool,
-    /// uninstall | orphan | monitor | copilot — default uninstall (S-R4-07).
+    /// uninstall | orphan | monitor | copilot | installer | toolcache — default uninstall (S-R4-07).
     #[serde(default)]
     pub cleanup_source: Option<String>,
 }
@@ -55,6 +55,8 @@ pub fn cleanup_source_from_opts(opts: &FullCleanupOptions) -> crate::policy::Cle
         Some("orphan") => crate::policy::CleanupSource::Orphan,
         Some("monitor") => crate::policy::CleanupSource::Monitor,
         Some("copilot") => crate::policy::CleanupSource::Copilot,
+        Some("installer") => crate::policy::CleanupSource::Installer,
+        Some("toolcache") => crate::policy::CleanupSource::ToolCache,
         _ => crate::policy::CleanupSource::Uninstall,
     }
 }

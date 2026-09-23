@@ -7,12 +7,15 @@ pub mod backup;
 pub mod commands;
 pub mod constants;
 pub mod dirsize;
+pub mod diskradar;
 pub mod error;
 pub mod executor;
 pub mod fsutil;
 pub mod history;
 pub mod icon;
+pub mod idle;
 pub mod ignore;
+pub mod installers;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
@@ -25,9 +28,11 @@ pub mod regops;
 pub mod regscan;
 pub mod restore;
 pub mod safety;
+pub mod scan_allow;
 pub mod scanner;
 pub mod shared;
 pub mod storeapps;
+pub mod toolcache;
 pub mod sysops;
 
 use apps::InstalledApp;
@@ -271,6 +276,8 @@ async fn run_cleanup_dry_run(
             Some("orphan") => crate::policy::CleanupSource::Orphan,
             Some("monitor") => crate::policy::CleanupSource::Monitor,
             Some("copilot") => crate::policy::CleanupSource::Copilot,
+            Some("installer") => crate::policy::CleanupSource::Installer,
+            Some("toolcache") => crate::policy::CleanupSource::ToolCache,
             _ => crate::policy::CleanupSource::Uninstall,
         };
         executor::run_cleanup_dry_for_app_source(&app, &items, source)
@@ -429,6 +436,49 @@ async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Idle software radar (read-only ranking).
+#[tauri::command]
+async fn rank_idle_apps() -> Result<Vec<idle::IdleApp>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let installed = apps::scan_installed_apps();
+        idle::rank_idle_apps(&installed)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Installer packages + updater caches (scoped delete allow-list).
+#[tauri::command]
+async fn scan_installer_caches() -> Result<Vec<scanner::CleanupItem>, String> {
+    tauri::async_runtime::spawn_blocking(installers::scan_installer_caches)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Dev / game / browser tool caches (scoped delete allow-list).
+#[tauri::command]
+async fn scan_tool_caches() -> Result<Vec<scanner::CleanupItem>, String> {
+    tauri::async_runtime::spawn_blocking(toolcache::scan_tool_caches)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Disk radar: top directories under well-known system roots (read-only).
+#[tauri::command]
+async fn list_top_dir_sizes() -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(diskradar::top_dir_sizes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Disk radar drill-down: immediate children of a directory (read-only).
+#[tauri::command]
+async fn list_dir_children(path: String) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || diskradar::list_dir_children(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// SOP §7: re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
@@ -577,6 +627,11 @@ pub fn run() {
             commands::ignore_cmd::suggest_ignore_rules,
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,
+            rank_idle_apps,
+            scan_installer_caches,
+            scan_tool_caches,
+            list_top_dir_sizes,
+            list_dir_children,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,

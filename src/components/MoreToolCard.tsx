@@ -14,7 +14,11 @@ export type ToolId =
   | "open-releases"
   | "csv"
   | "report"
-  | "ai";
+  | "ai"
+  | "idle"
+  | "installers"
+  | "diskradar"
+  | "toolcache";
 
 export type ToolItem = {
   id: ToolId;

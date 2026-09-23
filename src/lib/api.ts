@@ -6,8 +6,10 @@ import type {
   AiExplainOutput,
   CleanupItem,
   CleanupReport,
+  DirSizeRow,
   FullCleanupReport,
   HistoryEntry,
+  IdleApp,
   IgnoreSuggestion,
   InstalledApp,
   ManageItem,
@@ -16,13 +18,21 @@ import type {
   ScanResult,
 } from "../types";
 
+export type CleanupSourceId =
+  | "uninstall"
+  | "orphan"
+  | "monitor"
+  | "copilot"
+  | "installer"
+  | "toolcache";
+
 export type FullCleanupOptions = {
   dry_run: boolean;
   skip_official_uninstall: boolean;
   backup_enabled: boolean;
   restore_point?: boolean;
-  /** Gate source: uninstall | orphan | monitor | copilot */
-  cleanup_source?: "uninstall" | "orphan" | "monitor" | "copilot";
+  /** Gate source: uninstall | orphan | monitor | copilot | installer | toolcache */
+  cleanup_source?: CleanupSourceId;
 };
 
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };
@@ -37,7 +47,7 @@ export const api = {
   dryRun: (
     app: InstalledApp,
     items: CleanupItem[],
-    options?: { cleanup_source?: "uninstall" | "orphan" | "monitor" | "copilot" },
+    options?: { cleanup_source?: CleanupSourceId },
   ) => invoke<CleanupReport>("run_cleanup_dry_run", { app, items, cleanupSource: options?.cleanup_source }),
   fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions) =>
     invoke<FullCleanupReport>("run_full_cleanup", { app, items, options }),
@@ -46,6 +56,11 @@ export const api = {
   verifyLeftovers: (items: CleanupItem[]) =>
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
   orphanScan: () => invoke<CleanupItem[]>("scan_orphan_leftovers"),
+  rankIdleApps: () => invoke<IdleApp[]>("rank_idle_apps"),
+  scanInstallerCaches: () => invoke<CleanupItem[]>("scan_installer_caches"),
+  scanToolCaches: () => invoke<CleanupItem[]>("scan_tool_caches"),
+  listTopDirSizes: () => invoke<DirSizeRow[]>("list_top_dir_sizes"),
+  listDirChildren: (path: string) => invoke<DirSizeRow[]>("list_dir_children", { path }),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: () => invoke("elevate_restart"),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),
