@@ -1,6 +1,4 @@
 import { t } from "../i18n";
-import { api } from "../lib/api";
-import { toast } from "../lib/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
@@ -153,19 +151,6 @@ export function MorePage({
       desc: L.versionCheckHint,
       icon: "↑",
       action: onCheckUpdate,
-    },
-    {
-      id: "open-releases",
-      title: L.openReleases,
-      desc: L.openReleasesHint,
-      icon: "↗",
-      action: () => {
-        // window.open is blocked in the Tauri webview — open via backend ShellExecute.
-        void api
-          .openPath("https://github.com/Tsuki-hash/Remova/releases")
-          .then(() => toast.info(L.openReleasesToast))
-          .catch(() => toast.error(L.errOpenPathFailed));
-      },
     },
   ];
 
