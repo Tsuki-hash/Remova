@@ -322,7 +322,6 @@ export default function App() {
     openPathSafe,
     doIgnorePublisher,
     doIgnoreApp,
-    runOrphanScan,
     toggleMonitor,
     monitorDiffToCleanup,
     checkupOrphanScan,
@@ -674,9 +673,7 @@ export default function App() {
               lastReport={lastReport}
               closeMode={closeMode}
               onCloseModeChange={setCloseMode}
-              onForceClean={() => void forceClean()}
               onIgnorePublisher={() => void doIgnorePublisher()}
-              onOrphanScan={() => void runOrphanScan()}
               onToggleMonitor={() => void toggleMonitor()}
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
               onDismissMonitor={() => residualActions.setMonitorDiff(null)}
