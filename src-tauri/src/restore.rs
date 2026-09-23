@@ -380,11 +380,25 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
 
 /// `YYYYMMDD-HHMMSS` prefix (digits only, fixed widths).
 fn is_session_name(name: &str) -> bool {
+    // Legacy `YYYYMMDD-HHMMSS…` (optionally followed by `_extra`).
     let b = name.as_bytes();
-    b.len() >= 15
+    if b.len() >= 15
         && b[..8].iter().all(|c| c.is_ascii_digit())
         && b[8] == b'-'
         && (9..15).all(|i| b[i].is_ascii_digit())
+    {
+        return true;
+    }
+    // create_session format: `{unix_secs}_{safe}` (see prune_old_sessions).
+    if let Some((ts, rest)) = name.split_once('_') {
+        return !ts.is_empty()
+            && ts.chars().all(|c| c.is_ascii_digit())
+            && !rest.is_empty()
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    }
+    false
 }
 
 #[cfg(test)]

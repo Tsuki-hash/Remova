@@ -1,6 +1,41 @@
 //! Enumerate Windows uninstall registry entries (read-only).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+/// Uninstall command fingerprints from the latest server-side app scan (blocks IPC-forged RCE).
+static UNINSTALL_TRUST: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn uninstall_trust() -> &'static Mutex<HashSet<String>> {
+    UNINSTALL_TRUST.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn trust_key(uninstall: &str, quiet: &str) -> String {
+    format!("{uninstall}\n{quiet}")
+}
+
+/// Remember uninstall command pairs produced by the latest scan.
+pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
+    if let Ok(mut g) = uninstall_trust().lock() {
+        g.clear();
+        for a in apps {
+            if a.uninstall_string.trim().is_empty() && a.quiet_uninstall_string.trim().is_empty() {
+                continue;
+            }
+            g.insert(trust_key(&a.uninstall_string, &a.quiet_uninstall_string));
+        }
+    }
+}
+
+/// True when this app's uninstall command pair came from the latest scan.
+pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
+    let k = trust_key(&app.uninstall_string, &app.quiet_uninstall_string);
+    uninstall_trust()
+        .lock()
+        .map(|g| g.contains(&k))
+        .unwrap_or(false)
+}
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
@@ -287,11 +322,12 @@ unsafe fn read_uninstall_entry(
                 "QuietUninstallString" => quiet = s,
                 "DisplayIcon" => display_icon = s,
                 "InstallDate" => install_date = format_install_date(&s),
-                "EstimatedSize" if data_len >= 4 => {
-                    size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
-                }
                 _ => {}
             }
+        }
+        // EstimatedSize is REG_DWORD — must be read outside the REG_SZ arm.
+        if name == "EstimatedSize" && (vtype == 4 /* REG_DWORD */) && data_len >= 4 {
+            size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
         }
     }
     let _ = RegCloseKey(hk);

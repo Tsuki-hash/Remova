@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 pub enum AllowScope {
     Installer,
     ToolCache,
+    Monitor,
 }
 
 impl AllowScope {
@@ -15,6 +16,7 @@ impl AllowScope {
         match self {
             AllowScope::Installer => "installer",
             AllowScope::ToolCache => "toolcache",
+            AllowScope::Monitor => "monitor",
         }
     }
 }

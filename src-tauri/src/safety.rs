@@ -432,6 +432,15 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
             return false;
         }
     }
+    // S-R4: never write back into user-library subtrees or Startup (persistence / overwrite).
+    if is_user_library_path(&s) {
+        return false;
+    }
+    if trimmed.contains("\\start menu\\programs\\startup")
+        || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
+    {
+        return false;
+    }
     true
 }
 
