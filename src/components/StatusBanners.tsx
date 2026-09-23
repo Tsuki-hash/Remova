@@ -18,6 +18,9 @@ export function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: ()
         fontSize: 13,
         lineHeight: 1.45,
         flexShrink: 0,
+        flexBasis: "auto",
+        minHeight: 40,
+        overflow: "visible",
       }}
       role="alert"
     >

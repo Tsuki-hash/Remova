@@ -50,3 +50,23 @@ pub async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String>
         .await
         .map_err(|e| e.to_string())?
 }
+
+#[cfg(test)]
+mod tests {
+    // T-R7-01: commands-layer boundary coverage for manage write gates.
+
+    #[test]
+    fn set_service_start_disabled_rejects_critical_and_bad_names() {
+        // Critical services must never be disabled via the manage command path.
+        assert!(crate::manage::set_service_start_disabled("WinDefend", true).is_err());
+        assert!(crate::manage::set_service_start_disabled("EventLog", true).is_err());
+        assert!(crate::manage::set_service_start_disabled("", true).is_err());
+        assert!(crate::manage::set_service_start_disabled("a\\b", true).is_err());
+    }
+
+    #[test]
+    fn set_startup_enabled_rejects_blank_location() {
+        assert!(crate::manage::set_startup_enabled("", true).is_err());
+        assert!(crate::manage::set_startup_enabled("   ", false).is_err());
+    }
+}

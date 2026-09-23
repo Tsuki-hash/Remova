@@ -200,27 +200,31 @@ pub fn gate_cleanup_item(
 
     if let Some(app) = app {
         // S-R6-01: client cleanup_source alone must not disable association.
-        // Skip association only for server-scanned orphan paths on orphan-shaped apps.
+        // S-R7-01: orphan-shaped apps under orphan/monitor source must come from the
+        // server-side scan allow-list. Forged empty InstalledApp + cleanup_source=orphan
+        // must not delete arbitrary paths.
         let client_orphan = matches!(source, CleanupSource::Orphan | CleanupSource::Monitor);
-        let orphan = client_orphan
-            && crate::association::is_orphan_flow(app)
-            && crate::orphans::was_recent_orphan_path(&item.path);
-        // Compute association once (S7-R2).
-        let fs_assoc = if orphan {
-            false
-        } else {
-            crate::association::path_associated_with_app(app, item)
-        };
-        // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
-        // Orphan/Monitor never get CF vendor allow (shared runtime).
-        if matches!(item.kind, ItemKind::File | ItemKind::Dir)
-            && crate::shared::is_common_files_vendor_path(&item.path)
-        {
-            if client_orphan || orphan || !crate::association::cf_vendor_associated(app, &item.path)
+        let orphan_shape = crate::association::is_orphan_flow(app);
+        if client_orphan && orphan_shape {
+            if !crate::orphans::was_recent_orphan_path(&item.path) {
+                return GateDecision::Skip("path not associated with app");
+            }
+            // Confirmed orphan scan path — the allow-list is the association proof.
+            // CF vendor paths still hard-skip (shared runtime).
+            if matches!(item.kind, ItemKind::File | ItemKind::Dir)
+                && crate::shared::is_common_files_vendor_path(&item.path)
             {
                 return GateDecision::Skip("shared runtime");
             }
-        } else if !orphan && !fs_assoc {
+        } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
+            && crate::shared::is_common_files_vendor_path(&item.path)
+        {
+            // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
+            // Orphan/Monitor never get CF vendor allow (shared runtime).
+            if client_orphan || !crate::association::cf_vendor_associated(app, &item.path) {
+                return GateDecision::Skip("shared runtime");
+            }
+        } else if !crate::association::path_associated_with_app(app, item) {
             // S-R4-03: Registry/Path / non-CF FS also require association when app is known.
             return GateDecision::Skip("path not associated with app");
         }
@@ -497,9 +501,9 @@ mod tests {
         assert!(
             !gate_cleanup_item(Some(&a), &pf_vendor, CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // Orphan source still allows non-associated PATH (safety gate only).
-        let orphan_app = app("瀛ゅ効鎵弿", "");
-        assert!(gate_cleanup_item(
+        // S-R7-01: orphan-shaped app + Orphan source + unscanned path must skip.
+        let orphan_app = app("孤儿扫描", "");
+        assert!(!gate_cleanup_item(
             Some(&orphan_app),
             &other_path,
             CleanupSource::Orphan,
@@ -582,7 +586,7 @@ mod tests {
         );
         let orphan_app = app("瀛ゅ効鎵弿", "");
         let orphan_ok = item(r"C:\Program Files\SomeVendor\Tool", ItemKind::Dir);
-        assert!(gate_cleanup_item(
+        assert!(!gate_cleanup_item(
             Some(&orphan_app),
             &orphan_ok,
             CleanupSource::Orphan,
@@ -644,12 +648,47 @@ mod tests {
         let orphan_app = app("瀛ゅ効鎵弿", "");
         let related = item(r"C:\Program Files\SomeVendor\Tool", ItemKind::Dir);
         assert!(
-            gate_cleanup_item(Some(&orphan_app), &related, CleanupSource::Orphan, &ignore)
+            !gate_cleanup_item(Some(&orphan_app), &related, CleanupSource::Orphan, &ignore)
                 .is_allow()
         );
         let win = item(r"C:\Windows\System32\evil.dll", ItemKind::File);
         assert!(
             !gate_cleanup_item(Some(&orphan_app), &win, CleanupSource::Orphan, &ignore).is_allow()
+        );
+    }
+    /// S-R7-01 adversarial: forged empty InstalledApp + cleanup_source=orphan.
+    #[test]
+    fn adversarial_forged_orphan_app_cannot_delete_arbitrary_paths() {
+        let ignore = crate::ignore::IgnoreList::default();
+        // Shape-only orphan (empty install/uninstall strings) — classic IPC forgery.
+        let forged = app("x", "");
+        let paths = [
+            (r"C:\Program Files\UnrelatedVendor\App", ItemKind::Dir),
+            (r"D:\Games\Save", ItemKind::Dir),
+            (r"C:\Users\a\Documents\work", ItemKind::Dir),
+            (r"HKCU\Software\Unrelated\Key", ItemKind::Registry),
+            (r"D:\Other\bin", ItemKind::Path),
+            (
+                r"C:\Program Files\Common Files\Vendor\redist",
+                ItemKind::Dir,
+            ),
+        ];
+        for (p, kind) in paths {
+            let it = item(p, kind);
+            for src in [CleanupSource::Orphan, CleanupSource::Monitor] {
+                let d = gate_cleanup_item(Some(&forged), &it, src, &ignore);
+                assert!(
+                    !d.is_allow(),
+                    "forged orphan must skip {p} via {src:?}, got {d:?}"
+                );
+            }
+        }
+        // Real apps still need association even under orphan source.
+        let real = app("DemoApp", r"C:\Program Files\DemoApp");
+        let un = item(r"C:\Program Files\Unrelated\bin.exe", ItemKind::File);
+        assert!(
+            !gate_cleanup_item(Some(&real), &un, CleanupSource::Orphan, &ignore).is_allow(),
+            "orphan source must not disable association for real apps"
         );
     }
 }
