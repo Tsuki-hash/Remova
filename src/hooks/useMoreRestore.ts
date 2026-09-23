@@ -29,6 +29,14 @@ export function useMoreRestore(onError: (msg: string) => void) {
 
   const deleteSession = useCallback(
     async (name: string) => {
+      const L = t();
+      const ok = await requestConfirm({
+        title: L.deleteSession,
+        message: L.deleteSessionConfirm(name),
+        confirmLabel: L.deleteSession,
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await api.deleteBackupSession(name);
         const list = await api.backupSessions();

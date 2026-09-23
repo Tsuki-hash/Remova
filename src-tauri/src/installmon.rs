@@ -214,6 +214,12 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
     }
     crate::scanner::fill_item_sizes(&mut items);
     crate::scanner::fill_item_buckets(&mut items, "");
+    // S-R7-01: Monitor deletes only paths from this diff (server-side allow-list).
+    let mut scanned = std::collections::HashSet::new();
+    for it in &items {
+        scanned.insert(it.path.clone());
+    }
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
     items
 }
 

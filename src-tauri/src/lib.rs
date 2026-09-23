@@ -38,9 +38,13 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| {
+        let apps = apps::scan_installed_apps();
+        apps::remember_uninstall_commands(&apps);
+        apps
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Clear cancel flag before a new estimate batch.
@@ -181,9 +185,13 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
-async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
+async fn app_icon_data(display_icon: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let png = icon::extract_icon_png(&display_icon)?;
+        let raw = display_icon?;
+        if raw.trim().is_empty() {
+            return None;
+        }
+        let png = icon::extract_icon_png(&raw)?;
         use base64_light::*;
         Some(format!("data:image/png;base64,{}", b64_encode(&png)))
     })
