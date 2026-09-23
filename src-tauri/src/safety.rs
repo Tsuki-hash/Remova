@@ -408,13 +408,26 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     if trimmed.len() == 2 && trimmed.ends_with(':') {
         return false;
     }
-    let protected = [
+    // S-R7-02: match system roots on the normalized path (drive + suffix).
+    // A bare `\windows` prefix never matches `c:\windows\...` — strip the drive first.
+    let after_drive = trimmed
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    let protected_suffixes = [
         r"\windows",
+        r"\windows.old",
         r"\program files",
         r"\program files (x86)",
         r"\programdata\microsoft",
     ];
-    for pref in protected {
+    for pref in protected_suffixes {
+        if after_drive == pref || after_drive.starts_with(&format!("{pref}\\")) {
+            return false;
+        }
+    }
+    // Env-specific protected roots (SystemRoot on D:, ProgramData, …).
+    for pref in protected_fs_prefixes() {
         if trimmed == pref || trimmed.starts_with(&format!("{pref}\\")) {
             return false;
         }
@@ -847,5 +860,42 @@ mod tests {
         assert!(!super::is_safe_fs(Path::new(r"C:\Users\Aaron\DOCUME~1")));
         assert!(super::is_safe_fs(Path::new(r"C:\Users\Aaron\Documents")));
         assert!(super::is_user_data_path(r"\\?\C:\Users\Aaron\Documents"));
+    }
+
+    /// S-R7-02 adversarial: tampered path_map targeting system prefixes must be refused.
+    #[test]
+    fn adversarial_restore_target_rejects_system_prefixes() {
+        use std::path::Path;
+        // Drive-prefixed system roots (the old `\\windows` vs `c:\\windows\\...` miss).
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Windows\System32\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Windows\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(r"c:\windows")));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"D:\Windows\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Program Files\App\bin.exe"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Program Files (x86)\App\bin.exe"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\ProgramData\Microsoft\evil.dll"
+        )));
+        // Case / slash style must not bypass.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"c:/windows/system32/evil.dll"
+        )));
+        // Ordinary app paths remain legitimate restore destinations.
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Vendor\Tool\file.txt"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"D:\Games\Save\slot.dat"
+        )));
     }
 }
