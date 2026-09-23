@@ -160,6 +160,13 @@ fn split_win_args(s: &str) -> Vec<String> {
 /// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
 pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
     // S-RCE: never execute a command the client invented — must match last server scan.
+    if app.uninstall_string.trim().is_empty() && app.quiet_uninstall_string.trim().is_empty() {
+        return OfficialUninstallResult {
+            ok: false,
+            message: "no uninstall string".into(),
+            had_command: false,
+        };
+    }
     if !crate::apps::is_trusted_uninstall_app(app) {
         return OfficialUninstallResult {
             ok: false,
