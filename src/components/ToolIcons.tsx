@@ -14,7 +14,12 @@ export type ToolIconName =
   | "update"
   | "report"
   | "orphan"
-  | "force";
+  | "force"
+  | "folder"
+  | "file"
+  | "startup"
+  | "services"
+  | "tasks";
 
 const PATHS: Record<ToolIconName, ReactNode> = {
   history: (
@@ -97,6 +102,34 @@ const PATHS: Record<ToolIconName, ReactNode> = {
       <path d="M8 8l8 8" />
       <path d="M16 8l-8 8" />
       <circle cx="12" cy="12" r="8" />
+    </>
+  ),
+  folder: (
+    <>
+      <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l1.8 2H19.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-10z" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M7 3.5h6.5L19 9v11.5H7z" />
+      <path d="M13.5 3.5V9H19" />
+    </>
+  ),
+  startup: (
+    <>
+      <path d="M13 3L6 13h5l-1 8 8-12h-5l1-6z" />
+    </>
+  ),
+  services: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" />
+    </>
+  ),
+  tasks: (
+    <>
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M8 3v4M16 3v4M4 10h16" />
     </>
   ),
 };
