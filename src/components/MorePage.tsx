@@ -60,7 +60,7 @@ export function MorePage({
       id: "history",
       title: L.history,
       desc: L.historyHint,
-      icon: "⏱",
+      icon: "history",
       action: () => {
         // Open the panel first so the click always has visible feedback.
         tools.setOpenTool("history");
@@ -71,7 +71,7 @@ export function MorePage({
       id: "restore",
       title: L.restore,
       desc: L.restoreHint,
-      icon: "↩",
+      icon: "restore",
       action: () => {
         tools.setOpenTool("restore");
         void rest.loadRestore();
@@ -83,7 +83,7 @@ export function MorePage({
             id: "report" as const,
             title: L.exportReport,
             desc: L.exportReportHint,
-            icon: "⎙",
+            icon: "report" as const,
             action: onExportReport,
             badge: L.badgeNew,
           },
@@ -93,7 +93,7 @@ export function MorePage({
       id: "ignore",
       title: L.appWhitelist,
       desc: L.appWhitelistHint,
-      icon: "∅",
+      icon: "whitelist",
       action: () => tools.setOpenTool("ignore"),
     },
   ];
@@ -103,35 +103,35 @@ export function MorePage({
       id: "idle",
       title: L.idleTitle,
       desc: L.idleHint,
-      icon: "⏱",
+      icon: "idle",
       action: () => tools.setOpenTool("idle"),
     },
     {
       id: "installers",
       title: L.installerTitle,
       desc: L.installerHint,
-      icon: "⇩",
+      icon: "installers",
       action: () => tools.setOpenTool("installers"),
     },
     {
       id: "diskradar",
       title: L.diskRadarTitle,
       desc: L.diskRadarHint,
-      icon: "◫",
+      icon: "disk",
       action: () => tools.setOpenTool("diskradar"),
     },
     {
       id: "toolcache",
       title: L.toolcacheTitle,
       desc: L.toolcacheHint,
-      icon: "⌘",
+      icon: "toolcache",
       action: () => tools.setOpenTool("toolcache"),
     },
     {
       id: "monitor",
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
-      icon: monitoring ? "■" : "●",
+      icon: "monitor" as const,
       action: () => {
         void onToggleMonitor();
         tools.setOpenTool("monitor");
@@ -145,14 +145,14 @@ export function MorePage({
       id: "ai",
       title: L.aiSettings,
       desc: L.aiSettingsHint,
-      icon: "✦",
+      icon: "ai",
       action: () => tools.toggleTool("ai"),
     },
     {
       id: "releases",
       title: L.versionCheck,
       desc: L.versionCheckHint,
-      icon: "↑",
+      icon: "update",
       action: onCheckUpdate,
     },
   ];
