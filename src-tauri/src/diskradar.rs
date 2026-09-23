@@ -99,9 +99,16 @@ pub fn top_dir_sizes() -> Vec<DirSizeRow> {
 
 /// True when `path` is under one of the radar's well-known system roots.
 fn under_radar_roots(path: &str) -> bool {
+    // Canonicalize first so `C:\Users\x\..\..\Windows` cannot pass a raw prefix check.
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
     let drive = drive.trim_end_matches('\\').to_uppercase();
-    let norm = path.replace('/', "\\").trim_end_matches('\\').to_uppercase();
+    let norm = canon.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_uppercase();
+    // Strip Windows verbatim prefix (`\\?\`).
+    let norm = norm
+        .strip_prefix(r"\\?\")
+        .map(|s| s.to_string())
+        .unwrap_or(norm);
     for leaf in [
         "USERS",
         "PROGRAM FILES",

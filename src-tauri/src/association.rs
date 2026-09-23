@@ -99,6 +99,38 @@ fn guid_in_text(s: &str) -> Option<String> {
     }
 }
 
+/// Install roots that may act as association prefixes: deep enough, not a drive/library root.
+fn is_safe_install_root(install: &str) -> bool {
+    let norm = install.trim().replace('/', "\\");
+    let p = norm.trim_end_matches('\\');
+    if p.is_empty() {
+        return false;
+    }
+    // Reject drive roots (`C:` / `C:\`) and very shallow trees (`C:\Users`).
+    let segs: Vec<&str> = p.split('\\').filter(|s| !s.is_empty()).collect();
+    if segs.len() < 4 {
+        return false;
+    }
+    // Never treat profile library roots as install roots.
+    let last = segs.last().copied().unwrap_or("").to_lowercase();
+    const LIBS: &[&str] = &[
+        "documents",
+        "downloads",
+        "desktop",
+        "pictures",
+        "videos",
+        "music",
+        "onedrive",
+    ];
+    if LIBS.contains(&last.as_str()) {
+        return false;
+    }
+    if crate::safety::is_user_data_path(&p) {
+        return false;
+    }
+    true
+}
+
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
 /// S-3: never trust client `reason` 鈥?path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
@@ -167,7 +199,7 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 .replace('/', "\\")
                 .trim_end_matches('\\')
                 .to_lowercase();
-            let install_empty = install.is_empty();
+            let install_empty = install.is_empty() || !is_safe_install_root(&install);
             if !install_empty {
                 let inst = install.as_str();
                 if low == inst || low.starts_with(&format!("{inst}\\")) {
