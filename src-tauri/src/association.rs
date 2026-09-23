@@ -107,8 +107,9 @@ fn is_safe_install_root(install: &str) -> bool {
         return false;
     }
     // Reject drive roots (`C:` / `C:\`) and very shallow trees (`C:\Users`).
+    // Normal installs look like `C:\Program Files\Vendor` (drive + 2 segments).
     let segs: Vec<&str> = p.split('\\').filter(|s| !s.is_empty()).collect();
-    if segs.len() < 4 {
+    if segs.len() < 3 {
         return false;
     }
     // Never treat profile library roots as install roots.
