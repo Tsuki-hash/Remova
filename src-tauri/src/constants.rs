@@ -15,6 +15,19 @@ pub const INSTALLMON_PATH_BUDGET: usize = 80_000;
 /// Orphan scan result cap.
 pub const ORPHAN_RESULT_CAP: usize = 80;
 
+/// Installer / tool-cache scan result cap.
+pub const SPECIALTY_RESULT_CAP: usize = 80;
+
+/// Idle-radar result cap.
+pub const IDLE_RESULT_CAP: usize = 50;
+
+/// Idle radar thresholds (soft evidence only).
+pub const IDLE_MIN_DAYS: i64 = 90;
+pub const IDLE_MIN_SIZE_KB: i64 = 100 * 1024;
+
+/// Disk radar rows per parent root.
+pub const DISK_RADAR_TOP_N: usize = 12;
+
 /// History list cap.
 pub const HISTORY_LIST_CAP: usize = 200;
 
