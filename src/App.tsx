@@ -17,7 +17,7 @@ import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
 import { useCleanupHandlers } from "./hooks/useCleanupHandlers";
 import { useAnalyzeFlow } from "./hooks/useAnalyzeFlow";
-import { useAppBoot, checkUpdateNow, toggleShellMenuApi } from "./hooks/useAppBoot";
+import { useAppBoot, checkUpdateNow } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome } from "./hooks/useListFilterChrome";
@@ -94,8 +94,6 @@ export default function App() {
     nav,
     langVer,
     setLangVer,
-    shellMenu,
-    setShellMenu,
     closeMode,
     updateInfo,
     setUpdateInfo,
@@ -674,7 +672,6 @@ export default function App() {
               monitoring={monitoring}
               monitorDiff={monitorDiff}
               lastReport={lastReport}
-              shellMenu={shellMenu}
               closeMode={closeMode}
               onCloseModeChange={setCloseMode}
               onForceClean={() => void forceClean()}
@@ -683,7 +680,6 @@ export default function App() {
               onToggleMonitor={() => void toggleMonitor()}
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
               onDismissMonitor={() => residualActions.setMonitorDiff(null)}
-              onShellToggle={() => void toggleShellMenuApi(shellMenu, setShellMenu, core.setError, L)}
               onExportReport={() => {
                 if (lastReport) exportHtmlReport(lastReport, L);
               }}
