@@ -1,4 +1,6 @@
 import { t } from "../i18n";
+import { api } from "../lib/api";
+import { formatError } from "../lib/format";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
@@ -170,6 +172,7 @@ export function MorePage({
           history={hist.history}
           histQ={hist.histQ}
           setHistQ={hist.setHistQ}
+          onOpenBackup={(path) => void api.openPath(path).catch((e) => onError(formatError(e)))}
           onClose={() => {
             hist.closeHistory();
             tools.setOpenTool(null);
