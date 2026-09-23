@@ -695,6 +695,21 @@ mod tests {
             !gate_cleanup_item(Some(&orphan_app), &win, CleanupSource::Orphan, &ignore).is_allow()
         );
     }
+    /// S-R7-01 for installer/toolcache: forged empty app + scoped source + arbitrary path must skip.
+    #[test]
+    fn adversarial_forged_scoped_scan_requires_allow_list() {
+        let empty = app("安装包与更新缓存", "");
+        let p = r"C:\Users\a\Documents\secret.docx";
+        let ok = item(p, ItemKind::File);
+        let ignore = crate::ignore::IgnoreList::default();
+        for src in [CleanupSource::Installer, CleanupSource::ToolCache] {
+            assert!(
+                !gate_cleanup_item(Some(&empty), &ok, src, &ignore).is_allow(),
+                "forged scoped source {src:?} must skip {p}"
+            );
+        }
+    }
+
     /// S-R7-01 adversarial: forged empty InstalledApp + cleanup_source=orphan.
     #[test]
     fn adversarial_forged_orphan_app_cannot_delete_arbitrary_paths() {

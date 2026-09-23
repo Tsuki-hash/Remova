@@ -58,9 +58,14 @@ pub fn was_recent(scope: AllowScope, path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// These tests mutate the process-wide allow-list — serialize them.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn scoped_allow_lists_are_isolated() {
+        let _g = TEST_LOCK.lock().unwrap();
         let mut a = HashSet::new();
         a.insert(r"C:\Users\x\Downloads\app.msi".into());
         remember(AllowScope::Installer, &a);
@@ -76,6 +81,7 @@ mod tests {
 
     #[test]
     fn normalize_repels_case_and_slash_variants() {
+        let _g = TEST_LOCK.lock().unwrap();
         let mut a = HashSet::new();
         a.insert(r"C:\Users\x\AppData\Local\npm-cache".into());
         remember(AllowScope::ToolCache, &a);

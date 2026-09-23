@@ -73,7 +73,15 @@ export function IdleRadarPanel({
                 {r.app.install_date ? ` · ${r.app.install_date}` : ""}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {r.evidence.map((e) => e.code).join(" · ")}
+                {r.evidence
+                  .map((e) =>
+                    e.code === "idle_install_age"
+                      ? L.idleEvInstallAge
+                      : e.code === "idle_dir_mtime"
+                        ? L.idleEvDirMtime
+                        : e.code,
+                  )
+                  .join(" · ")}
               </div>
             </div>
             <button style={{ ...css.btnGhost, height: 28 }} onClick={onGoSoftware}>
