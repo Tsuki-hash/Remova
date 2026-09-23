@@ -85,6 +85,8 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 None
             };
             if let Some(target) = target {
+                // S-R7-03: key-shape whitelist before `reg import` (Uninstall / Run value-level / …).
+                validate_reg_import(&target)?;
                 let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
                 cmd.args(["import", &target.to_string_lossy()]);
                 crate::regops::hide_console(&mut cmd);
@@ -103,6 +105,120 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     }
 
     Ok(messages)
+}
+
+/// S-R7-03: reject `.reg` files whose key shapes fall outside the restore whitelist.
+/// Allowed: Uninstall / App Paths / Services / TaskCache vendor trees (via
+/// `is_safe_to_delete_registry`), plus Run/RunOnce **value-level** restores only.
+fn validate_reg_import(path: &Path) -> Result<(), String> {
+    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    reg_content_allowed(&raw)
+}
+
+/// Parse `.reg` text and enforce the key-shape whitelist (S-R7-03).
+fn reg_content_allowed(raw: &str) -> Result<(), String> {
+    let mut saw_header = false;
+    let mut current_key: Option<String> = None;
+    let mut current_is_run = false;
+    let mut current_has_value = false;
+    let mut current_has_delete = false;
+
+    let flush = |key: &Option<String>,
+                 is_run: bool,
+                 has_value: bool,
+                 has_delete: bool|
+     -> Result<(), String> {
+        let Some(k) = key else {
+            return Ok(());
+        };
+        if has_delete {
+            return Err(format!("reg import refused (key deletion): {k}"));
+        }
+        if is_run {
+            // Run roots: value-level restores only — at least one named/default write, no bare key.
+            if !has_value {
+                return Err(format!("reg import refused (Run key without values): {k}"));
+            }
+            return Ok(());
+        }
+        crate::safety::is_safe_to_delete_registry(k).map_err(|e| format!("reg import refused: {e}"))
+    };
+
+    for line in raw.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with("Windows Registry Editor") || t.starts_with("REGEDIT") {
+            saw_header = true;
+            continue;
+        }
+        if t.starts_with('[') {
+            flush(
+                &current_key,
+                current_is_run,
+                current_has_value,
+                current_has_delete,
+            )?;
+            current_has_value = false;
+            current_has_delete = false;
+            let body = t.trim_start_matches('[').trim_end_matches(']').trim();
+            if body.is_empty() {
+                return Err("reg import refused (empty key header)".into());
+            }
+            if let Some(stripped) = body.strip_prefix('-') {
+                current_has_delete = true;
+                current_key = Some(reg_hive_to_remova(stripped)?);
+            } else {
+                current_key = Some(reg_hive_to_remova(body)?);
+            }
+            let key_ref = current_key.as_deref().unwrap_or("");
+            // Run/RunOnce roots are value-level restore targets only (AR-05).
+            current_is_run = !key_ref.contains('|') && crate::safety::is_allowed_run_key(key_ref);
+            continue;
+        }
+        // Value / delete lines under the current key.
+        if t.starts_with('-') {
+            current_has_delete = true;
+        } else if t.starts_with('@') || t.starts_with('"') {
+            current_has_value = true;
+        }
+    }
+    flush(
+        &current_key,
+        current_is_run,
+        current_has_value,
+        current_has_delete,
+    )?;
+    if !saw_header {
+        return Err("reg import refused (missing REG header)".into());
+    }
+    if current_key.is_none() {
+        return Err("reg import refused (no keys)".into());
+    }
+    Ok(())
+}
+
+/// Map `HKEY_*` headers in `.reg` files onto Remova hive aliases.
+fn reg_hive_to_remova(key: &str) -> Result<String, String> {
+    let k = key.trim().trim_matches('"');
+    let up = k.to_uppercase();
+    if up.strip_prefix("HKEY_LOCAL_MACHINE\\").is_some() {
+        // Preserve original casing of the subkey via the original string.
+        let orig_rest = &k["HKEY_LOCAL_MACHINE\\".len()..];
+        return Ok(format!(r"HKLM64\{orig_rest}"));
+    }
+    if let Some(_rest) = up.strip_prefix("HKEY_CURRENT_USER\\") {
+        let orig_rest = &k["HKEY_CURRENT_USER\\".len()..];
+        return Ok(format!(r"HKCU\{orig_rest}"));
+    }
+    if up.starts_with("HKLM\\") || up.starts_with("HKLM64\\") || up.starts_with("HKLM32\\") {
+        return Ok(k.to_string());
+    }
+    if up.starts_with("HKCU\\") {
+        return Ok(k.to_string());
+    }
+    Err(format!("reg import refused (unsupported hive): {k}"))
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
@@ -235,6 +351,7 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
 }
 
 /// Delete one backup session by name. Path-traversal guarded.
+/// R-R7-02: session names must match `^[0-9]{8}-[0-9]{6}` (`YYYYMMDD-HHMMSS…`).
 pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     // Reject `.`, `..`, separators, and anything that is not a real session folder name
     // (`YYYYMMDD-HHMMSS-…`). `backup_root().join(".")` is the backup root itself.
@@ -245,6 +362,7 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
         || name.contains('/')
         || name.contains('\\')
         || name.contains(':')
+        || !is_session_name(name)
     {
         return Err("invalid session name".into());
     }
@@ -258,6 +376,15 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
         return Err("session not found".into());
     }
     fs::remove_dir_all(&path).map_err(|e| e.to_string())
+}
+
+/// `YYYYMMDD-HHMMSS` prefix (digits only, fixed widths).
+fn is_session_name(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() >= 15
+        && b[..8].iter().all(|c| c.is_ascii_digit())
+        && b[8] == b'-'
+        && (9..15).all(|i| b[i].is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -390,6 +517,105 @@ mod tests {
         assert_eq!(back.items.len(), 1);
         assert_eq!(back.items[0].entry, r"C:\vendor\tool");
         assert_eq!(super::path_restore_scopes(&back.items[0]), vec!["User"]);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn delete_session_requires_timestamp_name() {
+        // R-R7-02: only `YYYYMMDD-HHMMSS…` session folders are deletable by name.
+        assert!(super::is_session_name("20260922-120000"));
+        assert!(super::is_session_name("20260922-120000_extra"));
+        assert!(!super::is_session_name(""));
+        assert!(!super::is_session_name("2026092-120000"));
+        assert!(!super::is_session_name("20260922120000"));
+        assert!(!super::is_session_name("20260922-12000"));
+        assert!(!super::is_session_name("abcdefgh-ijklmn"));
+        assert!(crate::restore::delete_session_by_name("not-a-session").is_err());
+        assert!(crate::restore::delete_session_by_name("20260922-abc").is_err());
+    }
+
+    // S-R7-03: `.reg` import key-shape whitelist.
+    #[test]
+    fn reg_import_allows_uninstall_and_run_values() {
+        let uninstall = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DemoApp]\r\n\
+            \"DisplayName\"=\"Demo\"\r\n";
+        assert!(super::reg_content_allowed(uninstall).is_ok());
+
+        let run_value = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\
+            \"Demo\"=\"C:\\\\Tools\\\\demo.exe\"\r\n";
+        assert!(super::reg_content_allowed(run_value).is_ok());
+    }
+
+    #[test]
+    fn reg_import_rejects_protected_shapes() {
+        // Bare Run key with no values must not import.
+        let run_empty = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n";
+        assert!(super::reg_content_allowed(run_empty).is_err());
+
+        // Key deletion is never restorable via import whitelist.
+        let del = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [-HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Demo]\r\n";
+        assert!(super::reg_content_allowed(del).is_err());
+
+        // Unrelated / protected tree.
+        let evil = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\WinDefend]\r\n\
+            \"Start\"=dword:00000004\r\n";
+        assert!(super::reg_content_allowed(evil).is_err());
+
+        // Missing header.
+        let no_hdr = "[HKEY_CURRENT_USER\\Software\\Demo]\r\n\"A\"=\"B\"\r\n";
+        assert!(super::reg_content_allowed(no_hdr).is_err());
+    }
+
+    // S-R7-05: empty scopes must not silently write Machine PATH.
+    #[test]
+    fn restore_path_entry_empty_scopes_writes_user_only() {
+        let _lock = crate::regops::path_mock::lock_mock();
+        crate::regops::path_mock::install(r"C:\Vendor\Tool;C:\Other", r"C:\Windows\System32");
+        let changed = crate::regops::restore_path_entry(r"C:\Vendor\Tool", &[]).unwrap();
+        // Entry already in User → no change; Machine must remain untouched.
+        assert!(!changed);
+        assert_eq!(
+            crate::regops::path_mock::get("Machine"),
+            r"C:\Windows\System32"
+        );
+
+        crate::regops::path_mock::install(r"C:\Other", r"C:\Windows\System32");
+        let changed = crate::regops::restore_path_entry(r"C:\Vendor\Tool", &[]).unwrap();
+        assert!(changed);
+        assert!(crate::regops::path_mock::get("User").contains(r"C:\Vendor\Tool"));
+        assert_eq!(
+            crate::regops::path_mock::get("Machine"),
+            r"C:\Windows\System32",
+            "empty scopes must never write Machine"
+        );
+        crate::regops::path_mock::clear();
+    }
+
+    // S-R7-01 / S-R7-02 adversarial: tampered path_map must not write system dirs.
+    #[test]
+    fn restore_refuses_tampered_path_map_system_targets() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_adv_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let sess = tmp.join("sess");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let rel = "evil.txt";
+        fs::write(files.join(rel), b"pwn").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(rel.to_string(), r"C:\Windows\System32\evil.dll".to_string());
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        let err = restore_session(&sess).unwrap_err();
+        assert!(err.contains("protected"), "got: {err}");
+        assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }
 }

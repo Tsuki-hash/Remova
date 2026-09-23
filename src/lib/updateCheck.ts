@@ -7,20 +7,30 @@ export type UpdateInfo = {
   downloadUrl?: string;
 };
 
+export type UpdateCheckResult =
+  | { ok: true; info: UpdateInfo | null }
+  | { ok: false; reason: string };
+
 export const RELEASES_URL = "https://github.com/Tsuki-hash/Remova/releases";
 
-export async function checkLatestRelease(timeoutMs = 8000): Promise<UpdateInfo | null> {
-  void timeoutMs;
+/** Fetch latest release; always report *why* a check failed (never a silent null). */
+export async function checkLatestRelease(): Promise<UpdateCheckResult> {
   try {
     const raw = await api.checkGithubLatest();
-    if (!raw?.version) return null;
+    if (!raw?.version) {
+      return { ok: true, info: null };
+    }
     return {
-      version: raw.version,
-      url: raw.url || RELEASES_URL,
-      downloadUrl: raw.download_url || undefined,
+      ok: true,
+      info: {
+        version: raw.version,
+        url: raw.url || RELEASES_URL,
+        downloadUrl: raw.download_url || undefined,
+      },
     };
-  } catch {
-    return null;
+  } catch (e) {
+    const reason = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: reason || "unknown error" };
   }
 }
 

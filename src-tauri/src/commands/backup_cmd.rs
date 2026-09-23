@@ -41,4 +41,28 @@ mod tests {
         assert!(crate::restore::delete_session_by_name("a/b").is_err());
         assert!(crate::restore::delete_session_by_name("a\\b").is_err());
     }
+
+    // T-R7-01: commands-layer coverage for session-name shape (R-R7-02).
+    #[test]
+    fn delete_backup_session_requires_timestamp_prefix() {
+        // Non-session folder names must never be deleted by name.
+        assert!(crate::restore::delete_session_by_name("not-a-session").is_err());
+        assert!(crate::restore::delete_session_by_name("2026-09-22").is_err());
+        assert!(crate::restore::delete_session_by_name("backup").is_err());
+        assert!(crate::restore::delete_session_by_name("20260922-abc").is_err());
+        // Well-shaped missing sessions report not-found (name accepted, dir absent).
+        match crate::restore::delete_session_by_name("20260922-120000_no_such") {
+            Err(e) => assert!(e.contains("not found"), "got {e}"),
+            Ok(()) => panic!("must not delete a missing session"),
+        }
+    }
+
+    // T-R7-01: restore_by_name still rejects traversal at the command boundary.
+    #[test]
+    fn restore_session_by_name_rejects_traversal() {
+        assert!(crate::restore::restore_by_name("").is_err());
+        assert!(crate::restore::restore_by_name("..").is_err());
+        assert!(crate::restore::restore_by_name("a/b").is_err());
+        assert!(crate::restore::restore_by_name("a\\b").is_err());
+    }
 }

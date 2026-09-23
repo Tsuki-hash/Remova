@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -38,18 +38,22 @@ export function OrphanPage({
   const scan = async () => {
     if (busy) return;
     setBusy(true);
-    toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL, sticky: true });
+    // One channel for the whole run — no sticky pile-up.
+    toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
       const list = await api.orphanScan();
       setItems(list);
-      // FE-N5: same default-selection predicate as analyze/cleanup.
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       const s = summarizeLeftovers(list);
       setLastScanLabel(
         list.length === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${s.total}`,
       );
       if (list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
-      else toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel: ORPHAN_CHANNEL, ttl: 3000 });
+      else
+        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
+          channel: ORPHAN_CHANNEL,
+          ttl: 3000,
+        });
     } catch (e) {
       const msg = formatError(e, "analyze");
       onError?.(msg);
@@ -58,6 +62,15 @@ export function OrphanPage({
       setBusy(false);
     }
   };
+
+  // Start immediately when the page opens so the click always shows work happening.
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    void scan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
@@ -94,17 +107,20 @@ export function OrphanPage({
       if (report.aborted) {
         const msg = report.uninstall_message || formatError("cleanup aborted", "cleanup");
         onError?.(msg);
-        toast.error(msg);
+        toast.error(msg, { channel: ORPHAN_CHANNEL });
         onLastReport(report);
         return;
       }
       onLastReport(report);
-      toast.success(L.batchDetail(report.deleted, report.failed));
+      toast.success(L.batchDetail(report.deleted, report.failed), {
+        channel: ORPHAN_CHANNEL,
+        ttl: 3000,
+      });
       await scan();
     } catch (e) {
       const msg = formatError(e, "cleanup");
       onError?.(msg);
-      toast.error(msg);
+      toast.error(msg, { channel: ORPHAN_CHANNEL });
     } finally {
       setBusy(false);
     }

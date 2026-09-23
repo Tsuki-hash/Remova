@@ -72,10 +72,11 @@ export function useAppBoot({
         setDisk(`${drive} ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`);
       })
       .catch((e) => console.warn("[boot] diskUsage", e));
-    // Silent update check on launch
+    // Silent update check on launch (never navigates)
     void checkLatestRelease()
-      .then((info) => {
-        if (!info) return;
+      .then((res) => {
+        if (!res.ok || !res.info) return;
+        const info = res.info;
         if (compareSemver(info.version, __APP_VERSION__) > 0) {
           setUpdateInfo(info);
           toast.info(`${t().versionNew}: v${info.version}`);
@@ -154,36 +155,44 @@ export async function checkUpdateNow(
     openReleasesToast: string;
   },
 ) {
+  const openReleases = async () => {
+    try {
+      await api.openPath(RELEASES_URL);
+      toast.info(L.openReleasesToast);
+    } catch {
+      /* keep the error toast as the primary signal */
+    }
+  };
   try {
-    const info = await checkLatestRelease();
+    const res = await checkLatestRelease();
+    if (!res.ok) {
+      // Show the concrete reason first, then jump to Releases as a fallback path.
+      toast.error(`${L.versionCheckFailed}: ${res.reason}`);
+      await openReleases();
+      return;
+    }
+    const info = res.info;
     if (!info) {
       toast.error(L.versionCheckFailed);
-      // Network / GitHub unreachable: still open Releases so the action is useful.
-      try {
-        await api.openPath(RELEASES_URL);
-        toast.info(L.openReleasesToast);
-      } catch {
-        window.open(RELEASES_URL, "_blank");
-      }
+      await openReleases();
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
       setUpdateInfo(info);
       toast.success(`${L.versionNew}: v${info.version}`);
-      if (info.downloadUrl) {
-        try {
-          await api.openPath(info.downloadUrl);
-        } catch {
-          window.open(info.url, "_blank");
-        }
-      } else {
-        window.open(info.url, "_blank");
+      const target = info.downloadUrl || info.url;
+      try {
+        await api.openPath(target);
+      } catch {
+        toast.error(L.versionCheckFailed);
       }
     } else {
       toast.success(L.versionUpToDate(__APP_VERSION__));
     }
-  } catch {
-    toast.error(L.versionCheckFailed);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    toast.error(`${L.versionCheckFailed}: ${reason}`);
+    await openReleases();
   }
 }
 

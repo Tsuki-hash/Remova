@@ -76,6 +76,62 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
+/// F-R7-01: strict http(s) URL shape for `open_path` (scheme + host, no control/quote/space).
+fn is_safe_http_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    if url
+        .chars()
+        .any(|c| c.is_control() || c == '"' || c == '\'' || c == ' ' || c == '\t')
+    {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return false;
+    }
+    let host = authority.split(':').next().unwrap_or("");
+    !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']')
+}
+
+/// Launch a validated http(s) URL via ShellExecuteW "open" (no shell metacharacter parsing).
+#[cfg(windows)]
+fn open_url_shell(url: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let url_w: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let empty: Vec<u16> = vec![0];
+    unsafe {
+        let rc = ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(url_w.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR(empty.as_ptr()),
+            SW_SHOWNORMAL,
+        );
+        if (rc.0 as isize) > 32 {
+            Ok(())
+        } else {
+            Err("open_path:failed".into())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn open_url_shell(_url: &str) -> Result<(), String> {
+    Err("open_path:failed".into())
+}
+
 /// Stable errors: `open_path:empty` | `open_path:not_found` | `open_path:failed`.
 #[tauri::command]
 fn open_path_in_explorer(path: String) -> Result<(), String> {
@@ -83,16 +139,12 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("open_path:empty".into());
     }
-    // HTTP(S) updates: launch default browser via `start`.
+    // HTTP(S): ShellExecuteW + strict URL shape (F-R7-01 — no `cmd /C start` injection surface).
     if path.starts_with("http://") || path.starts_with("https://") {
-        use std::process::Command;
-        let mut cmd = Command::new(regops::sys_tool("cmd.exe"));
-        cmd.args(["/C", "start", "", path]);
-        regops::hide_console(&mut cmd);
-        return cmd
-            .spawn()
-            .map(|_| ())
-            .map_err(|_| "open_path:failed".to_string());
+        if !is_safe_http_url(path) {
+            return Err("open_path:failed".into());
+        }
+        return open_url_shell(path);
     }
     let p = std::path::Path::new(path);
     if !p.exists() {
@@ -174,6 +226,23 @@ mod base64_light {
             assert_eq!(b64_encode(b"Ma"), "TWE=");
             assert_eq!(b64_encode(b"M"), "TQ==");
         }
+    }
+}
+
+#[cfg(test)]
+mod open_path_url_tests {
+    // F-R7-01: strict URL whitelist for open_path (no cmd /C start).
+    #[test]
+    fn http_url_whitelist() {
+        assert!(super::is_safe_http_url(
+            "https://github.com/Tsuki-hash/Remova/releases"
+        ));
+        assert!(super::is_safe_http_url("http://127.0.0.1:11434/v1"));
+        assert!(!super::is_safe_http_url("https://"));
+        assert!(!super::is_safe_http_url("ftp://example.com/x"));
+        assert!(!super::is_safe_http_url("https://evil.com/\"&calc.exe"));
+        assert!(!super::is_safe_http_url("https://evil.com/ path"));
+        assert!(!super::is_safe_http_url("javascript:alert(1)"));
     }
 }
 
@@ -489,6 +558,8 @@ pub fn run() {
             commands::ignore_cmd::load_ignore,
             commands::ignore_cmd::ignore_publisher,
             commands::ignore_cmd::ignore_app_name,
+            commands::ignore_cmd::unignore_publisher,
+            commands::ignore_cmd::unignore_app_name,
             commands::ignore_cmd::suggest_ignore_rules,
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,

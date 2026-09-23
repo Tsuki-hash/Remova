@@ -19,9 +19,12 @@ pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> 
             .set("Accept", "application/vnd.github+json")
             .set("User-Agent", "Remova")
             .call()
-            .map_err(|e| e.to_string())?;
-        let body = resp.into_string().map_err(|e| e.to_string())?;
-        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+            .map_err(|e| format!("GitHub 请求失败: {e}"))?;
+        let body = resp
+            .into_string()
+            .map_err(|e| format!("读取响应失败: {e}"))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("解析 JSON 失败: {e}"))?;
         let tag = v
             .get("tag_name")
             .and_then(|t| t.as_str())

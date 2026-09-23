@@ -29,13 +29,11 @@ export function HistoryPanel({
   histQ,
   setHistQ,
   onClose,
-  onOpenBackup,
 }: {
   history: HistoryRow[];
   histQ: string;
   setHistQ: (v: string) => void;
   onClose: () => void;
-  onOpenBackup?: (path: string) => void;
 }) {
   const L = t();
   const q = histQ.trim().toLowerCase();
@@ -104,15 +102,6 @@ export function HistoryPanel({
                       : ""}
                   </div>
                 </div>
-                {h.backup_dir ? (
-                  <button
-                    style={{ ...css.btnSm, height: 28 }}
-                    title={h.backup_dir}
-                    onClick={() => onOpenBackup?.(h.backup_dir)}
-                  >
-                    {L.openBackupDir}
-                  </button>
-                ) : null}
               </div>
             ))}
           </div>
