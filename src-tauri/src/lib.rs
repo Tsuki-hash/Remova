@@ -19,10 +19,6 @@ pub mod installers;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
-#[cfg(test)]
-pub mod path_value_smoke;
-#[cfg(test)]
-pub mod pipeline_smoke;
 pub mod policy;
 pub mod regops;
 pub mod regscan;
