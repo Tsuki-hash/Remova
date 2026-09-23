@@ -13,7 +13,7 @@ import {
 } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
 
-const CHANNEL = "scoped-scan";
+const channelFor = (src: string) => `scoped-scan-${src}`;
 
 /** Shared panel for installer / toolcache scoped scans (same trust model as orphans). */
 export function ScopedScanPanel({
@@ -36,6 +36,7 @@ export function ScopedScanPanel({
   onError: (msg: string) => void;
 }) {
   const L = t();
+  const channel = channelFor(cleanupSource);
   const [items, setItems] = useState<CleanupItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -43,24 +44,24 @@ export function ScopedScanPanel({
 
   const runScan = useCallback(async () => {
     setBusy(true);
-    toast.info(L.orphanScanProgress, { channel: CHANNEL });
+    toast.info(L.orphanScanProgress, { channel });
     try {
       const list = await scan();
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
-      if (list.length === 0) toast.info(L.orphanScanEmpty, { channel: CHANNEL });
+      if (list.length === 0) toast.info(L.orphanScanEmpty, { channel });
       else {
         const s = summarizeLeftovers(list);
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel: CHANNEL, ttl: 2500 });
+        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel, ttl: 2500 });
       }
     } catch (e) {
       const msg = formatError(e, "analyze");
       onError(msg);
-      toast.error(msg, { channel: CHANNEL });
+      toast.error(msg, { channel });
     } finally {
       setBusy(false);
     }
-  }, [scan, L, onError]);
+  }, [scan, L, onError, channel]);
 
   useEffect(() => {
     void runScan();
@@ -101,13 +102,13 @@ export function ScopedScanPanel({
       });
       onLastReport(report);
       if (!report.aborted) {
-        toast.success(L.batchDetail(report.deleted, report.failed), { channel: CHANNEL, ttl: 2500 });
+        toast.success(L.batchDetail(report.deleted, report.failed), { channel, ttl: 2500 });
         await runScan();
       }
     } catch (e) {
       const msg = formatError(e, "cleanup");
       onError(msg);
-      toast.error(msg, { channel: CHANNEL });
+      toast.error(msg, { channel });
     } finally {
       setBusy(false);
     }

@@ -10,7 +10,8 @@ use crate::scanner::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-const PKG_EXTS: &[&str] = &[".msi", ".msix", ".appx", ".appxbundle", ".exe", ".zip"];
+/// Installer package extensions. `.zip` / bare `.exe` are too broad for personal Downloads.
+const PKG_EXTS: &[&str] = &[".msi", ".msix", ".appx", ".appxbundle"];
 
 fn user_downloads() -> Option<PathBuf> {
     let profile = std::env::var_os("USERPROFILE")?;
@@ -20,11 +21,6 @@ fn user_downloads() -> Option<PathBuf> {
 fn user_local_appdata() -> Option<PathBuf> {
     let local = std::env::var_os("LOCALAPPDATA")?;
     Some(PathBuf::from(local))
-}
-
-fn ext_is_pkg(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    PKG_EXTS.iter().any(|e| lower.ends_with(e))
 }
 
 fn looks_like_setup_name(name: &str) -> bool {
@@ -37,6 +33,15 @@ fn looks_like_setup_name(name: &str) -> bool {
         || n.contains("dotnet")
         || n.contains("jdk")
         || n.contains("node-v")
+}
+
+/// Dedicated package extensions, or `.exe` only when the name looks like an installer.
+fn ext_is_pkg(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    if PKG_EXTS.iter().any(|e| lower.ends_with(e)) {
+        return true;
+    }
+    lower.ends_with(".exe") && looks_like_setup_name(&lower)
 }
 
 fn push_file_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path: &Path, bucket: &str) {
@@ -178,6 +183,11 @@ mod tests {
         assert!(ext_is_pkg("App.Setup.MSI"));
         assert!(ext_is_pkg("node-v20.msi"));
         assert!(!ext_is_pkg("notes.txt"));
+        // bare exe / zip must not match — personal Downloads
+        assert!(!ext_is_pkg("photos.zip"));
+        assert!(!ext_is_pkg("game.exe"));
+        assert!(ext_is_pkg("vcredist_x64.exe"));
+        assert!(ext_is_pkg("App-Setup.exe"));
     }
 
     #[test]
