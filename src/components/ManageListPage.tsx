@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
+import { ToolGlyph } from "./ToolIcons";
 import { cssStyles as css } from "../styles";
 import { formatError, isAccessDeniedError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
@@ -304,7 +305,9 @@ export function ManageListPage({
                       flexShrink: 0,
                     }}
                   >
-                    {tab === "startup" ? "⚡" : tab === "services" ? "⚙" : "⏱"}
+                    <ToolGlyph
+                      name={tab === "startup" ? "startup" : tab === "services" ? "services" : "tasks"}
+                    />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
