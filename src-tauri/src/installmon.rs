@@ -58,7 +58,8 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
             return;
         }
         let p = e.path();
-        let rel = p.to_string_lossy().to_lowercase();
+        // Keep original casing for display/delete; NTFS compare is case-insensitive.
+        let rel = p.to_string_lossy().to_string();
         *budget = budget.saturating_sub(1);
         out.insert(rel);
         if p.is_dir() && !e.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
