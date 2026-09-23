@@ -43,7 +43,7 @@ pub async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        .map_err(|e| format!("ai:risk_brief:{e}"))
+        .map_err(|_| "ai:risk_brief_failed".to_string())
 }
 
 #[tauri::command]
@@ -61,7 +61,7 @@ pub async fn ai_explain_items(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| format!("ai:explain:{e}"))
+    .map_err(|_| "ai:explain_failed".to_string())
 }
 
 #[tauri::command]
@@ -74,7 +74,7 @@ pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        .map_err(|e| format!("ai:summarize:{e}"))
+        .map_err(|_| "ai:summarize_failed".to_string())
 }
 
 #[tauri::command]
