@@ -72,6 +72,8 @@ export const api = {
     invoke<NlIntent>("ai_parse_intent", { text, appNames }),
   history: () => invoke<HistoryEntry[]>("list_cleanup_history"),
   exportHistoryCsv: () => invoke<string>("export_history_csv"),
+  deleteHistory: (ids: string[]) => invoke<number>("delete_cleanup_history", { ids }),
+  clearHistory: () => invoke("clear_cleanup_history"),
   backupSessions: () => invoke<BackupSession[]>("list_backup_sessions"),
   deleteBackupSession: (name: string) => invoke("delete_backup_session", { name }),
   restoreSessionByName: (name: string) => invoke<string[]>("restore_session_by_name", { name }),

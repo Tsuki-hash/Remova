@@ -2,6 +2,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 
 export type HistoryRow = {
+  id: string;
   app_name: string;
   deleted: number;
   failed: number;
@@ -28,11 +29,15 @@ export function HistoryPanel({
   history,
   histQ,
   setHistQ,
+  onDelete,
+  onClearAll,
   onClose,
 }: {
   history: HistoryRow[];
   histQ: string;
   setHistQ: (v: string) => void;
+  onDelete: (id: string) => void;
+  onClearAll: () => void;
   onClose: () => void;
 }) {
   const L = t();
@@ -58,6 +63,13 @@ export function HistoryPanel({
           value={histQ}
           onChange={(e) => setHistQ(e.target.value)}
         />
+        <button
+          style={{ ...css.btnGhost, height: 30, color: "#b91c1c" }}
+          disabled={history.length === 0}
+          onClick={onClearAll}
+        >
+          {L.clearHistory}
+        </button>
         <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
           ×
         </button>
@@ -79,7 +91,7 @@ export function HistoryPanel({
             </div>
             {g.items.map((h, i) => (
               <div
-                key={`${h.app_name}-${h.created_at || i}`}
+                key={h.id || `${h.app_name}-${h.created_at || i}`}
                 style={{
                   display: "flex",
                   gap: 10,
@@ -102,6 +114,12 @@ export function HistoryPanel({
                       : ""}
                   </div>
                 </div>
+                <button
+                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "#b91c1c" }}
+                  onClick={() => onDelete(h.id)}
+                >
+                  {L.deleteHistory}
+                </button>
               </div>
             ))}
           </div>

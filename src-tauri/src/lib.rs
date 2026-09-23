@@ -539,6 +539,8 @@ pub fn run() {
             run_official_uninstall,
             commands::history_cmd::list_cleanup_history,
             commands::history_cmd::export_history_csv,
+            commands::history_cmd::delete_cleanup_history,
+            commands::history_cmd::clear_cleanup_history,
             is_elevated,
             disk_usage,
             elevate_restart,

@@ -129,6 +129,8 @@ export type IgnoreSuggestion = {
 };
 
 export type HistoryEntry = {
+  /** Runtime row id (`L{line_no}`); not persisted on disk. */
+  id: string;
   app_name: string;
   deleted: number;
   failed: number;
