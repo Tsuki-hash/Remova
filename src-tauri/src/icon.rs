@@ -2,6 +2,7 @@
 
 use crate::apps::parse_display_icon;
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 const ICON_SIZE: i32 = 32;
 
@@ -10,18 +11,41 @@ fn icon_cache_dir() -> PathBuf {
     PathBuf::from(local).join("Remova").join("icons")
 }
 
-fn cache_key(raw: &str) -> String {
-    // FNV-1a 64 hex of the raw DisplayIcon string.
+fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in raw.as_bytes() {
+    for b in bytes {
         h ^= *b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
-    format!("{h:016x}.png")
+    h
+}
+
+/// File fingerprint so icon updates (same DisplayIcon path) invalidate the cache.
+fn source_fingerprint(path: &str) -> String {
+    match std::fs::metadata(path) {
+        Ok(m) => {
+            let len = m.len();
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("{len}:{mtime}")
+        }
+        Err(_) => "missing".to_string(),
+    }
+}
+
+fn cache_key(raw: &str) -> String {
+    let (path, index) = parse_display_icon(raw);
+    let fp = source_fingerprint(&path);
+    let payload = format!("{raw}\0{index}\0{fp}");
+    format!("{:016x}.png", fnv1a64(payload.as_bytes()))
 }
 
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
-/// Uses `%LOCALAPPDATA%\Remova\icons\{hash}.png` as disk cache.
+/// Uses `%LOCALAPPDATA%\Remova\icons\{hash}.png` as disk cache (key includes source fingerprint).
 pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     let dir = icon_cache_dir();
     let cache_file = dir.join(cache_key(raw_display_icon));
@@ -39,7 +63,34 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     let png = extract_from_path(&path, index)?;
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(&cache_file, &png);
+    prune_stale_cache(&dir, &cache_file);
     Some(png)
+}
+
+/// Drop cache PNGs left behind by older source fingerprints (age > 7 days).
+fn prune_stale_cache(dir: &std::path::Path, keep: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let keep_name = keep.file_name();
+    for ent in rd.flatten() {
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("png") {
+            continue;
+        }
+        if p.file_name() == keep_name {
+            continue;
+        }
+        if let Ok(meta) = p.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(age) = modified.elapsed() {
+                    if age.as_secs() > 7 * 24 * 3600 {
+                        let _ = std::fs::remove_file(&p);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -198,5 +249,28 @@ mod tests {
         if let Some(bytes) = super::extract_icon_png(raw) {
             assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
         }
+    }
+
+    #[test]
+    fn cache_key_changes_with_source_fingerprint() {
+        let dir = std::env::temp_dir().join("remova-icon-cache-key-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let exe = dir.join("app.exe");
+        std::fs::write(&exe, b"v1").unwrap();
+        let raw = format!("{},0", exe.display());
+        let k1 = super::cache_key(&raw);
+        std::fs::write(&exe, b"v2-with-new-icon-bytes").unwrap();
+        let k2 = super::cache_key(&raw);
+        assert_ne!(
+            k1, k2,
+            "cache key must change when the icon source file changes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cache_key_stable_for_missing_source() {
+        let k = super::cache_key(r"C:\no\such\file.dll,0");
+        assert!(k.ends_with(".png"));
     }
 }
