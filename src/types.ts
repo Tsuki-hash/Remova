@@ -146,12 +146,13 @@ export type DirSizeRow = {
 };
 
 export type HistoryEntry = {
-  /** Runtime row id (`L{line_no}`); not persisted on disk. */
+  /** Runtime row id (content hash); not persisted on disk. */
   id: string;
   app_name: string;
   deleted: number;
   failed: number;
   skipped: number;
+  delayed?: number;
   aborted: boolean;
   dry_run: boolean;
   backup_dir: string;

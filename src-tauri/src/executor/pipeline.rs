@@ -123,6 +123,24 @@ struct DeleteOutcome {
     details: Vec<ItemDetail>,
 }
 
+/// Windows reparse point (junction/symlink) — refuse delete-through (TOCTOU).
+fn is_reparse_point(p: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_attributes() & 0x400 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+}
+
 fn delete_cleanup_items_source(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
@@ -247,6 +265,17 @@ fn delete_cleanup_items_source(
                         kind: format!("{:?}", it.kind).to_lowercase(),
                         status: "skipped".into(),
                         message: "path missing".into(),
+                    });
+                    continue;
+                }
+                // S-TOCTOU: refuse junction/symlink swaps — never follow reparse points on delete.
+                if is_reparse_point(p) {
+                    skipped += 1;
+                    details.push(ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "skipped".into(),
+                        message: "reparse point".into(),
                     });
                     continue;
                 }
