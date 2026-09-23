@@ -19,9 +19,7 @@ export function MorePage({
   lastReport,
   closeMode,
   onCloseModeChange,
-  onForceClean,
   onIgnorePublisher,
-  onOrphanScan,
   onToggleMonitor,
   onMonitorToCleanup,
   onDismissMonitor,
@@ -36,9 +34,7 @@ export function MorePage({
   lastReport: FullCleanupReport | null;
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
-  onForceClean: () => void;
   onIgnorePublisher: () => void;
-  onOrphanScan: () => void;
   onToggleMonitor: () => void;
   onMonitorToCleanup: () => void;
   onDismissMonitor: () => void;
@@ -98,28 +94,12 @@ export function MorePage({
 
   const advanced: ToolItem[] = [
     {
-      id: "force",
-      title: L.forceClean,
-      desc: L.forceCleanHint,
-      icon: "⌘",
-      action: () => tools.requireSelection(onForceClean),
-      needsSelection: true,
-    },
-    {
-      id: "orphan",
-      title: L.orphanScan,
-      desc: L.orphanScanHint,
-      icon: "⌕",
-      action: onOrphanScan,
-    },
-    {
       id: "monitor",
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
       icon: monitoring ? "■" : "●",
       action: () => {
         void onToggleMonitor();
-        // FE-P0b: open monitor panel after stop when a diff exists (parent updates props async).
         tools.setOpenTool("monitor");
       },
       badge: monitoring ? L.badgeRunning : undefined,
