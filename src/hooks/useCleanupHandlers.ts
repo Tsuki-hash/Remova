@@ -86,7 +86,7 @@ export function useCleanupHandlers({
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
       const target = appOverride ?? selected;
-      if (!target || forceBusy) return;
+      if (!target || forceBusy || busyRef.current) return;
       setForceBusy(true);
       busyRef.current = true;
       const aseq = ++forceAnalyzeSeqRef.current;
@@ -151,6 +151,7 @@ export function useCleanupHandlers({
     if (!scan || !selected) return;
     // F-R6-05: never overlap dry-run with another busy cleanup/uninstall.
     if (busyRef.current) return;
+    busyRef.current = true;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     const seq = ++dryRunSeqRef.current;
     setDryRunning(true);
@@ -170,6 +171,7 @@ export function useCleanupHandlers({
       setError(formatError(e, "cleanup"));
     } finally {
       if (seq === dryRunSeqRef.current) setDryRunning(false);
+      busyRef.current = false;
     }
   }, [scan, selected, selectedPaths, setReport, setError, busyRef]);
 

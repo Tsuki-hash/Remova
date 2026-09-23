@@ -27,6 +27,14 @@ fn history_path() -> PathBuf {
     PathBuf::from(pd).join("Remova").join("history.jsonl")
 }
 
+/// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
+static FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Stable row id: FNV of the raw jsonl line (survives deletes that shift line numbers).
+fn line_content_id(line: &str) -> String {
+    format!("H{:016x}", crate::fsutil::fnv1a64(line))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn append(
     app_name: &str,
@@ -58,8 +66,19 @@ pub fn append(
         Err(_) => return false,
     };
     let p = history_path();
+    let _g = FILE_LOCK.lock().ok();
     if let Some(parent) = p.parent() {
         let _ = fs::create_dir_all(parent);
+    }
+    // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
+    if let Ok(meta) = fs::metadata(&p) {
+        if meta.len() > 2 * 1024 * 1024 {
+            if let Ok(raw) = fs::read_to_string(&p) {
+                let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+                let keep: Vec<&str> = lines[lines.len().saturating_sub(2000)..].to_vec();
+                let _ = write_history_file(&p, &keep.join("\n"));
+            }
+        }
     }
     use std::io::Write;
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&p) {
@@ -70,14 +89,15 @@ pub fn append(
 }
 
 pub fn load(limit: usize) -> Vec<HistoryEntry> {
+    let _g = FILE_LOCK.lock().ok();
     let p = history_path();
     let Ok(raw) = fs::read_to_string(&p) else {
         return vec![];
     };
     let mut out: Vec<HistoryEntry> = vec![];
-    for (i, line) in raw.lines().enumerate() {
+    for line in raw.lines() {
         if let Ok(mut e) = serde_json::from_str::<HistoryEntry>(line) {
-            e.id = line_id(i);
+            e.id = line_content_id(line);
             out.push(e);
         }
     }
@@ -86,25 +106,16 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     out
 }
 
-/// Stable row id for a 0-based line index in `history.jsonl`.
-fn line_id(line_no: usize) -> String {
-    format!("L{line_no}")
-}
-
-fn parse_line_id(id: &str) -> Option<usize> {
-    id.strip_prefix('L')?.parse::<usize>().ok()
-}
-
-/// Drop lines whose 0-based index is in `drop_nos`; keep the rest.
-fn filter_raw_lines(raw: &str, drop_nos: &HashSet<usize>) -> (String, usize) {
+/// Drop lines whose content-id is in `drop_ids`; keep the rest.
+fn filter_raw_lines(raw: &str, drop_ids: &HashSet<String>) -> (String, usize) {
     let mut out = String::new();
     let mut removed = 0usize;
-    for (i, line) in raw.lines().enumerate() {
-        if drop_nos.contains(&i) {
-            removed += 1;
+    for line in raw.lines() {
+        if line.trim().is_empty() {
             continue;
         }
-        if line.trim().is_empty() {
+        if drop_ids.contains(&line_content_id(line)) {
+            removed += 1;
             continue;
         }
         out.push_str(line);
@@ -122,25 +133,24 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
     fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
-/// Delete rows by runtime ids returned from [`load`]. Returns removed count.
+/// Delete rows by runtime ids returned from [`load`] (content hashes). Returns removed count.
 pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
-    let mut drop_nos: HashSet<usize> = HashSet::new();
+    let mut drop_ids: HashSet<String> = HashSet::new();
     for id in ids {
-        match parse_line_id(id) {
-            Some(n) => {
-                drop_nos.insert(n);
-            }
-            None => return Err(format!("invalid history id: {id}")),
+        if id.is_empty() || id.len() > 40 {
+            return Err(format!("invalid history id: {id}"));
         }
+        drop_ids.insert(id.clone());
     }
-    if drop_nos.is_empty() {
+    if drop_ids.is_empty() {
         return Ok(0);
     }
+    let _g = FILE_LOCK.lock().ok();
     let p = history_path();
     let Ok(raw) = fs::read_to_string(&p) else {
         return Ok(0);
     };
-    let (next, removed) = filter_raw_lines(&raw, &drop_nos);
+    let (next, removed) = filter_raw_lines(&raw, &drop_ids);
     if removed == 0 {
         return Ok(0);
     }
@@ -150,6 +160,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
 
 /// Clear all cleanup history rows (does not touch backup sessions).
 pub fn clear_all() -> Result<(), String> {
+    let _g = FILE_LOCK.lock().ok();
     let p = history_path();
     write_history_file(&p, "")
 }
@@ -195,18 +206,20 @@ mod tests {
     }
 
     #[test]
-    fn line_id_roundtrip() {
-        assert_eq!(super::line_id(0), "L0");
-        assert_eq!(super::parse_line_id("L12"), Some(12));
-        assert_eq!(super::parse_line_id("x"), None);
-        assert_eq!(super::parse_line_id("L"), None);
-        assert_eq!(super::parse_line_id("../etc"), None);
+    fn line_content_id_stable() {
+        let a = super::line_content_id("{\"app_name\":\"a\"}");
+        let b = super::line_content_id("{\"app_name\":\"a\"}");
+        let c = super::line_content_id("{\"app_name\":\"b\"}");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert!(a.starts_with('H'));
     }
 
     #[test]
     fn filter_raw_lines_drops_selected() {
         let raw = "{\"app_name\":\"a\"}\n{\"app_name\":\"b\"}\n{\"app_name\":\"c\"}\n";
-        let drop: std::collections::HashSet<usize> = [1].into_iter().collect();
+        let mut drop: std::collections::HashSet<String> = Default::default();
+        drop.insert(super::line_content_id("{\"app_name\":\"b\"}"));
         let (next, removed) = super::filter_raw_lines(raw, &drop);
         assert_eq!(removed, 1);
         assert_eq!(next, "{\"app_name\":\"a\"}\n{\"app_name\":\"c\"}\n");
@@ -215,7 +228,8 @@ mod tests {
     #[test]
     fn filter_raw_lines_ignores_unknown_ids() {
         let raw = "{\"app_name\":\"a\"}\n";
-        let drop: std::collections::HashSet<usize> = [9].into_iter().collect();
+        let mut drop: std::collections::HashSet<String> = Default::default();
+        drop.insert("Hffffffffffffffff".into());
         let (next, removed) = super::filter_raw_lines(raw, &drop);
         assert_eq!(removed, 0);
         assert_eq!(next, "{\"app_name\":\"a\"}\n");
