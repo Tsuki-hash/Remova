@@ -265,6 +265,13 @@ export const dict = {
     histRow: (deleted: number, failed: number) => `${deleted} 成功 / ${failed} 失败`,
     deleteSession: "删除",
     deleteSessionConfirm: (name: string) => `将永久删除备份会话「${name}」。继续？`,
+    deleteHistory: "删除",
+    deleteHistoryConfirm: (name: string) =>
+      `将永久删除「${name}」的这条清理记录。不会删除备份文件。继续？`,
+    clearHistory: "清空",
+    clearHistoryConfirm: "将永久删除全部清理历史记录（不影响备份）。继续？",
+    historyDeleted: "已删除清理记录",
+    historyCleared: "已清空清理历史",
     monitorToCleanup: "转入清理列表",
     filterSource: "来源",
     filterAll: "全部",
