@@ -178,7 +178,7 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     }
     Err(match last_err {
         Some(e) if e.kind() == std::io::ErrorKind::NotFound => "open_path:not_found".into(),
-        Some(e) => format!("open_path:failed:{}", e),
+        Some(_e) => "open_path:failed".into(),
         None => "open_path:failed".into(),
     })
 }
