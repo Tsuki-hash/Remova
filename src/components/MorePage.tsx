@@ -139,6 +139,8 @@ export function MorePage({
           history={hist.history}
           histQ={hist.histQ}
           setHistQ={hist.setHistQ}
+          onDelete={(id) => void hist.deleteHistory(id)}
+          onClearAll={() => void hist.clearHistory()}
           onClose={() => {
             hist.closeHistory();
             tools.setOpenTool(null);

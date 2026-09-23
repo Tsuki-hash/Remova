@@ -268,6 +268,13 @@ export const dict = {
     histRow: (deleted: number, failed: number) => `${deleted} ok / ${failed} failed`,
     deleteSession: "Delete",
     deleteSessionConfirm: (name: string) => `Permanently delete backup session "${name}"?`,
+    deleteHistory: "Delete",
+    deleteHistoryConfirm: (name: string) =>
+      `Permanently delete the cleanup record for "${name}"? Backup files are kept. Continue?`,
+    clearHistory: "Clear all",
+    clearHistoryConfirm: "Permanently delete all cleanup history records (backups are kept). Continue?",
+    historyDeleted: "Cleanup record deleted",
+    historyCleared: "Cleanup history cleared",
     monitorToCleanup: "Add to cleanup list",
     filterSource: "Source",
     filterAll: "All",
