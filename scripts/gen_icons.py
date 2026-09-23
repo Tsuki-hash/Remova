@@ -13,10 +13,14 @@ DEFAULT_ICONS = Path(__file__).resolve().parent.parent / "src-tauri" / "icons"
 
 SIZES = {
     "icon.png": 512,
+    "16x16.png": 16,
+    "24x24.png": 24,
     "32x32.png": 32,
+    "48x48.png": 48,
+    "64x64.png": 64,
     "128x128.png": 128,
     "128x128@2x.png": 256,
-    "64x64.png": 64,
+    "256x256.png": 256,
     "Square310x310Logo.png": 310,
     "Square284x284Logo.png": 284,
     "Square150x150Logo.png": 150,
@@ -29,6 +33,28 @@ SIZES = {
     "StoreLogo.png": 50,
     "icon_clean.png": 256,
 }
+
+
+def strip_near_white(im: Image.Image, threshold: int = 246) -> Image.Image:
+    """Knock out flat near-white matte so tray/taskbar icons stay transparent."""
+    px = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a > 0 and r >= threshold and g >= threshold and b >= threshold:
+                px[x, y] = (r, g, b, 0)
+    return im
+
+
+def fit_square(canvas: Image.Image, size: int) -> Image.Image:
+    """Lanczos resize with a small safe margin so the glyph does not touch edges at 16px."""
+    margin = max(1, size // 16)
+    inner = size - margin * 2
+    scaled = canvas.resize((inner, inner), Image.Resampling.LANCZOS)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(scaled, (margin, margin), scaled)
+    return out
 
 
 def main(argv: list[str]) -> int:
@@ -44,12 +70,14 @@ def main(argv: list[str]) -> int:
 
     im = Image.open(src).convert("RGBA")
     print("src", im.size)
+    im = strip_near_white(im)
     w, h = im.size
     side = max(w, h)
-    canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
+    # Transparent canvas — opaque white boxed the taskbar/tray icon and softened edges.
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
     canvas.paste(im, ((side - w) // 2, (side - h) // 2), im)
     for name, s in SIZES.items():
-        canvas.resize((s, s), Image.Resampling.LANCZOS).save(icons / name, "PNG", optimize=True)
+        fit_square(canvas, s).save(icons / name, "PNG", optimize=True)
         print("wrote", name, s)
     canvas.save(
         icons / "icon.ico",
@@ -59,7 +87,7 @@ def main(argv: list[str]) -> int:
     print("wrote icon.ico")
     pub = icons.parent.parent / "public"
     pub.mkdir(parents=True, exist_ok=True)
-    canvas.resize((128, 128), Image.Resampling.LANCZOS).save(pub / "logo.png", "PNG")
+    fit_square(canvas, 128).save(pub / "logo.png", "PNG")
     print("wrote public/logo.png")
     return 0
 
