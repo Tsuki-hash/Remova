@@ -208,6 +208,8 @@ export const dict = {
     monitorInstall: "Track an install",
     monitorStop: "Finish and show changes",
     monitorRunning: "Recording installer changes… finish installing, then stop",
+    monitorStarting: "Starting to record (snapshotting the system, please wait)…",
+    monitorFinishing: "Comparing before/after (please wait)…",
     monitorDiff: "What this install changed",
     monitorNoSnap: "Click Track an install first, then run the installer",
     toolsExpand: "More tools",

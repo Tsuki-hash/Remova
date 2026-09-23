@@ -206,6 +206,8 @@ export const dict = {
     monitorInstall: "追踪安装写入",
     monitorStop: "结束并查看改动",
     monitorRunning: "正在记录安装写入…装完软件后再点结束",
+    monitorStarting: "正在开始记录（扫描当前系统，请稍候）…",
+    monitorFinishing: "正在对比安装前后差异（请稍候）…",
     monitorDiff: "这次安装改了什么",
     monitorNoSnap: "请先点「追踪安装写入」，再去安装软件",
     toolsExpand: "更多工具",
