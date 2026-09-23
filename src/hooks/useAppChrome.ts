@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 import type { Strings } from "../i18n";
@@ -56,6 +56,7 @@ export function useAppChrome({
 }) {
   /** F-R6-08: orphan checkup scan has its own spinner (never the analyze spinner). */
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
+  const monitorBusyRef = useRef(false);
 
   const elevate = useCallback(async () => {
     try {
@@ -122,22 +123,34 @@ export function useAppChrome({
   }, [L, goNav, residual, flow]);
 
   const toggleMonitor = useCallback(async () => {
+    // Repeated clicks during the filesystem snapshot used to queue work and
+    // then dump a pile of toasts — one run at a time, one toast channel.
+    if (monitorBusyRef.current) return;
+    monitorBusyRef.current = true;
+    const MON_CH = "install-monitor";
     try {
       if (!monitoring) {
+        toast.info(L.monitorStarting, { channel: MON_CH });
         await api.beginInstallMonitor();
         residual.setMonitoring(true);
         residual.setMonitorDiff(null);
-        toast.info(L.monitorRunning);
+        toast.success(L.monitorRunning, { channel: MON_CH, ttl: 3000 });
       } else {
+        toast.info(L.monitorFinishing, { channel: MON_CH });
         const d = await api.endInstallMonitor();
         residual.setMonitoring(false);
         residual.setMonitorDiff(d);
-        toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length));
+        toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length), {
+          channel: MON_CH,
+          ttl: 3000,
+        });
       }
     } catch (e) {
       flow.setError(formatError(e));
-      toast.error(formatError(e));
+      toast.error(formatError(e), { channel: MON_CH });
       residual.setMonitoring(false);
+    } finally {
+      monitorBusyRef.current = false;
     }
   }, [monitoring, L, residual, flow]);
 
