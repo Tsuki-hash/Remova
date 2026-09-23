@@ -175,6 +175,16 @@ export function ScopedScanPanel({
                 {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
               </div>
             </span>
+            <button
+              type="button"
+              style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
+              onClick={(e) => {
+                e.preventDefault();
+                void api.openPath(it.path);
+              }}
+            >
+              {L.openLocation}
+            </button>
           </label>
         ))}
         {items && items.length === 0 && <div style={css.muted}>{L.orphanScanEmpty}</div>}
