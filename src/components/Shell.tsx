@@ -2,14 +2,15 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { NavId } from "../lib/theme";
 import { t } from "../i18n";
 import { WindowControls } from "./WindowControls";
+import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
-const NAV_ICONS: Record<NavId, string> = {
-  software: "▣",
-  startup: "⚡",
-  services: "⚙",
-  tasks: "⏱",
-  orphans: "◎",
-  more: "•••",
+const NAV_ICONS: Record<NavId, ToolIconName> = {
+  software: "toolcache",
+  startup: "startup",
+  services: "services",
+  tasks: "tasks",
+  orphans: "orphan",
+  more: "history",
 };
 
 export function Sidebar({
@@ -96,8 +97,17 @@ export function Sidebar({
               textAlign: "left" as const,
             }}
           >
-            <span style={{ width: 20, textAlign: "center", opacity: active ? 1 : 0.75 }}>
-              {NAV_ICONS[it.id]}
+            <span
+              style={{
+                width: 20,
+                height: 20,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: active ? 1 : 0.75,
+              }}
+            >
+              <ToolGlyph name={NAV_ICONS[it.id]} />
             </span>
             {!collapsed && <span className="ell">{it.label}</span>}
           </button>

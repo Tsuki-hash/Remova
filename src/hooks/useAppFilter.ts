@@ -55,9 +55,9 @@ export function useAppFilter({
     if (needle) {
       list = list.filter(
         (a) =>
-          a.name.toLowerCase().includes(needle) ||
-          a.publisher.toLowerCase().includes(needle) ||
-          a.install_location.toLowerCase().includes(needle),
+          (a.name || "").toLowerCase().includes(needle) ||
+          (a.publisher || "").toLowerCase().includes(needle) ||
+          (a.install_location || "").toLowerCase().includes(needle),
       );
     }
     if (!sortCol) return list;

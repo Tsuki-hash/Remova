@@ -7,27 +7,28 @@ pub mod backup;
 pub mod commands;
 pub mod constants;
 pub mod dirsize;
+pub mod diskradar;
 pub mod error;
 pub mod executor;
 pub mod fsutil;
 pub mod history;
 pub mod icon;
+pub mod idle;
 pub mod ignore;
+pub mod installers;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
-#[cfg(test)]
-pub mod path_value_smoke;
-#[cfg(test)]
-pub mod pipeline_smoke;
 pub mod policy;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
 pub mod safety;
+pub mod scan_allow;
 pub mod scanner;
 pub mod shared;
 pub mod storeapps;
+pub mod toolcache;
 pub mod sysops;
 
 use apps::InstalledApp;
@@ -37,9 +38,13 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| {
+        let apps = apps::scan_installed_apps();
+        apps::remember_uninstall_commands(&apps);
+        apps
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Clear cancel flag before a new estimate batch.
@@ -173,16 +178,20 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     }
     Err(match last_err {
         Some(e) if e.kind() == std::io::ErrorKind::NotFound => "open_path:not_found".into(),
-        Some(e) => format!("open_path:failed:{}", e),
+        Some(_e) => "open_path:failed".into(),
         None => "open_path:failed".into(),
     })
 }
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
-async fn app_icon_data(display_icon: String) -> Result<Option<String>, String> {
+async fn app_icon_data(display_icon: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let png = icon::extract_icon_png(&display_icon)?;
+        let raw = display_icon?;
+        if raw.trim().is_empty() {
+            return None;
+        }
+        let png = icon::extract_icon_png(&raw)?;
         use base64_light::*;
         Some(format!("data:image/png;base64,{}", b64_encode(&png)))
     })
@@ -271,6 +280,8 @@ async fn run_cleanup_dry_run(
             Some("orphan") => crate::policy::CleanupSource::Orphan,
             Some("monitor") => crate::policy::CleanupSource::Monitor,
             Some("copilot") => crate::policy::CleanupSource::Copilot,
+            Some("installer") => crate::policy::CleanupSource::Installer,
+            Some("toolcache") => crate::policy::CleanupSource::ToolCache,
             _ => crate::policy::CleanupSource::Uninstall,
         };
         executor::run_cleanup_dry_for_app_source(&app, &items, source)
@@ -429,6 +440,49 @@ async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Idle software radar (read-only ranking).
+#[tauri::command]
+async fn rank_idle_apps() -> Result<Vec<idle::IdleApp>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let installed = apps::scan_installed_apps();
+        idle::rank_idle_apps(&installed)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Installer packages + updater caches (scoped delete allow-list).
+#[tauri::command]
+async fn scan_installer_caches() -> Result<Vec<scanner::CleanupItem>, String> {
+    tauri::async_runtime::spawn_blocking(installers::scan_installer_caches)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Dev / game / browser tool caches (scoped delete allow-list).
+#[tauri::command]
+async fn scan_tool_caches() -> Result<Vec<scanner::CleanupItem>, String> {
+    tauri::async_runtime::spawn_blocking(toolcache::scan_tool_caches)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Disk radar: top directories under well-known system roots (read-only).
+#[tauri::command]
+async fn list_top_dir_sizes() -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(diskradar::top_dir_sizes)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Disk radar drill-down: immediate children of a directory (read-only).
+#[tauri::command]
+async fn list_dir_children(path: String) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || diskradar::list_dir_children(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// SOP §7: re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
@@ -484,13 +538,25 @@ pub fn run() {
             let show_i = MenuItem::with_id(app, "show", "打开 Remova", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出 Remova", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-            let icon = match app.default_window_icon().cloned() {
-                Some(i) => i,
-                None => {
-                    eprintln!("[remova] default window icon missing — tray disabled");
-                    return Ok(());
-                }
+            // Prefer dedicated 32×32 transparent PNG for the tray (crisp at 16–32 px).
+            let icon = match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
+                Ok(i) => i,
+                Err(_) => match app.default_window_icon().cloned() {
+                    Some(i) => i,
+                    None => {
+                        eprintln!("[remova] tray icon missing — tray disabled");
+                        return Ok(());
+                    }
+                },
             };
+            // Taskbar / alt-tab: larger raster so high-DPI does not upscale a 32px glyph.
+            if let Ok(big) =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/128x128@2x.png"))
+            {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_icon(big);
+                }
+            }
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .tooltip("Remova")
@@ -539,6 +605,8 @@ pub fn run() {
             run_official_uninstall,
             commands::history_cmd::list_cleanup_history,
             commands::history_cmd::export_history_csv,
+            commands::history_cmd::delete_cleanup_history,
+            commands::history_cmd::clear_cleanup_history,
             is_elevated,
             disk_usage,
             elevate_restart,
@@ -563,6 +631,11 @@ pub fn run() {
             commands::ignore_cmd::suggest_ignore_rules,
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,
+            rank_idle_apps,
+            scan_installer_caches,
+            scan_tool_caches,
+            list_top_dir_sizes,
+            list_dir_children,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,

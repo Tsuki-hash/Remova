@@ -22,7 +22,13 @@ pub fn build_uninstall_command(
 
     if let Some(full) = raw.strip_prefix("remova-store:") {
         let full = full.trim();
-        if full.is_empty() {
+        // Package family names are [A-Za-z0-9._-] only — never interpolate into PS unvalidated.
+        if full.is_empty()
+            || full.len() > 200
+            || !full
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
             return None;
         }
         return Some(vec![
@@ -30,7 +36,8 @@ pub fn build_uninstall_command(
             "-NoProfile".into(),
             "-NonInteractive".into(),
             "-Command".into(),
-            format!("Remove-AppxPackage -Package '{full}' -ErrorAction Stop"),
+            // No surrounding quotes: charset already excludes quote/space/metachars.
+            format!("Remove-AppxPackage -Package {full} -ErrorAction Stop"),
         ]);
     }
 
@@ -152,6 +159,21 @@ fn split_win_args(s: &str) -> Vec<String> {
 
 /// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
 pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
+    // S-RCE: never execute a command the client invented — must match last server scan.
+    if app.uninstall_string.trim().is_empty() && app.quiet_uninstall_string.trim().is_empty() {
+        return OfficialUninstallResult {
+            ok: false,
+            message: "no uninstall string".into(),
+            had_command: false,
+        };
+    }
+    if !crate::apps::is_trusted_uninstall_app(app) {
+        return OfficialUninstallResult {
+            ok: false,
+            message: "uninstall command not from latest app scan".into(),
+            had_command: false,
+        };
+    }
     let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
     match cmd {
         Some(argv) if !argv.is_empty() => {

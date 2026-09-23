@@ -30,3 +30,9 @@ desktop.ini
 
 # Local demo pages (never track)
 flow-compare.html
+
+# Public tree: core app only — tests, issue templates, internal smoke stay local
+src/__tests__/
+.github/ISSUE_TEMPLATE/
+src-tauri/src/path_value_smoke.rs
+src-tauri/src/pipeline_smoke.rs

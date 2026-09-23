@@ -4,13 +4,17 @@
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, ItemKind};
 
-/// Who launched cleanup 鈥?drives orphan vs installed-app association rules.
+/// Who launched cleanup — drives orphan vs installed-app association rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CleanupSource {
     Uninstall,
     Orphan,
     Monitor,
     Copilot,
+    /// Installer packages / updater caches (进阶).
+    Installer,
+    /// Dev / game / browser tool caches (进阶).
+    ToolCache,
 }
 
 impl CleanupSource {
@@ -20,6 +24,35 @@ impl CleanupSource {
             CleanupSource::Orphan => "orphan",
             CleanupSource::Monitor => "monitor",
             CleanupSource::Copilot => "copilot",
+            CleanupSource::Installer => "installer",
+            CleanupSource::ToolCache => "toolcache",
+        }
+    }
+
+    /// Sources that delete only paths from the latest server-side scan allow-list.
+    pub fn is_scoped_scan(&self) -> bool {
+        matches!(
+            self,
+            CleanupSource::Orphan
+                | CleanupSource::Monitor
+                | CleanupSource::Installer
+                | CleanupSource::ToolCache
+        )
+    }
+
+    fn allow_ok(&self, path: &str) -> bool {
+        match self {
+            CleanupSource::Orphan => crate::orphans::was_recent_orphan_path(path),
+            CleanupSource::Monitor => {
+                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Monitor, path)
+            }
+            CleanupSource::Installer => {
+                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Installer, path)
+            }
+            CleanupSource::ToolCache => {
+                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::ToolCache, path)
+            }
+            _ => false,
         }
     }
 }
@@ -164,10 +197,14 @@ pub fn gate_cleanup_item(
         return GateDecision::Skip("user_data red line");
     }
     // Library subpaths (Documents/<App>, …) may be cleaned only with a proven link to the
-    // app (or in orphan/monitor flows). Never treat them as free-standing leftovers.
+    // app (or in scoped scans: orphan/monitor/installer). Never free-standing leftovers.
+    // Always enforce for non-scoped sources — a forged install_location must not unlock libraries.
     if crate::safety::is_user_library_path(&item.path)
-        && !matches!(source, CleanupSource::Orphan | CleanupSource::Monitor)
-        && app.is_none()
+        && !matches!(
+            source,
+            CleanupSource::Orphan | CleanupSource::Monitor | CleanupSource::Installer
+        )
+        && (app.is_none() || !crate::association::path_associated_with_app(app.unwrap(), item))
     {
         return GateDecision::Skip("path not associated with app");
     }
@@ -200,16 +237,20 @@ pub fn gate_cleanup_item(
 
     if let Some(app) = app {
         // S-R6-01: client cleanup_source alone must not disable association.
-        // S-R7-01: orphan-shaped apps under orphan/monitor source must come from the
-        // server-side scan allow-list. Forged empty InstalledApp + cleanup_source=orphan
+        // S-R7-01: scoped scans (orphan/monitor/installer/toolcache) must come from the
+        // server-side scan allow-list. Forged empty InstalledApp + scoped source
         // must not delete arbitrary paths.
-        let client_orphan = matches!(source, CleanupSource::Orphan | CleanupSource::Monitor);
-        let orphan_shape = crate::association::is_orphan_flow(app);
-        if client_orphan && orphan_shape {
-            if !crate::orphans::was_recent_orphan_path(&item.path) {
+        let client_scoped = source.is_scoped_scan();
+        let orphan_shape = crate::association::is_orphan_flow(app)
+            || matches!(
+                source,
+                CleanupSource::Installer | CleanupSource::ToolCache
+            );
+        if client_scoped && orphan_shape {
+            if !source.allow_ok(&item.path) {
                 return GateDecision::Skip("path not associated with app");
             }
-            // Confirmed orphan scan path — the allow-list is the association proof.
+            // Confirmed scan path — the allow-list is the association proof.
             // CF vendor paths still hard-skip (shared runtime).
             if matches!(item.kind, ItemKind::File | ItemKind::Dir)
                 && crate::shared::is_common_files_vendor_path(&item.path)
@@ -220,8 +261,8 @@ pub fn gate_cleanup_item(
             && crate::shared::is_common_files_vendor_path(&item.path)
         {
             // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
-            // Orphan/Monitor never get CF vendor allow (shared runtime).
-            if client_orphan || !crate::association::cf_vendor_associated(app, &item.path) {
+            // Scoped scans never get CF vendor allow (shared runtime).
+            if client_scoped || !crate::association::cf_vendor_associated(app, &item.path) {
                 return GateDecision::Skip("shared runtime");
             }
         } else if !crate::association::path_associated_with_app(app, item) {
@@ -231,11 +272,11 @@ pub fn gate_cleanup_item(
     } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
         && crate::shared::is_common_files_vendor_path(&item.path)
     {
-        // No app context 鈥?cannot prove vendor ownership.
+        // No app context — cannot prove vendor ownership.
         return GateDecision::Skip("shared runtime");
-    } else if matches!(source, CleanupSource::Orphan | CleanupSource::Monitor) {
-        // Orphan/Monitor without app: only paths from the last server-side orphan scan.
-        if !crate::orphans::was_recent_orphan_path(&item.path) {
+    } else if source.is_scoped_scan() {
+        // Scoped scan without app: only paths from the last server-side scan.
+        if !source.allow_ok(&item.path) {
             return GateDecision::Skip("path not associated with app");
         }
     }
@@ -656,6 +697,21 @@ mod tests {
             !gate_cleanup_item(Some(&orphan_app), &win, CleanupSource::Orphan, &ignore).is_allow()
         );
     }
+    /// S-R7-01 for installer/toolcache: forged empty app + scoped source + arbitrary path must skip.
+    #[test]
+    fn adversarial_forged_scoped_scan_requires_allow_list() {
+        let empty = app("安装包与更新缓存", "");
+        let p = r"C:\Users\a\Documents\secret.docx";
+        let ok = item(p, ItemKind::File);
+        let ignore = crate::ignore::IgnoreList::default();
+        for src in [CleanupSource::Installer, CleanupSource::ToolCache] {
+            assert!(
+                !gate_cleanup_item(Some(&empty), &ok, src, &ignore).is_allow(),
+                "forged scoped source {src:?} must skip {p}"
+            );
+        }
+    }
+
     /// S-R7-01 adversarial: forged empty InstalledApp + cleanup_source=orphan.
     #[test]
     fn adversarial_forged_orphan_app_cannot_delete_arbitrary_paths() {
