@@ -5,6 +5,7 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
+import { ToolGlyph } from "./ToolIcons";
 import {
   defaultSelectable,
   maxRiskOf,
@@ -165,6 +166,9 @@ export function ScopedScanPanel({
                 });
               }}
             />
+            <span style={{ color: "var(--muted)", display: "inline-flex", marginTop: 2 }}>
+              <ToolGlyph name={it.kind === "dir" ? "folder" : "file"} />
+            </span>
             <span style={{ minWidth: 0, flex: 1 }}>
               <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>
                 {it.path}
