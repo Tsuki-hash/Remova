@@ -5,7 +5,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import { compareSemver } from "../semver";
-import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
+import { checkLatestRelease, RELEASES_URL, type UpdateInfo } from "../lib/updateCheck";
 import { consumeQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
 import type { InstalledApp } from "../types";
 
@@ -72,10 +72,11 @@ export function useAppBoot({
         setDisk(`${drive} ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`);
       })
       .catch((e) => console.warn("[boot] diskUsage", e));
-    // Silent update check on launch
+    // Silent update check on launch (never navigates)
     void checkLatestRelease()
-      .then((info) => {
-        if (!info) return;
+      .then((res) => {
+        if (!res.ok || !res.info) return;
+        const info = res.info;
         if (compareSemver(info.version, __APP_VERSION__) > 0) {
           setUpdateInfo(info);
           toast.info(`${t().versionNew}: v${info.version}`);
@@ -154,11 +155,26 @@ export async function checkUpdateNow(
     openReleasesToast: string;
   },
 ) {
+  const openReleases = async () => {
+    try {
+      await api.openPath(RELEASES_URL);
+      toast.info(L.openReleasesToast);
+    } catch {
+      /* keep the error toast as the primary signal */
+    }
+  };
   try {
-    const info = await checkLatestRelease();
+    const res = await checkLatestRelease();
+    if (!res.ok) {
+      // Show the concrete reason first, then jump to Releases as a fallback path.
+      toast.error(`${L.versionCheckFailed}: ${res.reason}`);
+      await openReleases();
+      return;
+    }
+    const info = res.info;
     if (!info) {
-      // Only report failure — do not navigate (separate "Open Releases" action exists).
       toast.error(L.versionCheckFailed);
+      await openReleases();
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
@@ -173,8 +189,10 @@ export async function checkUpdateNow(
     } else {
       toast.success(L.versionUpToDate(__APP_VERSION__));
     }
-  } catch {
-    toast.error(L.versionCheckFailed);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    toast.error(`${L.versionCheckFailed}: ${reason}`);
+    await openReleases();
   }
 }
 
