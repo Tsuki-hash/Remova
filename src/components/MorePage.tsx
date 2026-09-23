@@ -1,10 +1,9 @@
 import { t } from "../i18n";
-import { cssStyles as css } from "../styles";
-import { prettyAppName } from "../lib/format";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
 import { AiSettingsPanel } from "./AiSettingsPanel";
+import { WhitelistPanel } from "./WhitelistPanel";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolItem } from "./MoreToolCard";
@@ -18,16 +17,12 @@ export function MorePage({
   monitoring,
   monitorDiff,
   lastReport,
-  shellMenu,
   closeMode,
   onCloseModeChange,
-  onForceClean,
   onIgnorePublisher,
-  onOrphanScan,
   onToggleMonitor,
   onMonitorToCleanup,
   onDismissMonitor,
-  onShellToggle,
   onExportReport,
   onError,
   onCheckUpdate,
@@ -37,16 +32,12 @@ export function MorePage({
   monitoring: boolean;
   monitorDiff: { added_files: string[]; added_reg_values: string[] } | null;
   lastReport: FullCleanupReport | null;
-  shellMenu: boolean;
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
-  onForceClean: () => void;
   onIgnorePublisher: () => void;
-  onOrphanScan: () => void;
   onToggleMonitor: () => void;
   onMonitorToCleanup: () => void;
   onDismissMonitor: () => void;
-  onShellToggle: () => void;
   onExportReport: () => void;
   onError: (msg: string) => void;
   onCheckUpdate: () => void;
@@ -64,21 +55,21 @@ export function MorePage({
       title: L.history,
       desc: L.historyHint,
       icon: "⏱",
-      action: () => void hist.loadHistory().then(() => tools.setOpenTool("history")),
+      action: () => {
+        // Open the panel first so the click always has visible feedback.
+        tools.setOpenTool("history");
+        void hist.loadHistory();
+      },
     },
     {
       id: "restore",
       title: L.restore,
       desc: L.restoreHint,
       icon: "↩",
-      action: () => void rest.loadRestore().then(() => tools.setOpenTool("restore")),
-    },
-    {
-      id: "csv",
-      title: L.exportCsv,
-      desc: L.exportCsvHint,
-      icon: "↓",
-      action: () => void hist.exportCsv(),
+      action: () => {
+        tools.setOpenTool("restore");
+        void rest.loadRestore();
+      },
     },
     ...(lastReport
       ? [
@@ -94,32 +85,14 @@ export function MorePage({
       : []),
     {
       id: "ignore",
-      title: L.ignorePub,
-      desc: selected
-        ? `${L.ignorePublisherHint} · ${prettyAppName(selected.name, selected.source)}`
-        : L.ignorePublisherHint,
+      title: L.appWhitelist,
+      desc: L.appWhitelistHint,
       icon: "∅",
-      action: () => tools.requireSelection(onIgnorePublisher),
-      needsSelection: true,
+      action: () => tools.setOpenTool("ignore"),
     },
   ];
 
   const advanced: ToolItem[] = [
-    {
-      id: "force",
-      title: L.forceClean,
-      desc: L.forceCleanHint,
-      icon: "⌘",
-      action: () => tools.requireSelection(onForceClean),
-      needsSelection: true,
-    },
-    {
-      id: "orphan",
-      title: L.orphanScan,
-      desc: L.orphanScanHint,
-      icon: "⌕",
-      action: onOrphanScan,
-    },
     {
       id: "monitor",
       title: monitoring ? L.monitorStop : L.monitorInstall,
@@ -127,17 +100,9 @@ export function MorePage({
       icon: monitoring ? "■" : "●",
       action: () => {
         void onToggleMonitor();
-        // FE-P0b: open monitor panel after stop when a diff exists (parent updates props async).
         tools.setOpenTool("monitor");
       },
       badge: monitoring ? L.badgeRunning : undefined,
-    },
-    {
-      id: "shell",
-      title: shellMenu ? L.shellUnregister : L.shellMenu,
-      desc: shellMenu ? L.shellUnregisterHint : L.shellMenuHint,
-      icon: "☰",
-      action: onShellToggle,
     },
   ];
 
@@ -156,57 +121,60 @@ export function MorePage({
       icon: "↑",
       action: onCheckUpdate,
     },
-    {
-      id: "open-releases",
-      title: L.openReleases,
-      desc: L.openReleasesHint,
-      icon: "↗",
-      action: () => window.open("https://github.com/Tsuki-hash/Remova/releases", "_blank"),
-    },
   ];
-
-  const selectedLabel = selected
-    ? prettyAppName(selected.name, selected.source)
-    : L.moreSelectedNone;
 
   return (
     <div
       style={{
         flex: 1,
         minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
+        // Not a flex column: children default to shrink:1 and squash the top card.
+        display: "block",
         overflow: "auto",
         paddingRight: 2,
       }}
     >
-      <div
-        style={{
-          ...css.card,
-          padding: "10px 14px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flexWrap: "wrap",
-          fontSize: 13,
-        }}
-      >
-        {selected ? (
-          <>
-            <span style={{ ...css.muted, fontSize: 12 }}>{L.selectedAppChip}</span>
-            <strong>{selectedLabel}</strong>
-          </>
-        ) : (
-          <>
-            <span style={{ color: "var(--muted)" }}>{L.moreSelectedNeedHint}</span>
-            <button style={{ ...css.btnSm, height: 28, marginLeft: "auto" }} onClick={onGoSoftware}>
-              {L.goToSoftware}
-            </button>
-          </>
-        )}
-      </div>
-
+      {openTool === "history" && (
+        <HistoryPanel
+          history={hist.history}
+          histQ={hist.histQ}
+          setHistQ={hist.setHistQ}
+          onClose={() => {
+            hist.closeHistory();
+            tools.setOpenTool(null);
+          }}
+        />
+      )}
+      {openTool === "restore" && (
+        <RestorePanel
+          sessions={rest.sessions}
+          pick={rest.restorePick}
+          setPick={rest.setRestorePick}
+          busy={rest.restoreBusy}
+          msgs={rest.restoreMsgs}
+          onRun={() => void rest.runRestore()}
+          onDelete={(name) => void rest.deleteSession(name)}
+          onClose={() => {
+            rest.closeRestore();
+            tools.setOpenTool(null);
+          }}
+        />
+      )}
+      {openTool === "ignore" && (
+        <WhitelistPanel
+          onClose={() => tools.setOpenTool(null)}
+          onError={onError}
+          onIgnorePublisher={onIgnorePublisher}
+        />
+      )}
+      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
+      {monitorDiff && (
+        <MonitorPanel
+          diff={monitorDiff}
+          onToCleanup={onMonitorToCleanup}
+          onDismiss={onDismissMonitor}
+        />
+      )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
         {common.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
@@ -285,35 +253,6 @@ export function MorePage({
           </div>
         </div>
       </Section>
-
-      {openTool === "history" && (
-        <HistoryPanel
-          history={hist.history}
-          histQ={hist.histQ}
-          setHistQ={hist.setHistQ}
-          onClose={hist.closeHistory}
-        />
-      )}
-      {openTool === "restore" && (
-        <RestorePanel
-          sessions={rest.sessions}
-          pick={rest.restorePick}
-          setPick={rest.setRestorePick}
-          busy={rest.restoreBusy}
-          msgs={rest.restoreMsgs}
-          onRun={() => void rest.runRestore()}
-          onDelete={(name) => void rest.deleteSession(name)}
-          onClose={rest.closeRestore}
-        />
-      )}
-      {monitorDiff && (
-        <MonitorPanel
-          diff={monitorDiff}
-          onToCleanup={onMonitorToCleanup}
-          onDismiss={onDismissMonitor}
-        />
-      )}
-      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
     </div>
   );
 }
