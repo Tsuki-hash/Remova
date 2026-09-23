@@ -683,6 +683,7 @@ export default function App() {
               onError={core.setError}
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
               onGoSoftware={() => goNav("software")}
+              onLastReport={(r) => coreSetReport(r)}
             />
           )}
           {nav === "software" && (

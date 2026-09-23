@@ -128,11 +128,31 @@ export type IgnoreSuggestion = {
   reason: string;
 };
 
+export type IdleEvidence = { code: string; detail: string };
+
+export type IdleApp = {
+  app: InstalledApp;
+  idle_days: number;
+  size_kb: number;
+  evidence: IdleEvidence[];
+  score: number;
+};
+
+export type DirSizeRow = {
+  path: string;
+  name: string;
+  size_kb: number;
+  parent: string;
+};
+
 export type HistoryEntry = {
+  /** Runtime row id (content hash); not persisted on disk. */
+  id: string;
   app_name: string;
   deleted: number;
   failed: number;
   skipped: number;
+  delayed?: number;
   aborted: boolean;
   dry_run: boolean;
   backup_dir: string;

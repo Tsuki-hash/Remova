@@ -58,7 +58,8 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
             return;
         }
         let p = e.path();
-        let rel = p.to_string_lossy().to_lowercase();
+        // Keep original casing for display/delete; NTFS compare is case-insensitive.
+        let rel = p.to_string_lossy().to_string();
         *budget = budget.saturating_sub(1);
         out.insert(rel);
         if p.is_dir() && !e.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
@@ -214,6 +215,12 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
     }
     crate::scanner::fill_item_sizes(&mut items);
     crate::scanner::fill_item_buckets(&mut items, "");
+    // S-R7-01: Monitor deletes only paths from this diff (server-side allow-list).
+    let mut scanned = std::collections::HashSet::new();
+    for it in &items {
+        scanned.insert(it.path.clone());
+    }
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
     items
 }
 

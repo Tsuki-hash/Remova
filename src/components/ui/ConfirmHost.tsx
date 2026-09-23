@@ -65,11 +65,20 @@ function HoldButton({
       type="button"
       style={base}
       disabled={disabled}
-      onMouseDown={() => {
+      onPointerDown={() => {
         if (holdMs > 0 && !disabled) setHolding(true);
       }}
-      onMouseUp={() => setHolding(false)}
-      onMouseLeave={() => setHolding(false)}
+      onPointerUp={() => setHolding(false)}
+      onPointerLeave={() => setHolding(false)}
+      onKeyDown={(e) => {
+        if (holdMs > 0 && !disabled && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          if (!holding) setHolding(true);
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === "Enter" || e.key === " ") setHolding(false);
+      }}
       onClick={() => {
         if (holdMs <= 0 && !disabled) onDone();
       }}
