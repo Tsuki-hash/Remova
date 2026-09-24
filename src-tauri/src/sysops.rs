@@ -77,6 +77,18 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
 ///
 /// On failure returns a stable `elevate:<kind>:<code>` string for UI localization:
 /// denied / cancelled / not_found / failed.
+/// Quote one Windows command-line argument (REV-SUP-01).
+fn quote_win_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".to_string();
+    }
+    if arg.contains([' ', '\t', '"']) {
+        format!("\"{}\"", arg.replace('"', "\"\""))
+    } else {
+        arg.to_string()
+    }
+}
+
 pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -94,7 +106,12 @@ pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
             .chain(std::iter::once(0))
             .collect();
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-        let params = args.join(" ");
+        // REV-SUP-01: quote each arg — `join(" ")` splits paths with spaces into extra argv.
+        let params = args
+            .iter()
+            .map(|a| quote_win_arg(a))
+            .collect::<Vec<_>>()
+            .join(" ");
         let params_w: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
         let empty: Vec<u16> = vec![0];
         unsafe {
@@ -165,6 +182,17 @@ mod tests {
         assert_eq!(super::elevate_error_token(1223), "elevate:cancelled:1223");
         assert_eq!(super::elevate_error_token(2), "elevate:not_found:2");
         assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
+    }
+
+    #[test]
+    fn quote_win_arg_spaces_and_quotes() {
+        assert_eq!(super::quote_win_arg("plain"), "plain");
+        assert_eq!(
+            super::quote_win_arg("C:\\Program Files\\App"),
+            "\"C:\\Program Files\\App\""
+        );
+        assert_eq!(super::quote_win_arg(""), "\"\"");
+        assert_eq!(super::quote_win_arg("say \"hi\""), "\"say \"\"hi\"\"\"");
     }
 }
 

@@ -366,6 +366,8 @@ export function useCleanupHandlers({
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
+      // REV-FE-10: confirm is async — another cleanup may have taken busyRef meanwhile.
+      if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
       try {
         busyRef.current = true;
