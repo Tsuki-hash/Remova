@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IgnoreList {
@@ -13,6 +14,9 @@ pub struct IgnoreList {
     pub paths: Vec<String>,
 }
 
+/// Serializes read-modify-write so concurrent ignore edits cannot drop entries.
+static FILE_LOCK: Mutex<()> = Mutex::new(());
+
 fn ignore_path() -> PathBuf {
     let base = std::env::var("PROGRAMDATA")
         .map(PathBuf::from)
@@ -21,6 +25,15 @@ fn ignore_path() -> PathBuf {
 }
 
 pub fn load() -> IgnoreList {
+    let _g = FILE_LOCK.lock().ok();
+    let p = ignore_path();
+    let Ok(s) = std::fs::read_to_string(p) else {
+        return IgnoreList::default();
+    };
+    serde_json::from_str(&s).unwrap_or_default()
+}
+
+fn load_unlocked() -> IgnoreList {
     let p = ignore_path();
     let Ok(s) = std::fs::read_to_string(p) else {
         return IgnoreList::default();
@@ -29,6 +42,11 @@ pub fn load() -> IgnoreList {
 }
 
 pub fn save(list: &IgnoreList) -> Result<(), String> {
+    let _g = FILE_LOCK.lock().ok();
+    save_unlocked(list)
+}
+
+fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
     let p = ignore_path();
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -37,54 +55,59 @@ pub fn save(list: &IgnoreList) -> Result<(), String> {
     std::fs::write(&p, s).map_err(|e| e.to_string())
 }
 
-pub fn add_publisher(name: &str) -> Result<IgnoreList, String> {
-    let mut l = load();
-    let n = name.trim();
-    if n.is_empty() {
-        return Err("empty publisher".into());
-    }
-    if !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(n)) {
-        l.publishers.push(n.to_string());
-    }
-    save(&l)?;
+/// Load → mutate → save under one lock (avoids lost updates).
+fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
+    let _g = FILE_LOCK.lock().ok();
+    let mut l = load_unlocked();
+    f(&mut l);
+    save_unlocked(&l)?;
     Ok(l)
 }
 
+pub fn add_publisher(name: &str) -> Result<IgnoreList, String> {
+    let n = name.trim().to_string();
+    if n.is_empty() {
+        return Err("empty publisher".into());
+    }
+    update_with(|l| {
+        if !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+            l.publishers.push(n);
+        }
+    })
+}
+
 pub fn add_name(name: &str) -> Result<IgnoreList, String> {
-    let mut l = load();
-    let n = name.trim();
+    let n = name.trim().to_string();
     if n.is_empty() {
         return Err("empty name".into());
     }
-    if !l.names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
-        l.names.push(n.to_string());
-    }
-    save(&l)?;
-    Ok(l)
+    update_with(|l| {
+        if !l.names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+            l.names.push(n);
+        }
+    })
 }
 
 /// Remove one publisher from the whitelist (undo ignore).
 pub fn remove_publisher(name: &str) -> Result<IgnoreList, String> {
-    let mut l = load();
-    let n = name.trim();
+    let n = name.trim().to_string();
     if n.is_empty() {
         return Err("empty publisher".into());
     }
-    l.publishers.retain(|x| !x.eq_ignore_ascii_case(n));
-    save(&l)?;
-    Ok(l)
+    update_with(|l| {
+        l.publishers.retain(|x| !x.eq_ignore_ascii_case(&n));
+    })
 }
 
 /// Remove one app name from the whitelist (undo ignore).
 pub fn remove_name(name: &str) -> Result<IgnoreList, String> {
-    let mut l = load();
-    let n = name.trim();
+    let n = name.trim().to_string();
     if n.is_empty() {
         return Err("empty name".into());
     }
-    l.names.retain(|x| !x.eq_ignore_ascii_case(n));
-    save(&l)?;
-    Ok(l)
+    update_with(|l| {
+        l.names.retain(|x| !x.eq_ignore_ascii_case(&n));
+    })
 }
 
 pub fn is_publisher_ignored(list: &IgnoreList, publisher: &str) -> bool {
@@ -135,16 +158,15 @@ pub fn should_skip_leftover_path(list: &IgnoreList, path: &str) -> bool {
 }
 
 pub fn add_path(path: &str) -> Result<IgnoreList, String> {
-    let mut l = load();
     let p = path.trim().replace('/', "\\");
     if p.is_empty() {
         return Err("empty path".into());
     }
-    if !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
-        l.paths.push(p);
-    }
-    save(&l)?;
-    Ok(l)
+    update_with(|l| {
+        if !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+            l.paths.push(p);
+        }
+    })
 }
 
 /// One proposed ignore rule with a human reason.
@@ -211,32 +233,31 @@ pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSu
 }
 
 pub fn apply_suggestions(items: &[IgnoreSuggestion]) -> Result<IgnoreList, String> {
-    let mut l = load();
-    for it in items {
-        match it.kind.as_str() {
-            "path" => {
-                let p = it.value.trim().replace('/', "\\");
-                if !p.is_empty() && !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
-                    l.paths.push(p);
+    update_with(|l| {
+        for it in items {
+            match it.kind.as_str() {
+                "path" => {
+                    let p = it.value.trim().replace('/', "\\");
+                    if !p.is_empty() && !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+                        l.paths.push(p);
+                    }
                 }
-            }
-            "publisher" => {
-                let p = it.value.trim();
-                if !p.is_empty() && !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(p)) {
-                    l.publishers.push(p.to_string());
+                "publisher" => {
+                    let p = it.value.trim();
+                    if !p.is_empty() && !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+                        l.publishers.push(p.to_string());
+                    }
                 }
-            }
-            "name" => {
-                let n = it.value.trim();
-                if !n.is_empty() && !l.names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
-                    l.names.push(n.to_string());
+                "name" => {
+                    let n = it.value.trim();
+                    if !n.is_empty() && !l.names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+                        l.names.push(n.to_string());
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
-    }
-    save(&l)?;
-    Ok(l)
+    })
 }
 
 #[cfg(test)]

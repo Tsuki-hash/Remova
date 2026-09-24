@@ -1,4 +1,5 @@
 /** Linked-item buckets for the right detail panel (path heuristics only). */
+import type { ToolIconName } from "../components/ToolIcons";
 import type { CleanupItem, InstalledApp } from "../types";
 
 export type LinkedBucketId =
@@ -158,19 +159,20 @@ export function linkedBucketLabelKey(id: LinkedBucketId): LinkedBucketLabelKey {
   }
 }
 
-export function linkedBucketIcon(id: LinkedBucketId): string {
+/** Stroke-glyph key for the bucket — render with `ToolGlyph` (matches toolbox icons). */
+export function linkedBucketIcon(id: LinkedBucketId): ToolIconName {
   switch (id) {
     case "programFiles":
-      return "📁";
+      return "folder";
     case "configFiles":
-      return "⚙";
+      return "file";
     case "registry":
-      return "🗄";
+      return "toolcache";
     case "shortcuts":
-      return "🔗";
+      return "force";
     case "startup":
-      return "▶";
+      return "startup";
     default:
-      return "•";
+      return "file";
   }
 }

@@ -441,10 +441,10 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .set("x-api-key", key)
         .set("anthropic-version", "2023-06-01")
         .send_json(body)
-        .map_err(|e| format!("anthropic http: {e}"))?;
+        .map_err(|_| "ai http failed".to_string())?;
     let v: serde_json::Value = resp
         .into_json()
-        .map_err(|e| format!("anthropic parse: {e}"))?;
+        .map_err(|_| "ai parse failed".to_string())?;
     if let Some(arr) = v["content"].as_array() {
         let text: String = arr
             .iter()
@@ -485,8 +485,8 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
     if !cfg.api_key.trim().is_empty() {
         req = req.set("Authorization", &format!("Bearer {}", cfg.api_key.trim()));
     }
-    let resp = req.send_json(body).map_err(|e| format!("ai http: {e}"))?;
-    let v: serde_json::Value = resp.into_json().map_err(|e| format!("ai parse: {e}"))?;
+    let resp = req.send_json(body).map_err(|_| "ai http failed".to_string())?;
+    let v: serde_json::Value = resp.into_json().map_err(|_| "ai parse failed".to_string())?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
@@ -600,7 +600,7 @@ pub fn explain_items(
     let text = chat_completion(cfg, EXPLAIN_SYSTEM, &user)?;
     let cleaned = strip_code_fence(&text);
     let parsed: Vec<ExplainOutput> =
-        serde_json::from_str(&cleaned).map_err(|e| format!("ai json: {e} | {cleaned}"))?;
+        serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
 
     // Match back by sanitized path (CODE-3) — never rely on array index alone.
     // two distinct paths can sanitize to the same string; when they do we cannot prove
@@ -811,7 +811,7 @@ pub fn parse_nl_intent(
     let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
     let cleaned = strip_code_fence(&text);
     let mut intent: NlIntent =
-        serde_json::from_str(&cleaned).map_err(|e| format!("ai intent json: {e} | {cleaned}"))?;
+        serde_json::from_str(&cleaned).map_err(|_| "ai intent parse failed".to_string())?;
     // Clamp dangerous defaults — never auto-run.
     match intent.action.as_str() {
         "list" | "analyze" | "batch_uninstall" | "force_clean" => {}

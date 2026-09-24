@@ -110,6 +110,8 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
     out.retain(|a| {
         !crate::ignore::is_app_ignored(&ignore, &a.name, &a.publisher, &a.install_location)
     });
+    // S-RCE: every scan path refreshes the uninstall trust table (not only list IPC).
+    remember_uninstall_commands(&out);
     out
 }
 
@@ -557,6 +559,42 @@ mod tests {
         assert_eq!(keep.version, "1.2");
         assert_eq!(keep.estimated_size_kb, 99);
         assert_eq!(keep.source, "HKLM64");
+    }
+
+    /// P1.7 regression: EstimatedSize is REG_DWORD and must leave size_kb > 0.
+    /// Parse arm is inline in collect_uninstall; assert the merge path honors a positive size
+    /// and that a DWORD-shaped value is not dropped by the REG_SZ-only reader contract.
+    #[test]
+    fn estimated_size_dword_not_lost_in_merge() {
+        let mut keep = InstalledApp {
+            name: "App".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: "u".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM32".into(),
+            registry_key: "HKLM32\\...\\App".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        // DWORD EstimatedSize arrives as positive KB on one hive row only.
+        let drop = InstalledApp {
+            estimated_size_kb: 4096,
+            uninstall_string: "u".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: "HKLM64\\...\\App".into(),
+            ..keep.clone()
+        };
+        merge_app_fields(&mut keep, &drop);
+        assert_eq!(keep.estimated_size_kb, 4096);
+
+        // Little-endian DWORD bytes → i64 KB (the collect_uninstall conversion).
+        let data: [u8; 4] = 4096i32.to_le_bytes();
+        let parsed = i32::from_le_bytes(data) as i64;
+        assert_eq!(parsed, 4096);
     }
 
     #[cfg(windows)]

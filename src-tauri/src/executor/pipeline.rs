@@ -86,7 +86,7 @@ fn try_backup_phase(
             dry_run: false,
             backup_dir: String::new(),
             uninstall_ok: false,
-            uninstall_message: format!("backup session failed: {e}"),
+            uninstall_message: "backup session failed".to_string(),
             deleted: 0,
             failed: 0,
             skipped: 0,
@@ -188,7 +188,7 @@ fn delete_cleanup_items_source(
                 }
                 Err(e) => {
                     failed += 1;
-                    errors.push(format!("{}: {e}", it.path));
+                    errors.push(format!("{}: path delete failed", it.path));
                     details.push(ItemDetail {
                         path: it.path.clone(),
                         kind: "path".into(),
@@ -238,12 +238,12 @@ fn delete_cleanup_items_source(
                             message: native_note,
                         });
                     }
-                    Err(e) => {
+                    Err(_) => {
                         failed += 1;
                         let msg = if native_note.is_empty() {
-                            e.clone()
+                            "registry delete failed".to_string()
                         } else {
-                            format!("{native_note}; {e}")
+                            format!("{native_note}; registry delete failed")
                         };
                         errors.push(format!("{}: {msg}", it.path));
                         details.push(ItemDetail {

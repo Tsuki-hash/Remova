@@ -72,7 +72,9 @@ export function useMoreHistory(onError: (msg: string) => void) {
       const a = document.createElement("a");
       a.href = url;
       a.download = "remova-history.csv";
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
       toast.success(L.exportCsv);
     } catch (e) {
