@@ -15,7 +15,8 @@ export function buildReportAiRequest(report: FullCleanupReport | CleanupReport) 
     skipped: report.skipped,
     aborted: "aborted" in report ? report.aborted : false,
     backupDir: "backup_dir" in report ? report.backup_dir || "" : "",
-    restorePointOk: "restore_point_ok" in report ? report.restore_point_ok : true,
+    // REV-FE-07: never claim restore-point success when the field is absent.
+    restorePointOk: "restore_point_ok" in report ? report.restore_point_ok : false,
     topFailed,
   };
 }

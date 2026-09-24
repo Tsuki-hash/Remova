@@ -93,11 +93,15 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
 fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> u64 {
     use std::collections::VecDeque;
     let mut total: u64 = 0;
-    let mut stack: VecDeque<std::path::PathBuf> = VecDeque::new();
-    stack.push_back(root.to_path_buf());
+    // REV-SUP-03: depth + entry caps — same budget as `walk_bytes_limited`.
+    let mut stack: VecDeque<(std::path::PathBuf, u32)> = VecDeque::new();
+    stack.push_back((root.to_path_buf(), 0));
     let mut files_seen: u64 = 0;
 
-    while let Some(dir) = stack.pop_front() {
+    while let Some((dir, depth)) = stack.pop_front() {
+        if depth > MAX_WALK_DEPTH {
+            continue;
+        }
         if cancelled.load(Ordering::SeqCst) {
             return 0;
         }
@@ -119,10 +123,15 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> u64 {
                 continue;
             }
             if meta.is_dir() {
-                stack.push_back(entry.path());
+                if depth < MAX_WALK_DEPTH {
+                    stack.push_back((entry.path(), depth + 1));
+                }
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
                 files_seen += 1;
+                if files_seen >= MAX_WALK_FILES {
+                    return total;
+                }
                 if files_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
                     return 0;
                 }

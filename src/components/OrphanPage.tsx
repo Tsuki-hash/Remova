@@ -219,7 +219,7 @@ export function OrphanPage({
                 onClick={() => setSelected(new Set())}
                 disabled={selected.size === 0}
               >
-                {L.cancel}
+                {L.clearSelection}
               </button>
               <button
                 style={{
