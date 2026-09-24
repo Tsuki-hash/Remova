@@ -19,6 +19,7 @@ pub mod installers;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
+pub mod path_seal;
 pub mod policy;
 pub mod regops;
 pub mod regscan;
