@@ -238,11 +238,17 @@ export function MorePage({
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
-      {monitorDiff && (
+      {/* REV-UX-02: always render the monitor tool surface (not only after a diff arrives). */}
+      {(openTool === "monitor" || monitorDiff) && (
         <MonitorPanel
-          diff={monitorDiff}
+          diff={monitorDiff ?? { added_files: [], added_reg_values: [] }}
+          monitoring={monitoring}
           onToCleanup={onMonitorToCleanup}
-          onDismiss={onDismissMonitor}
+          onDismiss={() => {
+            onDismissMonitor();
+            if (openTool === "monitor") tools.setOpenTool(null);
+          }}
+          onClose={() => tools.setOpenTool(null)}
         />
       )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>

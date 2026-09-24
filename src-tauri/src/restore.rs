@@ -37,34 +37,41 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 continue;
             }
             let dest = PathBuf::from(&original);
-            // S-R6-03: never restore into red-line / system-shaped destinations.
-            // A tampered path_map.json must not become an arbitrary-write primitive.
+            // REV-SEC-02: protected / unsafe destinations skip + warn — never abort sibling entries.
             if original.trim().is_empty()
                 || !crate::safety::is_safe_restore_target(&dest)
                 || crate::safety::looks_like_sync_conflict(original)
             {
-                return Err(crate::error::restore_err(format!(
-                    "refusing to restore into protected path: {original}"
-                ))
-                .to_ipc());
+                messages.push(format!("skipped protected restore target: {original}"));
+                continue;
             }
-            // Library subpaths require a matching out-of-session seal (N-risk):
-            // only destinations recorded at backup time may write back under Documents/….
-            if crate::safety::is_user_library_path(original)
-                && !crate::path_seal::target_sealed(session, &map, original)
-            {
-                return Err(crate::error::restore_err(format!(
-                    "refusing unsealed library restore: {original}"
-                ))
-                .to_ipc());
+            // REV-SEC-01: every write-back target requires a matching out-of-session seal
+            // (not only library subpaths) — a tampered path_map must not widen destinations.
+            if !crate::path_seal::target_sealed(session, &map, original) {
+                messages.push(format!("skipped unsealed restore target: {original}"));
+                continue;
+            }
+            // REV-SEC-03: refuse copy-through of junction/mount reparse points.
+            if crate::fsutil::is_reparse_point(&src) {
+                messages.push(format!("skipped reparse backup entry: {rel}"));
+                continue;
             }
             if src.is_dir() {
-                copy_dir(&src, &dest).map_err(|_| format!("restore:copy::{original}"))?;
+                if let Err(e) = copy_dir(&src, &dest) {
+                    messages.push(format!("restore failed for {original}: {e}"));
+                    continue;
+                }
             } else {
                 if let Some(p) = dest.parent() {
-                    fs::create_dir_all(p).map_err(|_| "restore:io".to_string())?;
+                    if let Err(e) = fs::create_dir_all(p) {
+                        messages.push(format!("restore failed for {original}: {e}"));
+                        continue;
+                    }
                 }
-                fs::copy(&src, &dest).map_err(|_| format!("restore:copy::{original}"))?;
+                if let Err(e) = crate::fsutil::copy_file_no_reparse(&src, &dest) {
+                    messages.push(format!("restore failed for {original}: {e}"));
+                    continue;
+                }
             }
             messages.push(format!("restored {original}"));
         }
@@ -500,8 +507,12 @@ mod tests {
 
     #[test]
     fn restore_file_roundtrip() {
-        let tmp = std::env::temp_dir().join("remova_restore_test");
+        let tmp = std::env::temp_dir().join(format!("remova_restore_rt_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
         let sess = tmp.join("sess");
         let files = sess.join("files");
         fs::create_dir_all(&files).unwrap();
@@ -517,16 +528,19 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
+        // REV-SEC-01: every write-back needs a seal (same as production backup path).
+        crate::path_seal::write_seal(&sess, "", &map).unwrap();
         // restore overwrites orig from backup
         let msgs = restore_session(&sess).unwrap();
-        assert!(msgs.iter().any(|m| m.contains("restored")));
+        assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// N-risk: library-subpath write-back requires a matching out-of-session seal.
+    /// REV-SEC-01: missing seal skips the entry (partial restore), never silently writes.
     #[test]
-    fn restore_refuses_unsealed_library_target() {
+    fn restore_skips_unsealed_library_target() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_seal_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -546,9 +560,13 @@ mod tests {
         let map_json = serde_json::to_string_pretty(&map).unwrap();
         fs::write(files.join("path_map.json"), &map_json).unwrap();
 
-        // Unsealed → refuse (even though shape gate would allow a library subpath).
-        let err = restore_session(&sess).unwrap_err();
-        assert!(err.contains("unsealed") || err.contains("protected"), "{err}");
+        // Unsealed → skip + warn (Ok), file must not appear.
+        let msgs = restore_session(&sess).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("unsealed")),
+            "expected unsealed skip, got: {msgs:?}"
+        );
+        assert!(!dest.exists(), "unsealed target must not be written");
 
         // Sealed → restore proceeds.
         crate::path_seal::write_seal(&sess, "", &map).unwrap();
@@ -709,8 +727,9 @@ mod tests {
     }
 
     // S-R7-01 / S-R7-02 adversarial: tampered path_map must not write system dirs.
+    // REV-SEC-02: protected targets skip + warn — the session still returns Ok (partial).
     #[test]
-    fn restore_refuses_tampered_path_map_system_targets() {
+    fn restore_skips_tampered_path_map_system_targets() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_adv_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let sess = tmp.join("sess");
@@ -725,8 +744,12 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        let err = restore_session(&sess).unwrap_err();
-        assert!(err.contains("protected"), "got: {err}");
+        let msgs = restore_session(&sess).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("protected") || m.contains("unsealed")),
+            "expected skip message, got: {msgs:?}"
+        );
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }

@@ -124,22 +124,8 @@ struct DeleteOutcome {
 }
 
 /// Windows reparse point (junction/symlink) — refuse delete-through (TOCTOU).
-fn is_reparse_point(p: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_attributes() & 0x400 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(windows))]
-    {
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    }
-}
+/// Shared with backup/restore copy paths via `fsutil` (REV-SEC-03).
+use crate::fsutil::is_reparse_point;
 
 fn delete_cleanup_items_source(
     app: &crate::apps::InstalledApp,

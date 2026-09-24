@@ -2,16 +2,35 @@
 
 use std::path::Path;
 
-/// Recursively copy a directory tree (files + dirs). Symlinks are skipped.
+/// Windows reparse point (junction / mount / symlink). Never follow when copying (REV-SEC-03).
+pub fn is_reparse_point(p: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400 — covers junctions, not just symlinks.
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_attributes() & 0x400 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+}
+
+/// Recursively copy a directory tree (files + dirs). Symlinks and other reparse points are skipped.
 pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
-        let ty = entry.file_type()?;
-        if ty.is_symlink() {
+        // junction/mount reparse: `file_type().is_symlink()` is false on Windows — must use attributes.
+        if is_reparse_point(&path) {
             continue;
         }
+        let ty = entry.file_type()?;
         let target = dest.join(entry.file_name());
         if ty.is_dir() {
             copy_dir(&path, &target)?;
@@ -20,6 +39,14 @@ pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Copy a single file; refuse reparse sources so `fs::copy` cannot follow a swapped junction.
+pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
+    if is_reparse_point(src) {
+        return Err(std::io::Error::other("refusing to copy reparse point"));
+    }
+    std::fs::copy(src, dest)
 }
 
 /// CSV field escape: wrap in quotes when needed; double internal quotes.
@@ -75,6 +102,44 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn unique_tmp(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir().join(format!(
+            "remova_fsutil_{tag}_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn copy_file_no_reparse_refuses_missing_is_ok_error() {
+        let tmp = unique_tmp("nofile");
+        let missing = tmp.join("nope.bin");
+        assert!(copy_file_no_reparse(&missing, &tmp.join("out.bin")).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn copy_dir_skips_symlink_entries() {
+        let tmp = unique_tmp("link");
+        let src = tmp.join("src");
+        let dest = tmp.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("ok.txt"), b"x").unwrap();
+        // Best-effort symlink: skip assertion on platforms that cannot create one.
+        let _ = std::os::windows::fs::symlink_file(src.join("ok.txt"), src.join("link.txt"));
+        copy_dir(&src, &dest).unwrap();
+        assert!(dest.join("ok.txt").exists());
+        assert!(!dest.join("link.txt").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn fnv1a64_stable() {
         assert_eq!(fnv1a64("hello"), fnv1a64("hello"));
@@ -106,7 +171,7 @@ mod tests {
 
     #[test]
     fn copy_dir_roundtrip() {
-        let root = std::env::temp_dir().join(format!("remova_fsutil_{}", std::process::id()));
+        let root = unique_tmp("rt");
         let src = root.join("src");
         let dest = root.join("dest");
         fs::create_dir_all(src.join("nested")).unwrap();

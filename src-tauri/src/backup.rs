@@ -269,6 +269,10 @@ fn backup_item_with_map(
             if !src.exists() {
                 return Ok(());
             }
+            // REV-SEC-03: never copy through junction/mount reparse (backup exfil / restore write-through).
+            if crate::fsutil::is_reparse_point(src) {
+                return Ok(());
+            }
             let digest = format!("{:x}", crate::fsutil::fnv1a64(&item.path));
             let name = src
                 .file_name()
@@ -282,7 +286,7 @@ fn backup_item_with_map(
                 if let Some(p) = dest.parent() {
                     fs::create_dir_all(p).map_err(|e| e.to_string())?;
                 }
-                fs::copy(src, &dest).map_err(|e| e.to_string())?;
+                crate::fsutil::copy_file_no_reparse(src, &dest).map_err(|e| e.to_string())?;
             }
             path_map.insert(rel, item.path.clone());
             Ok(())

@@ -4,6 +4,26 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-09-24
+
+安全与正确性修复（第20版评审 G0）。
+
+### 安全
+
+- 备份还原写回**每条**目标都要求本机封印（path_map seal）；缺封印或目标被篡改则跳过并提示，不再具备「改会话文件 → 写任意路径」的面
+- 受保护路径（Program Files / Windows / 库根 / 同步冲突等）还原改为**跳过并警告**，不再中止整次还原，混合会话可部分恢复
+- 备份/复制拒绝跟随目录联接（junction）等 reparse 点，与删除路径同一门禁
+
+### 体验
+
+- 「更多」页安装追踪入口可打开监控面板（不再只在有变更时出现）；空态有说明
+- 扫描切换后 AI 解释忙碌态不会卡死；列表刷新会裁剪已消失的选中项
+
+### 工程
+
+- 版本三源对齐 **1.2.1**；`ARCHITECTURE` 命令表与 `generate_handler!` 对齐
+- 单元测试纳入公开仓跟踪，CI/`npm test` 有真实信号
+
 ## [1.2.0] - 2026-09-24
 
 工具箱增强与图标统一。相对 1.1.1 为功能版本。

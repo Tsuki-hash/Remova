@@ -88,6 +88,9 @@ export function useAiScanNarrative({
     // Always invalidate in-flight explain when scan identity changes,
     // even if this run is skipped because aiBusy.
     aiExplainSeqRef.current += 1;
+    // REV-FE-01: a superseded run's `finally` only clears busy when seq still matches.
+    // Bumping seq above would otherwise leave aiBusy stuck true forever — force-clear here.
+    setAiBusy(false);
     scanUi.clearAiSummary();
     scanUi.clearRiskFilter();
     aiActions.clearAiScanState();
@@ -115,6 +118,9 @@ export function useAiScanNarrative({
   }, [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote]);
 
   useEffect(() => {
+    // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
+    aiReportSeqRef.current += 1;
+    setAiReportBusy(false);
     if (report && aiEnabled) void runAiReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, aiEnabled]);
