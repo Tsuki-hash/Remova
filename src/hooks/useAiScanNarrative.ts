@@ -76,7 +76,8 @@ export function useAiScanNarrative({
         .filter(Boolean)
         .join(" ");
       setAiSummaryNote(brief || null);
-      if (!out.length) toast.info(L.aiDisabledHint);
+      // REV-FE-05: empty explain is not "AI disabled" — say so.
+      if (!out.length) toast.info(L.aiEmptyResult);
     } catch {
       if (seq === aiExplainSeqRef.current) toast.error(L.aiFailed);
     } finally {

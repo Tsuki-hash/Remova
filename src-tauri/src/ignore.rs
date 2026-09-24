@@ -52,7 +52,13 @@ fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    std::fs::write(&p, s).map_err(|e| e.to_string())
+    // REV-SUP-07: temp + rename so a crash mid-write cannot leave half a JSON file.
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, s).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// Load → mutate → save under one lock (avoids lost updates).
