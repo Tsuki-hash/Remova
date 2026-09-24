@@ -95,7 +95,9 @@ fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(not(windows))]
 fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
-    Ok(blob.to_vec())
+    // REV-SEC-10: no DPAPI off-Windows — never accept forged plaintext seals.
+    let _ = blob;
+    Err("seal:unprotect_failed".into())
 }
 
 fn seals_root() -> PathBuf {

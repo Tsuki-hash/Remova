@@ -397,8 +397,14 @@ fn cache_put(key: u64, value: String) {
                 at: now_secs(),
             },
         );
+        // REV-SUP-06: evict oldest ~25% instead of wiping the whole cache.
         if map.len() > 400 {
-            map.clear();
+            let mut by_age: Vec<(u64, u64)> = map.iter().map(|(k, e)| (e.at, *k)).collect();
+            by_age.sort_unstable();
+            let drop = by_age.len() / 4;
+            for (_, k) in by_age.into_iter().take(drop) {
+                map.remove(&k);
+            }
         }
     }
 }

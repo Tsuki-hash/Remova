@@ -305,6 +305,10 @@ pub fn export_reg_value(
     let (alias, rest) = key_path
         .split_once('\\')
         .ok_or_else(|| "bad key".to_string())?;
+    // REV-SEC-07: key rest is interpolated into `[...]` — reject injection chars.
+    if rest.is_empty() || rest.contains(['\r', '\n', ']']) {
+        return Err("unsafe key path".into());
+    }
     let (hive, view) = match alias.to_uppercase().as_str() {
         "HKLM64" | "HKLM" => ("HKEY_LOCAL_MACHINE", "/reg:64"),
         "HKLM32" => ("HKEY_LOCAL_MACHINE", "/reg:32"),

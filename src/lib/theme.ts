@@ -22,10 +22,6 @@ export function loadNav(): NavId {
   return "software";
 }
 
-export function saveNav(nav: NavId) {
-  localStorage.setItem("remova_nav", nav);
-}
-
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.dataset.theme = theme;

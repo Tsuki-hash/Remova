@@ -4,7 +4,6 @@ import type { NavId, Theme } from "../lib/theme";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import type { UpdateInfo } from "../lib/updateCheck";
 import { saveCloseMode } from "../lib/closeMode";
-import { saveNav } from "../lib/theme";
 import { currentLang, setLang } from "../i18n";
 import { initialShellState, shellReducer } from "./reducers/shell";
 
@@ -20,7 +19,7 @@ export function useShellState() {
     dispatch({ type: "lang/bump" });
   }, []);
   const goNav = useCallback((n: NavId) => {
-    saveNav(n);
+    // REV-FE-16: nav is not restored on boot (always software) — no dead persist.
     dispatch({ type: "nav/set", nav: n });
   }, []);
   const persistCloseMode = useCallback((m: CloseMode) => {

@@ -33,10 +33,12 @@ export type AppChromeResidual = {
   selectDefaultItems: (items: import("../types").CleanupItem[]) => void;
 };
 
+import { LARGE_APP_KB } from "../lib/decision";
+
 /** Checkup tile counts (large installs / recent installs). */
 export function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number) {
   return useMemo(() => {
-    const large = apps.filter((a) => sizeOf(a) > 500 * 1024).length;
+    const large = apps.filter((a) => sizeOf(a) > LARGE_APP_KB).length;
     const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
     return { total: apps.length, large, recent };
   }, [apps, sizeOf]);

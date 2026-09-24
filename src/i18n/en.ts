@@ -1,5 +1,17 @@
 /** Language dictionary — keep zh/en key parity. */
-export const dict = {
+import { dict as zhDict } from "./zh";
+
+/**
+ * REV-FE-08: en must expose the same keys and function arities as zh.
+ * String literals are widened so translations may differ in wording.
+ */
+type EnDict = {
+  [K in keyof typeof zhDict]: (typeof zhDict)[K] extends (...args: infer A) => unknown
+    ? (...args: A) => string
+    : string;
+};
+
+export const dict: EnDict = {
     title: "Remova",
     subtitle: "Deep Uninstall",
     search: "Search apps…",
