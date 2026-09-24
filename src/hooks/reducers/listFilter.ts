@@ -14,6 +14,7 @@ export type ListFilterAction =
   | { type: "q/set"; value: string }
   | { type: "sortCol/set"; value: SortColState }
   | { type: "sortDesc/set"; value: boolean }
+  | { type: "sortDesc/update"; value: (d: boolean) => boolean }
   | { type: "category/set"; value: CategoryId };
 
 function loadCategory(): CategoryId {
@@ -33,6 +34,9 @@ export function listFilterReducer(state: ListFilterState, action: ListFilterActi
       return { ...state, sortCol: action.value };
     case "sortDesc/set":
       return { ...state, sortDesc: action.value };
+    case "sortDesc/update":
+      // REV-FE-03: functional update — never compute from a stale closure snapshot.
+      return { ...state, sortDesc: action.value(state.sortDesc) };
     case "category/set":
       return { ...state, category: action.value };
     default:

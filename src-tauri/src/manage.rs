@@ -477,6 +477,8 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         items.sort_by_key(|a| a.name.to_lowercase());
         items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
+        // REV-BE-17: arm write-side allow-list from this listing.
+        remember_scheduled_task_names(items.iter().map(|it| it.name.clone()));
         items
     }
 }
@@ -667,9 +669,39 @@ pub fn set_service_running(name: &str, run: bool) -> Result<(), String> {
     crate::regops::sc_set_service_running(name, run)
 }
 
+/// Tasks seen in the latest `list_scheduled_tasks` (REV-BE-17).
+static TASK_TRUST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn task_trust() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    TASK_TRUST.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn normalize_task_key(name: &str) -> String {
+    name.replace('/', "\\").trim().trim_matches('"').to_lowercase()
+}
+
+fn remember_scheduled_task_names(names: impl Iterator<Item = String>) {
+    if let Ok(mut g) = task_trust().lock() {
+        *g = names.map(|n| normalize_task_key(&n)).collect();
+    }
+}
+
+fn is_trusted_task(name: &str) -> bool {
+    let k = normalize_task_key(name);
+    task_trust()
+        .lock()
+        .map(|g| g.contains(&k))
+        .unwrap_or(false)
+}
+
 pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
         return Err(crate::error::manage_err("bad_name", "task").to_ipc());
+    }
+    // REV-BE-17: scoped allow-list — only tasks from the latest manage listing may be toggled.
+    if !is_trusted_task(task_name) {
+        return Err(crate::error::manage_err("task_not_listed", task_name).to_ipc());
     }
     let _guard = lock_manage();
     // S-02 / S-R6-13: mirror list-side filter — never disable `\Microsoft\` system tasks.
@@ -709,6 +741,12 @@ mod tests {
         assert_eq!(cols[0], r"C:\a");
         assert_eq!(cols[1], r#"say "hi""#);
         assert_eq!(cols[2], "x");
+    }
+
+    #[test]
+    fn set_task_requires_listed_name() {
+        // REV-BE-17: even non-Microsoft names are refused unless listed this session.
+        assert!(super::set_task_enabled(r"\Vendor\MyTask", true).is_err());
     }
 
     #[cfg(windows)]

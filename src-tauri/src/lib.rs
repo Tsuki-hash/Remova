@@ -79,29 +79,43 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-/// F-R7-01: strict http(s) URL shape for `open_path` (scheme + host, no control/quote/space).
+/// F-R7-01: strict URL shape for `open_path` (scheme + host, no control/quote/space).
+/// REV-SUP-12: plain `http://` only for loopback (local Ollama etc.); remote must be https.
 fn is_safe_http_url(url: &str) -> bool {
-    let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    else {
+    let is_https = url.starts_with("https://");
+    let is_http = url.starts_with("http://");
+    if !is_https && !is_http {
         return false;
-    };
+    }
     if url
         .chars()
         .any(|c| c.is_control() || c == '"' || c == '\'' || c == ' ' || c == '\t')
     {
         return false;
     }
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or("");
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
         return false;
     }
     let host = authority.split(':').next().unwrap_or("");
-    !host.is_empty()
-        && host
+    if host.is_empty()
+        || !host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']')
+    {
+        return false;
+    }
+    if is_http {
+        // loopback only (IPv4 / localhost / [::1])
+        let low = host.to_ascii_lowercase();
+        return low == "localhost"
+            || low == "127.0.0.1"
+            || low == "::1"
+            || low == "[::1]"
+            || low.starts_with("127.");
+    }
+    true
 }
 
 /// Launch a validated http(s) URL via ShellExecuteW "open" (no shell metacharacter parsing).
@@ -245,6 +259,9 @@ mod open_path_url_tests {
             "https://github.com/Tsuki-hash/Remova/releases"
         ));
         assert!(super::is_safe_http_url("http://127.0.0.1:11434/v1"));
+        assert!(super::is_safe_http_url("http://localhost:11434/v1"));
+        // REV-SUP-12: remote cleartext http is refused
+        assert!(!super::is_safe_http_url("http://example.com/x"));
         assert!(!super::is_safe_http_url("https://"));
         assert!(!super::is_safe_http_url("ftp://example.com/x"));
         assert!(!super::is_safe_http_url("https://evil.com/\"&calc.exe"));
