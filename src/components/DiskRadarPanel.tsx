@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type DiskUsage } from "../lib/api";
+import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -15,14 +15,17 @@ export function DiskRadarPanel({
 }) {
   const L = t();
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
-  const [usage, setUsage] = useState<DiskUsage | null>(null);
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+  const [drive, setDrive] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
 
-  const load = async (parent?: string) => {
+  const load = async (parent?: string, letter?: string) => {
     setBusy(true);
     try {
-      const list = parent ? await api.listDirChildren(parent) : await api.listTopDirSizes();
+      const list = parent
+        ? await api.listDirChildren(parent)
+        : await api.listTopDirSizes(letter);
       setRows(list);
     } catch (e) {
       onError(formatError(e));
@@ -34,40 +37,74 @@ export function DiskRadarPanel({
   useEffect(() => {
     void (async () => {
       try {
-        setUsage(await api.diskUsage());
-      } catch {
-        /* optional */
+        const list = await api.listLocalDrives();
+        setDrives(list);
+        const sys = list.find((d) => d.is_system) ?? list[0];
+        const letter = sys?.letter ?? "";
+        setDrive(letter);
+        await load(undefined, letter);
+      } catch (e) {
+        onError(formatError(e));
       }
-      await load();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const switchDrive = async (letter: string) => {
+    setDrive(letter);
+    setCrumbs([]);
+    await load(undefined, letter);
+  };
+
+  const current = drives.find((d) => d.letter === drive);
 
   return (
     <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <strong>{L.diskRadarTitle}</strong>
         <span style={css.muted}>{L.diskRadarHint}</span>
-        {usage && (
-          <span style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
-            {usage.drive || ""} {formatSize(Math.round(usage.free_gb * 1024 * 1024))} /{" "}
-            {formatSize(Math.round(usage.total_gb * 1024 * 1024))}
-          </span>
-        )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          {drives.map((d) => (
+            <button
+              key={d.letter}
+              type="button"
+              style={{
+                ...css.btnGhost,
+                height: 28,
+                padding: "0 10px",
+                fontWeight: drive === d.letter ? 700 : 500,
+                borderColor: drive === d.letter ? "var(--accent)" : undefined,
+              }}
+              disabled={busy}
+              title={`${formatSize(Math.round(d.free_gb * 1024 * 1024))} / ${formatSize(Math.round(d.total_gb * 1024 * 1024))}`}
+              onClick={() => void switchDrive(d.letter)}
+            >
+              {d.letter}:
+            </button>
+          ))}
+          {current && (
+            <span style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
+              {formatSize(Math.round(current.free_gb * 1024 * 1024))} /{" "}
+              {formatSize(Math.round(current.total_gb * 1024 * 1024))}
+            </span>
+          )}
           {crumbs.length > 0 && (
             <button
               style={{ ...css.btnGhost, height: 30 }}
               onClick={() => {
                 const next = crumbs.slice(0, -1);
                 setCrumbs(next);
-                void load(next[next.length - 1]?.path);
+                void load(next[next.length - 1]?.path, drive);
               }}
             >
               ←
             </button>
           )}
-          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void load()}>
+          <button
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={busy}
+            onClick={() => void load(undefined, drive)}
+          >
             {L.manageReload}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>

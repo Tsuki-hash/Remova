@@ -468,12 +468,28 @@ async fn scan_tool_caches() -> Result<Vec<scanner::CleanupItem>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Disk radar: top directories under well-known system roots (read-only).
+/// Disk radar: local fixed drives with free/total space (read-only).
 #[tauri::command]
-async fn list_top_dir_sizes() -> Result<Vec<diskradar::DirSizeRow>, String> {
-    tauri::async_runtime::spawn_blocking(diskradar::top_dir_sizes)
+async fn list_local_drives() -> Result<Vec<diskradar::DriveInfo>, String> {
+    tauri::async_runtime::spawn_blocking(diskradar::list_local_drives)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Disk radar: top directories for one drive (system drive → well-known roots).
+#[tauri::command]
+async fn list_top_dir_sizes(
+    drive: Option<String>,
+) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let letter = drive
+            .as_deref()
+            .and_then(|s| s.trim().chars().next())
+            .filter(|c| c.is_ascii_alphabetic());
+        diskradar::top_dir_sizes_for_drive(letter)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Disk radar drill-down: immediate children of a directory (read-only).
@@ -628,6 +644,7 @@ pub fn run() {
             rank_idle_apps,
             scan_installer_caches,
             scan_tool_caches,
+            list_local_drives,
             list_top_dir_sizes,
             list_dir_children,
             verify_cleanup_leftovers,

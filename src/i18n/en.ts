@@ -177,7 +177,7 @@ export const dict = {
     installerTitle: "Installers & update caches",
     installerHint: "Clean downloaded packages and updater caches (not app leftover dirs)",
     diskRadarTitle: "Disk usage radar",
-    diskRadarHint: "See what ate the disk (read-only; open paths)",
+    diskRadarHint: "See what ate the disk (switch drives; read-only; open paths)",
     toolcacheTitle: "Tool cache cleanup",
     toolcacheHint: "Dev / game / browser tool caches; never saves or browser profiles",
     detailHide: "Hide details",
