@@ -5,7 +5,13 @@ import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { defaultSelectable, maxRiskOf, riskTierLabel } from "../lib/decision";
+import {
+  buildCleanupRiskBits,
+  defaultSelectable,
+  formatRiskNote,
+  maxRiskOf,
+  riskTierLabel,
+} from "../lib/decision";
 import { appKey } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
 import type { BatchItemResult } from "../components/BatchPanels";
@@ -99,13 +105,7 @@ export function useCleanupHandlers({
           toast.info(L.toastForceCleanEmpty);
           return;
         }
-        // F-R6-04: surface user_library / shared risks in the force-clean confirm too.
-        const forceRiskBits: string[] = [];
-        if (items.some((it) => it.risk === "high")) forceRiskBits.push(L.conclusionHighRiskHint);
-        if (items.some((it) => it.user_data)) forceRiskBits.push(L.conclusionUserDataHint);
-        if (items.some((it) => it.user_library)) forceRiskBits.push(L.confirmUserLibrarySelected);
-        if (items.some((it) => it.shared)) forceRiskBits.push(L.confirmSharedSelected);
-        const forceRiskNote = forceRiskBits.length ? `\n\n⚠ ${forceRiskBits.join("\n")}` : "";
+        const forceRiskNote = formatRiskNote(buildCleanupRiskBits(items, L), L.riskNoteTitle);
         const { ok, checked } = await requestConfirmEx({
           title: L.forceClean,
           message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}${forceRiskNote}\n${L.forceCleanHint}`,
@@ -286,17 +286,10 @@ export function useCleanupHandlers({
       n,
       residualFromUninstall || useOfficial,
     )}`;
-    const riskBits: string[] = [];
-    if (picked.some((it) => it.risk === "high")) riskBits.push(L.conclusionHighRiskHint);
-    if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);
-    if (picked.some((it) => it.user_library)) riskBits.push(L.confirmUserLibrarySelected);
-    if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
-    if (riskBits.length) {
-      // Never truncate: high-risk must stay visible (F-R6-01).
-      message = `${message}\n\n⚠ ${riskBits.join("\n")}`;
-    }
+    // Never truncate: high-risk must stay visible.
+    message = `${message}${formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle)}`;
     if (picked.some((it) => /\\common files\\/i.test(it.path))) {
-      message = `${message}\n\n⚠ ${L.confirmCommonFilesHint}`;
+      message = `${message}\n\n${L.confirmCommonFilesHint}`;
     }
     if (aiEnabled && selected && aiRisk) {
       message = `${message}\n\n${L.aiRiskTitle}: ${aiRisk.slice(0, 160)}`;

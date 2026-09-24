@@ -112,19 +112,25 @@ export function CleanupConclusion({
 
           {keepSamples.length > 0 && (
             <div style={{ marginBottom: 10, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
-              {keepSamples.map((it) => (
-                <div key={it.path} style={{ marginBottom: 2 }}>
-                  ·{" "}
-                  {it.shared
-                    ? L.conclusionSharedHint
-                    : it.user_data
-                      ? L.conclusionUserDataHint
-                      : L.conclusionHighRiskHint}{" "}
-                  <span className="ell" style={{ maxWidth: 280, display: "inline-block", verticalAlign: "bottom" }} title={it.path}>
-                    {it.path}
-                  </span>
-                </div>
-              ))}
+              {keepSamples.map((it) => {
+                const tag = it.shared
+                  ? L.conclusionSharedHint
+                  : it.user_data
+                    ? L.conclusionUserDataHint
+                    : L.conclusionHighRiskHint;
+                return (
+                  <div key={it.path} style={{ marginBottom: 2, display: "flex", gap: 6, alignItems: "baseline" }}>
+                    <span style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{tag}</span>
+                    <span
+                      className="ell"
+                      style={{ maxWidth: 320, display: "inline-block" }}
+                      title={it.path}
+                    >
+                      {it.path}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 

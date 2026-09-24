@@ -7,7 +7,16 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
-import { groupByOrigin, summarizeLeftovers, defaultSelectable, bucketItem, maxRiskOf, riskTierLabel } from "../lib/decision";
+import {
+  groupByOrigin,
+  summarizeLeftovers,
+  defaultSelectable,
+  bucketItem,
+  maxRiskOf,
+  riskTierLabel,
+  buildCleanupRiskBits,
+  formatRiskNote,
+} from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
 
 const ORPHAN_CHANNEL = "orphan-scan";
@@ -75,9 +84,10 @@ export function OrphanPage({
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
+    const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}`,
+      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },

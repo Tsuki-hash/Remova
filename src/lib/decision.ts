@@ -1,4 +1,4 @@
-/** Decision chips & leftover risk buckets 鈥?only use data we already have. */
+/** Decision chips & leftover risk buckets — only use data we already have. */
 import type { CleanupItem, InstalledApp } from "../types";
 
 export type ChipTone = "accent" | "warn" | "muted" | "danger" | "ok";
@@ -73,7 +73,7 @@ export function isRecommendedCleanup(
   return false;
 }
 
-/** Fact-only health label 鈥?never claims leftovers without a scan. */
+/** Fact-only health label — never claims leftovers without a scan. */
 export function appHealth(
   app: InstalledApp,
   sizeKb: number,
@@ -84,7 +84,7 @@ export function appHealth(
   return { id: "ok", label: L.healthOk };
 }
 
-/** Factual cleanup progress from report counters 鈥?no marketing 100%. */
+/** Factual cleanup progress from report counters — no marketing 100%. */
 export function cleanupProgress(deleted: number, failed: number, skipped: number): {
   handled: number;
   total: number;
@@ -183,14 +183,14 @@ export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
   return "suggest";
 }
 
-/** Keep bucket predicate (high risk / shared / user data) 鈥?single source for UI filters. */
+/** Keep bucket predicate (high risk / shared / user data) — single source for UI filters. */
 export function isKeepItem(it: CleanupItem): boolean {
   return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
 }
 
 export type RiskTier = "low" | "medium" | "high";
 
-/** Highest risk among picked items 鈥?used to label confirms. */
+/** Highest risk among picked items — used to label confirms. */
 export function maxRiskOf(items: CleanupItem[]): RiskTier {
   if (items.some((it) => it.risk === "high")) return "high";
   if (items.some((it) => it.risk === "medium")) return "medium";
@@ -203,8 +203,31 @@ export function riskTierLabel(
 ): string {
   if (tier === "high") return L.riskTierHigh;
   if (tier === "medium") return L.riskTierMedium;
-  // Safe only when nothing is medium/high 鈥?callers pass maxRisk so low 鈮?low-risk items only.
+  // Safe only when nothing is medium/high — callers pass maxRisk so low means low-risk items only.
   return L.riskTierLow;
+}
+
+/** Shared cleanup-confirm risk callouts (high / user data / library / shared). */
+export function buildCleanupRiskBits(
+  items: CleanupItem[],
+  L: {
+    riskBitHigh: string;
+    riskBitUserData: string;
+    riskBitUserLibrary: string;
+    riskBitShared: string;
+  },
+): string[] {
+  const bits: string[] = [];
+  if (items.some((it) => it.risk === "high")) bits.push(L.riskBitHigh);
+  if (items.some((it) => it.user_data)) bits.push(L.riskBitUserData);
+  if (items.some((it) => it.user_library)) bits.push(L.riskBitUserLibrary);
+  if (items.some((it) => it.shared)) bits.push(L.riskBitShared);
+  return bits;
+}
+
+/** Format risk callouts for a confirm message body (no raw warning glyphs). */
+export function formatRiskNote(bits: string[], title = "注意"): string {
+  return bits.length ? `\n\n${title}\n${bits.join("\n")}` : "";
 }
 
 /** Suggest = not default-selectable and not keep. */
