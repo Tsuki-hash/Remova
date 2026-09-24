@@ -1,13 +1,13 @@
 //! Local cleanup history jsonl.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
-    /// Runtime row id (`L{line_no}`). Empty on disk; filled by [`load`] for the UI/API.
+    /// Runtime row id (`H{hash}-{nth}`). Empty on disk; filled by [`load`] for the UI/API.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
     pub app_name: String,
@@ -30,9 +30,31 @@ fn history_path() -> PathBuf {
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
 static FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Stable row id: FNV of the raw jsonl line (survives deletes that shift line numbers).
-fn line_content_id(line: &str) -> String {
+/// Content hash of a raw jsonl line (shared by identical rows).
+fn line_hash(line: &str) -> String {
     format!("H{:016x}", crate::fsutil::fnv1a64(line))
+}
+
+/// Stable row id: content hash + occurrence index among identical lines.
+/// Distinct rows never collide, so delete-by-id removes exactly one of them.
+fn line_content_id(line: &str, nth: usize) -> String {
+    format!("{}-{nth}", line_hash(line))
+}
+
+/// Assign `H{hash}-{nth}` ids in file order (nth counts identical non-empty lines).
+fn with_ids<'a>(
+    lines: impl Iterator<Item = &'a str>,
+) -> impl Iterator<Item = (&'a str, String)> {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    lines
+        .filter(|l| !l.trim().is_empty())
+        .map(move |line| {
+            let h = line_hash(line);
+            let nth = seen.entry(h.clone()).or_insert(0);
+            let id = line_content_id(line, *nth);
+            *nth += 1;
+            (line, id)
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -95,9 +117,9 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
         return vec![];
     };
     let mut out: Vec<HistoryEntry> = vec![];
-    for line in raw.lines() {
+    for (line, id) in with_ids(raw.lines()) {
         if let Ok(mut e) = serde_json::from_str::<HistoryEntry>(line) {
-            e.id = line_content_id(line);
+            e.id = id;
             out.push(e);
         }
     }
@@ -106,15 +128,13 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     out
 }
 
-/// Drop lines whose content-id is in `drop_ids`; keep the rest.
+/// Drop lines whose runtime id is in `drop_ids`. Ids are `H{hash}-{nth}`, so
+/// identical rows are addressed one-by-one and only the selected occurrences go.
 fn filter_raw_lines(raw: &str, drop_ids: &HashSet<String>) -> (String, usize) {
     let mut out = String::new();
     let mut removed = 0usize;
-    for line in raw.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if drop_ids.contains(&line_content_id(line)) {
+    for (line, id) in with_ids(raw.lines()) {
+        if drop_ids.contains(&id) {
             removed += 1;
             continue;
         }
@@ -133,7 +153,7 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
     fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
-/// Delete rows by runtime ids returned from [`load`] (content hashes). Returns removed count.
+/// Delete rows by runtime ids returned from [`load`] (`H{hash}-{nth}`). Returns removed count.
 pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let mut drop_ids: HashSet<String> = HashSet::new();
     for id in ids {
@@ -207,31 +227,91 @@ mod tests {
 
     #[test]
     fn line_content_id_stable() {
-        let a = super::line_content_id("{\"app_name\":\"a\"}");
-        let b = super::line_content_id("{\"app_name\":\"a\"}");
-        let c = super::line_content_id("{\"app_name\":\"b\"}");
+        let a = super::line_content_id("{\"app_name\":\"a\"}", 0);
+        let b = super::line_content_id("{\"app_name\":\"a\"}", 0);
+        let a1 = super::line_content_id("{\"app_name\":\"a\"}", 1);
+        let c = super::line_content_id("{\"app_name\":\"b\"}", 0);
         assert_eq!(a, b);
+        assert_ne!(a, a1, "identical rows must get distinct ids");
         assert_ne!(a, c);
         assert!(a.starts_with('H'));
+        assert!(a.ends_with("-0"));
+        assert!(a1.ends_with("-1"));
     }
 
     #[test]
     fn filter_raw_lines_drops_selected() {
         let raw = "{\"app_name\":\"a\"}\n{\"app_name\":\"b\"}\n{\"app_name\":\"c\"}\n";
         let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert(super::line_content_id("{\"app_name\":\"b\"}"));
+        drop.insert(super::line_content_id("{\"app_name\":\"b\"}", 0));
         let (next, removed) = super::filter_raw_lines(raw, &drop);
         assert_eq!(removed, 1);
         assert_eq!(next, "{\"app_name\":\"a\"}\n{\"app_name\":\"c\"}\n");
     }
 
     #[test]
+    fn filter_raw_lines_identical_rows_delete_one_by_one() {
+        let raw = "{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n";
+        // Delete only the middle occurrence.
+        let mut drop: std::collections::HashSet<String> = Default::default();
+        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 1));
+        let (next, removed) = super::filter_raw_lines(raw, &drop);
+        assert_eq!(removed, 1);
+        assert_eq!(next, "{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n");
+
+        // Delete two named occurrences together.
+        let mut drop: std::collections::HashSet<String> = Default::default();
+        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 0));
+        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 2));
+        let (next, removed) = super::filter_raw_lines(raw, &drop);
+        assert_eq!(removed, 2);
+        assert_eq!(next, "{\"app_name\":\"a\"}\n");
+    }
+
+    #[test]
     fn filter_raw_lines_ignores_unknown_ids() {
         let raw = "{\"app_name\":\"a\"}\n";
         let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert("Hffffffffffffffff".into());
+        drop.insert("Hffffffffffffffff-0".into());
         let (next, removed) = super::filter_raw_lines(raw, &drop);
         assert_eq!(removed, 0);
         assert_eq!(next, "{\"app_name\":\"a\"}\n");
+    }
+
+    /// Disk round-trip under a temp PROGRAMDATA (does not touch the real history file).
+    #[test]
+    fn disk_append_load_delete_clear_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("remova_hist_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("Remova")).unwrap();
+        // Point history_path at the temp tree via PROGRAMDATA for this test only.
+        // SAFETY: tests run multi-threaded; serialize with a process-local lock and restore env.
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var_os("PROGRAMDATA");
+        std::env::set_var("PROGRAMDATA", &tmp);
+        let p = super::history_path();
+        assert!(p.starts_with(&tmp));
+
+        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
+        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
+        assert!(super::append("B", 2, 0, 0, 0, false, false, r"C:\b"));
+        let rows = super::load(10);
+        assert_eq!(rows.len(), 3);
+        assert_ne!(rows[0].id, rows[1].id, "identical rows need distinct ids");
+        assert_eq!(rows[0].app_name, "B"); // newest first
+
+        let removed = super::delete_by_ids(&[rows[2].id.clone()]).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(super::load(10).len(), 2);
+
+        super::clear_all().unwrap();
+        assert!(super::load(10).is_empty());
+
+        match prev {
+            Some(v) => std::env::set_var("PROGRAMDATA", v),
+            None => std::env::remove_var("PROGRAMDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

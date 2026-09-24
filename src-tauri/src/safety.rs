@@ -432,10 +432,8 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
             return false;
         }
     }
-    // S-R4: never write back into user-library subtrees or Startup (persistence / overwrite).
-    if is_user_library_path(&s) {
-        return false;
-    }
+    // S-R4: never write into Startup (persistence). Library *subpaths* stay restorable —
+    // path_map is the server-side record of where the file came from (roots already blocked).
     if trimmed.contains("\\start menu\\programs\\startup")
         || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
     {
@@ -905,6 +903,42 @@ mod tests {
         )));
         assert!(super::is_safe_restore_target(Path::new(
             r"D:\Games\Save\slot.dat"
+        )));
+    }
+
+    /// R1: library *subpaths* are restorable (path_map originals); roots / Startup / sync-conflict stay blocked.
+    #[test]
+    fn restore_allows_library_subpaths_not_roots() {
+        // Backup of `Documents\<App>` must be able to write back.
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\App\Config\file.txt"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\MyGame\saves\slot.dat"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Downloads\App\pkg.dat"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Local\Acme\data.bin"
+        )));
+        // Library roots remain red-lined.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Downloads"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\"
+        )));
+        // Startup persistence stays blocked.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\evil.lnk"
+        )));
+        // Sync-conflict trees stay blocked.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\conflict\save.dat"
         )));
     }
 }

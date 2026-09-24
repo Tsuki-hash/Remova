@@ -6,6 +6,7 @@ import { AppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { summarizeLeftovers } from "../lib/decision";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
+import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
 
 export type UninstallMode = "official" | "deep" | "force";
@@ -264,8 +265,8 @@ export function AppDetailPanel({
                   }}
                   onClick={() => onDrillDown?.(b.id)}
                 >
-                  <span style={{ width: 18, flexShrink: 0 }} aria-hidden>
-                    {icon}
+                  <span style={{ width: 18, flexShrink: 0, display: "flex" }} aria-hidden>
+                    <ToolGlyph name={icon} />
                   </span>
                   <span style={{ flex: 1 }}>{label}</span>
                   <span style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>
