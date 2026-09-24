@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { useDialogFocus } from "../lib/useDialogFocus";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 
 export type CheckupStats = {
   total: number;
@@ -71,7 +72,7 @@ export function CheckupPanel({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <strong style={{ fontSize: 15 }}>{L.checkupTitle}</strong>
           <button style={{ ...css.btnGhost, marginLeft: "auto", height: 28 }} onClick={onClose}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
         <div style={{ ...css.muted, marginTop: 6, lineHeight: 1.5 }}>{L.checkupFlowHint}</div>
@@ -104,7 +105,7 @@ export function CheckupPanel({
               }}
             >
               <span style={{ color: row.ok ? "var(--ok)" : "var(--muted)", fontWeight: 700 }}>
-                {row.ok ? "✓" : "○"}
+                {row.ok ? <Deco ch="✓" /> : <Deco ch="○" />}
               </span>
               <span style={{ flex: 1 }}>{row.label}</span>
               <strong style={{ fontFamily: "var(--mono)" }}>{row.value}</strong>

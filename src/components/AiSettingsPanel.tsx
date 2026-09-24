@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -132,7 +133,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
           <div style={{ ...css.muted, marginTop: 2 }}>{L.aiSettingsHint}</div>
         </div>
         <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label="close">
-          ×
+          <CloseGlyph />
         </button>
       </div>
 

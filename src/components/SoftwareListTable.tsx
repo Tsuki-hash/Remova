@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
@@ -117,7 +118,7 @@ export function SoftwareListTable({
         </colgroup>
         <thead>
           <tr>
-            <th style={css.th}>✓</th>
+            <th style={css.th} title="selected"><Deco ch="✓" label="selected" /></th>
             <th style={{ ...css.th, cursor: "pointer" }} onClick={() => sortBy("name")} title={L.colName}>
               {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
             </th>

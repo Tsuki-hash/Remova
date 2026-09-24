@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
 import { runAiReportSummary } from "../lib/aiNarrative";
 import { t } from "../i18n";
@@ -45,7 +46,7 @@ export function ReportPanel({
           {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
         </strong>
         <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onDismiss}>
-          ×
+          <CloseGlyph />
         </button>
       </div>
       {"backup_dir" in report &&
@@ -65,7 +66,7 @@ export function ReportPanel({
               width: "fit-content",
             }}
           >
-            ✓ {L.safetyVaultBanner}
+            <Deco ch="✓" /> {L.safetyVaultBanner}
           </div>
         ) : !report.dry_run ? (
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
@@ -216,7 +217,7 @@ export function ReportPanel({
             lineHeight: 1.5,
           }}
         >
-          ✦ {aiReportNote}
+          <Deco ch="✦" /> {aiReportNote}
           <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
         </div>
       )}

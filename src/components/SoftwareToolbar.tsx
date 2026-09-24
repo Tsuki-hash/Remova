@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Deco } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { CategoryId } from "../lib/categories";
@@ -109,7 +110,7 @@ export function SoftwareToolbar({
           flexShrink: 0,
         }}
       >
-        ✦
+        <Deco ch="✦" />
       </button>
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {(
@@ -160,7 +161,7 @@ export function SoftwareToolbar({
             padding: 0,
           }}
         >
-          ⓘ
+          <Deco ch="ⓘ" />
         </button>
         {guideOpen && (
           <div

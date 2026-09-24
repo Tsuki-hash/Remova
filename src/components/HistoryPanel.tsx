@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { CloseGlyph } from "./ui/Glyph";
 import { cssStyles as css } from "../styles";
 
 export type HistoryRow = {
@@ -71,7 +72,7 @@ export function HistoryPanel({
           {L.clearHistory}
         </button>
         <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-          ×
+          <CloseGlyph />
         </button>
       </div>
       <div style={{ maxHeight: 280, overflow: "auto", marginTop: 10 }}>
