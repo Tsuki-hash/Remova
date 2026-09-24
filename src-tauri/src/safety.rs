@@ -310,7 +310,21 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
 
 /// Lowercased backslash form of a path, or `None` when not valid UTF-8 (fail-closed).
 fn path_utf8_lower(p: &std::path::Path) -> Option<String> {
-    Some(p.to_str()?.replace('/', "\\").to_lowercase())
+    // REV-SEC-12: Win32 strips trailing dots/spaces per segment — normalize before compare.
+    // Keep `.` / `..` intact so traversal rejection still works.
+    let s = p.to_str()?.replace('/', "\\").to_lowercase();
+    Some(
+        s.split('\\')
+            .map(|seg| {
+                if seg == "." || seg == ".." {
+                    seg
+                } else {
+                    seg.trim_end_matches(['.', ' '])
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\\"),
+    )
 }
 
 fn env_dir_lower(name: &str) -> Option<String> {
@@ -366,7 +380,7 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
-/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–4 digits.
+/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits (REV-SEC-11).
 fn is_83_short_segment(seg: &str) -> bool {
     let low = seg.to_ascii_lowercase();
     let base = low.split('.').next().unwrap_or(low.as_str());
@@ -376,7 +390,7 @@ fn is_83_short_segment(seg: &str) -> bool {
     if name.is_empty() || name.len() > 8 || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
         return false;
     }
-    !num.is_empty() && num.len() <= 4 && num.chars().all(|c| c.is_ascii_digit())
+    !num.is_empty() && num.len() <= 8 && num.chars().all(|c| c.is_ascii_digit())
 }
 
 /// True when the path uses an abnormal Windows shape that can bypass prefix/segment matching:

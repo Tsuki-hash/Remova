@@ -137,7 +137,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         r"c:\program files (x86)\powershell".into(),
         r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
-    // Env roots: only system PATH-shaped subtrees 鈥?not entire ProgramFiles/ProgramData (S-2).
+    // Env roots: only system PATH-shaped subtrees —not entire ProgramFiles/ProgramData (S-2).
     if let Ok(sr) = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")) {
         let root = sr
             .replace('/', "\\")
@@ -189,7 +189,7 @@ pub fn gate_cleanup_item(
     source: CleanupSource,
     ignore: &crate::ignore::IgnoreList,
 ) -> GateDecision {
-    // S-N1: never trust client-only flags 鈥?recompute red lines server-side.
+    // S-N1: never trust client-only flags —recompute red lines server-side.
     if item.user_data || crate::safety::is_user_data_path(&item.path) {
         return GateDecision::Skip("user_data red line");
     }
@@ -542,7 +542,7 @@ mod tests {
         assert!(
             gate_cleanup_item(Some(&a), &related, CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // Vendor PATH under Program Files is not system-danger (S-2) 鈥?still needs association when app known.
+        // Vendor PATH under Program Files is not system-danger (S-2) —still needs association when app known.
         let pf_vendor = item(r"C:\Program Files\UnrelatedVendor\bin", ItemKind::Path);
         assert!(
             !gate_cleanup_item(Some(&a), &pf_vendor, CleanupSource::Uninstall, &ignore).is_allow()

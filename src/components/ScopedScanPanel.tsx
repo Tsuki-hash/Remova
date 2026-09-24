@@ -179,7 +179,7 @@ export function ScopedScanPanel({
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
                 {it.bucket || it.reason}
-                {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary || "user data"}` : ""}
+                {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary}` : ""}
                 {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
               </div>
             </span>

@@ -70,11 +70,23 @@ fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
     Ok(l)
 }
 
+/// IPC hygiene (REV-SEC-13): reject oversized or control-character names.
+fn validate_rule_text(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("empty name".into());
+    }
+    if name.len() > 256 {
+        return Err("name too long".into());
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("control characters not allowed".into());
+    }
+    Ok(())
+}
+
 pub fn add_publisher(name: &str) -> Result<IgnoreList, String> {
     let n = name.trim().to_string();
-    if n.is_empty() {
-        return Err("empty publisher".into());
-    }
+    validate_rule_text(&n)?;
     update_with(|l| {
         if !l.publishers.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
             l.publishers.push(n);
@@ -84,6 +96,7 @@ pub fn add_publisher(name: &str) -> Result<IgnoreList, String> {
 
 pub fn add_name(name: &str) -> Result<IgnoreList, String> {
     let n = name.trim().to_string();
+    validate_rule_text(&n)?;
     if n.is_empty() {
         return Err("empty name".into());
     }

@@ -1,4 +1,4 @@
-//! Orphan leftover directory scan (P2-2) 鈥?no matching installed app.
+//! Orphan leftover directory scan (P2-2) —no matching installed app.
 
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel, SCORE_SUSPECTED_MIN};
@@ -213,7 +213,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                     detail: format!("{days} day(s) ago"),
                 });
             }
-            // Orphans stay Suspected/Medium 鈥?never auto-select; user must confirm.
+            // Orphans stay Suspected/Medium —never auto-select; user must confirm.
             let path_str = p.to_string_lossy().to_string();
             scanned.insert(path_str.clone());
             out.push(CleanupItem {

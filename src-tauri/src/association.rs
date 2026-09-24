@@ -45,7 +45,7 @@ pub fn common_files_vendor_segment(path: &str) -> Option<String> {
     Some(seg.to_string())
 }
 
-/// S-7R1: CF vendor association 鈥?vendor **directory segment** equals install prefix
+/// S-7R1: CF vendor association —vendor **directory segment** equals install prefix
 /// under Common Files, or equals a strong name/publisher slug (segment equality).
 pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool {
     if is_orphan_flow(app) {
@@ -146,7 +146,7 @@ fn is_safe_install_root(install: &str) -> bool {
 }
 
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
-/// S-3: never trust client `reason` 鈥?path / registry / publisher signals only.
+/// S-3: never trust client `reason` —path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     // S-R7-01: orphan-shaped apps must not claim arbitrary leftovers as associated.
     // Policy enforces the server-side orphan allow-list separately.
@@ -433,7 +433,7 @@ mod tests {
             install_location: r"C:\Program Files\Code".into(),
             ..demo_app()
         };
-        // "code" is a stopword / too short 鈥?not enough by itself outside install root match.
+        // "code" is a stopword / too short —not enough by itself outside install root match.
         assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\AppData\Local\Temp\code-cache", ItemKind::Dir)

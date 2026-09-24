@@ -49,20 +49,20 @@ pub struct CleanupItem {
     pub risk: RiskLevel,
     pub reason: String,
     pub evidence: Vec<Evidence>,
-    /// Shared runtime / redistributable 鈥?default do-not-select.
+    /// Shared runtime / redistributable —default do-not-select.
     #[serde(default)]
     pub shared: bool,
-    /// Library roots / sync-conflict red line 鈥?never delete.
+    /// Library roots / sync-conflict red line —never delete.
     #[serde(default)]
     pub user_data: bool,
-    /// Under a user library folder (Documents/Downloads/鈥? but not the root 鈥?confirm,
+    /// Under a user library folder (Documents/Downloads/— but not the root —confirm,
     /// never default-select; cleanable when associated.
     #[serde(default)]
     pub user_library: bool,
     /// Best-effort size in KB for file/dir leftovers only (None for registry/path or when bounded walk hits a cap).
     #[serde(default)]
     pub size_kb: Option<u64>,
-    /// Display bucket for the detail panel (program_files / config_files / 鈥?.
+    /// Display bucket for the detail panel (program_files / config_files / —.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -391,11 +391,8 @@ pub fn analyze_associations(
     registry_key: &str,
 ) -> ScanResult {
     let name_slugs = slugify(name);
-    let _pub_slugs = if publisher.trim().is_empty() {
-        vec![]
-    } else {
-        slugify(publisher)
-    };
+    // Publisher slug matching lives in association.rs (REV-BE-19: no dead local table).
+    let _ = publisher;
     let install = if install_location.trim().is_empty() {
         None
     } else {
@@ -670,7 +667,7 @@ pub fn analyze_associations(
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {
-            // Library subpath (Documents/<App>, Downloads/pkg, 鈥? 鈥?confirm, never default-select.
+            // Library subpath (Documents/<App>, Downloads/pkg, — —confirm, never default-select.
             it.user_library = true;
         }
     }

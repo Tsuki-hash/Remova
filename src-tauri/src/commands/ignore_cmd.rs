@@ -59,4 +59,10 @@ mod tests {
         assert!(super::ignore_app_name("".to_string()).is_err());
         assert!(super::ignore_app_name("\t".to_string()).is_err());
     }
+
+    #[test]
+    fn ignore_rejects_control_and_oversized_names() {
+        assert!(super::ignore_app_name("bad\nname".to_string()).is_err());
+        assert!(super::ignore_publisher("x".repeat(300)).is_err());
+    }
 }
