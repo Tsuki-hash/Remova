@@ -341,6 +341,7 @@ export default function App() {
       clearSelection: residualActions.clearSelection,
       setMonitoring: residualActions.setMonitoring,
       setMonitorDiff: residualActions.setMonitorDiff,
+      monitorDiff,
       selectDefaultItems: residualActions.selectDefaultItems,
     },
     setCheckupOrphanCount: shell.setCheckupOrphanCount,

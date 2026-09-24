@@ -151,7 +151,7 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
         if size_kb < IDLE_MIN_SIZE_KB {
             continue;
         }
-        let score = idle_days * (size_kb as i64 / 1024).max(1).ilog2() as i64;
+        let score = idle_days * (size_kb / 1024).max(1).ilog2() as i64;
         out.push(IdleApp {
             app: app.clone(),
             idle_days,
@@ -160,7 +160,7 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
             score,
         });
     }
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|a| std::cmp::Reverse(a.score));
     out.truncate(IDLE_RESULT_CAP);
     out
 }

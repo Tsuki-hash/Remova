@@ -47,6 +47,8 @@ export const dict = {
     toastBatchProgress: (i: number, n: number, name: string) => `[${i}/${n}] ${name}`,
     toastMonitorDiff: (files: number, regs: number) =>
       `Install diff: ${files} files / ${regs} registry values`,
+    monitorDiffCounts: (files: number, regs: number) =>
+      `Files ${files} · Registry ${regs}`,
     uninstallScanningLeftovers: "Uninstall finished — scanning leftovers…",
     admin: "Admin",
     nonAdmin: "Not admin",

@@ -77,7 +77,7 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             parent: parent.to_string_lossy().to_string(),
         });
     }
-    rows.sort_by(|a, b| b.size_kb.cmp(&a.size_kb));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
     rows.truncate(DISK_RADAR_TOP_N);
     rows
 }
@@ -92,7 +92,7 @@ pub fn top_dir_sizes() -> Vec<DirSizeRow> {
         let mut rows = child_rows(&root);
         out.append(&mut rows);
     }
-    out.sort_by(|a, b| b.size_kb.cmp(&a.size_kb));
+    out.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
     out.truncate(DISK_RADAR_TOP_N * 2);
     out
 }

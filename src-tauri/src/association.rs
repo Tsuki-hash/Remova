@@ -139,7 +139,7 @@ fn is_safe_install_root(install: &str) -> bool {
     if LIBS.contains(&last.as_str()) {
         return false;
     }
-    if crate::safety::is_user_data_path(&p) {
+    if crate::safety::is_user_data_path(p) {
         return false;
     }
     true

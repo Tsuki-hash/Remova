@@ -177,7 +177,8 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
             fail += 1;
             errors.push(format!("path_map write failed: {e}"));
         } else if let Err(e) = crate::path_seal::write_seal(session, &map_json, &path_map) {
-            // Seal failure is non-fatal for cleanup but blocks library-subpath restore.
+            // Seal failure must abort cleanup (library targets cannot restore).
+            fail += 1;
             errors.push(format!("path_map seal failed: {e}"));
         }
     }

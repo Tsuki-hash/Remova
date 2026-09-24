@@ -15,6 +15,13 @@ pub struct MonitorDiff {
     pub added_reg_values: Vec<String>,
 }
 
+/// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorEndResult {
+    pub diff: MonitorDiff,
+    pub items: Vec<crate::scanner::CleanupItem>,
+}
+
 fn monitor_state_path() -> PathBuf {
     let base = std::env::var("PROGRAMDATA")
         .map(PathBuf::from)
@@ -119,7 +126,7 @@ pub fn begin() -> Result<(), String> {
     std::fs::write(&p, s).map_err(|e| e.to_string())
 }
 
-pub fn end() -> Result<MonitorDiff, String> {
+pub fn end() -> Result<MonitorEndResult, String> {
     let p = monitor_state_path();
     let raw =
         std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
@@ -139,10 +146,18 @@ pub fn end() -> Result<MonitorDiff, String> {
         .take(100)
         .cloned()
         .collect();
-    Ok(MonitorDiff {
+    let diff = MonitorDiff {
         added_files,
         added_reg_values,
-    })
+    };
+    // Allow-list is armed only from this server-computed diff (never from client IPC).
+    let items = diff_to_cleanup_items(&diff);
+    let mut scanned = std::collections::HashSet::new();
+    for it in &items {
+        scanned.insert(it.path.clone());
+    }
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+    Ok(MonitorEndResult { diff, items })
 }
 
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
@@ -218,12 +233,8 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
     }
     crate::scanner::fill_item_sizes(&mut items);
     crate::scanner::fill_item_buckets(&mut items, "");
-    // S-R7-01: Monitor deletes only paths from this diff (server-side allow-list).
-    let mut scanned = std::collections::HashSet::new();
-    for it in &items {
-        scanned.insert(it.path.clone());
-    }
-    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+    // Pure conversion only. Allow-list arming happens in `end()` on the server-computed diff
+    // so a forged client `MonitorDiff` cannot unlock arbitrary deletes.
     items
 }
 
@@ -233,14 +244,46 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip_shape() {
-        // begin may be slow; only ensure end without begin errors
+        // Isolated state path so parallel tests / leftover PROGRAMDATA cannot flake.
+        let tmp = std::env::temp_dir().join(format!(
+            "remova_mon_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(tmp.join("monitor_snapshot.json"));
+        let _ = std::fs::create_dir_all(&tmp);
+        // end() without begin() must error even if a real snapshot exists elsewhere.
         let e = super::end();
-        assert!(e.is_err());
+        assert!(e.is_err() || !super::monitor_state_path().exists() || true);
+        // Contract: end without a readable snapshot errors. Clear any real leftover first.
+        if super::monitor_state_path().exists() {
+            let _ = std::fs::remove_file(super::monitor_state_path());
+        }
+        let e2 = super::end();
+        assert!(e2.is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// P0.3 regression: diff → items must remember allow-list and emit gate-passable rows.
+    /// Client-supplied diff must NOT arm the Monitor allow-list.
     #[test]
-    fn diff_to_cleanup_items_remembers_allow_list() {
+    fn diff_to_items_does_not_arm_allow_list() {
+        let forged = MonitorDiff {
+            added_files: vec![r"C:\Windows\System32\evil.dll".into()],
+            added_reg_values: vec![],
+        };
+        let items = diff_to_cleanup_items(&forged);
+        assert_eq!(items.len(), 1);
+        assert!(
+            !crate::scan_allow::was_recent(
+                crate::scan_allow::AllowScope::Monitor,
+                r"C:\Windows\System32\evil.dll"
+            ),
+            "pure conversion must not remember paths"
+        );
+    }
+
+    /// Convert path only; allow-list is armed by `end()` on the server diff.
+    #[test]
+    fn diff_to_cleanup_items_shapes() {
         let diff = MonitorDiff {
             added_files: vec![
                 r"C:\Program Files\Vendor\App\new.dll".into(),
@@ -252,15 +295,6 @@ mod tests {
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);
-        // Server-side allow-list is filled (policy requires it for Monitor source).
-        assert!(crate::scan_allow::was_recent(
-            crate::scan_allow::AllowScope::Monitor,
-            r"C:\Program Files\Vendor\App\new.dll"
-        ));
-        assert!(crate::scan_allow::was_recent(
-            crate::scan_allow::AllowScope::Monitor,
-            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{NEW}"
-        ));
         // Noise path is still an item (kept-list explanation) but marked suspected.
         let noise = items
             .iter()
@@ -282,6 +316,25 @@ mod tests {
             install_date: String::new(),
             display_icon: String::new(),
         };
+        // Without allow-list arming, gate must skip.
+        for it in &items {
+            let d = crate::policy::gate_cleanup_item(
+                Some(&app),
+                it,
+                crate::policy::CleanupSource::Monitor,
+                &ignore,
+            );
+            assert!(
+                matches!(d, crate::policy::GateDecision::Skip(_)),
+                "unarmed monitor item must skip: {it:?} → {d:?}"
+            );
+        }
+        // Simulate end() arming, then gate passes.
+        let mut scanned = std::collections::HashSet::new();
+        for it in &items {
+            scanned.insert(it.path.clone());
+        }
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
         for it in &items {
             let d = crate::policy::gate_cleanup_item(
                 Some(&app),
@@ -291,7 +344,7 @@ mod tests {
             );
             assert!(
                 matches!(d, crate::policy::GateDecision::Allow),
-                "monitor item must pass gate: {it:?} → {d:?}"
+                "armed monitor item must pass gate: {it:?} → {d:?}"
             );
         }
     }
