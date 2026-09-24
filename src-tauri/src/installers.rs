@@ -48,7 +48,10 @@ fn push_file_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, pat
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    // Non-UTF-8 never becomes a delete candidate (fail-closed).
+    let Some(p) = crate::fsutil::path_utf8(path) else {
+        return;
+    };
     let risk = if path
         .extension()
         .and_then(|e| e.to_str())
@@ -94,7 +97,9 @@ fn push_dir_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    let Some(p) = crate::fsutil::path_utf8(path) else {
+        return;
+    };
     out.push(CleanupItem {
         path: p.clone(),
         kind: ItemKind::Dir,

@@ -107,9 +107,13 @@ fn under_radar_roots(path: &str) -> bool {
     }
     // Canonicalize first so verbatim / 8.3 / substituted shapes resolve to the real root.
     let canon = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    // Non-UTF-8 after canonicalize → refuse (no lossy prefix match).
+    let Some(canon_s) = crate::fsutil::path_utf8(&canon) else {
+        return false;
+    };
     let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
     let drive = drive.trim_end_matches('\\').to_uppercase();
-    let norm = canon.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_uppercase();
+    let norm = canon_s.trim_end_matches('\\').to_uppercase();
     // Strip Windows verbatim prefix (`\\?\`).
     let norm = norm
         .strip_prefix(r"\\?\")

@@ -747,4 +747,49 @@ mod tests {
             "orphan source must not disable association for real apps"
         );
     }
+
+    /// N-risk: installer / toolcache only delete paths from the latest server-side scan.
+    #[test]
+    fn installer_toolcache_require_allow_list() {
+        let _g = crate::scan_allow::test_lock();
+        let ignore = crate::ignore::IgnoreList::default();
+        let orphanish = app("x", "");
+
+        let mut ins = std::collections::HashSet::new();
+        ins.insert(r"C:\Users\a\Downloads\app.msi".to_string());
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::Installer, &ins);
+        let listed = item(r"C:\Users\a\Downloads\app.msi", ItemKind::File);
+        let forged = item(r"C:\Users\a\Documents\save.dat", ItemKind::File);
+        assert!(gate_cleanup_item(
+            Some(&orphanish),
+            &listed,
+            CleanupSource::Installer,
+            &ignore
+        )
+        .is_allow());
+        assert!(
+            !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::Installer, &ignore)
+                .is_allow()
+        );
+
+        let mut tc = std::collections::HashSet::new();
+        tc.insert(r"C:\Users\a\AppData\Local\npm-cache\x".to_string());
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::ToolCache, &tc);
+        let listed = item(r"C:\Users\a\AppData\Local\npm-cache\x", ItemKind::Dir);
+        let forged = item(
+            r"C:\Users\a\AppData\Roaming\Code\User\settings.json",
+            ItemKind::File,
+        );
+        assert!(gate_cleanup_item(
+            Some(&orphanish),
+            &listed,
+            CleanupSource::ToolCache,
+            &ignore
+        )
+        .is_allow());
+        assert!(
+            !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::ToolCache, &ignore)
+                .is_allow()
+        );
+    }
 }

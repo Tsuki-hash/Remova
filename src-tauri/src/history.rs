@@ -22,9 +22,33 @@ pub struct HistoryEntry {
     pub created_at: String,
 }
 
+/// Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
+const HISTORY_SOFT_CAP: u64 = 2 * 1024 * 1024;
+/// Hard read bound — never load more than this into memory (N-risk).
+const HISTORY_HARD_CAP: u64 = 8 * 1024 * 1024;
+const HISTORY_KEEP_LINES: usize = 2000;
+
 fn history_path() -> PathBuf {
     let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
     PathBuf::from(pd).join("Remova").join("history.jsonl")
+}
+
+/// Read history text under a hard size bound. Oversized files are compacted first.
+fn read_history_bounded(p: &Path) -> Option<String> {
+    let meta = fs::metadata(p).ok()?;
+    if meta.len() > HISTORY_HARD_CAP {
+        // Compact in place (keep newest), then re-read under the bound.
+        if let Ok(raw) = fs::read_to_string(p) {
+            let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+            let keep: Vec<&str> = lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
+            let _ = write_history_file(p, &keep.join("\n"));
+        } else {
+            return None;
+        }
+    }
+    fs::read_to_string(p).ok().filter(|s| {
+        s.len() as u64 <= HISTORY_HARD_CAP
+    })
 }
 
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
@@ -94,10 +118,10 @@ pub fn append(
     }
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
     if let Ok(meta) = fs::metadata(&p) {
-        if meta.len() > 2 * 1024 * 1024 {
-            if let Ok(raw) = fs::read_to_string(&p) {
+        if meta.len() > HISTORY_SOFT_CAP {
+            if let Some(raw) = read_history_bounded(&p) {
                 let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
-                let keep: Vec<&str> = lines[lines.len().saturating_sub(2000)..].to_vec();
+                let keep: Vec<&str> = lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
                 let _ = write_history_file(&p, &keep.join("\n"));
             }
         }
@@ -113,7 +137,7 @@ pub fn append(
 pub fn load(limit: usize) -> Vec<HistoryEntry> {
     let _g = FILE_LOCK.lock().ok();
     let p = history_path();
-    let Ok(raw) = fs::read_to_string(&p) else {
+    let Some(raw) = read_history_bounded(&p) else {
         return vec![];
     };
     let mut out: Vec<HistoryEntry> = vec![];
@@ -167,7 +191,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     }
     let _g = FILE_LOCK.lock().ok();
     let p = history_path();
-    let Ok(raw) = fs::read_to_string(&p) else {
+    let Some(raw) = read_history_bounded(&p) else {
         return Ok(0);
     };
     let (next, removed) = filter_raw_lines(&raw, &drop_ids);

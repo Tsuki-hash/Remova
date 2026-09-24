@@ -114,7 +114,10 @@ fn push_item(
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    // Non-UTF-8 never becomes a delete candidate (fail-closed).
+    let Some(p) = crate::fsutil::path_utf8(&path) else {
+        return;
+    };
     // Profiles / saves are never default targets.
     let high_touch = label.contains("profile") || label.contains("save");
     let risk = if high_touch {
