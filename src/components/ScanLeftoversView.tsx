@@ -1,4 +1,5 @@
 import { memo, useMemo, useRef, type ReactNode } from "react";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -77,7 +78,7 @@ const LeftoverRow = memo(function LeftoverRow({
               fontWeight: 500,
             }}
           >
-            ✦ {note}
+            <Deco ch="✦" /> {note}
             <span style={{ opacity: 0.75, color: "var(--muted)" }}> · {L.aiDisclaimer}</span>
           </div>
         )}
@@ -157,7 +158,7 @@ const LeftoverRow = memo(function LeftoverRow({
             )
           }
         >
-          ⓘ
+          <Deco ch="ⓘ" />
         </button>
       </div>
     </div>
@@ -320,11 +321,11 @@ export function ScanLeftoversView({
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <span>✓</span>
+          <Deco ch="✓" />
           <span>{L.colLocation}</span>
           <span>{L.colSource}</span>
           <span>{L.colConfidence}</span>
-          <span>ⓘ</span>
+          <Deco ch="ⓘ" />
         </div>
         {displayItems.length === 0 ? (
           <div style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>{L.leftoversNone}</div>
@@ -372,7 +373,7 @@ export function ScanLeftoversView({
         >
           {evidence}{" "}
           <button style={{ ...css.btnGhost, height: 28 }} onClick={() => onEvidence(null)}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -108,7 +109,7 @@ export function DiskRadarPanel({
             {L.manageReload}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
       </div>

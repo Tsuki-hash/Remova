@@ -265,11 +265,9 @@ fn delete_cleanup_items_source(
                     });
                     continue;
                 }
-                let res = if p.is_dir() {
-                    std::fs::remove_dir_all(p)
-                } else {
-                    std::fs::remove_file(p)
-                };
+                // REV-BE-05: recursive delete that refuses to walk child reparse points
+                // (std remove_dir_all can follow a junction swapped after the root check).
+                let res = crate::fsutil::remove_tree_no_reparse(p);
                 match res {
                     Ok(()) => {
                         deleted += 1;

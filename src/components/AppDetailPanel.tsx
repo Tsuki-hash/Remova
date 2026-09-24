@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -95,7 +96,7 @@ export function AppDetailPanel({
           onClick={onClose}
           aria-label={L.cancel}
         >
-          ×
+          <CloseGlyph />
         </button>
       </div>
 
@@ -130,7 +131,7 @@ export function AppDetailPanel({
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}
             >
-              ⋯
+              <Deco ch="⋯" />
             </button>
             {menuOpen && (
               <div
@@ -292,7 +293,7 @@ export function AppDetailPanel({
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
-              ✓ {L.deepUninstallRecommend}
+              <Deco ch="✓" /> {L.deepUninstallRecommend}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.45 }}>
               {L.foundNLeftovers(linked.total)}

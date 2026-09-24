@@ -49,6 +49,38 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     std::fs::copy(src, dest)
 }
 
+/// Delete a tree without following reparse points (REV-BE-05 / TOCTOU).
+/// Child junctions/symlinks are unlinked as links only — never traversed.
+pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
+    if is_reparse_point(p) {
+        return Err(std::io::Error::other(
+            "refusing to delete through reparse point",
+        ));
+    }
+    let meta = std::fs::symlink_metadata(p)?;
+    if !meta.is_dir() {
+        return std::fs::remove_file(p);
+    }
+    for entry in std::fs::read_dir(p)? {
+        let entry = entry?;
+        let child = entry.path();
+        if is_reparse_point(&child) {
+            // Unlink the reparse itself (file link / dir junction) without descending.
+            if std::fs::remove_file(&child).is_err() {
+                std::fs::remove_dir(&child)?;
+            }
+            continue;
+        }
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            remove_tree_no_reparse(&child)?;
+        } else {
+            std::fs::remove_file(&child)?;
+        }
+    }
+    std::fs::remove_dir(p)
+}
+
 /// CSV field escape: wrap in quotes when needed; double internal quotes.
 pub fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
@@ -122,6 +154,38 @@ mod tests {
         let tmp = unique_tmp("nofile");
         let missing = tmp.join("nope.bin");
         assert!(copy_file_no_reparse(&missing, &tmp.join("out.bin")).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn remove_tree_no_reparse_refuses_root_reparse() {
+        let tmp = unique_tmp("rm_reparse");
+        let link = tmp.join("link");
+        let target = tmp.join("target");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("f.txt"), b"x").unwrap();
+        let _ = std::os::windows::fs::symlink_dir(&target, &link);
+        if is_reparse_point(&link) {
+            assert!(remove_tree_no_reparse(&link).is_err());
+            assert!(target.join("f.txt").exists(), "must not delete through link");
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn remove_tree_no_reparse_unlinks_child_junction_without_following() {
+        let tmp = unique_tmp("rm_child");
+        let tree = tmp.join("tree");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(tree.join("ok")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), b"keep").unwrap();
+        fs::write(tree.join("ok").join("a.txt"), b"a").unwrap();
+        let junc = tree.join("junc");
+        let _ = std::os::windows::fs::symlink_dir(&outside, &junc);
+        remove_tree_no_reparse(&tree).unwrap();
+        assert!(!tree.exists());
+        assert!(outside.join("keep.txt").exists(), "junction target must survive");
         let _ = fs::remove_dir_all(&tmp);
     }
 

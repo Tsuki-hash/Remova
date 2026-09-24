@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -152,7 +153,7 @@ export function CopilotPanel({
             flexShrink: 0,
           }}
         >
-          ✦ {L.smartFilter}
+          <Deco ch="✦" /> {L.smartFilter}
         </span>
         <input
           style={{ ...css.input, flex: "1 1 220px", height: 32, minWidth: 180 }}
@@ -180,7 +181,7 @@ export function CopilotPanel({
               setMatches([]);
             }}
           >
-            ×
+            <CloseGlyph />
           </button>
         )}
       </div>

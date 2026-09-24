@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { api, type CleanupSourceId } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -135,7 +136,7 @@ export function ScopedScanPanel({
             {L.orphanScan}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
       </div>

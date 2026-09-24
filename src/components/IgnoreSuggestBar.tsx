@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { CloseGlyph } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -51,7 +52,7 @@ export function IgnoreSuggestBar({
         {L.ignoreSuggestApply}
       </button>
       <button style={css.btnSm} onClick={onDismiss}>
-        ×
+        <CloseGlyph />
       </button>
     </div>
   );
