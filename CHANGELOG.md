@@ -4,7 +4,7 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.2.0] - 2026-09-23
+## [1.2.0] - 2026-09-24
 
 工具箱增强与图标统一。相对 1.1.1 为功能版本。
 
@@ -33,6 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 删除残留时拒绝目录联接/符号链接，避免被中途换路径
 - 界面确认支持键盘长按；删除备份前会二次确认
 - 清理历史读写加锁，超长日志自动压缩；同内容多条记录可逐条删除；若干错误提示不再暴露系统内部细节
+- 备份还原写回以本机用户绑定的校验记录登记，防止被改写的目标路径；库根与开机启动项仍禁止写入
+- 异常编码路径不再进入扫描与删除候选；清理历史读取加上限，异常大日志先压缩再读
 
 ## [1.1.1] - 2026-09-21
 
