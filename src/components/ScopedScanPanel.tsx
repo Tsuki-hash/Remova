@@ -7,7 +7,9 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
 import {
+  buildCleanupRiskBits,
   defaultSelectable,
+  formatRiskNote,
   maxRiskOf,
   riskTierLabel,
   summarizeLeftovers,
@@ -72,9 +74,10 @@ export function ScopedScanPanel({
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
+    const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}`,
+      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
