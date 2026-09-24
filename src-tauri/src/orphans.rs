@@ -109,6 +109,8 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
 }
 
 pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
+    // REV-BE-14: load ignore rules once (was per candidate in the loop).
+    let ignore = crate::ignore::load();
     let mut roots: Vec<std::path::PathBuf> = vec![];
     for env in [
         "ProgramFiles",
@@ -157,10 +159,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             // AR-04: honor ignore path rules for orphan candidates.
-            if crate::ignore::should_skip_leftover_path(
-                &crate::ignore::load(),
-                &p.to_string_lossy(),
-            ) {
+            if crate::ignore::should_skip_leftover_path(&ignore, &p.to_string_lossy()) {
                 continue;
             }
             if !looks_like_app_dir(&p) {

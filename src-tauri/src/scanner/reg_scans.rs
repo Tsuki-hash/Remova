@@ -11,9 +11,10 @@ pub(super) fn scan_path_env(
     let mut seen = std::collections::HashSet::new();
     for scope in ["User", "Machine"] {
         // Read the real per-scope PATH (not the merged process env).
-        let raw = match crate::regops::read_path_scope_public(scope) {
-            Ok(s) => s,
-            Err(_) => std::env::var("PATH").unwrap_or_default(),
+        // REV-BE-13: on read failure skip this scope — never fall back to process PATH
+        // (that would mis-tag Machine/User scope).
+        let Ok(raw) = crate::regops::read_path_scope_public(scope) else {
+            continue;
         };
         for entry in raw.split(';') {
             let e = entry.trim();

@@ -88,6 +88,7 @@ export function OrphanOriginGroups({
                         type="checkbox"
                         checked={selectedPaths.has(it.path)}
                         onChange={() => onToggle(it.path)}
+                        aria-label={it.path}
                         style={{ marginTop: 2, accentColor: "var(--accent)" }}
                       />
                       <span style={{ minWidth: 0, flex: 1 }}>

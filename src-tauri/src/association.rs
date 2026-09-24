@@ -182,9 +182,15 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         return true;
     }
     let slugs = crate::scanner::slugify(&app.name);
-    slugs
-        .iter()
-        .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()))
+    // REV-BE-07: segment-boundary match (`codec` must not hit `mycodec`).
+    slugs.iter().any(|s| {
+        if !ar10_name_slug_ok(s) {
+            return false;
+        }
+        let needle = s.to_lowercase();
+        low.split(['\\', '/', ':', ' ', '_', '-', '.'])
+            .any(|seg| seg == needle)
+    })
 }
 
 /// Medium association gate (AR-10): leftovers must look related to the app.

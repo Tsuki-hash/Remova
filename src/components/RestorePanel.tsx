@@ -77,7 +77,7 @@ export function RestorePanel({
                   {formatSize(s.size_kb)}
                 </span>
                 <button
-                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "#b91c1c" }}
+                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
                   disabled={busy}
                   onClick={(e) => {
                     e.preventDefault();
