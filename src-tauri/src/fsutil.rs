@@ -41,6 +41,11 @@ pub fn fnv1a64(s: &str) -> u64 {
     h
 }
 
+/// Strict UTF-8 path string (backslashes). `None` on non-UTF-8 — callers must fail closed.
+pub fn path_utf8(p: &Path) -> Option<String> {
+    Some(p.to_str()?.replace('/', "\\"))
+}
+
 /// Shared `to_wide` for Windows APIs.
 #[cfg(windows)]
 pub fn to_wide(s: &str) -> Vec<u16> {
@@ -81,6 +86,22 @@ mod tests {
         assert_eq!(csv_escape("plain"), "plain");
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn path_utf8_fails_closed_on_wide_junk() {
+        #[cfg(windows)]
+        {
+            use std::ffi::OsString;
+            use std::os::windows::ffi::OsStringExt;
+            let wide: Vec<u16> = vec!['C' as u16, ':' as u16, 0xD800, 'x' as u16];
+            let os = OsString::from_wide(&wide);
+            assert!(path_utf8(Path::new(&os)).is_none());
+        }
+        assert_eq!(
+            path_utf8(Path::new(r"C:\Foo/Bar")).as_deref(),
+            Some(r"C:\Foo\Bar")
+        );
     }
 
     #[test]

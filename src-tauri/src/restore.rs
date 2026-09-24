@@ -17,8 +17,8 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         let raw = fs::read_to_string(&map_path).map_err(|e| e.to_string())?;
         let map: std::collections::BTreeMap<String, String> =
             serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        for (rel, original) in map {
-            let src = files_root.join(&rel);
+        for (rel, original) in &map {
+            let src = files_root.join(rel);
             if !src.exists() {
                 continue;
             }
@@ -31,6 +31,16 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             {
                 return Err(crate::error::restore_err(format!(
                     "refusing to restore into protected path: {original}"
+                ))
+                .to_ipc());
+            }
+            // Library subpaths require a matching out-of-session seal (N-risk):
+            // only destinations recorded at backup time may write back under Documents/….
+            if crate::safety::is_user_library_path(&original)
+                && !crate::path_seal::target_sealed(session, &map, &original)
+            {
+                return Err(crate::error::restore_err(format!(
+                    "refusing unsealed library restore: {original}"
                 ))
                 .to_ipc());
             }
@@ -463,6 +473,46 @@ mod tests {
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")));
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// N-risk: library-subpath write-back requires a matching out-of-session seal.
+    #[test]
+    fn restore_refuses_unsealed_library_target() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_seal_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let seals = tmp.join("seals");
+        std::fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals.clone()));
+
+        let sess = tmp.join("1700000000_sealme");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let dest = tmp.join("Documents").join("App").join("f.txt");
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::write(files.join("abc_f.txt"), b"payload").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("abc_f.txt".to_string(), dest.to_string_lossy().to_string());
+        let map_json = serde_json::to_string_pretty(&map).unwrap();
+        fs::write(files.join("path_map.json"), &map_json).unwrap();
+
+        // Unsealed → refuse (even though shape gate would allow a library subpath).
+        let err = restore_session(&sess).unwrap_err();
+        assert!(err.contains("unsealed") || err.contains("protected"), "{err}");
+
+        // Sealed → restore proceeds.
+        crate::path_seal::write_seal(&sess, "", &map).unwrap();
+        assert!(
+            crate::path_seal::target_sealed(&sess, &map, &dest.to_string_lossy()),
+            "seal must accept the recorded target"
+        );
+        let msgs = restore_session(&sess).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("restored")));
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "payload");
+
+        crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
 

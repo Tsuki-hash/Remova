@@ -271,8 +271,11 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
 /// Unified filesystem safety gate (scanner + executor).
 /// Rejects protected prefixes, drive roots (`C:` / `C:\`), and shallow paths.
 /// Prefixes come from environment (SystemRoot / ProgramData / ProgramFiles…) with `c:\` fallbacks.
+/// Non-UTF-8 paths fail closed (no lossy conversion into the comparison).
 pub fn is_safe_fs(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
+    let Some(s) = path_utf8_lower(p) else {
+        return false;
+    };
     // S-R6-05: extended-length / 8.3 shapes must not slip past prefix matching.
     if is_abnormal_path_shape(&s) {
         return false;
@@ -299,6 +302,11 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     !protected
         .iter()
         .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
+}
+
+/// Lowercased backslash form of a path, or `None` when not valid UTF-8 (fail-closed).
+fn path_utf8_lower(p: &std::path::Path) -> Option<String> {
+    Some(p.to_str()?.replace('/', "\\").to_lowercase())
 }
 
 fn env_dir_lower(name: &str) -> Option<String> {
@@ -381,15 +389,20 @@ pub fn is_abnormal_path_shape(p: &str) -> bool {
 /// (flagged `user_data`) for the "why we kept this" explanation instead of vanishing. Any code that
 /// is about to *remove* something must call this instead of [`is_safe_fs`].
 pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy();
-    is_safe_fs(p) && !is_user_data_path(&s) && !looks_like_sync_conflict(&s)
+    let Some(s) = p.to_str() else {
+        return false;
+    };
+    is_safe_fs(p) && !is_user_data_path(s) && !looks_like_sync_conflict(s)
 }
 
 /// Restore target gate: write-back must not hit library roots, sync-conflict trees, or
 /// protected system prefixes. Unlike delete, 8.3 profile names (`Users\RUNNER~1\…`) are
 /// legitimate restore destinations (S-R6-03 + CI temp homes).
 pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy();
+    let Some(s) = p.to_str().map(|s| s.to_string()) else {
+        // Non-UTF-8 destinations never restore (no lossy compare).
+        return false;
+    };
     if s.trim().is_empty() {
         return false;
     }
@@ -940,5 +953,31 @@ mod tests {
         assert!(!super::is_safe_restore_target(Path::new(
             r"C:\Users\a\Documents\conflict\save.dat"
         )));
+    }
+
+    /// N-risk: non-UTF-8 paths fail closed in delete/restore gates (no lossy compare).
+    #[test]
+    fn non_utf8_paths_fail_closed() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        // Invalid UTF-16 unit → not valid UTF-8 on the Rust side.
+        let wide: Vec<u16> = vec!['C' as u16, ':' as u16, '\\' as u16, 0xD800, '\\' as u16, 'x' as u16];
+        let os = OsString::from_wide(&wide);
+        let p = std::path::Path::new(&os);
+        assert!(!super::is_safe_fs(p));
+        assert!(!super::is_safe_fs_for_delete(p));
+        assert!(!super::is_safe_restore_target(p));
+    }
+
+    /// Library-subpath restore requires an out-of-session seal (see path_seal).
+    #[test]
+    fn restore_target_shape_allows_library_subpath() {
+        // Shape gate alone permits it; restore.rs enforces the seal separately.
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\App\file.txt"
+        )));
+        assert!(super::is_user_library_path(
+            r"C:\Users\a\Documents\App\file.txt"
+        ));
     }
 }
