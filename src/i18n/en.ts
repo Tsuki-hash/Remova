@@ -230,6 +230,8 @@ export const dict = {
     monitorEmpty: "No install changes yet",
     monitorEmptyHint: "Start install tracking, finish the install, and new files / registry values will show up here",
     panelClose: "Close",
+    dangerScope: (n: number) => `${n} selected · backup optional · irreversible`,
+    dangerScopeHint: "Starts cleanup/uninstall. You can create a safety backup first; deletes are not undone by default",
     toolsExpand: "More tools",
     toolsCollapse: "Hide tools",
     toolsExpandHint: "Show history, export, ignore, and scan tools",
