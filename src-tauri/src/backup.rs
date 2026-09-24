@@ -144,11 +144,9 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
         if let Some(p) = map_path.parent() {
             let _ = fs::create_dir_all(p);
         }
-        fs::write(
-            &map_path,
-            serde_json::to_string_pretty(&existing).unwrap_or_default(),
-        )
-        .map_err(|e| e.to_string())?;
+        let map_json = serde_json::to_string_pretty(&existing).unwrap_or_default();
+        fs::write(&map_path, &map_json).map_err(|e| e.to_string())?;
+        crate::path_seal::write_seal(session, &map_json, &existing).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -174,12 +172,13 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
     }
     if !path_map.is_empty() {
         // BE-07: path_map write failure must abort cleanup (restore depends on it).
-        if let Err(e) = fs::write(
-            &map_path,
-            serde_json::to_string_pretty(&path_map).unwrap_or_default(),
-        ) {
+        let map_json = serde_json::to_string_pretty(&path_map).unwrap_or_default();
+        if let Err(e) = fs::write(&map_path, &map_json) {
             fail += 1;
             errors.push(format!("path_map write failed: {e}"));
+        } else if let Err(e) = crate::path_seal::write_seal(session, &map_json, &path_map) {
+            // Seal failure is non-fatal for cleanup but blocks library-subpath restore.
+            errors.push(format!("path_map seal failed: {e}"));
         }
     }
     (ok, fail, errors)

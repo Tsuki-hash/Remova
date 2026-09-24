@@ -59,7 +59,10 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
         }
         let p = e.path();
         // Keep original casing for display/delete; NTFS compare is case-insensitive.
-        let rel = p.to_string_lossy().to_string();
+        // Non-UTF-8 never enters snapshots/allow-lists (fail-closed).
+        let Some(rel) = crate::fsutil::path_utf8(&p) else {
+            continue;
+        };
         *budget = budget.saturating_sub(1);
         out.insert(rel);
         if p.is_dir() && !e.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
