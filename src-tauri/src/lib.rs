@@ -508,10 +508,12 @@ async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
 }
 
 #[tauri::command]
-fn monitor_diff_to_items(
+async fn monitor_diff_to_items(
     diff: installmon::MonitorDiff,
 ) -> Result<Vec<scanner::CleanupItem>, String> {
-    Ok(installmon::diff_to_cleanup_items(&diff))
+    tauri::async_runtime::spawn_blocking(move || installmon::diff_to_cleanup_items(&diff))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -212,19 +212,19 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                                 }
                                 std::thread::sleep(std::time::Duration::from_millis(200));
                             }
-                            Err(e) => {
+                            Err(_e) => {
                                 return OfficialUninstallResult {
                                     ok: false,
-                                    message: format!("wait failed: {e}"),
+                                    message: "uninstall wait failed".into(),
                                     had_command: true,
                                 };
                             }
                         }
                     }
                 }
-                Err(e) => OfficialUninstallResult {
+                Err(_e) => OfficialUninstallResult {
                     ok: false,
-                    message: format!("launch failed: {e}"),
+                    message: "uninstall launch failed".into(),
                     had_command: true,
                 },
             }
