@@ -66,9 +66,10 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
-      // only the newest request may write scan state, and only it may clear the spinner.
-      const seq = ++analyzeSeqRef.current;
+      // REV-FE-04: single in-flight ref (was dual scanningRef/analyzingRef).
+      // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
+      const seq = ++analyzeSeqRef.current;
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
       setSelected(app);

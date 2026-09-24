@@ -436,6 +436,8 @@ export default function App() {
 
   const drillDownBucket = useCallback(
     (bucket: LinkedBucketId) => {
+      // REV-FE-04: same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
+      if (scanning) return;
       if (scan && scan.app_name === selected?.name) {
         setKindFilter(bucket);
       } else {
@@ -443,24 +445,20 @@ export default function App() {
         if (selected) void analyze(selected);
       }
     },
-    [scan, selected, analyze, scanUi, setKindFilter],
+    [scan, selected, analyze, scanUi, setKindFilter, scanning],
   );
 
-  // a scan in progress absorbs new row-analyze requests (ref keeps the callback stable).
-  const scanningRef = useRef(false);
-  useEffect(() => {
-    scanningRef.current = scanning;
-  }, [scanning]);
+  // a scan in progress absorbs new row-analyze requests (REV-FE-04: one guard = `scanning`).
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],
   );
   const listAnalyze = useCallback(
     (a: InstalledApp) => {
-      if (scanningRef.current) return;
+      if (scanning) return;
       void analyze(a);
     },
-    [analyze],
+    [analyze, scanning],
   );
   const listForceClean = useCallback((a: InstalledApp) => void forceClean(a), [forceClean]);
   const listIgnoreApp = useCallback((a: InstalledApp) => void doIgnoreApp(a), [doIgnoreApp]);
