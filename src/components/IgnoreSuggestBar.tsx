@@ -35,7 +35,7 @@ export function IgnoreSuggestBar({
     >
       <strong>{L.ignoreSuggestTitle}</strong>
       <span style={{ color: "var(--muted)", flex: "1 1 180px" }}>
-        {suggestions.map((s) => `${s.value}（${s.reason}）`).join("；")}
+        {suggestions.map((s) => `${s.value} (${s.reason})`).join("; ")}
       </span>
       <button
         style={css.btnSm}

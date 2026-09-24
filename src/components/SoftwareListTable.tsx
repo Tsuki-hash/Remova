@@ -132,7 +132,7 @@ export function SoftwareListTable({
           </tr>
         </thead>
         <tbody>
-          {filtered.length === 0 && !(loading && filtered.length === 0) && (
+          {filtered.length === 0 && !loading && (
             <tr>
               <td
                 colSpan={4}

@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn session_dir_shape() {
-        // do not create on disk in unit test 鈥?just path builder logic via create
+        // do not create on disk in unit test —just path builder logic via create
         let _ = backup_root();
     }
 

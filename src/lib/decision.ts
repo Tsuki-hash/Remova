@@ -97,7 +97,7 @@ export function cleanupProgress(deleted: number, failed: number, skipped: number
   return { handled, total, pct, complete: failed === 0 && total > 0 };
 }
 
-/** 1鈥? chips under the app name; never invent usage we do not track. */
+/** 1— chips under the app name; never invent usage we do not track. */
 export function decisionChips(
   app: InstalledApp,
   sizeKb: number,
@@ -133,7 +133,7 @@ export function decisionChips(
       title: `${sizeKb} KB`,
     });
   }
-  // List rows: at most one high-signal chip 鈥?full metadata lives in detail panel.
+  // List rows: at most one high-signal chip —full metadata lives in detail panel.
   if (compact) {
     const priority = ["no-uninstall", "recommend", "large"] as const;
     for (const id of priority) {
@@ -229,7 +229,8 @@ export function buildCleanupRiskBits(
 /** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (REV-FE-12). */
 export const LARGE_APP_KB = 500 * 1024;
 
-export function formatRiskNote(bits: string[], title = "注意"): string {
+/** REV-FE-13: callers must pass localized title. */
+export function formatRiskNote(bits: string[], title: string): string {
   return bits.length ? `\n\n${title}\n${bits.join("\n")}` : "";
 }
 
@@ -374,7 +375,7 @@ export type OriginGroup = {
 
 /**
  * Group leftovers by path leaf (suspected software folder).
- * Orphans have no uninstall entry 鈥?never invent a product name.
+ * Orphans have no uninstall entry —never invent a product name.
  */
 export function groupByOrigin(items: CleanupItem[]): OriginGroup[] {
   const map = new Map<string, CleanupItem[]>();
