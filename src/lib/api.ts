@@ -37,6 +37,12 @@ export type FullCleanupOptions = {
 
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };
 export type DiskUsage = { free_gb: number; total_gb: number; drive?: string };
+export type DriveInfo = {
+  letter: string;
+  free_gb: number;
+  total_gb: number;
+  is_system: boolean;
+};
 export type MonitorDiff = { added_files: string[]; added_reg_values: string[] };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
@@ -60,7 +66,9 @@ export const api = {
   rankIdleApps: () => invoke<IdleApp[]>("rank_idle_apps"),
   scanInstallerCaches: () => invoke<CleanupItem[]>("scan_installer_caches"),
   scanToolCaches: () => invoke<CleanupItem[]>("scan_tool_caches"),
-  listTopDirSizes: () => invoke<DirSizeRow[]>("list_top_dir_sizes"),
+  listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
+  listTopDirSizes: (drive?: string) =>
+    invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null }),
   listDirChildren: (path: string) => invoke<DirSizeRow[]>("list_dir_children", { path }),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: () => invoke("elevate_restart"),

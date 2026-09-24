@@ -186,7 +186,7 @@ export const dict = {
     installerTitle: "安装包与更新缓存",
     installerHint: "清理下载的安装包与 updater 缓存（不是应用残留目录）",
     diskRadarTitle: "磁盘占用雷达",
-    diskRadarHint: "看谁吃满了磁盘（只读，可打开位置）",
+    diskRadarHint: "看谁吃满了磁盘（可切换磁盘；只读，可打开位置）",
     toolcacheTitle: "专项缓存清理",
     toolcacheHint: "开发 / 游戏 / 浏览器工具链缓存；不碰存档与浏览器配置",
     detailHide: "收起详情",
