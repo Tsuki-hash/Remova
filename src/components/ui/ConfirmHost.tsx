@@ -1,5 +1,6 @@
-import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { t } from "../../i18n";
+import { useDialogFocus } from "../../lib/useDialogFocus";
 import {
   getConfirm,
   getConfirmChecked,
@@ -123,6 +124,8 @@ function HoldButton({
 
 function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>> }) {
   const L = t();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(true, dialogRef);
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
   const [checked, setChecked] = useState(getConfirmChecked());
   // FE-R4-04: re-seed when a new dialog replaces a pending one without unmount.
@@ -137,7 +140,10 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
       role="dialog"
       aria-modal="true"
       aria-label={opts.title}
+      tabIndex={-1}
+      ref={dialogRef}
       style={{
+        outline: "none",
         width: "min(440px, calc(100vw - 32px))",
         background: "var(--surface)",
         border: "1px solid var(--border)",

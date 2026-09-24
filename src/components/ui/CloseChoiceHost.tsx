@@ -1,5 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../../i18n";
+import { useDialogFocus } from "../../lib/useDialogFocus";
 import {
   isCloseChoiceOpen,
   saveCloseMode,
@@ -10,7 +11,9 @@ import {
 export function CloseChoiceHost() {
   const open = useSyncExternalStore(subscribeCloseChoice, isCloseChoiceOpen, isCloseChoiceOpen);
   const [remember, setRemember] = useState(true);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const L = t();
+  useDialogFocus(open, dialogRef);
 
   useEffect(() => {
     if (!open) return;
@@ -64,7 +67,10 @@ export function CloseChoiceHost() {
         role="dialog"
         aria-modal="true"
         aria-label={L.closeChoiceTitle}
+        tabIndex={-1}
+        ref={dialogRef}
         style={{
+          outline: "none",
           width: "min(420px, calc(100vw - 32px))",
           background: "var(--surface)",
           border: "1px solid var(--border)",

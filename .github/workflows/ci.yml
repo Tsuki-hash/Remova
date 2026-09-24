@@ -75,6 +75,8 @@ jobs:
   package:
     runs-on: windows-latest
     timeout-minutes: 45
+    # REV-QA-05: never ship artifacts from a red test tree.
+    needs: test
     # Full Tauri bundle is slow — run on main and manual runs, not every PR.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
@@ -92,6 +94,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx tauri build
+      - name: app binary smoke
+        shell: pwsh
+        run: npm run smoke:app
       - shell: pwsh
         run: npm run package:portable
       - shell: pwsh
