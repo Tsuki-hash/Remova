@@ -39,13 +39,10 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let apps = apps::scan_installed_apps();
-        apps::remember_uninstall_commands(&apps);
-        apps
-    })
-    .await
-    .map_err(|e| e.to_string())
+    // scan_installed_apps already refreshes the uninstall trust table (REV-BE-04).
+    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Clear cancel flag before a new estimate batch.

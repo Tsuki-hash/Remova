@@ -40,6 +40,9 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
 
+      - name: check commands
+        run: npm run check-commands
+
       - name: cargo fmt
         run: cargo fmt --check
         working-directory: src-tauri
@@ -61,7 +64,7 @@ jobs:
       - name: frontend tests
         run: npm test
 
-      - name: frontend build + dist smoke
+      - name: frontend build
         run: npm run build
 
       - name: frontend dist smoke
@@ -69,6 +72,10 @@ jobs:
 
       - name: tauri build
         run: npx tauri build
+
+      - name: app binary smoke
+        shell: pwsh
+        run: npm run smoke:app
 
       - name: package portable zip
         shell: pwsh

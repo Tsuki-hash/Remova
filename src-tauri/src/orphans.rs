@@ -70,6 +70,19 @@ fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
     Some(age as i64)
 }
 
+/// Path prefix with segment boundary (REV-BE-06): `C:\App` must not own `C:\AppEvil`.
+fn path_same_or_under(a: &str, b: &str) -> bool {
+    let a = a.trim_end_matches('\\');
+    let b = b.trim_end_matches('\\');
+    if a == b {
+        return true;
+    }
+    match (a.strip_prefix(b), b.strip_prefix(a)) {
+        (Some(rest), _) | (_, Some(rest)) => rest.starts_with('\\'),
+        (None, None) => false,
+    }
+}
+
 fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
     let leaf = dir
@@ -78,7 +91,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
         .unwrap_or_default();
     for app in installed {
         let loc = app.install_location.replace('/', "\\").to_lowercase();
-        if !loc.is_empty() && (d.starts_with(&loc) || loc.starts_with(&d)) {
+        if !loc.is_empty() && path_same_or_under(&d, &loc) {
             return true;
         }
         if leaf.is_empty() {
@@ -291,6 +304,16 @@ mod tests {
         assert!(match_installed(&installed, p));
         let p2 = std::path::Path::new(r"C:\Program Files\OtherThing");
         assert!(!match_installed(&installed, p2));
+    }
+
+    #[test]
+    fn match_installed_requires_path_segment_boundary() {
+        let installed = [app("App", r"C:\Program Files\App")];
+        // Sibling that merely shares a string prefix must not match (REV-BE-06).
+        let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
+        assert!(!match_installed(&installed, evil));
+        let child = std::path::Path::new(r"C:\Program Files\App\bin");
+        assert!(match_installed(&installed, child));
     }
 
     #[test]

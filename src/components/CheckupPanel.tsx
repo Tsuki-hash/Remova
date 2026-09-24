@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
+import { useDialogFocus } from "../lib/useDialogFocus";
 
 export type CheckupStats = {
   total: number;
@@ -25,6 +27,18 @@ export function CheckupPanel({
   onOpenOrphans: () => void;
 }) {
   const L = t();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(true, dialogRef);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div
       style={{
@@ -38,9 +52,13 @@ export function CheckupPanel({
       }}
       role="dialog"
       aria-modal="true"
+      aria-label={L.checkupTitle}
     >
       <div
+        tabIndex={-1}
+        ref={dialogRef}
         style={{
+          outline: "none",
           width: "min(480px, 96vw)",
           background: "var(--surface)",
           border: "1px solid var(--border)",
