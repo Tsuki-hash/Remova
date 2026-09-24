@@ -67,12 +67,23 @@ export function ToolCard({
         background: active ? "var(--accent-soft)" : "var(--surface)",
         boxShadow: active ? "0 0 0 1px var(--accent)" : "none",
       }}
-      onMouseEnter={(e) => {
+          onMouseEnter={(e) => {
         if (active) return;
         e.currentTarget.style.borderColor = "var(--border-strong)";
         e.currentTarget.style.boxShadow = "0 1px 0 rgba(0,0,0,.04)";
       }}
       onMouseLeave={(e) => {
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.boxShadow = "none";
+      }}
+      onFocus={(e) => {
+        // REV-UX-22: keyboard focus must be as visible as hover.
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border-strong)";
+        e.currentTarget.style.boxShadow = "0 0 0 2px var(--accent-soft)";
+      }}
+      onBlur={(e) => {
         if (active) return;
         e.currentTarget.style.borderColor = "var(--border)";
         e.currentTarget.style.boxShadow = "none";

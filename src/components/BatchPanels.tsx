@@ -86,7 +86,7 @@ export function BatchSummaryPanel({
               style={{
                 color:
                   r.status === "failed"
-                    ? "#b91c1c"
+                    ? "var(--danger)"
                     : r.status === "ok"
                       ? "var(--accent)"
                       : "var(--muted)",

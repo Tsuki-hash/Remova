@@ -130,6 +130,12 @@ export function AppDetailPanel({
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && menuOpen) {
+                  e.preventDefault();
+                  setMenuOpen(false);
+                }
+              }}
             >
               <Deco ch="⋯" />
             </button>

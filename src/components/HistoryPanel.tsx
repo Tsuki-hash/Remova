@@ -65,7 +65,7 @@ export function HistoryPanel({
           onChange={(e) => setHistQ(e.target.value)}
         />
         <button
-          style={{ ...css.btnGhost, height: 30, color: "#b91c1c" }}
+          style={{ ...css.btnGhost, height: 30, color: "var(--danger)" }}
           disabled={history.length === 0}
           onClick={onClearAll}
         >
@@ -116,7 +116,7 @@ export function HistoryPanel({
                   </div>
                 </div>
                 <button
-                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "#b91c1c" }}
+                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
                   onClick={() => onDelete(h.id)}
                 >
                   {L.deleteHistory}

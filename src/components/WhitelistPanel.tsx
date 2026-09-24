@@ -59,7 +59,7 @@ export function WhitelistPanel({
         </button>
       </div>
       {rows.length === 0 ? (
-        <div style={{ color: "var(--muted)" }}>{L.ignoreSuggestNone || "—"}</div>
+        <div style={{ color: "var(--muted)" }}>{L.whitelistEmpty}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {rows.map((r) => (

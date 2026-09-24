@@ -321,6 +321,7 @@ export const dict: EnDict = {
     adminMenu: "Administrator",
     emptyList: "No matching apps",
     emptySearch: "No matches — try another keyword or clear filters",
+    whitelistEmpty: "Whitelist is empty",
     loadingApps: "Loading installed apps…",
     aiSettings: "Model settings",
     aiSettingsHint: "Configure smart explanations for leftovers and risk; suggestions only — never deletes",

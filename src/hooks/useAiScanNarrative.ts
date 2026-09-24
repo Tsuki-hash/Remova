@@ -123,8 +123,9 @@ export function useAiScanNarrative({
     aiReportSeqRef.current += 1;
     setAiReportBusy(false);
     if (report && aiEnabled) void runAiReport();
+    // REV-FE-15: key on report identity fields, not object identity only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, aiEnabled]);
+  }, [report, aiEnabled, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
 
   return { runAiExplain, runAiReport };
 }
