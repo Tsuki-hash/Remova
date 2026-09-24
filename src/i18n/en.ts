@@ -230,6 +230,8 @@ export const dict = {
     monitorEmpty: "No install changes yet",
     monitorEmptyHint: "Start install tracking, finish the install, and new files / registry values will show up here",
     panelClose: "Close",
+    mainRegion: "Main",
+    clearSelection: "Clear selection",
     dangerScope: (n: number) => `${n} selected · backup optional · irreversible`,
     aiEmptyResult: "AI explain returned no content this round. Retry later or use local rules",
     dangerScopeHint: "Starts cleanup/uninstall. You can create a safety backup first; deletes are not undone by default",

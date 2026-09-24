@@ -7,7 +7,11 @@ use std::time::UNIX_EPOCH;
 const ICON_SIZE: i32 = 32;
 
 fn icon_cache_dir() -> PathBuf {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Public".into());
+    // REV-SUP-04: never fall back to C:\Users\Public (shared writable).
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let temp = std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
+        format!("{temp}\\Remova-{}", std::process::id())
+    });
     PathBuf::from(local).join("Remova").join("icons")
 }
 

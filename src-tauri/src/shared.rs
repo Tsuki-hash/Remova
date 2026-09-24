@@ -84,8 +84,10 @@ pub fn is_common_files_vendor_path(path: &str) -> bool {
 }
 
 /// Hard shared: exact CF roots, Microsoft Shared, name tokens, non-CF hard path markers.
+/// Matching is **name + path only** (REV-BE-18) — free-text `reason` must not force shared.
 pub fn is_hard_shared_item(name: &str, path: &str, reason: &str) -> bool {
-    let blob = format!("{}\n{}\n{}", lower(name), lower(path), lower(reason));
+    let _ = reason;
+    let blob = format!("{}\n{}", lower(name), lower(path));
     if SHARED_NAME_TOKENS.iter().any(|t| blob.contains(t)) {
         return true;
     }
@@ -105,6 +107,16 @@ pub fn is_shared_item(name: &str, path: &str, reason: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forged_reason_cannot_mark_shared() {
+        // REV-BE-18: reason is free text from scan — must not flip the shared flag.
+        assert!(!is_shared_item(
+            "DemoApp",
+            r"C:\Program Files\DemoApp\bin",
+            "visual c++ redistributable shared runtime"
+        ));
+    }
 
     #[test]
     fn flags_vcredist() {

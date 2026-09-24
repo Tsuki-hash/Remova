@@ -79,7 +79,11 @@ impl From<&AiConfig> for AiConfigView {
 }
 
 fn config_path() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Public".into());
+    // REV-SUP-04: never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let temp = std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
+        format!("{temp}\\Remova-{}", std::process::id())
+    });
     PathBuf::from(base).join("Remova").join("ai-config.json")
 }
 

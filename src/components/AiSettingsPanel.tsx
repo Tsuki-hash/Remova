@@ -132,7 +132,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
           <div style={{ fontWeight: 700, fontSize: 14 }}>{L.aiSettings}</div>
           <div style={{ ...css.muted, marginTop: 2 }}>{L.aiSettingsHint}</div>
         </div>
-        <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label="close">
+        <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label={t().panelClose}>
           <CloseGlyph />
         </button>
       </div>

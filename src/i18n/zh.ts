@@ -228,6 +228,8 @@ export const dict = {
     monitorEmpty: "暂无安装变更",
     monitorEmptyHint: "开始安装追踪并完成安装后，这里会列出新增文件与注册表值",
     panelClose: "关闭",
+    mainRegion: "主面板",
+    clearSelection: "清空选择",
     dangerScope: (n: number) => `${n} 项 · 可备份 · 不可逆`,
     aiEmptyResult: "本轮智能解释没有返回内容，可稍后重试或使用本地规则",
     dangerScopeHint: "将进入清理/卸载流程；可选创建安全备份，删除后默认不可撤销",
