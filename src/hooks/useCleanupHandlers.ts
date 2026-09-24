@@ -276,8 +276,8 @@ export function useCleanupHandlers({
     try {
     const n = selectedPaths.size;
     if (n === 0) {
-      // FE-N3: never confirm an empty cleanup set.
-      toast.info(L.cleanup);
+      // FE-N3 / REV-FE-06: never confirm an empty cleanup set — say "select rows", not "cleanup".
+      toast.info(L.selectRowHint);
       busyRef.current = false;
       return;
     }

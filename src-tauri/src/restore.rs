@@ -116,10 +116,14 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 None
             };
             if let Some(target) = target {
-                // S-R7-03: key-shape whitelist before `reg import` (Uninstall / Run value-level / …).
-                validate_reg_import(&target)?;
+                // S-R7-03 / REV-SEC-05: validate the bytes we import (already-read raw).
+                let raw = validate_reg_import(&target)?;
+                // Rewrite a private temp with the validated content, then import that file
+                // so a race cannot swap the on-disk path after validation.
+                let pinned = e.path().join("value.import.reg");
+                fs::write(&pinned, &raw).map_err(|e| e.to_string())?;
                 let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-                cmd.args(["import", &target.to_string_lossy()]);
+                cmd.args(["import", &pinned.to_string_lossy()]);
                 crate::regops::hide_console(&mut cmd);
                 let out = cmd.output().map_err(|e| e.to_string())?;
                 if out.status.success() {
@@ -139,11 +143,11 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 }
 
 /// S-R7-03: reject `.reg` files whose key shapes fall outside the restore whitelist.
-/// Allowed: Uninstall / App Paths / Services / TaskCache vendor trees (via
-/// `is_safe_to_delete_registry`), plus Run/RunOnce **value-level** restores only.
-fn validate_reg_import(path: &Path) -> Result<(), String> {
+/// REV-SEC-05: read once — validate the same bytes that will be imported (no TOCTOU re-read).
+fn validate_reg_import(path: &Path) -> Result<String, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    reg_content_allowed(&raw)
+    reg_content_allowed(&raw)?;
+    Ok(raw)
 }
 
 /// Parse `.reg` text and enforce the key-shape whitelist (S-R7-03).

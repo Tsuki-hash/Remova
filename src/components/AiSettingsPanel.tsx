@@ -245,7 +245,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             autoComplete="new-password"
-            disabled={cfg.provider === "ollama" && !cfg.base_url.includes("api.")}
+            disabled={!activePreset.needsKey}
           />
         </div>
 

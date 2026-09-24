@@ -226,6 +226,9 @@ export function buildCleanupRiskBits(
 }
 
 /** Format risk callouts for a confirm message body (no raw warning glyphs). */
+/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (REV-FE-12). */
+export const LARGE_APP_KB = 500 * 1024;
+
 export function formatRiskNote(bits: string[], title = "注意"): string {
   return bits.length ? `\n\n${title}\n${bits.join("\n")}` : "";
 }

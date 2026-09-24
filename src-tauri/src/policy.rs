@@ -279,6 +279,11 @@ pub fn gate_cleanup_item(
         if !source.allow_ok(&item.path) {
             return GateDecision::Skip("path not associated with app");
         }
+    } else {
+        // REV-SEC-08: no app context and not a scoped allow-list flow — never default-allow FS deletes.
+        if matches!(item.kind, ItemKind::File | ItemKind::Dir) {
+            return GateDecision::Skip("path not associated with app");
+        }
     }
     GateDecision::Allow
 }

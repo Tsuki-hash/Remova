@@ -289,6 +289,10 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
+    // REV-SEC-04: absolute drive path only — no relative, no UNC/device shares.
+    if !p.has_root() || trimmed.starts_with("\\\\") {
+        return false;
+    }
     // S-7B: exact Common Files roots are never deletable (vendor subpaths via policy association).
     if crate::shared::is_common_files_root(trimmed) {
         return false;

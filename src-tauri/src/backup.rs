@@ -24,10 +24,11 @@ pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
+    // REV-SEC-09: charset must match `is_session_name` (alnum + `-` `_` only).
     let safe: String = app_name
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
                 c
             } else {
                 '_'
