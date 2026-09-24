@@ -226,10 +226,70 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn snapshot_roundtrip_shape() {
         // begin may be slow; only ensure end without begin errors
         let e = super::end();
         assert!(e.is_err());
+    }
+
+    /// P0.3 regression: diff → items must remember allow-list and emit gate-passable rows.
+    #[test]
+    fn diff_to_cleanup_items_remembers_allow_list() {
+        let diff = MonitorDiff {
+            added_files: vec![
+                r"C:\Program Files\Vendor\App\new.dll".into(),
+                r"C:\Program Files\Vendor\App\cache.tmp".into(),
+            ],
+            added_reg_values: vec![
+                r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{NEW}".into(),
+            ],
+        };
+        let items = diff_to_cleanup_items(&diff);
+        assert_eq!(items.len(), 3);
+        // Server-side allow-list is filled (policy requires it for Monitor source).
+        assert!(crate::scan_allow::was_recent(
+            crate::scan_allow::AllowScope::Monitor,
+            r"C:\Program Files\Vendor\App\new.dll"
+        ));
+        assert!(crate::scan_allow::was_recent(
+            crate::scan_allow::AllowScope::Monitor,
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{NEW}"
+        ));
+        // Noise path is still an item (kept-list explanation) but marked suspected.
+        let noise = items
+            .iter()
+            .find(|i| i.path.ends_with("cache.tmp"))
+            .unwrap();
+        assert_eq!(noise.confidence, crate::scanner::Confidence::Suspected);
+        // Gate: associated-less Monitor items still pass the scoped allow-list path.
+        let ignore = crate::ignore::IgnoreList::default();
+        let app = crate::apps::InstalledApp {
+            name: "Monitor".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "monitor".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        for it in &items {
+            let d = crate::policy::gate_cleanup_item(
+                Some(&app),
+                it,
+                crate::policy::CleanupSource::Monitor,
+                &ignore,
+            );
+            assert!(
+                matches!(d, crate::policy::GateDecision::Allow),
+                "monitor item must pass gate: {it:?} → {d:?}"
+            );
+        }
     }
 }

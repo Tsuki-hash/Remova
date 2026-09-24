@@ -106,11 +106,24 @@ fn is_safe_install_root(install: &str) -> bool {
     if p.is_empty() {
         return false;
     }
-    // Reject drive roots (`C:` / `C:\`) and very shallow trees (`C:\Users`).
-    // Normal installs look like `C:\Program Files\Vendor` (drive + 2 segments).
+    // Reject drive roots (`C:` / `C:\`). Normal installs: `C:\Program Files\Vendor`
+    // (drive + 2) or portable `C:\Steam` (drive + 1). Never allow system shallow names.
     let segs: Vec<&str> = p.split('\\').filter(|s| !s.is_empty()).collect();
-    if segs.len() < 3 {
+    if segs.len() < 2 {
         return false;
+    }
+    if segs.len() == 2 {
+        const SYSTEM_ROOTS: &[&str] = &[
+            "users",
+            "windows",
+            "programdata",
+            "program files",
+            "program files (x86)",
+        ];
+        let leaf = segs[1].to_lowercase();
+        if SYSTEM_ROOTS.contains(&leaf.as_str()) {
+            return false;
+        }
     }
     // Never treat profile library roots as install roots.
     let last = segs.last().copied().unwrap_or("").to_lowercase();
@@ -150,7 +163,8 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase();
-    if !install.is_empty() && low.contains(&install) {
+    // Segment-boundary prefix: `C:\Steam` must not match `C:\SteamTools\...`.
+    if !install.is_empty() && (low == install || low.starts_with(&format!("{install}\\"))) {
         return true;
     }
     if let Some(guid) = guid_in_text(&app.registry_key) {
@@ -159,7 +173,12 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         }
     }
     let pub_low = app.publisher.trim().to_lowercase();
-    if pub_low.len() >= 4 && low.contains(&pub_low) {
+    // Publisher as a path/registry segment, not a raw substring (`Apt` must not hit `Adaptive`).
+    if pub_low.len() >= 4
+        && low
+            .split(['\\', '/', ':', ' ', '_'])
+            .any(|seg| seg == pub_low || seg.starts_with(&format!("{pub_low} ")) || seg.ends_with(&format!(" {pub_low}")))
+    {
         return true;
     }
     let slugs = crate::scanner::slugify(&app.name);
@@ -208,9 +227,12 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 }
             }
             let slugs = crate::scanner::slugify(&app.name);
-            let name_hit = slugs
-                .iter()
-                .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()));
+            let name_hit = slugs.iter().any(|s| {
+                ar10_name_slug_ok(s)
+                    && low
+                        .split(['\\', '/', ' ', '_', '-', '.'])
+                        .any(|seg| seg == s.to_lowercase())
+            });
             if name_hit {
                 // With a known install location a name hit is a useful secondary signal.
                 // Without one, only trust name hits under common install roots (fail-closed).
@@ -225,7 +247,10 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                     .filter(|s| {
                         s.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&s.to_lowercase().as_str())
                     })
-                    .any(|s| low.contains(&s.to_lowercase()))
+                    .any(|s| {
+                        let sl = s.to_lowercase();
+                        low.split(['\\', '/', ' ', '_', '-', '.']).any(|seg| seg == sl)
+                    })
                 && ar10_in_install_root(&low)
             {
                 return true;
@@ -458,5 +483,26 @@ mod tests {
             ..demo_app()
         };
         assert!(!is_orphan_flow(&reg_only));
+    }
+
+    /// R3: portable 2-segment install roots work; system shallow names stay rejected.
+    #[test]
+    fn install_root_allows_portable_two_segment() {
+        assert!(is_safe_install_root(r"C:\Steam"));
+        assert!(is_safe_install_root(r"D:\Games"));
+        assert!(is_safe_install_root(r"C:\Program Files\Vendor"));
+        assert!(is_safe_install_root(r"C:\Program Files\Vendor\App"));
+        // Drive roots and system shallow names remain rejected.
+        assert!(!is_safe_install_root(r""));
+        assert!(!is_safe_install_root(r"C:"));
+        assert!(!is_safe_install_root(r"C:\"));
+        assert!(!is_safe_install_root(r"C:\Users"));
+        assert!(!is_safe_install_root(r"C:\Windows"));
+        assert!(!is_safe_install_root(r"C:\ProgramData"));
+        assert!(!is_safe_install_root(r"C:\Program Files"));
+        assert!(!is_safe_install_root(r"C:\Program Files (x86)"));
+        // Library roots are never install roots.
+        assert!(!is_safe_install_root(r"C:\Users\a\Documents"));
+        assert!(!is_safe_install_root(r"C:\Users\a\Downloads"));
     }
 }

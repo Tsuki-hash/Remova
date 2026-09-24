@@ -102,7 +102,11 @@ fn size_kb_of(app: &InstalledApp) -> i64 {
         return app.estimated_size_kb;
     }
     if !app.install_location.is_empty() {
-        return crate::dirsize::walk_size_kb(std::path::Path::new(&app.install_location));
+        // Private cancel flag: estimate-batch cancel must not zero idle sizes.
+        return crate::dirsize::walk_size_kb_with(
+            std::path::Path::new(&app.install_location),
+            &std::sync::atomic::AtomicBool::new(false),
+        );
     }
     0
 }

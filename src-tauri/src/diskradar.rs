@@ -99,7 +99,13 @@ pub fn top_dir_sizes() -> Vec<DirSizeRow> {
 
 /// True when `path` is under one of the radar's well-known system roots.
 fn under_radar_roots(path: &str) -> bool {
-    // Canonicalize first so `C:\Users\x\..\..\Windows` cannot pass a raw prefix check.
+    let raw = path.replace('/', "\\");
+    // Traversal segments must never pass a prefix check (even if the path is missing
+    // and canonicalize cannot resolve it).
+    if raw.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
+    // Canonicalize first so verbatim / 8.3 / substituted shapes resolve to the real root.
     let canon = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
     let drive = drive.trim_end_matches('\\').to_uppercase();
@@ -165,5 +171,20 @@ mod tests {
         assert!(super::under_radar_roots(r"C:\Windows\Temp"));
         assert!(!super::under_radar_roots(r"C:\Games\Steam"));
         assert!(!super::under_radar_roots(r"D:\Data"));
+    }
+
+    /// P1.8: `..` must never pass the radar roots check (string prefix or canonicalize).
+    #[test]
+    fn drilldown_rejects_traversal_outside_roots() {
+        // Traversal segments are refused outright — before any prefix match.
+        assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\..\..\Windows\System32"));
+        assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\..\Temp\evil"));
+        assert!(!super::under_radar_roots(r"C:\Windows\Temp\..\..\Games\Steam"));
+        assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\secret"));
+        // Clean paths under roots still pass.
+        assert!(super::under_radar_roots(r"C:\Users\a\Documents\keep"));
+        assert!(super::under_radar_roots(r"C:\Windows\Temp\ok"));
+        // Drill-down refuses traversal shapes.
+        assert!(list_dir_children(r"C:\Users\a\Documents\..\..\..\Windows\System32").is_err());
     }
 }

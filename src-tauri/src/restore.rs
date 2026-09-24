@@ -35,12 +35,12 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 .to_ipc());
             }
             if src.is_dir() {
-                copy_dir(&src, &dest).map_err(|e| format!("{original}: {e}"))?;
+                copy_dir(&src, &dest).map_err(|_| format!("restore:copy::{original}"))?;
             } else {
                 if let Some(p) = dest.parent() {
-                    fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                    fs::create_dir_all(p).map_err(|_| "restore:io".to_string())?;
                 }
-                fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+                fs::copy(&src, &dest).map_err(|_| format!("restore:copy::{original}"))?;
             }
             messages.push(format!("restored {original}"));
         }
@@ -58,9 +58,9 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
                 Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
                 Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                Err(e) => {
+                Err(_) => {
                     return Err(crate::error::restore_path_err(format!(
-                        "PATH restore failed for {}: {e}",
+                        "PATH restore failed for {}",
                         it.entry
                     ))
                     .to_ipc())
