@@ -235,7 +235,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     }
 }
 
-/// Read REG_DWORD value by name.
+/// Read REG_DWORD value by name via RegQueryValueExW (REV-BE-03, O(1) — same path as `read_string`).
 pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     #[cfg(not(windows))]
     {
@@ -244,7 +244,7 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     }
     #[cfg(windows)]
     {
-        use windows::Win32::System::Registry::REG_DWORD;
+        use windows::Win32::System::Registry::{RegQueryValueExW, REG_DWORD, REG_VALUE_TYPE};
         let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
@@ -259,36 +259,23 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
             {
                 return None;
             }
-            let mut n = 0u32;
-            let mut found = None;
-            loop {
-                let mut vname = vec![0u16; 256];
-                let mut vname_len = vname.len() as u32;
-                let mut vtype = 0u32;
-                let mut data = vec![0u8; 16];
-                let mut data_len = data.len() as u32;
-                if RegEnumValueW(
-                    root,
-                    n,
-                    windows::core::PWSTR(vname.as_mut_ptr()),
-                    &mut vname_len,
-                    None,
-                    Some(&mut vtype),
-                    Some(data.as_mut_ptr()),
-                    Some(&mut data_len),
-                ) != ERROR_SUCCESS
-                {
-                    break;
-                }
-                n += 1;
-                let name = String::from_utf16_lossy(&vname[..vname_len as usize]);
-                if name.eq_ignore_ascii_case(value_name) && vtype == REG_DWORD.0 && data_len >= 4 {
-                    found = Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]));
-                    break;
-                }
-            }
+            let name_w = to_wide(value_name);
+            let mut vtype = REG_VALUE_TYPE(0);
+            let mut data = [0u8; 4];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                root,
+                PCWSTR(name_w.as_ptr()),
+                None,
+                Some(&mut vtype),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
             let _ = RegCloseKey(root);
-            found
+            if st != ERROR_SUCCESS || vtype != REG_DWORD || data_len < 4 {
+                return None;
+            }
+            Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
         }
     }
 }

@@ -29,13 +29,17 @@ export function BatchActionBar({
       <span style={{ fontSize: 13, fontWeight: 600 }}>
         {L.batchUninstall} · {count}
       </span>
+      {/* REV-UX-03: destructive batch CTA shows scope / backup / irreversibility */}
+      <span style={{ color: "var(--muted)", fontSize: 12 }} title={L.dangerScopeHint}>
+        {L.dangerScope(count)}
+      </span>
       <button style={css.btnGhost} onClick={onCancelOrClear}>
         {batching ? L.batchCancel : L.batchDismiss}
       </button>
       <button
         style={{ ...css.btn, marginLeft: "auto", background: "var(--danger)", color: "#fff" }}
         disabled={batching}
-        title={L.batchOfficialHint}
+        title={L.dangerScopeHint}
         onClick={onStart}
       >
         {`${L.batchUninstall} (${count})`}

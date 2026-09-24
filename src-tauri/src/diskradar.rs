@@ -76,7 +76,7 @@ fn disk_space_of(root: &str) -> Option<(f64, f64)> {
     }
 }
 
-fn is_local_fixed_drive(letter: char) -> bool {
+pub fn is_local_fixed_drive(letter: char) -> bool {
     #[cfg(windows)]
     {
         use windows::core::PCWSTR;
