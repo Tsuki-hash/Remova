@@ -28,6 +28,16 @@ function HoldButton({
     if (!holding) return;
     const start = performance.now();
     let raf = 0;
+    const cancelHold = () => {
+      setHolding(false);
+      setProgress(0);
+      cancelAnimationFrame(raf);
+    };
+    const onVis = () => {
+      if (document.visibilityState !== "visible") cancelHold();
+    };
+    window.addEventListener("blur", cancelHold);
+    document.addEventListener("visibilitychange", onVis);
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / holdMs);
       setProgress(p);
@@ -40,7 +50,11 @@ function HoldButton({
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      window.removeEventListener("blur", cancelHold);
+      document.removeEventListener("visibilitychange", onVis);
+      cancelAnimationFrame(raf);
+    };
   }, [holding, holdMs, onDone]);
 
   const base: CSSProperties = {

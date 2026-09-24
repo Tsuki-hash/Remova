@@ -40,7 +40,13 @@ export function useResidualState() {
     dispatch({ type: "monitoring/set", value });
   }, []);
   const setMonitorDiff = useCallback(
-    (value: { added_files: string[]; added_reg_values: string[] } | null) => {
+    (
+      value: {
+        added_files: string[];
+        added_reg_values: string[];
+        items?: import("../types").CleanupItem[];
+      } | null,
+    ) => {
       dispatch({ type: "monitorDiff/set", value });
     },
     [],

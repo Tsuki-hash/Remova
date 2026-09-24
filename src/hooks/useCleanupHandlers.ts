@@ -175,12 +175,20 @@ export function useCleanupHandlers({
     }
   }, [scan, selected, selectedPaths, setReport, setError, busyRef]);
 
-  const execReal = useCallback(async () => {
-    if (!scan || !selected) return;
-    if (busyRef.current) return;
+  const execReal = useCallback(async (opts?: { slotHeld?: boolean }) => {
+    if (!scan || !selected) {
+      if (opts?.slotHeld) busyRef.current = false;
+      return;
+    }
+    if (opts?.slotHeld) {
+      // Caller already owns busyRef (confirm pipeline).
+    } else if (busyRef.current) {
+      return;
+    } else {
+      busyRef.current = true;
+    }
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     verifySeqRef.current += 1;
-    busyRef.current = true;
     setDryRunning(true);
     try {
       const r = await api.fullCleanup(selected, items, {
@@ -259,11 +267,18 @@ export function useCleanupHandlers({
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
   const handleCleanupConfirm = useCallback(async () => {
     if (!scan) return;
-    if (busyRef.current) return;
+    if (busyRef.current) {
+      toast.info(L.errCleanupFailed("busy"));
+      return;
+    }
+    // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
+    busyRef.current = true;
+    try {
     const n = selectedPaths.size;
     if (n === 0) {
       // FE-N3: never confirm an empty cleanup set.
       toast.info(L.cleanup);
+      busyRef.current = false;
       return;
     }
     const picked = scan.items.filter((it) => selectedPaths.has(it.path));
@@ -319,9 +334,15 @@ export function useCleanupHandlers({
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
     });
-    if (!ok) return;
+    if (!ok) {
+      busyRef.current = false;
+      return;
+    }
     backupEnabledRef.current = checked;
-    void execReal();
+    await execReal({ slotHeld: true });
+    } catch {
+      busyRef.current = false;
+    }
   }, [
     scan,
     selected,
@@ -379,11 +400,13 @@ export function useCleanupHandlers({
           },
           checked,
         );
+        // List must reflect uninstalled apps immediately.
+        await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
       }
     },
-    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching],
+    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching, refreshApps],
   );
 
   const cancelBatch = useCallback(() => {

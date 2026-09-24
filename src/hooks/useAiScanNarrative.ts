@@ -85,6 +85,9 @@ export function useAiScanNarrative({
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
   useEffect(() => {
+    // Always invalidate in-flight explain when scan identity changes,
+    // even if this run is skipped because aiBusy.
+    aiExplainSeqRef.current += 1;
     scanUi.clearAiSummary();
     scanUi.clearRiskFilter();
     aiActions.clearAiScanState();

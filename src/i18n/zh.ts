@@ -46,6 +46,8 @@ export const dict = {
     toastBatchProgress: (i: number, n: number, name: string) => `[${i}/${n}] ${name}`,
     toastMonitorDiff: (files: number, regs: number) =>
       `安装差异：${files} 个文件 / ${regs} 条注册表`,
+    monitorDiffCounts: (files: number, regs: number) =>
+      `文件 ${files} · 注册表 ${regs}`,
     uninstallScanningLeftovers: "卸载完成，正在扫描残留…",
     admin: "管理员",
     nonAdmin: "非管理员",

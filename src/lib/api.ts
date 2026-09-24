@@ -38,6 +38,7 @@ export type FullCleanupOptions = {
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };
 export type DiskUsage = { free_gb: number; total_gb: number; drive?: string };
 export type MonitorDiff = { added_files: string[]; added_reg_values: string[] };
+export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
 
@@ -107,9 +108,7 @@ export const api = {
   estimateDirSizeKb: (path: string) => invoke<number>("estimate_dir_size_kb", { path }),
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
   beginInstallMonitor: () => invoke("begin_install_monitor"),
-  endInstallMonitor: () => invoke<MonitorDiff>("end_install_monitor"),
-  monitorDiffToItems: (diff: MonitorDiff) =>
-    invoke<CleanupItem[]>("monitor_diff_to_items", { diff }),
+  endInstallMonitor: () => invoke<MonitorEndResult>("end_install_monitor"),
   registerContextMenu: () => invoke("register_context_menu"),
   unregisterContextMenu: () => invoke("unregister_context_menu"),
   setStartupEnabled: (location: string, enabled: boolean) =>

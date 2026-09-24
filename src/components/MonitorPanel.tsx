@@ -22,7 +22,7 @@ export function MonitorPanel({
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <strong>{L.monitorDiff}</strong>
         <span style={css.muted}>
-          files={diff.added_files.length} · reg={diff.added_reg_values.length}
+          {L.monitorDiffCounts(diff.added_files.length, diff.added_reg_values.length)}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button

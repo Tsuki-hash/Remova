@@ -362,24 +362,37 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
+/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–4 digits.
+fn is_83_short_segment(seg: &str) -> bool {
+    let low = seg.to_ascii_lowercase();
+    let base = low.split('.').next().unwrap_or(low.as_str());
+    let Some((name, num)) = base.split_once('~') else {
+        return false;
+    };
+    if name.is_empty() || name.len() > 8 || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    !num.is_empty() && num.len() <= 4 && num.chars().all(|c| c.is_ascii_digit())
+}
+
 /// True when the path uses an abnormal Windows shape that can bypass prefix/segment matching:
-/// extended-length / device prefixes (`\\?\`, `\\.\`) or **known protected** 8.3 short names
-/// (`PROGRA~1`, `DOCUME~1`, …). Generic profile short names (`Users\RUNNER~1\…`) stay legal.
+/// extended-length / device prefixes (`\\?\`, `\\.\`) or any non-profile 8.3 short segment
+/// (`WINDOWS~1`, `PROGRA~3`, `COMMON~1`, …). Profile short names (`Users\RUNNER~1\…`) stay legal.
 pub fn is_abnormal_path_shape(p: &str) -> bool {
     let s = p.replace('/', "\\");
     if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
         return true;
     }
-    const SHORTS: &[&str] = &[
-        "progra~1", "progra~2", "docume~1", "mydocu~1", "downlo~1", "applic~1", "locals~1",
-        "shared~1", "public~1",
-    ];
-    for seg in s.split('\\') {
-        let low = seg.to_ascii_lowercase();
-        let base = low.split('.').next().unwrap_or(&low);
-        if SHORTS.contains(&base) {
-            return true;
+    let segs: Vec<&str> = s.split('\\').collect();
+    for (i, seg) in segs.iter().enumerate() {
+        if !is_83_short_segment(seg) {
+            continue;
         }
+        // Users\<short>\… is a legitimate profile home (CI `RUNNER~1`).
+        if i > 0 && segs[i - 1].eq_ignore_ascii_case("users") {
+            continue;
+        }
+        return true;
     }
     false
 }
@@ -409,7 +422,9 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     if looks_like_sync_conflict(&s) || is_user_data_path(&s) {
         return false;
     }
-    if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
+    // Same fail-closed shape gate as delete (8.3 short names / extended prefixes).
+    // Profile short homes (`Users\RUNNER~1\…`) remain legal via `is_abnormal_path_shape`.
+    if is_abnormal_path_shape(&s) {
         return false;
     }
     let low = s.replace('/', "\\").to_lowercase();
@@ -871,6 +886,25 @@ mod tests {
         assert!(!super::is_abnormal_path_shape(r"C:\Users\Aaron\Documents"));
         // `~` not followed by digits is not an 8.3 shape.
         assert!(!super::is_abnormal_path_shape(r"C:\foo~bar\baz"));
+        // Non-profile NAME~digits segments always abnormal (windows~1 / progra~3 / common~1).
+        assert!(super::is_abnormal_path_shape(r"C:\WINDOWS~1\System32\evil.dll"));
+        assert!(super::is_abnormal_path_shape(r"C:\PROGRA~3\Vendor\App"));
+        assert!(super::is_abnormal_path_shape(r"C:\PROGRA~1\Common Files\x"));
+        assert!(super::is_abnormal_path_shape(r"C:\COMMON~1\Microsoft Shared\x"));
+        assert!(super::is_abnormal_path_shape(r"C:\Users\Aaron\DOCUME~1\App"));
+        // Profile short home under Users stays legal.
+        assert!(!super::is_abnormal_path_shape(r"C:\Users\RUNNER~1\Documents\App"));
+        assert!(!super::is_abnormal_path_shape(r"C:\Users\RUNNER~1\AppData\Local\Acme"));
+        assert!(!super::is_safe_fs(Path::new(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(r"C:\PROGRA~1\App\bin.exe")));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\RUNNER~1\Documents\App\file.txt"
+        )));
         assert!(!super::is_safe_fs(Path::new(
             r"\\?\C:\Windows\System32\evil"
         )));

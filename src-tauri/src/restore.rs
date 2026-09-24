@@ -18,7 +18,21 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         let map: std::collections::BTreeMap<String, String> =
             serde_json::from_str(&raw).map_err(|e| e.to_string())?;
         for (rel, original) in &map {
+            // Map keys are single backup names under `files/` — never path-shaped.
+            if !is_safe_map_rel(rel) {
+                return Err(crate::error::restore_err(format!(
+                    "refusing unsafe backup entry name: {rel}"
+                ))
+                .to_ipc());
+            }
             let src = files_root.join(rel);
+            // Defense-in-depth: joined source must stay under files_root.
+            if !src.starts_with(&files_root) {
+                return Err(crate::error::restore_err(format!(
+                    "refusing escaped backup entry: {rel}"
+                ))
+                .to_ipc());
+            }
             if !src.exists() {
                 continue;
             }
@@ -27,7 +41,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             // A tampered path_map.json must not become an arbitrary-write primitive.
             if original.trim().is_empty()
                 || !crate::safety::is_safe_restore_target(&dest)
-                || crate::safety::looks_like_sync_conflict(&original)
+                || crate::safety::looks_like_sync_conflict(original)
             {
                 return Err(crate::error::restore_err(format!(
                     "refusing to restore into protected path: {original}"
@@ -36,8 +50,8 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             }
             // Library subpaths require a matching out-of-session seal (N-risk):
             // only destinations recorded at backup time may write back under Documents/….
-            if crate::safety::is_user_library_path(&original)
-                && !crate::path_seal::target_sealed(session, &map, &original)
+            if crate::safety::is_user_library_path(original)
+                && !crate::path_seal::target_sealed(session, &map, original)
             {
                 return Err(crate::error::restore_err(format!(
                     "refusing unsealed library restore: {original}"
@@ -277,7 +291,16 @@ pub fn list_session_names() -> Vec<String> {
 }
 
 pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
-    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
+    // Same session-name predicate as delete_session_by_name.
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(':')
+        || !is_session_name(name)
+    {
         return Err("invalid session name".into());
     }
     let path = crate::backup::backup_root().join(name);
@@ -388,6 +411,20 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     fs::remove_dir_all(&path).map_err(|e| e.to_string())
 }
 
+/// Backup map keys are opaque `{digest}_{name}` tokens written by backup — one path segment only.
+fn is_safe_map_rel(rel: &str) -> bool {
+    if rel.is_empty() || rel == "." || rel == ".." {
+        return false;
+    }
+    if rel.contains("..") || rel.contains('/') || rel.contains('\\') || rel.contains(':') {
+        return false;
+    }
+    if rel.starts_with('~') {
+        return false;
+    }
+    true
+}
+
 /// `YYYYMMDD-HHMMSS` prefix (digits only, fixed widths).
 fn is_session_name(name: &str) -> bool {
     // Legacy `YYYYMMDD-HHMMSS…` (optionally followed by `_extra`).
@@ -415,6 +452,17 @@ fn is_session_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn map_rel_rejects_traversal_and_absolute() {
+        assert!(super::is_safe_map_rel("abc123_file.txt"));
+        assert!(!super::is_safe_map_rel(""));
+        assert!(!super::is_safe_map_rel(".."));
+        assert!(!super::is_safe_map_rel("../evil"));
+        assert!(!super::is_safe_map_rel("a/b"));
+        assert!(!super::is_safe_map_rel(r"a\b"));
+        assert!(!super::is_safe_map_rel(r"C:\Windows\evil"));
+    }
 
     #[test]
     fn restore_missing_session_errors() {

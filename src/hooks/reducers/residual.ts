@@ -4,6 +4,8 @@ import { defaultSelectable } from "../../lib/decision";
 export type MonitorDiffState = {
   added_files: string[];
   added_reg_values: string[];
+  /** Server-computed cleanup items from `end_install_monitor` (trusted). */
+  items?: CleanupItem[];
 } | null;
 
 export type ResidualState = {

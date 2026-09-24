@@ -298,6 +298,10 @@ pub fn export_reg_value(
     if value_name.is_empty() {
         return Err("empty value name".into());
     }
+    // Value names are interpolated into .reg text — reject quote/newline injection.
+    if value_name.contains('"') || value_name.contains('\n') || value_name.contains('\r') {
+        return Err("unsafe value name".into());
+    }
     let (alias, rest) = key_path
         .split_once('\\')
         .ok_or_else(|| "bad key".to_string())?;
@@ -476,6 +480,7 @@ pub(crate) mod path_mock {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
+    #[allow(dead_code)]
     pub fn set_fail_read(v: bool) {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
@@ -881,6 +886,17 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn export_reg_value_rejects_unsafe_names() {
+        let tmp = std::env::temp_dir().join("remova_reg_inject_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let dest = tmp.join("value.reg");
+        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\"name", &dest).is_err());
+        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\r\nname", &dest).is_err());
+        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "", &dest).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn export_reg_value_writes_reg_or_false() {
         let tmp = std::env::temp_dir().join(format!("remova_value_reg_{}", std::process::id()));
