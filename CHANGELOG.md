@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.2.1] - 2026-09-24
 
-安全与正确性修复（第20版评审 G0 + G1/G2 全量消化）。
+安全与正确性修复。
 
 ### 安全
 
