@@ -1,4 +1,4 @@
-//! Read-only association scanner (Phase 1) 閳?parity-oriented port of Python association.
+//! Read-only association scanner (Phase 1) — parity-oriented port of Python association.
 
 use crate::safety::is_safe_to_delete_registry;
 use serde::{Deserialize, Serialize};
@@ -550,7 +550,7 @@ pub fn analyze_associations(
         });
     }
 
-    // 4. App Paths 閳?only when install location verifies
+    // 4. App Paths — only when install location verifies
     if let Some(install) = install.as_ref() {
         let install_str = install.to_string_lossy().to_lowercase();
         if !install_str.is_empty() {
@@ -638,10 +638,10 @@ pub fn analyze_associations(
         }
     }
 
-    // 6. Windows services (suspected / high 閳?display only)
+    // 6. Windows services (suspected / high — display only)
     reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
 
-    // 7. Scheduled tasks (suspected / high 閳?display only)
+    // 7. Scheduled tasks (suspected / high — display only)
     reg_scans::scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
@@ -663,7 +663,7 @@ pub fn analyze_associations(
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
         {
-            // Frontend i18n renders the user-data hint (ARCH-4) 閳?keep reason English-neutral.
+            // Frontend i18n renders the user-data hint (ARCH-4) — keep reason English-neutral.
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {

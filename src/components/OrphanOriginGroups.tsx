@@ -28,6 +28,8 @@ export function OrphanOriginGroups({
 }) {
   const L = t();
   const [openPath, setOpenPath] = useState<string | null>(null);
+  // REV-UX-10: per-group expansion — the 8-item cap must not hide reachable paths.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   if (groups.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
@@ -36,6 +38,8 @@ export function OrphanOriginGroups({
         const suggestPaths = g.items
           .filter((it) => bucketItem(it) === "suggest")
           .map((it) => it.path);
+        const isOpen = expanded.has(g.origin);
+        const shown = isOpen ? g.items : g.items.slice(0, 8);
         return (
           <div key={g.origin} style={{ ...css.card, padding: "10px 12px", fontSize: 12.5 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -70,7 +74,7 @@ export function OrphanOriginGroups({
               </div>
             </div>
             <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-              {g.items.slice(0, 8).map((it) => {
+              {shown.map((it) => {
                 const chip = riskChip(it, L);
                 const open = openPath === it.path;
                 return (
@@ -166,7 +170,25 @@ export function OrphanOriginGroups({
                   </div>
                 );
               })}
-              {g.items.length > 8 && <div style={css.muted}>… +{g.items.length - 8}</div>}
+              {g.items.length > 8 && (
+                <button
+                  type="button"
+                  style={{ ...css.btnGhost, height: 24, fontSize: 11, alignSelf: "flex-start" }}
+                  onClick={() =>
+                    setExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(g.origin)) {
+                        next.delete(g.origin);
+                      } else {
+                        next.add(g.origin);
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {isOpen ? L.orphanShowLess : L.orphanShowAll(g.items.length)}
+                </button>
+              )}
             </div>
           </div>
         );

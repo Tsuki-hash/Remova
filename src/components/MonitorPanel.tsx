@@ -4,6 +4,9 @@ import { cssStyles as css } from "../styles";
 export type MonitorDiffData = {
   added_files: string[];
   added_reg_values: string[];
+  /** REV-BE-10: entries beyond the diff caps — shown as an honest truncation note. */
+  files_truncated?: number;
+  reg_truncated?: number;
 };
 
 export function MonitorPanel({
@@ -21,6 +24,7 @@ export function MonitorPanel({
 }) {
   const L = t();
   const total = diff.added_files.length + diff.added_reg_values.length;
+  const truncated = (diff.files_truncated ?? 0) + (diff.reg_truncated ?? 0);
   return (
     <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -50,6 +54,11 @@ export function MonitorPanel({
           )}
         </div>
       </div>
+      {truncated > 0 && (
+        <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
+          {L.monitorTruncated(diff.files_truncated ?? 0, diff.reg_truncated ?? 0)}
+        </div>
+      )}
       <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
         {total === 0 ? (
           <div style={{ ...css.muted, padding: "8px 0" }}>{L.monitorEmptyHint}</div>

@@ -13,6 +13,11 @@ pub struct FsSnapshot {
 pub struct MonitorDiff {
     pub added_files: Vec<String>,
     pub added_reg_values: Vec<String>,
+    /// REV-BE-10: entries beyond the diff caps — honest truncation, not silence.
+    #[serde(default)]
+    pub files_truncated: usize,
+    #[serde(default)]
+    pub reg_truncated: usize,
 }
 
 /// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
@@ -113,7 +118,17 @@ struct FullSnapshot {
     reg: Vec<String>,
 }
 
+/// REV-BE-11: one monitor session per process — begin/end are serialized so
+/// concurrent calls (UI double-fire, tests) cannot interleave snapshot writes.
+fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
 pub fn begin() -> Result<(), String> {
+    let _guard = monitor_lock();
     let snap = FullSnapshot {
         fs: take_fs_snapshot(),
         reg: reg_value_names().into_iter().collect(),
@@ -127,6 +142,7 @@ pub fn begin() -> Result<(), String> {
 }
 
 pub fn end() -> Result<MonitorEndResult, String> {
+    let _guard = monitor_lock();
     let p = monitor_state_path();
     let raw =
         std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
@@ -134,21 +150,18 @@ pub fn end() -> Result<MonitorEndResult, String> {
     let _ = std::fs::remove_file(&p);
     let after = take_fs_snapshot();
     let after_reg = reg_value_names();
-    let added_files: Vec<String> = after
-        .files
-        .difference(&before.fs.files)
-        .take(200)
-        .cloned()
-        .collect();
+    let added_files_all: Vec<String> = after.files.difference(&before.fs.files).cloned().collect();
+    let files_truncated = added_files_all.len().saturating_sub(200);
+    let added_files: Vec<String> = added_files_all.into_iter().take(200).collect();
     let before_reg: BTreeSet<String> = before.reg.into_iter().collect();
-    let added_reg_values: Vec<String> = after_reg
-        .difference(&before_reg)
-        .take(100)
-        .cloned()
-        .collect();
+    let added_reg_all: Vec<String> = after_reg.difference(&before_reg).cloned().collect();
+    let reg_truncated = added_reg_all.len().saturating_sub(100);
+    let added_reg_values: Vec<String> = added_reg_all.into_iter().take(100).collect();
     let diff = MonitorDiff {
         added_files,
         added_reg_values,
+        files_truncated,
+        reg_truncated,
     };
     // Allow-list is armed only from this server-computed diff (never from client IPC).
     let items = diff_to_cleanup_items(&diff);
@@ -161,8 +174,10 @@ pub fn end() -> Result<MonitorEndResult, String> {
 }
 
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
-/// Paths added during a monitored install are strong evidence 鈫?Confirmed/Low.
+/// Paths added during a monitored install are strong evidence (Confirmed/Low).
 /// Noise (cache/temp/log) is demoted to Suspected/Medium so it is not auto-selected as "safe".
+/// REV-BE-12: user-data / library red lines use the same classification as the
+/// analyzer, never hardcoded `false`.
 pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupItem> {
     use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
     let mut items = Vec::new();
@@ -174,16 +189,21 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
             ItemKind::File
         };
         let noisy = is_noise_path(f);
+        let user_data =
+            crate::safety::is_user_data_path(f) || crate::safety::looks_like_sync_conflict(f);
+        let user_library = !user_data && crate::safety::is_user_library_path(f);
         items.push(CleanupItem {
             path: f.clone(),
             kind,
             score: if noisy { 40 } else { 70 },
-            confidence: if noisy {
+            confidence: if noisy && !user_data {
                 Confidence::Suspected
             } else {
                 Confidence::Confirmed
             },
-            risk: if noisy {
+            risk: if user_data {
+                RiskLevel::High
+            } else if noisy {
                 RiskLevel::Medium
             } else {
                 RiskLevel::Low
@@ -204,8 +224,8 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 detail: String::new(),
             }],
             shared: false,
-            user_data: false,
-            user_library: false,
+            user_data,
+            user_library,
             size_kb: None,
             bucket: None,
         });
@@ -245,10 +265,7 @@ mod tests {
     #[test]
     fn snapshot_roundtrip_shape() {
         // Isolated state path so parallel tests / leftover PROGRAMDATA cannot flake.
-        let tmp = std::env::temp_dir().join(format!(
-            "remova_mon_test_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
         let _ = std::fs::remove_file(tmp.join("monitor_snapshot.json"));
         let _ = std::fs::create_dir_all(&tmp);
         // end() without begin() must error even if a real snapshot exists elsewhere.
@@ -269,6 +286,8 @@ mod tests {
         let forged = MonitorDiff {
             added_files: vec![r"C:\Windows\System32\evil.dll".into()],
             added_reg_values: vec![],
+            files_truncated: 0,
+            reg_truncated: 0,
         };
         let items = diff_to_cleanup_items(&forged);
         assert_eq!(items.len(), 1);
@@ -279,6 +298,34 @@ mod tests {
             ),
             "pure conversion must not remember paths"
         );
+    }
+
+    /// REV-BE-12: monitor items carry the analyzer's user-data / library red lines.
+    #[test]
+    fn diff_to_cleanup_items_red_lines() {
+        let diff = MonitorDiff {
+            added_files: vec![
+                r"C:\Users\testuser\Documents\SaveGame Editor\saves.db".into(),
+                r"C:\Users\testuser\Documents".into(),
+                r"C:\Program Files\Vendor\App\new.dll".into(),
+            ],
+            added_reg_values: vec![],
+            files_truncated: 0,
+            reg_truncated: 0,
+        };
+        let items = diff_to_cleanup_items(&diff);
+        let under_docs = items.iter().find(|i| i.path.ends_with("saves.db")).unwrap();
+        assert!(under_docs.user_library, "under Documents → user_library");
+        assert!(!under_docs.user_data);
+        let docs_root = items
+            .iter()
+            .find(|i| i.path.ends_with("Documents"))
+            .unwrap();
+        assert!(docs_root.user_data, "Documents root → user_data");
+        assert_eq!(docs_root.risk, crate::scanner::RiskLevel::High);
+        assert!(!under_docs.user_data && !docs_root.user_library);
+        let pf = items.iter().find(|i| i.path.ends_with("new.dll")).unwrap();
+        assert!(!pf.user_data && !pf.user_library);
     }
 
     /// Convert path only; allow-list is armed by `end()` on the server diff.
@@ -292,6 +339,8 @@ mod tests {
             added_reg_values: vec![
                 r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{NEW}".into(),
             ],
+            files_truncated: 0,
+            reg_truncated: 0,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);
