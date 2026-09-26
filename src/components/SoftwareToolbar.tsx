@@ -184,6 +184,12 @@ export function SoftwareToolbar({
             }}
           >
             <div style={{ marginBottom: 8 }}>{L.guided}</div>
+            {/* REV-UX-09: real onboarding steps instead of an empty popover. */}
+            <ol style={{ margin: "0 0 10px", paddingLeft: 18, display: "grid", gap: 6 }}>
+              <li>{L.guideStep1}</li>
+              <li>{L.guideStep2}</li>
+              <li>{L.guideStep3}</li>
+            </ol>
             <button
               type="button"
               style={{ ...css.btnSm, height: 26, width: "100%" }}

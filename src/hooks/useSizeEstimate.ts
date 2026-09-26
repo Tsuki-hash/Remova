@@ -54,7 +54,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
     setSizeProgress({ done: 0, total });
     void api.beginSizeEstimate().catch(() => {});
 
-    (async () => {
+    void (async () => {
       let done = 0;
       let pendingFlush: Record<string, number> = {};
       const flush = () => {

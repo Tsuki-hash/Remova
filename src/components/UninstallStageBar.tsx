@@ -31,7 +31,7 @@ export function UninstallStageBar({
     analyze: L.stageAnalyzeLinked,
     report: L.stageDoneReport,
   };
-  const idx = ORDER.indexOf(stage as ActiveStage);
+  const idx = ORDER.indexOf(stage);
   return (
     <div
       style={{

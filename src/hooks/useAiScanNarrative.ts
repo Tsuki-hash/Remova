@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { api } from "../lib/api";
 import type { InstalledApp, ScanResult, CleanupReport, FullCleanupReport } from "../types";
 import type { Strings } from "../i18n";
@@ -51,6 +51,18 @@ export function useAiScanNarrative({
   aiActions: AiScanActions;
 }) {
   const aiExplainSeqRef = useRef(0);
+  // REV-FE-15: scan identity by content, not by name + item count — two scans
+  // of the same app with the same count but different paths must re-trigger.
+  const scanId = useMemo(() => {
+    if (!scan) return null;
+    let h = 5381;
+    const feed = (s: string) => {
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    };
+    feed(scan.app_name);
+    for (const it of scan.items) feed(it.path);
+    return `${scan.app_name}:${scan.items.length}:${h >>> 0}`;
+  }, [scan]);
   const runAiExplain = useCallback(async () => {
     if (!scan || !aiEnabled || aiBusy) return;
     const seq = ++aiExplainSeqRef.current;
@@ -100,8 +112,10 @@ export function useAiScanNarrative({
     if (scan && scan.items.length > 0 && aiEnabled) {
       void runAiExplain();
     }
+    // scanId (REV-FE-15) fully identifies scan content; runAiExplain is stable
+    // in the values it closes over.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scan?.app_name, scan?.items.length, aiEnabled]);
+  }, [scanId, aiEnabled]);
 
   const aiReportSeqRef = useRef(0);
   const runAiReport = useCallback(async () => {

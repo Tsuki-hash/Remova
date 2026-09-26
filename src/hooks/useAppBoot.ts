@@ -37,7 +37,7 @@ export function useAppBoot({
 }) {
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const list = await api.listApps();
         if (!cancelled) setApps(list);

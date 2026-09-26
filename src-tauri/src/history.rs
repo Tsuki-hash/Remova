@@ -1,8 +1,9 @@
 //! Local cleanup history jsonl.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,31 +25,11 @@ pub struct HistoryEntry {
 
 /// Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
 const HISTORY_SOFT_CAP: u64 = 2 * 1024 * 1024;
-/// Hard read bound — never load more than this into memory (N-risk).
-const HISTORY_HARD_CAP: u64 = 8 * 1024 * 1024;
 const HISTORY_KEEP_LINES: usize = 2000;
 
 fn history_path() -> PathBuf {
     let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
     PathBuf::from(pd).join("Remova").join("history.jsonl")
-}
-
-/// Read history text under a hard size bound. Oversized files are compacted first.
-fn read_history_bounded(p: &Path) -> Option<String> {
-    let meta = fs::metadata(p).ok()?;
-    if meta.len() > HISTORY_HARD_CAP {
-        // Compact in place (keep newest), then re-read under the bound.
-        if let Ok(raw) = fs::read_to_string(p) {
-            let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
-            let keep: Vec<&str> = lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
-            let _ = write_history_file(p, &keep.join("\n"));
-        } else {
-            return None;
-        }
-    }
-    fs::read_to_string(p)
-        .ok()
-        .filter(|s| s.len() as u64 <= HISTORY_HARD_CAP)
 }
 
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
@@ -59,22 +40,42 @@ fn line_hash(line: &str) -> String {
     format!("H{:016x}", crate::fsutil::fnv1a64(line))
 }
 
-/// Stable row id: content hash + occurrence index among identical lines.
-/// Distinct rows never collide, so delete-by-id removes exactly one of them.
-fn line_content_id(line: &str, nth: usize) -> String {
-    format!("{}-{nth}", line_hash(line))
+/// Stable row id in file order: content hash + occurrence index among identical
+/// lines (REV-SUP-08: computed streaming — no whole-file parse).
+fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
+    let h = line_hash(line);
+    let nth = seen.entry(h.clone()).or_insert(0);
+    let id = format!("{h}-{nth}");
+    *nth += 1;
+    id
 }
 
-/// Assign `H{hash}-{nth}` ids in file order (nth counts identical non-empty lines).
-fn with_ids<'a>(lines: impl Iterator<Item = &'a str>) -> impl Iterator<Item = (&'a str, String)> {
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    lines.filter(|l| !l.trim().is_empty()).map(move |line| {
-        let h = line_hash(line);
-        let nth = seen.entry(h.clone()).or_insert(0);
-        let id = line_content_id(line, *nth);
-        *nth += 1;
-        (line, id)
-    })
+/// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
+/// one line at a time through a ring buffer — memory is O(keep), never O(file)
+/// (REV-SUP-02; also removes the old unbounded whole-file read on oversize).
+/// Caller must hold [`FILE_LOCK`].
+fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
+    let file = fs::File::open(p)?;
+    let reader = std::io::BufReader::new(file);
+    let mut ring: VecDeque<String> = VecDeque::new();
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        if ring.len() == keep {
+            ring.pop_front();
+        }
+        ring.push_back(line);
+    }
+    let tmp = p.with_extension("jsonl.tmp");
+    let out = fs::File::create(&tmp)?;
+    let mut w = BufWriter::new(out);
+    for l in &ring {
+        writeln!(w, "{l}")?;
+    }
+    w.flush()?;
+    fs::rename(&tmp, p)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -115,12 +116,8 @@ pub fn append(
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
     if let Ok(meta) = fs::metadata(&p) {
         if meta.len() > HISTORY_SOFT_CAP {
-            if let Some(raw) = read_history_bounded(&p) {
-                let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
-                let keep: Vec<&str> =
-                    lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
-                let _ = write_history_file(&p, &keep.join("\n"));
-            }
+            // REV-SUP-02: streaming compact — no whole-file read.
+            let _ = compact_keep_newest(&p, HISTORY_KEEP_LINES);
         }
     }
     use std::io::Write;
@@ -132,49 +129,44 @@ pub fn append(
 }
 
 pub fn load(limit: usize) -> Vec<HistoryEntry> {
+    if limit == 0 {
+        return vec![];
+    }
     let _g = FILE_LOCK.lock().ok();
     let p = history_path();
-    let Some(raw) = read_history_bounded(&p) else {
+    let Ok(file) = fs::File::open(&p) else {
         return vec![];
     };
-    let mut out: Vec<HistoryEntry> = vec![];
-    for (line, id) in with_ids(raw.lines()) {
-        if let Ok(mut e) = serde_json::from_str::<HistoryEntry>(line) {
+    // REV-SUP-08: stream lines, keep only the newest `limit` in a ring, parse
+    // after the pass — memory is O(limit), not O(file); rows whose ids must be
+    // counted across the whole file still get file-order occurrence ids.
+    let reader = std::io::BufReader::new(file);
+    let mut ring: VecDeque<(String, String)> = VecDeque::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for line in reader.lines() {
+        let Ok(line) = line else { continue };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let id = next_line_id(&mut seen, &line);
+        if ring.len() == limit {
+            ring.pop_front();
+        }
+        ring.push_back((line, id));
+    }
+    let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
+    for (line, id) in ring.into_iter().rev() {
+        if let Ok(mut e) = serde_json::from_str::<HistoryEntry>(&line) {
             e.id = id;
             out.push(e);
         }
     }
-    out.reverse();
-    out.truncate(limit);
     out
 }
 
-/// Drop lines whose runtime id is in `drop_ids`. Ids are `H{hash}-{nth}`, so
-/// identical rows are addressed one-by-one and only the selected occurrences go.
-fn filter_raw_lines(raw: &str, drop_ids: &HashSet<String>) -> (String, usize) {
-    let mut out = String::new();
-    let mut removed = 0usize;
-    for (line, id) in with_ids(raw.lines()) {
-        if drop_ids.contains(&id) {
-            removed += 1;
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    (out, removed)
-}
-
-fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = p.with_extension("jsonl.tmp");
-    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, p).map_err(|e| e.to_string())
-}
-
-/// Delete rows by runtime ids returned from [`load`] (`H{hash}-{nth}`). Returns removed count.
+/// Delete rows by runtime ids returned from [`load`] (`H{hash}-{nth}`). Ids are
+/// `H{hash}-{nth}`, so identical rows are addressed one-by-one and only the
+/// selected occurrences go. Streams a full rewrite — one line in memory at a time.
 pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let mut drop_ids: HashSet<String> = HashSet::new();
     for id in ids {
@@ -188,15 +180,50 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     }
     let _g = FILE_LOCK.lock().ok();
     let p = history_path();
-    let Some(raw) = read_history_bounded(&p) else {
+    let Ok(file) = fs::File::open(&p) else {
         return Ok(0);
     };
-    let (next, removed) = filter_raw_lines(&raw, &drop_ids);
+    let tmp = p.with_extension("jsonl.tmp");
+    let out = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    let mut w = BufWriter::new(out);
+    let reader = std::io::BufReader::new(file);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut removed = 0usize;
+    for line in reader.lines() {
+        let Ok(line) = line else { continue };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let id = next_line_id(&mut seen, &line);
+        if drop_ids.contains(&id) {
+            removed += 1;
+            continue;
+        }
+        if writeln!(w, "{line}").is_err() {
+            let _ = fs::remove_file(&tmp);
+            return Err("history rewrite failed".into());
+        }
+    }
+    if w.flush().is_err() {
+        let _ = fs::remove_file(&tmp);
+        return Err("history rewrite failed".into());
+    }
+    drop(w);
     if removed == 0 {
+        let _ = fs::remove_file(&tmp);
         return Ok(0);
     }
-    write_history_file(&p, &next)?;
+    fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
     Ok(removed)
+}
+
+fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = p.with_extension("jsonl.tmp");
+    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
 /// Clear all cleanup history rows (does not touch backup sessions).
@@ -218,6 +245,7 @@ fn unix_now_secs() -> String {
 #[cfg(test)]
 mod tests {
     // history writes to PROGRAMDATA — skip disk tests; pure helpers only
+    use std::collections::HashMap;
 
     #[test]
     fn entry_serde_skips_id() {
@@ -247,56 +275,38 @@ mod tests {
     }
 
     #[test]
-    fn line_content_id_stable() {
-        let a = super::line_content_id("{\"app_name\":\"a\"}", 0);
-        let b = super::line_content_id("{\"app_name\":\"a\"}", 0);
-        let a1 = super::line_content_id("{\"app_name\":\"a\"}", 1);
-        let c = super::line_content_id("{\"app_name\":\"b\"}", 0);
-        assert_eq!(a, b);
-        assert_ne!(a, a1, "identical rows must get distinct ids");
-        assert_ne!(a, c);
-        assert!(a.starts_with('H'));
-        assert!(a.ends_with("-0"));
+    fn next_line_id_counts_occurrences_in_file_order() {
+        let mut seen = HashMap::new();
+        let a0 = super::next_line_id(&mut seen, "{\"app_name\":\"a\"}");
+        let a1 = super::next_line_id(&mut seen, "{\"app_name\":\"a\"}");
+        let a2 = super::next_line_id(&mut seen, "{\"app_name\":\"a\"}");
+        let b0 = super::next_line_id(&mut seen, "{\"app_name\":\"b\"}");
+        assert_ne!(a0, a1, "identical rows must get distinct ids");
+        assert_ne!(a0, a2);
+        assert_ne!(a0, b0, "distinct rows never collide on the same nth");
+        assert!(a0.starts_with('H') && a0.ends_with("-0"));
         assert!(a1.ends_with("-1"));
+        assert!(a2.ends_with("-2"));
+        // A fresh map restarts the occurrence counter (delete pass == load pass).
+        let mut fresh = HashMap::new();
+        assert_eq!(super::next_line_id(&mut fresh, "{\"app_name\":\"a\"}"), a0);
     }
 
+    /// REV-SUP-02: streaming compact keeps only the newest N non-empty lines.
     #[test]
-    fn filter_raw_lines_drops_selected() {
-        let raw = "{\"app_name\":\"a\"}\n{\"app_name\":\"b\"}\n{\"app_name\":\"c\"}\n";
-        let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert(super::line_content_id("{\"app_name\":\"b\"}", 0));
-        let (next, removed) = super::filter_raw_lines(raw, &drop);
-        assert_eq!(removed, 1);
-        assert_eq!(next, "{\"app_name\":\"a\"}\n{\"app_name\":\"c\"}\n");
-    }
-
-    #[test]
-    fn filter_raw_lines_identical_rows_delete_one_by_one() {
-        let raw = "{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n";
-        // Delete only the middle occurrence.
-        let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 1));
-        let (next, removed) = super::filter_raw_lines(raw, &drop);
-        assert_eq!(removed, 1);
-        assert_eq!(next, "{\"app_name\":\"a\"}\n{\"app_name\":\"a\"}\n");
-
-        // Delete two named occurrences together.
-        let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 0));
-        drop.insert(super::line_content_id("{\"app_name\":\"a\"}", 2));
-        let (next, removed) = super::filter_raw_lines(raw, &drop);
-        assert_eq!(removed, 2);
-        assert_eq!(next, "{\"app_name\":\"a\"}\n");
-    }
-
-    #[test]
-    fn filter_raw_lines_ignores_unknown_ids() {
-        let raw = "{\"app_name\":\"a\"}\n";
-        let mut drop: std::collections::HashSet<String> = Default::default();
-        drop.insert("Hffffffffffffffff-0".into());
-        let (next, removed) = super::filter_raw_lines(raw, &drop);
-        assert_eq!(removed, 0);
-        assert_eq!(next, "{\"app_name\":\"a\"}\n");
+    fn compact_keep_newest_keeps_tail() {
+        let tmp = std::env::temp_dir().join(format!("remova_hist_c_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let p = tmp.join("history.jsonl");
+        std::fs::write(&p, "l1\nl2\nl3\nl4\n\nl5\n").unwrap();
+        super::compact_keep_newest(&p, 3).unwrap();
+        let s = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(s, "l3\nl4\nl5\n");
+        // Keeping more than present is a no-op.
+        super::compact_keep_newest(&p, 10).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "l3\nl4\nl5\n");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Disk round-trip under a temp PROGRAMDATA (does not touch the real history file).

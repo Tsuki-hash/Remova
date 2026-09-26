@@ -394,8 +394,23 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [batching, dryRunning]);
 
-  usePendingAnalyze({ loading, apps, goNav, setSelected: core.setSelected, analyze, setQ });
-  useDragDropAnalyze({ apps, setSelected: core.setSelected, analyze });
+  usePendingAnalyze({
+    loading,
+    apps,
+    goNav,
+    setSelected: core.setSelected,
+    analyze: (a) => {
+      void analyze(a);
+    },
+    setQ,
+  });
+  useDragDropAnalyze({
+    apps,
+    setSelected: core.setSelected,
+    analyze: (a) => {
+      void analyze(a);
+    },
+  });
 
   const toggleMulti = useCallback(
     (key: string) => {
@@ -484,7 +499,9 @@ export default function App() {
           onAnalyze={openAnalyzeFromDrawer}
           onOfficialOnly={(app) => void openOfficialOnly(app)}
           onForceClean={(app) => void forceClean(app)}
-          onOpenPath={openPathSafe}
+          onOpenPath={(p) => {
+            void openPathSafe(p);
+          }}
           onDrillDown={drillDownBucket}
           onViewLeftovers={() => setKindFilter(null)}
         />

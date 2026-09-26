@@ -156,7 +156,7 @@ describe("useSoftwareController mapping (REV-QA-02)", () => {
       useSoftwareController(input({ setCopilotList, setQ, setCategoryState })),
     );
     const list = [app("A"), app("B")];
-    result.current.onCopilotApplyFilter!(list);
+    result.current.onCopilotApplyFilter(list);
     expect(setCopilotList).toHaveBeenCalledWith(list);
     expect(setQ).toHaveBeenCalledWith("");
     expect(setCategoryState).toHaveBeenCalledWith("all");
@@ -169,7 +169,7 @@ describe("useSoftwareController mapping (REV-QA-02)", () => {
       useSoftwareController(input({ core: { ...input().core, setMulti }, setCopilotList })),
     );
     const list = [app("A"), app("B")];
-    result.current.onCopilotBatch!(list);
+    result.current.onCopilotBatch(list);
     expect(setMulti).toHaveBeenCalledWith(new Set(list.map(appKey)));
     expect(setCopilotList).toHaveBeenCalledWith(list);
     expect(toast.info).toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe("useSoftwareController mapping (REV-QA-02)", () => {
         }),
       ),
     );
-    result.current.onGoOrphans!();
+    result.current.onGoOrphans();
     expect(closeCheckup).toHaveBeenCalled();
     expect(goNav).toHaveBeenCalledWith("orphans");
   });
@@ -203,7 +203,7 @@ describe("useSoftwareController mapping (REV-QA-02)", () => {
         }),
       ),
     );
-    result.current.onIgnoreApplied!(["Acme"], ["DemoApp"]);
+    result.current.onIgnoreApplied(["Acme"], ["DemoApp"]);
     expect(setIgnorePub).toHaveBeenCalledWith(["Acme"]);
     expect(setIgnoreName).toHaveBeenCalledWith(["DemoApp"]);
     expect(clearIgnoreSuggestions).toHaveBeenCalled();

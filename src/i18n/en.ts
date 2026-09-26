@@ -64,6 +64,9 @@ export const dict: EnDict = {
     guided:
       "Deep uninstall loop: click a row for details → Uninstall → official uninstaller → auto-scan leftovers → classify → you confirm → optional backup → clean. Orphans/system items are in nav; advanced tools under More.",
     closeGuide: "Got it",
+    guideStep1: "1. Click an app row → Deep Uninstall runs the official uninstaller",
+    guideStep2: "2. Leftovers are scanned automatically and sorted safe / confirm / keep",
+    guideStep3: "3. Select items (optional backup) → clean; restore anytime from Restore",
     versionNew: "New version available",
     versionDownload: "Download",
     versionCheck: "Check for updates",

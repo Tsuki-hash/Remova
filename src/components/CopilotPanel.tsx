@@ -57,7 +57,7 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
   if (gb) sizeGtKb = Math.round(Number(gb[1]) * 1024 * 1024);
   else if (mb) sizeGtKb = Math.round(Number(mb[1]) * 1024);
   if (sizeGtKb && sizeGtKb > 0) {
-    list = list.filter((a) => a.estimated_size_kb >= sizeGtKb!);
+    list = list.filter((a) => a.estimated_size_kb >= sizeGtKb);
   }
 
   const action: NlIntent["action"] = /分析|analyze/i.test(raw)
@@ -286,7 +286,7 @@ export function CopilotPanel({
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
                 onClick={() => onForceClean(matches[0]!)}
               >
-                {L.copilotRunForceN(matches[0]!.name)}
+                {L.copilotRunForceN(matches[0].name)}
               </button>
             )}
           </div>

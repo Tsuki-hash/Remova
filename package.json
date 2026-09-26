@@ -16,6 +16,7 @@
     "package:portable": "pwsh -NoProfile -File scripts/package-portable.ps1",
     "smoke:dist": "pwsh -NoProfile -File scripts/smoke-dist.ps1",
     "smoke:portable": "pwsh -NoProfile -File scripts/smoke-portable.ps1",
+    "smoke:launch": "pwsh -NoProfile -File scripts/smoke-launch.ps1",
     "smoke:app": "pwsh -NoProfile -File scripts/smoke-app.ps1",
     "tauri": "tauri"
   },

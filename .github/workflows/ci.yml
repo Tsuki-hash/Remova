@@ -94,6 +94,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx tauri build
+      - name: install WebView2 (launch smoke prerequisite)
+        shell: pwsh
+        run: |
+          $dl = "$env:RUNNER_TEMP\webview2.exe"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
+          Start-Process -FilePath $dl -Args "/silent /install" -Wait
+      - name: app launch smoke (REV-QA-07)
+        shell: pwsh
+        run: npm run smoke:launch
       - name: app binary smoke
         shell: pwsh
         run: npm run smoke:app

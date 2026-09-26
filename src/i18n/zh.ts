@@ -51,6 +51,9 @@ export const dict = {
     guided:
       "深度卸载闭环：点软件行看详情 → 卸载 → 官方程序 → 自动扫残留 → 分类 → 你确认 → 可选备份 → 清理。孤儿/系统项在导航里；高级工具在「更多」。",
     closeGuide: "知道了",
+    guideStep1: "① 在列表点软件行 → 「深度卸载」调用官方卸载程序",
+    guideStep2: "② 卸载完成自动扫描残留，按 可清理 / 建议确认 / 保留 分类",
+    guideStep3: "③ 勾选要清理的项（可选先备份）→ 清理；出问题可在「还原」找回",
     versionNew: "发现新版本",
     versionDownload: "去下载",
     versionCheck: "检查更新",

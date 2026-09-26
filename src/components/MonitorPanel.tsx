@@ -1,13 +1,7 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-
-export type MonitorDiffData = {
-  added_files: string[];
-  added_reg_values: string[];
-  /** REV-BE-10: entries beyond the diff caps — shown as an honest truncation note. */
-  files_truncated?: number;
-  reg_truncated?: number;
-};
+// REV-FE-09: single source for the monitor DTO — no component-local duplicate.
+import type { MonitorDiff } from "../lib/api";
 
 export function MonitorPanel({
   diff,
@@ -16,7 +10,7 @@ export function MonitorPanel({
   onDismiss,
   onClose,
 }: {
-  diff: MonitorDiffData;
+  diff: MonitorDiff;
   monitoring?: boolean;
   onToCleanup: () => void;
   onDismiss: () => void;
