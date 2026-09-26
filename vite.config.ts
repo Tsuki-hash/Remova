@@ -24,12 +24,13 @@ export default defineConfig({
       include: ["src/lib/**", "src/hooks/**"],
       exclude: ["src/lib/api.ts"],
       thresholds: {
-        // Baseline 2026-09-26 (lines 44.15 / stmts 43.18 / branches 46.97 /
-        // functions 40.2) minus a small margin — tighten as hooks coverage grows.
-        statements: 41,
-        branches: 45,
-        functions: 38,
-        lines: 42,
+        // 2026-09-26 (post batch: boot/controller/closeMode/theme/deep pipeline
+        // tests): lines 51.3 / stmts 49.97 / branches 50.73 / funcs 46.15.
+        // Tighten further as hooks coverage grows.
+        statements: 48,
+        branches: 49,
+        functions: 44,
+        lines: 49,
       },
     },
   },

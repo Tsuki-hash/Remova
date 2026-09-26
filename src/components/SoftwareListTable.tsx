@@ -33,7 +33,7 @@ export function SoftwareListTable({
   filtered: InstalledApp[];
   loading: boolean;
   q: string;
-  category: string | CategoryId;
+  category: CategoryId;
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;

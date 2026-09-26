@@ -169,7 +169,7 @@ export function useAppChrome({
   }, [monitoring, L, residual, flow]);
 
   const monitorDiffToCleanup = useCallback(
-    async (_diff: { added_files: string[]; added_reg_values: string[] }) => {
+    (_diff: { added_files: string[]; added_reg_values: string[] }) => {
       try {
         // Trusted items only: captured when the server finished the monitor snapshot.
         const items = residual.monitorDiff?.items ?? [];

@@ -27,7 +27,25 @@ pub struct MonitorEndResult {
     pub items: Vec<crate::scanner::CleanupItem>,
 }
 
+// Q-T01: tests must never touch the real PROGRAMDATA snapshot — the override
+// is compile-time test-only and every test clears it when done.
+#[cfg(test)]
+static TEST_STATE_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn set_test_state_path(p: Option<PathBuf>) {
+    *TEST_STATE_PATH.lock().unwrap_or_else(|e| e.into_inner()) = p;
+}
+
 fn monitor_state_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(p) = TEST_STATE_PATH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return p;
+    }
     let base = std::env::var("PROGRAMDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData"));
@@ -85,12 +103,29 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
 
 fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
-    let mut budget = crate::constants::INSTALLMON_PATH_BUDGET;
+    let mut budget = walk_budget();
     for r in roots() {
         walk_names(&r, &mut files, &mut budget);
     }
     FsSnapshot { files }
 }
+
+// Q-T01: tests shrink the walk budget so begin/end roundtrips stay fast.
+#[cfg(test)]
+fn walk_budget() -> usize {
+    std::cmp::min(
+        crate::constants::INSTALLMON_PATH_BUDGET,
+        TEST_BUDGET.load(std::sync::atomic::Ordering::SeqCst),
+    )
+}
+
+#[cfg(not(test))]
+fn walk_budget() -> usize {
+    crate::constants::INSTALLMON_PATH_BUDGET
+}
+
+#[cfg(test)]
+static TEST_BUDGET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(200);
 
 fn reg_value_names() -> BTreeSet<String> {
     let mut set = BTreeSet::new();
@@ -264,19 +299,20 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip_shape() {
-        // Isolated state path so parallel tests / leftover PROGRAMDATA cannot flake.
+        // Q-T01: isolated state path — tests never touch real PROGRAMDATA.
         let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
-        let _ = std::fs::remove_file(tmp.join("monitor_snapshot.json"));
         let _ = std::fs::create_dir_all(&tmp);
-        // end() without begin() must error even if a real snapshot exists elsewhere.
-        let e = super::end();
-        assert!(e.is_err() || !super::monitor_state_path().exists() || true);
-        // Contract: end without a readable snapshot errors. Clear any real leftover first.
-        if super::monitor_state_path().exists() {
-            let _ = std::fs::remove_file(super::monitor_state_path());
-        }
+        let state = tmp.join("monitor_snapshot.json");
+        set_test_state_path(Some(state.clone()));
+        // end() without begin() must error (no snapshot at the injected path).
         let e2 = super::end();
         assert!(e2.is_err());
+        // begin() writes the snapshot at the injected path; end() consumes it.
+        super::begin().unwrap();
+        assert!(state.exists());
+        super::end().unwrap();
+        assert!(!state.exists(), "end() consumes the snapshot");
+        set_test_state_path(None);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

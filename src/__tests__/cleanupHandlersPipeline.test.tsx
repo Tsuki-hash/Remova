@@ -33,7 +33,12 @@ vi.mock("../lib/batchEngine", () => ({
 }));
 
 import { useCleanupHandlers } from "../hooks/useCleanupHandlers";
+import { runBatchCleanup } from "../lib/batchEngine";
+import { toast } from "../lib/toast";
+
+const runBatchCleanupMock = vi.mocked(runBatchCleanup);
 import { t } from "../i18n";
+import { appKey } from "../lib/appKey";
 
 function app(): InstalledApp {
   return {
@@ -194,5 +199,199 @@ describe("useCleanupHandlers confirm / force pipeline (REV-QA-02)", () => {
     expect(busyRef.current).toBe(true);
     expect(fullCleanup).not.toHaveBeenCalled();
     expect(analyze).not.toHaveBeenCalled();
+  });
+});
+
+describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
+  const mkApp = (n: string): InstalledApp => ({ ...app(), name: n, registry_key: n });
+
+  function setupDeep(
+    opts: {
+      selectedPaths?: Set<string>;
+      apps?: InstalledApp[];
+      multi?: Set<string>;
+    } = {},
+  ) {
+    const busyRef = { current: false };
+    const refreshApps = vi.fn().mockResolvedValue(undefined);
+    const flowDeep: CleanupFlowSetters = {
+      setMulti: vi.fn(),
+      setResidualFromUninstall: noop,
+      setAiRisk: noop,
+      setReport: vi.fn(),
+      setVerifyRows: noop,
+      setAiReportNote: noop,
+      setError: vi.fn(),
+    };
+    const hook = renderHook(() =>
+      useCleanupHandlers({
+        L: t(),
+        selected: app(),
+        scan: scan(),
+        selectedPaths: opts.selectedPaths ?? new Set(["C:\\Program Files\\DemoApp\\x"]),
+        residualFromUninstall: false,
+        useOfficial: false,
+        aiEnabled: false,
+        aiRisk: null,
+        apps: opts.apps ?? [],
+        multi: opts.multi ?? new Set<string>(),
+        flow: flowDeep,
+        refreshApps,
+        busyRef,
+      }),
+    );
+    return { ...hook, busyRef, refreshApps, flowDeep };
+  }
+
+  beforeEach(() => {
+    requestConfirmEx.mockReset();
+    fullCleanup.mockReset();
+    analyze.mockReset();
+    runBatchCleanupMock.mockReset();
+    vi.mocked(toast.info).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
+  });
+
+  it("handleCleanupConfirm cancel frees busy without executing", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: false, checked: false });
+    const { result, busyRef } = setupDeep();
+    await act(async () => {
+      await result.current.handleCleanupConfirm();
+    });
+    expect(requestConfirmEx).toHaveBeenCalledTimes(1);
+    expect(fullCleanup).not.toHaveBeenCalled();
+    expect(busyRef.current).toBe(false);
+  });
+
+  it("handleCleanupConfirm confirm executes with the checkbox backup flag", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: true });
+    fullCleanup.mockResolvedValue(report());
+    const { result, busyRef, flowDeep } = setupDeep();
+    await act(async () => {
+      await result.current.handleCleanupConfirm();
+    });
+    expect(fullCleanup).toHaveBeenCalledTimes(1);
+    const opts = fullCleanup.mock.calls[0]![2] as { backup_enabled: boolean };
+    expect(opts.backup_enabled).toBe(true);
+    expect(flowDeep.setReport).toHaveBeenCalled();
+    expect(busyRef.current).toBe(false);
+  });
+
+  it("handleCleanupConfirm with empty selection only hints", async () => {
+    const { result, busyRef } = setupDeep({ selectedPaths: new Set() });
+    await act(async () => {
+      await result.current.handleCleanupConfirm();
+    });
+    expect(requestConfirmEx).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(t().selectRowHint);
+    expect(busyRef.current).toBe(false);
+  });
+
+  it("batchCleanup with no selected apps only hints", async () => {
+    const { result } = setupDeep({ apps: [], multi: new Set() });
+    await act(async () => {
+      await result.current.batchCleanup();
+    });
+    expect(requestConfirmEx).not.toHaveBeenCalled();
+    expect(runBatchCleanupMock).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(t().selectRowHint);
+  });
+
+  it("batchCleanup confirm runs the engine and refreshes the list", async () => {
+    const a1 = mkApp("AppA");
+    const a2 = mkApp("AppB");
+    runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
+      // Mirror the engine contract: it owns the busy slot for the whole run
+      // and reports finished keys so multi can be pruned.
+      cb.busyRef.current = true;
+      cb.onDoneKeys([appKey(a1)]);
+      cb.busyRef.current = false;
+    });
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const { result, busyRef, refreshApps, flowDeep } = setupDeep({
+      apps: [a1, a2],
+      multi: new Set([appKey(a1), appKey(a2)]),
+    });
+    await act(async () => {
+      await result.current.batchCleanup();
+    });
+    expect(runBatchCleanupMock).toHaveBeenCalledTimes(1);
+    const [queue, useOfficial, , , backup] = runBatchCleanupMock.mock.calls[0]! as [
+      InstalledApp[],
+      boolean,
+      unknown,
+      unknown,
+      boolean,
+    ];
+    expect(queue).toHaveLength(2);
+    expect(useOfficial).toBe(true); // beginner batch runs official uninstallers
+    expect(backup).toBe(false);
+    expect(refreshApps).toHaveBeenCalledTimes(1);
+    expect(busyRef.current).toBe(false);
+    expect(flowDeep.setMulti).toHaveBeenCalled(); // onDoneKeys pruning
+  });
+
+  it("batchCleanup cancel never reaches the engine", async () => {
+    const a1 = mkApp("AppA");
+    requestConfirmEx.mockResolvedValue({ ok: false, checked: false });
+    const { result } = setupDeep({ apps: [a1], multi: new Set([appKey(a1)]) });
+    await act(async () => {
+      await result.current.batchCleanup();
+    });
+    expect(requestConfirmEx).toHaveBeenCalledTimes(1);
+    expect(runBatchCleanupMock).not.toHaveBeenCalled();
+  });
+
+  it("REV-FE-10: busyRef taken while the dialog was open blocks the engine", async () => {
+    const a1 = mkApp("AppA");
+    const hook = setupDeep({ apps: [a1], multi: new Set([appKey(a1)]) });
+    const busyRefRef = hook.busyRef;
+    requestConfirmEx.mockImplementation(async () => {
+      // Another cleanup wins the busy slot while the dialog is open.
+      busyRefRef.current = true;
+      return { ok: true, checked: false };
+    });
+    await act(async () => {
+      await hook.result.current.batchCleanup();
+    });
+    expect(runBatchCleanupMock).not.toHaveBeenCalled();
+    // The other owner still holds the slot — batchCleanup must not free it.
+    expect(hook.busyRef.current).toBe(true);
+  });
+
+  it("retryFailedBatch re-arms failed keys and hides the summary", async () => {
+    const a1 = mkApp("AppA");
+    const a2 = mkApp("AppB");
+    runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
+      cb.onSetBatching(true);
+      cb.onResults([
+        { key: appKey(a1), name: a1.name, status: "failed", detail: "x" },
+        { key: appKey(a2), name: a2.name, status: "ok", detail: "" },
+      ]);
+      cb.onShowSummary(true);
+    });
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const { result, flowDeep } = setupDeep({
+      apps: [a1, a2],
+      multi: new Set([appKey(a1), appKey(a2)]),
+    });
+    await act(async () => {
+      await result.current.batchCleanup();
+    });
+    expect(result.current.showBatchSummary).toBe(true);
+    act(() => {
+      result.current.retryFailedBatch();
+    });
+    expect(flowDeep.setMulti).toHaveBeenCalledWith(new Set([appKey(a1)]));
+    expect(result.current.showBatchSummary).toBe(false);
+  });
+
+  it("cancelBatch signals the cancel ref and toasts", () => {
+    const { result } = setupDeep();
+    act(() => {
+      result.current.cancelBatch();
+    });
+    expect(toast.info).toHaveBeenCalledWith(t().batchCancelHint);
   });
 });

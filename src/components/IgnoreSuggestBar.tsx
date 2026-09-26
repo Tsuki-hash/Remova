@@ -39,14 +39,16 @@ export function IgnoreSuggestBar({
       </span>
       <button
         style={css.btnSm}
-        onClick={async () => {
-          try {
-            const ig = await api.applyIgnoreSuggestions(suggestions);
-            onApplied(ig.publishers || [], ig.names || []);
-            toast.success(L.ignoreSuggestDone);
-          } catch (e) {
-            toast.error(formatError(e));
-          }
+        onClick={() => {
+          void (async () => {
+            try {
+              const ig = await api.applyIgnoreSuggestions(suggestions);
+              onApplied(ig.publishers || [], ig.names || []);
+              toast.success(L.ignoreSuggestDone);
+            } catch (e) {
+              toast.error(formatError(e));
+            }
+          })();
         }}
       >
         {L.ignoreSuggestApply}

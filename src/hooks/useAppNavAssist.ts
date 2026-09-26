@@ -71,7 +71,7 @@ export function useDragDropAnalyze({
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
         const webview = getCurrentWebview();

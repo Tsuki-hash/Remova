@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
+import { VirtualList } from "./ui/VirtualList";
 import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -113,11 +114,15 @@ export function DiskRadarPanel({
           </button>
         </div>
       </div>
-      <div style={{ maxHeight: 320, overflow: "auto", marginTop: 10 }}>
-        {busy && !rows && <div style={css.muted}>{L.loadingApps}</div>}
-        {rows?.map((r) => (
+      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.loadingApps}</div>}
+      <VirtualList
+        items={rows ?? []}
+        height={320}
+        estimateSize={72}
+        empty={<div style={css.muted}>{L.orphanScanEmpty}</div>}
+        keyOf={(r) => r.path}
+        renderItem={(r) => (
           <div
-            key={r.path}
             style={{
               display: "flex",
               gap: 10,
@@ -126,7 +131,6 @@ export function DiskRadarPanel({
               borderRadius: 8,
               border: "1px solid var(--border)",
               background: "var(--surface-2)",
-              marginBottom: 6,
             }}
           >
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -151,9 +155,8 @@ export function DiskRadarPanel({
               {L.openLocation}
             </button>
           </div>
-        ))}
-        {rows && rows.length === 0 && <div style={css.muted}>{L.orphanScanEmpty}</div>}
-      </div>
+        )}
+      />
     </div>
   );
 }

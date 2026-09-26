@@ -174,12 +174,14 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             title={report.backup_dir}
-            onClick={async () => {
-              try {
-                await api.openPath(report.backup_dir);
-              } catch (e) {
-                toast.error(formatError(e));
-              }
+            onClick={() => {
+              void (async () => {
+                try {
+                  await api.openPath(report.backup_dir);
+                } catch (e) {
+                  toast.error(formatError(e));
+                }
+              })();
             }}
           >
             {L.openBackupDir}
@@ -189,18 +191,20 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}
-            onClick={async () => {
-              onAiReportBusy(true);
-              try {
-                const note = await runAiReportSummary(report);
-                onAiReportNote(note);
-                if (!note) toast.error(L.aiFailed);
-              } catch (e) {
-                // REV-SUP-05: mapped backend cause instead of one generic string.
-                toast.error(formatError(e));
-              } finally {
-                onAiReportBusy(false);
-              }
+            onClick={() => {
+              void (async () => {
+                onAiReportBusy(true);
+                try {
+                  const note = await runAiReportSummary(report);
+                  onAiReportNote(note);
+                  if (!note) toast.error(L.aiFailed);
+                } catch (e) {
+                  // REV-SUP-05: mapped backend cause instead of one generic string.
+                  toast.error(formatError(e));
+                } finally {
+                  onAiReportBusy(false);
+                }
+              })();
             }}
           >
             {aiReportBusy ? L.aiReportBusy : L.aiReportSummary}
