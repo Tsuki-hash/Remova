@@ -72,7 +72,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
 }
 
 /// Whether a LOCALAPPDATA/APPDATA child dir name looks like a product WebView2/Electron
-/// mask. Name match is REQUIRED 閳?a folder that merely contains EBWebView is not evidence (SEC-2).
+/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence (SEC-2).
 pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> bool {
     let low = dir_name.to_lowercase();
     if !low.ends_with(".exe") && !low.contains("ebwebview") {
@@ -110,7 +110,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Name match is REQUIRED 閳?WebView2 folder alone is not evidence (SEC-2).
+            // Name match is REQUIRED — WebView2 folder alone is not evidence (SEC-2).
             if !webview_mask_matches(fname, name_slugs) {
                 continue;
             }
@@ -218,13 +218,12 @@ fn walk_shortcuts(
                     // Case-insensitive ASCII peek (paths in LNK are mixed-case).
                     let peek_lc = peek.to_ascii_lowercase();
                     !install_low.is_empty() && {
-                        find_bytes(&peek_lc, install_low.as_bytes())
-                            || {
-                                let u16s: Vec<u16> = install_low.encode_utf16().collect();
-                                let bytes: Vec<u8> =
-                                    u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
-                                find_bytes(peek, &bytes)
-                            }
+                        find_bytes(&peek_lc, install_low.as_bytes()) || {
+                            let u16s: Vec<u16> = install_low.encode_utf16().collect();
+                            let bytes: Vec<u8> =
+                                u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
+                            find_bytes(peek, &bytes)
+                        }
                     }
                 } else {
                     false

@@ -136,6 +136,34 @@ pub fn allow_manage_reg_write(
     Ok(())
 }
 
+/// REV-SEC-14: intrinsic write-target allowlist for registry value primitives.
+/// Covers every legitimate writer in the codebase — Uninstall roots (product
+/// metadata), Run/RunOnce + StartupApproved (startup management), per-service
+/// keys (start type) and Remova's own context-menu key — so a value write can
+/// never land outside these shapes even if a future caller forgets its gate.
+pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
+    let low = normalize_hklm(key_path);
+    const UNINSTALL_ROOTS: &[&str] = &[
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKLM\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKCU\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+    ];
+    const SERVICES_PREFIX: &str = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES\\";
+    const REMOVA_MENU_PREFIX: &str = "HKCU\\SOFTWARE\\CLASSES\\*\\SHELL\\REMOVADEEPUNINSTALL";
+    if UNINSTALL_ROOTS
+        .iter()
+        .any(|r| low == *r || low.starts_with(&format!("{r}\\")))
+        || is_allowed_run_key(key_path)
+        || is_allowed_startup_approved_key(key_path)
+        || (low.starts_with(SERVICES_PREFIX) && low.len() > SERVICES_PREFIX.len())
+        || low.starts_with(REMOVA_MENU_PREFIX)
+    {
+        return Ok(());
+    }
+    Err(crate::error::safety_err(format!("registry write outside allowlist: {key_path}")).to_ipc())
+}
+
 fn normalize_hklm(key_path: &str) -> String {
     let low = key_path.replace('/', "\\").to_uppercase();
     let low = low
@@ -577,6 +605,40 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// REV-SEC-14: registry value primitives may only write inside the allowlist.
+    #[test]
+    fn reg_value_write_allowlist() {
+        // Allowed shapes.
+        assert!(allow_reg_value_write(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\App"
+        )
+        .is_ok());
+        assert!(
+            allow_reg_value_write(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run").is_ok()
+        );
+        assert!(allow_reg_value_write(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+        )
+        .is_ok());
+        assert!(
+            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc").is_ok()
+        );
+        assert!(allow_reg_value_write(
+            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall\command"
+        )
+        .is_ok());
+        // Everything else is refused — even plausible-but-unlisted keys.
+        assert!(allow_reg_value_write(r"HKCU\Software\Vendor\Config").is_err());
+        assert!(allow_reg_value_write(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe"
+        )
+        .is_err());
+        assert!(allow_reg_value_write(r"HKCU\Environment").is_err());
+        assert!(allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services").is_err());
+        assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool").is_err());
+        assert!(allow_reg_value_write("").is_err());
+    }
+
     #[test]
     fn fs_rejects_drive_root() {
         assert!(!is_safe_fs(Path::new(r"C:\")));
@@ -905,21 +967,33 @@ mod tests {
         // `~` not followed by digits is not an 8.3 shape.
         assert!(!super::is_abnormal_path_shape(r"C:\foo~bar\baz"));
         // Non-profile NAME~digits segments always abnormal (windows~1 / progra~3 / common~1).
-        assert!(super::is_abnormal_path_shape(r"C:\WINDOWS~1\System32\evil.dll"));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        ));
         assert!(super::is_abnormal_path_shape(r"C:\PROGRA~3\Vendor\App"));
         assert!(super::is_abnormal_path_shape(r"C:\PROGRA~1\Common Files\x"));
-        assert!(super::is_abnormal_path_shape(r"C:\COMMON~1\Microsoft Shared\x"));
-        assert!(super::is_abnormal_path_shape(r"C:\Users\Aaron\DOCUME~1\App"));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\COMMON~1\Microsoft Shared\x"
+        ));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\Users\Aaron\DOCUME~1\App"
+        ));
         // Profile short home under Users stays legal.
-        assert!(!super::is_abnormal_path_shape(r"C:\Users\RUNNER~1\Documents\App"));
-        assert!(!super::is_abnormal_path_shape(r"C:\Users\RUNNER~1\AppData\Local\Acme"));
+        assert!(!super::is_abnormal_path_shape(
+            r"C:\Users\RUNNER~1\Documents\App"
+        ));
+        assert!(!super::is_abnormal_path_shape(
+            r"C:\Users\RUNNER~1\AppData\Local\Acme"
+        ));
         assert!(!super::is_safe_fs(Path::new(
             r"C:\WINDOWS~1\System32\evil.dll"
         )));
         assert!(!super::is_safe_restore_target(Path::new(
             r"C:\WINDOWS~1\System32\evil.dll"
         )));
-        assert!(!super::is_safe_restore_target(Path::new(r"C:\PROGRA~1\App\bin.exe")));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\PROGRA~1\App\bin.exe"
+        )));
         assert!(super::is_safe_restore_target(Path::new(
             r"C:\Users\RUNNER~1\Documents\App\file.txt"
         )));
@@ -1013,7 +1087,14 @@ mod tests {
         use std::ffi::OsString;
         use std::os::windows::ffi::OsStringExt;
         // Invalid UTF-16 unit → not valid UTF-8 on the Rust side.
-        let wide: Vec<u16> = vec!['C' as u16, ':' as u16, '\\' as u16, 0xD800, '\\' as u16, 'x' as u16];
+        let wide: Vec<u16> = vec![
+            'C' as u16,
+            ':' as u16,
+            '\\' as u16,
+            0xD800,
+            '\\' as u16,
+            'x' as u16,
+        ];
         let os = OsString::from_wide(&wide);
         let p = std::path::Path::new(&os);
         assert!(!super::is_safe_fs(p));

@@ -43,7 +43,13 @@ export type DriveInfo = {
   total_gb: number;
   is_system: boolean;
 };
-export type MonitorDiff = { added_files: string[]; added_reg_values: string[] };
+export type MonitorDiff = {
+  added_files: string[];
+  added_reg_values: string[];
+  /** REV-BE-10: entries beyond the diff caps (honest truncation, backend-filled). */
+  files_truncated?: number;
+  reg_truncated?: number;
+};
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
 export type BackupSession = { name: string; size_kb: number; created_at: string };

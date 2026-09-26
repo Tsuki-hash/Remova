@@ -351,14 +351,15 @@ pub fn export_reg_value(
     let key_reg = format!("[{key_win}]");
     let body = match reg_type.as_str() {
         "REG_DWORD" => {
-            // data like 0x2
+            // data like 0x2 — REV-SEC-07: parse failure must not silently become 0.
             let n = u32::from_str_radix(data_raw.trim_start_matches("0x"), 16)
                 .or_else(|_| data_raw.trim().parse::<u32>())
-                .unwrap_or(0);
+                .map_err(|_| format!("export_reg_value: bad DWORD data '{data_raw}'"))?;
             format!("\"{value_name}\"=dword:{n:08x}")
         }
         "REG_QWORD" => {
-            let n = u64::from_str_radix(data_raw.trim_start_matches("0x"), 16).unwrap_or(0);
+            let n = u64::from_str_radix(data_raw.trim_start_matches("0x"), 16)
+                .map_err(|_| format!("export_reg_value: bad QWORD data '{data_raw}'"))?;
             let bytes = n.to_le_bytes();
             let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
             format!("\"{value_name}\"=hex(b):{}", hex.join(","))
@@ -588,6 +589,8 @@ pub fn leaf_name(path: &str) -> String {
 
 /// Rename a registry value (copy data + delete old) under `key`.
 pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, from, to);
@@ -668,6 +671,8 @@ fn normalize_reg_exe_hive(key_path: &str) -> String {
 }
 
 pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -704,6 +709,8 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
 
 /// Write REG_BINARY under `key_path` (creates key tree via `reg add` fallback).
 pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -756,6 +763,14 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
 /// Errors use stable codes for the UI:
 /// `manage:access_denied:<name>` | `manage:open_failed:<name>` | `manage:write_failed:<name>`
 pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
+    // REV-SEC-14: intrinsic gate — service names are single leaves under Services.
+    let name = svc_name.trim();
+    if name.is_empty() || name.contains('\\') || name.contains('/') || name.contains("..") {
+        return Err(format!("manage:bad_name:{svc_name}"));
+    }
+    crate::safety::allow_reg_value_write(&format!(
+        r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"
+    ))?;
     #[cfg(not(windows))]
     {
         let _ = (svc_name, start);
@@ -765,7 +780,7 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
     {
         use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
         use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, REG_DWORD};
-        let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{svc_name}");
+        let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}");
         let (hive, sub, access) = parse(&key_path).ok_or_else(|| "bad key".to_string())?;
         unsafe {
             let w = to_wide(&sub);
@@ -896,7 +911,9 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         let dest = tmp.join("value.reg");
         assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\"name", &dest).is_err());
-        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\r\nname", &dest).is_err());
+        assert!(
+            super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\r\nname", &dest).is_err()
+        );
         assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "", &dest).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }

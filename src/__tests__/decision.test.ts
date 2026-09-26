@@ -23,6 +23,10 @@ import {
 } from "../lib/decision";
 import type { CleanupItem, InstalledApp } from "../types";
 
+// QA-12: frozen clock — install-date branches must not silently change as the
+// wall clock moves (the old Date.now() assertions decayed after 2026-01-31).
+const NOW = Date.UTC(2026, 6, 1);
+
 const riskL = {
   riskBitHigh: "高风险：请逐项确认后再删除",
   riskBitUserData: "用户数据：默认不删，请确认是缓存后再清",
@@ -92,9 +96,10 @@ describe("decisionChips compact", () => {
       }),
       3 * 1024 * 1024,
       { ...L, chipRecommend: "推荐清理" },
-      { compact: true, now: Date.now() },
+      { compact: true, now: NOW },
     );
-    expect(chips.length).toBeLessThanOrEqual(1);
+    // 3 GB app with an uninstall cmd → exactly the recommend chip, nothing else.
+    expect(chips.map((c) => c.id)).toEqual(["recommend"]);
   });
 
   it("prefers no-uninstall warning when command is missing", () => {
@@ -282,9 +287,12 @@ describe("isKeepItem / isSuggestItem", () => {
 describe("recommendScore / health / progress", () => {
   it("recommends large + old apps with uninstall cmd", () => {
     const a = app({ install_date: "20200101" });
-    expect(isRecommendedCleanup(a, 3 * 1024 * 1024, Date.now())).toBe(true);
-    expect(isRecommendedCleanup(a, 10, Date.now())).toBe(false);
-    expect(recommendScore(a, 3 * 1024 * 1024)).toBeGreaterThan(50);
+    expect(isRecommendedCleanup(a, 3 * 1024 * 1024, NOW)).toBe(true);
+    expect(isRecommendedCleanup(a, 10, NOW)).toBe(false);
+    // 1 GB + 90 days old → recommend; recent install → not yet.
+    expect(isRecommendedCleanup(app({ install_date: "20260301" }), 1024 * 1024, NOW)).toBe(true);
+    expect(isRecommendedCleanup(app({ install_date: "20260601" }), 1024 * 1024, NOW)).toBe(false);
+    expect(recommendScore(a, 3 * 1024 * 1024, NOW)).toBeGreaterThan(50);
   });
   it("health attention without uninstall cmd", () => {
     const Lh = { healthOk: "OK", healthAttention: "Review" };

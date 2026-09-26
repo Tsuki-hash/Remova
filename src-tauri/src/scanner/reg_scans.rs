@@ -61,7 +61,7 @@ pub(super) fn scan_path_env(
     }
 }
 
-/// Shell extension / CLSID / ProgID leftovers (SOP 鎼?閳?.
+/// Shell extension / CLSID / ProgID leftovers (per uninstall SOP).
 pub(super) fn scan_shell_extensions(
     name_slugs: &[String],
     install_low: &str,
@@ -154,7 +154,7 @@ pub(super) fn scan_shell_extensions(
     }
 }
 
-/// Kernel/file-system drivers under Services (Type=1) (SOP 鎼?閳?.
+/// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
 pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();

@@ -114,11 +114,9 @@ afterEach(() => {
 describe("exportHtmlReport (real module)", () => {
   it("escapes path/message and triggers download with sanitized filename", async () => {
     exportHtmlReport(report(), L);
-    // Blob text is resolved async in mock
-    await Promise.resolve();
-    await Promise.resolve();
+    // Blob text resolves async in the mock — wait instead of guessing microtask depth.
+    await vi.waitFor(() => expect(captured.clicked).toBe(true));
 
-    expect(captured.clicked).toBe(true);
     expect(captured.download).toBe("remova-report-Demo_App_.html");
     expect(captured.html).toContain("Demo &lt;App&gt;");
     expect(captured.html).toContain("C:\\evil&lt;script&gt;");
@@ -146,9 +144,7 @@ describe("exportHtmlReport (real module)", () => {
       }),
       L,
     );
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(captured.html).toContain("演练");
+    await vi.waitFor(() => expect(captured.html).toContain("演练"));
     expect(captured.html).toContain("已中止");
     expect(captured.download).toBe("remova-report-X.html");
   });

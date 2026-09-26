@@ -339,7 +339,7 @@ pub fn run_full_cleanup(
         .filter(|it| !it.path.trim().is_empty())
         .collect();
     // Empty leftover set is valid when the user asked for official uninstall only
-    // (batch 鈥渘o default-selectable residue—should still remove the app).
+    // (batch "no default-selectable residue" — should still remove the app).
     if selected.is_empty() && opts.skip_official_uninstall {
         return FullCleanupReport {
             app_name: app.name.clone(),

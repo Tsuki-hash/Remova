@@ -119,12 +119,32 @@ export function SoftwareListTable({
         <thead>
           <tr>
             <th style={css.th} title="selected"><Deco ch="✓" label="selected" /></th>
-            <th style={{ ...css.th, cursor: "pointer" }} onClick={() => sortBy("name")} title={L.colName}>
+            <th
+              style={{ ...css.th, cursor: "pointer" }}
+              onClick={() => sortBy("name")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  sortBy("name");
+                }
+              }}
+              tabIndex={0}
+              aria-sort={sortCol === "name" ? (sortDesc ? "descending" : "ascending") : undefined}
+              title={L.colName}
+            >
               {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
             </th>
             <th
               style={{ ...css.th, cursor: "pointer", textAlign: "right" as const }}
               onClick={() => sortBy("size")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  sortBy("size");
+                }
+              }}
+              tabIndex={0}
+              aria-sort={sortCol === "size" ? (sortDesc ? "descending" : "ascending") : undefined}
             >
               {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
             </th>

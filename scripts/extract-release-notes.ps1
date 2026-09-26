@@ -16,7 +16,9 @@ if ($Tag -notmatch '^v?([0-9]+\.[0-9]+\.[0-9]+)$') {
 $ver = $Matches[1]
 
 $lines = @(Get-Content "CHANGELOG.md")
-$headPattern = '^## \[' + [regex]::Escape($ver) + '\]'
+# QA-14: accept an optional `v` prefix so a `## [v1.2.1]` heading cannot pass
+# check-versions (v?-tolerant) yet fail notes extraction (exact-match).
+$headPattern = '^## \[v?' + [regex]::Escape($ver) + '\]'
 $start = -1
 for ($i = 0; $i -lt $lines.Count; $i++) {
   if ($lines[$i] -match $headPattern) { $start = $i; break }
@@ -31,7 +33,7 @@ for ($i = $start + 1; $i -lt $lines.Count; $i++) {
 }
 
 $body = @()
-if ($lines[$start] -match '^## \[[0-9.]+\]\s*-?\s*(.*)$') {
+if ($lines[$start] -match '^## \[v?[0-9.]+\]\s*-?\s*(.*)$') {
   $date = $Matches[1].Trim()
   $body += if ($date) { "## Remova $ver ($date)" } else { "## Remova $ver" }
 } else {
