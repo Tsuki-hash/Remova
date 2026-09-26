@@ -275,8 +275,10 @@ export function CopilotPanel({
               <button
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
                 onClick={() => onBatch(matches, intent)}
+                title={matches.map((m) => m.name).join(" · ")}
               >
-                {L.copilotRunBatch}
+                {/* REV-UX-20: the direct action names its own scope. */}
+                {L.copilotRunBatchN(matches.length)}
               </button>
             )}
             {intent.action === "force_clean" && matches[0] && (
@@ -284,7 +286,7 @@ export function CopilotPanel({
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
                 onClick={() => onForceClean(matches[0]!)}
               >
-                {L.copilotRunForce}
+                {L.copilotRunForceN(matches[0]!.name)}
               </button>
             )}
           </div>

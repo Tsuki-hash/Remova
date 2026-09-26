@@ -40,7 +40,14 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let dir = backup_root().join(format!("{ts}_{safe}"));
+    // Q-B13: two cleanups within the same second must not merge into one
+    // session directory — disambiguate with `_N` (still `is_session_name`-safe).
+    let mut dir = backup_root().join(format!("{ts}_{safe}"));
+    let mut n = 1u32;
+    while dir.exists() && n < 100 {
+        dir = backup_root().join(format!("{ts}_{safe}_{n}"));
+        n += 1;
+    }
     fs::create_dir_all(dir.join("files"))?;
     fs::create_dir_all(dir.join("registry"))?;
     Ok(dir)

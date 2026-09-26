@@ -70,10 +70,8 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
-        let Ok(sm) = entry.path().symlink_metadata() else {
-            continue;
-        };
-        if sm.file_type().is_symlink() {
+        // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+        if crate::fsutil::is_reparse_point(&entry.path()) {
             continue;
         }
         if meta.is_dir() {
@@ -115,11 +113,8 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> u64 {
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            // metadata() follows symlinks; use symlink_metadata to avoid loops
-            let Ok(sm) = entry.path().symlink_metadata() else {
-                continue;
-            };
-            if sm.file_type().is_symlink() {
+            // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+            if crate::fsutil::is_reparse_point(&entry.path()) {
                 continue;
             }
             if meta.is_dir() {
