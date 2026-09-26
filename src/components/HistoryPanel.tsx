@@ -89,7 +89,7 @@ export function HistoryPanel({
         items={units}
         height={280}
         estimateSize={72}
-        rowGap={0}
+        rowGap={6}
         empty={<div style={css.muted}>{L.noHistory}</div>}
         keyOf={(u) =>
           u.kind === "header" ? `day-${u.day}` : u.h.id || `${u.h.app_name}-${u.h.created_at || u.idx}`

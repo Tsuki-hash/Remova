@@ -145,9 +145,29 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 /// S-R7-03: reject `.reg` files whose key shapes fall outside the restore whitelist.
 /// REV-SEC-05: read once — validate the same bytes that will be imported (no TOCTOU re-read).
 fn validate_reg_import(path: &Path) -> Result<String, String> {
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    reg_content_allowed(&raw)?;
-    Ok(raw)
+    // Whole-key exports come from `reg.exe export`, which writes UTF-16LE with a
+    // BOM — a plain UTF-8 read fails outright and aborted the entire restore.
+    // Read the bytes once, transcode, then validate the very text we import.
+    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let text = decode_reg_text(raw)?;
+    reg_content_allowed(&text)?;
+    Ok(text)
+}
+
+/// Accept UTF-16LE (reg.exe native), UTF-8 with BOM and plain UTF-8; anything
+/// else fails closed.
+fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
+    if raw.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = raw[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&units).map_err(|e| e.to_string());
+    }
+    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8(raw[3..].to_vec()).map_err(|e| e.to_string());
+    }
+    String::from_utf8(raw).map_err(|e| e.to_string())
 }
 
 /// Parse `.reg` text and enforce the key-shape whitelist (S-R7-03).
@@ -454,6 +474,27 @@ fn is_session_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn validate_reg_import_accepts_utf16le_export() {
+        let tmp = std::env::temp_dir().join(format!("remova_reg16_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let p = tmp.join("export.reg");
+        let text = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\"RemovaTest\"=\"C:\\\\x.exe\"\r\n";
+        // reg.exe native form: UTF-16LE with BOM — must decode and validate.
+        let mut bytes: Vec<u8> = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        std::fs::write(&p, &bytes).unwrap();
+        let out = super::validate_reg_import(&p).unwrap();
+        assert!(out.starts_with("Windows Registry Editor"), "{out}");
+        // UTF-8 with BOM is accepted too.
+        let mut utf8bom: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+        utf8bom.extend_from_slice(text.as_bytes());
+        std::fs::write(&p, &utf8bom).unwrap();
+        assert!(super::validate_reg_import(&p).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn map_rel_rejects_traversal_and_absolute() {

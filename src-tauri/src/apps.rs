@@ -42,7 +42,7 @@ pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::ERROR_SUCCESS;
+use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryInfoKeyW, HKEY,
@@ -98,15 +98,7 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
         out.extend(crate::storeapps::scan_store_apps());
     }
-    out.sort_by_key(|a| a.name.to_lowercase());
-    // HKLM64 + HKLM32 often list the same product twice (same path / MSI product code).
-    out.dedup_by(|a, b| {
-        if !same_product(a, b) {
-            return false;
-        }
-        merge_app_fields(a, b);
-        true
-    });
+    dedup_same_products(&mut out);
     // AR-04: backend-enforce ignore rules (publisher / name / install path).
     let ignore = crate::ignore::load();
     out.retain(|a| {
@@ -115,6 +107,21 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
     // S-RCE: every scan path refreshes the uninstall trust table (not only list IPC).
     remember_uninstall_commands(&out);
     out
+}
+
+/// Sort by lowercase name and merge same-product twins (HKLM64/HKLM32/HKCU).
+/// `dedup_by` removes its FIRST argument and keeps the second, so the dropped
+/// twin's fields must be merged INTO the surviving row (was inverted — the
+/// kept row silently lost size/location/quiet-command data).
+fn dedup_same_products(out: &mut Vec<InstalledApp>) {
+    out.sort_by_key(|a| a.name.to_lowercase());
+    out.dedup_by(|a, b| {
+        if !same_product(a, b) {
+            return false;
+        }
+        merge_app_fields(b, a);
+        true
+    });
 }
 
 /// Uninstall string comparable form: case-insensitive, no quotes/whitespace.
@@ -300,7 +307,7 @@ unsafe fn read_uninstall_entry(
         let mut vtype = 0u32;
         let mut data: Vec<u8> = vec![0u8; 4096];
         let mut data_len = data.len() as u32;
-        let st = RegEnumValueW(
+        let mut st = RegEnumValueW(
             hk,
             n,
             windows::core::PWSTR(vname.as_mut_ptr()),
@@ -310,7 +317,34 @@ unsafe fn read_uninstall_entry(
             Some(data.as_mut_ptr()),
             Some(&mut data_len),
         );
-        if st != ERROR_SUCCESS {
+        if st == ERROR_MORE_DATA {
+            // R21-BE-04: one retry with the reported sizes — an oversized value
+            // must not silently drop every remaining value of the entry.
+            let need_data = data_len as usize;
+            let need_name = vname_len as usize;
+            if need_data > data.len() && need_data <= (1 << 20) {
+                data = vec![0u8; need_data];
+            }
+            if need_name > vname.len() && need_name <= (1 << 14) {
+                vname = vec![0u16; need_name + 1];
+            }
+            vname_len = vname.len() as u32;
+            data_len = data.len() as u32;
+            st = RegEnumValueW(
+                hk,
+                n,
+                windows::core::PWSTR(vname.as_mut_ptr()),
+                &mut vname_len,
+                None,
+                Some(&mut vtype),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            if st != ERROR_SUCCESS {
+                n += 1; // skip this value; keep enumerating the rest
+                continue;
+            }
+        } else if st != ERROR_SUCCESS {
             break;
         }
         n += 1;
@@ -466,6 +500,52 @@ mod tests {
         assert_eq!(
             parse_display_icon(r#"C:\App\app.ico"#),
             (r"C:\App\app.ico".to_string(), 0)
+        );
+    }
+
+    /// The dropped twin's fields must land on the SURVIVING row (dedup_by
+    /// removes its first argument — the merge used to fill the dropped one).
+    #[test]
+    fn dedup_merges_into_surviving_row() {
+        let mk = |name: &str, loc: &str, src: &str, key: &str, uns: &str, size: i64| InstalledApp {
+            name: name.into(),
+            version: "1.0".into(),
+            publisher: "P".into(),
+            install_location: loc.into(),
+            uninstall_string: uns.into(),
+            quiet_uninstall_string: String::new(),
+            source: src.into(),
+            registry_key: key.into(),
+            estimated_size_kb: size,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let mut v = vec![
+            mk(
+                "Xftp 8",
+                "",
+                "HKLM64",
+                r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Xftp 8",
+                r"C:\Program Files (x86)\NetSarang\Xftp 8\uninst.exe",
+                0,
+            ),
+            mk(
+                "Xftp 8",
+                r"C:\Program Files (x86)\NetSarang\Xftp 8",
+                "HKLM32",
+                r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Xftp 8",
+                r#""C:\Program Files (x86)\NetSarang\Xftp 8\uninst.exe""#,
+                12345,
+            ),
+        ];
+        dedup_same_products(&mut v);
+        assert_eq!(v.len(), 1);
+        // Stable sort keeps the first (HKLM64) row — it must carry the dropped twin's data.
+        assert_eq!(v[0].source, "HKLM64");
+        assert_eq!(v[0].estimated_size_kb, 12345);
+        assert_eq!(
+            v[0].install_location,
+            r"C:\Program Files (x86)\NetSarang\Xftp 8"
         );
     }
 

@@ -182,7 +182,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
                         continue;
                     }
                     if need_name > vname.len() {
-                        vname = vec![0u16; need_name];
+                        vname = vec![0u16; need_name + 1];
                     }
                     if need_data > data.len() {
                         data = vec![0u8; need_data];
@@ -199,6 +199,12 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
                         Some(data.as_mut_ptr()),
                         Some(&mut data_len),
                     );
+                }
+                if st == ERROR_MORE_DATA {
+                    // Second failure (value grew again / buffer race) — skip
+                    // this value and keep enumerating instead of dropping the rest.
+                    n += 1;
+                    continue;
                 }
                 if st != ERROR_SUCCESS {
                     break;

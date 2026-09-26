@@ -119,7 +119,7 @@ export function DiskRadarPanel({
         items={rows ?? []}
         height={320}
         estimateSize={72}
-        empty={<div style={css.muted}>{L.orphanScanEmpty}</div>}
+        empty={rows === null ? undefined : <div style={css.muted}>{L.orphanScanEmpty}</div>}
         keyOf={(r) => r.path}
         renderItem={(r) => (
           <div

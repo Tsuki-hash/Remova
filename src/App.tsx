@@ -304,6 +304,7 @@ export default function App() {
       setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setUninstallingKey: core.setUninstallingKey,
       setUninstallStage,
+      setEvidence,
     },
     refreshApps,
     busyRef,
@@ -425,6 +426,7 @@ export default function App() {
     residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
+    setEvidence(null);
     scanUi.clearScanChrome();
     aiActions.clearAiScanState();
     aiActions.clearAiReport();

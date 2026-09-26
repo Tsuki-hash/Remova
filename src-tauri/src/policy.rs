@@ -109,12 +109,20 @@ fn expand_path_env(entry: &str) -> String {
 /// Public so write primitives can apply an intrinsic secondary gate (S-R6-06).
 pub fn is_dangerous_path_entry(entry: &str) -> bool {
     let expanded = expand_path_env(entry);
-    let s = expanded
+    let joined = expanded
         .trim()
         .trim_matches('"')
         .replace('/', "\\")
-        .trim_end_matches('\\')
         .to_lowercase();
+    // Win32 strips per-segment trailing dots/spaces — judge the resolved form
+    // so `C:\Windows.` is not treated as a scrubbable PATH entry.
+    let s = joined
+        .split('\\')
+        .map(|seg| seg.trim_end_matches(['.', ' ']))
+        .collect::<Vec<_>>()
+        .join("\\")
+        .trim_end_matches('\\')
+        .to_string();
     if s.is_empty() || s.len() <= 3 {
         return true;
     }
@@ -123,7 +131,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         return true;
     }
     // Reject path traversal in PATH segments (S-4 class).
-    if s.split('\\').any(|seg| seg == ".." || seg == ".") {
+    if joined.split('\\').any(|seg| seg == ".." || seg == ".") {
         return true;
     }
     let mut danger: Vec<String> = vec![

@@ -84,6 +84,7 @@ describe("useAnalyzeFlow request sequencing", () => {
       setResidualFromUninstall: () => {},
       setUninstallingKey: () => {},
       setUninstallStage: () => {},
+      setEvidence: () => {},
     };
   });
 

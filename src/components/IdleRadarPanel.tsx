@@ -56,7 +56,7 @@ export function IdleRadarPanel({
         items={rows ?? []}
         height={320}
         estimateSize={72}
-        empty={<div style={css.muted}>{L.idleEmpty}</div>}
+        empty={rows === null ? undefined : <div style={css.muted}>{L.idleEmpty}</div>}
         keyOf={(r) => r.app.registry_key || r.app.name}
         renderItem={(r) => (
           <div

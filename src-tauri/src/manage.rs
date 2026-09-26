@@ -196,6 +196,9 @@ pub fn list_startup_items() -> Vec<ManageItem> {
 
 /// User-mode services with Start=2 (auto), including Microsoft ones (consumers expect them).
 fn list_auto_services() -> Vec<ManageItem> {
+    // Real running state — a hardcoded `true` showed stopped auto-start
+    // services as running with a Stop button.
+    let running_services = query_running_service_names();
     let mut out = Vec::new();
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
@@ -235,7 +238,7 @@ fn list_auto_services() -> Vec<ManageItem> {
                 );
                 it.kind = Some("startup".into());
                 it.source_label = Some("Service".into());
-                it.running = Some(true);
+                it.running = Some(running_services.contains(&svc.to_ascii_lowercase()));
                 it.start_type = Some("auto".into());
                 it.path = Some(svc.clone());
                 it

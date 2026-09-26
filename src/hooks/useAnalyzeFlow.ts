@@ -25,6 +25,7 @@ export type AnalyzeFlowSetters = {
   setResidualFromUninstall: (v: boolean) => void;
   setUninstallingKey: (k: string | null) => void;
   setUninstallStage: (s: UninstallStage) => void;
+  setEvidence: (v: string | null) => void;
 };
 
 /** Deep-analyze + official uninstall flow used by list rows and detail drawer. */
@@ -52,6 +53,7 @@ export function useAnalyzeFlow({
     setResidualFromUninstall,
     setUninstallingKey,
     setUninstallStage,
+    setEvidence,
   } = flow;
   const analyzeSeqRef = useRef(0);
   const analyzingRef = useRef(false);
@@ -79,6 +81,8 @@ export function useAnalyzeFlow({
       setAiNotes({});
       setAiRisk(null);
       setIgnoreSuggestions([]);
+      // A new app's scan must not inherit the previous app's evidence bar.
+      setEvidence(null);
       const t0 = performance.now();
       try {
         const r = await api.analyze(app);

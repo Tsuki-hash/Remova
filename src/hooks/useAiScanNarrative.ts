@@ -63,8 +63,12 @@ export function useAiScanNarrative({
     for (const it of scan.items) feed(it.path);
     return `${scan.app_name}:${scan.items.length}:${h >>> 0}`;
   }, [scan]);
-  const runAiExplain = useCallback(async () => {
-    if (!scan || !aiEnabled || aiBusy) return;
+  const runAiExplain = useCallback(async (opts?: { force?: boolean }) => {
+    if (!scan || !aiEnabled) return;
+    // The auto effect runs right after force-clearing busy — the closure still
+    // sees the pre-clear aiBusy, so the effect path passes force (seq already
+    // supersedes any in-flight run; this effect owns the busy lifecycle).
+    if (!opts?.force && aiBusy) return;
     const seq = ++aiExplainSeqRef.current;
     setAiBusy(true);
     try {
@@ -110,7 +114,7 @@ export function useAiScanNarrative({
     scanUi.clearRiskFilter();
     aiActions.clearAiScanState();
     if (scan && scan.items.length > 0 && aiEnabled) {
-      void runAiExplain();
+      void runAiExplain({ force: true });
     }
     // scanId (REV-FE-15) fully identifies scan content; runAiExplain is stable
     // in the values it closes over.

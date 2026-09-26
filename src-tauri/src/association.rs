@@ -88,12 +88,14 @@ pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool
 }
 
 fn guid_in_text(s: &str) -> Option<String> {
-    let low = s.to_lowercase();
+    // Byte indices from a Unicode fold must never slice the original —
+    // GUIDs are ASCII, so fold ASCII-only (byte-length preserving) and slice that.
+    let low = s.to_ascii_lowercase();
     let start = low.find('{')?;
     let end = low[start..].find('}')? + start;
-    let g = &s[start..=end];
+    let g = &low[start..=end];
     if g.len() >= 38 {
-        Some(g.to_lowercase())
+        Some(g.to_string())
     } else {
         None
     }

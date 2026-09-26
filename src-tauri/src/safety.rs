@@ -223,9 +223,12 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         if rest.is_empty() || rest.contains('\\') {
             return Err(crate::error::safety_err("only top-level service keys allowed").to_ipc());
         }
+        // Value-shaped paths (`SERVICES\<name>|value`) arrive merged from
+        // delete_value — compare the key part, or the critical check is bypassed.
+        let key_part = rest.split('|').next().unwrap_or(rest);
         if critical_service_names()
             .iter()
-            .any(|n| rest == n.to_uppercase())
+            .any(|n| key_part == n.to_uppercase())
         {
             return Err(crate::error::safety_err("critical system service protected").to_ipc());
         }
@@ -474,7 +477,15 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
         return false;
     }
     let low = s.replace('/', "\\").to_lowercase();
-    let trimmed = low.trim_end_matches('\\');
+    // Win32 strips per-segment trailing dots/spaces when resolving paths —
+    // compare on the normalized form so `C:\Windows.` cannot slip past the
+    // protected roots (same normalization the delete side uses).
+    let normalized: String = low
+        .split('\\')
+        .map(|seg| seg.trim_end_matches(['.', ' ']))
+        .collect::<Vec<_>>()
+        .join("\\");
+    let trimmed = normalized.trim_end_matches('\\');
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
@@ -637,6 +648,34 @@ mod tests {
         assert!(allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services").is_err());
         assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool").is_err());
         assert!(allow_reg_value_write("").is_err());
+    }
+
+    /// Value-shaped `Services|value` paths must not bypass the critical list.
+    #[test]
+    fn reg_delete_gate_blocks_service_value_shape() {
+        let err =
+            is_safe_to_delete_registry(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend|Start")
+                .unwrap_err();
+        assert!(err.contains("critical system service protected"), "{err}");
+        assert!(is_safe_to_delete_registry(
+            r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc|Start"
+        )
+        .is_ok());
+    }
+
+    /// Restore-target gate must judge the Win32-normalized path (trailing
+    /// dots/spaces per segment are stripped by the OS when resolving).
+    #[test]
+    fn restore_target_blocks_trailing_dot_shapes() {
+        assert!(!is_safe_restore_target(Path::new(r"C:\Windows.\evil.dll")));
+        assert!(!is_safe_restore_target(Path::new(
+            r"C:\Program Files.\evil.exe"
+        )));
+        assert!(!is_safe_restore_target(Path::new(r"C:\Windows. \evil.dll")));
+        // Ordinary dotted names keep restoring fine.
+        assert!(is_safe_restore_target(Path::new(
+            r"C:\Users\testuser\AppData\Local\App\v1.2\file.dll"
+        )));
     }
 
     #[test]

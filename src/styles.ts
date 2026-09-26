@@ -242,7 +242,7 @@ export const globalCss = `
   button:disabled { opacity: .4; cursor: not-allowed; }
   button:not(:disabled):hover { filter: brightness(1.08); }
   button:not(:disabled):active { transform: translateY(0.5px); }
-  button:focus-visible, input:focus-visible, select:focus-visible {
+  button:focus-visible, input:focus-visible, select:focus-visible, th[tabindex]:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
