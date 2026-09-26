@@ -6,11 +6,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const CACHE_TTL_SECS: u64 = 7 * 24 * 3600;
 const HTTP_TIMEOUT_SECS: u64 = 12;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// REV-SUP-11: a config leaving scope wipes its API-key bytes from memory.
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -94,10 +96,13 @@ pub fn load_config() -> AiConfig {
         return AiConfig::default();
     };
     let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
-    let raw_key = c.api_key.clone();
+    let mut raw_key = c.api_key.clone();
     c.api_key = decrypt_stored_key(&c.api_key);
     // S-R6-09: migrate a legacy plaintext key to DPAPI at rest on first load.
-    if !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX) {
+    let migrate = !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX);
+    // REV-SUP-11: the ciphertext copy leaves no residue either.
+    raw_key.zeroize();
+    if migrate {
         let _ = save_config(&c);
     }
     c
@@ -495,7 +500,9 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
         .post(&url)
         .set("Content-Type", "application/json");
     if !cfg.api_key.trim().is_empty() {
-        req = req.set("Authorization", &format!("Bearer {}", cfg.api_key.trim()));
+        // REV-SUP-11: the header copy wipes from memory when it leaves scope.
+        let auth = zeroize::Zeroizing::new(format!("Bearer {}", cfg.api_key.trim()));
+        req = req.set("Authorization", &auth);
     }
     let resp = req
         .send_json(body)
@@ -946,10 +953,9 @@ mod tests {
 
     #[test]
     fn config_view_hides_key() {
-        let c = AiConfig {
-            api_key: "sk-secret".into(),
-            ..Default::default()
-        };
+        // Struct-update syntax would move fields out of a Drop type (ZeroizeOnDrop).
+        let mut c = AiConfig::default();
+        c.api_key = "sk-secret".into();
         let v = AiConfigView::from(&c);
         assert!(v.has_api_key);
         assert!(!serde_json::to_string(&v).unwrap().contains("sk-secret"));

@@ -326,18 +326,9 @@ pub struct SessionInfo {
 }
 
 fn dir_size_kb(p: &Path) -> u64 {
-    let mut total = 0u64;
-    if let Ok(rd) = fs::read_dir(p) {
-        for e in rd.flatten() {
-            let path = e.path();
-            if path.is_dir() {
-                total = total.saturating_add(dir_size_kb(&path));
-            } else if let Ok(md) = e.metadata() {
-                total = total.saturating_add(md.len() / 1024);
-            }
-        }
-    }
-    total
+    // Q-B12: bounded, reparse-safe walk — a huge or junction-planted session
+    // must not turn the listing path into an unbounded traversal.
+    crate::dirsize::walk_size_kb_limited(p).unwrap_or(0)
 }
 
 /// List backup sessions with size (KB). Does NOT prune (read path is pure).

@@ -49,36 +49,119 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     std::fs::copy(src, dest)
 }
 
-/// Delete a tree without following reparse points (REV-BE-05 / TOCTOU).
-/// Child junctions/symlinks are unlinked as links only — never traversed.
-pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
-    if is_reparse_point(p) {
-        return Err(std::io::Error::other(
-            "refusing to delete through reparse point",
-        ));
+/// REV-SEC-06: a handle that pins a directory (or file) while it is being
+/// cleared. Opened with FILE_FLAG_OPEN_REPARSE_POINT — a swapped-in junction
+/// is opened as the link itself, never its target — and a share mode WITHOUT
+/// FILE_SHARE_DELETE, so the path cannot be renamed away while pinned: the
+/// object verified below is exactly the object that will be removed.
+pub struct DirPin {
+    #[cfg(windows)]
+    handle: windows::Win32::Foundation::HANDLE,
+}
+
+impl Drop for DirPin {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
+        }
     }
-    let meta = std::fs::symlink_metadata(p)?;
-    if !meta.is_dir() {
-        return std::fs::remove_file(p);
-    }
-    for entry in std::fs::read_dir(p)? {
-        let entry = entry?;
-        let child = entry.path();
-        if is_reparse_point(&child) {
-            // Unlink the reparse itself (file link / dir junction) without descending.
-            if std::fs::remove_file(&child).is_err() {
-                std::fs::remove_dir(&child)?;
+}
+
+/// Open `p` and verify it is not a reparse point — by handle, not by path.
+pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, FILE_FLAGS_AND_ATTRIBUTES,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        // DELETE (0x00010000) is not exported by this windows crate build (same
+        // as regops); FILE_READ_ATTRIBUTES (0x0080) for the by-handle check.
+        const DELETE_RIGHT: u32 = 0x0001_0000;
+        const FILE_READ_ATTR: u32 = 0x0000_0080;
+        unsafe {
+            let wide = to_wide(&p.to_string_lossy());
+            // Holding DELETE ourselves while not sharing it is what blocks a
+            // concurrent rename — a 0-access handle does not.
+            let handle = CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                DELETE_RIGHT | FILE_READ_ATTR,
+                FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0),
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(
+                    FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0,
+                ),
+                None,
+            )
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut info = std::mem::zeroed();
+            if GetFileInformationByHandle(handle, &mut info).is_err()
+                || info.dwFileAttributes & 0x400 != 0
+            {
+                let _ = CloseHandle(handle);
+                return Err(std::io::Error::other(
+                    "refusing to delete through reparse point",
+                ));
             }
-            continue;
-        }
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            remove_tree_no_reparse(&child)?;
-        } else {
-            std::fs::remove_file(&child)?;
+            Ok(DirPin { handle })
         }
     }
-    std::fs::remove_dir(p)
+    #[cfg(not(windows))]
+    {
+        if is_reparse_point(p) {
+            return Err(std::io::Error::other(
+                "refusing to delete through reparse point",
+            ));
+        }
+        Ok(DirPin {})
+    }
+}
+
+/// Delete a tree without following reparse points (REV-BE-05 / REV-SEC-06).
+/// Every level is pinned (no-DELETE-share handle + by-handle reparse check)
+/// before its children are cleared, so the path cannot be swapped for a
+/// junction mid-recursion; child junctions are unlinked as links only.
+pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
+    let is_dir = {
+        let _pin = pin_dir_no_reparse(p)?;
+        let meta = std::fs::symlink_metadata(p)?;
+        if meta.is_dir() {
+            for entry in std::fs::read_dir(p)? {
+                let entry = entry?;
+                let child = entry.path();
+                if is_reparse_point(&child) {
+                    // Unlink the reparse itself (file link / dir junction) without descending.
+                    if std::fs::remove_file(&child).is_err() {
+                        std::fs::remove_dir(&child)?;
+                    }
+                    continue;
+                }
+                let ty = entry.file_type()?;
+                if ty.is_dir() {
+                    remove_tree_no_reparse(&child)?;
+                } else {
+                    std::fs::remove_file(&child)?;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    };
+    // Pin is dropped first: removing needs a DELETE-open, which our own
+    // no-DELETE-share pin would otherwise block. The window left here is
+    // benign — a swapped-in junction link or empty dir is removed as-is,
+    // never followed.
+    if is_dir {
+        std::fs::remove_dir(p)
+    } else {
+        std::fs::remove_file(p)
+    }
 }
 
 /// CSV field escape: wrap in quotes when needed; double internal quotes.
@@ -171,6 +254,39 @@ mod tests {
                 target.join("f.txt").exists(),
                 "must not delete through link"
             );
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// REV-SEC-06: the pin itself must refuse reparse points and actually pin
+    /// (rename of a pinned directory fails; after drop it succeeds again).
+    #[test]
+    fn dir_pin_refuses_reparse_and_blocks_rename() {
+        let tmp = unique_tmp("pin");
+        let dir = tmp.join("d");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.txt"), b"a").unwrap();
+
+        let pin = pin_dir_no_reparse(&dir).unwrap();
+        #[cfg(windows)]
+        {
+            assert!(
+                fs::rename(&dir, tmp.join("d2")).is_err(),
+                "pinned dir must not be renameable (no DELETE share)"
+            );
+        }
+        drop(pin);
+        #[cfg(windows)]
+        fs::rename(&dir, tmp.join("d2")).unwrap();
+
+        let target = tmp.join("t2");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"keep").unwrap();
+        let junc = tmp.join("junc");
+        let _ = std::os::windows::fs::symlink_dir(&target, &junc);
+        if is_reparse_point(&junc) {
+            assert!(pin_dir_no_reparse(&junc).is_err());
+            assert!(target.join("keep.txt").exists());
         }
         let _ = fs::remove_dir_all(&tmp);
     }

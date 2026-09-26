@@ -63,8 +63,8 @@ jobs:
       - name: frontend typecheck tests
         run: npm run typecheck:tests
 
-      - name: frontend test
-        run: npm test
+      - name: frontend test + coverage gate (REV-QA-09)
+        run: npm run coverage
 
       - name: frontend build
         run: npm run build
