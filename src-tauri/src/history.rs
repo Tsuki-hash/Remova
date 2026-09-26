@@ -46,9 +46,9 @@ fn read_history_bounded(p: &Path) -> Option<String> {
             return None;
         }
     }
-    fs::read_to_string(p).ok().filter(|s| {
-        s.len() as u64 <= HISTORY_HARD_CAP
-    })
+    fs::read_to_string(p)
+        .ok()
+        .filter(|s| s.len() as u64 <= HISTORY_HARD_CAP)
 }
 
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
@@ -66,19 +66,15 @@ fn line_content_id(line: &str, nth: usize) -> String {
 }
 
 /// Assign `H{hash}-{nth}` ids in file order (nth counts identical non-empty lines).
-fn with_ids<'a>(
-    lines: impl Iterator<Item = &'a str>,
-) -> impl Iterator<Item = (&'a str, String)> {
+fn with_ids<'a>(lines: impl Iterator<Item = &'a str>) -> impl Iterator<Item = (&'a str, String)> {
     let mut seen: HashMap<String, usize> = HashMap::new();
-    lines
-        .filter(|l| !l.trim().is_empty())
-        .map(move |line| {
-            let h = line_hash(line);
-            let nth = seen.entry(h.clone()).or_insert(0);
-            let id = line_content_id(line, *nth);
-            *nth += 1;
-            (line, id)
-        })
+    lines.filter(|l| !l.trim().is_empty()).map(move |line| {
+        let h = line_hash(line);
+        let nth = seen.entry(h.clone()).or_insert(0);
+        let id = line_content_id(line, *nth);
+        *nth += 1;
+        (line, id)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -121,7 +117,8 @@ pub fn append(
         if meta.len() > HISTORY_SOFT_CAP {
             if let Some(raw) = read_history_bounded(&p) {
                 let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
-                let keep: Vec<&str> = lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
+                let keep: Vec<&str> =
+                    lines[lines.len().saturating_sub(HISTORY_KEEP_LINES)..].to_vec();
                 let _ = write_history_file(&p, &keep.join("\n"));
             }
         }

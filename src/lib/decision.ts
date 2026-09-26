@@ -356,10 +356,10 @@ export function originLabel(path: string): string {
     .split("\\")
     .filter((s) => s && !/^[A-Za-z]:$/.test(s));
   if (parts.length === 0) return path || "-";
-  let last = parts[parts.length - 1];
-  // File path 鈫?use parent folder as the origin hint.
+  let last = parts[parts.length - 1] ?? path;
+  // File path → use parent folder as the origin hint.
   if (parts.length >= 2 && /\.[A-Za-z0-9]{1,12}$/.test(last) && !last.startsWith(".")) {
-    last = parts[parts.length - 2];
+    last = parts[parts.length - 2] ?? last;
   }
   return last || path || "-";
 }
@@ -397,7 +397,7 @@ export function groupByOrigin(items: CleanupItem[]): OriginGroup[] {
         else keep += 1;
       }
       return {
-        origin: originLabel(list[0].path),
+        origin: originLabel(list[0]?.path ?? ""),
         count: list.length,
         safe,
         suggest,

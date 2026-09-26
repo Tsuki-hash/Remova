@@ -43,11 +43,7 @@ fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
         // REV-SUP-13: nested `join()` — `/` segments are not portable separators.
         let appdata = up.join("AppData");
         let local = appdata.join("Local");
-        out.push((
-            ToolDomain::Dev,
-            local.join("npm-cache"),
-            "npm-cache",
-        ));
+        out.push((ToolDomain::Dev, local.join("npm-cache"), "npm-cache"));
         out.push((
             ToolDomain::Dev,
             local.join("pip").join("cache"),
@@ -104,7 +100,8 @@ fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
             "firefox-profiles-skip",
         ));
     }
-    if let Some(pf) = std::env::var_os("ProgramFiles(x86)").or_else(|| std::env::var_os("ProgramFiles"))
+    if let Some(pf) =
+        std::env::var_os("ProgramFiles(x86)").or_else(|| std::env::var_os("ProgramFiles"))
     {
         out.push((
             ToolDomain::Game,
@@ -141,11 +138,7 @@ fn push_item(
     } else {
         RiskLevel::Low
     };
-    let score = if high_touch {
-        0
-    } else {
-        SCORE_CONFIRMED
-    };
+    let score = if high_touch { 0 } else { SCORE_CONFIRMED };
     out.push(CleanupItem {
         path: p.clone(),
         kind: ItemKind::Dir,

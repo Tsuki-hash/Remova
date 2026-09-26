@@ -81,7 +81,8 @@ impl From<&AiConfig> for AiConfigView {
 fn config_path() -> PathBuf {
     // REV-SUP-04: never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
     let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let temp = std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
+        let temp =
+            std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
         format!("{temp}\\Remova-{}", std::process::id())
     });
     PathBuf::from(base).join("Remova").join("ai-config.json")
@@ -451,10 +452,11 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .set("x-api-key", key)
         .set("anthropic-version", "2023-06-01")
         .send_json(body)
-        .map_err(|_| "ai http failed".to_string())?;
+        // REV-SUP-05: transport detail survives to the command layer.
+        .map_err(|e| format!("ai http failed: {e}"))?;
     let v: serde_json::Value = resp
         .into_json()
-        .map_err(|_| "ai parse failed".to_string())?;
+        .map_err(|e| format!("ai parse failed: {e}"))?;
     if let Some(arr) = v["content"].as_array() {
         let text: String = arr
             .iter()
@@ -495,8 +497,13 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
     if !cfg.api_key.trim().is_empty() {
         req = req.set("Authorization", &format!("Bearer {}", cfg.api_key.trim()));
     }
-    let resp = req.send_json(body).map_err(|_| "ai http failed".to_string())?;
-    let v: serde_json::Value = resp.into_json().map_err(|_| "ai parse failed".to_string())?;
+    let resp = req
+        .send_json(body)
+        // REV-SUP-05: transport detail survives to the command layer.
+        .map_err(|e| format!("ai http failed: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| format!("ai parse failed: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")

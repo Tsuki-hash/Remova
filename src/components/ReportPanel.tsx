@@ -195,8 +195,9 @@ export function ReportPanel({
                 const note = await runAiReportSummary(report);
                 onAiReportNote(note);
                 if (!note) toast.error(L.aiFailed);
-              } catch {
-                toast.error(L.aiFailed);
+              } catch (e) {
+                // REV-SUP-05: mapped backend cause instead of one generic string.
+                toast.error(formatError(e));
               } finally {
                 onAiReportBusy(false);
               }

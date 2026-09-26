@@ -242,10 +242,7 @@ pub fn gate_cleanup_item(
         // must not delete arbitrary paths.
         let client_scoped = source.is_scoped_scan();
         let orphan_shape = crate::association::is_orphan_flow(app)
-            || matches!(
-                source,
-                CleanupSource::Installer | CleanupSource::ToolCache
-            );
+            || matches!(source, CleanupSource::Installer | CleanupSource::ToolCache);
         if client_scoped && orphan_shape {
             if !source.allow_ok(&item.path) {
                 return GateDecision::Skip("path not associated with app");
@@ -765,13 +762,10 @@ mod tests {
         crate::scan_allow::remember(crate::scan_allow::AllowScope::Installer, &ins);
         let listed = item(r"C:\Users\a\Downloads\app.msi", ItemKind::File);
         let forged = item(r"C:\Users\a\Documents\save.dat", ItemKind::File);
-        assert!(gate_cleanup_item(
-            Some(&orphanish),
-            &listed,
-            CleanupSource::Installer,
-            &ignore
-        )
-        .is_allow());
+        assert!(
+            gate_cleanup_item(Some(&orphanish), &listed, CleanupSource::Installer, &ignore)
+                .is_allow()
+        );
         assert!(
             !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::Installer, &ignore)
                 .is_allow()
@@ -785,13 +779,10 @@ mod tests {
             r"C:\Users\a\AppData\Roaming\Code\User\settings.json",
             ItemKind::File,
         );
-        assert!(gate_cleanup_item(
-            Some(&orphanish),
-            &listed,
-            CleanupSource::ToolCache,
-            &ignore
-        )
-        .is_allow());
+        assert!(
+            gate_cleanup_item(Some(&orphanish), &listed, CleanupSource::ToolCache, &ignore)
+                .is_allow()
+        );
         assert!(
             !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::ToolCache, &ignore)
                 .is_allow()

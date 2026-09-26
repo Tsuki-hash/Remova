@@ -234,12 +234,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("remova_idle_min_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("recent.bin"), b"x").unwrap();
-        let old = app(
-            "Active",
-            "20150101",
-            &dir.to_string_lossy(),
-            2_000_000,
-        );
+        let old = app("Active", "20150101", &dir.to_string_lossy(), 2_000_000);
         let ranked = rank_idle_apps(&[old]);
         assert!(
             ranked.is_empty(),

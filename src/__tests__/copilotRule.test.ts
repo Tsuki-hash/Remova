@@ -42,7 +42,7 @@ describe("ruleParseFilter", () => {
   it("filters by size in GB", () => {
     const { list } = ruleParseFilter(apps, "超过 2GB 的软件");
     expect(list).toHaveLength(1);
-    expect(list[0].name).toBe("Adobe Acrobat");
+    expect(list[0]?.name).toBe("Adobe Acrobat");
   });
 
   it("detects analyze action", () => {

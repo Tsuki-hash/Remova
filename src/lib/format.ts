@@ -87,8 +87,9 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   }
   // RemovaError IPC: `code::message` (BE-01) — code must be a known domain prefix.
   const ipc = raw.trim().split("::");
-  if (ipc.length >= 2 && isKnownIpcCode(ipc[0].toLowerCase().trim())) {
-    const code = ipc[0].toLowerCase();
+  const head = ipc[0];
+  if (head !== undefined && ipc.length >= 2 && isKnownIpcCode(head.toLowerCase().trim())) {
+    const code = head.toLowerCase();
     const name = ipc.slice(1).join("::").trim();
     if (code === "manage:protected" || code === "manage:protected_registry") {
       return name ? L.errServiceProtectedNamed(name) : L.errServiceProtected;
@@ -110,14 +111,22 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errCleanupFailed(name || code);
     }
     if (code.startsWith("ai:")) {
+      // REV-SUP-05: backend now passes the underlying cause in the `::` tail —
+      // map the common ones to actionable text instead of one generic string.
+      const d = name.toLowerCase();
+      if (d.includes("api key empty")) return L.aiErrKeyEmpty;
+      if (d.includes("model empty")) return L.aiErrModelEmpty;
+      if (d.includes("http failed")) return L.aiErrHttp;
+      if (d.includes("empty response")) return L.aiErrEmpty;
+      if (d.includes("parse failed")) return L.aiErrParse;
       return L.aiFailed;
     }
   }
   // manage:<kind>:<name>
   const mg = raw.trim().match(/^manage:(access_denied|open_failed|write_failed|protected):(.*)$/i);
   if (mg) {
-    const kind = mg[1].toLowerCase();
-    const name = mg[2].trim();
+    const kind = mg[1]?.toLowerCase() ?? "";
+    const name = mg[2]?.trim() ?? "";
     if (kind === "access_denied") return L.errAccessAdminNamed(name);
     if (kind === "protected") return L.errServiceProtectedNamed(name);
     if (kind === "open_failed" || kind === "write_failed") {

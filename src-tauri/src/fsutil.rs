@@ -167,7 +167,10 @@ mod tests {
         let _ = std::os::windows::fs::symlink_dir(&target, &link);
         if is_reparse_point(&link) {
             assert!(remove_tree_no_reparse(&link).is_err());
-            assert!(target.join("f.txt").exists(), "must not delete through link");
+            assert!(
+                target.join("f.txt").exists(),
+                "must not delete through link"
+            );
         }
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -185,7 +188,10 @@ mod tests {
         let _ = std::os::windows::fs::symlink_dir(&outside, &junc);
         remove_tree_no_reparse(&tree).unwrap();
         assert!(!tree.exists());
-        assert!(outside.join("keep.txt").exists(), "junction target must survive");
+        assert!(
+            outside.join("keep.txt").exists(),
+            "junction target must survive"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 

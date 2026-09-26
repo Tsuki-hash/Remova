@@ -29,8 +29,8 @@ pub mod scan_allow;
 pub mod scanner;
 pub mod shared;
 pub mod storeapps;
-pub mod toolcache;
 pub mod sysops;
+pub mod toolcache;
 
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
@@ -492,9 +492,7 @@ async fn list_local_drives() -> Result<Vec<diskradar::DriveInfo>, String> {
 
 /// Disk radar: top directories for one drive (system drive → well-known roots).
 #[tauri::command]
-async fn list_top_dir_sizes(
-    drive: Option<String>,
-) -> Result<Vec<diskradar::DirSizeRow>, String> {
+async fn list_top_dir_sizes(drive: Option<String>) -> Result<Vec<diskradar::DirSizeRow>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let letter = drive
             .as_deref()

@@ -127,7 +127,7 @@ describe("useAnalyzeFlow request sequencing", () => {
       resolveA(scanA);
     });
     expect(captured.scan).toBe(scanB);
-    expect(captured.selectedPaths).toEqual(new Set([scanB.items[0].path]));
+    expect(captured.selectedPaths).toEqual(new Set([scanB.items[0]?.path]));
     expect(captured.scanning).toBe(false);
   });
 

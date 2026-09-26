@@ -175,9 +175,11 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     let pub_low = app.publisher.trim().to_lowercase();
     // Publisher as a path/registry segment, not a raw substring (`Apt` must not hit `Adaptive`).
     if pub_low.len() >= 4
-        && low
-            .split(['\\', '/', ':', ' ', '_'])
-            .any(|seg| seg == pub_low || seg.starts_with(&format!("{pub_low} ")) || seg.ends_with(&format!(" {pub_low}")))
+        && low.split(['\\', '/', ':', ' ', '_']).any(|seg| {
+            seg == pub_low
+                || seg.starts_with(&format!("{pub_low} "))
+                || seg.ends_with(&format!(" {pub_low}"))
+        })
     {
         return true;
     }
@@ -255,7 +257,8 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                     })
                     .any(|s| {
                         let sl = s.to_lowercase();
-                        low.split(['\\', '/', ' ', '_', '-', '.']).any(|seg| seg == sl)
+                        low.split(['\\', '/', ' ', '_', '-', '.'])
+                            .any(|seg| seg == sl)
                     })
                 && ar10_in_install_root(&low)
             {

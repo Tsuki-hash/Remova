@@ -267,7 +267,7 @@ export function CopilotPanel({
               {L.copilotApply}
             </button>
             {intent.action === "analyze" && matches[0] && (
-              <button style={css.btnSm} onClick={() => onAnalyze(matches[0])}>
+              <button style={css.btnSm} onClick={() => onAnalyze(matches[0]!)}>
                 {L.copilotRunAnalyze}
               </button>
             )}
@@ -282,7 +282,7 @@ export function CopilotPanel({
             {intent.action === "force_clean" && matches[0] && (
               <button
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
-                onClick={() => onForceClean(matches[0])}
+                onClick={() => onForceClean(matches[0]!)}
               >
                 {L.copilotRunForce}
               </button>

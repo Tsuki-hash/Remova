@@ -125,7 +125,7 @@ describe("buildLinkedBuckets", () => {
     const buckets = buildLinkedBuckets(items, app);
     expect(buckets.map((b) => b.id)).toEqual(["programFiles", "registry", "startup"]);
     expect(buckets[0]).toEqual({ id: "programFiles", count: 2, sizeKb: 150 });
-    expect(buckets[1].sizeKb).toBeNull();
+    expect(buckets[1]?.sizeKb).toBeNull();
   });
 
   it("omits empty buckets", () => {
@@ -134,7 +134,7 @@ describe("buildLinkedBuckets", () => {
       app,
     );
     expect(buckets).toHaveLength(1);
-    expect(buckets[0].id).toBe("registry");
+    expect(buckets[0]?.id).toBe("registry");
   });
 
   it("sizeKb null when file sizes missing", () => {
@@ -142,8 +142,8 @@ describe("buildLinkedBuckets", () => {
       [item({ path: "C:\\Program Files\\DemoApp\\x.bin", kind: "file", size_kb: null })],
       app,
     );
-    expect(buckets[0].sizeKb).toBeNull();
-    expect(buckets[0].count).toBe(1);
+    expect(buckets[0]?.sizeKb).toBeNull();
+    expect(buckets[0]?.count).toBe(1);
   });
 });
 
