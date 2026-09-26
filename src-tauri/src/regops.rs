@@ -325,29 +325,9 @@ pub fn export_reg_value(
         return Ok(false);
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    // Typical line: `    value_name    REG_SZ    C:\path\app.exe`
-    let mut reg_type = String::new();
-    let mut data_raw = String::new();
-    for line in text.lines() {
-        let t = line.trim();
-        if t.is_empty() || t.starts_with("HKEY_") {
-            continue;
-        }
-        // Split on whitespace runs; value name may contain spaces — find REG_* token.
-        if let Some(idx) = t.find("REG_") {
-            let (left, right) = t.split_at(idx);
-            let mut parts = right.splitn(2, char::is_whitespace);
-            let ty = parts.next().unwrap_or("").to_string();
-            let data = parts.next().unwrap_or("").trim().to_string();
-            let _vname = left.trim();
-            reg_type = ty;
-            data_raw = data;
-            break;
-        }
-    }
-    if reg_type.is_empty() {
+    let Some((reg_type, data_raw)) = parse_reg_query(&text) else {
         return Ok(false);
-    }
+    };
     let key_reg = format!("[{key_win}]");
     let body = match reg_type.as_str() {
         "REG_DWORD" => {
@@ -389,6 +369,57 @@ pub fn export_reg_value(
     }
     std::fs::write(dest, reg).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// Parse `reg query` output for a single value: locate the known-type token
+/// (a value NAME containing "REG_" must not confuse it), then accumulate
+/// multi-line hex continuations until the next key header — long REG_BINARY
+/// data used to be silently truncated at the first line (data corruption in
+/// the backup safety net). Returns (type, data) or None.
+fn parse_reg_query(text: &str) -> Option<(String, String)> {
+    const KNOWN: &[&str] = &[
+        "REG_SZ",
+        "REG_EXPAND_SZ",
+        "REG_BINARY",
+        "REG_DWORD",
+        "REG_QWORD",
+        "REG_MULTI_SZ",
+    ];
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("HKEY_") {
+            continue;
+        }
+        let mut hit: Option<(usize, usize, &str)> = None;
+        for ty in KNOWN {
+            if let Some(idx) = t.find(ty) {
+                let before_ok = idx == 0 || t[..idx].ends_with(char::is_whitespace);
+                let after = &t[idx + ty.len()..];
+                let after_ok = after.is_empty() || after.starts_with(char::is_whitespace);
+                if before_ok && after_ok {
+                    hit = Some((idx, ty.len(), ty));
+                    break;
+                }
+            }
+        }
+        let Some((idx, ty_len, ty)) = hit else {
+            continue;
+        };
+        let mut data = t[idx + ty_len..].trim().to_string();
+        for cont in lines.by_ref() {
+            let ct = cont.trim();
+            if ct.is_empty() || ct.starts_with("HKEY_") || ct.starts_with('[') {
+                break;
+            }
+            if !data.is_empty() {
+                data.push(' ');
+            }
+            data.push_str(ct);
+        }
+        return Some((ty.to_string(), data));
+    }
+    None
 }
 
 fn utf16_hex_expand(s: &str) -> String {
@@ -810,7 +841,39 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn hive_alias_normalized_for_reg_exe() {
+    fn parse_reg_query_multi_line_binary_and_name_with_reg_token() {
+        // Long REG_BINARY data wraps onto continuation lines; a value NAME may
+        // itself contain "REG_" — the known-type token wins, continuations join.
+        let out = concat!(
+            "HKEY_CURRENT_USER\\Software\\T\r\n",
+            "\r\n",
+            "    My REG_Thing    REG_BINARY    0A0B\r\n",
+            "        0C0D0E0F\r\n",
+            "\r\n",
+            "HKEY_CURRENT_USER\\Software\\T2\r\n",
+            "\r\n",
+            "    Other    REG_SZ    hello\r\n",
+        );
+        let (ty, data) = super::parse_reg_query(out).unwrap();
+        assert_eq!(ty, "REG_BINARY");
+        assert_eq!(data, "0A0B 0C0D0E0F");
+        // Single-line REG_SZ still parses; the value name is ignored.
+        let (ty, data) =
+            super::parse_reg_query("    Path    REG_SZ    C:\\x y\\z.exe\r\n").unwrap();
+        assert_eq!(ty, "REG_SZ");
+        assert_eq!(data, "C:\\x y\\z.exe");
+    }
+
+    #[test]
+    fn parse_reg_query_no_type_is_none() {
+        assert!(
+            super::parse_reg_query("HKEY_CURRENT_USER\\Software\\T\r\n\r\n    junk line\r\n")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn fs_rejects_drive_root() {
         assert_eq!(
             super::normalize_reg_exe_hive(r"HKLM64\SOFTWARE\Foo"),
             r"HKLM\SOFTWARE\Foo"

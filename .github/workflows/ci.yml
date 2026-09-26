@@ -63,7 +63,7 @@ jobs:
       - name: frontend typecheck tests
         run: npm run typecheck:tests
 
-      - name: frontend test + coverage gate (REV-QA-09)
+      - name: frontend test + coverage gate
         run: npm run coverage
 
       - name: frontend build
@@ -97,10 +97,25 @@ jobs:
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh
         run: |
-          $dl = "$env:RUNNER_TEMP\webview2.exe"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
-          Start-Process -FilePath $dl -Args "/silent /install" -Wait
-      - name: app launch smoke (REV-QA-07)
+          $keys = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          )
+          $installed = $keys | ForEach-Object { (Get-ItemProperty -ErrorAction SilentlyContinue $_).pv } | Where-Object { $_ }
+          if ($installed) {
+            Write-Host "WebView2 already installed: $($installed[0])"
+          } else {
+            $dl = "$env:RUNNER_TEMP\webview2.exe"
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
+            $p = Start-Process -FilePath $dl -Args "/silent /install" -PassThru -Wait
+            # 0 = installed, 3010 = installed (reboot pending); anything else fails the job
+            if ($p.ExitCode -notin 0, 3010) {
+              Write-Error "WebView2 installer exit code $($p.ExitCode)"
+              exit $p.ExitCode
+            }
+            Write-Host "WebView2 installed (exit $($p.ExitCode))"
+          }
+      - name: app launch smoke
         shell: pwsh
         run: npm run smoke:launch
       - name: app binary smoke

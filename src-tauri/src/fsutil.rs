@@ -22,6 +22,9 @@ pub fn is_reparse_point(p: &Path) -> bool {
 
 /// Recursively copy a directory tree (files + dirs). Symlinks and other reparse points are skipped.
 pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
+    // Per-level pin (same as the delete path): a child swapped for a junction
+    // between the reparse check and this open is refused, not followed.
+    let _pin = pin_dir_no_reparse(src)?;
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -46,7 +49,26 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     if is_reparse_point(src) {
         return Err(std::io::Error::other("refusing to copy reparse point"));
     }
-    std::fs::copy(src, dest)
+    // Read through a handle that never follows a link swapped in after the
+    // check (streamed — no whole-file buffering).
+    #[cfg(windows)]
+    {
+        use std::io::Write as _;
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        let mut f = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(src)?;
+        let mut out = std::fs::File::create(dest)?;
+        let n = std::io::copy(&mut f, &mut out)?;
+        out.flush()?;
+        Ok(n)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::copy(src, dest)
+    }
 }
 
 /// REV-SEC-06: a handle that pins a directory (or file) while it is being

@@ -1,6 +1,7 @@
 //! Restore from backup session.
 
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -116,25 +117,53 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 None
             };
             if let Some(target) = target {
-                // S-R7-03 / REV-SEC-05: validate the bytes we import (already-read raw).
+                // Validate the bytes we import, then stage them in an
+                // exclusively created temp held open (share-read only) while
+                // reg.exe imports: a same-user process can neither pre-place
+                // nor swap the content in between.
                 let raw = validate_reg_import(&target)?;
-                // Rewrite a private temp with the validated content, then import that file
-                // so a race cannot swap the on-disk path after validation.
-                let pinned = e.path().join("value.import.reg");
-                fs::write(&pinned, &raw).map_err(|e| e.to_string())?;
-                let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-                cmd.args(["import", &pinned.to_string_lossy()]);
-                crate::regops::hide_console(&mut cmd);
-                let out = cmd.output().map_err(|e| e.to_string())?;
-                if out.status.success() {
-                    messages.push(format!("imported {}", target.display()));
-                } else {
+                let pinned = e.path().join(format!(
+                    "value.import.{}.{}.reg",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ));
+                let mut opts = fs::OpenOptions::new();
+                opts.create_new(true).write(true);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    opts.share_mode(0x0000_0001); // FILE_SHARE_READ only
+                }
+                let mut pin = opts.open(&pinned).map_err(|e| e.to_string())?;
+                let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
+                if let Err(write_err) = staged {
+                    drop(pin);
+                    let _ = fs::remove_file(&pinned);
                     return Err(crate::error::restore_reg_err(format!(
-                        "reg import failed {}",
-                        target.display()
+                        "reg import staging failed: {write_err}"
                     ))
                     .to_ipc());
                 }
+                let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
+                cmd.args(["import", &pinned.to_string_lossy()]);
+                crate::regops::hide_console(&mut cmd);
+                let out = cmd.output();
+                let import_res = match out {
+                    Ok(o) if o.status.success() => Ok(()),
+                    Ok(_) => Err(crate::error::restore_reg_err(format!(
+                        "reg import failed {}",
+                        target.display()
+                    ))
+                    .to_ipc()),
+                    Err(e) => Err(e.to_string()),
+                };
+                drop(pin);
+                let _ = fs::remove_file(&pinned);
+                import_res?;
+                messages.push(format!("imported {}", target.display()));
             }
         }
     }

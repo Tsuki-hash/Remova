@@ -289,6 +289,9 @@ fn backup_item_with_map(
             let rel = format!("{digest}_{name}");
             let dest = session.join("files").join(&rel);
             if src.is_dir() {
+                // Pin the source for the whole copy — the verified object is
+                // what gets enumerated, a swap-in junction cannot be followed.
+                let _pin = crate::fsutil::pin_dir_no_reparse(src).map_err(|e| e.to_string())?;
                 copy_dir(src, &dest).map_err(|e| e.to_string())?;
             } else {
                 if let Some(p) = dest.parent() {

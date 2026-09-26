@@ -42,10 +42,10 @@ if (Test-Path "CHANGELOG.md") {
     $head = $cl | Where-Object { $_ -match '^## \[(v?)([0-9]+\.[0-9]+\.[0-9]+)\]' } | Select-Object -First 1
     if (-not $head) {
         $errors += "CHANGELOG.md has no '## [x.y.z]' section"
-    } elseif ($head -notmatch '\[([0-9]+\.[0-9]+\.[0-9]+)\]') {
+    } elseif ($head -notmatch '\[(v?)([0-9]+\.[0-9]+\.[0-9]+)\]') {
         $errors += "CHANGELOG.md newest section unparsable: $head"
     } else {
-        $clVer = $Matches[1]
+        $clVer = $Matches[2]
         if ($clVer -ne $pkg) {
             $errors += "CHANGELOG newest section [$clVer] != package.json ($pkg)"
         }

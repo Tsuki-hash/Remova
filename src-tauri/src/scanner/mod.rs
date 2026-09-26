@@ -193,9 +193,11 @@ pub struct ScanResult {
 }
 
 pub fn normalize_for_match(s: &str) -> String {
+    // Unicode alphanumeric (not just ASCII) — CJK product/folder names must
+    // normalize to something matchable, not to the empty string.
     s.to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
+        .filter(|c| c.is_alphanumeric())
         .collect()
 }
 
@@ -223,7 +225,7 @@ pub fn slugify(text: &str) -> Vec<String> {
     }
     let cleaned = cleaned.trim();
     let tokens: Vec<String> = cleaned
-        .split(|c: char| !c.is_ascii_alphanumeric())
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
@@ -691,6 +693,17 @@ pub(crate) mod reg_scans;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slugify_keeps_cjk_tokens() {
+        // CJK product names must slugify to matchable slugs (previously the
+        // ASCII-only tokenizer returned an empty list for pure-CJK names).
+        assert_eq!(slugify("腾讯会议"), vec!["腾讯会议".to_string()]);
+        let mixed = slugify("Tencent Meeting 腾讯会议");
+        assert!(mixed.iter().any(|s| s.contains("tencent")));
+        assert!(mixed.iter().any(|s| s.contains("腾讯会议")));
+        assert_eq!(normalize_for_match("腾讯会议"), "腾讯会议");
+    }
 
     #[test]
     fn slugify_tokens() {

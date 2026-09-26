@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, type ReactNode } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
@@ -235,11 +235,26 @@ export function ScanLeftoversView({
     return L[key];
   }, [kindFilter, L]);
 
+  // The list starts below the column header and (for orphans) the origin-group
+  // block — tell the virtualizer where item 0 actually sits.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [listMargin, setListMargin] = useState(0);
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    const sc = scrollRef.current;
+    if (!el || !sc) return;
+    const next = Math.max(
+      0,
+      Math.round(el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop),
+    );
+    setListMargin((m) => (Math.abs(m - next) > 0.5 ? next : m));
+  });
   const rowVirtualizer = useVirtualizer({
     count: displayItems.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 72,
     overscan: 8,
+    scrollMargin: listMargin,
     getItemKey: (index) => displayItems[index]?.path ?? index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -330,7 +345,10 @@ export function ScanLeftoversView({
         {displayItems.length === 0 ? (
           <div style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>{L.leftoversNone}</div>
         ) : (
-          <div style={{ height: totalSize, position: "relative" }}>
+          <div
+            ref={listRef}
+            style={{ height: Math.max(0, totalSize - listMargin), position: "relative" }}
+          >
             {virtualRows.map((vr) => {
               const it = displayItems[vr.index];
               if (!it) return null;
@@ -344,7 +362,7 @@ export function ScanLeftoversView({
                     top: 0,
                     left: 0,
                     right: 0,
-                    transform: `translateY(${vr.start}px)`,
+                    transform: `translateY(${vr.start - listMargin}px)`,
                   }}
                 >
                   <LeftoverRow
