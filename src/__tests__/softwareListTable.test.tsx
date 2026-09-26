@@ -94,7 +94,7 @@ describe("SoftwareListTable", () => {
     );
     expect(rows.length).toBeGreaterThan(0);
     // data-index is what rowVirtualizer.measureElement keys measurements by.
-    expect(rows[0].dataset.index).toBeDefined();
+    expect(rows[0]?.dataset.index).toBeDefined();
     expect(screen.getAllByText(/Demo App/).length).toBeGreaterThan(0);
   });
 

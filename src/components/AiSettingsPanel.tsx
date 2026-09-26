@@ -108,7 +108,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const activePreset = PRESETS.find((p) => p.id === cfg.provider) ?? PRESETS[0];
+  const activePreset = PRESETS.find((p) => p.id === cfg.provider) ?? PRESETS[0]!;
 
   return (
     <div

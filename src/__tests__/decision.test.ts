@@ -254,11 +254,11 @@ describe("groupByOrigin", () => {
       item({ path: "D:\\Portable\\Chrome", confidence: "suspected" }),
       item({ path: "C:\\Users\\x\\AppData\\Local\\Steam" }),
     ]);
-    expect(groups[0].origin).toBe("Chrome");
-    expect(groups[0].count).toBe(2);
-    expect(groups[0].safe).toBe(1);
-    expect(groups[0].suggest).toBe(1);
-    expect(groups[1].origin).toBe("Steam");
+    expect(groups[0]?.origin).toBe("Chrome");
+    expect(groups[0]?.count).toBe(2);
+    expect(groups[0]?.safe).toBe(1);
+    expect(groups[0]?.suggest).toBe(1);
+    expect(groups[1]?.origin).toBe("Steam");
   });
 });
 

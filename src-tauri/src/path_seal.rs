@@ -211,11 +211,7 @@ pub fn load_seal(session: &Path) -> Option<PathMapSeal> {
 
 /// True when this original path is a sealed restore target **and** the decoded
 /// `path_map` still matches the digest recorded at backup time.
-pub fn target_sealed(
-    session: &Path,
-    path_map: &BTreeMap<String, String>,
-    original: &str,
-) -> bool {
+pub fn target_sealed(session: &Path, path_map: &BTreeMap<String, String>, original: &str) -> bool {
     let Some(seal) = load_seal(session) else {
         return false;
     };

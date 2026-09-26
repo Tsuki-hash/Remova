@@ -10,12 +10,12 @@ describe("toast channel", () => {
     toast.info("扫描中", { channel: "orphan-scan", sticky: true });
     const first = getToasts();
     expect(first).toHaveLength(1);
-    expect(first[0].message).toBe("扫描中");
+    expect(first[0]?.message).toBe("扫描中");
     toast.success("扫描完成", { channel: "orphan-scan" });
     const second = getToasts();
     expect(second).toHaveLength(1);
-    expect(second[0].message).toBe("扫描完成");
-    expect(second[0].channel).toBe("orphan-scan");
+    expect(second[0]?.message).toBe("扫描完成");
+    expect(second[0]?.channel).toBe("orphan-scan");
   });
 
   it("keeps unrelated channels independent", () => {

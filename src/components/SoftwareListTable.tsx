@@ -168,14 +168,18 @@ export function SoftwareListTable({
           )}
           {virtualRows.length > 0 && (
             <>
-              {virtualRows[0].start > 0 && (
+              {virtualRows[0] && virtualRows[0].start > 0 && (
                 <tr aria-hidden style={{ height: virtualRows[0].start }}>
                   <td colSpan={4} style={{ padding: 0, border: "none" }} />
                 </tr>
               )}
-              {virtualRows.map((vr) => renderRow(filtered[vr.index], vr.index))}
+              {virtualRows.map((vr) => {
+                const app = filtered[vr.index];
+                return app ? renderRow(app, vr.index) : null;
+              })}
               {(() => {
                 const last = virtualRows[virtualRows.length - 1];
+                if (!last) return null;
                 const pad = totalSize - last.end;
                 return pad > 0 ? (
                   <tr aria-hidden style={{ height: pad }}>

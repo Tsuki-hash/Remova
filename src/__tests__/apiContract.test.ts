@@ -96,7 +96,7 @@ function feInvokedCommands(): string[] {
   const api = readFileSync(new URL("../lib/api.ts", import.meta.url), "utf8");
   return [
     ...new Set(
-      [...api.matchAll(/invoke(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1]),
+      [...api.matchAll(/invoke(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g)].map((m) => m[1] ?? "").filter(Boolean),
     ),
   ].sort();
 }

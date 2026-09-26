@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { InstalledApp, ScanResult, CleanupReport, FullCleanupReport } from "../types";
 import type { Strings } from "../i18n";
 import { toast } from "../lib/toast";
+import { formatError } from "../lib/format";
 import { runAiReportSummary } from "../lib/aiNarrative";
 
 type ScanChrome = {
@@ -78,8 +79,9 @@ export function useAiScanNarrative({
       setAiSummaryNote(brief || null);
       // REV-FE-05: empty explain is not "AI disabled" — say so.
       if (!out.length) toast.info(L.aiEmptyResult);
-    } catch {
-      if (seq === aiExplainSeqRef.current) toast.error(L.aiFailed);
+    } catch (e) {
+      // REV-SUP-05: surface the mapped backend cause, not one generic string.
+      if (seq === aiExplainSeqRef.current) toast.error(formatError(e));
     } finally {
       if (seq === aiExplainSeqRef.current) setAiBusy(false);
     }

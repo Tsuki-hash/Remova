@@ -43,7 +43,9 @@ pub async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        .map_err(|_| "ai:risk_brief_failed".to_string())
+        // REV-SUP-05: keep the stable code, pass the underlying reason through —
+        // `code::detail` (formatError maps the code, the tail carries the cause).
+        .map_err(|e| format!("ai:risk_brief_failed::{e}"))
 }
 
 #[tauri::command]
@@ -61,7 +63,8 @@ pub async fn ai_explain_items(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|_| "ai:explain_failed".to_string())
+    // REV-SUP-05: stable code + underlying reason (see ai_risk_brief).
+    .map_err(|e| format!("ai:explain_failed::{e}"))
 }
 
 #[tauri::command]
@@ -74,16 +77,18 @@ pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        .map_err(|_| "ai:summarize_failed".to_string())
+        // REV-SUP-05: stable code + underlying reason (see ai_risk_brief).
+        .map_err(|e| format!("ai:summarize_failed::{e}"))
 }
 
 #[tauri::command]
 pub async fn ai_parse_intent(text: String, app_names: Vec<String>) -> Result<ai::NlIntent, String> {
     let cfg = ai::load_config();
     if !cfg.enabled {
-        return Err("ai disabled".into());
+        return Err("ai:parse_intent_failed::ai disabled".into());
     }
     tauri::async_runtime::spawn_blocking(move || ai::parse_nl_intent(&cfg, &text, &app_names))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("ai:parse_intent_failed::{e}"))?
+        .map_err(|e| format!("ai:parse_intent_failed::{e}"))
 }

@@ -330,7 +330,7 @@ unsafe fn read_uninstall_entry(
             }
         }
         // EstimatedSize is REG_DWORD — must be read outside the REG_SZ arm.
-        if name == "EstimatedSize" && (vtype == 4 /* REG_DWORD */) && data_len >= 4 {
+        if name == "EstimatedSize" && (vtype == 4/* REG_DWORD */) && data_len >= 4 {
             size_kb = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i64;
         }
     }

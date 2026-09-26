@@ -182,9 +182,7 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
         .next()
         .unwrap_or('C')
         .to_ascii_uppercase();
-    let letter = letter
-        .map(|c| c.to_ascii_uppercase())
-        .unwrap_or(sys);
+    let letter = letter.map(|c| c.to_ascii_uppercase()).unwrap_or(sys);
     let mut out = Vec::new();
     if letter == sys {
         for root in system_drive_roots() {
@@ -323,9 +321,15 @@ mod tests {
     #[test]
     fn drilldown_rejects_traversal_outside_roots() {
         // Traversal segments are refused outright — before any prefix match.
-        assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\..\..\Windows\System32"));
-        assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\..\Temp\evil"));
-        assert!(!super::under_radar_roots(r"C:\Windows\Temp\..\..\Games\Steam"));
+        assert!(!super::under_radar_roots(
+            r"C:\Users\a\Documents\..\..\..\Windows\System32"
+        ));
+        assert!(!super::under_radar_roots(
+            r"C:\Users\a\Documents\..\..\Temp\evil"
+        ));
+        assert!(!super::under_radar_roots(
+            r"C:\Windows\Temp\..\..\Games\Steam"
+        ));
         assert!(!super::under_radar_roots(r"C:\Users\a\Documents\..\secret"));
         // Clean paths under roots still pass.
         assert!(super::under_radar_roots(r"C:\Users\a\Documents\keep"));
