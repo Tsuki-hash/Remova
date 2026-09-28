@@ -108,7 +108,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 # 前端
 npm ci
 npm run build
-npm test
+npm run coverage
 
 # 后端
 cd src-tauri
@@ -167,7 +167,7 @@ Remova/
 欢迎 Issue 与 Pull Request：
 
 1. Fork 并创建功能分支
-2. 运行 `cargo test --workspace` 与 `npm test`
+2. 运行 `cargo test --workspace` 与 `npm run coverage`
 3. 使用 Conventional Commits（`feat:` / `fix:` / `docs:` …）
 4. 用户可见变更请更新 `CHANGELOG.md`
 

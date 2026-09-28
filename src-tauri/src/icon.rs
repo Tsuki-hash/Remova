@@ -37,6 +37,12 @@ fn source_fingerprint(path: &str) -> String {
     }
 }
 
+/// PNG file signature (0x89 'PNG' CR LF 0x1A LF) — every cached
+/// payload must start with it, so a torn or planted file is never served.
+fn looks_like_png(bytes: &[u8]) -> bool {
+    bytes.len() > 8 && bytes[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+}
+
 fn cache_key(raw: &str) -> String {
     let (path, index) = parse_display_icon(raw);
     let fp = source_fingerprint(&path);
@@ -51,7 +57,8 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     let cache_file = dir.join(cache_key(raw_display_icon));
     if cache_file.is_file() {
         if let Ok(bytes) = std::fs::read(&cache_file) {
-            if !bytes.is_empty() {
+            // A torn or planted non-PNG cache file must not be served as an icon.
+            if looks_like_png(&bytes) {
                 return Some(bytes);
             }
         }
@@ -62,7 +69,12 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     }
     let png = extract_from_path(&path, index)?;
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(&cache_file, &png);
+    // tmp + rename: a crash mid-write must not leave a torn PNG that would
+    // poison the cache key until the fingerprint changes.
+    let tmp = cache_file.with_extension("png.tmp");
+    if std::fs::write(&tmp, &png).is_ok() {
+        let _ = std::fs::rename(&tmp, &cache_file);
+    }
     prune_stale_cache(&dir, &cache_file);
     Some(png)
 }
@@ -233,6 +245,20 @@ fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn png_magic_rejects_torn_or_planted_files() {
+        let mut ok = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        ok.extend_from_slice(b"rest-of-image");
+        assert!(looks_like_png(&ok));
+        assert!(!looks_like_png(&[]));
+        assert!(!looks_like_png(&[0x89, 0x50]));
+        assert!(!looks_like_png(b"<html>evil</html>"));
+        let mut torn = vec![0x89, 0x50, 0x4E, 0x47];
+        torn.extend_from_slice(b"half-written");
+        assert!(!looks_like_png(&torn));
+    }
     #[test]
     fn encode_png_signature() {
         let bgra = [

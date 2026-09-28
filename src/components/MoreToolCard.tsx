@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import type { InstalledApp } from "../types";
 import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
 export type ToolId =
@@ -50,7 +49,6 @@ export function ToolCard({
 }: {
   item: ToolItem;
   active: boolean;
-  selectedApp?: InstalledApp | null;
 }) {
   return (
     <button

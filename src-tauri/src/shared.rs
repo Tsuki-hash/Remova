@@ -59,6 +59,27 @@ fn norm_path(path: &str) -> String {
     lower(&path.replace('/', "\\"))
 }
 
+/// First valid GUID (`{36 hex/dash chars}`) across ALL brace groups,
+/// ASCII-folded to lowercase. Only ASCII is folded, so slicing the folded
+/// string is byte-safe (no Unicode indices touch the original `String`).
+pub fn first_guid(s: &str) -> Option<String> {
+    let low = s.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(rel) = low[from..].find('{') {
+        let start = from + rel;
+        let Some(end_rel) = low[start..].find('}') else {
+            break;
+        };
+        let end = start + end_rel;
+        let body = &low[start + 1..end];
+        if body.len() == 36 && body.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Some(low[start..=end].to_string());
+        }
+        from = start + 1;
+    }
+    None
+}
+
 /// True when path is an exact Common Files root (last segment).
 pub fn is_common_files_root(path: &str) -> bool {
     let trimmed = norm_path(path).trim_end_matches('\\').to_string();
@@ -177,5 +198,21 @@ mod tests {
             r"C:\Users\a\AppData\Local\Foo\Cache\x.dat",
             "temp"
         ));
+    }
+
+    #[test]
+    fn first_guid_scans_all_brace_groups_and_validates_shape() {
+        let g = "{12345678-1234-1234-1234-123456789ABC}";
+        // The only brace group is a valid GUID (case-folded to lowercase).
+        assert_eq!(first_guid(g).as_deref(), Some(g.to_lowercase().as_str()));
+        // A short first group must not stop the scan.
+        assert_eq!(
+            first_guid("{bad} tail {12345678-1234-1234-1234-123456789ABC}").as_deref(),
+            Some("{12345678-1234-1234-1234-123456789abc}")
+        );
+        // Shape validation: wrong length / non-hex bodies are not GUIDs.
+        assert_eq!(first_guid("{123}"), None);
+        assert_eq!(first_guid("{ZZZZZZZZ-1234-1234-1234-123456789ABC}"), None);
+        assert_eq!(first_guid("no braces at all"), None);
     }
 }

@@ -124,6 +124,7 @@ export function useAnalyzeFlow({
       setAiRisk,
       setIgnoreSuggestions,
       setSelectedPaths,
+      setEvidence,
       setError,
       setResidualFromUninstall,
     ],

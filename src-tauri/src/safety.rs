@@ -229,6 +229,10 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         // Value-shaped paths (`SERVICES\<name>|value`) arrive merged from
         // delete_value — compare the key part, or the critical check is bypassed.
         let key_part = rest.split('|').next().unwrap_or(rest);
+        if key_part.is_empty() {
+            // `Services\|Start` — no service named; never authorize.
+            return Err(crate::error::safety_err("service key name must not be empty").to_ipc());
+        }
         if critical_service_names()
             .iter()
             .any(|n| key_part == n.to_uppercase())
@@ -695,6 +699,14 @@ mod tests {
             r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc|Start"
         )
         .is_ok());
+        // Empty service name in the value shape must not pass either.
+        let empty_name =
+            is_safe_to_delete_registry(r"HKLM\SYSTEM\CurrentControlSet\Services\|Start")
+                .unwrap_err();
+        assert!(
+            empty_name.contains("service key name must not be empty"),
+            "{empty_name}"
+        );
     }
 
     /// Restore-target gate must judge the Win32-normalized path (trailing

@@ -24,12 +24,14 @@ pub fn save_ai_config(
     c.base_url = base_url;
     c.model = model;
     c.allow_cloud_paths = allow_cloud_paths;
-    if let Some(k) = api_key {
-        let k = k.trim().to_string();
-        if !k.is_empty() {
+    if let Some(mut k) = api_key {
+        let trimmed = k.trim().to_string();
+        // The IPC copy (possibly padded) holds the secret too — wipe it.
+        k.zeroize();
+        if !trimmed.is_empty() {
             // R21-SUP-02: assignment would drop the old decrypted key without wipe.
             c.api_key.zeroize();
-            c.api_key = k;
+            c.api_key = trimmed;
         }
     }
     ai::save_config(&c)?;

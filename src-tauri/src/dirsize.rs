@@ -93,7 +93,7 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
         } else if meta.is_file() {
             total = total.saturating_add(meta.len());
             files_seen += 1;
-            if files_seen > MAX_WALK_FILES {
+            if files_seen >= MAX_WALK_FILES {
                 return None;
             }
         }
@@ -110,6 +110,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
     let mut stack: VecDeque<(std::path::PathBuf, u32)> = VecDeque::new();
     stack.push_back((root.to_path_buf(), 0));
     let mut files_seen: u64 = 0;
+    let mut capped = false;
 
     while let Some((dir, depth)) = stack.pop_front() {
         if depth > MAX_WALK_DEPTH {
@@ -135,6 +136,10 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
             if meta.is_dir() {
                 if depth < MAX_WALK_DEPTH {
                     stack.push_back((entry.path(), depth + 1));
+                } else {
+                    // Subtrees below the depth cap are not visited — the total
+                    // is a floor and must say so.
+                    capped = true;
                 }
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
@@ -149,7 +154,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
             }
         }
     }
-    (total, false)
+    (total, capped)
 }
 
 #[cfg(test)]

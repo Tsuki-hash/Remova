@@ -134,6 +134,10 @@ fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> 
         }
         *budget -= 1;
         let p = ent.path();
+        // Junction/symlink subtrees double-count sizes and may cross volumes.
+        if crate::fsutil::is_reparse_point(&p) {
+            continue;
+        }
         if p.is_dir() {
             bytes += shallow_size_kb(&p, max_depth - 1, budget) * 1024;
         } else if let Ok(meta) = ent.metadata() {
