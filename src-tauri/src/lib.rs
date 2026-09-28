@@ -54,19 +54,33 @@ fn begin_size_estimate() {
 /// Estimate on-disk size of an install location (KB).
 /// Runs on the blocking pool so large trees do not freeze the webview.
 /// Result is zeroed if the estimate batch was cancelled / superseded.
+/// `capped` marks a file-cap partial (floor, not total) — R21-SUP-04.
+#[derive(serde::Serialize)]
+struct SizeEstimate {
+    kb: i64,
+    capped: bool,
+}
+
 #[tauri::command]
-async fn estimate_dir_size_kb(path: String) -> Result<i64, String> {
+async fn estimate_dir_size_kb(path: String) -> Result<SizeEstimate, String> {
     let path = path.trim().to_string();
     if path.is_empty() {
-        return Ok(0);
+        return Ok(SizeEstimate {
+            kb: 0,
+            capped: false,
+        });
     }
     let gen = dirsize::current_batch();
     tauri::async_runtime::spawn_blocking(move || {
-        let kb = dirsize::walk_size_kb(std::path::Path::new(&path));
+        // Honors the global cancel flag (batch cancel must zero in-flight walks).
+        let (kb, capped) = dirsize::walk_size_kb_capped(std::path::Path::new(&path));
         if dirsize::batch_stale(gen) {
-            0
+            SizeEstimate {
+                kb: 0,
+                capped: false,
+            }
         } else {
-            kb
+            SizeEstimate { kb, capped }
         }
     })
     .await

@@ -741,9 +741,12 @@ const REPORT_SYSTEM: &str =
 是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
 
 pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
+    // R21-SUP-03: publisher is part of the prompt — without it two products from
+    // different vendors with the same shape share a 7-day cache entry.
     let key = fnv1a64(&format!(
-        "risk|{}|{}|{}|{}|{}|{}|{}",
+        "risk|{}|{}|{}|{}|{}|{}|{}|{}",
         input.app_name,
+        input.publisher,
         input.action,
         input.item_count,
         input.has_service,
@@ -794,14 +797,18 @@ pub struct ReportBriefInput {
 }
 
 pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
+    // R21-SUP-03: backup_dir / top_failed are rendered into the prompt — they
+    // must break the cache or the UI shows the previous run's path/failures.
     let key = fnv1a64(&format!(
-        "report|{}|{}|{}|{}|{}|{}",
+        "report|{}|{}|{}|{}|{}|{}|{}|{}",
         input.app_name,
         input.deleted,
         input.failed,
         input.skipped,
         input.aborted,
-        input.restore_point_ok
+        input.restore_point_ok,
+        input.backup_dir,
+        serde_json::to_string(&input.top_failed).unwrap_or_default()
     ));
     if let Some(c) = cache_get(key) {
         return Ok(c);

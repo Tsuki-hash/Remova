@@ -570,17 +570,101 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
             return path_mock::read(scope);
         }
     }
-    use std::process::Command;
-    let ps = format!("[Environment]::GetEnvironmentVariable('Path','{scope}')");
-    let mut cmd = Command::new(powershell_exe());
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps]);
-    hide_console(&mut cmd);
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        // S-03: never fall back to process PATH — that can corrupt User/Machine PATH.
-        return Err(crate::error::path_io_err(format!("read Path {scope} failed")).to_ipc());
+    // R21-BE-07: read Path straight from the registry — no PowerShell round-trip
+    // (was two processes per analyze) and no OEM-codepage `from_utf8_lossy`
+    // corruption of non-ASCII PATH entries.
+    let key = match scope {
+        "User" => r"HKCU\Environment",
+        "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
+    };
+    let raw = read_reg_path_value(key)?;
+    Ok(raw)
+}
+
+/// Read the Path value (REG_SZ or REG_EXPAND_SZ) as Unicode text.
+/// `%VAR%` is expanded only for REG_EXPAND_SZ (R21-BE-07).
+fn read_reg_path_value(key_path: &str) -> Result<String, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = key_path;
+        Err("not windows".into())
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{
+            RegQueryValueExW, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+        };
+        let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        unsafe {
+            let w = to_wide(&sub);
+            let mut hk = HKEY::default();
+            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
+                .ok()
+                .map_err(|_| format!("open failed {key_path}"))?;
+            let vname = to_wide("Path");
+            let mut typ = REG_VALUE_TYPE(0);
+            let mut data = vec![0u8; 65_536];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                hk,
+                PCWSTR(vname.as_ptr()),
+                None,
+                Some(&mut typ),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            let _ = RegCloseKey(hk);
+            if st != ERROR_SUCCESS {
+                return Err(
+                    crate::error::path_io_err(format!("read Path {key_path} failed")).to_ipc(),
+                );
+            }
+            if typ != REG_SZ && typ != REG_EXPAND_SZ {
+                return Err(crate::error::path_io_err(format!(
+                    "unexpected type for Path {key_path}"
+                ))
+                .to_ipc());
+            }
+            let text = crate::fsutil::wstring_from_reg_data(&data[..data_len as usize]);
+            if typ == REG_EXPAND_SZ {
+                Ok(expand_env_string(&text))
+            } else {
+                Ok(text)
+            }
+        }
+    }
+}
+
+/// Expand `%VAR%` references using the current environment block.
+fn expand_env_string(s: &str) -> String {
+    #[cfg(not(windows))]
+    {
+        s.to_string()
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+        if !s.contains('%') {
+            return s.to_string();
+        }
+        let wide = to_wide(s);
+        unsafe {
+            let needed = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), None);
+            if needed == 0 {
+                return s.to_string();
+            }
+            let mut buf = vec![0u16; needed as usize];
+            let written = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+            if written == 0 {
+                return s.to_string();
+            }
+            while buf.last().copied() == Some(0) {
+                buf.pop();
+            }
+            String::from_utf16_lossy(&buf)
+        }
+    }
 }
 
 /// Public wrapper so the scanner can read true User/Machine PATH.

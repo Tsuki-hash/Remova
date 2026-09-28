@@ -121,6 +121,14 @@ const RUN_KEYS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Run / RunOnce / Policies-Explorer-Run key paths (shared with installmon).
+pub fn run_key_paths() -> Vec<String> {
+    RUN_KEYS
+        .iter()
+        .map(|(alias, sub, _view)| format!(r"{alias}\{sub}"))
+        .collect()
+}
+
 pub fn list_startup_items() -> Vec<ManageItem> {
     let mut out = Vec::new();
     for (alias, sub, _view) in RUN_KEYS {
@@ -903,5 +911,17 @@ mod tests {
         assert!(!super::task_status_enabled("Desabilitada")); // pt
         assert!(!super::task_status_enabled(""));
         assert!(!super::task_status_enabled("Queued"));
+    }
+
+    /// R21-BE-08: installmon shares this list — cover 32-bit Run, RunOnce, Policies.
+    #[test]
+    fn run_key_paths_covers_all_views() {
+        let keys = super::run_key_paths();
+        assert!(keys
+            .iter()
+            .any(|k| k.contains("HKLM32") && k.ends_with(r"\Run")));
+        assert!(keys.iter().any(|k| k.ends_with(r"\RunOnce")));
+        assert!(keys.iter().any(|k| k.contains(r"Policies\Explorer\Run")));
+        assert_eq!(keys.len(), super::RUN_KEYS.len());
     }
 }

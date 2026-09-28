@@ -129,18 +129,20 @@ static TEST_BUDGET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 
 fn reg_value_names() -> BTreeSet<String> {
     let mut set = BTreeSet::new();
-    let keys = [
-        r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-        r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    // R21-BE-08: align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
+    // RunOnce views, Policies Explorer Run) so 32-bit / one-shot / policy
+    // persistence shows up in the install-monitor diff.
+    let mut keys: Vec<String> = vec![
+        r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall".into(),
+        r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall".into(),
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall".into(),
     ];
+    keys.extend(crate::manage::run_key_paths());
     for k in keys {
-        for sub in crate::regscan::list_subkeys(k) {
+        for sub in crate::regscan::list_subkeys(&k) {
             set.insert(format!("{k}\\{sub}").to_lowercase());
         }
-        for (v, _) in crate::regscan::list_values(k) {
+        for (v, _) in crate::regscan::list_values(&k) {
             set.insert(format!("{k}::{v}").to_lowercase());
         }
     }

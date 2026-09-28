@@ -119,7 +119,8 @@ export const api = {
   diskUsage: () => invoke<DiskUsage>("disk_usage"),
   beginSizeEstimate: () => invoke("begin_size_estimate"),
   cancelSizeEstimate: () => invoke("cancel_size_estimate"),
-  estimateDirSizeKb: (path: string) => invoke<number>("estimate_dir_size_kb", { path }),
+  estimateDirSizeKb: (path: string) =>
+    invoke<{ kb: number; capped: boolean }>("estimate_dir_size_kb", { path }),
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
   beginInstallMonitor: () => invoke("begin_install_monitor"),
   endInstallMonitor: () => invoke<MonitorEndResult>("end_install_monitor"),
