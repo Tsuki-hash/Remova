@@ -4,6 +4,7 @@ import type {
   InstalledApp,
   ScanResult,
 } from "../../types";
+import { appKey } from "../../lib/appKey";
 
 export type AppCoreState = {
   apps: InstalledApp[];
@@ -75,8 +76,19 @@ function isCompletedFullReport(
 
 export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppCoreState {
   switch (action.type) {
-    case "apps/set":
-      return { ...state, apps: action.value };
+    case "apps/set": {
+      // REV-FE-02: refresh must not leave ghost selection / multi keys for vanished rows.
+      const apps = action.value;
+      const live = new Set(apps.map(appKey));
+      const multi = new Set([...state.multi].filter((k) => live.has(k)));
+      const selected = (() => {
+        if (!state.selected) return null;
+        const key = appKey(state.selected);
+        if (!live.has(key)) return null;
+        return apps.find((a) => appKey(a) === key) ?? state.selected;
+      })();
+      return { ...state, apps, multi, selected };
+    }
     case "loading/set":
       return { ...state, loading: action.value };
     case "error/set":

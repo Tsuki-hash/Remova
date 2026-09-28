@@ -2,7 +2,6 @@ import type { LinkedBucketId } from "../../lib/linkedItems";
 
 export type ScanUiState = {
   kindFilter: LinkedBucketId | null;
-  pendingBucket: LinkedBucketId | null;
   riskFilter: "confirm" | "keep" | null;
   aiSummaryNote: string | null;
   aiNudgeDismissed: boolean;
@@ -10,8 +9,6 @@ export type ScanUiState = {
 
 export type ScanUiAction =
   | { type: "kindFilter/set"; value: LinkedBucketId | null }
-  | { type: "pendingBucket/set"; value: LinkedBucketId | null }
-  | { type: "pendingBucket/take" }
   | { type: "riskFilter/set"; value: "confirm" | "keep" | null }
   | { type: "riskFilter/toggle"; mode: "confirm" | "keep" }
   | { type: "aiSummary/set"; value: string | null }
@@ -21,7 +18,6 @@ export type ScanUiAction =
 export function initialScanUiState(): ScanUiState {
   return {
     kindFilter: null,
-    pendingBucket: null,
     riskFilter: null,
     aiSummaryNote: null,
     aiNudgeDismissed: localStorage.getItem("remova_ai_nudge") === "1",
@@ -32,12 +28,6 @@ export function scanUiReducer(state: ScanUiState, action: ScanUiAction): ScanUiS
   switch (action.type) {
     case "kindFilter/set":
       return { ...state, kindFilter: action.value };
-    case "pendingBucket/set":
-      return { ...state, pendingBucket: action.value };
-    case "pendingBucket/take": {
-      const v = state.pendingBucket;
-      return { ...state, pendingBucket: null, kindFilter: v ?? state.kindFilter };
-    }
     case "riskFilter/set":
       return { ...state, riskFilter: action.value };
     case "riskFilter/toggle":
@@ -56,7 +46,6 @@ export function scanUiReducer(state: ScanUiState, action: ScanUiAction): ScanUiS
         kindFilter: null,
         riskFilter: null,
         aiSummaryNote: null,
-        pendingBucket: null,
       };
     default:
       return state;

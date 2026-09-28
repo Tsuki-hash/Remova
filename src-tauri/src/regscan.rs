@@ -3,7 +3,7 @@
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::ERROR_SUCCESS;
+use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryInfoKeyW, HKEY,
@@ -162,7 +162,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
                 let mut vtype = 0u32;
                 let mut data = vec![0u8; 4096];
                 let mut data_len = data.len() as u32;
-                if RegEnumValueW(
+                let mut st = RegEnumValueW(
                     root,
                     n,
                     windows::core::PWSTR(vname.as_mut_ptr()),
@@ -171,8 +171,42 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
                     Some(&mut vtype),
                     Some(data.as_mut_ptr()),
                     Some(&mut data_len),
-                ) != ERROR_SUCCESS
-                {
+                );
+                if st == ERROR_MORE_DATA {
+                    // REV-BE-09: one retry with the buffer sizes the API reported
+                    // instead of silently dropping oversized names/values.
+                    let need_name = vname_len as usize;
+                    let need_data = data_len as usize;
+                    if need_name > (1 << 14) || need_data > (1 << 20) {
+                        n += 1; // pathological — skip this value, keep enumerating
+                        continue;
+                    }
+                    if need_name > vname.len() {
+                        vname = vec![0u16; need_name + 1];
+                    }
+                    if need_data > data.len() {
+                        data = vec![0u8; need_data];
+                    }
+                    vname_len = vname.len() as u32;
+                    data_len = data.len() as u32;
+                    st = RegEnumValueW(
+                        root,
+                        n,
+                        windows::core::PWSTR(vname.as_mut_ptr()),
+                        &mut vname_len,
+                        None,
+                        Some(&mut vtype),
+                        Some(data.as_mut_ptr()),
+                        Some(&mut data_len),
+                    );
+                }
+                if st == ERROR_MORE_DATA {
+                    // Second failure (value grew again / buffer race) — skip
+                    // this value and keep enumerating instead of dropping the rest.
+                    n += 1;
+                    continue;
+                }
+                if st != ERROR_SUCCESS {
                     break;
                 }
                 n += 1;
@@ -218,7 +252,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
             let mut vtype = REG_VALUE_TYPE(0);
             let mut data = vec![0u8; 4096];
             let mut data_len = data.len() as u32;
-            let st = RegQueryValueExW(
+            let mut st = RegQueryValueExW(
                 root,
                 PCWSTR(name_w.as_ptr()),
                 None,
@@ -226,6 +260,23 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
                 Some(data.as_mut_ptr()),
                 Some(&mut data_len),
             );
+            if st == ERROR_MORE_DATA {
+                // REV-BE-09: re-query with the reported size — long UninstallString
+                // / display values must not be silently dropped.
+                let need = data_len as usize;
+                if need > data.len() && need <= (1 << 20) {
+                    data = vec![0u8; need];
+                    data_len = data.len() as u32;
+                    st = RegQueryValueExW(
+                        root,
+                        PCWSTR(name_w.as_ptr()),
+                        None,
+                        Some(&mut vtype),
+                        Some(data.as_mut_ptr()),
+                        Some(&mut data_len),
+                    );
+                }
+            }
             let _ = RegCloseKey(root);
             if st != ERROR_SUCCESS || (vtype != REG_SZ && vtype != REG_EXPAND_SZ) {
                 return None;
@@ -235,7 +286,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     }
 }
 
-/// Read REG_DWORD value by name.
+/// Read REG_DWORD value by name via RegQueryValueExW (REV-BE-03, O(1) — same path as `read_string`).
 pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     #[cfg(not(windows))]
     {
@@ -244,7 +295,7 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     }
     #[cfg(windows)]
     {
-        use windows::Win32::System::Registry::REG_DWORD;
+        use windows::Win32::System::Registry::{RegQueryValueExW, REG_DWORD, REG_VALUE_TYPE};
         let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
@@ -259,36 +310,23 @@ pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
             {
                 return None;
             }
-            let mut n = 0u32;
-            let mut found = None;
-            loop {
-                let mut vname = vec![0u16; 256];
-                let mut vname_len = vname.len() as u32;
-                let mut vtype = 0u32;
-                let mut data = vec![0u8; 16];
-                let mut data_len = data.len() as u32;
-                if RegEnumValueW(
-                    root,
-                    n,
-                    windows::core::PWSTR(vname.as_mut_ptr()),
-                    &mut vname_len,
-                    None,
-                    Some(&mut vtype),
-                    Some(data.as_mut_ptr()),
-                    Some(&mut data_len),
-                ) != ERROR_SUCCESS
-                {
-                    break;
-                }
-                n += 1;
-                let name = String::from_utf16_lossy(&vname[..vname_len as usize]);
-                if name.eq_ignore_ascii_case(value_name) && vtype == REG_DWORD.0 && data_len >= 4 {
-                    found = Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]));
-                    break;
-                }
-            }
+            let name_w = to_wide(value_name);
+            let mut vtype = REG_VALUE_TYPE(0);
+            let mut data = [0u8; 4];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                root,
+                PCWSTR(name_w.as_ptr()),
+                None,
+                Some(&mut vtype),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
             let _ = RegCloseKey(root);
-            found
+            if st != ERROR_SUCCESS || vtype != REG_DWORD || data_len < 4 {
+                return None;
+            }
+            Some(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
         }
     }
 }
@@ -360,7 +398,7 @@ pub fn read_string_default(key: &str) -> Option<String> {
             let mut len = buf.len() as u32;
             let mut vtype = windows::Win32::System::Registry::REG_VALUE_TYPE(0);
             let empty = to_wide("");
-            let st = windows::Win32::System::Registry::RegQueryValueExW(
+            let mut st = windows::Win32::System::Registry::RegQueryValueExW(
                 hk,
                 PCWSTR(empty.as_ptr()),
                 None,
@@ -368,6 +406,22 @@ pub fn read_string_default(key: &str) -> Option<String> {
                 Some(buf.as_mut_ptr()),
                 Some(&mut len),
             );
+            if st == ERROR_MORE_DATA {
+                // REV-BE-09: re-query with the reported size instead of dropping.
+                let need = len as usize;
+                if need > buf.len() && need <= (1 << 20) {
+                    buf = vec![0u8; need];
+                    len = buf.len() as u32;
+                    st = windows::Win32::System::Registry::RegQueryValueExW(
+                        hk,
+                        PCWSTR(empty.as_ptr()),
+                        None,
+                        Some(&mut vtype),
+                        Some(buf.as_mut_ptr()),
+                        Some(&mut len),
+                    );
+                }
+            }
             let _ = RegCloseKey(hk);
             if st != ERROR_SUCCESS {
                 return None;

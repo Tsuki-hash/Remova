@@ -48,6 +48,8 @@ export function exportHtmlReport(r: FullCleanupReport, L: Strings) {
   const a = document.createElement("a");
   a.href = url;
   a.download = `remova-report-${(r.app_name || "app").replace(/[^\w.-]+/g, "_")}.html`;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   URL.revokeObjectURL(url);
 }

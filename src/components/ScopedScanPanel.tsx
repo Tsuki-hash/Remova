@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { api, type CleanupSourceId } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -7,7 +8,9 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
 import {
+  buildCleanupRiskBits,
   defaultSelectable,
+  formatRiskNote,
   maxRiskOf,
   riskTierLabel,
   summarizeLeftovers,
@@ -72,9 +75,10 @@ export function ScopedScanPanel({
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
+    const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}`,
+      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
@@ -132,13 +136,46 @@ export function ScopedScanPanel({
             {L.orphanScan}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
       </div>
       {items && (
         <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
           {summary.total} · {L.orphanSelectedMeta(selected.size, "")}
+        </div>
+      )}
+      {busy && items === null && (
+        <div
+          style={{
+            ...css.muted,
+            marginTop: 12,
+            padding: "18px 8px",
+            textAlign: "center" as const,
+            fontSize: 12.5,
+          }}
+          role="status"
+        >
+          {L.loadingApps}
+          <div
+            style={{
+              marginTop: 10,
+              height: 3,
+              borderRadius: 2,
+              background: "var(--surface-2)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: "40%",
+                height: "100%",
+                background: "var(--accent)",
+                borderRadius: 2,
+                animation: "remova-indeterminate 1.1s ease-in-out infinite",
+              }}
+            />
+          </div>
         </div>
       )}
       <div style={{ maxHeight: 320, overflow: "auto", marginTop: 8 }}>
@@ -175,7 +212,7 @@ export function ScopedScanPanel({
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
                 {it.bucket || it.reason}
-                {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary || "user data"}` : ""}
+                {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary}` : ""}
                 {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
               </div>
             </span>

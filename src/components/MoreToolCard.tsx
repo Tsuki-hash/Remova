@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import { t } from "../i18n";
 import type { InstalledApp } from "../types";
 import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
@@ -27,7 +26,6 @@ export type ToolItem = {
   desc: string;
   icon: ToolIconName;
   action: () => void;
-  needsSelection?: boolean;
   accent?: boolean;
   badge?: string;
 };
@@ -49,14 +47,11 @@ export const cardBase: CSSProperties = {
 export function ToolCard({
   item,
   active,
-  selectedApp,
 }: {
   item: ToolItem;
   active: boolean;
-  selectedApp: InstalledApp | null;
+  selectedApp?: InstalledApp | null;
 }) {
-  const L = t();
-  const blocked = item.needsSelection && !selectedApp;
   return (
     <button
       type="button"
@@ -67,12 +62,23 @@ export function ToolCard({
         background: active ? "var(--accent-soft)" : "var(--surface)",
         boxShadow: active ? "0 0 0 1px var(--accent)" : "none",
       }}
-      onMouseEnter={(e) => {
+          onMouseEnter={(e) => {
         if (active) return;
         e.currentTarget.style.borderColor = "var(--border-strong)";
         e.currentTarget.style.boxShadow = "0 1px 0 rgba(0,0,0,.04)";
       }}
       onMouseLeave={(e) => {
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.boxShadow = "none";
+      }}
+      onFocus={(e) => {
+        // REV-UX-22: keyboard focus must be as visible as hover.
+        if (active) return;
+        e.currentTarget.style.borderColor = "var(--border-strong)";
+        e.currentTarget.style.boxShadow = "0 0 0 2px var(--accent-soft)";
+      }}
+      onBlur={(e) => {
         if (active) return;
         e.currentTarget.style.borderColor = "var(--border)";
         e.currentTarget.style.boxShadow = "none";
@@ -83,15 +89,15 @@ export function ToolCard({
           width: 36,
           height: 36,
           borderRadius: 9,
-          background: item.accent && !blocked ? "var(--accent-soft)" : "var(--surface-2)",
-          color: item.accent && !blocked ? "var(--accent)" : "var(--muted)",
+          background: item.accent ? "var(--accent-soft)" : "var(--surface-2)",
+          color: item.accent ? "var(--accent)" : "var(--muted)",
           display: "grid",
           placeItems: "center",
           fontSize: 16,
           fontWeight: 600,
           flexShrink: 0,
           border:
-            item.accent && !blocked ? "1px solid transparent" : "1px solid var(--border)",
+            item.accent ? "1px solid transparent" : "1px solid var(--border)",
         }}
         aria-hidden
       >
@@ -116,21 +122,7 @@ export function ToolCard({
             </span>
           )}
         </div>
-        <div style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.45 }}>
-          {blocked ? L.needsSoftware : item.desc}
-        </div>
-        {blocked && (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              fontWeight: 600,
-              color: "var(--accent)",
-            }}
-          >
-            {L.goToSoftware} →
-          </div>
-        )}
+        <div style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.45 }}>{item.desc}</div>
       </span>
       <span style={{ color: "var(--muted)", fontSize: 14, alignSelf: "center" }} aria-hidden>
         ›

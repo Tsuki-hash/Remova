@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Deco } from "./ui/Glyph";
 import { createPortal } from "react-dom";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
@@ -133,7 +134,7 @@ function RowMenu({
           setOpen((v) => !v);
         }}
       >
-        ⋯
+        <Deco ch="⋯" />
       </button>
       {open &&
         pos &&

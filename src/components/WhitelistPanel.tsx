@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { api, type IgnoreLists } from "../lib/api";
@@ -54,11 +55,11 @@ export function WhitelistPanel({
           </button>
         )}
         <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose}>
-          ×
+          <CloseGlyph />
         </button>
       </div>
       {rows.length === 0 ? (
-        <div style={{ color: "var(--muted)" }}>{L.ignoreSuggestNone || "—"}</div>
+        <div style={{ color: "var(--muted)" }}>{L.whitelistEmpty}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {rows.map((r) => (

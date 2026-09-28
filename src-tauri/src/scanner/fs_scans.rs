@@ -2,8 +2,22 @@
 
 use super::*;
 
+/// Shortcut peek budget (REV-BE-01): LNK target strings sit near the header.
+const SHORTCUT_PEEK_BYTES: usize = 8 * 1024;
+
+fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return false;
+    }
+    hay.windows(needle.len()).any(|w| w == needle)
+}
+
 pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     for letter in b'C'..=b'Z' {
+        // REV-BE-02: skip remote/CDROM — `exists()` on a dead network mapping can stall 30s+.
+        if !crate::diskradar::is_local_fixed_drive(letter as char) {
+            continue;
+        }
         let drive = format!("{}:\\", letter as char);
         let root = PathBuf::from(&drive);
         if !root.exists() {
@@ -58,7 +72,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
 }
 
 /// Whether a LOCALAPPDATA/APPDATA child dir name looks like a product WebView2/Electron
-/// mask. Name match is REQUIRED 閳?a folder that merely contains EBWebView is not evidence (SEC-2).
+/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence (SEC-2).
 pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> bool {
     let low = dir_name.to_lowercase();
     if !low.ends_with(".exe") && !low.contains("ebwebview") {
@@ -96,7 +110,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Name match is REQUIRED 閳?WebView2 folder alone is not evidence (SEC-2).
+            // Name match is REQUIRED — WebView2 folder alone is not evidence (SEC-2).
             if !webview_mask_matches(fname, name_slugs) {
                 continue;
             }
@@ -108,7 +122,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                 path: p.to_string_lossy().to_string(),
                 kind: ItemKind::Dir,
                 score: 40,
-                // AppData / WebView caches are name-match only 鈥?require user confirm (BE-03).
+                // AppData / WebView caches are name-match only —require user confirm (BE-03).
                 confidence: Confidence::Suspected,
                 risk: RiskLevel::Medium,
                 reason: if has_web {
@@ -198,18 +212,19 @@ fn walk_shortcuts(
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
             || {
-                // binary peek for install path
+                // REV-BE-01: peek at most 8KB (lnk target lives near the start) and search bytes.
                 if let Ok(data) = std::fs::read(&p) {
-                    !install_low.is_empty()
-                        && (data
-                            .windows(install_low.len())
-                            .any(|w| String::from_utf8_lossy(w).to_lowercase() == *install_low)
-                            || {
-                                let u16s: Vec<u16> = install_low.encode_utf16().collect();
-                                let bytes: Vec<u8> =
-                                    u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
-                                data.windows(bytes.len()).any(|w| w == bytes)
-                            })
+                    let peek = &data[..data.len().min(SHORTCUT_PEEK_BYTES)];
+                    // Case-insensitive ASCII peek (paths in LNK are mixed-case).
+                    let peek_lc = peek.to_ascii_lowercase();
+                    !install_low.is_empty() && {
+                        find_bytes(&peek_lc, install_low.as_bytes()) || {
+                            let u16s: Vec<u16> = install_low.encode_utf16().collect();
+                            let bytes: Vec<u8> =
+                                u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
+                            find_bytes(peek, &bytes)
+                        }
+                    }
                 } else {
                     false
                 }

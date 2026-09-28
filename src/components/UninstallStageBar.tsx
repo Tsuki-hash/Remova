@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { Deco } from "./ui/Glyph";
 import { cssStyles as css } from "../styles";
 
 export type UninstallStage =
@@ -30,7 +31,7 @@ export function UninstallStageBar({
     analyze: L.stageAnalyzeLinked,
     report: L.stageDoneReport,
   };
-  const idx = ORDER.indexOf(stage as ActiveStage);
+  const idx = ORDER.indexOf(stage);
   return (
     <div
       style={{
@@ -69,7 +70,7 @@ export function UninstallStageBar({
                 border: "1px solid var(--border)",
               }}
             >
-              {done ? "✓" : i + 1}
+              {done ? <Deco ch="✓" /> : i + 1}
             </span>
             <span
               style={{

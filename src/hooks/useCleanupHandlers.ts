@@ -5,7 +5,13 @@ import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { defaultSelectable, maxRiskOf, riskTierLabel } from "../lib/decision";
+import {
+  buildCleanupRiskBits,
+  defaultSelectable,
+  formatRiskNote,
+  maxRiskOf,
+  riskTierLabel,
+} from "../lib/decision";
 import { appKey } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
 import type { BatchItemResult } from "../components/BatchPanels";
@@ -99,13 +105,7 @@ export function useCleanupHandlers({
           toast.info(L.toastForceCleanEmpty);
           return;
         }
-        // F-R6-04: surface user_library / shared risks in the force-clean confirm too.
-        const forceRiskBits: string[] = [];
-        if (items.some((it) => it.risk === "high")) forceRiskBits.push(L.conclusionHighRiskHint);
-        if (items.some((it) => it.user_data)) forceRiskBits.push(L.conclusionUserDataHint);
-        if (items.some((it) => it.user_library)) forceRiskBits.push(L.confirmUserLibrarySelected);
-        if (items.some((it) => it.shared)) forceRiskBits.push(L.confirmSharedSelected);
-        const forceRiskNote = forceRiskBits.length ? `\n\n⚠ ${forceRiskBits.join("\n")}` : "";
+        const forceRiskNote = formatRiskNote(buildCleanupRiskBits(items, L), L.riskNoteTitle);
         const { ok, checked } = await requestConfirmEx({
           title: L.forceClean,
           message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}${forceRiskNote}\n${L.forceCleanHint}`,
@@ -175,12 +175,20 @@ export function useCleanupHandlers({
     }
   }, [scan, selected, selectedPaths, setReport, setError, busyRef]);
 
-  const execReal = useCallback(async () => {
-    if (!scan || !selected) return;
-    if (busyRef.current) return;
+  const execReal = useCallback(async (opts?: { slotHeld?: boolean }) => {
+    if (!scan || !selected) {
+      if (opts?.slotHeld) busyRef.current = false;
+      return;
+    }
+    if (opts?.slotHeld) {
+      // Caller already owns busyRef (confirm pipeline).
+    } else if (busyRef.current) {
+      return;
+    } else {
+      busyRef.current = true;
+    }
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     verifySeqRef.current += 1;
-    busyRef.current = true;
     setDryRunning(true);
     try {
       const r = await api.fullCleanup(selected, items, {
@@ -259,11 +267,18 @@ export function useCleanupHandlers({
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
   const handleCleanupConfirm = useCallback(async () => {
     if (!scan) return;
-    if (busyRef.current) return;
+    if (busyRef.current) {
+      toast.info(L.taskBusy);
+      return;
+    }
+    // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
+    busyRef.current = true;
+    try {
     const n = selectedPaths.size;
     if (n === 0) {
-      // FE-N3: never confirm an empty cleanup set.
-      toast.info(L.cleanup);
+      // FE-N3 / REV-FE-06: never confirm an empty cleanup set — say "select rows", not "cleanup".
+      toast.info(L.selectRowHint);
+      busyRef.current = false;
       return;
     }
     const picked = scan.items.filter((it) => selectedPaths.has(it.path));
@@ -271,17 +286,10 @@ export function useCleanupHandlers({
       n,
       residualFromUninstall || useOfficial,
     )}`;
-    const riskBits: string[] = [];
-    if (picked.some((it) => it.risk === "high")) riskBits.push(L.conclusionHighRiskHint);
-    if (picked.some((it) => it.user_data)) riskBits.push(L.conclusionUserDataHint);
-    if (picked.some((it) => it.user_library)) riskBits.push(L.confirmUserLibrarySelected);
-    if (picked.some((it) => it.shared)) riskBits.push(L.confirmSharedSelected);
-    if (riskBits.length) {
-      // Never truncate: high-risk must stay visible (F-R6-01).
-      message = `${message}\n\n⚠ ${riskBits.join("\n")}`;
-    }
+    // Never truncate: high-risk must stay visible.
+    message = `${message}${formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle)}`;
     if (picked.some((it) => /\\common files\\/i.test(it.path))) {
-      message = `${message}\n\n⚠ ${L.confirmCommonFilesHint}`;
+      message = `${message}\n\n${L.confirmCommonFilesHint}`;
     }
     if (aiEnabled && selected && aiRisk) {
       message = `${message}\n\n${L.aiRiskTitle}: ${aiRisk.slice(0, 160)}`;
@@ -319,9 +327,15 @@ export function useCleanupHandlers({
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
     });
-    if (!ok) return;
+    if (!ok) {
+      busyRef.current = false;
+      return;
+    }
     backupEnabledRef.current = checked;
-    void execReal();
+    await execReal({ slotHeld: true });
+    } catch {
+      busyRef.current = false;
+    }
   }, [
     scan,
     selected,
@@ -338,7 +352,9 @@ export function useCleanupHandlers({
 
   const batchCleanup = useCallback(
     async (queueOverride?: InstalledApp[]) => {
-      const queue = queueOverride ?? apps.filter((a) => new Set(multi).has(appKey(a)));
+      // R21-FE-04: one Set for the whole filter, not per row.
+      const multiSet = new Set(multi);
+      const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
       if (!queue.length) {
         toast.info(L.selectRowHint);
         return;
@@ -352,6 +368,8 @@ export function useCleanupHandlers({
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
+      // REV-FE-10: confirm is async — another cleanup may have taken busyRef meanwhile.
+      if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
       try {
         busyRef.current = true;
@@ -379,11 +397,13 @@ export function useCleanupHandlers({
           },
           checked,
         );
+        // List must reflect uninstalled apps immediately.
+        await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
       }
     },
-    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching],
+    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching, refreshApps],
   );
 
   const cancelBatch = useCallback(() => {

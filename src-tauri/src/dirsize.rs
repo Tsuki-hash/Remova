@@ -36,16 +36,29 @@ pub fn walk_size_kb(root: &Path) -> i64 {
     walk_size_kb_with(root, &CANCELLED)
 }
 
-pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
+/// Like [`walk_size_kb`] but also reports whether the file cap truncated the walk
+/// (R21-SUP-04). Honors the global cancel flag.
+pub fn walk_size_kb_capped(root: &Path) -> (i64, bool) {
+    walk_size_kb_with_capped(root, &CANCELLED)
+}
+
+/// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
+/// Second element is `true` when the walk hit the file cap (partial total — do not
+/// present as a complete size; R21-SUP-04).
+pub fn walk_size_kb_with_capped(root: &Path, cancelled: &AtomicBool) -> (i64, bool) {
     if !root.exists() {
-        return 0;
+        return (0, false);
     }
-    let bytes = walk_size_bytes_with(root, cancelled);
+    let (bytes, capped) = walk_size_bytes_with(root, cancelled);
     if bytes == 0 {
-        0
+        (0, capped)
     } else {
-        bytes.div_ceil(1024) as i64
+        (bytes.div_ceil(1024) as i64, capped)
     }
+}
+
+pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
+    walk_size_kb_with_capped(root, cancelled).0
 }
 
 /// Bounded walk for leftover items: depth + entry caps, no global cancel flag.
@@ -70,10 +83,8 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
-        let Ok(sm) = entry.path().symlink_metadata() else {
-            continue;
-        };
-        if sm.file_type().is_symlink() {
+        // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+        if crate::fsutil::is_reparse_point(&entry.path()) {
             continue;
         }
         if meta.is_dir() {
@@ -90,46 +101,55 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
     Some(total)
 }
 
-fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> u64 {
+/// Bounded walk returning (bytes, capped). `capped` means the file cap was hit
+/// and `bytes` is a floor, not a total (R21-SUP-04).
+fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
     use std::collections::VecDeque;
     let mut total: u64 = 0;
-    let mut stack: VecDeque<std::path::PathBuf> = VecDeque::new();
-    stack.push_back(root.to_path_buf());
+    // REV-SUP-03: depth + entry caps — same budget as `walk_bytes_limited`.
+    let mut stack: VecDeque<(std::path::PathBuf, u32)> = VecDeque::new();
+    stack.push_back((root.to_path_buf(), 0));
     let mut files_seen: u64 = 0;
 
-    while let Some(dir) = stack.pop_front() {
+    while let Some((dir, depth)) = stack.pop_front() {
+        if depth > MAX_WALK_DEPTH {
+            continue;
+        }
         if cancelled.load(Ordering::SeqCst) {
-            return 0;
+            return (0, false);
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
             if cancelled.load(Ordering::SeqCst) {
-                return 0;
+                return (0, false);
             }
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            // metadata() follows symlinks; use symlink_metadata to avoid loops
-            let Ok(sm) = entry.path().symlink_metadata() else {
-                continue;
-            };
-            if sm.file_type().is_symlink() {
+            // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+            if crate::fsutil::is_reparse_point(&entry.path()) {
                 continue;
             }
             if meta.is_dir() {
-                stack.push_back(entry.path());
+                if depth < MAX_WALK_DEPTH {
+                    stack.push_back((entry.path(), depth + 1));
+                }
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
                 files_seen += 1;
+                if files_seen >= MAX_WALK_FILES {
+                    // R21-SUP-04: cap → partial floor, never a silent "complete" total.
+                    return (total, true);
+                }
                 if files_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
-                    return 0;
+                    return (0, false);
                 }
             }
         }
     }
-    total
+    (total, false)
 }
 
 #[cfg(test)]
@@ -161,6 +181,31 @@ mod tests {
     fn walk_missing_is_zero() {
         let missing = std::env::temp_dir().join("remova_dirsize_missing_xyz");
         assert_eq!(walk_size_kb_with(&missing, &AtomicBool::new(false)), 0);
+    }
+
+    /// R21-SUP-04: hitting the file cap must flag `capped`, not pretend completeness.
+    #[test]
+    fn walk_file_cap_sets_capped_flag() {
+        let tmp = std::env::temp_dir().join(format!("remova_dirsize_cap_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        for i in 0..MAX_WALK_FILES {
+            let mut f = fs::File::create(tmp.join(format!("f{i}.bin"))).unwrap();
+            f.write_all(&[0u8; 8]).unwrap();
+        }
+        let (kb, capped) = walk_size_kb_with_capped(&tmp, &AtomicBool::new(false));
+        assert!(capped, "file-cap walk must be marked partial");
+        assert!(kb > 0);
+        // Under the cap a complete walk is uncapped.
+        let small =
+            std::env::temp_dir().join(format!("remova_dirsize_small_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&small);
+        fs::create_dir_all(&small).unwrap();
+        fs::File::create(small.join("a.bin")).unwrap();
+        let (_kb, capped2) = walk_size_kb_with_capped(&small, &AtomicBool::new(false));
+        assert!(!capped2);
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::remove_dir_all(&small);
     }
 
     #[test]

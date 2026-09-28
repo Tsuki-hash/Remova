@@ -7,17 +7,17 @@ use std::time::UNIX_EPOCH;
 const ICON_SIZE: i32 = 32;
 
 fn icon_cache_dir() -> PathBuf {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Public".into());
+    // REV-SUP-04: never fall back to C:\Users\Public (shared writable).
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let temp =
+            std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
+        format!("{temp}\\Remova-{}", std::process::id())
+    });
     PathBuf::from(local).join("Remova").join("icons")
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
+fn fnv1a64(s: &str) -> u64 {
+    crate::fsutil::fnv1a64(s)
 }
 
 /// File fingerprint so icon updates (same DisplayIcon path) invalidate the cache.
@@ -41,7 +41,7 @@ fn cache_key(raw: &str) -> String {
     let (path, index) = parse_display_icon(raw);
     let fp = source_fingerprint(&path);
     let payload = format!("{raw}\0{index}\0{fp}");
-    format!("{:016x}.png", fnv1a64(payload.as_bytes()))
+    format!("{:016x}.png", fnv1a64(&payload))
 }
 
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.

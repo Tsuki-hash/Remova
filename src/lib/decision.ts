@@ -1,4 +1,4 @@
-/** Decision chips & leftover risk buckets 鈥?only use data we already have. */
+/** Decision chips & leftover risk buckets — only use data we already have. */
 import type { CleanupItem, InstalledApp } from "../types";
 
 export type ChipTone = "accent" | "warn" | "muted" | "danger" | "ok";
@@ -73,7 +73,7 @@ export function isRecommendedCleanup(
   return false;
 }
 
-/** Fact-only health label 鈥?never claims leftovers without a scan. */
+/** Fact-only health label — never claims leftovers without a scan. */
 export function appHealth(
   app: InstalledApp,
   sizeKb: number,
@@ -84,7 +84,7 @@ export function appHealth(
   return { id: "ok", label: L.healthOk };
 }
 
-/** Factual cleanup progress from report counters 鈥?no marketing 100%. */
+/** Factual cleanup progress from report counters — no marketing 100%. */
 export function cleanupProgress(deleted: number, failed: number, skipped: number): {
   handled: number;
   total: number;
@@ -97,7 +97,7 @@ export function cleanupProgress(deleted: number, failed: number, skipped: number
   return { handled, total, pct, complete: failed === 0 && total > 0 };
 }
 
-/** 1鈥? chips under the app name; never invent usage we do not track. */
+/** 1— chips under the app name; never invent usage we do not track. */
 export function decisionChips(
   app: InstalledApp,
   sizeKb: number,
@@ -133,7 +133,7 @@ export function decisionChips(
       title: `${sizeKb} KB`,
     });
   }
-  // List rows: at most one high-signal chip 鈥?full metadata lives in detail panel.
+  // List rows: at most one high-signal chip —full metadata lives in detail panel.
   if (compact) {
     const priority = ["no-uninstall", "recommend", "large"] as const;
     for (const id of priority) {
@@ -183,14 +183,14 @@ export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
   return "suggest";
 }
 
-/** Keep bucket predicate (high risk / shared / user data) 鈥?single source for UI filters. */
+/** Keep bucket predicate (high risk / shared / user data) — single source for UI filters. */
 export function isKeepItem(it: CleanupItem): boolean {
   return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
 }
 
 export type RiskTier = "low" | "medium" | "high";
 
-/** Highest risk among picked items 鈥?used to label confirms. */
+/** Highest risk among picked items — used to label confirms. */
 export function maxRiskOf(items: CleanupItem[]): RiskTier {
   if (items.some((it) => it.risk === "high")) return "high";
   if (items.some((it) => it.risk === "medium")) return "medium";
@@ -203,8 +203,35 @@ export function riskTierLabel(
 ): string {
   if (tier === "high") return L.riskTierHigh;
   if (tier === "medium") return L.riskTierMedium;
-  // Safe only when nothing is medium/high 鈥?callers pass maxRisk so low 鈮?low-risk items only.
+  // Safe only when nothing is medium/high — callers pass maxRisk so low means low-risk items only.
   return L.riskTierLow;
+}
+
+/** Shared cleanup-confirm risk callouts (high / user data / library / shared). */
+export function buildCleanupRiskBits(
+  items: CleanupItem[],
+  L: {
+    riskBitHigh: string;
+    riskBitUserData: string;
+    riskBitUserLibrary: string;
+    riskBitShared: string;
+  },
+): string[] {
+  const bits: string[] = [];
+  if (items.some((it) => it.risk === "high")) bits.push(L.riskBitHigh);
+  if (items.some((it) => it.user_data)) bits.push(L.riskBitUserData);
+  if (items.some((it) => it.user_library)) bits.push(L.riskBitUserLibrary);
+  if (items.some((it) => it.shared)) bits.push(L.riskBitShared);
+  return bits;
+}
+
+/** Format risk callouts for a confirm message body (no raw warning glyphs). */
+/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (REV-FE-12). */
+export const LARGE_APP_KB = 500 * 1024;
+
+/** REV-FE-13: callers must pass localized title. */
+export function formatRiskNote(bits: string[], title: string): string {
+  return bits.length ? `\n\n${title}\n${bits.join("\n")}` : "";
 }
 
 /** Suggest = not default-selectable and not keep. */
@@ -329,10 +356,10 @@ export function originLabel(path: string): string {
     .split("\\")
     .filter((s) => s && !/^[A-Za-z]:$/.test(s));
   if (parts.length === 0) return path || "-";
-  let last = parts[parts.length - 1];
-  // File path 鈫?use parent folder as the origin hint.
+  let last = parts[parts.length - 1] ?? path;
+  // File path → use parent folder as the origin hint.
   if (parts.length >= 2 && /\.[A-Za-z0-9]{1,12}$/.test(last) && !last.startsWith(".")) {
-    last = parts[parts.length - 2];
+    last = parts[parts.length - 2] ?? last;
   }
   return last || path || "-";
 }
@@ -348,7 +375,7 @@ export type OriginGroup = {
 
 /**
  * Group leftovers by path leaf (suspected software folder).
- * Orphans have no uninstall entry 鈥?never invent a product name.
+ * Orphans have no uninstall entry —never invent a product name.
  */
 export function groupByOrigin(items: CleanupItem[]): OriginGroup[] {
   const map = new Map<string, CleanupItem[]>();
@@ -370,7 +397,7 @@ export function groupByOrigin(items: CleanupItem[]): OriginGroup[] {
         else keep += 1;
       }
       return {
-        origin: originLabel(list[0].path),
+        origin: originLabel(list[0]?.path ?? ""),
         count: list.length,
         safe,
         suggest,

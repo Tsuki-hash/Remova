@@ -26,17 +26,19 @@ export function WindowControls() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
         setMaximized(await win.isMaximized());
-        const un = await win.onResized(async () => {
-          try {
-            setMaximized(await win.isMaximized());
-          } catch {
-            // ignore
-          }
+        const un = await win.onResized(() => {
+          void (async () => {
+            try {
+              setMaximized(await win.isMaximized());
+            } catch {
+              // ignore
+            }
+          })();
         });
         if (cancelled) un();
         else unlisten = un;

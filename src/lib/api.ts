@@ -37,7 +37,20 @@ export type FullCleanupOptions = {
 
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };
 export type DiskUsage = { free_gb: number; total_gb: number; drive?: string };
-export type MonitorDiff = { added_files: string[]; added_reg_values: string[] };
+export type DriveInfo = {
+  letter: string;
+  free_gb: number;
+  total_gb: number;
+  is_system: boolean;
+};
+export type MonitorDiff = {
+  added_files: string[];
+  added_reg_values: string[];
+  /** REV-BE-10: entries beyond the diff caps (honest truncation, backend-filled). */
+  files_truncated?: number;
+  reg_truncated?: number;
+};
+export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
 
@@ -59,7 +72,9 @@ export const api = {
   rankIdleApps: () => invoke<IdleApp[]>("rank_idle_apps"),
   scanInstallerCaches: () => invoke<CleanupItem[]>("scan_installer_caches"),
   scanToolCaches: () => invoke<CleanupItem[]>("scan_tool_caches"),
-  listTopDirSizes: () => invoke<DirSizeRow[]>("list_top_dir_sizes"),
+  listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
+  listTopDirSizes: (drive?: string) =>
+    invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null }),
   listDirChildren: (path: string) => invoke<DirSizeRow[]>("list_dir_children", { path }),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: () => invoke("elevate_restart"),
@@ -104,12 +119,11 @@ export const api = {
   diskUsage: () => invoke<DiskUsage>("disk_usage"),
   beginSizeEstimate: () => invoke("begin_size_estimate"),
   cancelSizeEstimate: () => invoke("cancel_size_estimate"),
-  estimateDirSizeKb: (path: string) => invoke<number>("estimate_dir_size_kb", { path }),
+  estimateDirSizeKb: (path: string) =>
+    invoke<{ kb: number; capped: boolean }>("estimate_dir_size_kb", { path }),
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
   beginInstallMonitor: () => invoke("begin_install_monitor"),
-  endInstallMonitor: () => invoke<MonitorDiff>("end_install_monitor"),
-  monitorDiffToItems: (diff: MonitorDiff) =>
-    invoke<CleanupItem[]>("monitor_diff_to_items", { diff }),
+  endInstallMonitor: () => invoke<MonitorEndResult>("end_install_monitor"),
   registerContextMenu: () => invoke("register_context_menu"),
   unregisterContextMenu: () => invoke("unregister_context_menu"),
   setStartupEnabled: (location: string, enabled: boolean) =>

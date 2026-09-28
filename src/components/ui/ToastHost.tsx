@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { CloseGlyph } from "./Glyph";
 import { t } from "../../i18n";
 import { dismissToast, getToasts, subscribeToasts, type ToastItem } from "../../lib/toast";
 
@@ -88,7 +89,7 @@ export function ToastHost() {
             }}
             onClick={() => dismissToast(item.id)}
           >
-            ×
+            <CloseGlyph />
           </button>
         </div>
       ))}

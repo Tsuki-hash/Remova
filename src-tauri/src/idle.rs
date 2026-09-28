@@ -102,7 +102,11 @@ fn size_kb_of(app: &InstalledApp) -> i64 {
         return app.estimated_size_kb;
     }
     if !app.install_location.is_empty() {
-        return crate::dirsize::walk_size_kb(std::path::Path::new(&app.install_location));
+        // Private cancel flag: estimate-batch cancel must not zero idle sizes.
+        return crate::dirsize::walk_size_kb_with(
+            std::path::Path::new(&app.install_location),
+            &std::sync::atomic::AtomicBool::new(false),
+        );
     }
     0
 }
@@ -147,7 +151,7 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
         if size_kb < IDLE_MIN_SIZE_KB {
             continue;
         }
-        let score = idle_days * (size_kb as i64 / 1024).max(1).ilog2() as i64;
+        let score = idle_days * (size_kb / 1024).max(1).ilog2() as i64;
         out.push(IdleApp {
             app: app.clone(),
             idle_days,
@@ -156,7 +160,7 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
             score,
         });
     }
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|a| std::cmp::Reverse(a.score));
     out.truncate(IDLE_RESULT_CAP);
     out
 }
@@ -230,12 +234,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("remova_idle_min_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("recent.bin"), b"x").unwrap();
-        let old = app(
-            "Active",
-            "20150101",
-            &dir.to_string_lossy(),
-            2_000_000,
-        );
+        let old = app("Active", "20150101", &dir.to_string_lossy(), 2_000_000);
         let ranked = rank_idle_apps(&[old]);
         assert!(
             ranked.is_empty(),

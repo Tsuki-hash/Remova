@@ -141,7 +141,9 @@ fn read_manifest_display_name(install_location: &str) -> Option<String> {
     }
     let path = std::path::Path::new(install_location).join("AppxManifest.xml");
     let text = std::fs::read_to_string(path).ok()?;
-    let lower = text.to_lowercase();
+    // REV-BE-08: case-insensitive find on the same byte length — never index `text` with
+    // indices from `to_lowercase()` (Unicode fold can change length and panic).
+    let lower = text.to_ascii_lowercase();
     let start = lower.find("<displayname>")? + "<displayname>".len();
     let end = start + lower[start..].find("</displayname>")?;
     let raw = text[start..end].trim();

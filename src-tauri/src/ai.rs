@@ -6,11 +6,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const CACHE_TTL_SECS: u64 = 7 * 24 * 3600;
 const HTTP_TIMEOUT_SECS: u64 = 12;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// REV-SUP-11: a config leaving scope wipes its API-key bytes from memory.
+// R21-SUP-02: no derived Debug — that would print the raw key into logs.
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -26,6 +29,26 @@ pub struct AiConfig {
     /// Allow sending desensitized install paths (default false → path only as vendor/product tokens).
     #[serde(default)]
     pub allow_cloud_paths: bool,
+}
+
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiConfig")
+            .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    "<empty>"
+                } else {
+                    "<redacted>"
+                },
+            )
+            .field("model", &self.model)
+            .field("allow_cloud_paths", &self.allow_cloud_paths)
+            .finish()
+    }
 }
 
 fn default_provider() -> String {
@@ -79,7 +102,12 @@ impl From<&AiConfig> for AiConfigView {
 }
 
 fn config_path() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| r"C:\Users\Public".into());
+    // REV-SUP-04: never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+        let temp =
+            std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
+        format!("{temp}\\Remova-{}", std::process::id())
+    });
     PathBuf::from(base).join("Remova").join("ai-config.json")
 }
 
@@ -89,10 +117,15 @@ pub fn load_config() -> AiConfig {
         return AiConfig::default();
     };
     let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
-    let raw_key = c.api_key.clone();
-    c.api_key = decrypt_stored_key(&c.api_key);
+    // R21-SUP-02: take ownership of the stored bytes so the pre-image is wiped
+    // explicitly instead of being dropped by the field assignment.
+    let mut raw_key = std::mem::take(&mut c.api_key);
+    c.api_key = decrypt_stored_key(&raw_key);
     // S-R6-09: migrate a legacy plaintext key to DPAPI at rest on first load.
-    if !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX) {
+    let migrate = !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX);
+    // REV-SUP-11: the ciphertext copy leaves no residue either.
+    raw_key.zeroize();
+    if migrate {
         let _ = save_config(&c);
     }
     c
@@ -103,7 +136,16 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let mut out = c.clone();
+    // R21-SUP-02: never clone the plaintext key into `out` — build the write
+    // payload without it and store only the ciphertext.
+    let mut out = AiConfig {
+        enabled: c.enabled,
+        provider: c.provider.clone(),
+        base_url: c.base_url.clone(),
+        api_key: String::new(),
+        model: c.model.clone(),
+        allow_cloud_paths: c.allow_cloud_paths,
+    };
     out.api_key = encrypt_stored_key(&c.api_key)?;
     let s = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
     std::fs::write(&p, s).map_err(|e| e.to_string())
@@ -214,7 +256,15 @@ fn decrypt_stored_key(stored: &str) -> String {
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
-        String::from_utf8(dec).unwrap_or_default()
+        // R21-SUP-02: a failed UTF-8 decode still holds key bytes — wipe them.
+        match String::from_utf8(dec) {
+            Ok(s) => s,
+            Err(e) => {
+                let mut bad = e.into_bytes();
+                bad.zeroize();
+                String::new()
+            }
+        }
     }
 }
 
@@ -393,8 +443,14 @@ fn cache_put(key: u64, value: String) {
                 at: now_secs(),
             },
         );
+        // REV-SUP-06: evict oldest ~25% instead of wiping the whole cache.
         if map.len() > 400 {
-            map.clear();
+            let mut by_age: Vec<(u64, u64)> = map.iter().map(|(k, e)| (e.at, *k)).collect();
+            by_age.sort_unstable();
+            let drop = by_age.len() / 4;
+            for (_, k) in by_age.into_iter().take(drop) {
+                map.remove(&k);
+            }
         }
     }
 }
@@ -441,10 +497,11 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .set("x-api-key", key)
         .set("anthropic-version", "2023-06-01")
         .send_json(body)
-        .map_err(|e| format!("anthropic http: {e}"))?;
+        // REV-SUP-05: transport detail survives to the command layer.
+        .map_err(|e| format!("ai http failed: {e}"))?;
     let v: serde_json::Value = resp
         .into_json()
-        .map_err(|e| format!("anthropic parse: {e}"))?;
+        .map_err(|e| format!("ai parse failed: {e}"))?;
     if let Some(arr) = v["content"].as_array() {
         let text: String = arr
             .iter()
@@ -483,10 +540,17 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
         .post(&url)
         .set("Content-Type", "application/json");
     if !cfg.api_key.trim().is_empty() {
-        req = req.set("Authorization", &format!("Bearer {}", cfg.api_key.trim()));
+        // REV-SUP-11: the header copy wipes from memory when it leaves scope.
+        let auth = zeroize::Zeroizing::new(format!("Bearer {}", cfg.api_key.trim()));
+        req = req.set("Authorization", &auth);
     }
-    let resp = req.send_json(body).map_err(|e| format!("ai http: {e}"))?;
-    let v: serde_json::Value = resp.into_json().map_err(|e| format!("ai parse: {e}"))?;
+    let resp = req
+        .send_json(body)
+        // REV-SUP-05: transport detail survives to the command layer.
+        .map_err(|e| format!("ai http failed: {e}"))?;
+    let v: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| format!("ai parse failed: {e}"))?;
     let text = v["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
@@ -600,7 +664,7 @@ pub fn explain_items(
     let text = chat_completion(cfg, EXPLAIN_SYSTEM, &user)?;
     let cleaned = strip_code_fence(&text);
     let parsed: Vec<ExplainOutput> =
-        serde_json::from_str(&cleaned).map_err(|e| format!("ai json: {e} | {cleaned}"))?;
+        serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
 
     // Match back by sanitized path (CODE-3) — never rely on array index alone.
     // two distinct paths can sanitize to the same string; when they do we cannot prove
@@ -677,9 +741,12 @@ const REPORT_SYSTEM: &str =
 是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
 
 pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
+    // R21-SUP-03: publisher is part of the prompt — without it two products from
+    // different vendors with the same shape share a 7-day cache entry.
     let key = fnv1a64(&format!(
-        "risk|{}|{}|{}|{}|{}|{}|{}",
+        "risk|{}|{}|{}|{}|{}|{}|{}|{}",
         input.app_name,
+        input.publisher,
         input.action,
         input.item_count,
         input.has_service,
@@ -730,14 +797,18 @@ pub struct ReportBriefInput {
 }
 
 pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
+    // R21-SUP-03: backup_dir / top_failed are rendered into the prompt — they
+    // must break the cache or the UI shows the previous run's path/failures.
     let key = fnv1a64(&format!(
-        "report|{}|{}|{}|{}|{}|{}",
+        "report|{}|{}|{}|{}|{}|{}|{}|{}",
         input.app_name,
         input.deleted,
         input.failed,
         input.skipped,
         input.aborted,
-        input.restore_point_ok
+        input.restore_point_ok,
+        input.backup_dir,
+        serde_json::to_string(&input.top_failed).unwrap_or_default()
     ));
     if let Some(c) = cache_get(key) {
         return Ok(c);
@@ -811,7 +882,7 @@ pub fn parse_nl_intent(
     let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
     let cleaned = strip_code_fence(&text);
     let mut intent: NlIntent =
-        serde_json::from_str(&cleaned).map_err(|e| format!("ai intent json: {e} | {cleaned}"))?;
+        serde_json::from_str(&cleaned).map_err(|_| "ai intent parse failed".to_string())?;
     // Clamp dangerous defaults — never auto-run.
     match intent.action.as_str() {
         "list" | "analyze" | "batch_uninstall" | "force_clean" => {}
@@ -929,12 +1000,21 @@ mod tests {
 
     #[test]
     fn config_view_hides_key() {
-        let c = AiConfig {
-            api_key: "sk-secret".into(),
-            ..Default::default()
-        };
+        // Struct-update syntax would move fields out of a Drop type (ZeroizeOnDrop).
+        let mut c = AiConfig::default();
+        c.api_key = "sk-secret".into();
         let v = AiConfigView::from(&c);
         assert!(v.has_api_key);
         assert!(!serde_json::to_string(&v).unwrap().contains("sk-secret"));
+    }
+
+    /// R21-SUP-02: Debug must never print the API key.
+    #[test]
+    fn config_debug_redacts_key() {
+        let mut c = AiConfig::default();
+        c.api_key = "sk-secret".into();
+        let s = format!("{c:?}");
+        assert!(!s.contains("sk-secret"), "Debug leaked api_key: {s}");
+        assert!(s.contains("<redacted>"));
     }
 }

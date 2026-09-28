@@ -1,7 +1,6 @@
 import { t } from "../i18n";
 import { formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { requestConfirm } from "../lib/confirm";
 
 export type SessionInfo = {
   name: string;
@@ -78,17 +77,12 @@ export function RestorePanel({
                   {formatSize(s.size_kb)}
                 </span>
                 <button
-                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "#b91c1c" }}
+                  style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
                   disabled={busy}
-                  onClick={async (e) => {
+                  onClick={(e) => {
                     e.preventDefault();
-                    const ok = await requestConfirm({
-                      title: L.deleteSession,
-                      message: L.deleteSessionConfirm(s.name),
-                      confirmLabel: L.deleteSession,
-                      danger: true,
-                    });
-                    if (ok) onDelete(s.name);
+                    // Confirm lives in useMoreRestore — no second dialog here.
+                    onDelete(s.name);
                   }}
                 >
                   {L.deleteSession}

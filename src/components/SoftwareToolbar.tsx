@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Deco } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { CategoryId } from "../lib/categories";
@@ -109,7 +110,7 @@ export function SoftwareToolbar({
           flexShrink: 0,
         }}
       >
-        ✦
+        <Deco ch="✦" />
       </button>
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {(
@@ -160,7 +161,7 @@ export function SoftwareToolbar({
             padding: 0,
           }}
         >
-          ⓘ
+          <Deco ch="ⓘ" />
         </button>
         {guideOpen && (
           <div
@@ -183,6 +184,12 @@ export function SoftwareToolbar({
             }}
           >
             <div style={{ marginBottom: 8 }}>{L.guided}</div>
+            {/* REV-UX-09: real onboarding steps instead of an empty popover. */}
+            <ol style={{ margin: "0 0 10px", paddingLeft: 18, display: "grid", gap: 6 }}>
+              <li>{L.guideStep1}</li>
+              <li>{L.guideStep2}</li>
+              <li>{L.guideStep3}</li>
+            </ol>
             <button
               type="button"
               style={{ ...css.btnSm, height: 26, width: "100%" }}

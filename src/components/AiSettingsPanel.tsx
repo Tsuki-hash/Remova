@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { CloseGlyph } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -107,7 +108,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const activePreset = PRESETS.find((p) => p.id === cfg.provider) ?? PRESETS[0];
+  const activePreset = PRESETS.find((p) => p.id === cfg.provider) ?? PRESETS[0]!;
 
   return (
     <div
@@ -131,8 +132,8 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
           <div style={{ fontWeight: 700, fontSize: 14 }}>{L.aiSettings}</div>
           <div style={{ ...css.muted, marginTop: 2 }}>{L.aiSettingsHint}</div>
         </div>
-        <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label="close">
-          ×
+        <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label={t().panelClose}>
+          <CloseGlyph />
         </button>
       </div>
 
@@ -244,7 +245,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             autoComplete="new-password"
-            disabled={cfg.provider === "ollama" && !cfg.base_url.includes("api.")}
+            disabled={!activePreset.needsKey}
           />
         </div>
 

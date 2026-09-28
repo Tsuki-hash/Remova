@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { InstalledApp } from "../types";
-import { recommendScore } from "../lib/decision";
+import { recommendScore, LARGE_APP_KB } from "../lib/decision";
 import type { CategoryId, SortCol } from "../lib/categories";
 
 export type { CategoryId, SortCol };
@@ -44,7 +44,7 @@ export function useAppFilter({
       list = list.filter((a) => a.source === "Store");
     } else if (category === "large") {
       list = [...list]
-        .filter((a) => sizeOf(a) > 200 * 1024)
+        .filter((a) => sizeOf(a) > LARGE_APP_KB)
         .sort((a, b) => sizeOf(b) - sizeOf(a));
     } else if (category === "recent") {
       list = [...list]

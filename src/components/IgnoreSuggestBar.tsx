@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { CloseGlyph } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -34,24 +35,26 @@ export function IgnoreSuggestBar({
     >
       <strong>{L.ignoreSuggestTitle}</strong>
       <span style={{ color: "var(--muted)", flex: "1 1 180px" }}>
-        {suggestions.map((s) => `${s.value}（${s.reason}）`).join("；")}
+        {suggestions.map((s) => `${s.value} (${s.reason})`).join("; ")}
       </span>
       <button
         style={css.btnSm}
-        onClick={async () => {
-          try {
-            const ig = await api.applyIgnoreSuggestions(suggestions);
-            onApplied(ig.publishers || [], ig.names || []);
-            toast.success(L.ignoreSuggestDone);
-          } catch (e) {
-            toast.error(formatError(e));
-          }
+        onClick={() => {
+          void (async () => {
+            try {
+              const ig = await api.applyIgnoreSuggestions(suggestions);
+              onApplied(ig.publishers || [], ig.names || []);
+              toast.success(L.ignoreSuggestDone);
+            } catch (e) {
+              toast.error(formatError(e));
+            }
+          })();
         }}
       >
         {L.ignoreSuggestApply}
       </button>
       <button style={css.btnSm} onClick={onDismiss}>
-        ×
+        <CloseGlyph />
       </button>
     </div>
   );

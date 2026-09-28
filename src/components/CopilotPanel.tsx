@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -56,7 +57,7 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
   if (gb) sizeGtKb = Math.round(Number(gb[1]) * 1024 * 1024);
   else if (mb) sizeGtKb = Math.round(Number(mb[1]) * 1024);
   if (sizeGtKb && sizeGtKb > 0) {
-    list = list.filter((a) => a.estimated_size_kb >= sizeGtKb!);
+    list = list.filter((a) => a.estimated_size_kb >= sizeGtKb);
   }
 
   const action: NlIntent["action"] = /分析|analyze/i.test(raw)
@@ -152,7 +153,7 @@ export function CopilotPanel({
             flexShrink: 0,
           }}
         >
-          ✦ {L.smartFilter}
+          <Deco ch="✦" /> {L.smartFilter}
         </span>
         <input
           style={{ ...css.input, flex: "1 1 220px", height: 32, minWidth: 180 }}
@@ -180,7 +181,7 @@ export function CopilotPanel({
               setMatches([]);
             }}
           >
-            ×
+            <CloseGlyph />
           </button>
         )}
       </div>
@@ -266,7 +267,7 @@ export function CopilotPanel({
               {L.copilotApply}
             </button>
             {intent.action === "analyze" && matches[0] && (
-              <button style={css.btnSm} onClick={() => onAnalyze(matches[0])}>
+              <button style={css.btnSm} onClick={() => onAnalyze(matches[0]!)}>
                 {L.copilotRunAnalyze}
               </button>
             )}
@@ -274,16 +275,18 @@ export function CopilotPanel({
               <button
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
                 onClick={() => onBatch(matches, intent)}
+                title={matches.map((m) => m.name).join(" · ")}
               >
-                {L.copilotRunBatch}
+                {/* REV-UX-20: the direct action names its own scope. */}
+                {L.copilotRunBatchN(matches.length)}
               </button>
             )}
             {intent.action === "force_clean" && matches[0] && (
               <button
                 style={{ ...css.btnSm, color: "var(--danger)", borderColor: "var(--danger)" }}
-                onClick={() => onForceClean(matches[0])}
+                onClick={() => onForceClean(matches[0]!)}
               >
-                {L.copilotRunForce}
+                {L.copilotRunForceN(matches[0].name)}
               </button>
             )}
           </div>

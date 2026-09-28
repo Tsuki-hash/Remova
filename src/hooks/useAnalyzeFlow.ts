@@ -25,6 +25,7 @@ export type AnalyzeFlowSetters = {
   setResidualFromUninstall: (v: boolean) => void;
   setUninstallingKey: (k: string | null) => void;
   setUninstallStage: (s: UninstallStage) => void;
+  setEvidence: (v: string | null) => void;
 };
 
 /** Deep-analyze + official uninstall flow used by list rows and detail drawer. */
@@ -52,6 +53,7 @@ export function useAnalyzeFlow({
     setResidualFromUninstall,
     setUninstallingKey,
     setUninstallStage,
+    setEvidence,
   } = flow;
   const analyzeSeqRef = useRef(0);
   const analyzingRef = useRef(false);
@@ -66,9 +68,10 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
-      // only the newest request may write scan state, and only it may clear the spinner.
-      const seq = ++analyzeSeqRef.current;
+      // REV-FE-04: single in-flight ref (was dual scanningRef/analyzingRef).
+      // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
+      const seq = ++analyzeSeqRef.current;
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
       setSelected(app);
@@ -78,6 +81,8 @@ export function useAnalyzeFlow({
       setAiNotes({});
       setAiRisk(null);
       setIgnoreSuggestions([]);
+      // A new app's scan must not inherit the previous app's evidence bar.
+      setEvidence(null);
       const t0 = performance.now();
       try {
         const r = await api.analyze(app);

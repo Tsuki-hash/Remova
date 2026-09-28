@@ -19,6 +19,7 @@ pub mod installers;
 pub mod installmon;
 pub mod manage;
 pub mod orphans;
+pub mod path_seal;
 pub mod policy;
 pub mod regops;
 pub mod regscan;
@@ -28,8 +29,8 @@ pub mod scan_allow;
 pub mod scanner;
 pub mod shared;
 pub mod storeapps;
-pub mod toolcache;
 pub mod sysops;
+pub mod toolcache;
 
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
@@ -38,13 +39,10 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let apps = apps::scan_installed_apps();
-        apps::remember_uninstall_commands(&apps);
-        apps
-    })
-    .await
-    .map_err(|e| e.to_string())
+    // scan_installed_apps already refreshes the uninstall trust table (REV-BE-04).
+    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Clear cancel flag before a new estimate batch.
@@ -56,19 +54,33 @@ fn begin_size_estimate() {
 /// Estimate on-disk size of an install location (KB).
 /// Runs on the blocking pool so large trees do not freeze the webview.
 /// Result is zeroed if the estimate batch was cancelled / superseded.
+/// `capped` marks a file-cap partial (floor, not total) — R21-SUP-04.
+#[derive(serde::Serialize)]
+struct SizeEstimate {
+    kb: i64,
+    capped: bool,
+}
+
 #[tauri::command]
-async fn estimate_dir_size_kb(path: String) -> Result<i64, String> {
+async fn estimate_dir_size_kb(path: String) -> Result<SizeEstimate, String> {
     let path = path.trim().to_string();
     if path.is_empty() {
-        return Ok(0);
+        return Ok(SizeEstimate {
+            kb: 0,
+            capped: false,
+        });
     }
     let gen = dirsize::current_batch();
     tauri::async_runtime::spawn_blocking(move || {
-        let kb = dirsize::walk_size_kb(std::path::Path::new(&path));
+        // Honors the global cancel flag (batch cancel must zero in-flight walks).
+        let (kb, capped) = dirsize::walk_size_kb_capped(std::path::Path::new(&path));
         if dirsize::batch_stale(gen) {
-            0
+            SizeEstimate {
+                kb: 0,
+                capped: false,
+            }
         } else {
-            kb
+            SizeEstimate { kb, capped }
         }
     })
     .await
@@ -81,29 +93,43 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-/// F-R7-01: strict http(s) URL shape for `open_path` (scheme + host, no control/quote/space).
+/// F-R7-01: strict URL shape for `open_path` (scheme + host, no control/quote/space).
+/// REV-SUP-12: plain `http://` only for loopback (local Ollama etc.); remote must be https.
 fn is_safe_http_url(url: &str) -> bool {
-    let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    else {
+    let is_https = url.starts_with("https://");
+    let is_http = url.starts_with("http://");
+    if !is_https && !is_http {
         return false;
-    };
+    }
     if url
         .chars()
         .any(|c| c.is_control() || c == '"' || c == '\'' || c == ' ' || c == '\t')
     {
         return false;
     }
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or("");
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
         return false;
     }
     let host = authority.split(':').next().unwrap_or("");
-    !host.is_empty()
-        && host
+    if host.is_empty()
+        || !host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']')
+    {
+        return false;
+    }
+    if is_http {
+        // loopback only (IPv4 / localhost / [::1])
+        let low = host.to_ascii_lowercase();
+        return low == "localhost"
+            || low == "127.0.0.1"
+            || low == "::1"
+            || low == "[::1]"
+            || low.starts_with("127.");
+    }
+    true
 }
 
 /// Launch a validated http(s) URL via ShellExecuteW "open" (no shell metacharacter parsing).
@@ -247,6 +273,9 @@ mod open_path_url_tests {
             "https://github.com/Tsuki-hash/Remova/releases"
         ));
         assert!(super::is_safe_http_url("http://127.0.0.1:11434/v1"));
+        assert!(super::is_safe_http_url("http://localhost:11434/v1"));
+        // REV-SUP-12: remote cleartext http is refused
+        assert!(!super::is_safe_http_url("http://example.com/x"));
         assert!(!super::is_safe_http_url("https://"));
         assert!(!super::is_safe_http_url("ftp://example.com/x"));
         assert!(!super::is_safe_http_url("https://evil.com/\"&calc.exe"));
@@ -467,12 +496,26 @@ async fn scan_tool_caches() -> Result<Vec<scanner::CleanupItem>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Disk radar: top directories under well-known system roots (read-only).
+/// Disk radar: local fixed drives with free/total space (read-only).
 #[tauri::command]
-async fn list_top_dir_sizes() -> Result<Vec<diskradar::DirSizeRow>, String> {
-    tauri::async_runtime::spawn_blocking(diskradar::top_dir_sizes)
+async fn list_local_drives() -> Result<Vec<diskradar::DriveInfo>, String> {
+    tauri::async_runtime::spawn_blocking(diskradar::list_local_drives)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Disk radar: top directories for one drive (system drive → well-known roots).
+#[tauri::command]
+async fn list_top_dir_sizes(drive: Option<String>) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let letter = drive
+            .as_deref()
+            .and_then(|s| s.trim().chars().next())
+            .filter(|c| c.is_ascii_alphabetic());
+        diskradar::top_dir_sizes_for_drive(letter)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Disk radar drill-down: immediate children of a directory (read-only).
@@ -501,17 +544,10 @@ async fn begin_install_monitor() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn end_install_monitor() -> Result<installmon::MonitorDiff, String> {
+async fn end_install_monitor() -> Result<installmon::MonitorEndResult, String> {
     tauri::async_runtime::spawn_blocking(installmon::end)
         .await
         .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-fn monitor_diff_to_items(
-    diff: installmon::MonitorDiff,
-) -> Result<Vec<scanner::CleanupItem>, String> {
-    Ok(installmon::diff_to_cleanup_items(&diff))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -634,12 +670,12 @@ pub fn run() {
             rank_idle_apps,
             scan_installer_caches,
             scan_tool_caches,
+            list_local_drives,
             list_top_dir_sizes,
             list_dir_children,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,
-            monitor_diff_to_items,
             take_pending_analyze,
             commands::ai_cmd::get_ai_config,
             commands::ai_cmd::save_ai_config,

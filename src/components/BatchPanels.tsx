@@ -28,6 +28,11 @@ export function BatchProgress({
         <span style={css.muted}>{L.batchCancelHint}</span>
       </div>
       <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(total, 1)}
+        aria-valuenow={index}
+        aria-valuetext={`${index}/${total}`}
         style={{
           marginTop: 8,
           height: 6,
@@ -86,7 +91,7 @@ export function BatchSummaryPanel({
               style={{
                 color:
                   r.status === "failed"
-                    ? "#b91c1c"
+                    ? "var(--danger)"
                     : r.status === "ok"
                       ? "var(--accent)"
                       : "var(--muted)",

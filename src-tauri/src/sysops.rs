@@ -77,6 +77,47 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
 ///
 /// On failure returns a stable `elevate:<kind>:<code>` string for UI localization:
 /// denied / cancelled / not_found / failed.
+/// Quote one Windows command-line argument (REV-SUP-01).
+/// Follows CommandLineToArgvW: `\"` for embedded quotes, and trailing
+/// backslashes before a closing quote are doubled (R21-SUP-08).
+fn quote_win_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".to_string();
+    }
+    if !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                // n backslashes + quote → 2n+1 backslashes + escaped quote.
+                for _ in 0..backslashes * 2 + 1 {
+                    out.push('\\');
+                }
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                for _ in 0..backslashes {
+                    out.push('\\');
+                }
+                out.push(c);
+                backslashes = 0;
+            }
+        }
+    }
+    // Trailing backslashes sit against the closing quote — double them.
+    for _ in 0..backslashes * 2 {
+        out.push('\\');
+    }
+    out.push('"');
+    out
+}
+
 pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -94,7 +135,12 @@ pub fn elevate_relaunch(args: &[String]) -> Result<(), String> {
             .chain(std::iter::once(0))
             .collect();
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
-        let params = args.join(" ");
+        // REV-SUP-01: quote each arg — `join(" ")` splits paths with spaces into extra argv.
+        let params = args
+            .iter()
+            .map(|a| quote_win_arg(a))
+            .collect::<Vec<_>>()
+            .join(" ");
         let params_w: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
         let empty: Vec<u16> = vec![0];
         unsafe {
@@ -165,6 +211,39 @@ mod tests {
         assert_eq!(super::elevate_error_token(1223), "elevate:cancelled:1223");
         assert_eq!(super::elevate_error_token(2), "elevate:not_found:2");
         assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
+    }
+
+    #[test]
+    fn quote_win_arg_spaces_and_quotes() {
+        assert_eq!(super::quote_win_arg("plain"), "plain");
+        assert_eq!(
+            super::quote_win_arg("C:\\Program Files\\App"),
+            "\"C:\\Program Files\\App\""
+        );
+        assert_eq!(super::quote_win_arg(""), "\"\"");
+        // CommandLineToArgvW: embedded quote is `\"`, not CSV-style `""`.
+        assert_eq!(super::quote_win_arg("say \"hi\""), "\"say \\\"hi\\\"\"");
+    }
+
+    /// R21-SUP-08: trailing backslash must not eat the closing quote.
+    #[test]
+    fn quote_win_arg_doubles_trailing_backslash() {
+        // No metacharacters — pass through (trailing `\` is fine unquoted).
+        assert_eq!(super::quote_win_arg(r"C:\Dir\"), r"C:\Dir\");
+        assert_eq!(super::quote_win_arg("a b"), "\"a b\"");
+        // Quoted + trailing backslash → double the backslashes before `"`.
+        assert_eq!(
+            super::quote_win_arg(r"C:\Program Files\App\"),
+            "\"C:\\Program Files\\App\\\\\""
+        );
+        // Embedded quote with no preceding backslash → `\"`; trailing `\` doubles.
+        // (The `\` before `a` is a literal path backslash, not a quote-escape.)
+        assert_eq!(super::quote_win_arg("C:\\a\"b\\"), "\"C:\\a\\\"b\\\\\"");
+        // Two backslashes immediately before a quote → 2*2+1 = 5, then `"`.
+        assert_eq!(
+            super::quote_win_arg("C:\\a\\\\\"b"),
+            "\"C:\\a\\\\\\\\\\\"b\""
+        );
     }
 }
 

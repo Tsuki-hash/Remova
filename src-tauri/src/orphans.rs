@@ -1,4 +1,4 @@
-//! Orphan leftover directory scan (P2-2) 鈥?no matching installed app.
+//! Orphan leftover directory scan (P2-2) —no matching installed app.
 
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel, SCORE_SUSPECTED_MIN};
@@ -70,6 +70,19 @@ fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
     Some(age as i64)
 }
 
+/// Path prefix with segment boundary (REV-BE-06): `C:\App` must not own `C:\AppEvil`.
+fn path_same_or_under(a: &str, b: &str) -> bool {
+    let a = a.trim_end_matches('\\');
+    let b = b.trim_end_matches('\\');
+    if a == b {
+        return true;
+    }
+    match (a.strip_prefix(b), b.strip_prefix(a)) {
+        (Some(rest), _) | (_, Some(rest)) => rest.starts_with('\\'),
+        (None, None) => false,
+    }
+}
+
 fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
     let leaf = dir
@@ -78,7 +91,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
         .unwrap_or_default();
     for app in installed {
         let loc = app.install_location.replace('/', "\\").to_lowercase();
-        if !loc.is_empty() && (d.starts_with(&loc) || loc.starts_with(&d)) {
+        if !loc.is_empty() && path_same_or_under(&d, &loc) {
             return true;
         }
         if leaf.is_empty() {
@@ -96,6 +109,8 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
 }
 
 pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
+    // REV-BE-14: load ignore rules once (was per candidate in the loop).
+    let ignore = crate::ignore::load();
     let mut roots: Vec<std::path::PathBuf> = vec![];
     for env in [
         "ProgramFiles",
@@ -144,10 +159,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             // AR-04: honor ignore path rules for orphan candidates.
-            if crate::ignore::should_skip_leftover_path(
-                &crate::ignore::load(),
-                &p.to_string_lossy(),
-            ) {
+            if crate::ignore::should_skip_leftover_path(&ignore, &p.to_string_lossy()) {
                 continue;
             }
             if !looks_like_app_dir(&p) {
@@ -200,7 +212,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                     detail: format!("{days} day(s) ago"),
                 });
             }
-            // Orphans stay Suspected/Medium 鈥?never auto-select; user must confirm.
+            // Orphans stay Suspected/Medium —never auto-select; user must confirm.
             let path_str = p.to_string_lossy().to_string();
             scanned.insert(path_str.clone());
             out.push(CleanupItem {
@@ -291,6 +303,16 @@ mod tests {
         assert!(match_installed(&installed, p));
         let p2 = std::path::Path::new(r"C:\Program Files\OtherThing");
         assert!(!match_installed(&installed, p2));
+    }
+
+    #[test]
+    fn match_installed_requires_path_segment_boundary() {
+        let installed = [app("App", r"C:\Program Files\App")];
+        // Sibling that merely shares a string prefix must not match (REV-BE-06).
+        let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
+        assert!(!match_installed(&installed, evil));
+        let child = std::path::Path::new(r"C:\Program Files\App\bin");
+        assert!(match_installed(&installed, child));
     }
 
     #[test]

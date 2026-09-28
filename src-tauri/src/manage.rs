@@ -121,6 +121,14 @@ const RUN_KEYS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Run / RunOnce / Policies-Explorer-Run key paths (shared with installmon).
+pub fn run_key_paths() -> Vec<String> {
+    RUN_KEYS
+        .iter()
+        .map(|(alias, sub, _view)| format!(r"{alias}\{sub}"))
+        .collect()
+}
+
 pub fn list_startup_items() -> Vec<ManageItem> {
     let mut out = Vec::new();
     for (alias, sub, _view) in RUN_KEYS {
@@ -196,6 +204,9 @@ pub fn list_startup_items() -> Vec<ManageItem> {
 
 /// User-mode services with Start=2 (auto), including Microsoft ones (consumers expect them).
 fn list_auto_services() -> Vec<ManageItem> {
+    // Real running state — a hardcoded `true` showed stopped auto-start
+    // services as running with a Stop button.
+    let running_services = query_running_service_names();
     let mut out = Vec::new();
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
@@ -235,7 +246,7 @@ fn list_auto_services() -> Vec<ManageItem> {
                 );
                 it.kind = Some("startup".into());
                 it.source_label = Some("Service".into());
-                it.running = Some(true);
+                it.running = Some(running_services.contains(&svc.to_ascii_lowercase()));
                 it.start_type = Some("auto".into());
                 it.path = Some(svc.clone());
                 it
@@ -399,6 +410,35 @@ pub fn list_services() -> Vec<ManageItem> {
     out
 }
 
+/// REV-BE-16: schtasks /v status text is locale-dependent; a short deny-list
+/// misreports disabled tasks as enabled on unlisted locales (ja/pt/ru/…).
+/// Invert: enabled only on known Ready/Running markers (substring match absorbs
+/// suffix variants); anything we cannot prove is active — including
+/// untranslated statuses — shows as disabled, the honest display default.
+fn task_status_enabled(status: &str) -> bool {
+    const ENABLED_MARKERS: &[&str] = &[
+        "ready",
+        "running",
+        "就绪",
+        "正在运行",
+        "bereit",
+        "wird ausgeführt",
+        "prête",
+        "en cours",
+        "lista",
+        "ejecutándose",
+        "em execução",
+        "準備完了",
+        "実行中",
+        "준비",
+        "실행 중",
+        "готово",
+        "выполняется",
+    ];
+    let low = status.to_lowercase();
+    ENABLED_MARKERS.iter().any(|m| low.contains(m))
+}
+
 /// Parse `schtasks /query /fo CSV /v` rows.
 /// Verbose CSV column order is stable across locales:
 /// 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment.
@@ -446,18 +486,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             let comment = cols.get(IDX_COMMENT).cloned().unwrap_or_default();
             let next_run = cols.get(2).cloned().unwrap_or_default();
             let last_run = cols.get(5).cloned().unwrap_or_default();
-            let disabled_markers = [
-                "disabled",
-                "已禁用",
-                "禁用",
-                "deaktiviert",
-                "désactivé",
-                "desactivado",
-                "비활성화",
-            ];
-            let enabled = !disabled_markers
-                .iter()
-                .any(|m| status.eq_ignore_ascii_case(m));
+            let enabled = task_status_enabled(&status);
             let detail = if !comment.is_empty() && comment != "N/A" {
                 comment.chars().take(120).collect()
             } else if !run.is_empty() && run != "N/A" {
@@ -477,6 +506,8 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         items.sort_by_key(|a| a.name.to_lowercase());
         items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
+        // REV-BE-17: arm write-side allow-list from this listing.
+        remember_scheduled_task_names(items.iter().map(|it| it.name.clone()));
         items
     }
 }
@@ -667,9 +698,39 @@ pub fn set_service_running(name: &str, run: bool) -> Result<(), String> {
     crate::regops::sc_set_service_running(name, run)
 }
 
+/// Tasks seen in the latest `list_scheduled_tasks` (REV-BE-17).
+static TASK_TRUST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn task_trust() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    TASK_TRUST.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn normalize_task_key(name: &str) -> String {
+    name.replace('/', "\\")
+        .trim()
+        .trim_matches('"')
+        .to_lowercase()
+}
+
+fn remember_scheduled_task_names(names: impl Iterator<Item = String>) {
+    if let Ok(mut g) = task_trust().lock() {
+        *g = names.map(|n| normalize_task_key(&n)).collect();
+    }
+}
+
+fn is_trusted_task(name: &str) -> bool {
+    let k = normalize_task_key(name);
+    task_trust().lock().map(|g| g.contains(&k)).unwrap_or(false)
+}
+
 pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
         return Err(crate::error::manage_err("bad_name", "task").to_ipc());
+    }
+    // REV-BE-17: scoped allow-list — only tasks from the latest manage listing may be toggled.
+    if !is_trusted_task(task_name) {
+        return Err(crate::error::manage_err("task_not_listed", task_name).to_ipc());
     }
     let _guard = lock_manage();
     // S-02 / S-R6-13: mirror list-side filter — never disable `\Microsoft\` system tasks.
@@ -709,6 +770,12 @@ mod tests {
         assert_eq!(cols[0], r"C:\a");
         assert_eq!(cols[1], r#"say "hi""#);
         assert_eq!(cols[2], "x");
+    }
+
+    #[test]
+    fn set_task_requires_listed_name() {
+        // REV-BE-17: even non-Microsoft names are refused unless listed this session.
+        assert!(super::set_task_enabled(r"\Vendor\MyTask", true).is_err());
     }
 
     #[cfg(windows)]
@@ -826,5 +893,35 @@ mod tests {
             Some(r"C:\tools\cleanup.exe")
         );
         let _ = header;
+    }
+
+    /// REV-BE-16: unknown/localized-off statuses must not display as enabled.
+    #[test]
+    fn task_status_inverted_to_enabled_markers() {
+        // Known-active statuses across the common locales.
+        assert!(super::task_status_enabled("Ready"));
+        assert!(super::task_status_enabled("Running"));
+        assert!(super::task_status_enabled("就绪"));
+        assert!(super::task_status_enabled("正在运行"));
+        assert!(super::task_status_enabled("Bereit"));
+        // Disabled / unknown / empty → false, even on locales the table lacks.
+        assert!(!super::task_status_enabled("Disabled"));
+        assert!(!super::task_status_enabled("已禁用"));
+        assert!(!super::task_status_enabled("無効")); // ja — not in any old deny-list
+        assert!(!super::task_status_enabled("Desabilitada")); // pt
+        assert!(!super::task_status_enabled(""));
+        assert!(!super::task_status_enabled("Queued"));
+    }
+
+    /// R21-BE-08: installmon shares this list — cover 32-bit Run, RunOnce, Policies.
+    #[test]
+    fn run_key_paths_covers_all_views() {
+        let keys = super::run_key_paths();
+        assert!(keys
+            .iter()
+            .any(|k| k.contains("HKLM32") && k.ends_with(r"\Run")));
+        assert!(keys.iter().any(|k| k.ends_with(r"\RunOnce")));
+        assert!(keys.iter().any(|k| k.contains(r"Policies\Explorer\Run")));
+        assert_eq!(keys.len(), super::RUN_KEYS.len());
     }
 }

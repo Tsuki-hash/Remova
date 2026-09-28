@@ -136,6 +136,37 @@ pub fn allow_manage_reg_write(
     Ok(())
 }
 
+/// REV-SEC-14: intrinsic write-target allowlist for registry value primitives.
+/// Covers every legitimate writer in the codebase — Uninstall roots (product
+/// metadata), Run/RunOnce + StartupApproved (startup management), per-service
+/// keys (start type) and Remova's own context-menu key — so a value write can
+/// never land outside these shapes even if a future caller forgets its gate.
+pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
+    let low = normalize_hklm(key_path);
+    const UNINSTALL_ROOTS: &[&str] = &[
+        "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKLM\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+        "HKCU\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
+    ];
+    const SERVICES_PREFIX: &str = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES\\";
+    // R21-SEC-07: require a path separator after the base key so sibling keys
+    // like `RemovaDeepUninstallX` are not treated as subkeys.
+    const REMOVA_MENU_BASE: &str = "HKCU\\SOFTWARE\\CLASSES\\*\\SHELL\\REMOVADEEPUNINSTALL";
+    if UNINSTALL_ROOTS
+        .iter()
+        .any(|r| low == *r || low.starts_with(&format!("{r}\\")))
+        || is_allowed_run_key(key_path)
+        || is_allowed_startup_approved_key(key_path)
+        || (low.starts_with(SERVICES_PREFIX) && low.len() > SERVICES_PREFIX.len())
+        || low == REMOVA_MENU_BASE
+        || low.starts_with(&format!("{REMOVA_MENU_BASE}\\"))
+    {
+        return Ok(());
+    }
+    Err(crate::error::safety_err(format!("registry write outside allowlist: {key_path}")).to_ipc())
+}
+
 fn normalize_hklm(key_path: &str) -> String {
     let low = key_path.replace('/', "\\").to_uppercase();
     let low = low
@@ -195,9 +226,12 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         if rest.is_empty() || rest.contains('\\') {
             return Err(crate::error::safety_err("only top-level service keys allowed").to_ipc());
         }
+        // Value-shaped paths (`SERVICES\<name>|value`) arrive merged from
+        // delete_value — compare the key part, or the critical check is bypassed.
+        let key_part = rest.split('|').next().unwrap_or(rest);
         if critical_service_names()
             .iter()
-            .any(|n| rest == n.to_uppercase())
+            .any(|n| key_part == n.to_uppercase())
         {
             return Err(crate::error::safety_err("critical system service protected").to_ipc());
         }
@@ -271,8 +305,11 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
 /// Unified filesystem safety gate (scanner + executor).
 /// Rejects protected prefixes, drive roots (`C:` / `C:\`), and shallow paths.
 /// Prefixes come from environment (SystemRoot / ProgramData / ProgramFiles…) with `c:\` fallbacks.
+/// Non-UTF-8 paths fail closed (no lossy conversion into the comparison).
 pub fn is_safe_fs(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy().replace('/', "\\").to_lowercase();
+    let Some(s) = path_utf8_lower(p) else {
+        return false;
+    };
     // S-R6-05: extended-length / 8.3 shapes must not slip past prefix matching.
     if is_abnormal_path_shape(&s) {
         return false;
@@ -284,6 +321,10 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     }
     // S-4: reject path traversal segments before any prefix comparison.
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
+    // REV-SEC-04: absolute drive path only — no relative, no UNC/device shares.
+    if !p.has_root() || trimmed.starts_with("\\\\") {
         return false;
     }
     // S-7B: exact Common Files roots are never deletable (vendor subpaths via policy association).
@@ -299,6 +340,25 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     !protected
         .iter()
         .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
+}
+
+/// Lowercased backslash form of a path, or `None` when not valid UTF-8 (fail-closed).
+fn path_utf8_lower(p: &std::path::Path) -> Option<String> {
+    // REV-SEC-12: Win32 strips trailing dots/spaces per segment — normalize before compare.
+    // Keep `.` / `..` intact so traversal rejection still works.
+    let s = p.to_str()?.replace('/', "\\").to_lowercase();
+    Some(
+        s.split('\\')
+            .map(|seg| {
+                if seg == "." || seg == ".." {
+                    seg
+                } else {
+                    seg.trim_end_matches(['.', ' '])
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\\"),
+    )
 }
 
 fn env_dir_lower(name: &str) -> Option<String> {
@@ -354,24 +414,37 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
+/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits (REV-SEC-11).
+fn is_83_short_segment(seg: &str) -> bool {
+    let low = seg.to_ascii_lowercase();
+    let base = low.split('.').next().unwrap_or(low.as_str());
+    let Some((name, num)) = base.split_once('~') else {
+        return false;
+    };
+    if name.is_empty() || name.len() > 8 || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    !num.is_empty() && num.len() <= 8 && num.chars().all(|c| c.is_ascii_digit())
+}
+
 /// True when the path uses an abnormal Windows shape that can bypass prefix/segment matching:
-/// extended-length / device prefixes (`\\?\`, `\\.\`) or **known protected** 8.3 short names
-/// (`PROGRA~1`, `DOCUME~1`, …). Generic profile short names (`Users\RUNNER~1\…`) stay legal.
+/// extended-length / device prefixes (`\\?\`, `\\.\`) or any non-profile 8.3 short segment
+/// (`WINDOWS~1`, `PROGRA~3`, `COMMON~1`, …). Profile short names (`Users\RUNNER~1\…`) stay legal.
 pub fn is_abnormal_path_shape(p: &str) -> bool {
     let s = p.replace('/', "\\");
     if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
         return true;
     }
-    const SHORTS: &[&str] = &[
-        "progra~1", "progra~2", "docume~1", "mydocu~1", "downlo~1", "applic~1", "locals~1",
-        "shared~1", "public~1",
-    ];
-    for seg in s.split('\\') {
-        let low = seg.to_ascii_lowercase();
-        let base = low.split('.').next().unwrap_or(&low);
-        if SHORTS.contains(&base) {
-            return true;
+    let segs: Vec<&str> = s.split('\\').collect();
+    for (i, seg) in segs.iter().enumerate() {
+        if !is_83_short_segment(seg) {
+            continue;
         }
+        // Users\<short>\… is a legitimate profile home (CI `RUNNER~1`).
+        if i > 0 && segs[i - 1].eq_ignore_ascii_case("users") {
+            continue;
+        }
+        return true;
     }
     false
 }
@@ -381,26 +454,41 @@ pub fn is_abnormal_path_shape(p: &str) -> bool {
 /// (flagged `user_data`) for the "why we kept this" explanation instead of vanishing. Any code that
 /// is about to *remove* something must call this instead of [`is_safe_fs`].
 pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy();
-    is_safe_fs(p) && !is_user_data_path(&s) && !looks_like_sync_conflict(&s)
+    let Some(s) = p.to_str() else {
+        return false;
+    };
+    is_safe_fs(p) && !is_user_data_path(s) && !looks_like_sync_conflict(s)
 }
 
 /// Restore target gate: write-back must not hit library roots, sync-conflict trees, or
 /// protected system prefixes. Unlike delete, 8.3 profile names (`Users\RUNNER~1\…`) are
 /// legitimate restore destinations (S-R6-03 + CI temp homes).
 pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
-    let s = p.to_string_lossy();
+    let Some(s) = p.to_str().map(|s| s.to_string()) else {
+        // Non-UTF-8 destinations never restore (no lossy compare).
+        return false;
+    };
     if s.trim().is_empty() {
         return false;
     }
     if looks_like_sync_conflict(&s) || is_user_data_path(&s) {
         return false;
     }
-    if s.contains("\\\\?\\") || s.contains("\\\\.\\") {
+    // Same fail-closed shape gate as delete (8.3 short names / extended prefixes).
+    // Profile short homes (`Users\RUNNER~1\…`) remain legal via `is_abnormal_path_shape`.
+    if is_abnormal_path_shape(&s) {
         return false;
     }
     let low = s.replace('/', "\\").to_lowercase();
-    let trimmed = low.trim_end_matches('\\');
+    // Win32 strips per-segment trailing dots/spaces when resolving paths —
+    // compare on the normalized form so `C:\Windows.` cannot slip past the
+    // protected roots (same normalization the delete side uses).
+    let normalized: String = low
+        .split('\\')
+        .map(|seg| seg.trim_end_matches(['.', ' ']))
+        .collect::<Vec<_>>()
+        .join("\\");
+    let trimmed = normalized.trim_end_matches('\\');
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
@@ -432,10 +520,8 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
             return false;
         }
     }
-    // S-R4: never write back into user-library subtrees or Startup (persistence / overwrite).
-    if is_user_library_path(&s) {
-        return false;
-    }
+    // S-R4: never write into Startup (persistence). Library *subpaths* stay restorable —
+    // path_map is the server-side record of where the file came from (roots already blocked).
     if trimmed.contains("\\start menu\\programs\\startup")
         || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
     {
@@ -532,6 +618,79 @@ pub fn looks_like_sync_conflict(p: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// REV-SEC-14: registry value primitives may only write inside the allowlist.
+    #[test]
+    fn reg_value_write_allowlist() {
+        // Allowed shapes.
+        assert!(allow_reg_value_write(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\App"
+        )
+        .is_ok());
+        assert!(
+            allow_reg_value_write(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run").is_ok()
+        );
+        assert!(allow_reg_value_write(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+        )
+        .is_ok());
+        assert!(
+            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc").is_ok()
+        );
+        assert!(allow_reg_value_write(
+            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall\command"
+        )
+        .is_ok());
+        assert!(
+            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall").is_ok()
+        );
+        // R21-SEC-07: sibling keys must not ride the Remova menu prefix.
+        assert!(
+            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX").is_err()
+        );
+        assert!(allow_reg_value_write(
+            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX\command"
+        )
+        .is_err());
+        // Everything else is refused — even plausible-but-unlisted keys.
+        assert!(allow_reg_value_write(r"HKCU\Software\Vendor\Config").is_err());
+        assert!(allow_reg_value_write(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe"
+        )
+        .is_err());
+        assert!(allow_reg_value_write(r"HKCU\Environment").is_err());
+        assert!(allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services").is_err());
+        assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool").is_err());
+        assert!(allow_reg_value_write("").is_err());
+    }
+
+    /// Value-shaped `Services|value` paths must not bypass the critical list.
+    #[test]
+    fn reg_delete_gate_blocks_service_value_shape() {
+        let err =
+            is_safe_to_delete_registry(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend|Start")
+                .unwrap_err();
+        assert!(err.contains("critical system service protected"), "{err}");
+        assert!(is_safe_to_delete_registry(
+            r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc|Start"
+        )
+        .is_ok());
+    }
+
+    /// Restore-target gate must judge the Win32-normalized path (trailing
+    /// dots/spaces per segment are stripped by the OS when resolving).
+    #[test]
+    fn restore_target_blocks_trailing_dot_shapes() {
+        assert!(!is_safe_restore_target(Path::new(r"C:\Windows.\evil.dll")));
+        assert!(!is_safe_restore_target(Path::new(
+            r"C:\Program Files.\evil.exe"
+        )));
+        assert!(!is_safe_restore_target(Path::new(r"C:\Windows. \evil.dll")));
+        // Ordinary dotted names keep restoring fine.
+        assert!(is_safe_restore_target(Path::new(
+            r"C:\Users\testuser\AppData\Local\App\v1.2\file.dll"
+        )));
+    }
 
     #[test]
     fn fs_rejects_drive_root() {
@@ -860,6 +1019,37 @@ mod tests {
         assert!(!super::is_abnormal_path_shape(r"C:\Users\Aaron\Documents"));
         // `~` not followed by digits is not an 8.3 shape.
         assert!(!super::is_abnormal_path_shape(r"C:\foo~bar\baz"));
+        // Non-profile NAME~digits segments always abnormal (windows~1 / progra~3 / common~1).
+        assert!(super::is_abnormal_path_shape(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        ));
+        assert!(super::is_abnormal_path_shape(r"C:\PROGRA~3\Vendor\App"));
+        assert!(super::is_abnormal_path_shape(r"C:\PROGRA~1\Common Files\x"));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\COMMON~1\Microsoft Shared\x"
+        ));
+        assert!(super::is_abnormal_path_shape(
+            r"C:\Users\Aaron\DOCUME~1\App"
+        ));
+        // Profile short home under Users stays legal.
+        assert!(!super::is_abnormal_path_shape(
+            r"C:\Users\RUNNER~1\Documents\App"
+        ));
+        assert!(!super::is_abnormal_path_shape(
+            r"C:\Users\RUNNER~1\AppData\Local\Acme"
+        ));
+        assert!(!super::is_safe_fs(Path::new(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\WINDOWS~1\System32\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\PROGRA~1\App\bin.exe"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\RUNNER~1\Documents\App\file.txt"
+        )));
         assert!(!super::is_safe_fs(Path::new(
             r"\\?\C:\Windows\System32\evil"
         )));
@@ -906,5 +1096,74 @@ mod tests {
         assert!(super::is_safe_restore_target(Path::new(
             r"D:\Games\Save\slot.dat"
         )));
+    }
+
+    /// R1: library *subpaths* are restorable (path_map originals); roots / Startup / sync-conflict stay blocked.
+    #[test]
+    fn restore_allows_library_subpaths_not_roots() {
+        // Backup of `Documents\<App>` must be able to write back.
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\App\Config\file.txt"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\MyGame\saves\slot.dat"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Downloads\App\pkg.dat"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Local\Acme\data.bin"
+        )));
+        // Library roots remain red-lined.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Downloads"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\"
+        )));
+        // Startup persistence stays blocked.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\evil.lnk"
+        )));
+        // Sync-conflict trees stay blocked.
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\conflict\save.dat"
+        )));
+    }
+
+    /// N-risk: non-UTF-8 paths fail closed in delete/restore gates (no lossy compare).
+    #[test]
+    fn non_utf8_paths_fail_closed() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        // Invalid UTF-16 unit → not valid UTF-8 on the Rust side.
+        let wide: Vec<u16> = vec![
+            'C' as u16,
+            ':' as u16,
+            '\\' as u16,
+            0xD800,
+            '\\' as u16,
+            'x' as u16,
+        ];
+        let os = OsString::from_wide(&wide);
+        let p = std::path::Path::new(&os);
+        assert!(!super::is_safe_fs(p));
+        assert!(!super::is_safe_fs_for_delete(p));
+        assert!(!super::is_safe_restore_target(p));
+    }
+
+    /// Library-subpath restore requires an out-of-session seal (see path_seal).
+    #[test]
+    fn restore_target_shape_allows_library_subpath() {
+        // Shape gate alone permits it; restore.rs enforces the seal separately.
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\Documents\App\file.txt"
+        )));
+        assert!(super::is_user_library_path(
+            r"C:\Users\a\Documents\App\file.txt"
+        ));
     }
 }

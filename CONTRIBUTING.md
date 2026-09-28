@@ -16,9 +16,10 @@
 npm ci
 npm run build      # tsc + vite
 npm test           # vitest
+npm run coverage   # vitest + coverage gate
 npm run lint
-npm run typecheck:tests
 npm run check-versions
+npm run check-commands
 
 # Backend
 cd src-tauri
@@ -29,14 +30,16 @@ cargo clippy --all-targets -- -D warnings
 # Full app
 npx tauri dev
 npx tauri build
-npm run smoke:dist      # after npm run build
+npm run smoke:dist      # after a build (npm run build or tauri build)
+npm run smoke:app
+npm run smoke:launch
 npm run smoke:portable  # after package:portable
 ```
 
 ## Conventions
 
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).
-- Keep zh/en i18n keys in lockstep (`src/i18n.ts` has a compile-time key-parity check).
+- Keep zh/en i18n keys in lockstep (`src/i18n/index.ts` has a compile-time key-parity check).
 - New Tauri commands that do IO must be `async` + `spawn_blocking`.
 - Safety gates live in `src-tauri/src/safety.rs` — do not duplicate `is_safe_fs`. Anything about to
   *delete* must use `is_safe_fs_for_delete` (delete-grade gate) via `policy::gate_cleanup_item`.

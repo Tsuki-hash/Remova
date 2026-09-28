@@ -304,6 +304,7 @@ export default function App() {
       setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setUninstallingKey: core.setUninstallingKey,
       setUninstallStage,
+      setEvidence,
     },
     refreshApps,
     busyRef,
@@ -341,6 +342,7 @@ export default function App() {
       clearSelection: residualActions.clearSelection,
       setMonitoring: residualActions.setMonitoring,
       setMonitorDiff: residualActions.setMonitorDiff,
+      monitorDiff,
       selectDefaultItems: residualActions.selectDefaultItems,
     },
     setCheckupOrphanCount: shell.setCheckupOrphanCount,
@@ -393,8 +395,23 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [batching, dryRunning]);
 
-  usePendingAnalyze({ loading, apps, goNav, setSelected: core.setSelected, analyze, setQ });
-  useDragDropAnalyze({ apps, setSelected: core.setSelected, analyze });
+  usePendingAnalyze({
+    loading,
+    apps,
+    goNav,
+    setSelected: core.setSelected,
+    analyze: (a) => {
+      void analyze(a);
+    },
+    setQ,
+  });
+  useDragDropAnalyze({
+    apps,
+    setSelected: core.setSelected,
+    analyze: (a) => {
+      void analyze(a);
+    },
+  });
 
   const toggleMulti = useCallback(
     (key: string) => {
@@ -409,6 +426,7 @@ export default function App() {
     residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
+    setEvidence(null);
     scanUi.clearScanChrome();
     aiActions.clearAiScanState();
     aiActions.clearAiReport();
@@ -425,41 +443,36 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    const pending = scanUi.takePendingBucket();
-    if (scan && pending) {
-      setKindFilter(pending);
-    }
+    // R21-FE-03: pendingBucket removed — closing the preview always resets the filter.
     if (!scan) setKindFilter(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan]);
 
   const drillDownBucket = useCallback(
     (bucket: LinkedBucketId) => {
+      // REV-FE-04: same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
+      if (scanning) return;
       if (scan && scan.app_name === selected?.name) {
         setKindFilter(bucket);
-      } else {
-        scanUi.setPendingBucket(bucket);
-        if (selected) void analyze(selected);
+      } else if (selected) {
+        // R21-FE-03: no deferred bucket — analyze first; drill after results land.
+        void analyze(selected);
       }
     },
-    [scan, selected, analyze, scanUi, setKindFilter],
+    [scan, selected, analyze, setKindFilter, scanning],
   );
 
-  // a scan in progress absorbs new row-analyze requests (ref keeps the callback stable).
-  const scanningRef = useRef(false);
-  useEffect(() => {
-    scanningRef.current = scanning;
-  }, [scanning]);
+  // a scan in progress absorbs new row-analyze requests (REV-FE-04: one guard = `scanning`).
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],
   );
   const listAnalyze = useCallback(
     (a: InstalledApp) => {
-      if (scanningRef.current) return;
+      if (scanning) return;
       void analyze(a);
     },
-    [analyze],
+    [analyze, scanning],
   );
   const listForceClean = useCallback((a: InstalledApp) => void forceClean(a), [forceClean]);
   const listIgnoreApp = useCallback((a: InstalledApp) => void doIgnoreApp(a), [doIgnoreApp]);
@@ -485,7 +498,9 @@ export default function App() {
           onAnalyze={openAnalyzeFromDrawer}
           onOfficialOnly={(app) => void openOfficialOnly(app)}
           onForceClean={(app) => void forceClean(app)}
-          onOpenPath={openPathSafe}
+          onOpenPath={(p) => {
+            void openPathSafe(p);
+          }}
           onDrillDown={drillDownBucket}
           onViewLeftovers={() => setKindFilter(null)}
         />

@@ -1,4 +1,4 @@
-//! Read-only association scanner (Phase 1) 閳?parity-oriented port of Python association.
+//! Read-only association scanner (Phase 1) — parity-oriented port of Python association.
 
 use crate::safety::is_safe_to_delete_registry;
 use serde::{Deserialize, Serialize};
@@ -49,20 +49,20 @@ pub struct CleanupItem {
     pub risk: RiskLevel,
     pub reason: String,
     pub evidence: Vec<Evidence>,
-    /// Shared runtime / redistributable 鈥?default do-not-select.
+    /// Shared runtime / redistributable —default do-not-select.
     #[serde(default)]
     pub shared: bool,
-    /// Library roots / sync-conflict red line 鈥?never delete.
+    /// Library roots / sync-conflict red line —never delete.
     #[serde(default)]
     pub user_data: bool,
-    /// Under a user library folder (Documents/Downloads/鈥? but not the root 鈥?confirm,
+    /// Under a user library folder (Documents/Downloads/— but not the root —confirm,
     /// never default-select; cleanable when associated.
     #[serde(default)]
     pub user_library: bool,
     /// Best-effort size in KB for file/dir leftovers only (None for registry/path or when bounded walk hits a cap).
     #[serde(default)]
     pub size_kb: Option<u64>,
-    /// Display bucket for the detail panel (program_files / config_files / 鈥?.
+    /// Display bucket for the detail panel (program_files / config_files / —.
     #[serde(default)]
     pub bucket: Option<String>,
 }
@@ -193,9 +193,11 @@ pub struct ScanResult {
 }
 
 pub fn normalize_for_match(s: &str) -> String {
+    // Unicode alphanumeric (not just ASCII) — CJK product/folder names must
+    // normalize to something matchable, not to the empty string.
     s.to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
+        .filter(|c| c.is_alphanumeric())
         .collect()
 }
 
@@ -223,7 +225,7 @@ pub fn slugify(text: &str) -> Vec<String> {
     }
     let cleaned = cleaned.trim();
     let tokens: Vec<String> = cleaned
-        .split(|c: char| !c.is_ascii_alphanumeric())
+        .split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
@@ -391,11 +393,8 @@ pub fn analyze_associations(
     registry_key: &str,
 ) -> ScanResult {
     let name_slugs = slugify(name);
-    let _pub_slugs = if publisher.trim().is_empty() {
-        vec![]
-    } else {
-        slugify(publisher)
-    };
+    // Publisher slug matching lives in association.rs (REV-BE-19: no dead local table).
+    let _ = publisher;
     let install = if install_location.trim().is_empty() {
         None
     } else {
@@ -553,7 +552,7 @@ pub fn analyze_associations(
         });
     }
 
-    // 4. App Paths 閳?only when install location verifies
+    // 4. App Paths — only when install location verifies
     if let Some(install) = install.as_ref() {
         let install_str = install.to_string_lossy().to_lowercase();
         if !install_str.is_empty() {
@@ -641,10 +640,10 @@ pub fn analyze_associations(
         }
     }
 
-    // 6. Windows services (suspected / high 閳?display only)
+    // 6. Windows services (suspected / high — display only)
     reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
 
-    // 7. Scheduled tasks (suspected / high 閳?display only)
+    // 7. Scheduled tasks (suspected / high — display only)
     reg_scans::scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
@@ -666,11 +665,11 @@ pub fn analyze_associations(
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
         {
-            // Frontend i18n renders the user-data hint (ARCH-4) 閳?keep reason English-neutral.
+            // Frontend i18n renders the user-data hint (ARCH-4) — keep reason English-neutral.
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {
-            // Library subpath (Documents/<App>, Downloads/pkg, 鈥? 鈥?confirm, never default-select.
+            // Library subpath (Documents/<App>, Downloads/pkg, — —confirm, never default-select.
             it.user_library = true;
         }
     }
@@ -694,6 +693,17 @@ pub(crate) mod reg_scans;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slugify_keeps_cjk_tokens() {
+        // CJK product names must slugify to matchable slugs (previously the
+        // ASCII-only tokenizer returned an empty list for pure-CJK names).
+        assert_eq!(slugify("腾讯会议"), vec!["腾讯会议".to_string()]);
+        let mixed = slugify("Tencent Meeting 腾讯会议");
+        assert!(mixed.iter().any(|s| s.contains("tencent")));
+        assert!(mixed.iter().any(|s| s.contains("腾讯会议")));
+        assert_eq!(normalize_for_match("腾讯会议"), "腾讯会议");
+    }
 
     #[test]
     fn slugify_tokens() {
