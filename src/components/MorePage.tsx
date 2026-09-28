@@ -248,7 +248,8 @@ export function MorePage({
             onDismissMonitor();
             if (openTool === "monitor") tools.setOpenTool(null);
           }}
-          onClose={() => tools.setOpenTool(null)}
+          // No separate Close: the panel also renders without openTool (once a
+          // diff exists), where clearing openTool alone could not dismiss it.
         />
       )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>

@@ -530,6 +530,26 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     true
 }
 
+/// Lowercased, per-segment Win32-normalized form of a path string: trailing
+/// dots/spaces are stripped from every segment (the OS does this when
+/// resolving) so `C:\Users\a\Documents.` cannot slip past a segment-name
+/// red line. `.` / `..` segments are kept for traversal checks.
+fn normalize_path_segments(p: &str) -> String {
+    let s = p.replace('/', "\\").to_lowercase();
+    let trimmed = s.trim_end_matches('\\');
+    trimmed
+        .split('\\')
+        .map(|seg| {
+            if seg == "." || seg == ".." {
+                seg
+            } else {
+                seg.trim_end_matches(['.', ' '])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\\")
+}
+
 /// Red line: the user's library **roots** (Documents/Downloads/…) and sync-conflict trees.
 /// Never delete these. Subfolders under a library (e.g. `Documents\<App>`, updater caches)
 /// are **not** red-lined — they may be cleaned when associated. See [`is_user_library_path`].
@@ -537,8 +557,8 @@ pub fn is_user_data_path(p: &str) -> bool {
     // Library-root red line is based on segment names. Abnormal `\\?\` / 8.3 shapes are
     // rejected by `is_safe_fs` for deletes; they must not mark every `Users\RUNNER~1\…`
     // as user_data or restores into CI/profile temp homes become impossible.
-    let low = p.replace('/', "\\").to_lowercase();
-    let trimmed = low.trim_end_matches('\\');
+    // Segments are Win32-normalized (trailing dots/spaces) before matching.
+    let trimmed = normalize_path_segments(p);
     // Exact profile / public library roots (last path segment match).
     const SEGMENTS: &[&str] = &[
         "documents",
@@ -565,7 +585,7 @@ pub fn is_user_library_path(p: &str) -> bool {
     if is_user_data_path(p) {
         return false;
     }
-    let low = p.replace('/', "\\").to_lowercase();
+    let low = normalize_path_segments(p);
     let markers = [
         r"\my documents\",
         r"\documents\",
@@ -582,7 +602,7 @@ pub fn is_user_library_path(p: &str) -> bool {
 /// Sync-conflict style folders often hold real user files.
 /// S-R6-11: segment-aware — a bare `conflict` substring (`MyConflictApp`) must not match.
 pub fn looks_like_sync_conflict(p: &str) -> bool {
-    let low = p.replace('/', "\\").to_lowercase();
+    let low = normalize_path_segments(p);
     if low.contains("同步冲突") {
         return true;
     }
@@ -982,6 +1002,31 @@ mod tests {
         assert!(!super::is_user_data_path(r"C:\Users\a\Downloads\x.msi"));
         assert!(super::is_user_library_path(r"C:\Users\a\Downloads\x.msi"));
         assert!(!super::is_user_data_path(r"C:\Program Files\App\bin.exe"));
+    }
+
+    /// R22-SEC-01: Win32 strips per-segment trailing dots/spaces when resolving —
+    /// the red-line comparisons must judge the normalized segments, not raw ones.
+    #[test]
+    fn user_data_red_line_survives_trailing_dot_segments() {
+        assert!(super::is_user_data_path(r"C:\Users\a\Documents."));
+        assert!(super::is_user_data_path(r"C:\Users\a\Documents. "));
+        assert!(super::is_user_data_path(r"C:\Users.\a\Documents."));
+        assert!(super::is_user_library_path(
+            r"C:\Users\a\Documents.\App\saves.db"
+        ));
+        // Red line still must not fire outside a Users-style prefix.
+        assert!(!super::is_user_data_path(
+            r"C:\Program Files\App\Documents."
+        ));
+        assert!(super::looks_like_sync_conflict(
+            r"C:\Users\a\Documents\conflict."
+        ));
+        assert!(super::looks_like_sync_conflict(
+            r"C:\Users\a\Documents\MyApp - conflict."
+        ));
+        assert!(super::looks_like_sync_conflict(
+            r"C:\Users\a\Documents\report (conflicted copy 2024). docx."
+        ));
     }
 
     #[test]

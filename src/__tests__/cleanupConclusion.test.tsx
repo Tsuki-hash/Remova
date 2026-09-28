@@ -48,7 +48,7 @@ describe("CleanupConclusion", () => {
       />,
     );
     expect(screen.getByText("本地规则")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /清理建议项（1）/ }));
+    fireEvent.click(screen.getByRole("button", { name: /选中建议项（1）/ }));
     expect(onCleanSafe).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /需确认（1）/ }));
     expect(onShowConfirm).toHaveBeenCalled();

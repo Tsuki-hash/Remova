@@ -57,22 +57,54 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped reparse backup entry: {rel}"));
                 continue;
             }
-            if src.is_dir() {
-                if let Err(e) = copy_dir(&src, &dest) {
+            // The string gate above judges the *requested* path. Pin the actual
+            // parent and re-run the gates on its by-handle resolved location:
+            // a junction planted anywhere above the target can no longer divert
+            // the write into a protected or redirected tree.
+            let Some(parent) = dest.parent() else {
+                messages.push(format!("skipped restore target without parent: {original}"));
+                continue;
+            };
+            if let Err(e) = fs::create_dir_all(parent) {
+                messages.push(format!("restore failed for {original}: {e}"));
+                continue;
+            }
+            let pin = match crate::fsutil::pin_dir_resolved(parent) {
+                Ok(pin) => pin,
+                Err(e) => {
                     messages.push(format!("restore failed for {original}: {e}"));
                     continue;
                 }
+            };
+            if !same_dir_path(pin.final_path(), parent) {
+                drop(pin);
+                messages.push(format!("skipped redirected restore target: {original}"));
+                continue;
+            }
+            if !crate::safety::is_safe_restore_target(Path::new(pin.final_path()))
+                || crate::safety::looks_like_sync_conflict(pin.final_path())
+            {
+                drop(pin);
+                messages.push(format!("skipped protected restore target: {original}"));
+                continue;
+            }
+            // A link planted as the leaf itself must not be written through
+            // (the parent pin stops renames, not pre-existing children).
+            if crate::fsutil::is_reparse_point(&dest) {
+                drop(pin);
+                messages.push(format!("skipped reparse restore target: {original}"));
+                continue;
+            }
+            let copied = if src.is_dir() {
+                copy_dir(&src, &dest).map(|_| ())
             } else {
-                if let Some(p) = dest.parent() {
-                    if let Err(e) = fs::create_dir_all(p) {
-                        messages.push(format!("restore failed for {original}: {e}"));
-                        continue;
-                    }
-                }
-                if let Err(e) = crate::fsutil::copy_file_no_reparse(&src, &dest) {
-                    messages.push(format!("restore failed for {original}: {e}"));
-                    continue;
-                }
+                crate::fsutil::copy_file_no_reparse(&src, &dest).map(|_| ())
+            };
+            // Hold the parent pin until the copy is done.
+            drop(pin);
+            if let Err(e) = copied {
+                messages.push(format!("restore failed for {original}: {e}"));
+                continue;
             }
             messages.push(format!("restored {original}"));
         }
@@ -107,15 +139,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         for e in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
             let e = e.map_err(|e| e.to_string())?;
             // AR-05: prefer single-value restore when value.reg exists (Run values etc.).
-            let value_reg = e.path().join("value.reg");
-            let export = e.path().join("export.reg");
-            let target = if value_reg.exists() {
-                Some(value_reg)
-            } else if export.exists() {
-                Some(export)
-            } else {
-                None
-            };
+            let target = pick_import_target(&e.path());
             if let Some(target) = target {
                 // R21-SEC-08: bind the export bytes to the out-of-session seal
                 // before form validation / import.
@@ -184,6 +208,36 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     }
 
     Ok(messages)
+}
+
+/// Case-/slash-insensitive directory identity check (requested parent vs the
+/// by-handle resolved path). Trailing separators and `\\?\` shapes normalize.
+fn same_dir_path(a: &str, b: &Path) -> bool {
+    let norm = |s: &str| {
+        s.replace('/', "\\")
+            .to_lowercase()
+            .trim_end_matches('\\')
+            .to_string()
+    };
+    let Some(bs) = b.to_str() else {
+        return false;
+    };
+    norm(a) == norm(bs)
+}
+
+/// AR-05: within one backup entry directory, prefer the single-value
+/// `value.reg` over the whole-key `export.reg`. A directory-shaped decoy is
+/// not a target (only real files restore).
+pub(crate) fn pick_import_target(entry_dir: &Path) -> Option<PathBuf> {
+    let value_reg = entry_dir.join("value.reg");
+    if value_reg.is_file() {
+        return Some(value_reg);
+    }
+    let export = entry_dir.join("export.reg");
+    if export.is_file() {
+        return Some(export);
+    }
+    None
 }
 
 fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
@@ -277,7 +331,13 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
         if t.starts_with('-') {
             current_has_delete = true;
         } else if t.starts_with('@') || t.starts_with('"') {
-            current_has_value = true;
+            // `"Name"=-` / `@=-` are value-DELETION lines, not writes — a Run
+            // root must not pass the value-write gate by carrying one.
+            if is_reg_value_delete_line(t) {
+                current_has_delete = true;
+            } else {
+                current_has_value = true;
+            }
         }
     }
     flush(
@@ -293,6 +353,20 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
         return Err("reg import refused (no keys)".into());
     }
     Ok(())
+}
+
+/// `.reg` value-deletion syntax: `@=-` (default) and `"Name"=-` (named).
+/// A quoted write whose data merely ends in `=-` (`"K"="x=-"`) is NOT a delete.
+fn is_reg_value_delete_line(t: &str) -> bool {
+    if let Some(rest) = t.strip_prefix("@=") {
+        return rest == "-";
+    }
+    if let Some(rest) = t.strip_prefix('"') {
+        if let Some(end) = rest.find('"') {
+            return &rest[end + 1..] == "=-";
+        }
+    }
+    false
 }
 
 /// Map `HKEY_*` headers in `.reg` files onto Remova hive aliases.
@@ -776,6 +850,59 @@ mod tests {
         // Missing header.
         let no_hdr = "[HKEY_CURRENT_USER\\Software\\Demo]\r\n\"A\"=\"B\"\r\n";
         assert!(super::reg_content_allowed(no_hdr).is_err());
+    }
+
+    /// R22-SEC-02: `"Name"=-` / `@=-` are value deletions — a Run root must
+    /// not pass the value-write gate by carrying one.
+    #[test]
+    fn reg_import_rejects_value_delete_lines_on_run_root() {
+        let named = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\
+            \"Demo\"=-\r\n";
+        assert!(super::reg_content_allowed(named).is_err());
+        let default = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\
+            @=-\r\n";
+        assert!(super::reg_content_allowed(default).is_err());
+        // A quoted write whose data merely ends in `=-` stays a write.
+        let lookalike = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\
+            \"Demo\"=\"x=-\"\r\n";
+        assert!(super::reg_content_allowed(lookalike).is_ok());
+        // Value deletions are refused on ordinary keys too.
+        let plain = "Windows Registry Editor Version 5.00\r\n\r\n\
+            [HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Demo]\r\n\
+            \"DisplayName\"=-\r\n";
+        assert!(super::reg_content_allowed(plain).is_err());
+    }
+
+    /// AR-05 target selection: value.reg preferred, export.reg fallback,
+    /// directories never count.
+    #[test]
+    fn pick_import_target_prefers_value_reg() {
+        let tmp = std::env::temp_dir().join(format!("remova_pick_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let dir = tmp.join("entry");
+        fs::create_dir_all(&dir).unwrap();
+        // Neither file → None.
+        assert!(super::pick_import_target(&dir).is_none());
+        // export.reg only → export.
+        fs::write(dir.join("export.reg"), b"hdr").unwrap();
+        assert_eq!(
+            super::pick_import_target(&dir),
+            Some(dir.join("export.reg"))
+        );
+        // Both → value.reg wins.
+        fs::write(dir.join("value.reg"), b"hdr").unwrap();
+        assert_eq!(super::pick_import_target(&dir), Some(dir.join("value.reg")));
+        // A directory named value.reg is not a target; export.reg still is.
+        fs::remove_file(dir.join("value.reg")).unwrap();
+        fs::create_dir_all(dir.join("value.reg")).unwrap();
+        assert_eq!(
+            super::pick_import_target(&dir),
+            Some(dir.join("export.reg"))
+        );
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     // S-R7-05: empty scopes must not silently write Machine PATH.

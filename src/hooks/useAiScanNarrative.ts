@@ -122,27 +122,35 @@ export function useAiScanNarrative({
   }, [scanId, aiEnabled]);
 
   const aiReportSeqRef = useRef(0);
-  const runAiReport = useCallback(async () => {
-    if (!report || !("deleted" in report) || !aiEnabled || aiReportBusy) return;
-    const seq = ++aiReportSeqRef.current;
-    setAiReportBusy(true);
-    try {
-      const note = await runAiReportSummary(report);
-      // F-R6-06: only the newest report summary may write aiReportNote.
-      if (seq !== aiReportSeqRef.current) return;
-      setAiReportNote(note);
-    } catch {
-      // rule narrative still shown
-    } finally {
-      if (seq === aiReportSeqRef.current) setAiReportBusy(false);
-    }
-  }, [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote]);
+  const runAiReport = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!report || !("deleted" in report) || !aiEnabled) return;
+      // The auto effect runs right after force-clearing busy — the closure
+      // still sees the pre-clear aiReportBusy, so the effect path passes
+      // force (seq already supersedes any in-flight run; this effect owns
+      // the busy lifecycle).
+      if (!opts?.force && aiReportBusy) return;
+      const seq = ++aiReportSeqRef.current;
+      setAiReportBusy(true);
+      try {
+        const note = await runAiReportSummary(report);
+        // F-R6-06: only the newest report summary may write aiReportNote.
+        if (seq !== aiReportSeqRef.current) return;
+        setAiReportNote(note);
+      } catch {
+        // rule narrative still shown
+      } finally {
+        if (seq === aiReportSeqRef.current) setAiReportBusy(false);
+      }
+    },
+    [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote],
+  );
 
   useEffect(() => {
     // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
     aiReportSeqRef.current += 1;
     setAiReportBusy(false);
-    if (report && aiEnabled) void runAiReport();
+    if (report && aiEnabled) void runAiReport({ force: true });
     // REV-FE-15: key on report identity fields, not object identity only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, aiEnabled, report && "deleted" in report ? report.deleted : 0, report?.skipped]);

@@ -339,7 +339,7 @@ export const dict = {
     conclusionNoHighRisk: "未见高风险项",
     conclusionOneLiner: (space: string, safe: number, keep: number, risk: string) =>
       `${space}；可安全清理 ${safe} 项，将保留 ${keep} 项；${risk}。`,
-    conclusionCleanSafe: (n: number) => `清理建议项（${n}）`,
+    conclusionCleanSafe: (n: number) => `选中建议项（${n}）`,
     conclusionShowConfirm: (n: number) => `需确认（${n}）`,
     conclusionShowKeep: (n: number) => `为何保留（${n}）`,
     conclusionSharedHint: "共享组件：其它软件可能仍在用",

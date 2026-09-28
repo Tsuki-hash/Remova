@@ -614,12 +614,21 @@ pub fn explain_items(
     let mut pending: Vec<ExplainInput> = Vec::new();
 
     for it in items {
+        // Cache key includes risk + publisher: a verdict cached for a low-risk
+        // classification (or another publisher's identical path) must never be
+        // replayed for a high-risk one.
         let key = fnv1a64(&format!(
-            "{app_name}|{}|{}|{}|{}",
-            it.path, it.kind, it.confidence, it.reason
+            "{app_name}|{publisher}|{}|{}|{}|{}|{}",
+            it.path, it.kind, it.confidence, it.risk, it.reason
         ));
         if let Some(cached) = cache_get(key) {
-            if let Ok(parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
+            if let Ok(mut parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
+                // Re-run the freshness gate on hits too — a cached
+                // `suggest_check` from a lower-risk classification must not
+                // surface on a high-risk item.
+                if parsed.suggest_check && it.risk.as_str() == "high" {
+                    parsed.suggest_check = false;
+                }
                 out.push(parsed);
                 continue;
             }
@@ -706,8 +715,8 @@ pub fn explain_items(
             suggest_check: p.suggest_check && orig.risk.as_str() != "high",
         };
         let key = fnv1a64(&format!(
-            "{app_name}|{}|{}|{}|{}",
-            item.path, orig.kind, orig.confidence, orig.reason
+            "{app_name}|{publisher}|{}|{}|{}|{}|{}",
+            item.path, orig.kind, orig.confidence, orig.risk, orig.reason
         ));
         if let Ok(s) = serde_json::to_string(&item) {
             cache_put(key, s);

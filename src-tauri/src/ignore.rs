@@ -25,7 +25,7 @@ fn ignore_path() -> PathBuf {
 }
 
 pub fn load() -> IgnoreList {
-    let _g = FILE_LOCK.lock().ok();
+    let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let p = ignore_path();
     let Ok(s) = std::fs::read_to_string(p) else {
         return IgnoreList::default();
@@ -42,7 +42,7 @@ fn load_unlocked() -> IgnoreList {
 }
 
 pub fn save(list: &IgnoreList) -> Result<(), String> {
-    let _g = FILE_LOCK.lock().ok();
+    let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     save_unlocked(list)
 }
 
@@ -63,7 +63,7 @@ fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
 
 /// Load → mutate → save under one lock (avoids lost updates).
 fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
-    let _g = FILE_LOCK.lock().ok();
+    let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut l = load_unlocked();
     f(&mut l);
     save_unlocked(&l)?;
