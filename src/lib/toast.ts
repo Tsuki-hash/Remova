@@ -87,7 +87,7 @@ export const toast = {
     dismissToast(id);
   },
   clear() {
-    for (const id of [...timers.keys()]) clearTimeout(timers.get(id)!);
+    for (const id of [...timers.keys()]) clearTimeout(timers.get(id));
     timers.clear();
     items = [];
     emit();

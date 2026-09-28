@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -6,6 +7,7 @@ import { AppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { summarizeLeftovers } from "../lib/decision";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
+import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
 
 export type UninstallMode = "official" | "deep" | "force";
@@ -43,21 +45,38 @@ export function AppDetailPanel({
   const L = t();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const name = prettyAppName(app.name, app.source);
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
   const linked = scan && scan.app_name === app.name ? summarizeLeftovers(scan.items) : null;
   const buckets =
     scan && scan.app_name === app.name ? buildLinkedBuckets(scan.items, app) : [];
 
+  const closeMenu = (restoreFocus: boolean) => {
+    setMenuOpen(false);
+    if (restoreFocus) menuBtnRef.current?.focus();
+  };
+
   useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
+        closeMenu(false);
+      }
+    };
+    // R21-UX-10: Escape must work from menu items too, and focus returns to the trigger.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMenu(true);
       }
     };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [menuOpen]);
 
   const runDeep = () => onDeepUninstall(app);
@@ -92,9 +111,9 @@ export function AppDetailPanel({
         <button
           style={{ ...css.btnGhost, height: 28, width: 28, padding: 0 }}
           onClick={onClose}
-          aria-label={L.cancel}
+          aria-label={L.panelClose}
         >
-          ×
+          <CloseGlyph />
         </button>
       </div>
 
@@ -124,12 +143,13 @@ export function AppDetailPanel({
           </button>
           <div ref={menuRef} style={{ position: "relative" }}>
             <button
+              ref={menuBtnRef}
               style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}
             >
-              ⋯
+              <Deco ch="⋯" />
             </button>
             {menuOpen && (
               <div
@@ -161,10 +181,10 @@ export function AppDetailPanel({
                       borderRadius: 6,
                       cursor: "pointer",
                       fontSize: 12.5,
-                      color: m.danger ? "var(--danger)" : "var(--ink)",
+                      color: m.danger ? "var(--danger)" : "var(--fg)",
                     }}
                     onClick={() => {
-                      setMenuOpen(false);
+                      closeMenu(true);
                       m.onClick();
                     }}
                   >
@@ -206,9 +226,10 @@ export function AppDetailPanel({
               {r.action && app.install_location && (
                 <button
                   style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11 }}
+                  aria-label={L.openLocation}
                   onClick={() => onOpenPath?.(app.install_location)}
                 >
-                  ⧉
+                  <span aria-hidden>⧉</span>
                 </button>
               )}
             </div>
@@ -260,12 +281,12 @@ export function AppDetailPanel({
                     background: "transparent",
                     cursor: onDrillDown ? "pointer" : "default",
                     textAlign: "left",
-                    color: "var(--ink)",
+                    color: "var(--fg)",
                   }}
                   onClick={() => onDrillDown?.(b.id)}
                 >
-                  <span style={{ width: 18, flexShrink: 0 }} aria-hidden>
-                    {icon}
+                  <span style={{ width: 18, flexShrink: 0, display: "flex" }} aria-hidden>
+                    <ToolGlyph name={icon} />
                   </span>
                   <span style={{ flex: 1 }}>{label}</span>
                   <span style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>
@@ -291,7 +312,7 @@ export function AppDetailPanel({
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
-              ✓ {L.deepUninstallRecommend}
+              <Deco ch="✓" /> {L.deepUninstallRecommend}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.45 }}>
               {L.foundNLeftovers(linked.total)}

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { CloseGlyph } from "./ui/Glyph";
+import { VirtualList } from "./ui/VirtualList";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -45,16 +47,19 @@ export function IdleRadarPanel({
             {busy ? L.loadingApps : L.manageReload}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-            ×
+            <CloseGlyph />
           </button>
         </div>
       </div>
-      <div style={{ maxHeight: 320, overflow: "auto", marginTop: 10 }}>
-        {busy && !rows && <div style={css.muted}>{L.loadingApps}</div>}
-        {rows && rows.length === 0 && <div style={css.muted}>{L.idleEmpty}</div>}
-        {rows?.map((r) => (
+      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.loadingApps}</div>}
+      <VirtualList
+        items={rows ?? []}
+        height={320}
+        estimateSize={72}
+        empty={rows === null ? undefined : <div style={css.muted}>{L.idleEmpty}</div>}
+        keyOf={(r) => r.app.registry_key || r.app.name}
+        renderItem={(r) => (
           <div
-            key={r.app.registry_key || r.app.name}
             style={{
               display: "flex",
               gap: 10,
@@ -63,7 +68,6 @@ export function IdleRadarPanel({
               borderRadius: 8,
               border: "1px solid var(--border)",
               background: "var(--surface-2)",
-              marginBottom: 6,
             }}
           >
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -88,8 +92,8 @@ export function IdleRadarPanel({
               {L.goToSoftware}
             </button>
           </div>
-        ))}
-      </div>
+        )}
+      />
     </div>
   );
 }

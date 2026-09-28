@@ -2,9 +2,14 @@
 # Usage: pwsh -NoProfile -File scripts/package-portable.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root "src-tauri\target\release\remova.exe"
-if (-not (Test-Path $exe)) {
-  Write-Error "Build first: npm run tauri build (missing $exe)"
+# QA-13: same candidate resolution as smoke-app.ps1 — Cargo may emit either case.
+$exeCandidates = @(
+  (Join-Path $root "src-tauri\target\release\remova.exe"),
+  (Join-Path $root "src-tauri\target\release\Remova.exe")
+)
+$exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $exe) {
+  Write-Error "Build first: npm run tauri build. Looked for: $($exeCandidates -join ', ')"
 }
 $ver = (Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json).version
 $outDir = Join-Path $root "src-tauri\target\release\bundle\portable"

@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { CloseGlyph } from "./ui/Glyph";
 import { cssStyles as css } from "../styles";
 
 export function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: () => void }) {
@@ -14,7 +15,7 @@ export function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: ()
         borderRadius: 10,
         border: "1px solid #fca5a5",
         background: "var(--surface)",
-        color: "#b91c1c",
+        color: "var(--danger)",
         fontSize: 13,
         lineHeight: 1.45,
         flexShrink: 0,
@@ -30,7 +31,7 @@ export function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: ()
           ...css.btnGhost,
           height: 28,
           padding: "0 10px",
-          color: "#b91c1c",
+          color: "var(--danger)",
           flexShrink: 0,
         }}
         onClick={onDismiss}
@@ -60,7 +61,7 @@ export function AiRiskBanner({ risk, onDismiss }: { risk: string; onDismiss: () 
       {risk}
       <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
       <button style={{ ...css.btnSm, marginLeft: 10, height: 24 }} onClick={onDismiss}>
-        ×
+        <CloseGlyph />
       </button>
     </div>
   );

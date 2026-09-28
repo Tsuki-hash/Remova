@@ -40,62 +40,75 @@ fn userprofile() -> Option<PathBuf> {
 fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
     let mut out = Vec::new();
     if let Some(up) = userprofile() {
+        // REV-SUP-13: nested `join()` — `/` segments are not portable separators.
+        let appdata = up.join("AppData");
+        let local = appdata.join("Local");
+        out.push((ToolDomain::Dev, local.join("npm-cache"), "npm-cache"));
         out.push((
             ToolDomain::Dev,
-            up.join("AppData/Local/npm-cache"),
-            "npm-cache",
-        ));
-        out.push((
-            ToolDomain::Dev,
-            up.join("AppData/Local/pip/cache"),
+            local.join("pip").join("cache"),
             "pip-cache",
         ));
         out.push((
             ToolDomain::Dev,
-            up.join("AppData/Local/NuGet/v3-cache"),
+            local.join("NuGet").join("v3-cache"),
             "nuget-cache",
         ));
         out.push((
             ToolDomain::Dev,
-            up.join("AppData/Local/Yarn/Cache"),
+            local.join("Yarn").join("Cache"),
             "yarn-cache",
         ));
         out.push((
             ToolDomain::Dev,
-            up.join("AppData/Local/pnpm/cache"),
+            local.join("pnpm").join("cache"),
             "pnpm-cache",
         ));
         out.push((
             ToolDomain::Dev,
-            up.join(".cargo/registry/cache"),
+            up.join(".cargo").join("registry").join("cache"),
             "cargo-cache",
         ));
         out.push((
             ToolDomain::Dev,
-            up.join("AppData/Local/gradle/caches"),
+            local.join("gradle").join("caches"),
             "gradle-cache",
         ));
         out.push((
             ToolDomain::Browser,
-            up.join("AppData/Local/Google/Chrome/User Data/Default/Cache"),
+            local
+                .join("Google")
+                .join("Chrome")
+                .join("User Data")
+                .join("Default")
+                .join("Cache"),
             "chrome-cache",
         ));
         out.push((
             ToolDomain::Browser,
-            up.join("AppData/Local/Microsoft/Edge/User Data/Default/Cache"),
+            local
+                .join("Microsoft")
+                .join("Edge")
+                .join("User Data")
+                .join("Default")
+                .join("Cache"),
             "edge-cache",
         ));
         out.push((
             ToolDomain::Browser,
-            up.join("AppData/Local/Mozilla/Firefox/Profiles"),
+            local.join("Mozilla").join("Firefox").join("Profiles"),
             "firefox-profiles-skip",
         ));
     }
-    if let Some(pf) = std::env::var_os("ProgramFiles(x86)").or_else(|| std::env::var_os("ProgramFiles"))
+    if let Some(pf) =
+        std::env::var_os("ProgramFiles(x86)").or_else(|| std::env::var_os("ProgramFiles"))
     {
         out.push((
             ToolDomain::Game,
-            PathBuf::from(&pf).join("Steam/steamapps/shadercache"),
+            PathBuf::from(&pf)
+                .join("Steam")
+                .join("steamapps")
+                .join("shadercache"),
             "steam-shadercache",
         ));
     }
@@ -114,7 +127,10 @@ fn push_item(
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    // Non-UTF-8 never becomes a delete candidate (fail-closed).
+    let Some(p) = crate::fsutil::path_utf8(&path) else {
+        return;
+    };
     // Profiles / saves are never default targets.
     let high_touch = label.contains("profile") || label.contains("save");
     let risk = if high_touch {
@@ -122,11 +138,7 @@ fn push_item(
     } else {
         RiskLevel::Low
     };
-    let score = if high_touch {
-        0
-    } else {
-        SCORE_CONFIRMED
-    };
+    let score = if high_touch { 0 } else { SCORE_CONFIRMED };
     out.push(CleanupItem {
         path: p.clone(),
         kind: ItemKind::Dir,

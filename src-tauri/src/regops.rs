@@ -298,9 +298,17 @@ pub fn export_reg_value(
     if value_name.is_empty() {
         return Err("empty value name".into());
     }
+    // Value names are interpolated into .reg text — reject quote/newline injection.
+    if value_name.contains('"') || value_name.contains('\n') || value_name.contains('\r') {
+        return Err("unsafe value name".into());
+    }
     let (alias, rest) = key_path
         .split_once('\\')
         .ok_or_else(|| "bad key".to_string())?;
+    // REV-SEC-07: key rest is interpolated into `[...]` — reject injection chars.
+    if rest.is_empty() || rest.contains(['\r', '\n', ']']) {
+        return Err("unsafe key path".into());
+    }
     let (hive, view) = match alias.to_uppercase().as_str() {
         "HKLM64" | "HKLM" => ("HKEY_LOCAL_MACHINE", "/reg:64"),
         "HKLM32" => ("HKEY_LOCAL_MACHINE", "/reg:32"),
@@ -317,40 +325,21 @@ pub fn export_reg_value(
         return Ok(false);
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    // Typical line: `    value_name    REG_SZ    C:\path\app.exe`
-    let mut reg_type = String::new();
-    let mut data_raw = String::new();
-    for line in text.lines() {
-        let t = line.trim();
-        if t.is_empty() || t.starts_with("HKEY_") {
-            continue;
-        }
-        // Split on whitespace runs; value name may contain spaces — find REG_* token.
-        if let Some(idx) = t.find("REG_") {
-            let (left, right) = t.split_at(idx);
-            let mut parts = right.splitn(2, char::is_whitespace);
-            let ty = parts.next().unwrap_or("").to_string();
-            let data = parts.next().unwrap_or("").trim().to_string();
-            let _vname = left.trim();
-            reg_type = ty;
-            data_raw = data;
-            break;
-        }
-    }
-    if reg_type.is_empty() {
+    let Some((reg_type, data_raw)) = parse_reg_query(&text) else {
         return Ok(false);
-    }
+    };
     let key_reg = format!("[{key_win}]");
     let body = match reg_type.as_str() {
         "REG_DWORD" => {
-            // data like 0x2
+            // data like 0x2 — REV-SEC-07: parse failure must not silently become 0.
             let n = u32::from_str_radix(data_raw.trim_start_matches("0x"), 16)
                 .or_else(|_| data_raw.trim().parse::<u32>())
-                .unwrap_or(0);
+                .map_err(|_| format!("export_reg_value: bad DWORD data '{data_raw}'"))?;
             format!("\"{value_name}\"=dword:{n:08x}")
         }
         "REG_QWORD" => {
-            let n = u64::from_str_radix(data_raw.trim_start_matches("0x"), 16).unwrap_or(0);
+            let n = u64::from_str_radix(data_raw.trim_start_matches("0x"), 16)
+                .map_err(|_| format!("export_reg_value: bad QWORD data '{data_raw}'"))?;
             let bytes = n.to_le_bytes();
             let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
             format!("\"{value_name}\"=hex(b):{}", hex.join(","))
@@ -380,6 +369,57 @@ pub fn export_reg_value(
     }
     std::fs::write(dest, reg).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// Parse `reg query` output for a single value: locate the known-type token
+/// (a value NAME containing "REG_" must not confuse it), then accumulate
+/// multi-line hex continuations until the next key header — long REG_BINARY
+/// data used to be silently truncated at the first line (data corruption in
+/// the backup safety net). Returns (type, data) or None.
+fn parse_reg_query(text: &str) -> Option<(String, String)> {
+    const KNOWN: &[&str] = &[
+        "REG_SZ",
+        "REG_EXPAND_SZ",
+        "REG_BINARY",
+        "REG_DWORD",
+        "REG_QWORD",
+        "REG_MULTI_SZ",
+    ];
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("HKEY_") {
+            continue;
+        }
+        let mut hit: Option<(usize, usize, &str)> = None;
+        for ty in KNOWN {
+            if let Some(idx) = t.find(ty) {
+                let before_ok = idx == 0 || t[..idx].ends_with(char::is_whitespace);
+                let after = &t[idx + ty.len()..];
+                let after_ok = after.is_empty() || after.starts_with(char::is_whitespace);
+                if before_ok && after_ok {
+                    hit = Some((idx, ty.len(), ty));
+                    break;
+                }
+            }
+        }
+        let Some((idx, ty_len, ty)) = hit else {
+            continue;
+        };
+        let mut data = t[idx + ty_len..].trim().to_string();
+        for cont in lines.by_ref() {
+            let ct = cont.trim();
+            if ct.is_empty() || ct.starts_with("HKEY_") || ct.starts_with('[') {
+                break;
+            }
+            if !data.is_empty() {
+                data.push(' ');
+            }
+            data.push_str(ct);
+        }
+        return Some((ty.to_string(), data));
+    }
+    None
 }
 
 fn utf16_hex_expand(s: &str) -> String {
@@ -476,6 +516,7 @@ pub(crate) mod path_mock {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
+    #[allow(dead_code)]
     pub fn set_fail_read(v: bool) {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
@@ -529,17 +570,101 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
             return path_mock::read(scope);
         }
     }
-    use std::process::Command;
-    let ps = format!("[Environment]::GetEnvironmentVariable('Path','{scope}')");
-    let mut cmd = Command::new(powershell_exe());
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps]);
-    hide_console(&mut cmd);
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        // S-03: never fall back to process PATH — that can corrupt User/Machine PATH.
-        return Err(crate::error::path_io_err(format!("read Path {scope} failed")).to_ipc());
+    // R21-BE-07: read Path straight from the registry — no PowerShell round-trip
+    // (was two processes per analyze) and no OEM-codepage `from_utf8_lossy`
+    // corruption of non-ASCII PATH entries.
+    let key = match scope {
+        "User" => r"HKCU\Environment",
+        "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
+    };
+    let raw = read_reg_path_value(key)?;
+    Ok(raw)
+}
+
+/// Read the Path value (REG_SZ or REG_EXPAND_SZ) as Unicode text.
+/// `%VAR%` is expanded only for REG_EXPAND_SZ (R21-BE-07).
+fn read_reg_path_value(key_path: &str) -> Result<String, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = key_path;
+        Err("not windows".into())
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{
+            RegQueryValueExW, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+        };
+        let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        unsafe {
+            let w = to_wide(&sub);
+            let mut hk = HKEY::default();
+            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
+                .ok()
+                .map_err(|_| format!("open failed {key_path}"))?;
+            let vname = to_wide("Path");
+            let mut typ = REG_VALUE_TYPE(0);
+            let mut data = vec![0u8; 65_536];
+            let mut data_len = data.len() as u32;
+            let st = RegQueryValueExW(
+                hk,
+                PCWSTR(vname.as_ptr()),
+                None,
+                Some(&mut typ),
+                Some(data.as_mut_ptr()),
+                Some(&mut data_len),
+            );
+            let _ = RegCloseKey(hk);
+            if st != ERROR_SUCCESS {
+                return Err(
+                    crate::error::path_io_err(format!("read Path {key_path} failed")).to_ipc(),
+                );
+            }
+            if typ != REG_SZ && typ != REG_EXPAND_SZ {
+                return Err(crate::error::path_io_err(format!(
+                    "unexpected type for Path {key_path}"
+                ))
+                .to_ipc());
+            }
+            let text = crate::fsutil::wstring_from_reg_data(&data[..data_len as usize]);
+            if typ == REG_EXPAND_SZ {
+                Ok(expand_env_string(&text))
+            } else {
+                Ok(text)
+            }
+        }
+    }
+}
+
+/// Expand `%VAR%` references using the current environment block.
+fn expand_env_string(s: &str) -> String {
+    #[cfg(not(windows))]
+    {
+        s.to_string()
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+        if !s.contains('%') {
+            return s.to_string();
+        }
+        let wide = to_wide(s);
+        unsafe {
+            let needed = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), None);
+            if needed == 0 {
+                return s.to_string();
+            }
+            let mut buf = vec![0u16; needed as usize];
+            let written = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+            if written == 0 {
+                return s.to_string();
+            }
+            while buf.last().copied() == Some(0) {
+                buf.pop();
+            }
+            String::from_utf16_lossy(&buf)
+        }
+    }
 }
 
 /// Public wrapper so the scanner can read true User/Machine PATH.
@@ -579,6 +704,8 @@ pub fn leaf_name(path: &str) -> String {
 
 /// Rename a registry value (copy data + delete old) under `key`.
 pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, from, to);
@@ -659,6 +786,8 @@ fn normalize_reg_exe_hive(key_path: &str) -> String {
 }
 
 pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -695,6 +824,8 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
 
 /// Write REG_BINARY under `key_path` (creates key tree via `reg add` fallback).
 pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result<(), String> {
+    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -747,6 +878,14 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
 /// Errors use stable codes for the UI:
 /// `manage:access_denied:<name>` | `manage:open_failed:<name>` | `manage:write_failed:<name>`
 pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
+    // REV-SEC-14: intrinsic gate — service names are single leaves under Services.
+    let name = svc_name.trim();
+    if name.is_empty() || name.contains('\\') || name.contains('/') || name.contains("..") {
+        return Err(format!("manage:bad_name:{svc_name}"));
+    }
+    crate::safety::allow_reg_value_write(&format!(
+        r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"
+    ))?;
     #[cfg(not(windows))]
     {
         let _ = (svc_name, start);
@@ -756,7 +895,7 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
     {
         use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
         use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, REG_DWORD};
-        let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{svc_name}");
+        let key_path = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}");
         let (hive, sub, access) = parse(&key_path).ok_or_else(|| "bad key".to_string())?;
         unsafe {
             let w = to_wide(&sub);
@@ -786,7 +925,39 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn hive_alias_normalized_for_reg_exe() {
+    fn parse_reg_query_multi_line_binary_and_name_with_reg_token() {
+        // Long REG_BINARY data wraps onto continuation lines; a value NAME may
+        // itself contain "REG_" — the known-type token wins, continuations join.
+        let out = concat!(
+            "HKEY_CURRENT_USER\\Software\\T\r\n",
+            "\r\n",
+            "    My REG_Thing    REG_BINARY    0A0B\r\n",
+            "        0C0D0E0F\r\n",
+            "\r\n",
+            "HKEY_CURRENT_USER\\Software\\T2\r\n",
+            "\r\n",
+            "    Other    REG_SZ    hello\r\n",
+        );
+        let (ty, data) = super::parse_reg_query(out).unwrap();
+        assert_eq!(ty, "REG_BINARY");
+        assert_eq!(data, "0A0B 0C0D0E0F");
+        // Single-line REG_SZ still parses; the value name is ignored.
+        let (ty, data) =
+            super::parse_reg_query("    Path    REG_SZ    C:\\x y\\z.exe\r\n").unwrap();
+        assert_eq!(ty, "REG_SZ");
+        assert_eq!(data, "C:\\x y\\z.exe");
+    }
+
+    #[test]
+    fn parse_reg_query_no_type_is_none() {
+        assert!(
+            super::parse_reg_query("HKEY_CURRENT_USER\\Software\\T\r\n\r\n    junk line\r\n")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn fs_rejects_drive_root() {
         assert_eq!(
             super::normalize_reg_exe_hive(r"HKLM64\SOFTWARE\Foo"),
             r"HKLM\SOFTWARE\Foo"
@@ -881,6 +1052,19 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn export_reg_value_rejects_unsafe_names() {
+        let tmp = std::env::temp_dir().join("remova_reg_inject_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let dest = tmp.join("value.reg");
+        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\"name", &dest).is_err());
+        assert!(
+            super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\r\nname", &dest).is_err()
+        );
+        assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "", &dest).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn export_reg_value_writes_reg_or_false() {
         let tmp = std::env::temp_dir().join(format!("remova_value_reg_{}", std::process::id()));

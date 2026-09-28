@@ -18,14 +18,6 @@ export function useScanUiState() {
   const clearKindFilter = useCallback(() => dispatch({ type: "kindFilter/set", value: null }), []);
   const clearRiskFilter = useCallback(() => dispatch({ type: "riskFilter/set", value: null }), []);
   const clearAiSummary = useCallback(() => dispatch({ type: "aiSummary/set", value: null }), []);
-  const setPendingBucket = useCallback((bucket: LinkedBucketId | null) => {
-    dispatch({ type: "pendingBucket/set", value: bucket });
-  }, []);
-  const takePendingBucket = useCallback((): LinkedBucketId | null => {
-    const v = state.pendingBucket;
-    dispatch({ type: "pendingBucket/take" });
-    return v;
-  }, [state.pendingBucket]);
   const toggleRiskFilter = useCallback((mode: "confirm" | "keep") => {
     dispatch({ type: "riskFilter/toggle", mode });
   }, []);
@@ -49,8 +41,6 @@ export function useScanUiState() {
         clearKindFilter,
         clearRiskFilter,
         clearAiSummary,
-        setPendingBucket,
-        takePendingBucket,
         toggleRiskFilter,
         clearScanChrome,
         dismissAiNudge,
@@ -67,8 +57,6 @@ export function useScanUiState() {
       clearKindFilter,
       clearRiskFilter,
       clearAiSummary,
-      setPendingBucket,
-      takePendingBucket,
       toggleRiskFilter,
       clearScanChrome,
       dismissAiNudge,

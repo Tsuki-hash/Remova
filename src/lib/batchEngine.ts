@@ -44,6 +44,7 @@ export async function runBatchCleanup(
     for (let i = 0; i < queue.length; i++) {
       if (cb.cancelRef.current) break;
       const app = queue[i];
+      if (!app) continue;
       const key = appKey(app);
       cb.onIndex(i + 1);
       cb.onCurrent(app.name);

@@ -24,10 +24,11 @@ pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
+    // REV-SEC-09: charset must match `is_session_name` (alnum + `-` `_` only).
     let safe: String = app_name
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
                 c
             } else {
                 '_'
@@ -39,7 +40,14 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let dir = backup_root().join(format!("{ts}_{safe}"));
+    // Q-B13: two cleanups within the same second must not merge into one
+    // session directory — disambiguate with `_N` (still `is_session_name`-safe).
+    let mut dir = backup_root().join(format!("{ts}_{safe}"));
+    let mut n = 1u32;
+    while dir.exists() && n < 100 {
+        dir = backup_root().join(format!("{ts}_{safe}_{n}"));
+        n += 1;
+    }
     fs::create_dir_all(dir.join("files"))?;
     fs::create_dir_all(dir.join("registry"))?;
     Ok(dir)
@@ -133,6 +141,8 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
     let mut map = std::collections::BTreeMap::new();
     backup_item_with_map(item, session, &mut map)?;
     // Persist map for file/dir items when called as a one-shot API.
+    // R21-SEC-08: also seal registry export digests (registry-only sessions too).
+    let reg_digests = crate::path_seal::collect_reg_digests(session);
     if !map.is_empty() {
         let map_path = session.join("files").join("path_map.json");
         let mut existing: std::collections::BTreeMap<String, String> =
@@ -144,9 +154,16 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
         if let Some(p) = map_path.parent() {
             let _ = fs::create_dir_all(p);
         }
-        fs::write(
-            &map_path,
-            serde_json::to_string_pretty(&existing).unwrap_or_default(),
+        let map_json = serde_json::to_string_pretty(&existing).unwrap_or_default();
+        fs::write(&map_path, &map_json).map_err(|e| e.to_string())?;
+        crate::path_seal::write_seal(session, &map_json, &existing, &reg_digests)
+            .map_err(|e| e.to_string())?;
+    } else if !reg_digests.is_empty() {
+        crate::path_seal::write_seal(
+            session,
+            "",
+            &std::collections::BTreeMap::new(),
+            &reg_digests,
         )
         .map_err(|e| e.to_string())?;
     }
@@ -172,14 +189,25 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
             }
         }
     }
+    // R21-SEC-08: registry exports are bound into the seal even without a path_map.
+    let reg_digests = crate::path_seal::collect_reg_digests(session);
     if !path_map.is_empty() {
         // BE-07: path_map write failure must abort cleanup (restore depends on it).
-        if let Err(e) = fs::write(
-            &map_path,
-            serde_json::to_string_pretty(&path_map).unwrap_or_default(),
-        ) {
+        let map_json = serde_json::to_string_pretty(&path_map).unwrap_or_default();
+        if let Err(e) = fs::write(&map_path, &map_json) {
             fail += 1;
             errors.push(format!("path_map write failed: {e}"));
+        } else if let Err(e) =
+            crate::path_seal::write_seal(session, &map_json, &path_map, &reg_digests)
+        {
+            // Seal failure must abort cleanup (library targets cannot restore).
+            fail += 1;
+            errors.push(format!("path_map seal failed: {e}"));
+        }
+    } else if !reg_digests.is_empty() {
+        if let Err(e) = crate::path_seal::write_seal(session, "", &path_map, &reg_digests) {
+            fail += 1;
+            errors.push(format!("registry seal failed: {e}"));
         }
     }
     (ok, fail, errors)
@@ -269,6 +297,10 @@ fn backup_item_with_map(
             if !src.exists() {
                 return Ok(());
             }
+            // REV-SEC-03: never copy through junction/mount reparse (backup exfil / restore write-through).
+            if crate::fsutil::is_reparse_point(src) {
+                return Ok(());
+            }
             let digest = format!("{:x}", crate::fsutil::fnv1a64(&item.path));
             let name = src
                 .file_name()
@@ -277,12 +309,15 @@ fn backup_item_with_map(
             let rel = format!("{digest}_{name}");
             let dest = session.join("files").join(&rel);
             if src.is_dir() {
+                // Pin the source for the whole copy — the verified object is
+                // what gets enumerated, a swap-in junction cannot be followed.
+                let _pin = crate::fsutil::pin_dir_no_reparse(src).map_err(|e| e.to_string())?;
                 copy_dir(src, &dest).map_err(|e| e.to_string())?;
             } else {
                 if let Some(p) = dest.parent() {
                     fs::create_dir_all(p).map_err(|e| e.to_string())?;
                 }
-                fs::copy(src, &dest).map_err(|e| e.to_string())?;
+                crate::fsutil::copy_file_no_reparse(src, &dest).map_err(|e| e.to_string())?;
             }
             path_map.insert(rel, item.path.clone());
             Ok(())
@@ -313,7 +348,7 @@ mod tests {
 
     #[test]
     fn session_dir_shape() {
-        // do not create on disk in unit test 鈥?just path builder logic via create
+        // do not create on disk in unit test —just path builder logic via create
         let _ = backup_root();
     }
 

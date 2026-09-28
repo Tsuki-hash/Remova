@@ -86,7 +86,7 @@ fn try_backup_phase(
             dry_run: false,
             backup_dir: String::new(),
             uninstall_ok: false,
-            uninstall_message: format!("backup session failed: {e}"),
+            uninstall_message: "backup session failed".to_string(),
             deleted: 0,
             failed: 0,
             skipped: 0,
@@ -124,22 +124,8 @@ struct DeleteOutcome {
 }
 
 /// Windows reparse point (junction/symlink) — refuse delete-through (TOCTOU).
-fn is_reparse_point(p: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_attributes() & 0x400 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(windows))]
-    {
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    }
-}
+/// Shared with backup/restore copy paths via `fsutil` (REV-SEC-03).
+use crate::fsutil::is_reparse_point;
 
 fn delete_cleanup_items_source(
     app: &crate::apps::InstalledApp,
@@ -188,7 +174,7 @@ fn delete_cleanup_items_source(
                 }
                 Err(e) => {
                     failed += 1;
-                    errors.push(format!("{}: {e}", it.path));
+                    errors.push(format!("{}: path delete failed", it.path));
                     details.push(ItemDetail {
                         path: it.path.clone(),
                         kind: "path".into(),
@@ -238,12 +224,12 @@ fn delete_cleanup_items_source(
                             message: native_note,
                         });
                     }
-                    Err(e) => {
+                    Err(_) => {
                         failed += 1;
                         let msg = if native_note.is_empty() {
-                            e.clone()
+                            "registry delete failed".to_string()
                         } else {
-                            format!("{native_note}; {e}")
+                            format!("{native_note}; registry delete failed")
                         };
                         errors.push(format!("{}: {msg}", it.path));
                         details.push(ItemDetail {
@@ -279,11 +265,9 @@ fn delete_cleanup_items_source(
                     });
                     continue;
                 }
-                let res = if p.is_dir() {
-                    std::fs::remove_dir_all(p)
-                } else {
-                    std::fs::remove_file(p)
-                };
+                // REV-BE-05: recursive delete that refuses to walk child reparse points
+                // (std remove_dir_all can follow a junction swapped after the root check).
+                let res = crate::fsutil::remove_tree_no_reparse(p);
                 match res {
                     Ok(()) => {
                         deleted += 1;
@@ -355,7 +339,7 @@ pub fn run_full_cleanup(
         .filter(|it| !it.path.trim().is_empty())
         .collect();
     // Empty leftover set is valid when the user asked for official uninstall only
-    // (batch 鈥渘o default-selectable residue鈥?should still remove the app).
+    // (batch "no default-selectable residue" — should still remove the app).
     if selected.is_empty() && opts.skip_official_uninstall {
         return FullCleanupReport {
             app_name: app.name.clone(),

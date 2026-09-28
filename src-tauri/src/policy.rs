@@ -109,12 +109,20 @@ fn expand_path_env(entry: &str) -> String {
 /// Public so write primitives can apply an intrinsic secondary gate (S-R6-06).
 pub fn is_dangerous_path_entry(entry: &str) -> bool {
     let expanded = expand_path_env(entry);
-    let s = expanded
+    let joined = expanded
         .trim()
         .trim_matches('"')
         .replace('/', "\\")
-        .trim_end_matches('\\')
         .to_lowercase();
+    // Win32 strips per-segment trailing dots/spaces — judge the resolved form
+    // so `C:\Windows.` is not treated as a scrubbable PATH entry.
+    let s = joined
+        .split('\\')
+        .map(|seg| seg.trim_end_matches(['.', ' ']))
+        .collect::<Vec<_>>()
+        .join("\\")
+        .trim_end_matches('\\')
+        .to_string();
     if s.is_empty() || s.len() <= 3 {
         return true;
     }
@@ -123,7 +131,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         return true;
     }
     // Reject path traversal in PATH segments (S-4 class).
-    if s.split('\\').any(|seg| seg == ".." || seg == ".") {
+    if joined.split('\\').any(|seg| seg == ".." || seg == ".") {
         return true;
     }
     let mut danger: Vec<String> = vec![
@@ -137,7 +145,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         r"c:\program files (x86)\powershell".into(),
         r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
-    // Env roots: only system PATH-shaped subtrees 鈥?not entire ProgramFiles/ProgramData (S-2).
+    // Env roots: only system PATH-shaped subtrees —not entire ProgramFiles/ProgramData (S-2).
     if let Ok(sr) = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")) {
         let root = sr
             .replace('/', "\\")
@@ -189,7 +197,7 @@ pub fn gate_cleanup_item(
     source: CleanupSource,
     ignore: &crate::ignore::IgnoreList,
 ) -> GateDecision {
-    // S-N1: never trust client-only flags 鈥?recompute red lines server-side.
+    // S-N1: never trust client-only flags —recompute red lines server-side.
     if item.user_data || crate::safety::is_user_data_path(&item.path) {
         return GateDecision::Skip("user_data red line");
     }
@@ -242,10 +250,7 @@ pub fn gate_cleanup_item(
         // must not delete arbitrary paths.
         let client_scoped = source.is_scoped_scan();
         let orphan_shape = crate::association::is_orphan_flow(app)
-            || matches!(
-                source,
-                CleanupSource::Installer | CleanupSource::ToolCache
-            );
+            || matches!(source, CleanupSource::Installer | CleanupSource::ToolCache);
         if client_scoped && orphan_shape {
             if !source.allow_ok(&item.path) {
                 return GateDecision::Skip("path not associated with app");
@@ -277,6 +282,11 @@ pub fn gate_cleanup_item(
     } else if source.is_scoped_scan() {
         // Scoped scan without app: only paths from the last server-side scan.
         if !source.allow_ok(&item.path) {
+            return GateDecision::Skip("path not associated with app");
+        }
+    } else {
+        // REV-SEC-08: no app context and not a scoped allow-list flow — never default-allow FS deletes.
+        if matches!(item.kind, ItemKind::File | ItemKind::Dir) {
             return GateDecision::Skip("path not associated with app");
         }
     }
@@ -537,7 +547,7 @@ mod tests {
         assert!(
             gate_cleanup_item(Some(&a), &related, CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // Vendor PATH under Program Files is not system-danger (S-2) 鈥?still needs association when app known.
+        // Vendor PATH under Program Files is not system-danger (S-2) —still needs association when app known.
         let pf_vendor = item(r"C:\Program Files\UnrelatedVendor\bin", ItemKind::Path);
         assert!(
             !gate_cleanup_item(Some(&a), &pf_vendor, CleanupSource::Uninstall, &ignore).is_allow()
@@ -745,6 +755,45 @@ mod tests {
         assert!(
             !gate_cleanup_item(Some(&real), &un, CleanupSource::Orphan, &ignore).is_allow(),
             "orphan source must not disable association for real apps"
+        );
+    }
+
+    /// N-risk: installer / toolcache only delete paths from the latest server-side scan.
+    #[test]
+    fn installer_toolcache_require_allow_list() {
+        let _g = crate::scan_allow::test_lock();
+        let ignore = crate::ignore::IgnoreList::default();
+        let orphanish = app("x", "");
+
+        let mut ins = std::collections::HashSet::new();
+        ins.insert(r"C:\Users\a\Downloads\app.msi".to_string());
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::Installer, &ins);
+        let listed = item(r"C:\Users\a\Downloads\app.msi", ItemKind::File);
+        let forged = item(r"C:\Users\a\Documents\save.dat", ItemKind::File);
+        assert!(
+            gate_cleanup_item(Some(&orphanish), &listed, CleanupSource::Installer, &ignore)
+                .is_allow()
+        );
+        assert!(
+            !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::Installer, &ignore)
+                .is_allow()
+        );
+
+        let mut tc = std::collections::HashSet::new();
+        tc.insert(r"C:\Users\a\AppData\Local\npm-cache\x".to_string());
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::ToolCache, &tc);
+        let listed = item(r"C:\Users\a\AppData\Local\npm-cache\x", ItemKind::Dir);
+        let forged = item(
+            r"C:\Users\a\AppData\Roaming\Code\User\settings.json",
+            ItemKind::File,
+        );
+        assert!(
+            gate_cleanup_item(Some(&orphanish), &listed, CleanupSource::ToolCache, &ignore)
+                .is_allow()
+        );
+        assert!(
+            !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::ToolCache, &ignore)
+                .is_allow()
         );
     }
 }

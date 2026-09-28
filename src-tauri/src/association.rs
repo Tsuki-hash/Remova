@@ -45,7 +45,7 @@ pub fn common_files_vendor_segment(path: &str) -> Option<String> {
     Some(seg.to_string())
 }
 
-/// S-7R1: CF vendor association 鈥?vendor **directory segment** equals install prefix
+/// S-7R1: CF vendor association —vendor **directory segment** equals install prefix
 /// under Common Files, or equals a strong name/publisher slug (segment equality).
 pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool {
     if is_orphan_flow(app) {
@@ -88,12 +88,14 @@ pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool
 }
 
 fn guid_in_text(s: &str) -> Option<String> {
-    let low = s.to_lowercase();
+    // Byte indices from a Unicode fold must never slice the original —
+    // GUIDs are ASCII, so fold ASCII-only (byte-length preserving) and slice that.
+    let low = s.to_ascii_lowercase();
     let start = low.find('{')?;
     let end = low[start..].find('}')? + start;
-    let g = &s[start..=end];
+    let g = &low[start..=end];
     if g.len() >= 38 {
-        Some(g.to_lowercase())
+        Some(g.to_string())
     } else {
         None
     }
@@ -106,11 +108,24 @@ fn is_safe_install_root(install: &str) -> bool {
     if p.is_empty() {
         return false;
     }
-    // Reject drive roots (`C:` / `C:\`) and very shallow trees (`C:\Users`).
-    // Normal installs look like `C:\Program Files\Vendor` (drive + 2 segments).
+    // Reject drive roots (`C:` / `C:\`). Normal installs: `C:\Program Files\Vendor`
+    // (drive + 2) or portable `C:\Steam` (drive + 1). Never allow system shallow names.
     let segs: Vec<&str> = p.split('\\').filter(|s| !s.is_empty()).collect();
-    if segs.len() < 3 {
+    if segs.len() < 2 {
         return false;
+    }
+    if segs.len() == 2 {
+        const SYSTEM_ROOTS: &[&str] = &[
+            "users",
+            "windows",
+            "programdata",
+            "program files",
+            "program files (x86)",
+        ];
+        let leaf = segs[1].to_lowercase();
+        if SYSTEM_ROOTS.contains(&leaf.as_str()) {
+            return false;
+        }
     }
     // Never treat profile library roots as install roots.
     let last = segs.last().copied().unwrap_or("").to_lowercase();
@@ -126,14 +141,14 @@ fn is_safe_install_root(install: &str) -> bool {
     if LIBS.contains(&last.as_str()) {
         return false;
     }
-    if crate::safety::is_user_data_path(&p) {
+    if crate::safety::is_user_data_path(p) {
         return false;
     }
     true
 }
 
 /// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
-/// S-3: never trust client `reason` 鈥?path / registry / publisher signals only.
+/// S-3: never trust client `reason` —path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     // S-R7-01: orphan-shaped apps must not claim arbitrary leftovers as associated.
     // Policy enforces the server-side orphan allow-list separately.
@@ -150,7 +165,8 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase();
-    if !install.is_empty() && low.contains(&install) {
+    // Segment-boundary prefix: `C:\Steam` must not match `C:\SteamTools\...`.
+    if !install.is_empty() && (low == install || low.starts_with(&format!("{install}\\"))) {
         return true;
     }
     if let Some(guid) = guid_in_text(&app.registry_key) {
@@ -159,13 +175,26 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         }
     }
     let pub_low = app.publisher.trim().to_lowercase();
-    if pub_low.len() >= 4 && low.contains(&pub_low) {
+    // Publisher as a path/registry segment, not a raw substring (`Apt` must not hit `Adaptive`).
+    if pub_low.len() >= 4
+        && low.split(['\\', '/', ':', ' ', '_']).any(|seg| {
+            seg == pub_low
+                || seg.starts_with(&format!("{pub_low} "))
+                || seg.ends_with(&format!(" {pub_low}"))
+        })
+    {
         return true;
     }
     let slugs = crate::scanner::slugify(&app.name);
-    slugs
-        .iter()
-        .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()))
+    // REV-BE-07: segment-boundary match (`codec` must not hit `mycodec`).
+    slugs.iter().any(|s| {
+        if !ar10_name_slug_ok(s) {
+            return false;
+        }
+        let needle = s.to_lowercase();
+        low.split(['\\', '/', ':', ' ', '_', '-', '.'])
+            .any(|seg| seg == needle)
+    })
 }
 
 /// Medium association gate (AR-10): leftovers must look related to the app.
@@ -208,9 +237,12 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 }
             }
             let slugs = crate::scanner::slugify(&app.name);
-            let name_hit = slugs
-                .iter()
-                .any(|s| ar10_name_slug_ok(s) && low.contains(&s.to_lowercase()));
+            let name_hit = slugs.iter().any(|s| {
+                ar10_name_slug_ok(s)
+                    && low
+                        .split(['\\', '/', ' ', '_', '-', '.'])
+                        .any(|seg| seg == s.to_lowercase())
+            });
             if name_hit {
                 // With a known install location a name hit is a useful secondary signal.
                 // Without one, only trust name hits under common install roots (fail-closed).
@@ -225,7 +257,11 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                     .filter(|s| {
                         s.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&s.to_lowercase().as_str())
                     })
-                    .any(|s| low.contains(&s.to_lowercase()))
+                    .any(|s| {
+                        let sl = s.to_lowercase();
+                        low.split(['\\', '/', ' ', '_', '-', '.'])
+                            .any(|seg| seg == sl)
+                    })
                 && ar10_in_install_root(&low)
             {
                 return true;
@@ -408,7 +444,7 @@ mod tests {
             install_location: r"C:\Program Files\Code".into(),
             ..demo_app()
         };
-        // "code" is a stopword / too short 鈥?not enough by itself outside install root match.
+        // "code" is a stopword / too short —not enough by itself outside install root match.
         assert!(!path_associated_with_app(
             &app,
             &probe(r"C:\Users\a\AppData\Local\Temp\code-cache", ItemKind::Dir)
@@ -458,5 +494,26 @@ mod tests {
             ..demo_app()
         };
         assert!(!is_orphan_flow(&reg_only));
+    }
+
+    /// R3: portable 2-segment install roots work; system shallow names stay rejected.
+    #[test]
+    fn install_root_allows_portable_two_segment() {
+        assert!(is_safe_install_root(r"C:\Steam"));
+        assert!(is_safe_install_root(r"D:\Games"));
+        assert!(is_safe_install_root(r"C:\Program Files\Vendor"));
+        assert!(is_safe_install_root(r"C:\Program Files\Vendor\App"));
+        // Drive roots and system shallow names remain rejected.
+        assert!(!is_safe_install_root(r""));
+        assert!(!is_safe_install_root(r"C:"));
+        assert!(!is_safe_install_root(r"C:\"));
+        assert!(!is_safe_install_root(r"C:\Users"));
+        assert!(!is_safe_install_root(r"C:\Windows"));
+        assert!(!is_safe_install_root(r"C:\ProgramData"));
+        assert!(!is_safe_install_root(r"C:\Program Files"));
+        assert!(!is_safe_install_root(r"C:\Program Files (x86)"));
+        // Library roots are never install roots.
+        assert!(!is_safe_install_root(r"C:\Users\a\Documents"));
+        assert!(!is_safe_install_root(r"C:\Users\a\Downloads"));
     }
 }

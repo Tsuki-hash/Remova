@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
 import { runAiReportSummary } from "../lib/aiNarrative";
 import { t } from "../i18n";
@@ -45,7 +46,7 @@ export function ReportPanel({
           {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
         </strong>
         <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onDismiss}>
-          ×
+          <CloseGlyph />
         </button>
       </div>
       {"backup_dir" in report &&
@@ -65,7 +66,7 @@ export function ReportPanel({
               width: "fit-content",
             }}
           >
-            ✓ {L.safetyVaultBanner}
+            <Deco ch="✓" /> {L.safetyVaultBanner}
           </div>
         ) : !report.dry_run ? (
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
@@ -173,12 +174,14 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             title={report.backup_dir}
-            onClick={async () => {
-              try {
-                await api.openPath(report.backup_dir);
-              } catch (e) {
-                toast.error(formatError(e));
-              }
+            onClick={() => {
+              void (async () => {
+                try {
+                  await api.openPath(report.backup_dir);
+                } catch (e) {
+                  toast.error(formatError(e));
+                }
+              })();
             }}
           >
             {L.openBackupDir}
@@ -188,17 +191,20 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}
-            onClick={async () => {
-              onAiReportBusy(true);
-              try {
-                const note = await runAiReportSummary(report);
-                onAiReportNote(note);
-                if (!note) toast.error(L.aiFailed);
-              } catch {
-                toast.error(L.aiFailed);
-              } finally {
-                onAiReportBusy(false);
-              }
+            onClick={() => {
+              void (async () => {
+                onAiReportBusy(true);
+                try {
+                  const note = await runAiReportSummary(report);
+                  onAiReportNote(note);
+                  if (!note) toast.error(L.aiFailed);
+                } catch (e) {
+                  // REV-SUP-05: mapped backend cause instead of one generic string.
+                  toast.error(formatError(e));
+                } finally {
+                  onAiReportBusy(false);
+                }
+              })();
             }}
           >
             {aiReportBusy ? L.aiReportBusy : L.aiReportSummary}
@@ -216,7 +222,7 @@ export function ReportPanel({
             lineHeight: 1.5,
           }}
         >
-          ✦ {aiReportNote}
+          <Deco ch="✦" /> {aiReportNote}
           <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
         </div>
       )}

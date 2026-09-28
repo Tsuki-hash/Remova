@@ -60,11 +60,8 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
-      - name: frontend typecheck tests
-        run: npm run typecheck:tests
-
-      - name: frontend test
-        run: npm test
+      - name: frontend test + coverage gate
+        run: npm run coverage
 
       - name: frontend build
         run: npm run build
@@ -75,6 +72,8 @@ jobs:
   package:
     runs-on: windows-latest
     timeout-minutes: 45
+    # REV-QA-05: never ship artifacts from a red test tree.
+    needs: test
     # Full Tauri bundle is slow — run on main and manual runs, not every PR.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
@@ -90,8 +89,35 @@ jobs:
           workspaces: src-tauri
           cache-targets: "false"
       - run: npm ci
-      - run: npm run build
+      # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
       - run: npx tauri build
+      - name: install WebView2 (launch smoke prerequisite)
+        shell: pwsh
+        run: |
+          $keys = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          )
+          $installed = $keys | ForEach-Object { (Get-ItemProperty -ErrorAction SilentlyContinue $_).pv } | Where-Object { $_ }
+          if ($installed) {
+            Write-Host "WebView2 already installed: $($installed[0])"
+          } else {
+            $dl = "$env:RUNNER_TEMP\webview2.exe"
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
+            $p = Start-Process -FilePath $dl -Args "/silent /install" -PassThru -Wait
+            # 0 = installed, 3010 = installed (reboot pending); anything else fails the job
+            if ($p.ExitCode -notin 0, 3010) {
+              Write-Error "WebView2 installer exit code $($p.ExitCode)"
+              exit $p.ExitCode
+            }
+            Write-Host "WebView2 installed (exit $($p.ExitCode))"
+          }
+      - name: app launch smoke
+        shell: pwsh
+        run: npm run smoke:launch
+      - name: app binary smoke
+        shell: pwsh
+        run: npm run smoke:app
       - shell: pwsh
         run: npm run package:portable
       - shell: pwsh

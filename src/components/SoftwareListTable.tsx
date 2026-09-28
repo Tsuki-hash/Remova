@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
@@ -32,7 +33,7 @@ export function SoftwareListTable({
   filtered: InstalledApp[];
   loading: boolean;
   q: string;
-  category: string | CategoryId;
+  category: CategoryId;
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;
@@ -117,13 +118,35 @@ export function SoftwareListTable({
         </colgroup>
         <thead>
           <tr>
-            <th style={css.th}>✓</th>
-            <th style={{ ...css.th, cursor: "pointer" }} onClick={() => sortBy("name")} title={L.colName}>
+            <th style={css.th} title={L.colSelected}>
+              <Deco ch="✓" label={L.colSelected} />
+            </th>
+            <th
+              style={{ ...css.th, cursor: "pointer" }}
+              onClick={() => sortBy("name")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  sortBy("name");
+                }
+              }}
+              tabIndex={0}
+              aria-sort={sortCol === "name" ? (sortDesc ? "descending" : "ascending") : undefined}
+              title={L.colName}
+            >
               {L.colName} {sortCol === "name" ? (sortDesc ? "↓" : "↑") : ""}
             </th>
             <th
               style={{ ...css.th, cursor: "pointer", textAlign: "right" as const }}
               onClick={() => sortBy("size")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  sortBy("size");
+                }
+              }}
+              tabIndex={0}
+              aria-sort={sortCol === "size" ? (sortDesc ? "descending" : "ascending") : undefined}
             >
               {L.colSize} {sortCol === "size" ? (sortDesc ? "↓" : "↑") : ""}
             </th>
@@ -131,30 +154,30 @@ export function SoftwareListTable({
           </tr>
         </thead>
         <tbody>
-          {filtered.length === 0 && !(loading && filtered.length === 0) && (
+          {filtered.length === 0 && !loading && (
             <tr>
               <td
                 colSpan={4}
                 style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}
               >
-                {loading
-                  ? L.loadingApps
-                  : q.trim() || category !== "all"
-                    ? L.emptySearch
-                    : L.emptyList}
+                {q.trim() || category !== "all" ? L.emptySearch : L.emptyList}
               </td>
             </tr>
           )}
           {virtualRows.length > 0 && (
             <>
-              {virtualRows[0].start > 0 && (
+              {virtualRows[0] && virtualRows[0].start > 0 && (
                 <tr aria-hidden style={{ height: virtualRows[0].start }}>
                   <td colSpan={4} style={{ padding: 0, border: "none" }} />
                 </tr>
               )}
-              {virtualRows.map((vr) => renderRow(filtered[vr.index], vr.index))}
+              {virtualRows.map((vr) => {
+                const app = filtered[vr.index];
+                return app ? renderRow(app, vr.index) : null;
+              })}
               {(() => {
                 const last = virtualRows[virtualRows.length - 1];
+                if (!last) return null;
                 const pad = totalSize - last.end;
                 return pad > 0 ? (
                   <tr aria-hidden style={{ height: pad }}>

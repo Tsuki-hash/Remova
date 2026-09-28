@@ -1,6 +1,7 @@
 //! Restore from backup session.
 
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -17,30 +18,61 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         let raw = fs::read_to_string(&map_path).map_err(|e| e.to_string())?;
         let map: std::collections::BTreeMap<String, String> =
             serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        for (rel, original) in map {
-            let src = files_root.join(&rel);
+        for (rel, original) in &map {
+            // Map keys are single backup names under `files/` — never path-shaped.
+            if !is_safe_map_rel(rel) {
+                return Err(crate::error::restore_err(format!(
+                    "refusing unsafe backup entry name: {rel}"
+                ))
+                .to_ipc());
+            }
+            let src = files_root.join(rel);
+            // Defense-in-depth: joined source must stay under files_root.
+            if !src.starts_with(&files_root) {
+                return Err(crate::error::restore_err(format!(
+                    "refusing escaped backup entry: {rel}"
+                ))
+                .to_ipc());
+            }
             if !src.exists() {
                 continue;
             }
             let dest = PathBuf::from(&original);
-            // S-R6-03: never restore into red-line / system-shaped destinations.
-            // A tampered path_map.json must not become an arbitrary-write primitive.
+            // REV-SEC-02: protected / unsafe destinations skip + warn — never abort sibling entries.
             if original.trim().is_empty()
                 || !crate::safety::is_safe_restore_target(&dest)
-                || crate::safety::looks_like_sync_conflict(&original)
+                || crate::safety::looks_like_sync_conflict(original)
             {
-                return Err(crate::error::restore_err(format!(
-                    "refusing to restore into protected path: {original}"
-                ))
-                .to_ipc());
+                messages.push(format!("skipped protected restore target: {original}"));
+                continue;
+            }
+            // REV-SEC-01: every write-back target requires a matching out-of-session seal
+            // (not only library subpaths) — a tampered path_map must not widen destinations.
+            if !crate::path_seal::target_sealed(session, &map, original) {
+                messages.push(format!("skipped unsealed restore target: {original}"));
+                continue;
+            }
+            // REV-SEC-03: refuse copy-through of junction/mount reparse points.
+            if crate::fsutil::is_reparse_point(&src) {
+                messages.push(format!("skipped reparse backup entry: {rel}"));
+                continue;
             }
             if src.is_dir() {
-                copy_dir(&src, &dest).map_err(|e| format!("{original}: {e}"))?;
+                if let Err(e) = copy_dir(&src, &dest) {
+                    messages.push(format!("restore failed for {original}: {e}"));
+                    continue;
+                }
             } else {
                 if let Some(p) = dest.parent() {
-                    fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                    if let Err(e) = fs::create_dir_all(p) {
+                        messages.push(format!("restore failed for {original}: {e}"));
+                        continue;
+                    }
                 }
-                fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+                if let Err(e) = crate::fsutil::copy_file_no_reparse(&src, &dest) {
+                    messages.push(format!("restore failed for {original}: {e}"));
+                    continue;
+                }
             }
             messages.push(format!("restored {original}"));
         }
@@ -58,9 +90,9 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
                 Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
                 Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                Err(e) => {
+                Err(_) => {
                     return Err(crate::error::restore_path_err(format!(
-                        "PATH restore failed for {}: {e}",
+                        "PATH restore failed for {}",
                         it.entry
                     ))
                     .to_ipc())
@@ -85,21 +117,68 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 None
             };
             if let Some(target) = target {
-                // S-R7-03: key-shape whitelist before `reg import` (Uninstall / Run value-level / …).
-                validate_reg_import(&target)?;
-                let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-                cmd.args(["import", &target.to_string_lossy()]);
-                crate::regops::hide_console(&mut cmd);
-                let out = cmd.output().map_err(|e| e.to_string())?;
-                if out.status.success() {
-                    messages.push(format!("imported {}", target.display()));
-                } else {
-                    return Err(crate::error::restore_reg_err(format!(
-                        "reg import failed {}",
+                // R21-SEC-08: bind the export bytes to the out-of-session seal
+                // before form validation / import.
+                let file_name = target
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let rel = format!("registry/{}/{}", e.file_name().to_string_lossy(), file_name);
+                let raw_bytes = fs::read(&target).map_err(|e| e.to_string())?;
+                if !crate::path_seal::reg_export_allowed(session, &rel, &raw_bytes) {
+                    messages.push(format!(
+                        "skipped registry import (seal digest mismatch): {}",
                         target.display()
+                    ));
+                    continue;
+                }
+                // Validate the same bytes we import (no TOCTOU re-read), then
+                // stage them in an exclusively created temp held open
+                // (share-read only) while reg.exe imports: a same-user process
+                // can neither pre-place nor swap the content in between.
+                let raw = validate_reg_bytes(raw_bytes)?;
+                let pinned = e.path().join(format!(
+                    "value.import.{}.{}.reg",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ));
+                let mut opts = fs::OpenOptions::new();
+                opts.create_new(true).write(true);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    opts.share_mode(0x0000_0001); // FILE_SHARE_READ only
+                }
+                let mut pin = opts.open(&pinned).map_err(|e| e.to_string())?;
+                let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
+                if let Err(write_err) = staged {
+                    drop(pin);
+                    let _ = fs::remove_file(&pinned);
+                    return Err(crate::error::restore_reg_err(format!(
+                        "reg import staging failed: {write_err}"
                     ))
                     .to_ipc());
                 }
+                let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
+                cmd.args(["import", &pinned.to_string_lossy()]);
+                crate::regops::hide_console(&mut cmd);
+                let out = cmd.output();
+                let import_res = match out {
+                    Ok(o) if o.status.success() => Ok(()),
+                    Ok(_) => Err(crate::error::restore_reg_err(format!(
+                        "reg import failed {}",
+                        target.display()
+                    ))
+                    .to_ipc()),
+                    Err(e) => Err(e.to_string()),
+                };
+                drop(pin);
+                let _ = fs::remove_file(&pinned);
+                import_res?;
+                messages.push(format!("imported {}", target.display()));
             }
         }
     }
@@ -107,12 +186,29 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     Ok(messages)
 }
 
-/// S-R7-03: reject `.reg` files whose key shapes fall outside the restore whitelist.
-/// Allowed: Uninstall / App Paths / Services / TaskCache vendor trees (via
-/// `is_safe_to_delete_registry`), plus Run/RunOnce **value-level** restores only.
-fn validate_reg_import(path: &Path) -> Result<(), String> {
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    reg_content_allowed(&raw)
+fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
+    // Whole-key exports come from `reg.exe export`, which writes UTF-16LE with a
+    // BOM — a plain UTF-8 read fails outright and aborted the entire restore.
+    // Transcode, then validate the very text we import.
+    let text = decode_reg_text(raw)?;
+    reg_content_allowed(&text)?;
+    Ok(text)
+}
+
+/// Accept UTF-16LE (reg.exe native), UTF-8 with BOM and plain UTF-8; anything
+/// else fails closed.
+fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
+    if raw.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = raw[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&units).map_err(|e| e.to_string());
+    }
+    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8(raw[3..].to_vec()).map_err(|e| e.to_string());
+    }
+    String::from_utf8(raw).map_err(|e| e.to_string())
 }
 
 /// Parse `.reg` text and enforce the key-shape whitelist (S-R7-03).
@@ -267,7 +363,16 @@ pub fn list_session_names() -> Vec<String> {
 }
 
 pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
-    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
+    // Same session-name predicate as delete_session_by_name.
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains("..")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(':')
+        || !is_session_name(name)
+    {
         return Err("invalid session name".into());
     }
     let path = crate::backup::backup_root().join(name);
@@ -282,18 +387,9 @@ pub struct SessionInfo {
 }
 
 fn dir_size_kb(p: &Path) -> u64 {
-    let mut total = 0u64;
-    if let Ok(rd) = fs::read_dir(p) {
-        for e in rd.flatten() {
-            let path = e.path();
-            if path.is_dir() {
-                total = total.saturating_add(dir_size_kb(&path));
-            } else if let Ok(md) = e.metadata() {
-                total = total.saturating_add(md.len() / 1024);
-            }
-        }
-    }
-    total
+    // Q-B12: bounded, reparse-safe walk — a huge or junction-planted session
+    // must not turn the listing path into an unbounded traversal.
+    crate::dirsize::walk_size_kb_limited(p).unwrap_or(0)
 }
 
 /// List backup sessions with size (KB). Does NOT prune (read path is pure).
@@ -378,6 +474,20 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     fs::remove_dir_all(&path).map_err(|e| e.to_string())
 }
 
+/// Backup map keys are opaque `{digest}_{name}` tokens written by backup — one path segment only.
+fn is_safe_map_rel(rel: &str) -> bool {
+    if rel.is_empty() || rel == "." || rel == ".." {
+        return false;
+    }
+    if rel.contains("..") || rel.contains('/') || rel.contains('\\') || rel.contains(':') {
+        return false;
+    }
+    if rel.starts_with('~') {
+        return false;
+    }
+    true
+}
+
 /// `YYYYMMDD-HHMMSS` prefix (digits only, fixed widths).
 fn is_session_name(name: &str) -> bool {
     // Legacy `YYYYMMDD-HHMMSS…` (optionally followed by `_extra`).
@@ -405,6 +515,38 @@ fn is_session_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn validate_reg_import_accepts_utf16le_export() {
+        let tmp = std::env::temp_dir().join(format!("remova_reg16_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let p = tmp.join("export.reg");
+        let text = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n\"RemovaTest\"=\"C:\\\\x.exe\"\r\n";
+        // reg.exe native form: UTF-16LE with BOM — must decode and validate.
+        let mut bytes: Vec<u8> = vec![0xFF, 0xFE];
+        bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        std::fs::write(&p, &bytes).unwrap();
+        let out = super::validate_reg_bytes(std::fs::read(&p).unwrap()).unwrap();
+        assert!(out.starts_with("Windows Registry Editor"), "{out}");
+        // UTF-8 with BOM is accepted too.
+        let mut utf8bom: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+        utf8bom.extend_from_slice(text.as_bytes());
+        std::fs::write(&p, &utf8bom).unwrap();
+        assert!(super::validate_reg_bytes(std::fs::read(&p).unwrap()).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn map_rel_rejects_traversal_and_absolute() {
+        assert!(super::is_safe_map_rel("abc123_file.txt"));
+        assert!(!super::is_safe_map_rel(""));
+        assert!(!super::is_safe_map_rel(".."));
+        assert!(!super::is_safe_map_rel("../evil"));
+        assert!(!super::is_safe_map_rel("a/b"));
+        assert!(!super::is_safe_map_rel(r"a\b"));
+        assert!(!super::is_safe_map_rel(r"C:\Windows\evil"));
+    }
 
     #[test]
     fn restore_missing_session_errors() {
@@ -442,8 +584,12 @@ mod tests {
 
     #[test]
     fn restore_file_roundtrip() {
-        let tmp = std::env::temp_dir().join("remova_restore_test");
+        let tmp = std::env::temp_dir().join(format!("remova_restore_rt_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
         let sess = tmp.join("sess");
         let files = sess.join("files");
         fs::create_dir_all(&files).unwrap();
@@ -459,10 +605,57 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
+        // REV-SEC-01: every write-back needs a seal (same as production backup path).
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         // restore overwrites orig from backup
         let msgs = restore_session(&sess).unwrap();
-        assert!(msgs.iter().any(|m| m.contains("restored")));
+        assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// REV-SEC-01: missing seal skips the entry (partial restore), never silently writes.
+    #[test]
+    fn restore_skips_unsealed_library_target() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_seal_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let seals = tmp.join("seals");
+        std::fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals.clone()));
+
+        let sess = tmp.join("1700000000_sealme");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let dest = tmp.join("Documents").join("App").join("f.txt");
+        fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        fs::write(files.join("abc_f.txt"), b"payload").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("abc_f.txt".to_string(), dest.to_string_lossy().to_string());
+        let map_json = serde_json::to_string_pretty(&map).unwrap();
+        fs::write(files.join("path_map.json"), &map_json).unwrap();
+
+        // Unsealed → skip + warn (Ok), file must not appear.
+        let msgs = restore_session(&sess).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("unsealed")),
+            "expected unsealed skip, got: {msgs:?}"
+        );
+        assert!(!dest.exists(), "unsealed target must not be written");
+
+        // Sealed → restore proceeds.
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        assert!(
+            crate::path_seal::target_sealed(&sess, &map, &dest.to_string_lossy()),
+            "seal must accept the recorded target"
+        );
+        let msgs = restore_session(&sess).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("restored")));
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "payload");
+
+        crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -611,8 +804,9 @@ mod tests {
     }
 
     // S-R7-01 / S-R7-02 adversarial: tampered path_map must not write system dirs.
+    // REV-SEC-02: protected targets skip + warn — the session still returns Ok (partial).
     #[test]
-    fn restore_refuses_tampered_path_map_system_targets() {
+    fn restore_skips_tampered_path_map_system_targets() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_adv_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let sess = tmp.join("sess");
@@ -627,8 +821,12 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        let err = restore_session(&sess).unwrap_err();
-        assert!(err.contains("protected"), "got: {err}");
+        let msgs = restore_session(&sess).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("protected") || m.contains("unsealed")),
+            "expected skip message, got: {msgs:?}"
+        );
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }

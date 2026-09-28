@@ -44,11 +44,19 @@ fn ext_is_pkg(name: &str) -> bool {
     lower.ends_with(".exe") && looks_like_setup_name(&lower)
 }
 
-fn push_file_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path: &Path, bucket: &str) {
+fn push_file_item(
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    path: &Path,
+    bucket: &str,
+) {
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    // Non-UTF-8 never becomes a delete candidate (fail-closed).
+    let Some(p) = crate::fsutil::path_utf8(path) else {
+        return;
+    };
     let risk = if path
         .extension()
         .and_then(|e| e.to_str())
@@ -83,18 +91,26 @@ fn push_file_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, pat
         evidence,
         shared: false,
         user_data: crate::safety::is_user_data_path(&p),
-        user_library: crate::safety::is_user_library_path(&p) && !crate::safety::is_user_data_path(&p),
+        user_library: crate::safety::is_user_library_path(&p)
+            && !crate::safety::is_user_data_path(&p),
         size_kb: None,
         bucket: Some(bucket.into()),
     });
     scanned.insert(p);
 }
 
-fn push_dir_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path: &Path, bucket: &str) {
+fn push_dir_item(
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    path: &Path,
+    bucket: &str,
+) {
     if out.len() >= SPECIALTY_RESULT_CAP {
         return;
     }
-    let p = path.to_string_lossy().to_string();
+    let Some(p) = crate::fsutil::path_utf8(path) else {
+        return;
+    };
     out.push(CleanupItem {
         path: p.clone(),
         kind: ItemKind::Dir,
@@ -110,7 +126,8 @@ fn push_dir_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path
         }],
         shared: false,
         user_data: crate::safety::is_user_data_path(&p),
-        user_library: crate::safety::is_user_library_path(&p) && !crate::safety::is_user_data_path(&p),
+        user_library: crate::safety::is_user_library_path(&p)
+            && !crate::safety::is_user_data_path(&p),
         size_kb: None,
         bucket: Some(bucket.into()),
     });
@@ -119,7 +136,9 @@ fn push_dir_item(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>, path
 
 fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
     let Some(dir) = user_downloads() else { return };
-    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
     for ent in rd.flatten().take(400) {
         let p = ent.path();
         if !p.is_file() {
@@ -143,14 +162,24 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
 }
 
 fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
-    let Some(local) = user_local_appdata() else { return };
-    let Ok(rd) = std::fs::read_dir(&local) else { return };
+    let Some(local) = user_local_appdata() else {
+        return;
+    };
+    let Ok(rd) = std::fs::read_dir(&local) else {
+        return;
+    };
     for vendor in rd.flatten().take(200) {
         let vpath = vendor.path();
         if !vpath.is_dir() {
             continue;
         }
-        for leaf in ["updater", "updates", "packages", "installcache", "squirreltemp"] {
+        for leaf in [
+            "updater",
+            "updates",
+            "packages",
+            "installcache",
+            "squirreltemp",
+        ] {
             let cand = vpath.join(leaf);
             if cand.is_dir() {
                 push_dir_item(out, scanned, &cand, "updater_cache");

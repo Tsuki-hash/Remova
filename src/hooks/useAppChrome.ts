@@ -19,15 +19,26 @@ export type AppChromeResidual = {
   clearSelection: () => void;
   setMonitoring: (v: boolean) => void;
   setMonitorDiff: (
-    v: { added_files: string[]; added_reg_values: string[] } | null,
+    v: {
+      added_files: string[];
+      added_reg_values: string[];
+      items?: import("../types").CleanupItem[];
+    } | null,
   ) => void;
+  monitorDiff: {
+    added_files: string[];
+    added_reg_values: string[];
+    items?: import("../types").CleanupItem[];
+  } | null;
   selectDefaultItems: (items: import("../types").CleanupItem[]) => void;
 };
+
+import { LARGE_APP_KB } from "../lib/decision";
 
 /** Checkup tile counts (large installs / recent installs). */
 export function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) => number) {
   return useMemo(() => {
-    const large = apps.filter((a) => sizeOf(a) > 500 * 1024).length;
+    const large = apps.filter((a) => sizeOf(a) > LARGE_APP_KB).length;
     const recent = apps.filter((a) => isRecentInstall(a.install_date, 30)).length;
     return { total: apps.length, large, recent };
   }, [apps, sizeOf]);
@@ -137,13 +148,16 @@ export function useAppChrome({
         toast.success(L.monitorRunning, { channel: MON_CH, ttl: 3000 });
       } else {
         toast.info(L.monitorFinishing, { channel: MON_CH });
-        const d = await api.endInstallMonitor();
+        const result = await api.endInstallMonitor();
         residual.setMonitoring(false);
-        residual.setMonitorDiff(d);
-        toast.success(L.toastMonitorDiff(d.added_files.length, d.added_reg_values.length), {
-          channel: MON_CH,
-          ttl: 3000,
-        });
+        residual.setMonitorDiff({ ...result.diff, items: result.items });
+        toast.success(
+          L.toastMonitorDiff(result.diff.added_files.length, result.diff.added_reg_values.length),
+          {
+            channel: MON_CH,
+            ttl: 3000,
+          },
+        );
       }
     } catch (e) {
       flow.setError(formatError(e));
@@ -155,9 +169,10 @@ export function useAppChrome({
   }, [monitoring, L, residual, flow]);
 
   const monitorDiffToCleanup = useCallback(
-    async (diff: { added_files: string[]; added_reg_values: string[] }) => {
+    (_diff: { added_files: string[]; added_reg_values: string[] }) => {
       try {
-        const items = await api.monitorDiffToItems(diff);
+        // Trusted items only: captured when the server finished the monitor snapshot.
+        const items = residual.monitorDiff?.items ?? [];
         if (!items.length) {
           toast.info(L.monitorNoSnap);
           return;

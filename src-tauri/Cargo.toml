@@ -1,6 +1,6 @@
 [package]
 name = "remova"
-version = "1.2.0"
+version = "1.2.1"
 description = "Remova deep uninstall (Tauri)"
 edition = "2021"
 rust-version = "1.77"
@@ -24,6 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.17"
 ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
+zeroize = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -32,6 +33,7 @@ windows = { version = "0.58", features = [
   "Win32_Security",
   "Win32_Security_Cryptography",
   "Win32_System_Threading",
+  "Win32_System_Environment",
   "Win32_Storage_FileSystem",
   "Win32_System_Restore",
   "Win32_UI_Shell",
