@@ -292,6 +292,7 @@ async fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
             &app.install_location,
             &app.publisher,
             &app.registry_key,
+            &app.source,
         )
     })
     .await

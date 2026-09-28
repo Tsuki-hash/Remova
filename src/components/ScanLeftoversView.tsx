@@ -347,7 +347,9 @@ export function ScanLeftoversView({
         ) : (
           <div
             ref={listRef}
-            style={{ height: Math.max(0, totalSize - listMargin), position: "relative" }}
+            // getTotalSize() already excludes scrollMargin (TanStack v3) —
+            // subtracting listMargin here double-counted and clipped the tail.
+            style={{ height: totalSize, position: "relative" }}
           >
             {virtualRows.map((vr) => {
               const it = displayItems[vr.index];
@@ -390,7 +392,7 @@ export function ScanLeftoversView({
           }}
         >
           {evidence}{" "}
-          <button style={{ ...css.btnGhost, height: 28 }} onClick={() => onEvidence(null)}>
+          <button style={{ ...css.btnGhost, height: 28 }} onClick={() => onEvidence(null)} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>

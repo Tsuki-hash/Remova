@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
+import { scanMatchesApp } from "../lib/appKey";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
 import type { VerifyRow } from "../lib/api";
@@ -314,7 +315,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
             }
             onEvidence={p.setEvidence}
           />
-          {p.selected && p.scan.app_name === p.selected.name && p.detailPanel}
+          {p.selected && p.scan && scanMatchesApp(p.scan, p.selected) && p.detailPanel}
         </div>
       ) : (
         <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0, alignItems: "stretch" }}>

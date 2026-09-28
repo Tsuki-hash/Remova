@@ -7,6 +7,7 @@ import { AppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { summarizeLeftovers } from "../lib/decision";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
+import { scanMatchesApp } from "../lib/appKey";
 import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
 
@@ -48,9 +49,8 @@ export function AppDetailPanel({
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const name = prettyAppName(app.name, app.source);
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
-  const linked = scan && scan.app_name === app.name ? summarizeLeftovers(scan.items) : null;
-  const buckets =
-    scan && scan.app_name === app.name ? buildLinkedBuckets(scan.items, app) : [];
+  const linked = scan && scanMatchesApp(scan, app) ? summarizeLeftovers(scan.items) : null;
+  const buckets = scan && scanMatchesApp(scan, app) ? buildLinkedBuckets(scan.items, app) : [];
 
   const closeMenu = (restoreFocus: boolean) => {
     setMenuOpen(false);
@@ -59,6 +59,12 @@ export function AppDetailPanel({
 
   useEffect(() => {
     if (!menuOpen) return;
+    const items = (): HTMLButtonElement[] =>
+      Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
+      );
+    // R22-UX-16: opening lands focus on the first item; arrows/Home/End roam.
+    items()[0]?.focus();
     const onDoc = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         closeMenu(false);
@@ -69,6 +75,22 @@ export function AppDetailPanel({
       if (e.key === "Escape") {
         e.preventDefault();
         closeMenu(true);
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
+        const list = items();
+        if (list.length === 0) return;
+        e.preventDefault();
+        const idx = list.indexOf(document.activeElement as HTMLButtonElement);
+        const next =
+          e.key === "ArrowDown"
+            ? (idx + 1) % list.length
+            : e.key === "ArrowUp"
+              ? (idx - 1 + list.length) % list.length
+              : e.key === "Home"
+                ? 0
+                : list.length - 1;
+        list[next]?.focus();
       }
     };
     document.addEventListener("mousedown", onDoc);
@@ -145,6 +167,7 @@ export function AppDetailPanel({
             <button
               ref={menuBtnRef}
               style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
+              aria-label={L.rowMore}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}

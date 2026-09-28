@@ -126,9 +126,40 @@ pub fn load_config() -> AiConfig {
     // REV-SUP-11: the ciphertext copy leaves no residue either.
     raw_key.zeroize();
     if migrate {
-        let _ = save_config(&c);
+        // The wrap must not silently fail: a swallowed error leaves the
+        // plaintext key on disk while the UI reports it protected.
+        if let Err(e) = save_config(&c) {
+            eprintln!("ai config migration failed: {e}");
+            // Scrub the plaintext from disk (best effort, atomic) and from the
+            // returned config so `has_api_key` no longer claims protection —
+            // the user re-enters the key once DPAPI works again.
+            let out = AiConfig {
+                enabled: c.enabled,
+                provider: c.provider.clone(),
+                base_url: c.base_url.clone(),
+                api_key: String::new(),
+                model: c.model.clone(),
+                allow_cloud_paths: c.allow_cloud_paths,
+            };
+            if let Ok(s) = serde_json::to_string_pretty(&out) {
+                let _ = write_config_file(&config_path(), &s);
+            }
+            let mut key = std::mem::take(&mut c.api_key);
+            key.zeroize();
+        }
     }
     c
+}
+
+/// Atomic config write (tmp + rename): a crash mid-write must not destroy the
+/// DPAPI-wrapped key or a half-migrated file.
+fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, s).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, p).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 pub fn save_config(c: &AiConfig) -> Result<(), String> {
@@ -148,7 +179,7 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
     };
     out.api_key = encrypt_stored_key(&c.api_key)?;
     let s = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-    std::fs::write(&p, s).map_err(|e| e.to_string())
+    write_config_file(&p, &s)
 }
 
 const KEY_PREFIX: &str = "dpapi:";

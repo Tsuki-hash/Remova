@@ -265,7 +265,7 @@ export function ManageListPage({
         )}
         {!busy && rows.length === 0 && (
           <div style={{ ...css.muted, padding: 28, textAlign: "center" as const }}>
-            {L.emptyList}
+            {q.trim() || onlyOn || hideMicrosoft ? L.emptySearch : L.emptyList}
           </div>
         )}
         {rows.length > 0 && (

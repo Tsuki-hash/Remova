@@ -54,11 +54,13 @@ export function WhitelistPanel({
             {L.ignorePub}
           </button>
         )}
-        <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose}>
+        <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose} aria-label={L.panelClose}>
           <CloseGlyph />
         </button>
       </div>
-      {rows.length === 0 ? (
+      {lists === null ? (
+        <div style={{ color: "var(--muted)" }}>{L.loadingGeneric}</div>
+      ) : rows.length === 0 ? (
         <div style={{ color: "var(--muted)" }}>{L.whitelistEmpty}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

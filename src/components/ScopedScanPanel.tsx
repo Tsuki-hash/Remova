@@ -135,7 +135,7 @@ export function ScopedScanPanel({
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
             {L.orphanScan}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
+          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>
@@ -180,7 +180,7 @@ export function ScopedScanPanel({
       )}
       <div style={{ maxHeight: 320, overflow: "auto", marginTop: 8 }}>
         {items?.map((it) => (
-          <label
+          <div
             key={it.path}
             style={{
               display: "flex",
@@ -188,6 +188,15 @@ export function ScopedScanPanel({
               alignItems: "flex-start",
               padding: "6px 4px",
               borderBottom: "1px solid var(--border)",
+            }}
+          >
+          <label
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              flex: 1,
+              minWidth: 0,
               cursor: "pointer",
             }}
           >
@@ -216,17 +225,15 @@ export function ScopedScanPanel({
                 {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
               </div>
             </span>
-            <button
-              type="button"
-              style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
-              onClick={(e) => {
-                e.preventDefault();
-                void api.openPath(it.path);
-              }}
-            >
-              {L.openLocation}
-            </button>
           </label>
+          <button
+            type="button"
+            style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0, alignSelf: "flex-start" }}
+            onClick={() => void api.openPath(it.path)}
+          >
+            {L.openLocation}
+          </button>
+          </div>
         ))}
         {items && items.length === 0 && <div style={css.muted}>{L.orphanScanEmpty}</div>}
       </div>

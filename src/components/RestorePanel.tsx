@@ -10,6 +10,7 @@ export type SessionInfo = {
 
 export function RestorePanel({
   sessions,
+  loading,
   pick,
   setPick,
   busy,
@@ -19,6 +20,7 @@ export function RestorePanel({
   onClose,
 }: {
   sessions: SessionInfo[];
+  loading?: boolean;
   pick: string;
   setPick: (v: string) => void;
   busy: boolean;
@@ -47,13 +49,13 @@ export function RestorePanel({
         </div>
       </div>
       {sessions.length === 0 ? (
-        <div style={css.muted}>{L.restoreNoSessions}</div>
+        <div style={css.muted}>{loading ? L.loadingGeneric : L.restoreNoSessions}</div>
       ) : (
         <>
           <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>
           <div style={{ maxHeight: 220, overflow: "auto" }}>
             {sessions.map((s) => (
-              <label
+              <div
                 key={s.name}
                 style={{
                   display: "flex",
@@ -61,33 +63,42 @@ export function RestorePanel({
                   gap: 8,
                   padding: "6px 4px",
                   borderBottom: "1px solid var(--border)",
-                  cursor: "pointer",
                 }}
               >
-                <input
-                  type="radio"
-                  name="restore-session"
-                  checked={pick === s.name}
-                  onChange={() => setPick(s.name)}
-                />
-                <span style={{ flex: 1, minWidth: 0 }} className="ell">
-                  {s.name}
-                </span>
-                <span style={{ ...css.muted, whiteSpace: "nowrap" }}>
-                  {formatSize(s.size_kb)}
-                </span>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flex: 1,
+                    minWidth: 0,
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="restore-session"
+                    checked={pick === s.name}
+                    onChange={() => setPick(s.name)}
+                  />
+                  <span style={{ flex: 1, minWidth: 0 }} className="ell">
+                    {s.name}
+                  </span>
+                  <span style={{ ...css.muted, whiteSpace: "nowrap" }}>
+                    {formatSize(s.size_kb)}
+                  </span>
+                </label>
                 <button
                   style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
                   disabled={busy}
-                  onClick={(e) => {
-                    e.preventDefault();
+                  onClick={() => {
                     // Confirm lives in useMoreRestore — no second dialog here.
                     onDelete(s.name);
                   }}
                 >
                   {L.deleteSession}
                 </button>
-              </label>
+              </div>
             ))}
           </div>
         </>

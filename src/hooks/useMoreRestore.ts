@@ -11,12 +11,14 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [restorePick, setRestorePick] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
+  const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
 
   const loadRestore = useCallback(async () => {
     setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
+    setRestoreLoading(true);
     try {
       const list = await api.backupSessions();
       setSessions(list);
@@ -24,6 +26,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
       setOpenRestore(true);
     } catch (e) {
       onError(formatError(e));
+    } finally {
+      setRestoreLoading(false);
     }
   }, [onError]);
 
@@ -77,6 +81,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
 
   return {
     sessions,
+    restoreLoading,
     restorePick,
     setRestorePick,
     restoreBusy,
