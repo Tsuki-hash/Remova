@@ -45,7 +45,7 @@ export function ReportPanel({
         <strong>
           {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
         </strong>
-        <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onDismiss}>
+        <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onDismiss} aria-label={L.panelClose}>
           <CloseGlyph />
         </button>
       </div>
@@ -57,7 +57,9 @@ export function ReportPanel({
               padding: "6px 10px",
               borderRadius: 8,
               background: "var(--ok)",
-              color: "#fff",
+              // Dark ink keeps AA contrast on the ok token in both themes
+              // (white on the dark-theme green falls below 4.5:1).
+              color: "#0B1220",
               fontSize: 12,
               fontWeight: 600,
               display: "inline-flex",

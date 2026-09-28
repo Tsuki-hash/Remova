@@ -218,6 +218,10 @@ pub fn fill_item_sizes(items: &mut [CleanupItem]) {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub app_name: String,
+    /// Stable scan↔app identity (`source\0registry_key\0name`, matching the
+    /// frontend `appKey()`) — two same-named apps can no longer cross-pair.
+    #[serde(default)]
+    pub app_key: String,
     pub items: Vec<CleanupItem>,
 }
 
@@ -420,6 +424,7 @@ pub fn analyze_associations(
     install_location: &str,
     publisher: &str,
     registry_key: &str,
+    source: &str,
 ) -> ScanResult {
     let name_slugs = slugify(name);
     // Publisher slug matching lives in association.rs (REV-BE-19: no dead local table).
@@ -713,6 +718,7 @@ pub fn analyze_associations(
 
     ScanResult {
         app_name: name.to_string(),
+        app_key: format!("{source}\0{registry_key}\0{name}"),
         items,
     }
 }
@@ -796,7 +802,9 @@ mod tests {
             "",
             "DemoVendor",
             r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{X}",
+            "registry",
         );
+        assert_eq!(r.app_key, "registry\0HKLM64\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{X}\0DemoApp");
         assert!(r.items.iter().any(|i| i.path.contains("Uninstall")));
     }
 

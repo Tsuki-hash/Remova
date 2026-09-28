@@ -176,6 +176,7 @@ export function CopilotPanel({
           <button
             type="button"
             style={{ ...css.btnSm, height: 32 }}
+            aria-label={L.panelClose}
             onClick={() => {
               setIntent(null);
               setMatches([]);

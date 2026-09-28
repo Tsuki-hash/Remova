@@ -37,7 +37,7 @@ export function BatchActionBar({
         {batching ? L.batchCancel : L.batchDismiss}
       </button>
       <button
-        style={{ ...css.btn, marginLeft: "auto", background: "var(--danger)", color: "#fff" }}
+        style={{ ...css.btn, marginLeft: "auto", background: "var(--danger)", color: "#1a0505" }}
         disabled={batching}
         title={L.dangerScopeHint}
         onClick={onStart}

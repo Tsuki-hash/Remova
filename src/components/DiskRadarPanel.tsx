@@ -109,17 +109,17 @@ export function DiskRadarPanel({
           >
             {L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
+          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>
       </div>
-      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.loadingApps}</div>}
+      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.radarScanning}</div>}
       <VirtualList
         items={rows ?? []}
         height={320}
         estimateSize={72}
-        empty={rows === null ? undefined : <div style={css.muted}>{L.orphanScanEmpty}</div>}
+        empty={rows === null ? undefined : <div style={css.muted}>{L.radarEmpty}</div>}
         keyOf={(r) => r.path}
         renderItem={(r) => (
           <div

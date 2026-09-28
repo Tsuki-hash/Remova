@@ -71,7 +71,7 @@ export function CheckupPanel({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <strong style={{ fontSize: 15 }}>{L.checkupTitle}</strong>
-          <button style={{ ...css.btnGhost, marginLeft: "auto", height: 28 }} onClick={onClose}>
+          <button style={{ ...css.btnGhost, marginLeft: "auto", height: 28 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>

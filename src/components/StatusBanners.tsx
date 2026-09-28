@@ -60,7 +60,7 @@ export function AiRiskBanner({ risk, onDismiss }: { risk: string; onDismiss: () 
       <strong>{L.aiRiskTitle}: </strong>
       {risk}
       <span style={{ color: "var(--muted)", marginLeft: 8 }}>· {L.aiDisclaimer}</span>
-      <button style={{ ...css.btnSm, marginLeft: 10, height: 24 }} onClick={onDismiss}>
+      <button style={{ ...css.btnSm, marginLeft: 10, height: 24 }} onClick={onDismiss} aria-label={L.panelClose}>
         <CloseGlyph />
       </button>
     </div>

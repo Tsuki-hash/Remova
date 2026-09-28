@@ -48,10 +48,25 @@ const PRESETS: Preset[] = [
   },
 ];
 
-function Label({ children, hint }: { children: string; hint?: ReactNode }) {
+function Label({
+  children,
+  hint,
+  htmlFor,
+}: {
+  children: string;
+  hint?: ReactNode;
+  htmlFor?: string;
+}) {
+  const textProps = { style: { fontSize: 12, fontWeight: 650, color: "var(--fg)" } };
   return (
     <div style={{ marginBottom: 6, display: "flex", alignItems: "baseline", gap: 8 }}>
-      <span style={{ fontSize: 12, fontWeight: 650, color: "var(--fg)" }}>{children}</span>
+      {htmlFor ? (
+        <label htmlFor={htmlFor} {...textProps}>
+          {children}
+        </label>
+      ) : (
+        <span {...textProps}>{children}</span>
+      )}
       {hint && <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{hint}</span>}
     </div>
   );
@@ -166,7 +181,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
               background: cfg.enabled ? "var(--surface)" : "var(--surface-2)",
             }}
           >
-            {cfg.enabled ? "ON" : "OFF"}
+            {cfg.enabled ? L.aiStateOn : L.aiStateOff}
           </span>
         </div>
 
@@ -199,8 +214,9 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
-            <Label>{L.aiBaseUrl}</Label>
+            <Label htmlFor="ai-base-url">{L.aiBaseUrl}</Label>
             <input
+              id="ai-base-url"
               style={inputStyle}
               value={cfg.base_url}
               onChange={(e) => {
@@ -212,8 +228,11 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div style={{ minWidth: 0 }}>
-            <Label hint={dirtyPreset ? L.aiCustomPreset : undefined}>{L.aiModel}</Label>
+            <Label htmlFor="ai-model" hint={dirtyPreset ? L.aiCustomPreset : undefined}>
+              {L.aiModel}
+            </Label>
             <input
+              id="ai-model"
               style={inputStyle}
               value={cfg.model}
               onChange={(e) => {
@@ -228,6 +247,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
 
         <div>
           <Label
+            htmlFor="ai-api-key"
             hint={
               cfg.has_api_key ? (
                 <span style={{ color: "var(--ok)" }}>{L.aiApiKeySet}</span>
@@ -239,6 +259,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             {L.aiApiKey}
           </Label>
           <input
+            id="ai-api-key"
             style={inputStyle}
             type="password"
             placeholder={cfg.has_api_key ? L.aiApiKeyKeep : activePreset.needsKey ? "sk-…" : "—"}

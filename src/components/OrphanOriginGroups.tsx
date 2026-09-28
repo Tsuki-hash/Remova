@@ -79,11 +79,14 @@ export function OrphanOriginGroups({
                 const open = openPath === it.path;
                 return (
                   <div key={it.path} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 4 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <label
                       style={{
                         display: "flex",
                         gap: 8,
                         alignItems: "flex-start",
+                        flex: 1,
+                        minWidth: 0,
                         cursor: "pointer",
                         color: "var(--muted)",
                       }}
@@ -118,17 +121,15 @@ export function OrphanOriginGroups({
                             : it.reason || L.orphanNoOwnerHint}
                         </span>
                       </span>
-                      <button
-                        type="button"
-                        style={{ ...css.btnGhost, height: 24, fontSize: 11, flexShrink: 0 }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setOpenPath(open ? null : it.path);
-                        }}
-                      >
-                        {open ? L.orphanCollapseEvidence : L.orphanExpandEvidence}
-                      </button>
                     </label>
+                    <button
+                      type="button"
+                      style={{ ...css.btnGhost, height: 24, fontSize: 11, flexShrink: 0, alignSelf: "flex-start" }}
+                      onClick={() => setOpenPath(open ? null : it.path)}
+                    >
+                      {open ? L.orphanCollapseEvidence : L.orphanExpandEvidence}
+                    </button>
+                    </div>
                     {open && (
                       <div
                         style={{

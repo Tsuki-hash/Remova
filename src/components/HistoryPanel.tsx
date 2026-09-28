@@ -81,7 +81,7 @@ export function HistoryPanel({
         >
           {L.clearHistory}
         </button>
-        <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
+        <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
           <CloseGlyph />
         </button>
       </div>
@@ -91,7 +91,7 @@ export function HistoryPanel({
         estimateSize={72}
         rowGap={6}
         listRole
-        empty={<div style={css.muted}>{L.noHistory}</div>}
+        empty={<div style={css.muted}>{histQ ? L.emptySearch : L.noHistory}</div>}
         keyOf={(u) =>
           u.kind === "header" ? `day-${u.day}` : u.h.id || `${u.h.app_name}-${u.h.created_at || u.idx}`
         }

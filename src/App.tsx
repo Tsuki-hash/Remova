@@ -11,7 +11,7 @@ import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
 import type { LinkedBucketId } from "./lib/linkedItems";
-import { appKey } from "./lib/appKey";
+import { appKey, scanMatchesApp } from "./lib/appKey";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
 import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
@@ -452,7 +452,7 @@ export default function App() {
     (bucket: LinkedBucketId) => {
       // REV-FE-04: same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
       if (scanning) return;
-      if (scan && scan.app_name === selected?.name) {
+      if (scan && selected && scanMatchesApp(scan, selected)) {
         setKindFilter(bucket);
       } else if (selected) {
         // R21-FE-03: no deferred bucket — analyze first; drill after results land.

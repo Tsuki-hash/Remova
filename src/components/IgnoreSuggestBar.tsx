@@ -53,7 +53,7 @@ export function IgnoreSuggestBar({
       >
         {L.ignoreSuggestApply}
       </button>
-      <button style={css.btnSm} onClick={onDismiss}>
+      <button style={css.btnSm} onClick={onDismiss} aria-label={L.panelClose}>
         <CloseGlyph />
       </button>
     </div>
