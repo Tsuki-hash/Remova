@@ -141,6 +141,8 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
     let mut map = std::collections::BTreeMap::new();
     backup_item_with_map(item, session, &mut map)?;
     // Persist map for file/dir items when called as a one-shot API.
+    // R21-SEC-08: also seal registry export digests (registry-only sessions too).
+    let reg_digests = crate::path_seal::collect_reg_digests(session);
     if !map.is_empty() {
         let map_path = session.join("files").join("path_map.json");
         let mut existing: std::collections::BTreeMap<String, String> =
@@ -154,7 +156,16 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
         }
         let map_json = serde_json::to_string_pretty(&existing).unwrap_or_default();
         fs::write(&map_path, &map_json).map_err(|e| e.to_string())?;
-        crate::path_seal::write_seal(session, &map_json, &existing).map_err(|e| e.to_string())?;
+        crate::path_seal::write_seal(session, &map_json, &existing, &reg_digests)
+            .map_err(|e| e.to_string())?;
+    } else if !reg_digests.is_empty() {
+        crate::path_seal::write_seal(
+            session,
+            "",
+            &std::collections::BTreeMap::new(),
+            &reg_digests,
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -178,16 +189,25 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
             }
         }
     }
+    // R21-SEC-08: registry exports are bound into the seal even without a path_map.
+    let reg_digests = crate::path_seal::collect_reg_digests(session);
     if !path_map.is_empty() {
         // BE-07: path_map write failure must abort cleanup (restore depends on it).
         let map_json = serde_json::to_string_pretty(&path_map).unwrap_or_default();
         if let Err(e) = fs::write(&map_path, &map_json) {
             fail += 1;
             errors.push(format!("path_map write failed: {e}"));
-        } else if let Err(e) = crate::path_seal::write_seal(session, &map_json, &path_map) {
+        } else if let Err(e) =
+            crate::path_seal::write_seal(session, &map_json, &path_map, &reg_digests)
+        {
             // Seal failure must abort cleanup (library targets cannot restore).
             fail += 1;
             errors.push(format!("path_map seal failed: {e}"));
+        }
+    } else if !reg_digests.is_empty() {
+        if let Err(e) = crate::path_seal::write_seal(session, "", &path_map, &reg_digests) {
+            fail += 1;
+            errors.push(format!("registry seal failed: {e}"));
         }
     }
     (ok, fail, errors)

@@ -117,11 +117,26 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 None
             };
             if let Some(target) = target {
-                // Validate the bytes we import, then stage them in an
-                // exclusively created temp held open (share-read only) while
-                // reg.exe imports: a same-user process can neither pre-place
-                // nor swap the content in between.
-                let raw = validate_reg_import(&target)?;
+                // R21-SEC-08: bind the export bytes to the out-of-session seal
+                // before form validation / import.
+                let file_name = target
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let rel = format!("registry/{}/{}", e.file_name().to_string_lossy(), file_name);
+                let raw_bytes = fs::read(&target).map_err(|e| e.to_string())?;
+                if !crate::path_seal::reg_export_allowed(session, &rel, &raw_bytes) {
+                    messages.push(format!(
+                        "skipped registry import (seal digest mismatch): {}",
+                        target.display()
+                    ));
+                    continue;
+                }
+                // Validate the same bytes we import (no TOCTOU re-read), then
+                // stage them in an exclusively created temp held open
+                // (share-read only) while reg.exe imports: a same-user process
+                // can neither pre-place nor swap the content in between.
+                let raw = validate_reg_bytes(raw_bytes)?;
                 let pinned = e.path().join(format!(
                     "value.import.{}.{}.reg",
                     std::process::id(),
@@ -171,13 +186,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     Ok(messages)
 }
 
-/// S-R7-03: reject `.reg` files whose key shapes fall outside the restore whitelist.
-/// REV-SEC-05: read once — validate the same bytes that will be imported (no TOCTOU re-read).
-fn validate_reg_import(path: &Path) -> Result<String, String> {
+fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
     // Whole-key exports come from `reg.exe export`, which writes UTF-16LE with a
     // BOM — a plain UTF-8 read fails outright and aborted the entire restore.
-    // Read the bytes once, transcode, then validate the very text we import.
-    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    // Transcode, then validate the very text we import.
     let text = decode_reg_text(raw)?;
     reg_content_allowed(&text)?;
     Ok(text)
@@ -515,13 +527,13 @@ mod tests {
         let mut bytes: Vec<u8> = vec![0xFF, 0xFE];
         bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
         std::fs::write(&p, &bytes).unwrap();
-        let out = super::validate_reg_import(&p).unwrap();
+        let out = super::validate_reg_bytes(std::fs::read(&p).unwrap()).unwrap();
         assert!(out.starts_with("Windows Registry Editor"), "{out}");
         // UTF-8 with BOM is accepted too.
         let mut utf8bom: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
         utf8bom.extend_from_slice(text.as_bytes());
         std::fs::write(&p, &utf8bom).unwrap();
-        assert!(super::validate_reg_import(&p).is_ok());
+        assert!(super::validate_reg_bytes(std::fs::read(&p).unwrap()).is_ok());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -594,7 +606,7 @@ mod tests {
         )
         .unwrap();
         // REV-SEC-01: every write-back needs a seal (same as production backup path).
-        crate::path_seal::write_seal(&sess, "", &map).unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         // restore overwrites orig from backup
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
@@ -634,7 +646,7 @@ mod tests {
         assert!(!dest.exists(), "unsealed target must not be written");
 
         // Sealed → restore proceeds.
-        crate::path_seal::write_seal(&sess, "", &map).unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         assert!(
             crate::path_seal::target_sealed(&sess, &map, &dest.to_string_lossy()),
             "seal must accept the recorded target"

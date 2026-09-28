@@ -12,7 +12,8 @@ const CACHE_TTL_SECS: u64 = 7 * 24 * 3600;
 const HTTP_TIMEOUT_SECS: u64 = 12;
 
 // REV-SUP-11: a config leaving scope wipes its API-key bytes from memory.
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+// R21-SUP-02: no derived Debug — that would print the raw key into logs.
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -28,6 +29,26 @@ pub struct AiConfig {
     /// Allow sending desensitized install paths (default false → path only as vendor/product tokens).
     #[serde(default)]
     pub allow_cloud_paths: bool,
+}
+
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiConfig")
+            .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    "<empty>"
+                } else {
+                    "<redacted>"
+                },
+            )
+            .field("model", &self.model)
+            .field("allow_cloud_paths", &self.allow_cloud_paths)
+            .finish()
+    }
 }
 
 fn default_provider() -> String {
@@ -96,8 +117,10 @@ pub fn load_config() -> AiConfig {
         return AiConfig::default();
     };
     let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
-    let mut raw_key = c.api_key.clone();
-    c.api_key = decrypt_stored_key(&c.api_key);
+    // R21-SUP-02: take ownership of the stored bytes so the pre-image is wiped
+    // explicitly instead of being dropped by the field assignment.
+    let mut raw_key = std::mem::take(&mut c.api_key);
+    c.api_key = decrypt_stored_key(&raw_key);
     // S-R6-09: migrate a legacy plaintext key to DPAPI at rest on first load.
     let migrate = !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX);
     // REV-SUP-11: the ciphertext copy leaves no residue either.
@@ -113,7 +136,16 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let mut out = c.clone();
+    // R21-SUP-02: never clone the plaintext key into `out` — build the write
+    // payload without it and store only the ciphertext.
+    let mut out = AiConfig {
+        enabled: c.enabled,
+        provider: c.provider.clone(),
+        base_url: c.base_url.clone(),
+        api_key: String::new(),
+        model: c.model.clone(),
+        allow_cloud_paths: c.allow_cloud_paths,
+    };
     out.api_key = encrypt_stored_key(&c.api_key)?;
     let s = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
     std::fs::write(&p, s).map_err(|e| e.to_string())
@@ -224,7 +256,15 @@ fn decrypt_stored_key(stored: &str) -> String {
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
-        String::from_utf8(dec).unwrap_or_default()
+        // R21-SUP-02: a failed UTF-8 decode still holds key bytes — wipe them.
+        match String::from_utf8(dec) {
+            Ok(s) => s,
+            Err(e) => {
+                let mut bad = e.into_bytes();
+                bad.zeroize();
+                String::new()
+            }
+        }
     }
 }
 
@@ -959,5 +999,15 @@ mod tests {
         let v = AiConfigView::from(&c);
         assert!(v.has_api_key);
         assert!(!serde_json::to_string(&v).unwrap().contains("sk-secret"));
+    }
+
+    /// R21-SUP-02: Debug must never print the API key.
+    #[test]
+    fn config_debug_redacts_key() {
+        let mut c = AiConfig::default();
+        c.api_key = "sk-secret".into();
+        let s = format!("{c:?}");
+        assert!(!s.contains("sk-secret"), "Debug leaked api_key: {s}");
+        assert!(s.contains("<redacted>"));
     }
 }

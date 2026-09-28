@@ -35,3 +35,6 @@ flow-compare.html
 .github/ISSUE_TEMPLATE/
 src-tauri/src/path_value_smoke.rs
 src-tauri/src/pipeline_smoke.rs
+
+# ZCode tool-local ignore rules (not part of the app).
+.zcodeignore

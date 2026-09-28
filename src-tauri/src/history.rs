@@ -35,6 +35,12 @@ fn history_path() -> PathBuf {
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
 static FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// R21-SUP-06: a poisoned mutex still holds `()` — recover instead of running
+/// subsequent reads/writes with no lock at all.
+fn lock_file() -> std::sync::MutexGuard<'static, ()> {
+    FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Content hash of a raw jsonl line (shared by identical rows).
 fn line_hash(line: &str) -> String {
     format!("H{:016x}", crate::fsutil::fnv1a64(line))
@@ -75,7 +81,10 @@ fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
         writeln!(w, "{l}")?;
     }
     w.flush()?;
-    fs::rename(&tmp, p)
+    // R21-SUP-01: a failed rename must not leave `history.jsonl.tmp` behind.
+    fs::rename(&tmp, p).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -109,7 +118,7 @@ pub fn append(
         Err(_) => return false,
     };
     let p = history_path();
-    let _g = FILE_LOCK.lock().ok();
+    let _g = lock_file();
     if let Some(parent) = p.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -132,7 +141,7 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     if limit == 0 {
         return vec![];
     }
-    let _g = FILE_LOCK.lock().ok();
+    let _g = lock_file();
     let p = history_path();
     let Ok(file) = fs::File::open(&p) else {
         return vec![];
@@ -178,7 +187,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     if drop_ids.is_empty() {
         return Ok(0);
     }
-    let _g = FILE_LOCK.lock().ok();
+    let _g = lock_file();
     let p = history_path();
     let Ok(file) = fs::File::open(&p) else {
         return Ok(0);
@@ -186,22 +195,45 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let tmp = p.with_extension("jsonl.tmp");
     let out = fs::File::create(&tmp).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(out);
-    let reader = std::io::BufReader::new(file);
+    let mut reader = std::io::BufReader::new(file);
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut removed = 0usize;
-    for line in reader.lines() {
-        let Ok(line) = line else { continue };
-        if line.trim().is_empty() {
+    // R21-SUP-07: stream raw lines — a non-UTF-8 row (torn append) must pass
+    // through untouched, not vanish along with unrelated rows.
+    let mut raw: Vec<u8> = Vec::new();
+    loop {
+        raw.clear();
+        let n = reader
+            .read_until(b'\n', &mut raw)
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        while matches!(raw.last(), Some(b'\n') | Some(b'\r')) {
+            raw.pop();
+        }
+        if raw.iter().all(|b| b.is_ascii_whitespace()) {
             continue;
         }
-        let id = next_line_id(&mut seen, &line);
-        if drop_ids.contains(&id) {
-            removed += 1;
-            continue;
-        }
-        if writeln!(w, "{line}").is_err() {
-            let _ = fs::remove_file(&tmp);
-            return Err("history rewrite failed".into());
+        match std::str::from_utf8(&raw) {
+            Ok(line) => {
+                let id = next_line_id(&mut seen, line);
+                if drop_ids.contains(&id) {
+                    removed += 1;
+                    continue;
+                }
+                if writeln!(w, "{line}").is_err() {
+                    let _ = fs::remove_file(&tmp);
+                    return Err("history rewrite failed".into());
+                }
+            }
+            Err(_) => {
+                // Opaque bytes — never selected via UI ids, so always keep.
+                if w.write_all(&raw).is_err() || w.write_all(b"\n").is_err() {
+                    let _ = fs::remove_file(&tmp);
+                    return Err("history rewrite failed".into());
+                }
+            }
         }
     }
     if w.flush().is_err() {
@@ -213,7 +245,12 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         let _ = fs::remove_file(&tmp);
         return Ok(0);
     }
-    fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    // R21-SUP-01: rename failure must not leave `history.jsonl.tmp` behind.
+    fs::rename(&tmp, &p)
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
+        .map_err(|e| e.to_string())?;
     Ok(removed)
 }
 
@@ -223,12 +260,17 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
     }
     let tmp = p.with_extension("jsonl.tmp");
     fs::write(&tmp, contents).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, p).map_err(|e| e.to_string())
+    // R21-SUP-01: align with ignore.rs — rename failure cleans the temp file.
+    fs::rename(&tmp, p)
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Clear all cleanup history rows (does not touch backup sessions).
 pub fn clear_all() -> Result<(), String> {
-    let _g = FILE_LOCK.lock().ok();
+    let _g = lock_file();
     let p = history_path();
     write_history_file(&p, "")
 }
@@ -246,6 +288,9 @@ fn unix_now_secs() -> String {
 mod tests {
     // history writes to PROGRAMDATA — skip disk tests; pure helpers only
     use std::collections::HashMap;
+
+    /// Serializes tests that mutate process-wide PROGRAMDATA.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn entry_serde_skips_id() {
@@ -317,7 +362,6 @@ mod tests {
         std::fs::create_dir_all(tmp.join("Remova")).unwrap();
         // Point history_path at the temp tree via PROGRAMDATA for this test only.
         // SAFETY: tests run multi-threaded; serialize with a process-local lock and restore env.
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _g = ENV_LOCK.lock().unwrap();
         let prev = std::env::var_os("PROGRAMDATA");
         std::env::set_var("PROGRAMDATA", &tmp);
@@ -338,6 +382,56 @@ mod tests {
 
         super::clear_all().unwrap();
         assert!(super::load(10).is_empty());
+
+        match prev {
+            Some(v) => std::env::set_var("PROGRAMDATA", v),
+            None => std::env::remove_var("PROGRAMDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// R21-SUP-07: a torn non-UTF-8 row must survive delete rewrites untouched.
+    #[test]
+    fn delete_preserves_non_utf8_lines() {
+        let tmp = std::env::temp_dir().join(format!("remova_hist_nu_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("Remova")).unwrap();
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var_os("PROGRAMDATA");
+        std::env::set_var("PROGRAMDATA", &tmp);
+        let p = super::history_path();
+
+        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
+        assert!(super::append("B", 2, 0, 0, 0, false, false, r"C:\b"));
+        // Inject a torn non-UTF-8 line between the two good rows.
+        let lines = std::fs::read(&p).unwrap();
+        let split = lines.iter().position(|&b| b == b'\n').unwrap();
+        let mut rebuilt = lines[..=split].to_vec();
+        rebuilt.extend_from_slice(b"{\"app_name\":\"");
+        rebuilt.extend_from_slice(&[0xFF, 0xFE, 0x80]);
+        rebuilt.extend_from_slice(b"\"}\n");
+        rebuilt.extend_from_slice(&lines[split + 1..]);
+        std::fs::write(&p, &rebuilt).unwrap();
+
+        // Load sees only the two UTF-8 rows (bad line is invisible to the UI).
+        let rows = super::load(10);
+        assert_eq!(rows.len(), 2, "load rows");
+        // Delete the oldest good row (newest-first → index 1) — opaque line remains.
+        let removed = super::delete_by_ids(&[rows[1].id.clone()]).unwrap();
+        assert_eq!(removed, 1);
+        let out = std::fs::read(&p).unwrap();
+        assert!(
+            out.windows(3).any(|w| w == [0xFF, 0xFE, 0x80]),
+            "non-UTF-8 line must pass through delete rewrite"
+        );
+        assert!(
+            out.windows(2).any(|w| w == b"B\n") || out.windows(3).any(|w| w == b"\"B\""),
+            "unrelated UTF-8 row must remain"
+        );
+        assert!(
+            !out.windows(3).any(|w| w == b"\"A\""),
+            "selected row must be gone"
+        );
 
         match prev {
             Some(v) => std::env::set_var("PROGRAMDATA", v),

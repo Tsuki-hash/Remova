@@ -18,6 +18,11 @@ pub struct PathMapSeal {
     pub map_digest: String,
     /// Sorted unique original restore targets recorded at backup time (normalized).
     pub targets: Vec<String>,
+    /// R21-SEC-08: FNV digests of registry export bytes, keyed by
+    /// `registry/<folder>/<file>` (relative to the session). Absent/empty on
+    /// seals written before this field existed (compat: form-whitelist only).
+    #[serde(default)]
+    pub reg_digests: BTreeMap<String, String>,
 }
 
 /// Magic prefix for DPAPI-protected seal blobs.
@@ -173,11 +178,12 @@ fn map_digest_of(path_map: &BTreeMap<String, String>) -> String {
     map_digest(canonical.as_bytes())
 }
 
-/// Persist a DPAPI-protected seal for `path_map` of `session`.
+/// Persist a DPAPI-protected seal for `path_map` and registry export digests of `session`.
 pub fn write_seal(
     session: &Path,
     _map_json: &str,
     path_map: &BTreeMap<String, String>,
+    reg_digests: &BTreeMap<String, String>,
 ) -> Result<(), String> {
     let name = session_name_of(session).ok_or("seal: bad session name")?;
     let mut targets: BTreeSet<String> = BTreeSet::new();
@@ -191,6 +197,7 @@ pub fn write_seal(
         session: name.clone(),
         map_digest: map_digest_of(path_map),
         targets: targets.into_iter().collect(),
+        reg_digests: reg_digests.clone(),
     };
     let json = serde_json::to_string(&seal).map_err(|e| e.to_string())?;
     let mut blob = SEAL_MAGIC.to_vec();
@@ -222,6 +229,43 @@ pub fn target_sealed(session: &Path, path_map: &BTreeMap<String, String>, origin
     !t.is_empty() && seal.targets.iter().any(|x| normalize_target(x) == t)
 }
 
+/// Digests of registry export files under `session/registry/<folder>/`.
+/// Keys are `registry/<folder>/<file>` so restore can look them up by path.
+pub fn collect_reg_digests(session: &Path) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(rd) = std::fs::read_dir(session.join("registry")) else {
+        return out;
+    };
+    for e in rd.flatten() {
+        let folder = e.file_name();
+        let folder = folder.to_string_lossy();
+        for name in ["export.reg", "value.reg"] {
+            let f = e.path().join(name);
+            if let Ok(bytes) = std::fs::read(&f) {
+                out.insert(format!("registry/{folder}/{name}"), map_digest(&bytes));
+            }
+        }
+    }
+    out
+}
+
+/// R21-SEC-08: true when this export may proceed to form validation.
+/// - No seal, or a pre-`reg_digests` seal → allow (compat with old sessions).
+/// - Seal records this file → digest must match.
+/// - Seal has `reg_digests` but omits this file → refuse (fail closed).
+pub fn reg_export_allowed(session: &Path, rel: &str, bytes: &[u8]) -> bool {
+    let Some(seal) = load_seal(session) else {
+        return true;
+    };
+    if seal.reg_digests.is_empty() {
+        return true;
+    }
+    match seal.reg_digests.get(rel) {
+        Some(expected) => expected == &map_digest(bytes),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,7 +294,7 @@ mod tests {
             let sess = temp_session("a");
             let mut map = BTreeMap::new();
             map.insert("x".into(), r"C:\Users\a\Documents\App\f".into());
-            write_seal(&sess, "", &map).unwrap();
+            write_seal(&sess, "", &map, &BTreeMap::new()).unwrap();
 
             assert!(target_sealed(&sess, &map, r"C:\Users\a\Documents\App\f"));
             // Target not in seal.
@@ -293,6 +337,7 @@ mod tests {
                 session: name.clone(),
                 map_digest: map_digest_of(&map),
                 targets: vec![normalize_target(r"C:\Users\a\Documents\App\f")],
+                reg_digests: BTreeMap::new(),
             })
             .unwrap();
             std::fs::write(seal_path(&name), forged).unwrap();
@@ -308,7 +353,7 @@ mod tests {
             let sess = temp_session("flip");
             let mut map = BTreeMap::new();
             map.insert("x".into(), r"C:\Users\a\Documents\App\f".into());
-            write_seal(&sess, "", &map).unwrap();
+            write_seal(&sess, "", &map, &BTreeMap::new()).unwrap();
             assert!(target_sealed(&sess, &map, r"C:\Users\a\Documents\App\f"));
             let name = session_name_of(&sess).unwrap();
             let path = seal_path(&name);
@@ -317,6 +362,44 @@ mod tests {
             bytes[n] ^= 0xFF;
             std::fs::write(&path, &bytes).unwrap();
             assert!(!target_sealed(&sess, &map, r"C:\Users\a\Documents\App\f"));
+            let _ = std::fs::remove_dir_all(&sess);
+        });
+    }
+
+    /// R21-SEC-08: registry export digests bind .reg bytes into the seal.
+    #[test]
+    fn reg_export_digest_roundtrip_and_tamper() {
+        with_seals_dir(|| {
+            let sess = temp_session("regseal");
+            std::fs::create_dir_all(sess.join("registry").join("App")).unwrap();
+            let export = sess.join("registry").join("App").join("export.reg");
+            std::fs::write(&export, b"Windows Registry Editor Version 5.00").unwrap();
+            let digests = collect_reg_digests(&sess);
+            assert_eq!(digests.len(), 1);
+            assert!(digests.contains_key("registry/App/export.reg"));
+            write_seal(&sess, "", &BTreeMap::new(), &digests).unwrap();
+
+            let bytes = std::fs::read(&export).unwrap();
+            assert!(reg_export_allowed(&sess, "registry/App/export.reg", &bytes));
+            // Tampered bytes → refuse.
+            assert!(!reg_export_allowed(
+                &sess,
+                "registry/App/export.reg",
+                b"evil"
+            ));
+            // Unknown export name is not listed → refuse.
+            assert!(!reg_export_allowed(&sess, "registry/App/value.reg", &bytes));
+            let _ = std::fs::remove_dir_all(&sess);
+        });
+    }
+
+    /// Old seals without `reg_digests` keep form-whitelist-only behavior.
+    #[test]
+    fn empty_reg_digests_allows_compat() {
+        with_seals_dir(|| {
+            let sess = temp_session("oldseal");
+            write_seal(&sess, "", &BTreeMap::new(), &BTreeMap::new()).unwrap();
+            assert!(reg_export_allowed(&sess, "registry/App/export.reg", b"x"));
             let _ = std::fs::remove_dir_all(&sess);
         });
     }

@@ -105,8 +105,15 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
         // as regops); FILE_READ_ATTRIBUTES (0x0080) for the by-handle check.
         const DELETE_RIGHT: u32 = 0x0001_0000;
         const FILE_READ_ATTR: u32 = 0x0000_0080;
+        // R21-SEC-09: lossy conversion would pin a U+FFFD-replaced path — fail closed.
+        let Some(path_str) = p.to_str() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path contains unpaired surrogates",
+            ));
+        };
         unsafe {
-            let wide = to_wide(&p.to_string_lossy());
+            let wide = to_wide(path_str);
             // Holding DELETE ourselves while not sharing it is what blocks a
             // concurrent rename — a 0-access handle does not.
             let handle = CreateFileW(

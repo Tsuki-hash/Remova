@@ -1,6 +1,7 @@
 //! AI command layer. AI only explains; it never deletes.
 
 use crate::ai;
+use zeroize::Zeroize;
 
 #[tauri::command]
 pub fn get_ai_config() -> Result<ai::AiConfigView, String> {
@@ -26,6 +27,8 @@ pub fn save_ai_config(
     if let Some(k) = api_key {
         let k = k.trim().to_string();
         if !k.is_empty() {
+            // R21-SUP-02: assignment would drop the old decrypted key without wipe.
+            c.api_key.zeroize();
             c.api_key = k;
         }
     }
