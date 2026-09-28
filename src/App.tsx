@@ -243,6 +243,7 @@ export default function App() {
   );
 
   const {
+    forceBusy,
     dryRunning,
     batching,
     batchIndex,
@@ -439,6 +440,7 @@ export default function App() {
     scanUi,
     coreClosePreview,
     coreActions,
+    setEvidence,
     setShowBatchSummary,
   ]);
 
@@ -562,6 +564,7 @@ export default function App() {
     aiSummaryNote,
     aiNudgeDismissed,
     dryRunning,
+    forceBusy,
     batching,
     error,
     report,

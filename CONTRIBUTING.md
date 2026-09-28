@@ -15,7 +15,6 @@
 # Frontend
 npm ci
 npm run build      # tsc + vite
-npm test           # vitest
 npm run coverage   # vitest + coverage gate
 npm run lint
 npm run check-versions
@@ -47,6 +46,6 @@ npm run smoke:portable  # after package:portable
 
 ## Pull requests
 
-1. Run `cargo test --workspace` and `npm test` before opening.
+1. Run `cargo test --workspace` and `npm run coverage` before opening.
 2. Keep diffs focused; no drive-by reformatting.
 3. Update `CHANGELOG.md` for user-visible changes.

@@ -7,6 +7,7 @@ import { formatError } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
+import { VirtualList } from "./ui/VirtualList";
 import {
   buildCleanupRiskBits,
   defaultSelectable,
@@ -178,10 +179,14 @@ export function ScopedScanPanel({
           </div>
         </div>
       )}
-      <div style={{ maxHeight: 320, overflow: "auto", marginTop: 8 }}>
-        {items?.map((it) => (
+      <VirtualList
+        items={items ?? []}
+        height={320}
+        estimateSize={44}
+        listRole
+        keyOf={(it) => it.path}
+        renderItem={(it) => (
           <div
-            key={it.path}
             style={{
               display: "flex",
               gap: 8,
@@ -234,9 +239,9 @@ export function ScopedScanPanel({
             {L.openLocation}
           </button>
           </div>
-        ))}
-        {items && items.length === 0 && <div style={css.muted}>{L.orphanScanEmpty}</div>}
-      </div>
+        )}
+        empty={<div style={css.muted}>{L.orphanScanEmpty}</div>}
+      />
     </div>
   );
 }

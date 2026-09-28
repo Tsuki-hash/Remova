@@ -42,7 +42,7 @@ pub fn build_uninstall_command(
     }
 
     // MSI product code: only when the string is clearly MSI (msiexec present, or bare {GUID}).
-    if let Some(guid) = extract_guid(&raw) {
+    if let Some(guid) = crate::shared::first_guid(&raw) {
         let lower = raw.to_lowercase();
         let trimmed = raw.trim();
         let bare_guid = trimmed == guid || trimmed.trim_matches('"').eq_ignore_ascii_case(&guid);
@@ -72,18 +72,6 @@ pub fn build_uninstall_command(
         return None;
     }
     Some(parts)
-}
-
-fn extract_guid(s: &str) -> Option<String> {
-    let start = s.find('{')?;
-    let end = s[start..].find('}')? + start;
-    let g = &s[start..=end];
-    let body = &g[1..g.len() - 1];
-    if body.len() == 36 && body.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        Some(g.to_string())
-    } else {
-        None
-    }
 }
 
 /// `CommandLineToArgvW`-compatible splitting: honours doubled quotes (`""` → one

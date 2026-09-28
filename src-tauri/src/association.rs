@@ -87,20 +87,6 @@ pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool
     })
 }
 
-fn guid_in_text(s: &str) -> Option<String> {
-    // Byte indices from a Unicode fold must never slice the original —
-    // GUIDs are ASCII, so fold ASCII-only (byte-length preserving) and slice that.
-    let low = s.to_ascii_lowercase();
-    let start = low.find('{')?;
-    let end = low[start..].find('}')? + start;
-    let g = &low[start..=end];
-    if g.len() >= 38 {
-        Some(g.to_string())
-    } else {
-        None
-    }
-}
-
 /// Install roots that may act as association prefixes: deep enough, not a drive/library root.
 fn is_safe_install_root(install: &str) -> bool {
     let norm = install.trim().replace('/', "\\");
@@ -169,7 +155,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     if !install.is_empty() && (low == install || low.starts_with(&format!("{install}\\"))) {
         return true;
     }
-    if let Some(guid) = guid_in_text(&app.registry_key) {
+    if let Some(guid) = crate::shared::first_guid(&app.registry_key) {
         if low.contains(&guid) {
             return true;
         }

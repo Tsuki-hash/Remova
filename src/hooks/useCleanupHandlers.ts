@@ -420,6 +420,7 @@ export function useCleanupHandlers({
   }, [batchResults, setMulti]);
 
   return {
+    forceBusy,
     dryRunning,
     batching,
     batchIndex,

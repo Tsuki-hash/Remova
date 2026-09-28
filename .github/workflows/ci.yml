@@ -100,7 +100,7 @@ jobs:
           )
           $installed = $keys | ForEach-Object { (Get-ItemProperty -ErrorAction SilentlyContinue $_).pv } | Where-Object { $_ }
           if ($installed) {
-            Write-Host "WebView2 already installed: $($installed[0])"
+            Write-Host "WebView2 already installed: @($installed)[0]"
           } else {
             $dl = "$env:RUNNER_TEMP\webview2.exe"
             Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl

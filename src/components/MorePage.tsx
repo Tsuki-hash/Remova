@@ -255,19 +255,19 @@ export function MorePage({
       )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
         {common.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+          <ToolCard key={c.id} item={c} active={openTool === c.id} />
         ))}
       </Section>
 
       <Section title={L.moreSectionAdvanced} hint={L.moreSectionAdvancedHint}>
         {advanced.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+          <ToolCard key={c.id} item={c} active={openTool === c.id} />
         ))}
       </Section>
 
       <Section title={L.moreSectionHelp} hint={L.moreSectionHelpHint}>
         {help.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} selectedApp={selected} />
+          <ToolCard key={c.id} item={c} active={openTool === c.id} />
         ))}
       </Section>
 

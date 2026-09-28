@@ -426,6 +426,13 @@ pub fn read_string_default(key: &str) -> Option<String> {
             if st != ERROR_SUCCESS {
                 return None;
             }
+            // A DWORD/QWORD default decodes to garbage UTF-16 and would poison
+            // the matching chain — only string-ish types are text.
+            if vtype != windows::Win32::System::Registry::REG_SZ
+                && vtype != windows::Win32::System::Registry::REG_EXPAND_SZ
+            {
+                return None;
+            }
             Some(wstring_from_reg_data(&buf[..len as usize]))
         }
     }

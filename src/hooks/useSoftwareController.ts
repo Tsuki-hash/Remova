@@ -59,6 +59,7 @@ export type SoftwareControllerInput = {
   aiSummaryNote: string | null;
   aiNudgeDismissed: boolean;
   dryRunning: boolean;
+  forceBusy: boolean;
   batching: boolean;
   error: string | null;
   report: CleanupReport | FullCleanupReport | null;
@@ -192,7 +193,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         aiNudgeDismissed: input.aiNudgeDismissed,
         onDismissAiNudge: input.dismissAiNudge,
         dryRunning: input.dryRunning,
-        busy: input.dryRunning || input.batching || input.scanning || input.aiBusy,
+        busy: input.dryRunning || input.forceBusy || input.batching || input.scanning || input.aiBusy,
         onBack: input.closePreview,
         onDryRun: () => void input.dryRun(),
         onCleanup: () => void input.handleCleanupConfirm(),

@@ -112,7 +112,15 @@ fn is_safe_http_url(url: &str) -> bool {
     if authority.is_empty() {
         return false;
     }
-    let host = authority.split(':').next().unwrap_or("");
+    // Bracketed IPv6 (`[::1]:8080`) — a plain colon split would truncate to "[".
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((h, _)) => format!("[{h}]"),
+            None => String::new(), // unterminated bracket: rejected below
+        }
+    } else {
+        authority.split(':').next().unwrap_or("").to_string()
+    };
     if host.is_empty()
         || !host
             .chars()
