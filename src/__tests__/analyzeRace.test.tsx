@@ -136,7 +136,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     let calls = 0;
     analyzeMock.mockImplementation(() => {
       calls += 1;
-      return Promise.resolve(scan("AppA"));
+      return Promise.resolve(scan(calls === 1 ? "AppA" : "AppB"));
     });
     const { result } = renderHook(() =>
       useAnalyzeFlow({
@@ -152,5 +152,14 @@ describe("useAnalyzeFlow request sequencing", () => {
     });
     expect(calls).toBe(1);
     expect(captured.scan?.app_name).toBe("AppA");
+
+    // R21-QA-05: a second run must replace the previous result.
+    await act(async () => {
+      await result.current.analyze(app("AppB"));
+    });
+    expect(calls).toBe(2);
+    expect(captured.scan?.app_name).toBe("AppB");
+    expect(captured.selectedPaths).toEqual(new Set([scan("AppB").items[0]?.path]));
+    expect(captured.scanning).toBe(false);
   });
 });

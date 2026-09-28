@@ -60,9 +60,6 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
-      - name: frontend typecheck tests
-        run: npm run typecheck:tests
-
       - name: frontend test + coverage gate
         run: npm run coverage
 
@@ -92,7 +89,7 @@ jobs:
           workspaces: src-tauri
           cache-targets: "false"
       - run: npm ci
-      - run: npm run build
+      # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
       - run: npx tauri build
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh

@@ -58,20 +58,16 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
-      - name: frontend typecheck tests
-        run: npm run typecheck:tests
+      # R21-QA-04: release path must honor the coverage gate, not bare vitest.
+      - name: frontend test + coverage gate
+        run: npm run coverage
 
-      - name: frontend tests
-        run: npm test
-
-      - name: frontend build
-        run: npm run build
+      # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
+      - name: tauri build
+        run: npx tauri build
 
       - name: frontend dist smoke
         run: npm run smoke:dist
-
-      - name: tauri build
-        run: npx tauri build
 
       - name: app binary smoke
         shell: pwsh

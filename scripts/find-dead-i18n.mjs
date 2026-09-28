@@ -36,29 +36,56 @@ console.log("total keys:", keys.length, "dead:", dead.length);
 if (!prune) {
   console.log(dead.join("\n"));
 } else {
-  // Entry spans from `    key:` until the first line ending with `,` (values are
-  // single strings, multi-line strings or `=>` + template — all terminate that way).
+  // R21-QA-07: depth-aware entry end (a value's internal line may also end in
+  // a comma). An entry starts at `    key:` and ends at the first line that
+  // terminates the value — depth back to 0 and a trailing comma.
   const deadSet = new Set(dead);
   for (const file of [zhPath, enPath]) {
-    const lines = fs.readFileSync(file, "utf8").split("\n");
+    const original = fs.readFileSync(file, "utf8");
+    const lines = original.split("\n");
     const out = [];
     let skipping = false;
+    let depth = 0;
     let removed = 0;
     for (const line of lines) {
       if (skipping) {
-        if (/,\s*$/.test(line)) skipping = false;
-        else continue;
+        for (const ch of line) {
+          if (ch === "(" || ch === "[" || ch === "{") depth++;
+          else if (ch === ")" || ch === "]" || ch === "}") depth--;
+        }
+        if (depth <= 0 && /,\s*$/.test(line)) {
+          skipping = false;
+          depth = 0;
+        }
         continue;
       }
       const m = line.match(/^    ([A-Za-z0-9_]+):/);
       if (m && deadSet.has(m[1])) {
         removed++;
-        if (!/,\s*$/.test(line)) skipping = true;
+        if (!/,\s*$/.test(line)) {
+          skipping = true;
+          depth = 0;
+          for (const ch of line) {
+            if (ch === "(" || ch === "[" || ch === "{") depth++;
+            else if (ch === ")" || ch === "]" || ch === "}") depth--;
+          }
+        }
         continue;
       }
       out.push(line);
     }
-    fs.writeFileSync(file, out.join("\n"));
+    const next = out.join("\n");
+    // R21-QA-07: write-back only if the pruned file still looks like a valid
+    // object literal — a mid-entry cut must roll back, not ship broken TS.
+    const opens = (next.match(/\{/g) || []).length;
+    const closes = (next.match(/\}/g) || []).length;
+    const parensOpen = (next.match(/\(/g) || []).length;
+    const parensClose = (next.match(/\)/g) || []).length;
+    if (opens !== closes || parensOpen !== parensClose) {
+      console.error(`${file}: prune would unbalance braces/parens — rolled back`);
+      continue;
+    }
+    fs.writeFileSync(file, next);
     console.log(`${file}: removed ${removed} keys`);
   }
 }

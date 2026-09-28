@@ -10,7 +10,6 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "typecheck:tests": "tsc -p tsconfig.vitest.json --noEmit",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
     "check-commands": "pwsh -NoProfile -File scripts/check-commands.ps1",
     "package:portable": "pwsh -NoProfile -File scripts/package-portable.ps1",

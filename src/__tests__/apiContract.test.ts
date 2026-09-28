@@ -120,9 +120,21 @@ describe("api IPC contract", () => {
   it("invoke() targets match the commands Rust actually registers (lib.rs)", () => {
     // REV-QA-10: real cross-check — a command registered on the Rust side with no
     // caller, or an invoke() targeting an unregistered command, fails here.
-    // Keep this allowlist in sync with $backendOnly in scripts/check-commands.ps1.
-    const backendOnly = ["list_restore_sessions"];
+    // R21-QA-10: backendOnly is parsed from check-commands.ps1 (single source).
+    const backendOnly = parseBackendOnlyFromPs1();
     const registered = rustRegisteredCommands().filter((c) => !backendOnly.includes(c));
     expect(feInvokedCommands()).toEqual(registered);
   });
 });
+
+/** R21-QA-10: extract `$backendOnly` names from scripts/check-commands.ps1. */
+function parseBackendOnlyFromPs1(): string[] {
+  const ps1 = readFileSync("scripts/check-commands.ps1", "utf8");
+  const m = ps1.match(/foreach \(\$n in @\(([^)]+)\)\)/);
+  const list = m?.[1];
+  if (!list) throw new Error("check-commands.ps1: $backendOnly list not found");
+  return list
+    .split(",")
+    .map((s) => s.trim().replace(/^'|'$/g, ""))
+    .filter(Boolean);
+}

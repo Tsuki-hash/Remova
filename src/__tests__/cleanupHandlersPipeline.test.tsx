@@ -90,9 +90,9 @@ function report(partial: Partial<FullCleanupReport> = {}): FullCleanupReport {
     restore_point_ok: false,
     restore_point_msg: "",
     errors: [],
-    details: [],
+    item_details: [],
     ...partial,
-  } as FullCleanupReport;
+  };
 }
 
 const noop = () => {};
