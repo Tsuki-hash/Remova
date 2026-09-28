@@ -131,8 +131,8 @@ pub fn append(
     }
     use std::io::Write;
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&p) {
-        let _ = writeln!(f, "{line}");
-        return true;
+        // A failed write is a lost history row — report it, never claim success.
+        return writeln!(f, "{line}").is_ok();
     }
     false
 }

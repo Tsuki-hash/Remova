@@ -635,10 +635,20 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err(crate::error::manage_err("bad_name", "startup location").to_ipc());
     };
-    allow_manage_reg_write(key, false)?;
     if vname.trim().is_empty() {
         return Err(crate::error::manage_err("bad_name", "startup value").to_ipc());
     }
+    // RunOnce values always execute at next logon and have no StartupApproved
+    // companion to flag them off — a disable must fail loudly instead of
+    // reporting success and letting the entry run anyway.
+    if !enabled && key.to_uppercase().replace('/', "\\").ends_with("\\RUNONCE") {
+        return Err(crate::error::manage_err(
+            "runonce_no_disable",
+            "RunOnce entries always run at next logon; delete the entry instead",
+        )
+        .to_ipc());
+    }
+    allow_manage_reg_write(key, false)?;
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
     let _guard = lock_manage();
@@ -664,7 +674,8 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
     // HKLM64/32\...\Run → same hive Explorer\StartupApproved\Run (Run32 for 32-bit view)
     let low = run_key.to_uppercase().replace('/', "\\");
     let sa_key = if low.contains("\\RUNONCE") {
-        // RunOnce has no StartupApproved companion; leave value intact (one-shot).
+        // RunOnce has no StartupApproved companion; nothing to write for an
+        // enable (disables are rejected before reaching this point).
         return Ok(());
     } else if low.contains("HKLM32") {
         r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
@@ -809,6 +820,16 @@ mod tests {
         assert!(super::set_startup_enabled(loc, false).is_err());
         let loc2 = r"HKLM\SOFTWARE\EvilCorp\Config::payload";
         assert!(super::set_startup_enabled(loc2, true).is_err());
+    }
+
+    /// R22-BE-04: RunOnce has no disable mechanism — rejecting must be loud.
+    #[test]
+    fn runonce_disable_rejected() {
+        let loc = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce::Leftover";
+        let err = super::set_startup_enabled(loc, false).unwrap_err();
+        assert!(err.contains("runonce_no_disable"), "got {err}");
+        let loc2 = r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce::Setup";
+        assert!(super::set_startup_enabled(loc2, false).is_err());
     }
 
     #[test]

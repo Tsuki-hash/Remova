@@ -143,7 +143,12 @@ fn reg_value_names() -> BTreeSet<String> {
             set.insert(format!("{k}\\{sub}").to_lowercase());
         }
         for (v, _) in crate::regscan::list_values(&k) {
-            set.insert(format!("{k}::{v}").to_lowercase());
+            // Value paths must use the pipeline-wide `key|value` shape — the
+            // cleanup pipeline, backup and restore all split on `|`, so a
+            // monitored Run value written as `key::value` can never be deleted.
+            if !v.is_empty() {
+                set.insert(format!("{k}|{v}").to_lowercase());
+            }
         }
     }
     set
@@ -316,6 +321,34 @@ mod tests {
         assert!(!state.exists(), "end() consumes the snapshot");
         set_test_state_path(None);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Monitored registry values must flow through the pipeline's value-path
+    /// contract: diff entry → CleanupItem → `split_value_path` → (key, value).
+    #[test]
+    fn diff_value_paths_split_into_key_and_value() {
+        let diff = MonitorDiff {
+            added_files: vec![],
+            added_reg_values: vec![
+                r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|VendorTray".to_lowercase(),
+                r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce|Setup".to_lowercase(),
+            ],
+            files_truncated: 0,
+            reg_truncated: 0,
+        };
+        let items = diff_to_cleanup_items(&diff);
+        assert_eq!(items.len(), 2);
+        for it in &items {
+            let (k, v) = crate::regops::split_value_path(&it.path)
+                .expect("monitored value must use key|value");
+            assert!(
+                !k.is_empty() && !v.is_empty(),
+                "key and value must be non-empty: {it:?}"
+            );
+        }
+        // Empty value names never enter the snapshot (a trailing `|` would be
+        // rejected by the pipeline as an attempt to delete the whole key).
+        assert!(crate::regops::split_value_path(r"HKCU\Software\Run|").is_none());
     }
 
     /// Client-supplied diff must NOT arm the Monitor allow-list.

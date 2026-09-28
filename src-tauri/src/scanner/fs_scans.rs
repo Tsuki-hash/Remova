@@ -275,8 +275,13 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     };
     for e in rd.flatten() {
         let p = e.path();
-        let name = p.to_string_lossy().to_lowercase();
-        if !slugs.iter().any(|s| name.contains(s.as_str())) {
+        // Match the entry NAME only — a slug appearing in a directory
+        // component (user name, `Local`, `Temp`, product root) must not
+        // claim unrelated files under it.
+        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !temp_entry_matches(name, &slugs) {
             continue;
         }
         if !is_safe_fs(&p) {
@@ -309,5 +314,30 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
             size_kb: None,
             bucket: None,
         });
+    }
+}
+
+/// TEMP entry matching is a file-NAME match only: a slug appearing in a
+/// directory component (`Users`, the user name, `Local`, `Temp`, an install
+/// root…) must not claim unrelated entries under it.
+pub(super) fn temp_entry_matches(entry_name: &str, slugs: &[String]) -> bool {
+    let name = normalize_for_match(entry_name);
+    slugs.iter().any(|s| name.contains(s.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// R22-BE-02: only the entry name is matched, never the whole path.
+    #[test]
+    fn temp_match_uses_entry_name_not_full_path() {
+        let slugs = vec![normalize_for_match("Steam")];
+        assert!(temp_entry_matches("steam_dumps", &slugs));
+        assert!(temp_entry_matches("Steam.exe", &slugs));
+        assert!(!temp_entry_matches("unrelated.log", &slugs));
+        assert!(!temp_entry_matches("savegame.tmp", &slugs));
+        // Name-insensitive composite still matches.
+        assert!(temp_entry_matches("MySteamTemp", &slugs));
     }
 }

@@ -26,7 +26,9 @@ pub(super) fn scan_path_env(
                 continue;
             }
             let low = e.replace('/', "\\").to_lowercase();
-            let hit_install = !install_low.is_empty() && low.contains(install_low);
+            // Boundary-anchored install hit: `C:\Steam` must not claim the
+            // `C:\SteamTools\bin` PATH entry.
+            let hit_install = is_under_install(low.trim_end_matches('\\'), install_low);
             let hit_name = name_norms
                 .iter()
                 .any(|n| n.len() >= 5 && normalize_for_match(e).contains(n));
@@ -260,12 +262,12 @@ pub(super) fn scan_services(
         if is_safe_to_delete_registry(&svc_path).is_err() {
             continue;
         }
-        let display = crate::regscan::read_string_default(&format!(r"{svc_path}\DisplayName"))
-            .unwrap_or_default();
         let image = crate::regscan::read_string_default(&format!(r"{svc_path}\ImagePath"))
             .unwrap_or_default();
-        let blob = format!("{svc} {display} {image}").to_lowercase();
-        let hit_install = !install_low.is_empty() && blob.contains(install_low);
+        // Boundary-anchored install hit on the ImagePath only — a display
+        // string or service name that merely contains the install prefix
+        // must not look like an install reference.
+        let hit_install = super::cmdline_refs_install(&image, install_low);
         let svc_n = normalize_for_match(&svc);
         let strong = hit_install
             || name_norms

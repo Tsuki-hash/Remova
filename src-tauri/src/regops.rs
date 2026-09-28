@@ -1083,4 +1083,58 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// R22-QA-02: registry-native PATH read — pure pieces get direct coverage.
+    /// `wstring_from_reg_data` decodes UTF-16LE and trims the trailing NUL.
+    #[cfg(windows)]
+    #[test]
+    fn wstring_from_reg_data_decodes_utf16le() {
+        let s = r"C:\Vendor 工具;C:\Other";
+        let mut wide: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        wide.extend_from_slice(&[0, 0]); // NUL terminator as the registry stores it
+        assert_eq!(crate::fsutil::wstring_from_reg_data(&wide), s);
+        // Odd byte count: the trailing half unit is dropped, not mis-decoded.
+        assert_eq!(
+            crate::fsutil::wstring_from_reg_data(&wide[..wide.len() - 1]),
+            s
+        );
+        // Empty / short blobs decode to "".
+        assert_eq!(crate::fsutil::wstring_from_reg_data(&[]), "");
+        assert_eq!(crate::fsutil::wstring_from_reg_data(&[0x41]), "");
+        assert_eq!(crate::fsutil::wstring_from_reg_data(&[0x41, 0x00]), "A");
+    }
+
+    /// R22-QA-02: `%VAR%` expansion used for REG_EXPAND_SZ Path values.
+    #[cfg(windows)]
+    #[test]
+    fn expand_env_string_expands_and_passes_through() {
+        // Unique name: set_var is process-global, other tests never read this.
+        std::env::set_var("REMOVA_QA02_VAR", r"C:\Vendor Tool");
+        assert_eq!(
+            super::expand_env_string(r"%REMOVA_QA02_VAR%\bin"),
+            r"C:\Vendor Tool\bin"
+        );
+        assert_eq!(
+            super::expand_env_string("no markers here"),
+            "no markers here"
+        );
+        // Unknown variable stays verbatim (Windows keeps the reference).
+        assert_eq!(
+            super::expand_env_string("%REMOVA_QA02_UNSET_VAR%/x"),
+            "%REMOVA_QA02_UNSET_VAR%/x"
+        );
+    }
+
+    /// R22-QA-02: real-registry integration check — `HKCU\Environment` Path
+    /// reads through the native code path (mock must be inactive). Opt-in via
+    /// `cargo test -- --ignored` since stock machines may have no user Path.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn read_reg_path_value_reads_real_user_environment() {
+        assert!(!super::path_mock::active());
+        // Must not fall back to the process env or error out on a healthy box.
+        let raw = super::read_path_scope("User").expect("native user PATH read");
+        let _ = raw; // shape is machine-specific; reaching here is the assertion
+    }
 }

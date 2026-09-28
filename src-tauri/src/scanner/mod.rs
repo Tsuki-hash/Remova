@@ -120,6 +120,35 @@ fn is_under_install(path: &str, install: &str) -> bool {
     a == b || a.starts_with(&format!("{b}\\"))
 }
 
+/// Install-location hit with path-segment boundaries for command-line data
+/// (`Run` values, service ImagePath): `C:\Steam` must not claim
+/// `C:\SteamTools\...`. Quoted tokens and the unquoted head are checked for a
+/// boundary-anchored install prefix (`install` itself or `install\…`).
+fn cmdline_refs_install(data: &str, install_low: &str) -> bool {
+    if install_low.is_empty() {
+        return false;
+    }
+    let d = data.to_lowercase().replace('/', "\\");
+    let under = format!("{install_low}\\");
+    for (i, chunk) in d.split('"').enumerate() {
+        if i % 2 == 1 {
+            // Odd chunks are quoted tokens — each is one path.
+            let c = chunk.trim();
+            if c == install_low || c.starts_with(&under) {
+                return true;
+            }
+        } else {
+            // Unquoted chunk: the leading command token, plus any boundary-
+            // anchored occurrence (argument values like `--dir=C:\App\…`).
+            let tok = chunk.trim_start().split([' ', '\t']).next().unwrap_or("");
+            if tok == install_low || tok.starts_with(&under) || chunk.contains(&under) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Classify one leftover into a display bucket (path heuristics; mirrors frontend linkedItems).
 pub fn classify_bucket(kind: &ItemKind, path: &str, install_location: &str) -> LinkedBucket {
     match kind {
@@ -562,7 +591,9 @@ pub fn analyze_associations(
                         continue;
                     };
                     let t = target.trim().trim_matches('"').to_lowercase();
-                    if !t.starts_with(&install_str) {
+                    // Boundary-anchored: `C:\Steam` must not claim an
+                    // App Paths entry pointing at `C:\SteamTools\…`.
+                    if !is_under_install(&t, &install_str) {
                         continue;
                     }
                     if is_safe_to_delete_registry(&key).is_ok() {
@@ -607,8 +638,7 @@ pub fn analyze_associations(
     ] {
         let key = format!("{alias}\\{sub}");
         for (vname, vdata) in crate::regscan::list_values(&key) {
-            let data_l = vdata.to_lowercase();
-            let hit_install = !install_low.is_empty() && data_l.contains(&install_low);
+            let hit_install = cmdline_refs_install(&vdata, &install_low);
             let hit_name = name_slugs
                 .iter()
                 .map(|s| normalize_for_match(s))
@@ -716,6 +746,37 @@ mod tests {
         assert_eq!(finalize_score(90).0, Confidence::Confirmed);
         assert_eq!(finalize_score(40).0, Confidence::Suspected);
         assert_eq!(finalize_score(5).1, RiskLevel::High);
+    }
+
+    /// R22-BE-03: command-line install references need path-segment
+    /// boundaries — `C:\Steam` must not claim `C:\SteamTools\…`.
+    #[test]
+    fn cmdline_install_refs_need_segment_boundary() {
+        let install = r"C:\Steam";
+        assert!(cmdline_refs_install(
+            r#""C:\Steam\steam.exe" -silent"#,
+            &install.to_lowercase()
+        ));
+        assert!(cmdline_refs_install(
+            r"C:\Steam\steam.exe /update",
+            &install.to_lowercase()
+        ));
+        assert!(cmdline_refs_install(r"C:\Steam", &install.to_lowercase()));
+        assert!(cmdline_refs_install(
+            r#""C:\x.exe" --dir=C:\Steam\cache"#,
+            &install.to_lowercase()
+        ));
+        // Prefix collisions must not hit.
+        assert!(!cmdline_refs_install(
+            r#""C:\SteamTools\tool.exe""#,
+            &install.to_lowercase()
+        ));
+        assert!(!cmdline_refs_install(
+            r"C:\SteamWorks\bin\svc.exe",
+            &install.to_lowercase()
+        ));
+        assert!(!cmdline_refs_install("anything", ""));
+        assert!(!cmdline_refs_install("", &install.to_lowercase()));
     }
 
     #[test]

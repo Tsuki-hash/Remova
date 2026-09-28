@@ -151,6 +151,114 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
     }
 }
 
+/// A pin on a directory plus its by-handle resolved final path. While held,
+/// the pinned object cannot be renamed away (no FILE_SHARE_DELETE), and the
+/// caller can re-run string gates against the *resolved* location instead of
+/// the requested one (restore write-back hardening).
+pub struct DirResolvedPin {
+    #[cfg(windows)]
+    handle: windows::Win32::Foundation::HANDLE,
+    final_path: String,
+}
+
+impl DirResolvedPin {
+    pub fn final_path(&self) -> &str {
+        &self.final_path
+    }
+}
+
+impl Drop for DirResolvedPin {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
+        }
+    }
+}
+
+/// Open `p` (following reparse chains, unlike [`pin_dir_no_reparse`]) and
+/// return the held pin plus the resolved final path. The caller compares the
+/// resolved path against the requested one: a mismatch means a junction or
+/// symlink was in the chain and the write must not proceed.
+pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, GetFinalPathNameByHandleW,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, GETFINALPATHNAMEBYHANDLE_FLAGS,
+            OPEN_EXISTING,
+        };
+        const DELETE_RIGHT: u32 = 0x0001_0000;
+        const FILE_READ_ATTR: u32 = 0x0000_0080;
+        let Some(path_str) = p.to_str() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path contains unpaired surrogates",
+            ));
+        };
+        unsafe {
+            let wide = to_wide(path_str);
+            // No FILE_FLAG_OPEN_REPARSE_POINT: the handle must land on the
+            // chain target so the final path exposes any planted junction.
+            let handle = CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                DELETE_RIGHT | FILE_READ_ATTR,
+                FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0),
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_BACKUP_SEMANTICS.0),
+                None,
+            )
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let mut info = std::mem::zeroed();
+            if GetFileInformationByHandle(handle, &mut info).is_err()
+                || info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0
+            {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+                return Err(std::io::Error::other("restore parent is not a directory"));
+            }
+            // windows 0.58 binding: (HANDLE, &mut [u16], flags) — an empty
+            // slice makes the API return the required length (incl. NUL).
+            let need =
+                GetFinalPathNameByHandleW(handle, &mut [], GETFINALPATHNAMEBYHANDLE_FLAGS(0));
+            if need == 0 {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+                return Err(std::io::Error::other("final path query failed"));
+            }
+            let mut buf = vec![0u16; need as usize];
+            let written =
+                GetFinalPathNameByHandleW(handle, &mut buf, GETFINALPATHNAMEBYHANDLE_FLAGS(0));
+            if written == 0 || written as usize > buf.len() {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+                return Err(std::io::Error::other("final path query failed"));
+            }
+            buf.truncate(written as usize);
+            while buf.last().copied() == Some(0) {
+                buf.pop();
+            }
+            let raw = String::from_utf16_lossy(&buf);
+            // `\\?\C:\...` → `C:\...`, `\\?\UNC\srv\share` → `\\srv\share`.
+            let final_path = raw
+                .strip_prefix(r"\\?\UNC\")
+                .map(|rest| format!(r"\\{rest}"))
+                .or_else(|| raw.strip_prefix(r"\\?\").map(str::to_string))
+                .unwrap_or(raw);
+            Ok(DirResolvedPin { handle, final_path })
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if is_reparse_point(p) {
+            return Err(std::io::Error::other("refusing reparse restore parent"));
+        }
+        Ok(DirResolvedPin {
+            final_path: p.to_string_lossy().into_owned(),
+        })
+    }
+}
+
 /// Delete a tree without following reparse points (REV-BE-05 / REV-SEC-06).
 /// Every level is pinned (no-DELETE-share handle + by-handle reparse check)
 /// before its children are cleared, so the path cannot be swapped for a
@@ -194,11 +302,19 @@ pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
 }
 
 /// CSV field escape: wrap in quotes when needed; double internal quotes.
+/// OWASP CSV injection: a leading `= + - @` (or tab) executes as a spreadsheet
+/// formula when the export is opened in Excel — neutralize with a leading
+/// apostrophe before any quoting so it stays part of the cell value.
 pub fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
+    let safe = if matches!(s.chars().next(), Some('=' | '+' | '-' | '@' | '\t')) {
+        format!("'{s}")
     } else {
         s.to_string()
+    };
+    if safe.contains(',') || safe.contains('"') || safe.contains('\n') || safe.contains('\r') {
+        format!("\"{}\"", safe.replace('"', "\"\""))
+    } else {
+        safe
     }
 }
 
@@ -366,6 +482,17 @@ mod tests {
         assert_eq!(csv_escape("plain"), "plain");
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        // OWASP CSV injection: formula prefixes are neutralized (R22-SUP-06).
+        assert_eq!(csv_escape("=cmd|' /C calc'!A0"), "'=cmd|' /C calc'!A0");
+        assert_eq!(csv_escape("+sum"), "'+sum");
+        assert_eq!(csv_escape("-flag"), "'-flag");
+        assert_eq!(csv_escape("@import"), "'@import");
+        assert_eq!(csv_escape("\t=1"), "'\t=1");
+        // Quoted fields keep the apostrophe inside the cell value.
+        assert_eq!(csv_escape("=a,\"b"), "\"'=a,\"\"b\"");
+        // Ordinary names (CJK, digits, drive paths) are untouched.
+        assert_eq!(csv_escape("7-Zip 压缩"), "7-Zip 压缩");
+        assert_eq!(csv_escape(r"C:\Users\a\b"), r"C:\Users\a\b");
     }
 
     #[test]

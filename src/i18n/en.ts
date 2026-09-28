@@ -355,7 +355,7 @@ export const dict: EnDict = {
     conclusionNoHighRisk: "No high-risk items found",
     conclusionOneLiner: (space: string, safe: number, keep: number, risk: string) =>
       `${space}; ${safe} safe to clean, ${keep} to keep; ${risk}.`,
-    conclusionCleanSafe: (n: number) => `Clean suggested (${n})`,
+    conclusionCleanSafe: (n: number) => `Select suggested (${n})`,
     conclusionShowConfirm: (n: number) => `Review (${n})`,
     conclusionShowKeep: (n: number) => `Why keep (${n})`,
     conclusionSharedHint: "Shared component: other apps may still need it",
