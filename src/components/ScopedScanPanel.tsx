@@ -145,6 +145,39 @@ export function ScopedScanPanel({
           {summary.total} · {L.orphanSelectedMeta(selected.size, "")}
         </div>
       )}
+      {busy && items === null && (
+        <div
+          style={{
+            ...css.muted,
+            marginTop: 12,
+            padding: "18px 8px",
+            textAlign: "center" as const,
+            fontSize: 12.5,
+          }}
+          role="status"
+        >
+          {L.loadingApps}
+          <div
+            style={{
+              marginTop: 10,
+              height: 3,
+              borderRadius: 2,
+              background: "var(--surface-2)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: "40%",
+                height: "100%",
+                background: "var(--accent)",
+                borderRadius: 2,
+                animation: "remova-indeterminate 1.1s ease-in-out infinite",
+              }}
+            />
+          </div>
+        </div>
+      )}
       <div style={{ maxHeight: 320, overflow: "auto", marginTop: 8 }}>
         {items?.map((it) => (
           <label

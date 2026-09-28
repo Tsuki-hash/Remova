@@ -94,7 +94,7 @@ export function AppDetailPanel({
         <button
           style={{ ...css.btnGhost, height: 28, width: 28, padding: 0 }}
           onClick={onClose}
-          aria-label={L.cancel}
+          aria-label={L.panelClose}
         >
           <CloseGlyph />
         </button>
@@ -169,7 +169,7 @@ export function AppDetailPanel({
                       borderRadius: 6,
                       cursor: "pointer",
                       fontSize: 12.5,
-                      color: m.danger ? "var(--danger)" : "var(--ink)",
+                      color: m.danger ? "var(--danger)" : "var(--fg)",
                     }}
                     onClick={() => {
                       setMenuOpen(false);
@@ -214,9 +214,10 @@ export function AppDetailPanel({
               {r.action && app.install_location && (
                 <button
                   style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11 }}
+                  aria-label={L.openLocation}
                   onClick={() => onOpenPath?.(app.install_location)}
                 >
-                  ⧉
+                  <span aria-hidden>⧉</span>
                 </button>
               )}
             </div>
@@ -268,7 +269,7 @@ export function AppDetailPanel({
                     background: "transparent",
                     cursor: onDrillDown ? "pointer" : "default",
                     textAlign: "left",
-                    color: "var(--ink)",
+                    color: "var(--fg)",
                   }}
                   onClick={() => onDrillDown?.(b.id)}
                 >

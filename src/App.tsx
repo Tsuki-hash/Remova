@@ -443,10 +443,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    const pending = scanUi.takePendingBucket();
-    if (scan && pending) {
-      setKindFilter(pending);
-    }
+    // R21-FE-03: pendingBucket removed — closing the preview always resets the filter.
     if (!scan) setKindFilter(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan]);
@@ -457,12 +454,12 @@ export default function App() {
       if (scanning) return;
       if (scan && scan.app_name === selected?.name) {
         setKindFilter(bucket);
-      } else {
-        scanUi.setPendingBucket(bucket);
-        if (selected) void analyze(selected);
+      } else if (selected) {
+        // R21-FE-03: no deferred bucket — analyze first; drill after results land.
+        void analyze(selected);
       }
     },
-    [scan, selected, analyze, scanUi, setKindFilter, scanning],
+    [scan, selected, analyze, setKindFilter, scanning],
   );
 
   // a scan in progress absorbs new row-analyze requests (REV-FE-04: one guard = `scanning`).

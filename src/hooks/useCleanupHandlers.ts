@@ -268,7 +268,7 @@ export function useCleanupHandlers({
   const handleCleanupConfirm = useCallback(async () => {
     if (!scan) return;
     if (busyRef.current) {
-      toast.info(L.errCleanupFailed("busy"));
+      toast.info(L.taskBusy);
       return;
     }
     // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
@@ -352,7 +352,9 @@ export function useCleanupHandlers({
 
   const batchCleanup = useCallback(
     async (queueOverride?: InstalledApp[]) => {
-      const queue = queueOverride ?? apps.filter((a) => new Set(multi).has(appKey(a)));
+      // R21-FE-04: one Set for the whole filter, not per row.
+      const multiSet = new Set(multi);
+      const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
       if (!queue.length) {
         toast.info(L.selectRowHint);
         return;

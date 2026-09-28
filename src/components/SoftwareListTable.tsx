@@ -118,7 +118,9 @@ export function SoftwareListTable({
         </colgroup>
         <thead>
           <tr>
-            <th style={css.th} title="selected"><Deco ch="✓" label="selected" /></th>
+            <th style={css.th} title={L.colSelected}>
+              <Deco ch="✓" label={L.colSelected} />
+            </th>
             <th
               style={{ ...css.th, cursor: "pointer" }}
               onClick={() => sortBy("name")}
@@ -158,11 +160,7 @@ export function SoftwareListTable({
                 colSpan={4}
                 style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}
               >
-                {loading
-                  ? L.loadingApps
-                  : q.trim() || category !== "all"
-                    ? L.emptySearch
-                    : L.emptyList}
+                {q.trim() || category !== "all" ? L.emptySearch : L.emptyList}
               </td>
             </tr>
           )}
