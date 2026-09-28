@@ -14,6 +14,7 @@ export function VirtualList<T>({
   height = 320,
   estimateSize = 64,
   rowGap = 6,
+  listRole = false,
 }: {
   items: T[];
   keyOf: (item: T, index: number) => string;
@@ -22,6 +23,8 @@ export function VirtualList<T>({
   height?: number;
   estimateSize?: number;
   rowGap?: number;
+  /** R21-UX-11: expose list/listitem semantics for screen readers. */
+  listRole?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -39,11 +42,19 @@ export function VirtualList<T>({
   // render everything rather than nothing. Real browsers always measure.
   const fallbackAll = virtualItems.length === 0;
   return (
-    <div ref={scrollRef} style={{ maxHeight: height, overflow: "auto", marginTop: 10 }}>
+    <div
+      ref={scrollRef}
+      role={listRole ? "list" : undefined}
+      style={{ maxHeight: height, overflow: "auto", marginTop: 10 }}
+    >
       <div style={{ height: fallbackAll ? undefined : virtualizer.getTotalSize(), position: "relative" }}>
         {fallbackAll
           ? items.map((it, i) => (
-              <div key={keyOf(it, i)} style={{ paddingBottom: rowGap }}>
+              <div
+                key={keyOf(it, i)}
+                role={listRole ? "listitem" : undefined}
+                style={{ paddingBottom: rowGap }}
+              >
                 {renderItem(it, i)}
               </div>
             ))
@@ -52,6 +63,7 @@ export function VirtualList<T>({
                 key={vr.key}
                 data-index={vr.index}
                 ref={virtualizer.measureElement}
+                role={listRole ? "listitem" : undefined}
                 style={{
                   position: "absolute",
                   top: 0,

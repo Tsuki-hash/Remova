@@ -45,21 +45,38 @@ export function AppDetailPanel({
   const L = t();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const name = prettyAppName(app.name, app.source);
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
   const linked = scan && scan.app_name === app.name ? summarizeLeftovers(scan.items) : null;
   const buckets =
     scan && scan.app_name === app.name ? buildLinkedBuckets(scan.items, app) : [];
 
+  const closeMenu = (restoreFocus: boolean) => {
+    setMenuOpen(false);
+    if (restoreFocus) menuBtnRef.current?.focus();
+  };
+
   useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
+        closeMenu(false);
+      }
+    };
+    // R21-UX-10: Escape must work from menu items too, and focus returns to the trigger.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMenu(true);
       }
     };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [menuOpen]);
 
   const runDeep = () => onDeepUninstall(app);
@@ -126,16 +143,11 @@ export function AppDetailPanel({
           </button>
           <div ref={menuRef} style={{ position: "relative" }}>
             <button
+              ref={menuBtnRef}
               style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen((v) => !v)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" && menuOpen) {
-                  e.preventDefault();
-                  setMenuOpen(false);
-                }
-              }}
             >
               <Deco ch="⋯" />
             </button>
@@ -172,7 +184,7 @@ export function AppDetailPanel({
                       color: m.danger ? "var(--danger)" : "var(--fg)",
                     }}
                     onClick={() => {
-                      setMenuOpen(false);
+                      closeMenu(true);
                       m.onClick();
                     }}
                   >

@@ -310,6 +310,7 @@ export function MorePage({
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => onCloseModeChange(opt.id)}
                   style={{
                     border: "none",

@@ -34,7 +34,7 @@ export function Sidebar({
 
   return (
     <nav
-      aria-label={t().mainRegion}
+      aria-label={t().navRegion}
       style={{
         width: collapsed ? 64 : 200,
         flexShrink: 0,

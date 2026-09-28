@@ -90,6 +90,7 @@ export function HistoryPanel({
         height={280}
         estimateSize={72}
         rowGap={6}
+        listRole
         empty={<div style={css.muted}>{L.noHistory}</div>}
         keyOf={(u) =>
           u.kind === "header" ? `day-${u.day}` : u.h.id || `${u.h.app_name}-${u.h.created_at || u.idx}`
@@ -97,6 +98,8 @@ export function HistoryPanel({
         renderItem={(u) =>
           u.kind === "header" ? (
             <div
+              role="heading"
+              aria-level={3}
               style={{
                 fontSize: 11,
                 fontWeight: 700,
