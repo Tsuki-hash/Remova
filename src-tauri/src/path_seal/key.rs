@@ -101,7 +101,7 @@ fn validate_object(file: &File, private: bool, protected: bool) -> Result<(), St
             let mut ace = std::ptr::null_mut();
             GetAce(acl, i.into(), &mut ace).map_err(|_| "seal:key_acl")?;
             let header = &*(ace as *const ACE_HEADER);
-            if header.AceFlags & INHERIT_ONLY_ACE.0 as u8 != 0 {
+            if !private && header.AceFlags & INHERIT_ONLY_ACE.0 as u8 != 0 {
                 continue;
             }
             // Standard allow/deny ACEs only; unsupported grants are not guessed.
@@ -198,11 +198,24 @@ fn publish(root: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
             .and_then(|_| file.sync_all())
             .map_err(|_| "seal:key_write")?;
         drop(file);
-        // Windows rename refuses an existing destination; never rotate a key.
-        fs::rename(&tmp, root.join(name)).map_err(|_| "seal:key_publish")
+        // std::fs::rename replaces an existing file. Use the Win32 primitive
+        // with NO replace-existing flag: publishing must never rotate a key.
+        move_no_replace(&tmp, &root.join(name)).map_err(|_| "seal:key_publish")
     })();
     let _ = fs::remove_file(&tmp);
     result.map_err(String::from)
+}
+fn move_no_replace(from: &Path, to: &Path) -> Result<(), String> {
+    let from = wide(from)?;
+    let to = wide(to)?;
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVE_FILE_FLAGS(0),
+        )
+    }
+    .map_err(|_| "seal:key_publish".into())
 }
 pub(super) fn program_data() -> Result<PathBuf, String> {
     use windows::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
@@ -395,6 +408,23 @@ impl Drop for Stage {
 mod tests {
     use super::*;
     #[test]
+    fn atomic_publish_never_replaces_an_existing_key() {
+        let root = std::env::temp_dir().join(format!("remova_publish_{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("new");
+        let target = root.join("key");
+        fs::write(&source, b"new key").unwrap();
+        fs::write(&target, b"existing key").unwrap();
+        assert!(move_no_replace(&source, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"existing key");
+        assert_eq!(fs::read(&source).unwrap(), b"new key");
+        fs::remove_file(&target).unwrap();
+        move_no_replace(&source, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new key");
+        assert!(!source.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn user_owned_directory_is_never_promoted_to_trusted_store() {
         let root = std::env::temp_dir().join(format!("remova_acl_reject_{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -424,6 +454,9 @@ mod tests {
         let store =
             load_at(&parent, &root, &public, true).expect("elevated key initialization required");
         let id = super::super::v2::sha256(store.key.as_ref()).unwrap();
+        publish(&root, "publish_sentinel", b"first").unwrap();
+        assert!(publish(&root, "publish_sentinel", b"second").is_err());
+        assert_eq!(fs::read(root.join("publish_sentinel")).unwrap(), b"first");
         let reused = load_at(&parent, &root, &public, true).unwrap();
         assert_eq!(id, super::super::v2::sha256(reused.key.as_ref()).unwrap());
         drop(reused);
