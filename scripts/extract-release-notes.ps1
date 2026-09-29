@@ -35,7 +35,7 @@ for ($i = $start + 1; $i -lt $lines.Count; $i++) {
 $body = @()
 if ($lines[$start] -match '^## \[v?[0-9.]+\]\s*-?\s*(.*)$') {
   $date = $Matches[1].Trim()
-  $body += if ($date) { "## Remova $ver ($date)" } else { "## Remova $ver" }
+  $body += if ($date -and $date -ne "Unreleased") { "## Remova $ver ($date)" } else { "## Remova $ver" }
 } else {
   $body += $lines[$start]
 }

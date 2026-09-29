@@ -4,7 +4,7 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.2.2] - 2026-09-28
+## [1.3.0] - Unreleased
 
 安全与正确性修复（第二波）。
 
@@ -66,7 +66,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 工程
 
-- 版本三源对齐 **1.2.2**
+- 版本三源对齐 **1.3.0**
 - 贡献文档的 PR 检查单统一指向覆盖率门禁（`npm run coverage`）
 - App 纳入覆盖率门禁，死 i18n 键通过只读检查接入 CI；注册表导出测试必须实际生成内容才通过
 - 文件换链回归作为明确要求 symlink 权限的专项，在 CI 和发布流程中单独执行
