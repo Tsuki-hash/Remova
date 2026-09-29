@@ -124,10 +124,13 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped restore target without parent: {original}"));
                 continue;
             };
-            if let Err(e) = fs::create_dir_all(parent) {
-                messages.push(format!("restore failed for {original}: {e}"));
-                continue;
-            }
+            let _parent_pins = match crate::fsutil::create_dirs_pinned(parent) {
+                Ok(pins) => pins,
+                Err(e) => {
+                    messages.push(format!("restore failed for {original}: {e}"));
+                    continue;
+                }
+            };
             let pin = match crate::fsutil::pin_dir_resolved(parent) {
                 Ok(pin) => pin,
                 Err(e) => {
