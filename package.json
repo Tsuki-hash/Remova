@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
+    "test:scripts": "node --test scripts/__tests__/find-dead-i18n.test.mjs",
+    "check:i18n": "node scripts/find-dead-i18n.mjs --check",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
     "check-commands": "pwsh -NoProfile -File scripts/check-commands.ps1",

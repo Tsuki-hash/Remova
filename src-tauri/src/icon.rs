@@ -71,12 +71,18 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     let _ = std::fs::create_dir_all(&dir);
     // tmp + rename: a crash mid-write must not leave a torn PNG that would
     // poison the cache key until the fingerprint changes.
-    let tmp = cache_file.with_extension("png.tmp");
-    if std::fs::write(&tmp, &png).is_ok() {
-        let _ = std::fs::rename(&tmp, &cache_file);
-    }
+    let _ = write_cache_png(&cache_file, &png);
     prune_stale_cache(&dir, &cache_file);
     Some(png)
+}
+
+fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<()> {
+    let tmp = cache_file.with_extension("png.tmp");
+    let result = std::fs::write(&tmp, png).and_then(|_| std::fs::rename(&tmp, cache_file));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Drop cache PNGs left behind by older source fingerprints (age > 7 days).
@@ -87,7 +93,11 @@ fn prune_stale_cache(dir: &std::path::Path, keep: &std::path::Path) {
     let keep_name = keep.file_name();
     for ent in rd.flatten() {
         let p = ent.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("png") {
+        let is_tmp = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".png.tmp"));
+        if p.extension().and_then(|e| e.to_str()) != Some("png") && !is_tmp {
             continue;
         }
         if p.file_name() == keep_name {
@@ -136,10 +146,11 @@ fn extract_from_path(path: &str, index: i32) -> Option<Vec<u8>> {
             1,
         );
 
+        // The unused small handle belongs to us even when large is invalid.
+        if !small.is_invalid() {
+            let _ = DestroyIcon(small);
+        }
         let hicon = if count > 0 && !large.is_invalid() {
-            if !small.is_invalid() {
-                let _ = DestroyIcon(small);
-            }
             large
         } else {
             // Fallback: shell file icon (works for many non-PE paths)
@@ -246,6 +257,42 @@ fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_publish_removes_tmp_and_prune_includes_stale_tmp() {
+        let dir = std::env::temp_dir().join(format!("remova-r23-icon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocked = dir.join("blocked.png");
+        std::fs::create_dir_all(&blocked).unwrap();
+        assert!(write_cache_png(&blocked, b"png").is_err());
+        assert!(!blocked.with_extension("png.tmp").exists());
+        let keep = dir.join("keep.png");
+        let stale = dir.join("stale.png.tmp");
+        let unrelated = dir.join("unrelated.tmp");
+        let recent = dir.join("recent.png.tmp");
+        for p in [&keep, &stale, &unrelated, &recent] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
+        for p in [&keep, &stale, &unrelated] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        prune_stale_cache(&dir, &keep);
+        assert!(!stale.exists());
+        assert!(keep.exists());
+        assert!(unrelated.exists());
+        assert!(recent.exists());
+        std::fs::remove_file(keep).unwrap();
+        std::fs::remove_file(unrelated).unwrap();
+        std::fs::remove_file(recent).unwrap();
+        std::fs::remove_dir(blocked).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn png_magic_rejects_torn_or_planted_files() {

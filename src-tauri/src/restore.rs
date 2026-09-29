@@ -9,15 +9,71 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     if !session.is_dir() {
         return Err(crate::error::restore_err("session not found").to_ipc());
     }
+    // Authorize the whole session before any file, PATH or registry write.
+    // Missing/legacy/invalid seals never enter an automatic restore path.
+    let seal = crate::path_seal::verified_seal(session)?;
+    let map_path = session.join("files/path_map.json");
+    let map: std::collections::BTreeMap<String, String> = if map_path.exists() {
+        serde_json::from_slice(&fs::read(&map_path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    if !crate::path_seal::map_matches(&seal, &map) {
+        return Err("seal:map_mismatch".into());
+    }
+    // Read and bind PATH bytes once, before restoring even a sibling file.
+    let path_bytes = if session.join("path.json").exists() {
+        let bytes = fs::read(session.join("path.json")).map_err(|e| e.to_string())?;
+        if !crate::path_seal::snapshot_matches(&seal, "path.json", &bytes) {
+            return Err("seal:path_snapshot_mismatch".into());
+        }
+        Some(bytes)
+    } else {
+        None
+    };
+    if seal.reg_digests.contains_key("path.json") && path_bytes.is_none() {
+        return Err("seal:path_snapshot_missing".into());
+    }
+    let mut imports = vec![];
+    let mut selected = std::collections::BTreeSet::new();
+    let reg_root = session.join("registry");
+    if reg_root.is_dir() {
+        for entry in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if let Some(target) = pick_import_target(&entry.path()) {
+                let rel = format!(
+                    "registry/{}/{}",
+                    entry.file_name().to_string_lossy(),
+                    target
+                        .file_name()
+                        .ok_or("seal:bad_export_name")?
+                        .to_string_lossy()
+                );
+                let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+                if !crate::path_seal::snapshot_matches(&seal, &rel, &bytes) {
+                    return Err("seal:registry_snapshot_mismatch".into());
+                }
+                selected.insert(rel);
+                imports.push((entry.path(), target, validate_reg_bytes(bytes)?));
+            }
+        }
+    }
+    let recorded: std::collections::BTreeSet<_> = seal
+        .reg_digests
+        .keys()
+        .filter(|key| key.starts_with("registry/"))
+        .cloned()
+        .collect();
+    if selected != recorded {
+        return Err("seal:registry_snapshot_missing".into());
+    }
     let mut messages = vec![];
 
     // Files via path_map.json
     let map_path = session.join("files").join("path_map.json");
     let files_root = session.join("files");
     if map_path.exists() {
-        let raw = fs::read_to_string(&map_path).map_err(|e| e.to_string())?;
-        let map: std::collections::BTreeMap<String, String> =
-            serde_json::from_str(&raw).map_err(|e| e.to_string())?;
         for (rel, original) in &map {
             // Map keys are single backup names under `files/` — never path-shaped.
             if !is_safe_map_rel(rel) {
@@ -48,7 +104,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             }
             // REV-SEC-01: every write-back target requires a matching out-of-session seal
             // (not only library subpaths) — a tampered path_map must not widen destinations.
-            if !crate::path_seal::target_sealed(session, &map, original) {
+            if !seal
+                .targets
+                .contains(&crate::path_seal::normalize_target(original))
+            {
                 messages.push(format!("skipped unsealed restore target: {original}"));
                 continue;
             }
@@ -111,11 +170,9 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     }
 
     // PATH leftovers (path.json) — merge missing segments back; never whole-env overwrite.
-    let path_snap = session.join("path.json");
-    if path_snap.exists() {
-        let raw = fs::read_to_string(&path_snap).map_err(|e| e.to_string())?;
+    if let Some(bytes) = path_bytes {
         let snap: crate::backup::PathSnapshot =
-            serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         for it in &snap.items {
             let scopes = path_restore_scopes(it);
             let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
@@ -133,78 +190,50 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         }
     }
 
-    // Registry exports
-    let reg_root = session.join("registry");
-    if reg_root.is_dir() {
-        for e in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
-            let e = e.map_err(|e| e.to_string())?;
-            // AR-05: prefer single-value restore when value.reg exists (Run values etc.).
-            let target = pick_import_target(&e.path());
-            if let Some(target) = target {
-                // R21-SEC-08: bind the export bytes to the out-of-session seal
-                // before form validation / import.
-                let file_name = target
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let rel = format!("registry/{}/{}", e.file_name().to_string_lossy(), file_name);
-                let raw_bytes = fs::read(&target).map_err(|e| e.to_string())?;
-                if !crate::path_seal::reg_export_allowed(session, &rel, &raw_bytes) {
-                    messages.push(format!(
-                        "skipped registry import (seal digest mismatch): {}",
-                        target.display()
-                    ));
-                    continue;
-                }
-                // Validate the same bytes we import (no TOCTOU re-read), then
-                // stage them in an exclusively created temp held open
-                // (share-read only) while reg.exe imports: a same-user process
-                // can neither pre-place nor swap the content in between.
-                let raw = validate_reg_bytes(raw_bytes)?;
-                let pinned = e.path().join(format!(
-                    "value.import.{}.{}.reg",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0)
-                ));
-                let mut opts = fs::OpenOptions::new();
-                opts.create_new(true).write(true);
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::OpenOptionsExt;
-                    opts.share_mode(0x0000_0001); // FILE_SHARE_READ only
-                }
-                let mut pin = opts.open(&pinned).map_err(|e| e.to_string())?;
-                let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
-                if let Err(write_err) = staged {
-                    drop(pin);
-                    let _ = fs::remove_file(&pinned);
-                    return Err(crate::error::restore_reg_err(format!(
-                        "reg import staging failed: {write_err}"
-                    ))
-                    .to_ipc());
-                }
-                let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-                cmd.args(["import", &pinned.to_string_lossy()]);
-                crate::regops::hide_console(&mut cmd);
-                let out = cmd.output();
-                let import_res = match out {
-                    Ok(o) if o.status.success() => Ok(()),
-                    Ok(_) => Err(crate::error::restore_reg_err(format!(
-                        "reg import failed {}",
-                        target.display()
-                    ))
-                    .to_ipc()),
-                    Err(e) => Err(e.to_string()),
-                };
-                drop(pin);
-                let _ = fs::remove_file(&pinned);
-                import_res?;
-                messages.push(format!("imported {}", target.display()));
-            }
+    // Import only the exact authenticated and validated bytes captured above.
+    for (entry_dir, target, raw) in imports {
+        let pinned = entry_dir.join(format!(
+            "value.import.{}.{}.reg",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let mut opts = fs::OpenOptions::new();
+        opts.create_new(true).write(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            opts.share_mode(0x0000_0001); // FILE_SHARE_READ only
         }
+        let mut pin = opts.open(&pinned).map_err(|e| e.to_string())?;
+        let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
+        if let Err(write_err) = staged {
+            drop(pin);
+            let _ = fs::remove_file(&pinned);
+            return Err(crate::error::restore_reg_err(format!(
+                "reg import staging failed: {write_err}"
+            ))
+            .to_ipc());
+        }
+        let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
+        cmd.args(["import", &pinned.to_string_lossy()]);
+        crate::regops::hide_console(&mut cmd);
+        let out = cmd.output();
+        let import_res = match out {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(_) => Err(crate::error::restore_reg_err(format!(
+                "reg import failed {}",
+                target.display()
+            ))
+            .to_ipc()),
+            Err(e) => Err(e.to_string()),
+        };
+        drop(pin);
+        let _ = fs::remove_file(&pinned);
+        import_res?;
+        messages.push(format!("imported {}", target.display()));
     }
 
     Ok(messages)
@@ -735,11 +764,7 @@ mod tests {
         fs::write(files.join("path_map.json"), &map_json).unwrap();
 
         // Unsealed → skip + warn (Ok), file must not appear.
-        let msgs = restore_session(&sess).unwrap();
-        assert!(
-            msgs.iter().any(|m| m.contains("unsealed")),
-            "expected unsealed skip, got: {msgs:?}"
-        );
+        assert!(restore_session(&sess).unwrap_err().contains("seal:missing"));
         assert!(!dest.exists(), "unsealed target must not be written");
 
         // Sealed → restore proceeds.
@@ -971,12 +996,7 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        let msgs = restore_session(&sess).unwrap();
-        assert!(
-            msgs.iter()
-                .any(|m| m.contains("protected") || m.contains("unsealed")),
-            "expected skip message, got: {msgs:?}"
-        );
+        assert!(restore_session(&sess).is_err());
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }

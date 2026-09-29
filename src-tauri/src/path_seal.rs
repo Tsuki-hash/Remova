@@ -4,11 +4,16 @@
 //! cannot silently widen restore destinations. Library-subpath write-back is only
 //! allowed when the seal is present, its map digest matches, and the target is listed.
 //!
-//! The seal **payload is DPAPI-bound** to the current Windows user+machine, so a
-//! forged file dropped into `seals/` cannot authorize an arbitrary write target.
+//! RSEAL2 binds the payload with a privileged installation HMAC key and a
+//! current-user DPAPI outer layer. Legacy/missing seals never authorize restore.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+mod key;
+#[cfg(windows)]
+mod v2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PathMapSeal {
@@ -18,17 +23,13 @@ pub struct PathMapSeal {
     pub map_digest: String,
     /// Sorted unique original restore targets recorded at backup time (normalized).
     pub targets: Vec<String>,
-    /// R21-SEC-08: FNV digests of registry export bytes, keyed by
-    /// `registry/<folder>/<file>` (relative to the session). Absent/empty on
-    /// seals written before this field existed (compat: form-whitelist only).
+    /// SHA256 of registry exports and path.json, relative to the session.
+    /// Empty inventories authorize no registry or PATH snapshots.
     #[serde(default)]
     pub reg_digests: BTreeMap<String, String>,
 }
 
-/// Magic prefix for DPAPI-protected seal blobs.
-const SEAL_MAGIC: &[u8] = b"RSEAL1";
-
-fn normalize_target(s: &str) -> String {
+pub(crate) fn normalize_target(s: &str) -> String {
     s.trim().replace('/', "\\").to_lowercase()
 }
 #[cfg(windows)]
@@ -121,8 +122,18 @@ fn seals_root() -> PathBuf {
             }
         }
     }
-    let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
-    PathBuf::from(pd).join("Remova").join("seals")
+    program_data().join("Remova").join("seals")
+}
+
+pub(crate) fn program_data() -> PathBuf {
+    #[cfg(windows)]
+    {
+        key::program_data().unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData"))
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from(r"C:\ProgramData")
+    }
 }
 
 /// Serializes tests that install a seals-root override.
@@ -146,6 +157,25 @@ pub(crate) fn set_seals_root_for_tests(root: Option<PathBuf>) {
     }
 }
 
+#[cfg(test)]
+pub(crate) struct TestStore(std::sync::MutexGuard<'static, ()>);
+#[cfg(test)]
+impl TestStore {
+    pub fn new(root: PathBuf) -> Self {
+        let guard = test_lock();
+        std::fs::create_dir_all(&root).unwrap();
+        set_seals_root_for_tests(Some(root));
+        Self(guard)
+    }
+}
+#[cfg(test)]
+impl Drop for TestStore {
+    fn drop(&mut self) {
+        let _ = &self.0;
+        set_seals_root_for_tests(None);
+    }
+}
+
 fn seal_path(session_name: &str) -> PathBuf {
     // Session names are `{digits}_{safe}` — reject anything that could traverse.
     if session_name.is_empty()
@@ -159,14 +189,15 @@ fn seal_path(session_name: &str) -> PathBuf {
 }
 
 fn map_digest(bytes: &[u8]) -> String {
-    // FNV-1a over raw bytes (same primitive as cache keys; enough to detect edits
-    // when the digest lives outside the session tree).
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+    #[cfg(windows)]
+    {
+        v2::sha256(bytes).unwrap_or_default()
     }
-    format!("{h:016x}")
+    #[cfg(not(windows))]
+    {
+        let _ = bytes;
+        String::new()
+    }
 }
 
 fn session_name_of(session: &Path) -> Option<String> {
@@ -190,48 +221,106 @@ pub fn write_seal(
     reg_digests: &BTreeMap<String, String>,
 ) -> Result<(), String> {
     let name = session_name_of(session).ok_or("seal: bad session name")?;
-    let mut targets: BTreeSet<String> = BTreeSet::new();
-    for orig in path_map.values() {
-        let t = orig.trim();
-        if !t.is_empty() {
-            targets.insert(normalize_target(t));
-        }
-    }
-    let seal = PathMapSeal {
-        session: name.clone(),
-        map_digest: map_digest_of(path_map),
-        targets: targets.into_iter().collect(),
-        reg_digests: reg_digests.clone(),
+    #[cfg(windows)]
+    let blob = {
+        let store = key::load(true)?;
+        v2::encode_blob(
+            &store.key,
+            &v2::payload(&name, path_map, reg_digests.clone())?,
+        )?
     };
-    let json = serde_json::to_string(&seal).map_err(|e| e.to_string())?;
-    let mut blob = SEAL_MAGIC.to_vec();
-    blob.extend(protect(json.as_bytes())?);
+    #[cfg(not(windows))]
+    let blob: Vec<u8> = return Err("seal:windows_required".into());
     let dir = seals_root();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _pins = crate::fsutil::create_dirs_pinned(&dir).map_err(|e| e.to_string())?;
     // R23-SEC-05: tmp + rename — a torn seal fails closed and is unusable.
     let target = seal_path(&name);
-    let tmp = target.with_extension("seal.tmp");
-    std::fs::write(&tmp, blob).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })?;
-    std::fs::rename(&tmp, &target).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let tmp = dir.join(format!("seal.{}.{}.tmp", std::process::id(), nonce));
+    let result = (|| {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&blob)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    result
 }
 
 /// Load and DPAPI-verify the seal for `session`. `None` on missing/tampered/foreign-user.
+#[cfg(test)]
 pub fn load_seal(session: &Path) -> Option<PathMapSeal> {
-    let name = session_name_of(session)?;
-    let raw = std::fs::read(seal_path(&name)).ok()?;
-    let payload = raw.strip_prefix(SEAL_MAGIC)?;
-    let json = unprotect(payload).ok()?;
-    serde_json::from_slice(&json).ok()
+    verified_seal(session).ok()
+}
+
+pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
+    let name = session_name_of(session).ok_or("seal:bad_session")?;
+    use std::io::Read;
+    let file = std::fs::File::open(seal_path(&name)).map_err(|_| "seal:missing")?;
+    let mut raw = vec![];
+    file.take(128 * 1024 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|_| "seal:read")?;
+    if raw.len() > 128 * 1024 {
+        return Err("seal:v2_input_too_large".into());
+    }
+    if raw.starts_with(b"RSEAL1") {
+        return Err("seal:legacy_manual_restore_only".into());
+    }
+    #[cfg(windows)]
+    {
+        let store = key::load(false)?;
+        let seal = v2::verify_blob(&store.key, &name, &raw)?;
+        Ok(PathMapSeal {
+            session: seal.session,
+            map_digest: seal.map_digest,
+            targets: seal.targets,
+            reg_digests: seal.reg_digests,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Err("seal:windows_required".into())
+    }
+}
+
+pub(crate) fn map_matches(seal: &PathMapSeal, map: &BTreeMap<String, String>) -> bool {
+    !seal.map_digest.is_empty() && seal.map_digest == map_digest_of(map)
+}
+pub(crate) fn snapshot_matches(seal: &PathMapSeal, rel: &str, bytes: &[u8]) -> bool {
+    seal.reg_digests
+        .get(rel)
+        .is_some_and(|expected| !expected.is_empty() && expected == &map_digest(bytes))
+}
+#[cfg(windows)]
+pub(crate) struct BackupStage(key::Stage);
+#[cfg(windows)]
+impl BackupStage {
+    pub fn path(&self) -> &Path {
+        &self.0.path
+    }
+    pub fn verify_snapshots(&self) -> Result<(), String> {
+        self.0.verify_snapshots()
+    }
+}
+#[cfg(windows)]
+pub(crate) fn backup_stage() -> Result<BackupStage, String> {
+    Ok(BackupStage(key::load(true)?.stage()?))
 }
 
 /// True when this original path is a sealed restore target **and** the decoded
 /// `path_map` still matches the digest recorded at backup time.
+#[cfg(test)]
 pub fn target_sealed(session: &Path, path_map: &BTreeMap<String, String>, original: &str) -> bool {
     let Some(seal) = load_seal(session) else {
         return false;
@@ -245,39 +334,51 @@ pub fn target_sealed(session: &Path, path_map: &BTreeMap<String, String>, origin
 
 /// Digests of registry export files under `session/registry/<folder>/`.
 /// Keys are `registry/<folder>/<file>` so restore can look them up by path.
-pub fn collect_reg_digests(session: &Path) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let Ok(rd) = std::fs::read_dir(session.join("registry")) else {
-        return out;
-    };
-    for e in rd.flatten() {
-        let folder = e.file_name();
-        let folder = folder.to_string_lossy();
-        for name in ["export.reg", "value.reg"] {
-            let f = e.path().join(name);
-            if let Ok(bytes) = std::fs::read(&f) {
-                out.insert(format!("registry/{folder}/{name}"), map_digest(&bytes));
+pub fn collect_reg_digests(session: &Path) -> Result<BTreeMap<String, String>, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = session;
+        Err("seal:windows_required".into())
+    }
+    #[cfg(windows)]
+    {
+        let mut out = BTreeMap::new();
+        if session.join("path.json").exists() {
+            let bytes = std::fs::read(session.join("path.json")).map_err(|e| e.to_string())?;
+            out.insert("path.json".into(), v2::sha256(&bytes)?);
+        }
+        let root = session.join("registry");
+        if !root.exists() {
+            return Ok(out);
+        }
+        for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let folder = entry.file_name();
+            // Single-value backups authorize value.reg only. Deleting it must
+            // not fall back to importing the broader parent-key export.
+            if let Some(file) = crate::restore::pick_import_target(&entry.path()) {
+                let name = file
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or("seal:bad_export_name")?;
+                let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
+                out.insert(
+                    format!("registry/{}/{name}", folder.to_string_lossy()),
+                    v2::sha256(&bytes)?,
+                );
             }
         }
+        Ok(out)
     }
-    out
 }
 
 /// R21-SEC-08: true when this export may proceed to form validation.
-/// - No seal, or a pre-`reg_digests` seal → allow (compat with old sessions).
+/// - Missing/legacy/empty inventory → refuse.
 /// - Seal records this file → digest must match.
 /// - Seal has `reg_digests` but omits this file → refuse (fail closed).
+#[cfg(test)]
 pub fn reg_export_allowed(session: &Path, rel: &str, bytes: &[u8]) -> bool {
-    let Some(seal) = load_seal(session) else {
-        return true;
-    };
-    if seal.reg_digests.is_empty() {
-        return true;
-    }
-    match seal.reg_digests.get(rel) {
-        Some(expected) => expected == &map_digest(bytes),
-        None => false,
-    }
+    load_seal(session).is_some_and(|seal| snapshot_matches(&seal, rel, bytes))
 }
 
 #[cfg(test)]
@@ -388,7 +489,7 @@ mod tests {
             std::fs::create_dir_all(sess.join("registry").join("App")).unwrap();
             let export = sess.join("registry").join("App").join("export.reg");
             std::fs::write(&export, b"Windows Registry Editor Version 5.00").unwrap();
-            let digests = collect_reg_digests(&sess);
+            let digests = collect_reg_digests(&sess).unwrap();
             assert_eq!(digests.len(), 1);
             assert!(digests.contains_key("registry/App/export.reg"));
             write_seal(&sess, "", &BTreeMap::new(), &digests).unwrap();
@@ -407,14 +508,148 @@ mod tests {
         });
     }
 
-    /// Old seals without `reg_digests` keep form-whitelist-only behavior.
+    /// Empty inventories cannot authorize newly planted exports.
     #[test]
-    fn empty_reg_digests_allows_compat() {
+    fn empty_reg_digests_refuses_exports() {
         with_seals_dir(|| {
             let sess = temp_session("oldseal");
             write_seal(&sess, "", &BTreeMap::new(), &BTreeMap::new()).unwrap();
-            assert!(reg_export_allowed(&sess, "registry/App/export.reg", b"x"));
+            assert!(!reg_export_allowed(&sess, "registry/App/export.reg", b"x"));
             let _ = std::fs::remove_dir_all(&sess);
+        });
+    }
+
+    #[test]
+    fn restore_v2_authorizes_once_before_file_path_or_registry_writes() {
+        with_seals_dir(|| {
+            let _path_lock = crate::regops::path_mock::lock_mock();
+            crate::regops::path_mock::install(r"C:\Other", r"C:\Windows\System32");
+            let sess = temp_session("restore_v2");
+            let dest = sess.join("output/file.txt");
+            std::fs::write(sess.join("files/file.txt"), b"authenticated destination").unwrap();
+            let map = BTreeMap::from([("file.txt".into(), dest.to_string_lossy().into_owned())]);
+            std::fs::write(
+                sess.join("files/path_map.json"),
+                serde_json::to_vec(&map).unwrap(),
+            )
+            .unwrap();
+            let name = session_name_of(&sess).unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:missing"
+            );
+            // A standard-user-created, DPAPI-valid v1 is still not authorization.
+            let old = PathMapSeal {
+                session: name.clone(),
+                map_digest: map_digest_of(&map),
+                targets: map.values().map(|s| normalize_target(s)).collect(),
+                reg_digests: BTreeMap::new(),
+            };
+            let mut legacy = b"RSEAL1".to_vec();
+            legacy.extend(protect(&serde_json::to_vec(&old).unwrap()).unwrap());
+            std::fs::write(seal_path(&name), legacy).unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:legacy_manual_restore_only"
+            );
+            write_seal(&sess, "", &map, &BTreeMap::new()).unwrap();
+            let original_blob = std::fs::read(seal_path(&name)).unwrap();
+            let mut envelope: serde_json::Value =
+                serde_json::from_slice(&unprotect(&original_blob[6..]).unwrap()).unwrap();
+            envelope["mac"] = serde_json::Value::String("0".repeat(64));
+            let mut bad_mac = b"RSEAL2".to_vec();
+            // Value sorts object keys; use the canonical envelope field order.
+            let canonical = format!(
+                "{{\"version\":2,\"key_id\":{},\"payload\":{},\"mac\":{}}}",
+                envelope["key_id"], envelope["payload"], envelope["mac"]
+            );
+            bad_mac.extend(protect(canonical.as_bytes()).unwrap());
+            std::fs::write(seal_path(&name), bad_mac).unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:v2_bad_mac"
+            );
+            std::fs::write(seal_path(&name), original_blob).unwrap();
+            let evil_map = BTreeMap::from([("file.txt", "C:\\evil\\file.txt")]);
+            std::fs::write(
+                sess.join("files/path_map.json"),
+                serde_json::to_vec(&evil_map).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:map_mismatch"
+            );
+            std::fs::write(
+                sess.join("files/path_map.json"),
+                serde_json::to_vec(&map).unwrap(),
+            )
+            .unwrap();
+            let reg = sess.join("registry/App");
+            std::fs::create_dir_all(&reg).unwrap();
+            std::fs::write(reg.join("export.reg"), b"unlisted export must never import").unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:registry_snapshot_mismatch"
+            );
+            std::fs::remove_file(reg.join("export.reg")).unwrap();
+            let snap = crate::backup::PathSnapshot {
+                items: vec![crate::backup::PathSnapshotItem {
+                    entry: r"C:\Vendor\Tool".into(),
+                    scopes: vec!["User".into()],
+                    user_path: r"C:\Vendor\Tool".into(),
+                    machine_path: String::new(),
+                }],
+            };
+            let bytes = serde_json::to_vec(&snap).unwrap();
+            std::fs::write(sess.join("path.json"), &bytes).unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:path_snapshot_mismatch"
+            );
+            let inventory = BTreeMap::from([("path.json".into(), map_digest(&bytes))]);
+            write_seal(&sess, "", &map, &inventory).unwrap();
+            std::fs::write(sess.join("path.json"), b"tampered").unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:path_snapshot_mismatch"
+            );
+            assert!(
+                !dest.exists(),
+                "all failures must precede sibling file writes"
+            );
+            assert_eq!(crate::regops::path_mock::get("User"), r"C:\Other");
+            std::fs::write(sess.join("path.json"), bytes).unwrap();
+            crate::restore::restore_session(&sess).unwrap();
+            assert_eq!(std::fs::read(&dest).unwrap(), b"authenticated destination");
+            assert!(crate::regops::path_mock::get("User").contains(r"C:\Vendor\Tool"));
+            assert_eq!(
+                crate::regops::path_mock::get("Machine"),
+                r"C:\Windows\System32"
+            );
+            crate::regops::path_mock::clear();
+            std::fs::remove_dir_all(sess).unwrap();
+        });
+    }
+
+    #[test]
+    fn single_value_inventory_never_authorizes_parent_key_fallback() {
+        with_seals_dir(|| {
+            let sess = temp_session("single_value");
+            let reg = sess.join("registry/App");
+            std::fs::create_dir_all(&reg).unwrap();
+            std::fs::write(reg.join("export.reg"), b"whole parent key").unwrap();
+            std::fs::write(reg.join("value.reg"), b"single value").unwrap();
+            let inventory = collect_reg_digests(&sess).unwrap();
+            assert_eq!(inventory.len(), 1);
+            assert!(inventory.contains_key("registry/App/value.reg"));
+            write_seal(&sess, "", &BTreeMap::new(), &inventory).unwrap();
+            std::fs::remove_file(reg.join("value.reg")).unwrap();
+            assert_eq!(
+                crate::restore::restore_session(&sess).unwrap_err(),
+                "seal:registry_snapshot_mismatch"
+            );
+            std::fs::remove_dir_all(sess).unwrap();
         });
     }
 }

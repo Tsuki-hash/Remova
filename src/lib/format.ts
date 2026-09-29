@@ -76,6 +76,12 @@ function isKnownIpcCode(code: string): boolean {
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   const L = t();
   const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+  // Backup errors may embed the seal code in a per-item failure message.
+  if (raw.includes("seal:")) {
+    if (raw.includes("requires_admin")) return L.errSealAdmin;
+    if (raw.includes("seal:legacy_manual_restore_only")) return L.errSealLegacy;
+    return L.errSealInvalid;
+  }
   const elev = raw.match(/^elevate:(denied|cancelled|not_found|failed):(\d+)/);
   if (elev) {
     const kind = elev[1];

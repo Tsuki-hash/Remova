@@ -109,22 +109,48 @@ fn is_safe_http_url(url: &str) -> bool {
     }
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or("");
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() {
+    if authority.is_empty() || authority.contains(['@', '\\']) {
         return false;
     }
     // Bracketed IPv6 (`[::1]:8080`) — a plain colon split would truncate to "[".
-    let host = if let Some(rest) = authority.strip_prefix('[') {
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
         match rest.split_once(']') {
-            Some((h, _)) => format!("[{h}]"),
-            None => String::new(), // unterminated bracket: rejected below
+            Some((h, tail)) => {
+                if h.parse::<std::net::Ipv6Addr>().is_err() {
+                    return false;
+                }
+                let port = if tail.is_empty() {
+                    None
+                } else {
+                    match tail.strip_prefix(':') {
+                        Some(p) => Some(p),
+                        None => return false,
+                    }
+                };
+                (format!("[{h}]"), port)
+            }
+            None => return false,
         }
     } else {
-        authority.split(':').next().unwrap_or("").to_string()
+        let (host, port) = authority
+            .split_once(':')
+            .map_or((authority, None), |(h, p)| (h, Some(p)));
+        (host.to_string(), port)
     };
+    if port.is_some_and(|p| {
+        p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit()) || p.parse::<u16>().is_err()
+    }) {
+        return false;
+    }
     if host.is_empty()
-        || !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '[' || c == ']')
+        || !host.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c == '.'
+                || c == '-'
+                || c == '['
+                || c == ']'
+                || (c == ':' && host.starts_with('[') && host.ends_with(']'))
+        })
     {
         return false;
     }
@@ -132,10 +158,10 @@ fn is_safe_http_url(url: &str) -> bool {
         // loopback only (IPv4 / localhost / [::1])
         let low = host.to_ascii_lowercase();
         return low == "localhost"
-            || low == "127.0.0.1"
-            || low == "::1"
             || low == "[::1]"
-            || low.starts_with("127.");
+            || low
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback());
     }
     true
 }
@@ -282,6 +308,23 @@ mod open_path_url_tests {
         ));
         assert!(super::is_safe_http_url("http://127.0.0.1:11434/v1"));
         assert!(super::is_safe_http_url("http://localhost:11434/v1"));
+        assert!(super::is_safe_http_url("http://127.9.8.7:11434/v1"));
+        assert!(super::is_safe_http_url("http://[::1]:11434/v1"));
+        for url in [
+            "http://127.0.0.1.evil.com",
+            "http://127.999.0.1",
+            "http://127.1",
+            "http://128.0.0.1",
+            "http://127.0.0.1@evil.com",
+            "http://127.0.0.1:80@evil.com",
+            "http://[::1]:80@evil.com",
+            "http://[::1]evil.com",
+            "http://127.0.0.1:65536",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:abc",
+        ] {
+            assert!(!super::is_safe_http_url(url), "must reject {url}");
+        }
         // REV-SUP-12: remote cleartext http is refused
         assert!(!super::is_safe_http_url("http://example.com/x"));
         assert!(!super::is_safe_http_url("https://"));
@@ -345,7 +388,7 @@ async fn run_full_cleanup(
 ) -> Result<FullCleanupReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let report = executor::run_full_cleanup(&app, &items, &options);
-        history::append(
+        if !history::append(
             &report.app_name,
             report.deleted,
             report.failed,
@@ -354,7 +397,9 @@ async fn run_full_cleanup(
             report.aborted,
             report.dry_run,
             &report.backup_dir,
-        );
+        ) {
+            eprintln!("cleanup completed, but history append failed");
+        }
         report
     })
     .await

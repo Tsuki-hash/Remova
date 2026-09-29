@@ -410,6 +410,7 @@ export const dict: EnDict = {
     loadingManage: "Loading…",
     loadingPage: "Opening page…",
     navBack: "Back",
+    idleEvSizePartial: "Partial size estimate; lower bound shown",
     loadingGeneric: "Loading…",
     idleScanning: "Scanning idle candidates…",
     radarScanning: "Measuring disk usage…",
@@ -546,4 +547,7 @@ export const dict: EnDict = {
     showAllLeftovers: "Show all",
     scanLinkedLeftovers: "Scan related leftovers",
     itemCount: (n: number) => `${n} item${n === 1 ? "" : "s"}`,
+    errSealAdmin: "Secure backup and restore require administrator access. Elevate and retry.",
+    errSealLegacy: "Legacy backups can be inspected and exported manually, but cannot be restored automatically. Keep the original backup.",
+    errSealInvalid: "The backup seal or key state is invalid. The operation was stopped. Keep the backup; do not delete or regenerate the key.",
 } as const;

@@ -30,8 +30,9 @@ pub fn backup_root() -> PathBuf {
             }
         }
     }
-    let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
-    PathBuf::from(pd).join("Remova").join("Backup")
+    crate::path_seal::program_data()
+        .join("Remova")
+        .join("Backup")
 }
 
 /// Serializes tests that mutate process-wide `REMOVA_BACKUP_DIR` so parallel
@@ -67,8 +68,8 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
         dir = backup_root().join(format!("{ts}_{safe}_{n}"));
         n += 1;
     }
-    fs::create_dir_all(dir.join("files"))?;
-    fs::create_dir_all(dir.join("registry"))?;
+    let _pins = crate::fsutil::create_dirs_pinned(&dir.join("files"))?;
+    let _pins_reg = crate::fsutil::create_dirs_pinned(&dir.join("registry"))?;
     Ok(dir)
 }
 
@@ -170,87 +171,65 @@ fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
 }
 
 pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
-    let mut map = std::collections::BTreeMap::new();
-    backup_item_with_map(item, session, &mut map)?;
-    // Persist map for file/dir items when called as a one-shot API.
-    // R21-SEC-08: also seal registry export digests (registry-only sessions too).
-    let reg_digests = crate::path_seal::collect_reg_digests(session);
-    if !map.is_empty() {
-        let map_path = session.join("files").join("path_map.json");
-        let mut existing: std::collections::BTreeMap<String, String> =
-            fs::read_to_string(&map_path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default();
-        existing.extend(map);
-        if let Some(p) = map_path.parent() {
-            let _ = fs::create_dir_all(p);
-        }
-        let map_json = serde_json::to_string_pretty(&existing).unwrap_or_default();
-        write_bytes_atomic(&map_path, map_json.as_bytes())?;
-        crate::path_seal::write_seal(session, &map_json, &existing, &reg_digests)
-            .map_err(|e| e.to_string())?;
-    } else if !reg_digests.is_empty() {
-        crate::path_seal::write_seal(
-            session,
-            "",
-            &std::collections::BTreeMap::new(),
-            &reg_digests,
-        )
-        .map_err(|e| e.to_string())?;
+    if matches!(item.kind, ItemKind::File | ItemKind::Dir) && !Path::new(&item.path).exists() {
+        return Ok(());
+    }
+    let (_, fail, errors) = backup_items(std::slice::from_ref(item), session);
+    if fail > 0 {
+        return Err(errors.join("; "));
     }
     Ok(())
 }
 
 pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<String>) {
-    let mut ok = 0u32;
-    let mut fail = 0u32;
-    let mut errors = vec![];
-    // Load path_map once; write once at end (PERF-6).
-    let map_path = session.join("files").join("path_map.json");
-    // R23-SEC-06: create_session guarantees a fresh directory — a pre-existing
-    // path_map means a same-user race planted it, and merging would bless
-    // forged targets into the seal. Fail the batch instead.
-    if map_path.exists() {
-        return (
-            items.len() as u32,
-            items.len() as u32,
-            vec!["session path_map pre-exists; refusing to merge".to_string()],
-        );
+    match backup_batch(items, session) {
+        Ok(result) => result,
+        Err(e) => (0, items.len().max(1) as u32, vec![e]),
     }
-    let mut path_map: std::collections::BTreeMap<String, String> =
-        std::collections::BTreeMap::new();
-    for it in items {
-        match backup_item_with_map(it, session, &mut path_map) {
+}
+
+fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<String>), String> {
+    // One-shot sessions only. Never read and re-sign an existing public map/snapshot.
+    if session.join("files/path_map.json").exists()
+        || session.join("path.json").exists()
+        || fs::read_dir(session.join("registry"))
+            .into_iter()
+            .flatten()
+            .next()
+            .is_some()
+    {
+        return Err("session snapshots pre-exist; refusing to merge".into());
+    }
+    #[cfg(windows)]
+    let stage = crate::path_seal::backup_stage()?;
+    #[cfg(windows)]
+    let private = stage.path();
+    #[cfg(not(windows))]
+    let private: &Path = return Err("seal:windows_required".into());
+    fs::create_dir_all(private.join("files")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(private.join("registry")).map_err(|e| e.to_string())?;
+    let mut map = std::collections::BTreeMap::new();
+    let (mut ok, mut fail) = (0, 0);
+    let mut errors = vec![];
+    for item in items {
+        match backup_item_with_map(item, private, &mut map) {
             Ok(()) => ok += 1,
             Err(e) => {
                 fail += 1;
-                errors.push(format!("{}: {e}", it.path));
+                errors.push(format!("{}: {e}", item.path));
             }
         }
     }
-    // R21-SEC-08: registry exports are bound into the seal even without a path_map.
-    let reg_digests = crate::path_seal::collect_reg_digests(session);
-    if !path_map.is_empty() {
-        // BE-07: path_map write failure must abort cleanup (restore depends on it).
-        let map_json = serde_json::to_string_pretty(&path_map).unwrap_or_default();
-        if let Err(e) = write_bytes_atomic(&map_path, map_json.as_bytes()) {
-            fail += 1;
-            errors.push(format!("path_map write failed: {e}"));
-        } else if let Err(e) =
-            crate::path_seal::write_seal(session, &map_json, &path_map, &reg_digests)
-        {
-            // Seal failure must abort cleanup (library targets cannot restore).
-            fail += 1;
-            errors.push(format!("path_map seal failed: {e}"));
-        }
-    } else if !reg_digests.is_empty() {
-        if let Err(e) = crate::path_seal::write_seal(session, "", &path_map, &reg_digests) {
-            fail += 1;
-            errors.push(format!("registry seal failed: {e}"));
-        }
-    }
-    (ok, fail, errors)
+    // All inputs are produced in the privileged private stage, never re-read
+    // from the user-writable session. Capture digests before publishing.
+    #[cfg(windows)]
+    stage.verify_snapshots()?;
+    let digests = crate::path_seal::collect_reg_digests(private)?;
+    let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+    write_bytes_atomic(&private.join("files/path_map.json"), json.as_bytes())?;
+    crate::fsutil::copy_dir(private, session).map_err(|e| e.to_string())?;
+    crate::path_seal::write_seal(session, &json, &map, &digests)?;
+    Ok((ok, fail, errors))
 }
 
 fn backup_item_with_map(
@@ -373,6 +352,60 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
+
+    #[test]
+    fn private_stage_backup_file_and_path_roundtrip_refuses_existing_snapshots() {
+        let root = std::env::temp_dir().join(format!("remova_v2_backup_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let _path_lock = crate::regops::path_mock::lock_mock();
+        crate::regops::path_mock::install(r"C:\Vendor\Tool;C:\Other", r"C:\Windows");
+        let source = root.join("source/file.txt");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"backup bytes").unwrap();
+        let session = root.join("1700000000_batch");
+        fs::create_dir_all(session.join("files")).unwrap();
+        fs::create_dir_all(session.join("registry")).unwrap();
+        let mut item = CleanupItem {
+            path: source.to_string_lossy().into_owned(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "test".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let file_item = item.clone();
+        item.kind = ItemKind::Path;
+        item.path = r"C:\Vendor\Tool".into();
+        let (ok, fail, errors) = backup_items(&[file_item.clone(), item], &session);
+        assert_eq!((ok, fail), (2, 0), "{errors:?}");
+        let seal = crate::path_seal::verified_seal(&session).unwrap();
+        assert!(seal.reg_digests.contains_key("path.json"));
+        assert!(!fs::read_dir(root.join("seals"))
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("stage_")));
+        fs::write(&source, b"changed after backup").unwrap();
+        crate::regops::path_mock::install(r"C:\Other", r"C:\Windows");
+        crate::restore::restore_session(&session).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"backup bytes");
+        assert!(crate::regops::path_mock::get("User").contains(r"C:\Vendor\Tool"));
+        let before = fs::read(session.join("files/path_map.json")).unwrap();
+        let (ok, fail, _) = backup_items(&[file_item], &session);
+        assert_eq!((ok, fail), (0, 1));
+        assert_eq!(
+            before,
+            fs::read(session.join("files/path_map.json")).unwrap()
+        );
+        crate::regops::path_mock::clear();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn reg_view_flags() {

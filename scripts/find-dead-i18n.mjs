@@ -2,13 +2,21 @@
 // referenced outside src/i18n, optionally prune them from zh.ts + en.ts.
 //
 //   node scripts/find-dead-i18n.mjs          # report only
+//   node scripts/find-dead-i18n.mjs --check  # read-only gate, exit 1 on dead keys
 //   node scripts/find-dead-i18n.mjs --prune  # remove dead keys from both files
 import fs from "node:fs";
 import path from "node:path";
 
 const zhPath = "src/i18n/zh.ts";
 const enPath = "src/i18n/en.ts";
-const prune = process.argv.includes("--prune");
+const args = process.argv.slice(2);
+if (args.some((arg) => !["--check", "--prune"].includes(arg)) ||
+    (args.includes("--check") && args.includes("--prune"))) {
+  console.error("Usage: node scripts/find-dead-i18n.mjs [--check | --prune]");
+  process.exit(2);
+}
+const prune = args.includes("--prune");
+const check = args.includes("--check");
 
 const zh = fs.readFileSync(zhPath, "utf8");
 const keys = [...zh.matchAll(/^    ([A-Za-z0-9_]+):/gm)].map((m) => m[1]);
@@ -35,6 +43,7 @@ console.log("total keys:", keys.length, "dead:", dead.length);
 
 if (!prune) {
   console.log(dead.join("\n"));
+  if (check && dead.length > 0) process.exitCode = 1;
 } else {
   // R21-QA-07: depth-aware entry end (a value's internal line may also end in
   // a comma). An entry starts at `    key:` and ends at the first line that

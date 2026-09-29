@@ -1087,20 +1087,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(windows)]
     #[test]
-    fn export_reg_value_writes_reg_or_false() {
+    fn export_reg_value_writes_existing_value() {
         let tmp = std::env::temp_dir().join(format!("remova_value_reg_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let dest = tmp.join("value.reg");
-        let r = super::export_reg_value(r"HKCU\Environment", "PATH", &dest);
+        // Read-only OS fixture: do not mutate the user's PATH or registry.
+        let r = super::export_reg_value(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
+            "Desktop",
+            &dest,
+        );
         match r {
             Ok(true) => {
                 let s = std::fs::read_to_string(&dest).unwrap();
                 assert!(s.contains("Windows Registry Editor"));
-                assert!(s.to_uppercase().contains("ENVIRONMENT"));
+                assert!(s.contains("Shell Folders"));
+                assert!(s.contains("\"Desktop\"="));
+                assert!(s.contains("HKEY_CURRENT_USER"));
             }
-            Ok(false) => {}
+            Ok(false) => panic!("Desktop registry fixture missing: export was not exercised"),
             Err(e) => panic!("export_reg_value: {e}"),
         }
         let _ = std::fs::remove_dir_all(&tmp);

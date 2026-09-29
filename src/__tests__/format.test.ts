@@ -119,3 +119,12 @@ describe("shortPath", () => {
     expect(s.length).toBeLessThan(p.length);
   });
 });
+
+describe("seal failure guidance", () => {
+  it("explains elevation, legacy migration and invalid state including nested backup errors", () => {
+    expect(formatError("backup:failed::seal:key_create_requires_admin")).toContain("管理员");
+    expect(formatError("seal:legacy_manual_restore_only")).toContain("手工导出");
+    expect(formatError("seal:v2_bad_mac")).toContain("保留备份");
+    expect(formatError("seal:key_lost")).toContain("勿删除或重建密钥");
+  });
+});

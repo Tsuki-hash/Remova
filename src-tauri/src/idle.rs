@@ -97,18 +97,18 @@ fn dir_mtime_age_days(path: &str) -> Option<i64> {
     Some(age as i64)
 }
 
-fn size_kb_of(app: &InstalledApp) -> i64 {
+fn size_kb_of(app: &InstalledApp) -> (i64, bool) {
     if app.estimated_size_kb > 0 {
-        return app.estimated_size_kb;
+        return (app.estimated_size_kb, false);
     }
     if !app.install_location.is_empty() {
         // Private cancel flag: estimate-batch cancel must not zero idle sizes.
-        return crate::dirsize::walk_size_kb_with(
+        return crate::dirsize::walk_size_kb_with_capped(
             std::path::Path::new(&app.install_location),
             &std::sync::atomic::AtomicBool::new(false),
         );
     }
-    0
+    (0, false)
 }
 
 /// Rank idle candidates. Soft evidence only — caller must confirm before uninstall.
@@ -147,7 +147,13 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
         if idle_days < IDLE_MIN_DAYS {
             continue;
         }
-        let size_kb = size_kb_of(app);
+        let (size_kb, capped) = size_kb_of(app);
+        if capped {
+            evidence.push(IdleEvidence {
+                code: "idle_size_partial".into(),
+                detail: format!(">={size_kb}KB"),
+            });
+        }
         if size_kb < IDLE_MIN_SIZE_KB {
             continue;
         }
@@ -226,6 +232,38 @@ mod tests {
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0].idle_days >= IDLE_MIN_DAYS);
         assert!(ranked[0].score > 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capped_walk_is_reported_as_partial_in_ranked_evidence() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("remova-r23-idle-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Every visited file contributes the same size, regardless of order.
+        for i in 0..5001 {
+            let file = std::fs::File::create(dir.join(format!("{i:05}.bin"))).unwrap();
+            file.set_len(32 * 1024).unwrap();
+        }
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(365 * 86400);
+        std::fs::OpenOptions::new()
+            .access_mode(0x100)
+            .custom_flags(0x02000000)
+            .open(&dir)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        let candidate = app("R23Partial", "20100101", &dir.to_string_lossy(), 0);
+        let ranked = rank_idle_apps(&[candidate]);
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0]
+            .evidence
+            .iter()
+            .any(|e| e.code == "idle_size_partial"));
+        for i in 0..5001 {
+            std::fs::remove_file(dir.join(format!("{i:05}.bin"))).unwrap();
+        }
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[test]

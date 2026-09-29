@@ -107,15 +107,21 @@ pub(super) fn scan_shell_extensions(
                 bucket: None,
             });
         }
-        for root in [
-            format!(r"{alias}\SOFTWARE\Classes\CLSID"),
-            format!(r"{alias}\SOFTWARE\Classes\Wow6432Node\CLSID"),
-        ] {
-            // PERF-1: skip full CLSID walk without a strong product token.
-            let has_strong = !install_low.is_empty() || name_norms.iter().any(|s| s.len() >= 5);
-            if !has_strong {
-                continue;
-            }
+        // HKLM32 selects the 32-bit view itself. Do not walk its explicit
+        // Wow6432Node again. Per-user 32-bit registrations have no HKCU32
+        // alias in our reader, so keep their explicit root once.
+        let has_strong = (!install_low.is_empty()
+            && install_low
+                .trim_end_matches('\\')
+                .split('\\')
+                .filter(|s| !s.is_empty())
+                .count()
+                >= 2)
+            || name_norms.iter().any(|s| s.len() >= 5);
+        if !has_strong {
+            continue;
+        }
+        for root in clsid_roots(alias) {
             for leaf in crate::regscan::list_subkeys(&root) {
                 let def = crate::regscan::read_string_default(&format!(r"{root}\{leaf}"))
                     .unwrap_or_default();
@@ -156,6 +162,14 @@ pub(super) fn scan_shell_extensions(
             }
         }
     }
+}
+
+fn clsid_roots(alias: &str) -> Vec<String> {
+    let mut roots = vec![format!(r"{alias}\SOFTWARE\Classes\CLSID")];
+    if alias == "HKCU" {
+        roots.push(format!(r"{alias}\SOFTWARE\Classes\Wow6432Node\CLSID"));
+    }
+    roots
 }
 
 /// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
@@ -353,6 +367,18 @@ fn service_image_string(svc_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clsid_roots_do_not_duplicate_machine_views() {
+        assert_eq!(
+            super::clsid_roots("HKLM64"),
+            [r"HKLM64\SOFTWARE\Classes\CLSID"]
+        );
+        assert_eq!(
+            super::clsid_roots("HKLM32"),
+            [r"HKLM32\SOFTWARE\Classes\CLSID"]
+        );
+        assert_eq!(super::clsid_roots("HKCU").len(), 2);
+    }
     /// R23-BE-01/QA-01: opt-in against the real registry (`cargo test -- --ignored`).
     /// A healthy machine has many services with non-empty ImagePath strings; the
     /// old read-as-subkey form returned empty for every single one.
