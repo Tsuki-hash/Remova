@@ -37,14 +37,14 @@ pub fn walk_size_kb(root: &Path) -> i64 {
 }
 
 /// Like [`walk_size_kb`] but also reports whether the file cap truncated the walk
-/// (R21-SUP-04). Honors the global cancel flag.
+/// (). Honors the global cancel flag.
 pub fn walk_size_kb_capped(root: &Path) -> (i64, bool) {
     walk_size_kb_with_capped(root, &CANCELLED)
 }
 
 /// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
 /// Second element is `true` when the walk hit the file cap (partial total — do not
-/// present as a complete size; R21-SUP-04).
+/// present as a complete size; ).
 pub fn walk_size_kb_with_capped(root: &Path, cancelled: &AtomicBool) -> (i64, bool) {
     if !root.exists() {
         return (0, false);
@@ -83,7 +83,7 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
-        // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+        // `is_symlink()` misses Windows junctions — check reparse attributes.
         if crate::fsutil::is_reparse_point(&entry.path()) {
             continue;
         }
@@ -102,11 +102,11 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
 }
 
 /// Bounded walk returning (bytes, capped). `capped` means the file cap was hit
-/// and `bytes` is a floor, not a total (R21-SUP-04).
+/// and `bytes` is a floor, not a total ().
 fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
     use std::collections::VecDeque;
     let mut total: u64 = 0;
-    // REV-SUP-03: depth + entry caps — same budget as `walk_bytes_limited`.
+    // depth + entry caps — same budget as `walk_bytes_limited`.
     let mut stack: VecDeque<(std::path::PathBuf, u32)> = VecDeque::new();
     stack.push_back((root.to_path_buf(), 0));
     let mut files_seen: u64 = 0;
@@ -129,7 +129,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            // Q-B12: `is_symlink()` misses Windows junctions — check reparse attributes.
+            // `is_symlink()` misses Windows junctions — check reparse attributes.
             if crate::fsutil::is_reparse_point(&entry.path()) {
                 continue;
             }
@@ -145,7 +145,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
                 total = total.saturating_add(meta.len());
                 files_seen += 1;
                 if files_seen >= MAX_WALK_FILES {
-                    // R21-SUP-04: cap → partial floor, never a silent "complete" total.
+                    // cap → partial floor, never a silent "complete" total.
                     return (total, true);
                 }
                 if files_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(walk_size_kb_with(&missing, &AtomicBool::new(false)), 0);
     }
 
-    /// R21-SUP-04: hitting the file cap must flag `capped`, not pretend completeness.
+    /// hitting the file cap must flag `capped`, not pretend completeness.
     #[test]
     fn walk_file_cap_sets_capped_flag() {
         let tmp = std::env::temp_dir().join(format!("remova_dirsize_cap_{}", std::process::id()));

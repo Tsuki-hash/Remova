@@ -35,7 +35,7 @@ fn history_path() -> PathBuf {
 /// Serializes append / rewrite so concurrent cleanup cannot drop or duplicate rows.
 static FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// R21-SUP-06: a poisoned mutex still holds `()` — recover instead of running
+/// a poisoned mutex still holds `()` — recover instead of running
 /// subsequent reads/writes with no lock at all.
 fn lock_file() -> std::sync::MutexGuard<'static, ()> {
     FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner())
@@ -47,7 +47,7 @@ fn line_hash(line: &str) -> String {
 }
 
 /// Stable row id in file order: content hash + occurrence index among identical
-/// lines (REV-SUP-08: computed streaming — no whole-file parse).
+/// lines (computed streaming — no whole-file parse).
 fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
     let h = line_hash(line);
     let nth = seen.entry(h.clone()).or_insert(0);
@@ -58,7 +58,7 @@ fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
 
 /// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
 /// one line at a time through a ring buffer — memory is O(keep), never O(file)
-/// (REV-SUP-02; also removes the old unbounded whole-file read on oversize).
+/// (; also removes the old unbounded whole-file read on oversize).
 /// Caller must hold [`FILE_LOCK`].
 fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
     let file = fs::File::open(p)?;
@@ -75,16 +75,20 @@ fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
         ring.push_back(line);
     }
     let tmp = p.with_extension("jsonl.tmp");
-    let out = fs::File::create(&tmp)?;
-    let mut w = BufWriter::new(out);
-    for l in &ring {
-        writeln!(w, "{l}")?;
-    }
-    w.flush()?;
-    // R21-SUP-01: a failed rename must not leave `history.jsonl.tmp` behind.
-    fs::rename(&tmp, p).inspect_err(|_| {
+    let result = (|| -> std::io::Result<()> {
+        let out = fs::File::create(&tmp)?;
+        let mut w = BufWriter::new(out);
+        for l in &ring {
+            writeln!(w, "{l}")?;
+        }
+        w.flush()?;
+        w.into_inner()?.sync_all()?;
+        fs::rename(&tmp, p)
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-    })
+    }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,7 +129,7 @@ pub fn append(
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
     if let Ok(meta) = fs::metadata(&p) {
         if meta.len() > HISTORY_SOFT_CAP {
-            // REV-SUP-02: streaming compact — no whole-file read.
+            // streaming compact — no whole-file read.
             let _ = compact_keep_newest(&p, HISTORY_KEEP_LINES);
         }
     }
@@ -146,7 +150,7 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     let Ok(file) = fs::File::open(&p) else {
         return vec![];
     };
-    // REV-SUP-08: stream lines, keep only the newest `limit` in a ring, parse
+    // stream lines, keep only the newest `limit` in a ring, parse
     // after the pass — memory is O(limit), not O(file); rows whose ids must be
     // counted across the whole file still get file-order occurrence ids.
     let reader = std::io::BufReader::new(file);
@@ -198,7 +202,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let mut reader = std::io::BufReader::new(file);
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut removed = 0usize;
-    // R21-SUP-07: stream raw lines — a non-UTF-8 row (torn append) must pass
+    // stream raw lines — a non-UTF-8 row (torn append) must pass
     // through untouched, not vanish along with unrelated rows.
     let mut raw: Vec<u8> = Vec::new();
     loop {
@@ -245,7 +249,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         let _ = fs::remove_file(&tmp);
         return Ok(0);
     }
-    // R21-SUP-01: rename failure must not leave `history.jsonl.tmp` behind.
+    // rename failure must not leave `history.jsonl.tmp` behind.
     fs::rename(&tmp, &p)
         .inspect_err(|_| {
             let _ = fs::remove_file(&tmp);
@@ -263,7 +267,7 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         e.to_string()
     })?;
-    // R21-SUP-01: align with ignore.rs — rename failure cleans the temp file.
+    // align with ignore.rs — rename failure cleans the temp file.
     fs::rename(&tmp, p)
         .inspect_err(|_| {
             let _ = fs::remove_file(&tmp);
@@ -318,6 +322,30 @@ mod tests {
         std::fs::remove_dir(dir).unwrap();
     }
 
+    /// compact_keep_newest must remove tmp on write failure (same as write_history_file).
+    #[cfg(windows)]
+    #[test]
+    fn compact_keep_newest_failure_removes_tmp() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("remova-r23-history-compact-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("history.jsonl");
+        std::fs::write(&path, "{\"id\":\"L1\"}\n{\"id\":\"L2\"}\n").unwrap();
+        let tmp = path.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, "old partial").unwrap();
+        // Deny write but allow delete so create/write fails and cleanup can remove tmp.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x4)
+            .open(&tmp)
+            .unwrap();
+        assert!(super::compact_keep_newest(&path, 1).is_err());
+        assert!(!tmp.exists());
+        drop(held);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn entry_serde_skips_id() {
         let e = super::HistoryEntry {
@@ -363,7 +391,7 @@ mod tests {
         assert_eq!(super::next_line_id(&mut fresh, "{\"app_name\":\"a\"}"), a0);
     }
 
-    /// REV-SUP-02: streaming compact keeps only the newest N non-empty lines.
+    /// streaming compact keeps only the newest N non-empty lines.
     #[test]
     fn compact_keep_newest_keeps_tail() {
         let tmp = std::env::temp_dir().join(format!("remova_hist_c_{}", std::process::id()));
@@ -416,7 +444,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// R21-SUP-07: a torn non-UTF-8 row must survive delete rewrites untouched.
+    /// a torn non-UTF-8 row must survive delete rewrites untouched.
     #[test]
     fn delete_preserves_non_utf8_lines() {
         let tmp = std::env::temp_dir().join(format!("remova_hist_nu_{}", std::process::id()));

@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-// REV-FE-09: single source for the monitor DTO — no component-local duplicate.
+// single source for the monitor DTO — no component-local duplicate.
 import type { MonitorDiff } from "../lib/api";
 
 export function MonitorPanel({

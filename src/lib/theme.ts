@@ -41,7 +41,7 @@ export function applyTheme(theme: Theme) {
     root.style.setProperty("--danger-soft", "rgba(248,113,113,.12)");
     root.style.setProperty("--warn", "#FBBF24");
     root.style.setProperty("--ok", "#4ADE80");
-    // Text-grade tokens: small-size text needs >=4.5:1 on light panels (R23-UX-03/04).
+    // Text-grade tokens: small-size text needs >=4.5:1 on light panels (/04).
     root.style.setProperty("--warn-ink", "#FBBF24");
     root.style.setProperty("--ok-ink", "#4ADE80");
     root.style.setProperty("--accent-text", "#60A5FA");

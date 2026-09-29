@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// REV-QA-02: money-path orchestration — confirm pipeline + busyRef gate.
+// money-path orchestration — confirm pipeline + busyRef gate.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { FullCleanupReport, InstalledApp, ScanResult } from "../types";

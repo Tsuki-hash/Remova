@@ -55,7 +55,7 @@ export function sourceLabel(source: string, L: { sourceHkcu: string; sourceHklm6
 export type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
 
 /**
- * RemovaError IPC uses `code::message`. Only known domain prefixes qualify (F-R6-09)
+ * RemovaError IPC uses `code::message`. Only known domain prefixes qualify (-09)
  * so strings like `PACKAGED::HKLM\...::Evil` or `error: foo::bar` are not misparsed.
  */
 const IPC_CODE_PREFIXES = [
@@ -117,7 +117,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errCleanupFailed(name || code);
     }
     if (code.startsWith("ai:")) {
-      // REV-SUP-05: backend now passes the underlying cause in the `::` tail —
+      // backend now passes the underlying cause in the `::` tail —
       // map the common ones to actionable text instead of one generic string.
       const d = name.toLowerCase();
       if (d.includes("api key empty")) return L.aiErrKeyEmpty;

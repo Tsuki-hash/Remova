@@ -7,7 +7,7 @@ use super::preview::run_cleanup_dry_for_app_source;
 use super::uninstall::run_official_uninstall;
 use super::{cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail};
 
-/// Process-wide lock so batch + manual cleanup cannot race PATH/backup (S-08).
+/// Process-wide lock so batch + manual cleanup cannot race PATH/backup ().
 static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Stage 1: restore point + Safety Vault backup.
@@ -35,7 +35,7 @@ fn try_backup_phase(
         restore_point_ok = rp_ok;
         restore_point_msg = rp_msg;
     }
-    // Backup session is optional (product opt-in). Restore point stays decoupled (S-R4-05).
+    // Backup session is optional (product opt-in). Restore point stays decoupled ().
     if !opts.backup_enabled {
         return BackupOutcome::Ready {
             backup_dir: String::new(),
@@ -100,7 +100,7 @@ fn try_backup_phase(
     }
 }
 
-/// Full scheduled-task name from a TaskCache\Tree registry path (S-R4-11).
+/// Full scheduled-task name from a TaskCache\Tree registry path ().
 pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     let low = reg_path.replace('/', "\\");
     let marker = r"\TaskCache\Tree\";
@@ -124,7 +124,7 @@ struct DeleteOutcome {
 }
 
 /// Windows reparse point (junction/symlink) — refuse delete-through (TOCTOU).
-/// Shared with backup/restore copy paths via `fsutil` (REV-SEC-03).
+/// Shared with backup/restore copy paths via `fsutil` ().
 use crate::fsutil::is_reparse_point;
 
 fn delete_cleanup_items_source(
@@ -195,7 +195,7 @@ fn delete_cleanup_items_source(
                         format!("sc delete {svc}: failed or not found")
                     };
                 } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
-                    // S-R4-11: use full task path from TaskCache tree when possible.
+                    // use full task path from TaskCache tree when possible.
                     let tn = task_full_name_from_reg_path(&it.path);
                     let native_ok = crate::regops::schtasks_delete(&tn);
                     native_note = if native_ok {
@@ -265,7 +265,7 @@ fn delete_cleanup_items_source(
                     });
                     continue;
                 }
-                // REV-BE-05: recursive delete that refuses to walk child reparse points
+                // recursive delete that refuses to walk child reparse points
                 // (std remove_dir_all can follow a junction swapped after the root check).
                 let res = crate::fsutil::remove_tree_no_reparse(p);
                 match res {
@@ -381,7 +381,7 @@ pub fn run_full_cleanup(
         uninstall_message = official.message;
         uninstall_had_command = official.had_command;
     }
-    // S-R6-07: when a vendor uninstaller existed and failed, do not silently wipe leftovers —
+    // when a vendor uninstaller existed and failed, do not silently wipe leftovers —
     // the main program may still be half-installed. Force-clean / skip_official remains available.
     if uninstall_had_command && !uninstall_ok {
         return FullCleanupReport {

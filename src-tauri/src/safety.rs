@@ -20,7 +20,7 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "schedule",
         "spooler",
         "themes",
-        // Manage-path expansions (AR-02): core OS / security / session services.
+        // Manage-path expansions (): core OS / security / session services.
         "appinfo",
         "profsvc",
         "dcomlaunch",
@@ -96,7 +96,7 @@ pub fn is_allowed_run_key(key_path: &str) -> bool {
     ALLOWED.iter().any(|a| low == *a)
 }
 
-/// Unified write-policy for manage IPC (AR-06 light): critical service + startup-approved keys.
+/// Unified write-policy for manage IPC ( light): critical service + startup-approved keys.
 pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
     let n = name.trim();
     if n.is_empty() || n.contains('\\') || n.contains('/') {
@@ -105,7 +105,7 @@ pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
     if is_critical_service(n) {
         return Err(crate::error::manage_err("protected", n).to_ipc());
     }
-    // S-R4-09 / S-R6-08: Microsoft-family services (MSMQ, MsSqlServer, Microsoft*, MS *).
+    // / Microsoft-family services (MSMQ, MsSqlServer, Microsoft*, MS *).
     let low = n.to_lowercase();
     if low.starts_with("microsoft")
         || low.starts_with("ms ")
@@ -136,7 +136,7 @@ pub fn allow_manage_reg_write(
     Ok(())
 }
 
-/// REV-SEC-14: intrinsic write-target allowlist for registry value primitives.
+/// intrinsic write-target allowlist for registry value primitives.
 /// Covers every legitimate writer in the codebase — Uninstall roots (product
 /// metadata), Run/RunOnce + StartupApproved (startup management), per-service
 /// keys (start type) and Remova's own context-menu key — so a value write can
@@ -150,7 +150,7 @@ pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
         "HKCU\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
     ];
     const SERVICES_PREFIX: &str = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES\\";
-    // R21-SEC-07: require a path separator after the base key so sibling keys
+    // require a path separator after the base key so sibling keys
     // like `RemovaDeepUninstallX` are not treated as subkeys.
     const REMOVA_MENU_BASE: &str = "HKCU\\SOFTWARE\\CLASSES\\*\\SHELL\\REMOVADEEPUNINSTALL";
     if UNINSTALL_ROOTS
@@ -158,10 +158,21 @@ pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
         .any(|r| low == *r || low.starts_with(&format!("{r}\\")))
         || is_allowed_run_key(key_path)
         || is_allowed_startup_approved_key(key_path)
-        || (low.starts_with(SERVICES_PREFIX) && low.len() > SERVICES_PREFIX.len())
         || low == REMOVA_MENU_BASE
         || low.starts_with(&format!("{REMOVA_MENU_BASE}\\"))
     {
+        return Ok(());
+    }
+    // Services: intrinsic gate must refuse critical / Microsoft-family names
+    // even if a future caller skips `allow_manage_service_write`.
+    if low.starts_with(SERVICES_PREFIX) && low.len() > SERVICES_PREFIX.len() {
+        let leaf = registry_key_part(key_path)
+            .replace('/', "\\")
+            .rsplit('\\')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        allow_manage_service_write(&leaf)?;
         return Ok(());
     }
     Err(crate::error::safety_err(format!("registry write outside allowlist: {key_path}")).to_ipc())
@@ -180,12 +191,35 @@ fn normalize_hklm(key_path: &str) -> String {
     low
 }
 
+/// Registry paths may carry a trailing `|ValueName`. Gates that judge the key
+/// tree (protected prefixes, service names) must compare the key part only —
+/// otherwise `HKLM\SYSTEM|X` slips past `HKLM\SYSTEM` / `HKLM\SYSTEM\`.
+fn registry_key_part(key_path: &str) -> &str {
+    match key_path.rsplit_once('|') {
+        Some((key, _)) => key,
+        None => key_path,
+    }
+}
+
 /// Final gate for registry key/value paths (same shape as Python `is_safe_to_delete_registry`).
 pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     if key_path.trim().is_empty() {
         return Err(crate::error::safety_err("empty registry path").to_ipc());
     }
-    let low = normalize_hklm(key_path);
+    // Value-shaped `key|Value`: empty name never authorizes deleting the key.
+    // Tree rules below always judge the key part only (see `registry_key_part`).
+    let value_name = match key_path.rsplit_once('|') {
+        Some((_, val)) => {
+            if val.trim().is_empty() {
+                return Err(
+                    crate::error::safety_err("registry value name must not be empty").to_ipc(),
+                );
+            }
+            Some(val)
+        }
+        None => None,
+    };
+    let low = normalize_hklm(registry_key_part(key_path));
 
     let uninstall_roots = [
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
@@ -223,19 +257,17 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         return Err(crate::error::safety_err("services root protected").to_ipc());
     }
     if let Some(rest) = low.strip_prefix(&format!("{services_root}\\")) {
-        if rest.is_empty() || rest.contains('\\') {
+        // `rest` is already the key part (value name stripped above).
+        if rest.contains('\\') {
             return Err(crate::error::safety_err("only top-level service keys allowed").to_ipc());
         }
-        // Value-shaped paths (`SERVICES\<name>|value`) arrive merged from
-        // delete_value — compare the key part, or the critical check is bypassed.
-        let key_part = rest.split('|').next().unwrap_or(rest);
-        if key_part.is_empty() {
+        if rest.is_empty() {
             // `Services\|Start` — no service named; never authorize.
             return Err(crate::error::safety_err("service key name must not be empty").to_ipc());
         }
         if critical_service_names()
             .iter()
-            .any(|n| key_part == n.to_uppercase())
+            .any(|n| rest == n.to_uppercase())
         {
             return Err(crate::error::safety_err("critical system service protected").to_ipc());
         }
@@ -256,7 +288,8 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     }
 
     // Run/RunOnce values: key|ValueName only, never the key itself.
-    // Empty ValueName (`…\Run|`) must NOT authorize deleting the whole Run key.
+    // Empty ValueName (`…\Run|`) must NOT authorize deleting the whole Run key
+    // (handled above). A value on a Run root is legal; the bare root is not.
     let run_roots = [
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUN",
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUNONCE",
@@ -265,21 +298,11 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUN",
         "HKCU\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUNONCE",
     ];
-    if let Some((key, val)) = key_path.rsplit_once('|') {
-        if val.trim().is_empty() {
-            return Err(crate::error::safety_err("registry value name must not be empty").to_ipc());
-        }
-        let key_low = normalize_hklm(key);
-        for root in run_roots {
-            if key_low == root {
-                return Ok(());
-            }
-        }
-        // Non-Run `key|Value` falls through to the same key-tree rules below
-        // (Uninstall|Name, App Paths|Name, …).
-    }
     for root in run_roots {
         if low == root {
+            if value_name.is_some() {
+                return Ok(());
+            }
             return Err(crate::error::safety_err("run root protected").to_ipc());
         }
     }
@@ -314,7 +337,7 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     let Some(s) = path_utf8_lower(p) else {
         return false;
     };
-    // S-R6-05: extended-length / 8.3 shapes must not slip past prefix matching.
+    // extended-length / 8.3 shapes must not slip past prefix matching.
     if is_abnormal_path_shape(&s) {
         return false;
     }
@@ -323,15 +346,15 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if trimmed.len() == 2 && trimmed.ends_with(':') {
         return false;
     }
-    // S-4: reject path traversal segments before any prefix comparison.
+    // reject path traversal segments before any prefix comparison.
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
-    // REV-SEC-04: absolute drive path only — no relative, no UNC/device shares.
+    // absolute drive path only — no relative, no UNC/device shares.
     if !p.has_root() || trimmed.starts_with("\\\\") {
         return false;
     }
-    // S-7B: exact Common Files roots are never deletable (vendor subpaths via policy association).
+    //exact Common Files roots are never deletable (vendor subpaths via policy association).
     if crate::shared::is_common_files_root(trimmed) {
         return false;
     }
@@ -348,7 +371,7 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
 
 /// Lowercased backslash form of a path, or `None` when not valid UTF-8 (fail-closed).
 fn path_utf8_lower(p: &std::path::Path) -> Option<String> {
-    // REV-SEC-12: Win32 strips trailing dots/spaces per segment — normalize before compare.
+    // Win32 strips trailing dots/spaces per segment — normalize before compare.
     // Keep `.` / `..` intact so traversal rejection still works.
     let s = p.to_str()?.replace('/', "\\").to_lowercase();
     Some(
@@ -376,14 +399,14 @@ fn env_dir_lower(name: &str) -> Option<String> {
     })
 }
 
-/// Protected FS prefixes: hardcoded C-drive defaults + live environment roots (AR-03).
+/// Protected FS prefixes: hardcoded C-drive defaults + live environment roots ().
 pub fn protected_fs_prefixes() -> Vec<String> {
     let mut out = vec![
         r"c:\windows".to_string(),
         r"c:\windows.old".to_string(),
         r"c:\programdata\microsoft".to_string(),
         r"c:\program files\windowsapps".to_string(),
-        // S-7B: protect Microsoft Shared subtree; Common Files vendor subpaths need association (policy).
+        //protect Microsoft Shared subtree; Common Files vendor subpaths need association (policy).
         r"c:\program files\common files\microsoft shared".to_string(),
         r"c:\program files (x86)\common files\microsoft shared".to_string(),
         r"c:\users\default".to_string(),
@@ -418,7 +441,7 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
-/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits (REV-SEC-11).
+/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits ().
 fn is_83_short_segment(seg: &str) -> bool {
     let low = seg.to_ascii_lowercase();
     let base = low.split('.').next().unwrap_or(low.as_str());
@@ -466,7 +489,7 @@ pub fn is_safe_fs_for_delete(p: &std::path::Path) -> bool {
 
 /// Restore target gate: write-back must not hit library roots, sync-conflict trees, or
 /// protected system prefixes. Unlike delete, 8.3 profile names (`Users\RUNNER~1\…`) are
-/// legitimate restore destinations (S-R6-03 + CI temp homes).
+/// legitimate restore destinations ( + CI temp homes).
 pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     let Some(s) = p.to_str().map(|s| s.to_string()) else {
         // Non-UTF-8 destinations never restore (no lossy compare).
@@ -496,7 +519,7 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
-    // R23-SEC-03: absolute drive paths only — no relative targets, no UNC,
+    // absolute drive paths only — no relative targets, no UNC,
     // not even drive-relative backslash-led forms (`\srv`, same rule as
     // the delete gate enforces via `is_safe_fs`).
     if !p.has_root() || trimmed.starts_with('\\') {
@@ -506,7 +529,7 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     if trimmed.len() == 2 && trimmed.ends_with(':') {
         return false;
     }
-    // S-R7-02: match system roots on the normalized path (drive + suffix).
+    // match system roots on the normalized path (drive + suffix).
     // A bare `\windows` prefix never matches `c:\windows\...` — strip the drive first.
     let after_drive = trimmed
         .split_once(':')
@@ -610,7 +633,7 @@ pub fn is_user_library_path(p: &str) -> bool {
 }
 
 /// Sync-conflict style folders often hold real user files.
-/// S-R6-11: segment-aware — a bare `conflict` substring (`MyConflictApp`) must not match.
+/// segment-aware — a bare `conflict` substring (`MyConflictApp`) must not match.
 pub fn looks_like_sync_conflict(p: &str) -> bool {
     let low = normalize_path_segments(p);
     if low.contains("同步冲突") {
@@ -649,7 +672,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// REV-SEC-14: registry value primitives may only write inside the allowlist.
+    /// registry value primitives may only write inside the allowlist.
     #[test]
     fn reg_value_write_allowlist() {
         // Allowed shapes.
@@ -674,7 +697,7 @@ mod tests {
         assert!(
             allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall").is_ok()
         );
-        // R21-SEC-07: sibling keys must not ride the Remova menu prefix.
+        // sibling keys must not ride the Remova menu prefix.
         assert!(
             allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX").is_err()
         );
@@ -692,6 +715,56 @@ mod tests {
         assert!(allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services").is_err());
         assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool").is_err());
         assert!(allow_reg_value_write("").is_err());
+    }
+
+    /// Protected roots accept value deletes only when the key part is judged.
+    /// `HKLM\SYSTEM|X` must fail the prefix gate the same way `HKLM\SYSTEM` does.
+    #[test]
+    fn reg_delete_gate_blocks_protected_root_value_shapes() {
+        for path in [
+            r"HKLM\SYSTEM|X",
+            r"HKLM\SYSTEM|MachineGuid",
+            r"HKLM\SECURITY|X",
+            r"HKLM\SAM|X",
+            r"HKLM\HARDWARE|X",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography|MachineGuid",
+            r"HKLM\SOFTWARE\Microsoft\Windows|X",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion|X",
+            r"HKCU\SOFTWARE\Microsoft\Windows|X",
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion|X",
+        ] {
+            assert!(
+                is_safe_to_delete_registry(path).is_err(),
+                "protected root value must be refused: {path}"
+            );
+        }
+        // Uninstall product values remain legal (existing contract).
+        assert!(is_safe_to_delete_registry(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{ABC}|QuietUninstallString"
+        )
+        .is_ok());
+    }
+
+    /// Intrinsic write allowlist must refuse critical services even when a
+    /// future caller skips `allow_manage_service_write`.
+    #[test]
+    fn reg_value_write_blocks_critical_services() {
+        for key in [
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\WinDefend",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\Winmgmt",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\DcomLaunch",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\TrustedInstaller",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\MicrosoftEdgeUpdate",
+        ] {
+            assert!(
+                allow_reg_value_write(key).is_err(),
+                "critical/Microsoft service write must be refused: {key}"
+            );
+        }
+        // Non-critical vendor service still allowed.
+        assert!(
+            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc").is_ok()
+        );
     }
 
     /// Value-shaped `Services|value` paths must not bypass the critical list.
@@ -832,7 +905,7 @@ mod tests {
             r"C:\Program Files (x86)\Common Files"
         )));
         assert!(!is_safe_fs(Path::new(r"C:\Users\Public\Documents")));
-        // S-7B: Microsoft Shared subtree still protected; bare vendor CF dir is not FS-protected.
+        //Microsoft Shared subtree still protected; bare vendor CF dir is not FS-protected.
         assert!(!is_safe_fs(Path::new(
             r"C:\Program Files\Common Files\Microsoft Shared\X"
         )));
@@ -932,7 +1005,7 @@ mod tests {
     fn manage_policy_helpers() {
         assert!(allow_manage_service_write("WinDefend").is_err());
         assert!(allow_manage_service_write("DemoVendorHelper").is_ok());
-        // S-R4-09: Microsoft-prefixed services are write-protected even if not critical.
+        // Microsoft-prefixed services are write-protected even if not critical.
         assert!(allow_manage_service_write("MicrosoftEdgeUpdate").is_err());
         assert!(allow_manage_service_write("microsoft some svc").is_err());
         assert!(allow_manage_reg_write(r"HKLM\SOFTWARE\Evil\Config", false).is_err());
@@ -991,7 +1064,7 @@ mod tests {
         let root = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         assert!(is_safe_to_delete_registry(root).is_err());
         assert!(is_safe_to_delete_registry(&format!("{root}|DemoApp")).is_ok());
-        // S-R6-02: empty value name must not authorize deleting the whole key.
+        // empty value name must not authorize deleting the whole key.
         assert!(is_safe_to_delete_registry(&format!("{root}|")).is_err());
         assert!(is_safe_to_delete_registry(&format!("{root}| ")).is_err());
         let run_root = r"HKCU\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN";
@@ -1022,7 +1095,7 @@ mod tests {
         assert!(!super::is_user_data_path(r"C:\Program Files\App\bin.exe"));
     }
 
-    /// R22-SEC-01: Win32 strips per-segment trailing dots/spaces when resolving —
+    /// Win32 strips per-segment trailing dots/spaces when resolving —
     /// the red-line comparisons must judge the normalized segments, not raw ones.
     #[test]
     fn user_data_red_line_survives_trailing_dot_segments() {
@@ -1053,7 +1126,7 @@ mod tests {
             r"C:\Users\a\Documents\坚果云同步冲突"
         ));
         assert!(!super::looks_like_sync_conflict(r"C:\ProgramData\App"));
-        // S-R6-11: bare `conflict` substring must not match ordinary product names.
+        // bare `conflict` substring must not match ordinary product names.
         assert!(!super::looks_like_sync_conflict(
             r"C:\Program Files\MyConflictApp"
         ));
@@ -1070,7 +1143,7 @@ mod tests {
 
     #[test]
     fn abnormal_path_shape_rejected() {
-        // S-R6-05: extended-length / 8.3 shapes cannot enter safe / non-user-data results.
+        // extended-length / 8.3 shapes cannot enter safe / non-user-data results.
         assert!(super::is_abnormal_path_shape(r"\\?\C:\Program Files\App"));
         assert!(super::is_abnormal_path_shape(r"\\.\C:\Program Files\App"));
         assert!(super::is_abnormal_path_shape(r"C:\PROGRA~1\App"));
@@ -1124,7 +1197,7 @@ mod tests {
         assert!(super::is_user_data_path(r"\\?\C:\Users\Aaron\Documents"));
     }
 
-    /// S-R7-02 adversarial: tampered path_map targeting system prefixes must be refused.
+    ///  adversarial: tampered path_map targeting system prefixes must be refused.
     #[test]
     fn adversarial_restore_target_rejects_system_prefixes() {
         use std::path::Path;
@@ -1229,7 +1302,7 @@ mod tests {
             r"C:\Users\a\Documents\App\file.txt"
         ));
     }
-    /// R23-SEC-03: restore targets must be absolute drive paths — relative and
+    /// restore targets must be absolute drive paths — relative and
     /// UNC shapes were previously accepted by the string gate.
     #[test]
     fn restore_target_refuses_relative_and_unc() {

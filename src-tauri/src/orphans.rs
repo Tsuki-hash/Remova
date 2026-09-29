@@ -1,4 +1,4 @@
-//! Orphan leftover directory scan (P2-2) —no matching installed app.
+//! Orphan leftover directory scan (-2) —no matching installed app.
 
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel, SCORE_SUSPECTED_MIN};
@@ -70,7 +70,7 @@ fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
     Some(age as i64)
 }
 
-/// Path prefix with segment boundary (REV-BE-06): `C:\App` must not own `C:\AppEvil`.
+/// Path prefix with segment boundary (): `C:\App` must not own `C:\AppEvil`.
 fn path_same_or_under(a: &str, b: &str) -> bool {
     let a = a.trim_end_matches('\\');
     let b = b.trim_end_matches('\\');
@@ -92,7 +92,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     for app in installed {
         let loc = app.install_location.replace('/', "\\").to_lowercase();
         let loc_trim = loc.trim_end_matches('\\');
-        // R23-BE-11: a broken InstallLocation of a drive root (`C:` / `C:\`)
+        // a broken InstallLocation of a drive root (`C:` / `C:\`)
         // must not claim every path on that drive — require a real depth.
         let rooted = loc_trim.split('\\').filter(|s| !s.is_empty()).count() >= 2;
         if rooted && path_same_or_under(&d, loc_trim) {
@@ -102,7 +102,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
             continue;
         }
         let tokens = slug_tokens(&app.name);
-        // R23-BE-13: boundary-anchored like the install-path side — `Notepad`
+        // boundary-anchored like the install-path side — `Notepad`
         // must not claim `NotepadPlusPlus`.
         if tokens
             .iter()
@@ -115,7 +115,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
 }
 
 pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
-    // REV-BE-14: load ignore rules once (was per candidate in the loop).
+    // load ignore rules once (was per candidate in the loop).
     let ignore = crate::ignore::load();
     let mut roots: Vec<std::path::PathBuf> = vec![];
     for env in [
@@ -140,7 +140,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             let name = e.file_name().to_string_lossy().to_string();
-            // skip obvious system / installer cache folders (FUNC-8)
+            // skip obvious system / installer cache folders ()
             if matches!(
                 name.to_lowercase().as_str(),
                 "windows"
@@ -168,7 +168,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
             if match_installed(installed, &p) {
                 continue;
             }
-            // AR-04: honor ignore path rules for orphan candidates.
+            // honor ignore path rules for orphan candidates.
             if crate::ignore::should_skip_leftover_path(&ignore, &p.to_string_lossy()) {
                 continue;
             }
@@ -253,7 +253,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
     out
 }
 
-/// Server-side allow-list of paths from the latest `scan_orphans` (S-R6-01).
+/// Server-side allow-list of paths from the latest `scan_orphans` ().
 static ORPHAN_PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
     std::sync::OnceLock::new();
 
@@ -261,7 +261,7 @@ fn orphan_paths() -> &'static std::sync::Mutex<std::collections::HashSet<String>
     ORPHAN_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
-/// F-R7-02: normalize allow-list keys so case / trailing `\` / slash style cannot bypass.
+/// -02: normalize allow-list keys so case / trailing `\` / slash style cannot bypass.
 fn normalize_orphan_key(path: &str) -> String {
     path.replace('/', "\\")
         .trim()
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn match_installed_requires_path_segment_boundary() {
         let installed = [app("App", r"C:\Program Files\App")];
-        // Sibling that merely shares a string prefix must not match (REV-BE-06).
+        // Sibling that merely shares a string prefix must not match ().
         let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
         assert!(!match_installed(&installed, evil));
         let child = std::path::Path::new(r"C:\Program Files\App\bin");
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn orphan_allow_list_normalizes_case_and_trailing_slash() {
-        // F-R7-02: case / trailing `\` / slash style must not bypass the allow-list.
+        // -02: case / trailing `\` / slash style must not bypass the allow-list.
         use std::collections::HashSet;
         let mut set = HashSet::new();
         set.insert(r"C:\Program Files\SomeVendor\App".to_string());

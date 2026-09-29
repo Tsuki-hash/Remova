@@ -2,7 +2,7 @@
 import { dict as zhDict } from "./zh";
 
 /**
- * REV-FE-08: en must expose the same keys and function arities as zh.
+ * en must expose the same keys and function arities as zh.
  * String literals are widened so translations may differ in wording.
  */
 type EnDict = {

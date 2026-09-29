@@ -101,7 +101,7 @@ fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(not(windows))]
 fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
-    // REV-SEC-10: no DPAPI off-Windows — never accept forged plaintext seals.
+    // no DPAPI off-Windows — never accept forged plaintext seals.
     let _ = blob;
     Err("seal:unprotect_failed".into())
 }
@@ -113,7 +113,7 @@ fn seals_root() -> PathBuf {
             return p.clone();
         }
     }
-    // R23-SEC-08: compile-time test-only (see backup_root).
+    // compile-time test-only (see backup_root).
     #[cfg(test)]
     {
         if let Ok(v) = std::env::var("REMOVA_SEALS_DIR") {
@@ -233,7 +233,7 @@ pub fn write_seal(
     let blob: Vec<u8> = return Err("seal:windows_required".into());
     let dir = seals_root();
     let _pins = crate::fsutil::create_dirs_pinned(&dir).map_err(|e| e.to_string())?;
-    // R23-SEC-05: tmp + rename — a torn seal fails closed and is unusable.
+    // tmp + rename — a torn seal fails closed and is unusable.
     let target = seal_path(&name);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -372,7 +372,7 @@ pub fn collect_reg_digests(session: &Path) -> Result<BTreeMap<String, String>, S
     }
 }
 
-/// R21-SEC-08: true when this export may proceed to form validation.
+/// true when this export may proceed to form validation.
 /// - Missing/legacy/empty inventory → refuse.
 /// - Seal records this file → digest must match.
 /// - Seal has `reg_digests` but omits this file → refuse (fail closed).
@@ -481,7 +481,7 @@ mod tests {
         });
     }
 
-    /// R21-SEC-08: registry export digests bind .reg bytes into the seal.
+    /// registry export digests bind .reg bytes into the seal.
     #[test]
     fn reg_export_digest_roundtrip_and_tamper() {
         with_seals_dir(|| {

@@ -1,4 +1,4 @@
-/** Rescan after official uninstall (FN-04). Default ON; user can turn off. */
+/** Rescan after official uninstall (). Default ON; user can turn off. */
 const KEY = "remova_rescan_after_uninstall";
 
 export function loadRescanAfterUninstall(): boolean {

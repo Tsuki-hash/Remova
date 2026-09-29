@@ -94,7 +94,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 continue;
             }
             let dest = PathBuf::from(&original);
-            // REV-SEC-02: protected / unsafe destinations skip + warn — never abort sibling entries.
+            // protected / unsafe destinations skip + warn — never abort sibling entries.
             if original.trim().is_empty()
                 || !crate::safety::is_safe_restore_target(&dest)
                 || crate::safety::looks_like_sync_conflict(original)
@@ -102,7 +102,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped protected restore target: {original}"));
                 continue;
             }
-            // REV-SEC-01: every write-back target requires a matching out-of-session seal
+            // every write-back target requires a matching out-of-session seal
             // (not only library subpaths) — a tampered path_map must not widen destinations.
             if !seal
                 .targets
@@ -111,7 +111,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped unsealed restore target: {original}"));
                 continue;
             }
-            // REV-SEC-03: refuse copy-through of junction/mount reparse points.
+            // refuse copy-through of junction/mount reparse points.
             if crate::fsutil::is_reparse_point(&src) {
                 messages.push(format!("skipped reparse backup entry: {rel}"));
                 continue;
@@ -249,7 +249,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 /// Case-/slash-insensitive directory identity check (requested parent vs the
 /// by-handle resolved path). Trailing separators and `\\?\` shapes normalize.
 fn same_dir_path(a: &str, b: &Path) -> bool {
-    // R23-SEC-04: Win32 strips per-segment trailing dots/spaces when resolving,
+    // Win32 strips per-segment trailing dots/spaces when resolving,
     // and an 8.3 short-name request resolves to its LONG name by handle —
     // normalize segments and fall back to the OS long form before declaring a
     // redirect, or every `Users\RUNNER~1\...` restore is skipped.
@@ -274,7 +274,7 @@ fn same_dir_path(a: &str, b: &Path) -> bool {
     }
 }
 
-/// AR-05: within one backup entry directory, prefer the single-value
+/// within one backup entry directory, prefer the single-value
 /// `value.reg` over the whole-key `export.reg`. A directory-shaped decoy is
 /// not a target (only real files restore).
 pub(crate) fn pick_import_target(entry_dir: &Path) -> Option<PathBuf> {
@@ -314,7 +314,7 @@ fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     String::from_utf8(raw).map_err(|e| e.to_string())
 }
 
-/// Parse `.reg` text and enforce the key-shape whitelist (S-R7-03).
+/// Parse `.reg` text and enforce the key-shape whitelist ().
 fn reg_content_allowed(raw: &str) -> Result<(), String> {
     let mut saw_header = false;
     let mut current_key: Option<String> = None;
@@ -372,7 +372,7 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
                 current_key = Some(reg_hive_to_remova(body)?);
             }
             let key_ref = current_key.as_deref().unwrap_or("");
-            // Run/RunOnce roots are value-level restore targets only (AR-05).
+            // Run/RunOnce roots are value-level restore targets only ().
             current_is_run = !key_ref.contains('|') && crate::safety::is_allowed_run_key(key_ref);
             continue;
         }
@@ -446,7 +446,7 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 
 /// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else User only.
 fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
-    // R23-SEC-02: a tampered `scopes` field must not unlock the system PATH —
+    // a tampered `scopes` field must not unlock the system PATH —
     // Machine scope is honored only when the recorded snapshot actually
     // contained the entry in the Machine value.
     let machine_ok = crate::regops::path_contains_entry(&item.machine_path, &item.entry);
@@ -467,7 +467,7 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
         out.push("Machine".into());
     }
     if out.is_empty() {
-        // S-R4-10: never silently write Machine PATH when backup has no scope evidence.
+        // never silently write Machine PATH when backup has no scope evidence.
         out.push("User".into());
     }
     out
@@ -520,7 +520,7 @@ pub struct SessionInfo {
 }
 
 fn dir_size_kb(p: &Path) -> u64 {
-    // Q-B12: bounded, reparse-safe walk — a huge or junction-planted session
+    // bounded, reparse-safe walk — a huge or junction-planted session
     // must not turn the listing path into an unbounded traversal.
     crate::dirsize::walk_size_kb_limited(p).unwrap_or(0)
 }
@@ -710,7 +710,7 @@ mod tests {
         assert!(removed >= 1);
         assert!(!old.exists());
         assert!(fresh.exists());
-        // Do not remove_var here (NEW-B): the guard serializes env access; the
+        // Do not remove_var here (): the guard serializes env access; the
         // process exits after the suite and no other test needs the default root.
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -738,7 +738,7 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        // REV-SEC-01: every write-back needs a seal (same as production backup path).
+        // every write-back needs a seal (same as production backup path).
         crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         // restore overwrites orig from backup
         let msgs = restore_session(&sess).unwrap();
@@ -748,7 +748,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// REV-SEC-01: missing seal skips the entry (partial restore), never silently writes.
+    /// missing seal skips the entry (partial restore), never silently writes.
     #[test]
     fn restore_skips_unsealed_library_target() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_seal_{}", std::process::id()));
@@ -816,7 +816,7 @@ mod tests {
             user_path: String::new(),
             machine_path: String::new(),
         };
-        // S-R4-10: no evidence → User only.
+        // no evidence → User only.
         assert_eq!(super::path_restore_scopes(&none), vec!["User".to_string()]);
     }
 
@@ -870,7 +870,7 @@ mod tests {
         assert!(crate::restore::delete_session_by_name("20260922-abc").is_err());
     }
 
-    // S-R7-03: `.reg` import key-shape whitelist.
+    // `.reg` import key-shape whitelist.
     #[test]
     fn reg_import_allows_uninstall_and_run_values() {
         let uninstall = "Windows Registry Editor Version 5.00\r\n\r\n\
@@ -907,7 +907,7 @@ mod tests {
         assert!(super::reg_content_allowed(no_hdr).is_err());
     }
 
-    /// R22-SEC-02: `"Name"=-` / `@=-` are value deletions — a Run root must
+    /// `"Name"=-` / `@=-` are value deletions — a Run root must
     /// not pass the value-write gate by carrying one.
     #[test]
     fn reg_import_rejects_value_delete_lines_on_run_root() {
@@ -931,7 +931,7 @@ mod tests {
         assert!(super::reg_content_allowed(plain).is_err());
     }
 
-    /// AR-05 target selection: value.reg preferred, export.reg fallback,
+    ///  target selection: value.reg preferred, export.reg fallback,
     /// directories never count.
     #[test]
     fn pick_import_target_prefers_value_reg() {
@@ -960,7 +960,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    // S-R7-05: empty scopes must not silently write Machine PATH.
+    // empty scopes must not silently write Machine PATH.
     #[test]
     fn restore_path_entry_empty_scopes_writes_user_only() {
         let _lock = crate::regops::path_mock::lock_mock();
@@ -985,8 +985,8 @@ mod tests {
         crate::regops::path_mock::clear();
     }
 
-    // S-R7-01 / S-R7-02 adversarial: tampered path_map must not write system dirs.
-    // REV-SEC-02: protected targets skip + warn — the session still returns Ok (partial).
+    // /  adversarial: tampered path_map must not write system dirs.
+    // protected targets skip + warn — the session still returns Ok (partial).
     #[test]
     fn restore_skips_tampered_path_map_system_targets() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_adv_{}", std::process::id()));
@@ -1007,7 +1007,7 @@ mod tests {
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }
-    /// R23-SEC-02: a recorded Machine scope without snapshot evidence must not
+    /// a recorded Machine scope without snapshot evidence must not
     /// unlock the system PATH — it degrades to the evidence-based fallback.
     #[test]
     fn path_restore_scopes_machine_requires_evidence() {
@@ -1046,7 +1046,7 @@ mod tests {
         );
     }
 
-    /// R23-SEC-04: short-name requests and trailing-dot segments must not be
+    /// short-name requests and trailing-dot segments must not be
     /// misread as redirects. Vacuous when the volume has 8.3 generation off.
     #[cfg(windows)]
     #[test]

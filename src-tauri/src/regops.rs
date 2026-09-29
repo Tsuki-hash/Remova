@@ -29,7 +29,7 @@ use crate::fsutil::to_wide;
 /// Delete registry key tree. Caller must have run safety checks.
 /// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
 /// Parent needs DELETE + enumerate/query/set rights (MSDN RegDeleteTreeW).
-/// S-R6-06: intrinsic secondary gate — protected registry trees are refused here even if
+/// intrinsic secondary gate — protected registry trees are refused here even if
 /// the caller skipped `is_safe_to_delete_registry`.
 pub fn delete_key(key_path: &str) -> Result<(), String> {
     if let Err(e) = crate::safety::is_safe_to_delete_registry(key_path) {
@@ -82,7 +82,7 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
 }
 
 /// Delete a value under `key` (Run|Name).
-/// S-R7-04: intrinsic secondary gate — protected registry trees/values are refused here
+/// intrinsic secondary gate — protected registry trees/values are refused here
 /// even if the caller skipped `is_safe_to_delete_registry`.
 pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
     let combined = if value_name.trim().is_empty() {
@@ -126,7 +126,7 @@ pub fn split_value_path(path: &str) -> Option<(&str, &str)> {
     Some((&path[..i], &path[i + 1..]))
 }
 
-/// System32 absolute path for a tool (SEC-4: avoid PATH hijack).
+/// System32 absolute path for a tool (avoid PATH hijack).
 pub fn sys_tool(name: &str) -> String {
     let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     format!(r"{windir}\System32\{name}")
@@ -265,9 +265,9 @@ pub fn merge_path_entry(path_value: &str, entry: &str) -> Option<String> {
 
 /// Restore one PATH segment into the given scopes when missing (Safety Vault).
 /// Returns Ok(true) if at least one scope was updated.
-/// S-R7-05: empty scopes restore to User only — never silently write Machine PATH.
+/// empty scopes restore to User only — never silently write Machine PATH.
 pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> {
-    // R23-SEC-02: symmetric gate with scrub_path_entry — the entry comes from
+    // symmetric gate with scrub_path_entry — the entry comes from
     // the session's user-writable path.json and must never be a dangerous one.
     if crate::policy::is_dangerous_path_entry(entry) {
         return Err("protected PATH entry".into());
@@ -292,7 +292,7 @@ pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> 
     Ok(changed)
 }
 
-/// Export a single registry value to a .reg file (AR-05 value-level restore).
+/// Export a single registry value to a .reg file ( value-level restore).
 /// `key_path` uses Remova aliases (HKCU / HKLM64 / HKLM32). Best-effort: Ok(false) if missing.
 pub fn export_reg_value(
     key_path: &str,
@@ -310,7 +310,7 @@ pub fn export_reg_value(
     let (alias, rest) = key_path
         .split_once('\\')
         .ok_or_else(|| "bad key".to_string())?;
-    // REV-SEC-07: key rest is interpolated into `[...]` — reject injection chars.
+    // key rest is interpolated into `[...]` — reject injection chars.
     if rest.is_empty() || rest.contains(['\r', '\n', ']']) {
         return Err("unsafe key path".into());
     }
@@ -336,7 +336,7 @@ pub fn export_reg_value(
     let key_reg = format!("[{key_win}]");
     let body = match reg_type.as_str() {
         "REG_DWORD" => {
-            // data like 0x2 — REV-SEC-07: parse failure must not silently become 0.
+            // data like 0x2 — parse failure must not silently become 0.
             let n = u32::from_str_radix(data_raw.trim_start_matches("0x"), 16)
                 .or_else(|_| data_raw.trim().parse::<u32>())
                 .map_err(|_| format!("export_reg_value: bad DWORD data '{data_raw}'"))?;
@@ -442,7 +442,7 @@ static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Remove one PATH segment from User and Machine environments (exact match only).
 /// Returns Ok(true) if at least one scope changed.
-/// S-R6-06: intrinsic secondary gate — system PATH segments are refused here even if
+/// intrinsic secondary gate — system PATH segments are refused here even if
 /// the caller skipped `is_dangerous_path_entry`.
 pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
     if crate::policy::is_dangerous_path_entry(entry) {
@@ -504,7 +504,7 @@ fn powershell_exe() -> String {
     format!(r"{windir}\System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
-/// Test-only PATH I/O mock (S-08): production path is untouched when inactive.
+/// Test-only PATH I/O mock (): production path is untouched when inactive.
 #[cfg(test)]
 pub(crate) mod path_mock {
     use std::collections::HashMap;
@@ -575,7 +575,7 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
             return path_mock::read(scope);
         }
     }
-    // R21-BE-07: read Path straight from the registry — no PowerShell round-trip
+    // read Path straight from the registry — no PowerShell round-trip
     // (was two processes per analyze) and no OEM-codepage `from_utf8_lossy`
     // corruption of non-ASCII PATH entries.
     let key = match scope {
@@ -588,7 +588,7 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
 }
 
 /// Read the Path value (REG_SZ or REG_EXPAND_SZ) as Unicode text.
-/// `%VAR%` is expanded only for REG_EXPAND_SZ (R21-BE-07).
+/// `%VAR%` is expanded only for REG_EXPAND_SZ ().
 fn read_reg_path_value(key_path: &str) -> Result<String, String> {
     #[cfg(not(windows))]
     {
@@ -620,7 +620,7 @@ fn read_reg_path_value(key_path: &str) -> Result<String, String> {
                 Some(&mut data_len),
             );
             if st == ERROR_MORE_DATA {
-                // R23-SEC-10: re-query with the reported size — long PATH
+                // re-query with the reported size — long PATH
                 // values must not fail the whole chain.
                 let need = data_len as usize;
                 if need > data.len() && need <= (1 << 20) {
@@ -726,7 +726,7 @@ pub fn leaf_name(path: &str) -> String {
 
 /// Rename a registry value (copy data + delete old) under `key`.
 pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
-    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    // intrinsic target gate — callers gate too, primitives enforce last.
     crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
@@ -808,7 +808,7 @@ fn normalize_reg_exe_hive(key_path: &str) -> String {
 }
 
 pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
-    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    // intrinsic target gate — callers gate too, primitives enforce last.
     crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
@@ -846,7 +846,7 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
 
 /// Write REG_BINARY under `key_path` (creates key tree via `reg add` fallback).
 pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result<(), String> {
-    // REV-SEC-14: intrinsic target gate — callers gate too, primitives enforce last.
+    // intrinsic target gate — callers gate too, primitives enforce last.
     crate::safety::allow_reg_value_write(key_path)?;
     #[cfg(not(windows))]
     {
@@ -896,14 +896,18 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
 }
 
 /// Write service Start DWORD (2=auto, 3=manual, 4=disabled).
-///
 /// Errors use stable codes for the UI:
 /// `manage:access_denied:<name>` | `manage:open_failed:<name>` | `manage:write_failed:<name>`
 pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
-    // REV-SEC-14: intrinsic gate — service names are single leaves under Services.
+    // intrinsic gate — service names are single leaves under Services.
     let name = svc_name.trim();
     if name.is_empty() || name.contains('\\') || name.contains('/') || name.contains("..") {
         return Err(format!("manage:bad_name:{svc_name}"));
+    }
+    // Defense in depth: never start-type-write a critical service even if a
+    // future caller routes around `allow_manage_service_write`.
+    if crate::safety::is_critical_service(name) {
+        return Err(format!("manage:protected:{svc_name}"));
     }
     crate::safety::allow_reg_value_write(&format!(
         r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"
@@ -1005,7 +1009,7 @@ mod tests {
 
     #[test]
     fn scrub_uses_exact_segment_match() {
-        // SEC-1: C:\Python3 must not equal C:\Python312
+        // C:\Python3 must not equal C:\Python312
         let a = super::normalize_path_entry(r"C:\Python3");
         let b = super::normalize_path_entry(r"C:\Python312");
         let c = super::normalize_path_entry(r"C:\Python3\Scripts");
@@ -1016,7 +1020,7 @@ mod tests {
 
     #[test]
     fn delete_key_intrinsic_gate_blocks_protected() {
-        // S-R6-06: write primitive refuses protected trees even without caller checks.
+        // write primitive refuses protected trees even without caller checks.
         assert!(super::delete_key(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend").is_err());
         assert!(super::delete_key(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").is_err());
         assert!(
@@ -1026,14 +1030,14 @@ mod tests {
 
     #[test]
     fn scrub_path_entry_intrinsic_gate_blocks_system() {
-        // S-R6-06: PATH scrub refuses system segments even without caller checks.
+        // PATH scrub refuses system segments even without caller checks.
         assert!(super::scrub_path_entry(r"C:\Windows\System32").is_err());
         assert!(super::scrub_path_entry(r"C:\Windows").is_err());
     }
 
     #[test]
     fn delete_value_intrinsic_gate_blocks_protected() {
-        // S-R7-04: value delete refuses protected trees even without caller checks.
+        // value delete refuses protected trees even without caller checks.
         assert!(
             super::delete_value(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend", "Start")
                 .is_err()
@@ -1114,7 +1118,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// R22-QA-02: registry-native PATH read — pure pieces get direct coverage.
+    /// registry-native PATH read — pure pieces get direct coverage.
     /// `wstring_from_reg_data` decodes UTF-16LE and trims the trailing NUL.
     #[cfg(windows)]
     #[test]
@@ -1134,7 +1138,7 @@ mod tests {
         assert_eq!(crate::fsutil::wstring_from_reg_data(&[0x41, 0x00]), "A");
     }
 
-    /// R22-QA-02: `%VAR%` expansion used for REG_EXPAND_SZ Path values.
+    /// `%VAR%` expansion used for REG_EXPAND_SZ Path values.
     #[cfg(windows)]
     #[test]
     fn expand_env_string_expands_and_passes_through() {
@@ -1155,7 +1159,7 @@ mod tests {
         );
     }
 
-    /// R22-QA-02: real-registry integration check — `HKCU\Environment` Path
+    /// real-registry integration check — `HKCU\Environment` Path
     /// reads through the native code path (mock must be inactive). Opt-in via
     /// `cargo test -- --ignored` since stock machines may have no user Path.
     #[cfg(windows)]

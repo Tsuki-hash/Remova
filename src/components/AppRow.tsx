@@ -88,7 +88,7 @@ function RowMenu({
     setPos({ top, left, minWidth });
   }, [open, items.length]);
 
-  // R23-UX-09: shared focus management — open lands on the first item,
+  // shared focus management — open lands on the first item,
   // arrows roam, Escape restores focus to the trigger, outside click closes.
   usePopupMenu({
     open,

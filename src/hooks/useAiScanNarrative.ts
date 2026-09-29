@@ -17,7 +17,7 @@ type AiScanActions = {
 
 /**
  * AI leftover explanations + post-cleanup report narrative.
- * F-R7-03: extracted from App.tsx (race guards kept intact).
+ * -03: extracted from App.tsx (race guards kept intact).
  */
 export function useAiScanNarrative({
   scan,
@@ -51,7 +51,7 @@ export function useAiScanNarrative({
   aiActions: AiScanActions;
 }) {
   const aiExplainSeqRef = useRef(0);
-  // REV-FE-15: scan identity by content, not by name + item count — two scans
+  // scan identity by content, not by name + item count — two scans
   // of the same app with the same count but different paths must re-trigger.
   const scanId = useMemo(() => {
     if (!scan) return null;
@@ -93,10 +93,10 @@ export function useAiScanNarrative({
         .filter(Boolean)
         .join(" ");
       setAiSummaryNote(brief || null);
-      // REV-FE-05: empty explain is not "AI disabled" — say so.
+      // empty explain is not "AI disabled" — say so.
       if (!out.length) toast.info(L.aiEmptyResult);
     } catch (e) {
-      // REV-SUP-05: surface the mapped backend cause, not one generic string.
+      // surface the mapped backend cause, not one generic string.
       if (seq === aiExplainSeqRef.current) toast.error(formatError(e));
     } finally {
       if (seq === aiExplainSeqRef.current) setAiBusy(false);
@@ -107,7 +107,7 @@ export function useAiScanNarrative({
     // Always invalidate in-flight explain when scan identity changes,
     // even if this run is skipped because aiBusy.
     aiExplainSeqRef.current += 1;
-    // REV-FE-01: a superseded run's `finally` only clears busy when seq still matches.
+    // a superseded run's `finally` only clears busy when seq still matches.
     // Bumping seq above would otherwise leave aiBusy stuck true forever — force-clear here.
     setAiBusy(false);
     scanUi.clearAiSummary();
@@ -116,7 +116,7 @@ export function useAiScanNarrative({
     if (scan && scan.items.length > 0 && aiEnabled) {
       void runAiExplain({ force: true });
     }
-    // scanId (REV-FE-15) fully identifies scan content; runAiExplain is stable
+    // scanId () fully identifies scan content; runAiExplain is stable
     // in the values it closes over.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanId, aiEnabled]);
@@ -134,7 +134,7 @@ export function useAiScanNarrative({
       setAiReportBusy(true);
       try {
         const note = await runAiReportSummary(report);
-        // F-R6-06: only the newest report summary may write aiReportNote.
+        // -06: only the newest report summary may write aiReportNote.
         if (seq !== aiReportSeqRef.current) return;
         setAiReportNote(note);
       } catch {
@@ -151,7 +151,7 @@ export function useAiScanNarrative({
     aiReportSeqRef.current += 1;
     setAiReportBusy(false);
     if (report && aiEnabled) void runAiReport({ force: true });
-    // REV-FE-15: key on report identity fields, not object identity only.
+    // key on report identity fields, not object identity only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, aiEnabled, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
 

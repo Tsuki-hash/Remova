@@ -15,7 +15,7 @@ fn trust_key(uninstall: &str, quiet: &str) -> String {
     format!("{uninstall}\n{quiet}")
 }
 
-/// Remember uninstall command pairs produced by the latest scan (REV-BE-04).
+/// Remember uninstall command pairs produced by the latest scan ().
 /// Build the next set first, then swap — never leave an empty trust window for concurrent uninstall.
 pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
     let mut next = HashSet::new();
@@ -99,7 +99,7 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         out.extend(crate::storeapps::scan_store_apps());
     }
     dedup_same_products(&mut out);
-    // AR-04: backend-enforce ignore rules (publisher / name / install path).
+    // backend-enforce ignore rules (publisher / name / install path).
     let ignore = crate::ignore::load();
     out.retain(|a| {
         !crate::ignore::is_app_ignored(&ignore, &a.name, &a.publisher, &a.install_location)
@@ -149,7 +149,7 @@ pub fn same_product(a: &InstalledApp, b: &InstalledApp) -> bool {
     if ka.starts_with('{') && ka.ends_with('}') && ka == kb {
         return true;
     }
-    // SEC-5: generic names need GUID — never merge "Update"/short names on name alone.
+    // generic names need GUID — never merge "Update"/short names on name alone.
     let n = a.name.trim();
     let generic = n.len() < 4
         || n.eq_ignore_ascii_case("update")
@@ -318,7 +318,7 @@ unsafe fn read_uninstall_entry(
             Some(&mut data_len),
         );
         if st == ERROR_MORE_DATA {
-            // R21-BE-04: one retry with the reported sizes — an oversized value
+            // one retry with the reported sizes — an oversized value
             // must not silently drop every remaining value of the entry.
             let need_data = data_len as usize;
             let need_name = vname_len as usize;
@@ -458,7 +458,7 @@ fn looks_system_update(name: &str) -> bool {
         return true;
     }
     let lower = n.to_lowercase();
-    // R23-BE-08: slice the LOWERCASED string — U+212A KELVIN SIGN lowercases
+    // slice the LOWERCASED string — U+212A KELVIN SIGN lowercases
     // to ASCII 'k', so slicing the original at byte 2 could split a char and
     // panic on registry-controlled DisplayNames.
     if lower.starts_with("kb") && lower.len() > 2 && lower[2..].chars().all(|c| c.is_ascii_digit())
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(keep.source, "HKLM64");
     }
 
-    /// P1.7 regression: EstimatedSize is REG_DWORD and must leave size_kb > 0.
+    /// .7 regression: EstimatedSize is REG_DWORD and must leave size_kb > 0.
     /// Parse arm is inline in collect_uninstall; assert the merge path honors a positive size
     /// and that a DWORD-shaped value is not dropped by the REG_SZ-only reader contract.
     #[test]

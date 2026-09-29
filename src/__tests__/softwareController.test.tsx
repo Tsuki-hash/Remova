@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// REV-QA-02: software controller mapping — copilot scope handoff, busy
+// software controller mapping — copilot scope handoff, busy
 // composite, orphan/checkup nav, ignore application (was 0% covered).
 import { describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";

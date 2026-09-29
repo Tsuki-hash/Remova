@@ -34,7 +34,7 @@ pub struct ItemDetail {
     pub message: String,
 }
 
-/// Lightweight error alias until thiserror is fully adopted (ARCH-5).
+/// Lightweight error alias until thiserror is fully adopted ().
 pub type ExecResult<T> = Result<T, String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ pub struct FullCleanupOptions {
     /// Create a Windows restore point (tests set false to avoid real side effects).
     #[serde(default = "default_true")]
     pub restore_point: bool,
-    /// uninstall | orphan | monitor | copilot | installer | toolcache — default uninstall (S-R4-07).
+    /// uninstall | orphan | monitor | copilot | installer | toolcache — default uninstall ().
     #[serde(default)]
     pub cleanup_source: Option<String>,
 }
@@ -82,7 +82,7 @@ pub struct FullCleanupReport {
     pub deleted: u32,
     pub failed: u32,
     pub skipped: u32,
-    /// Reboot-delayed deletes (not counted in `deleted`) — S-R4-13.
+    /// Reboot-delayed deletes (not counted in `deleted`) — .
     #[serde(default)]
     pub delayed: u32,
     pub aborted: bool,

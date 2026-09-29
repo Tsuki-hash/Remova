@@ -61,7 +61,7 @@ export async function runBatchCleanup(
           cleanup_source: "uninstall",
         });
         if (report.aborted && items.length) {
-          // S-R4-06: backup/session abort must not look like success.
+          // backup/session abort must not look like success.
           results.push({
             key,
             name: app.name,

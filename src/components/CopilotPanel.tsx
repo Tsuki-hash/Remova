@@ -27,7 +27,7 @@ function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): Installe
   return list;
 }
 
-/** Offline keyword fallback when no model is configured (P0 Copilot always usable). */
+/** Offline keyword fallback when no model is configured ( Copilot always usable). */
 export function ruleParseFilter(apps: InstalledApp[], text: string): {
   list: InstalledApp[];
   intent: NlIntent;
@@ -278,7 +278,7 @@ export function CopilotPanel({
                 onClick={() => onBatch(matches, intent)}
                 title={matches.map((m) => m.name).join(" · ")}
               >
-                {/* REV-UX-20: the direct action names its own scope. */}
+                {/* the direct action names its own scope. */}
                 {L.copilotRunBatchN(matches.length)}
               </button>
             )}

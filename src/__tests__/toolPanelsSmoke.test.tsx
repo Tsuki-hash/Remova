@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// REV-QA-03: tool panel smoke — empty/diff surfaces render and fire callbacks.
+// tool panel smoke — empty/diff surfaces render and fire callbacks.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MonitorPanel } from "../components/MonitorPanel";

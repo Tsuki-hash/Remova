@@ -1,4 +1,4 @@
-//! Startup / service / scheduled-task listing and enable-disable (P1-2).
+//! Startup / service / scheduled-task listing and enable-disable (-2).
 
 use serde::{Deserialize, Serialize};
 
@@ -173,7 +173,7 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                 .unwrap_or(fname)
                 .trim_end_matches(".remova-disabled")
                 .to_string();
-            // R23-BE-02: Explorer keys StartupApproved\StartupFolder by the FULL
+            // Explorer keys StartupApproved\StartupFolder by the FULL
             // file name (with extension) — the stem never matches.
             let enabled = startup_folder_enabled(fname)
                 .unwrap_or(!fname.to_lowercase().contains(".remova-disabled"));
@@ -306,7 +306,7 @@ fn resolve_packaged_display_name(value_name: &str) -> Option<String> {
     None
 }
 
-/// Serialize manage write-side mutations (services / startup / tasks) — S-08.
+/// Serialize manage write-side mutations (services / startup / tasks) — .
 static MANAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_manage() -> std::sync::MutexGuard<'static, ()> {
@@ -412,7 +412,7 @@ pub fn list_services() -> Vec<ManageItem> {
     out
 }
 
-/// REV-BE-16: schtasks /v status text is locale-dependent; a short deny-list
+/// schtasks /v status text is locale-dependent; a short deny-list
 /// misreports disabled tasks as enabled on unlisted locales (ja/pt/ru/…).
 /// Invert: enabled only on known Ready/Running markers (substring match absorbs
 /// suffix variants); anything we cannot prove is active — including
@@ -479,7 +479,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
                 continue;
             }
             let lower = name.to_lowercase();
-            // S-R6-13: protect the whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
+            // protect the whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
             if lower.starts_with("\\microsoft\\") {
                 continue;
             }
@@ -508,7 +508,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         items.sort_by_key(|a| a.name.to_lowercase());
         items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
-        // REV-BE-17: arm write-side allow-list from this listing.
+        // arm write-side allow-list from this listing.
         remember_scheduled_task_names(items.iter().map(|it| it.name.clone()));
         items
     }
@@ -586,7 +586,6 @@ fn split_csv_line(line: &str) -> Vec<String> {
 
 /// Enable/disable a Run startup value via Explorer `StartupApproved\Run` binary flag.
 /// Falls back to renaming a legacy `.remova-disabled` value if present.
-///
 /// Windows reads every value under Run at logon; only StartupApproved actually blocks it.
 /// Binary layout (12 bytes): byte0 = 0x02 enabled / 0x03 disabled.
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
@@ -614,7 +613,7 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         let Some((dir, fname)) = rest.rsplit_once("::") else {
             return Err(crate::error::manage_err("bad_name", "startup folder location").to_ipc());
         };
-        // S-09: only allow write when dir is one of the known Startup folders.
+        // only allow write when dir is one of the known Startup folders.
         let dir_norm = dir.replace('/', "\\");
         let dir_ok = startup_folder_paths()
             .iter()
@@ -622,7 +621,7 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         if !dir_ok {
             return Err(crate::error::manage_err("protected_registry", dir).to_ipc());
         }
-        // R23-BE-02: the approved-flag value name is the full file name —
+        // the approved-flag value name is the full file name —
         // writing the stem created a value Explorer never reads (disable was a
         // silent no-op) and the display stem stays list-side only.
         if fname.trim().is_empty() || fname.contains('\\') || fname.contains('/') {
@@ -659,7 +658,7 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
 
 /// `file_name` must be the FULL startup-folder file name incl. extension —
 /// Explorer reads `StartupApproved\StartupFolder` values by that name
-/// (R23-BE-02: a stem-named value is invisible to it).
+/// (a stem-named value is invisible to it).
 fn write_startup_folder_approved(file_name: &str, enabled: bool) -> Result<(), String> {
     let mut buf = [0u8; 12];
     buf[0] = if enabled { 0x02 } else { 0x03 };
@@ -711,7 +710,7 @@ pub fn set_service_running(name: &str, run: bool) -> Result<(), String> {
     crate::regops::sc_set_service_running(name, run)
 }
 
-/// Tasks seen in the latest `list_scheduled_tasks` (REV-BE-17).
+/// Tasks seen in the latest `list_scheduled_tasks` ().
 static TASK_TRUST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
     std::sync::OnceLock::new();
 
@@ -741,12 +740,12 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     if task_name.trim().is_empty() {
         return Err(crate::error::manage_err("bad_name", "task").to_ipc());
     }
-    // REV-BE-17: scoped allow-list — only tasks from the latest manage listing may be toggled.
+    // scoped allow-list — only tasks from the latest manage listing may be toggled.
     if !is_trusted_task(task_name) {
         return Err(crate::error::manage_err("task_not_listed", task_name).to_ipc());
     }
     let _guard = lock_manage();
-    // S-02 / S-R6-13: mirror list-side filter — never disable `\Microsoft\` system tasks.
+    // / mirror list-side filter — never disable `\Microsoft\` system tasks.
     let low = task_name.replace('/', "\\").to_lowercase();
     if low.starts_with("\\microsoft\\") || low.starts_with("microsoft\\") {
         return Err(crate::error::manage_err("protected_task", task_name).to_ipc());
@@ -763,7 +762,7 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
         let action = if enabled { "/enable" } else { "/disable" };
         let mut cmd = Command::new(format!(r"{windir}\System32\schtasks.exe"));
         // No manual quotes: std::process::Command already quotes args containing spaces.
-        // Manual quotes make schtasks look for a name with literal quote chars (NEW-A).
+        // Manual quotes make schtasks look for a name with literal quote chars ().
         cmd.args(["/change", "/tn", task_name, action]);
         crate::regops::hide_console(&mut cmd);
         let st = cmd.output().map_err(|e| e.to_string())?;
@@ -787,7 +786,7 @@ mod tests {
 
     #[test]
     fn set_task_requires_listed_name() {
-        // REV-BE-17: even non-Microsoft names are refused unless listed this session.
+        // even non-Microsoft names are refused unless listed this session.
         assert!(super::set_task_enabled(r"\Vendor\MyTask", true).is_err());
     }
 
@@ -824,7 +823,7 @@ mod tests {
         assert!(super::set_startup_enabled(loc2, true).is_err());
     }
 
-    /// R22-BE-04: RunOnce has no disable mechanism — rejecting must be loud.
+    /// RunOnce has no disable mechanism — rejecting must be loud.
     #[test]
     fn runonce_disable_rejected() {
         let loc = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce::Leftover";
@@ -840,7 +839,7 @@ mod tests {
             super::set_task_enabled(r"\Microsoft\Windows\Defrag\ScheduledDefrag", false).is_err()
         );
         assert!(super::set_task_enabled("Microsoft\\Windows\\Update", true).is_err());
-        // S-R6-13: whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
+        // whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
         assert!(
             super::set_task_enabled(r"\Microsoft\Office\Office Automatic Updates", false).is_err()
         );
@@ -850,7 +849,7 @@ mod tests {
 
     #[test]
     fn folder_startup_location_rejects_unknown_dir() {
-        // S-09: FOLDER:: must not accept arbitrary directories.
+        // FOLDER:: must not accept arbitrary directories.
         let loc = r"FOLDER::C:\Temp\NotStartup::evil.exe";
         let err = super::set_startup_enabled(loc, false).unwrap_err();
         assert!(
@@ -918,7 +917,7 @@ mod tests {
         let _ = header;
     }
 
-    /// REV-BE-16: unknown/localized-off statuses must not display as enabled.
+    /// unknown/localized-off statuses must not display as enabled.
     #[test]
     fn task_status_inverted_to_enabled_markers() {
         // Known-active statuses across the common locales.
@@ -936,7 +935,7 @@ mod tests {
         assert!(!super::task_status_enabled("Queued"));
     }
 
-    /// R21-BE-08: installmon shares this list — cover 32-bit Run, RunOnce, Policies.
+    /// installmon shares this list — cover 32-bit Run, RunOnce, Policies.
     #[test]
     fn run_key_paths_covers_all_views() {
         let keys = super::run_key_paths();
@@ -948,7 +947,7 @@ mod tests {
         assert_eq!(keys.len(), super::RUN_KEYS.len());
     }
 
-    /// R23-BE-02/QA-01: opt-in reality check — Explorer's StartupApproved\
+    /// opt-in reality check — Explorer's StartupApproved\
     /// StartupFolder value names are FULL file names (with extension). Only
     /// asserts when this machine has folder startup flags recorded.
     #[cfg(windows)]

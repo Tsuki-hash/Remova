@@ -40,7 +40,7 @@ fn userprofile() -> Option<PathBuf> {
 fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
     let mut out = Vec::new();
     if let Some(up) = userprofile() {
-        // REV-SUP-13: nested `join()` — `/` segments are not portable separators.
+        // nested `join()` — `/` segments are not portable separators.
         let appdata = up.join("AppData");
         let local = appdata.join("Local");
         out.push((ToolDomain::Dev, local.join("npm-cache"), "npm-cache"));

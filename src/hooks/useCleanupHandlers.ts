@@ -56,7 +56,7 @@ export function useCleanupHandlers({
   multi: Set<string>;
   flow: CleanupFlowSetters;
   refreshApps: () => Promise<void>;
-  /** FN-04: auto re-analyze after successful official uninstall + cleanup. */
+  /** auto re-analyze after successful official uninstall + cleanup. */
   onAfterCleanup?: (app: InstalledApp, report: FullCleanupReport) => void;
   busyRef: { current: boolean };
 }) {
@@ -82,11 +82,11 @@ export function useCleanupHandlers({
   const batchCancelRef = useRef(false);
 
   const backupEnabledRef = useRef(false);
-  /**: invalidates an in-flight verify probe when a newer cleanup starts. */
+  /**invalidates an in-flight verify probe when a newer cleanup starts. */
   const verifySeqRef = useRef(0);
-  /** F-R6-05: only the latest dry-run may write its report. */
+  /** -05: only the latest dry-run may write its report. */
   const dryRunSeqRef = useRef(0);
-  /** F-R6-07: invalidates force-clean's internal analyze when a newer one starts. */
+  /** -07: invalidates force-clean's internal analyze when a newer one starts. */
   const forceAnalyzeSeqRef = useRef(0);
 
   const forceClean = useCallback(
@@ -98,7 +98,7 @@ export function useCleanupHandlers({
       const aseq = ++forceAnalyzeSeqRef.current;
       try {
         const r = await api.analyze(target);
-        // F-R6-07: a newer force-clean/analyze started while this one was in flight.
+        // -07: a newer force-clean/analyze started while this one was in flight.
         if (aseq !== forceAnalyzeSeqRef.current) return;
         const items = r.items.filter(defaultSelectable);
         if (!items.length) {
@@ -135,7 +135,7 @@ export function useCleanupHandlers({
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
         );
         setReport(report);
-        // R23-FE-03: a new report must never inherit the previous cleanup's
+        // a new report must never inherit the previous cleanup's
         // post-cleanup verify list or AI narrative.
         setVerifyRows(null);
         setAiReportNote(null);
@@ -153,7 +153,7 @@ export function useCleanupHandlers({
 
   const dryRun = useCallback(async () => {
     if (!scan || !selected) return;
-    // F-R6-05: never overlap dry-run with another busy cleanup/uninstall.
+    // -05: never overlap dry-run with another busy cleanup/uninstall.
     if (busyRef.current) return;
     busyRef.current = true;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
@@ -291,7 +291,7 @@ export function useCleanupHandlers({
     try {
     const n = selectedPaths.size;
     if (n === 0) {
-      // FE-N3 / REV-FE-06: never confirm an empty cleanup set — say "select rows", not "cleanup".
+      // FE-N3 / never confirm an empty cleanup set — say "select rows", not "cleanup".
       toast.info(L.selectRowHint);
       busyRef.current = false;
       return;
@@ -367,7 +367,7 @@ export function useCleanupHandlers({
 
   const batchCleanup = useCallback(
     async (queueOverride?: InstalledApp[]) => {
-      // R21-FE-04: one Set for the whole filter, not per row.
+      // one Set for the whole filter, not per row.
       const multiSet = new Set(multi);
       const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
       if (!queue.length) {
@@ -383,7 +383,7 @@ export function useCleanupHandlers({
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
-      // REV-FE-10: confirm is async — another cleanup may have taken busyRef meanwhile.
+      // confirm is async — another cleanup may have taken busyRef meanwhile.
       if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
       try {
@@ -399,7 +399,7 @@ export function useCleanupHandlers({
             onShowSummary: setShowBatchSummary,
             onSetBatching: setBatching,
             onDoneKeys: (keys) => {
-              // FE-P0a: remove finished keys without clearing failed multi selections.
+              // remove finished keys without clearing failed multi selections.
               setMulti((m) => {
                 const okSet = new Set(keys);
                 const n = new Set(m);

@@ -77,7 +77,7 @@ function isCompletedFullReport(
 export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppCoreState {
   switch (action.type) {
     case "apps/set": {
-      // REV-FE-02: refresh must not leave ghost selection / multi keys for vanished rows.
+      // refresh must not leave ghost selection / multi keys for vanished rows.
       const apps = action.value;
       const live = new Set(apps.map(appKey));
       const multi = new Set([...state.multi].filter((k) => live.has(k)));

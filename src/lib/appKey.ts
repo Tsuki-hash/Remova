@@ -1,4 +1,4 @@
-/** Stable row/multi-select key (CODE-8: avoid ambiguous string concat). */
+/** Stable row/multi-select key (avoid ambiguous string concat). */
 import type { InstalledApp, ScanResult } from "../types";
 
 const SEP = String.fromCharCode(0);

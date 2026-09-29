@@ -105,7 +105,7 @@ pub fn is_common_files_vendor_path(path: &str) -> bool {
 }
 
 /// Hard shared: exact CF roots, Microsoft Shared, name tokens, non-CF hard path markers.
-/// Matching is **name + path only** (REV-BE-18) — free-text `reason` must not force shared.
+/// Matching is **name + path only** () — free-text `reason` must not force shared.
 pub fn is_hard_shared_item(name: &str, path: &str, reason: &str) -> bool {
     let _ = reason;
     let blob = format!("{}\n{}", lower(name), lower(path));
@@ -120,7 +120,7 @@ pub fn is_hard_shared_item(name: &str, path: &str, reason: &str) -> bool {
 }
 
 /// Heuristic: path/name looks like a shared runtime another app may need.
-/// S-7B: bare `\common files\` vendor subpaths are NOT hard-shared; policy decides via association.
+/// : bare `\common files\` vendor subpaths are NOT hard-shared; policy decides via association.
 pub fn is_shared_item(name: &str, path: &str, reason: &str) -> bool {
     is_hard_shared_item(name, path, reason)
 }
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn forged_reason_cannot_mark_shared() {
-        // REV-BE-18: reason is free text from scan — must not flip the shared flag.
+        // reason is free text from scan — must not flip the shared flag.
         assert!(!is_shared_item(
             "DemoApp",
             r"C:\Program Files\DemoApp\bin",
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn vendor_common_files_subpath_is_not_hard_shared() {
-        // S-7B: vendor subpath — policy uses association, not blanket shared flag.
+        //vendor subpath — policy uses association, not blanket shared flag.
         assert!(!is_shared_item(
             "",
             r"C:\Program Files\Common Files\Acme\lib.dll",

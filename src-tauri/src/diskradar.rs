@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(super::under_radar_roots(r"D:\Games\Steam"), d_ok);
     }
 
-    /// P1.8: `..` must never pass the radar roots check (string prefix or canonicalize).
+    /// .8: `..` must never pass the radar roots check (string prefix or canonicalize).
     #[test]
     fn drilldown_rejects_traversal_outside_roots() {
         // Traversal segments are refused outright — before any prefix match.

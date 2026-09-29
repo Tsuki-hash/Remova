@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// REV-QA-02: boot orchestration — app list load, boot race guard, manual
+// boot orchestration — app list load, boot race guard, manual
 // update-check flows (useAppBoot was previously 0% covered).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";

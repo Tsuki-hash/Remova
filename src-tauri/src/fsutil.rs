@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-/// Windows reparse point (junction / mount / symlink). Never follow when copying (REV-SEC-03).
+/// Windows reparse point (junction / mount / symlink). Never follow when copying ().
 pub fn is_reparse_point(p: &Path) -> bool {
     #[cfg(windows)]
     {
@@ -73,7 +73,7 @@ fn copy_dir_before_file(
         if ty.is_dir() {
             copy_dir_before_file(&path, &target, before_file)?;
         } else if ty.is_file() {
-            // R23-SEC-01: the reparse check above is a path stat — a child
+            // the reparse check above is a path stat — a child
             // swapped for a link before `fs::copy` re-opens the path would be
             // followed. The dedicated primitive opens by non-following handle.
             before_file(&path)?;
@@ -84,6 +84,27 @@ fn copy_dir_before_file(
 }
 
 /// Copy a single file; refuse reparse sources so `fs::copy` cannot follow a swapped junction.
+/// Stream `reader` into a sibling tmp file, fsync, then atomically replace
+/// `dest`. A mid-copy failure leaves any pre-existing `dest` bytes intact and
+/// removes the tmp — never truncate-in-place.
+fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::Result<u64> {
+    let mut tmp_name = dest.as_os_str().to_owned();
+    tmp_name.push(".remova-copy-tmp");
+    let tmp = std::path::PathBuf::from(tmp_name);
+    let result = (|| {
+        let mut out = std::fs::File::create(&tmp)?;
+        let n = std::io::copy(&mut reader, &mut out)?;
+        out.sync_all()?;
+        drop(out);
+        std::fs::rename(&tmp, dest)?;
+        Ok(n)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     if is_reparse_point(src) {
         return Err(std::io::Error::other("refusing to copy reparse point"));
@@ -92,7 +113,6 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     // check (streamed — no whole-file buffering).
     #[cfg(windows)]
     {
-        use std::io::Write as _;
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         let mut f = std::fs::OpenOptions::new()
@@ -118,36 +138,20 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
             dest.parent()
                 .ok_or_else(|| std::io::Error::other("missing copy parent"))?,
         )?;
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(dest)?;
-        let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
-        unsafe {
-            windows::Win32::Storage::FileSystem::GetFileInformationByHandle(
-                windows::Win32::Foundation::HANDLE(out.as_raw_handle()),
-                &mut info,
-            )
-        }
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-        if info.dwFileAttributes & (0x400 | 0x10) != 0 {
+        if is_reparse_point(dest) {
             return Err(std::io::Error::other(
                 "refusing reparse/directory copy destination",
             ));
         }
-        out.set_len(0)?;
-        let n = std::io::copy(&mut f, &mut out)?;
-        out.flush()?;
-        Ok(n)
+        copy_stream_atomic(&mut f, dest)
     }
     #[cfg(not(windows))]
     {
-        std::fs::copy(src, dest)
+        copy_stream_atomic(std::fs::File::open(src)?, dest)
     }
 }
 
-/// REV-SEC-06: a handle that pins a directory (or file) while it is being
+/// a handle that pins a directory (or file) while it is being
 /// cleared. Opened with FILE_FLAG_OPEN_REPARSE_POINT — a swapped-in junction
 /// is opened as the link itself, never its target — and a share mode WITHOUT
 /// FILE_SHARE_DELETE, so the path cannot be renamed away while pinned: the
@@ -346,7 +350,7 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
         };
         // DELETE (0x00010000) is not exported by this windows crate build (same
         // as regops); FILE_READ_ATTRIBUTES (0x0080) for the by-handle check.
-        // R21-SEC-09: lossy conversion would pin a U+FFFD-replaced path — fail closed.
+        // lossy conversion would pin a U+FFFD-replaced path — fail closed.
         let Some(path_str) = p.to_str() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -502,7 +506,7 @@ pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
     }
 }
 
-/// R23-SEC-04: long (expanded) form of an existing path — `GetLongPathNameW`
+/// long (expanded) form of an existing path — `GetLongPathNameW`
 /// turns 8.3 components back into their long names so restore-target
 /// comparisons can match a short-name request against the resolved form.
 #[cfg(windows)]
@@ -554,7 +558,7 @@ pub fn short_path_form(p: &Path) -> Option<String> {
     }
 }
 
-/// Delete a tree without following reparse points (REV-BE-05 / REV-SEC-06).
+/// Delete a tree without following reparse points ( / ).
 /// Every level is pinned (no-DELETE-share handle + by-handle reparse check)
 /// before its children are cleared, so the path cannot be swapped for a
 /// junction mid-recursion; child junctions are unlinked as links only.
@@ -680,6 +684,62 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// A failing mid-stream copy must never truncate or replace the destination.
+    #[test]
+    fn copy_stream_failure_preserves_dest_and_leaves_no_tmp() {
+        struct FailAfter {
+            left: usize,
+        }
+        impl std::io::Read for FailAfter {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.left == 0 {
+                    return Err(std::io::Error::other("injected mid-copy failure"));
+                }
+                let n = self.left.min(buf.len()).min(4);
+                buf[..n].fill(b'N');
+                self.left -= n;
+                Ok(n)
+            }
+        }
+        let tmp = unique_tmp("atomic_copy");
+        let dest = tmp.join("out.bin");
+        fs::write(&dest, b"ORIGINAL").unwrap();
+        let err = copy_stream_atomic(FailAfter { left: 8 }, &dest).unwrap_err();
+        assert!(err.to_string().contains("injected"), "{err}");
+        assert_eq!(
+            fs::read(&dest).unwrap(),
+            b"ORIGINAL",
+            "dest must stay intact"
+        );
+        let leftovers: Vec<_> = fs::read_dir(&tmp)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 1, "no tmp leftovers: {leftovers:?}");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Successful replace is atomic: dest gets the new bytes, no tmp remains.
+    #[test]
+    fn copy_stream_success_replaces_dest_without_tmp() {
+        let tmp = unique_tmp("atomic_copy_ok");
+        let dest = tmp.join("out.bin");
+        fs::write(&dest, b"OLD").unwrap();
+        let n = copy_stream_atomic(&b"NEWER"[..], &dest).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(fs::read(&dest).unwrap(), b"NEWER");
+        assert!(!tmp.join("out.bin.removal-tmp").exists());
+        assert!(!tmp.join("out.bin.removal-tmp").exists());
+        let leftovers: Vec<_> = fs::read_dir(&tmp)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(leftovers.len(), 1, "no tmp leftovers: {leftovers:?}");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "requires Windows symlink privilege or Developer Mode; run explicitly on the Windows CI runner"]
@@ -732,7 +792,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// REV-SEC-06: the pin itself must refuse reparse points and actually pin
+    /// the pin itself must refuse reparse points and actually pin
     /// (rename of a pinned directory fails; after drop it succeeds again).
     #[test]
     fn dir_pin_refuses_reparse_and_blocks_rename() {
@@ -811,7 +871,7 @@ mod tests {
         assert_eq!(csv_escape("plain"), "plain");
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
-        // OWASP CSV injection: formula prefixes are neutralized (R22-SUP-06).
+        // OWASP CSV injection: formula prefixes are neutralized ().
         assert_eq!(csv_escape("=cmd|' /C calc'!A0"), "'=cmd|' /C calc'!A0");
         assert_eq!(csv_escape("+sum"), "'+sum");
         assert_eq!(csv_escape("-flag"), "'-flag");
@@ -973,7 +1033,7 @@ mod tests {
         fs::remove_dir(link).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
-    /// R23-QA-02: the restore write-back relies on `pin_dir_resolved` to expose
+    /// the restore write-back relies on `pin_dir_resolved` to expose
     /// junction redirects — regressions here would silently reintroduce the
     /// planted-junction write path. Junctions need no admin rights.
     #[cfg(windows)]

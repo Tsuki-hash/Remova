@@ -20,7 +20,7 @@ export function CheckupPanel({
   onOpenOrphans,
 }: {
   stats: CheckupStats;
-  /** F-R6-08: orphan scan spinner is independent of the analyze spinner. */
+  /** -08: orphan scan spinner is independent of the analyze spinner. */
   orphanScanning: boolean;
   orphanCount: number | null;
   onClose: () => void;

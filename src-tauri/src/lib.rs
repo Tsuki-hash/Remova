@@ -39,7 +39,7 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    // scan_installed_apps already refreshes the uninstall trust table (REV-BE-04).
+    // scan_installed_apps already refreshes the uninstall trust table ().
     tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
         .await
         .map_err(|e| e.to_string())
@@ -54,7 +54,7 @@ fn begin_size_estimate() {
 /// Estimate on-disk size of an install location (KB).
 /// Runs on the blocking pool so large trees do not freeze the webview.
 /// Result is zeroed if the estimate batch was cancelled / superseded.
-/// `capped` marks a file-cap partial (floor, not total) — R21-SUP-04.
+/// `capped` marks a file-cap partial (floor, not total) — .
 #[derive(serde::Serialize)]
 struct SizeEstimate {
     kb: i64,
@@ -93,8 +93,8 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-/// F-R7-01: strict URL shape for `open_path` (scheme + host, no control/quote/space).
-/// REV-SUP-12: plain `http://` only for loopback (local Ollama etc.); remote must be https.
+/// -01: strict URL shape for `open_path` (scheme + host, no control/quote/space).
+/// plain `http://` only for loopback (local Ollama etc.); remote must be https.
 fn is_safe_http_url(url: &str) -> bool {
     let is_https = url.starts_with("https://");
     let is_http = url.starts_with("http://");
@@ -204,7 +204,7 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("open_path:empty".into());
     }
-    // HTTP(S): ShellExecuteW + strict URL shape (F-R7-01 — no `cmd /C start` injection surface).
+    // HTTP(S): ShellExecuteW + strict URL shape (-01 — no `cmd /C start` injection surface).
     if path.starts_with("http://") || path.starts_with("https://") {
         if !is_safe_http_url(path) {
             return Err("open_path:failed".into());
@@ -300,7 +300,7 @@ mod base64_light {
 
 #[cfg(test)]
 mod open_path_url_tests {
-    // F-R7-01: strict URL whitelist for open_path (no cmd /C start).
+    // -01: strict URL whitelist for open_path (no cmd /C start).
     #[test]
     fn http_url_whitelist() {
         assert!(super::is_safe_http_url(
@@ -325,7 +325,7 @@ mod open_path_url_tests {
         ] {
             assert!(!super::is_safe_http_url(url), "must reject {url}");
         }
-        // REV-SUP-12: remote cleartext http is refused
+        // remote cleartext http is refused
         assert!(!super::is_safe_http_url("http://example.com/x"));
         assert!(!super::is_safe_http_url("https://"));
         assert!(!super::is_safe_http_url("ftp://example.com/x"));
@@ -456,7 +456,7 @@ fn disk_usage() -> Result<DiskInfo, String> {
     {
         use windows::core::PCWSTR;
         use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-        // System drive, not hardcoded C: (FUNC-6)
+        // System drive, not hardcoded C: ()
         let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
         let drive = drive.trim_end_matches('\\').to_uppercase();
         let root = format!("{drive}\\\0");

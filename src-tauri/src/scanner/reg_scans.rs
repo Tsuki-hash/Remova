@@ -11,7 +11,7 @@ pub(super) fn scan_path_env(
     let mut seen = std::collections::HashSet::new();
     for scope in ["User", "Machine"] {
         // Read the real per-scope PATH (not the merged process env).
-        // REV-BE-13: on read failure skip this scope — never fall back to process PATH
+        // on read failure skip this scope — never fall back to process PATH
         // (that would mis-tag Machine/User scope).
         let Ok(raw) = crate::regops::read_path_scope_public(scope) else {
             continue;
@@ -129,7 +129,7 @@ pub(super) fn scan_shell_extensions(
                 let name_hit = name_norms
                     .iter()
                     .any(|s| s.len() >= 5 && blob.contains(s.as_str()));
-                // R23-BE-05: boundary-anchored on the raw default string — the
+                // boundary-anchored on the raw default string — the
                 // normalized contains form matched any class whose default merely
                 // contained the install slug (`C:\App` → `capp` in "captured").
                 let install_hit = super::cmdline_refs_install(&def, install_low);
@@ -326,7 +326,7 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
             continue;
         }
         let leaf_n = normalize_for_match(&top);
-        // R23-BE-04: TaskCache\Tree key paths never contain file-system install
+        // TaskCache\Tree key paths never contain file-system install
         // paths, and the action string lives in a binary blob under
         // TaskCache\Actions — install evidence here is the task NAME only.
         let strong = name_norms
@@ -359,7 +359,7 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
 }
 
 /// Service/driver `ImagePath` is a VALUE under the service key — read it with
-/// `read_string`, never as a subkey default (R23-BE-01: the subkey form always
+/// `read_string`, never as a subkey default (the subkey form always
 /// opened nothing and silently killed the install-location channel).
 fn service_image_string(svc_path: &str) -> String {
     crate::regscan::read_string(svc_path, "ImagePath").unwrap_or_default()
@@ -379,7 +379,7 @@ mod tests {
         );
         assert_eq!(super::clsid_roots("HKCU").len(), 2);
     }
-    /// R23-BE-01/QA-01: opt-in against the real registry (`cargo test -- --ignored`).
+    /// opt-in against the real registry (`cargo test -- --ignored`).
     /// A healthy machine has many services with non-empty ImagePath strings; the
     /// old read-as-subkey form returned empty for every single one.
     #[cfg(windows)]
