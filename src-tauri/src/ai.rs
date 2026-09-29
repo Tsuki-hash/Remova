@@ -11,8 +11,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 const CACHE_TTL_SECS: u64 = 7 * 24 * 3600;
 const HTTP_TIMEOUT_SECS: u64 = 12;
 
-// REV-SUP-11: a config leaving scope wipes its API-key bytes from memory.
-// R21-SUP-02: no derived Debug — that would print the raw key into logs.
+// a config leaving scope wipes its API-key bytes from memory.
+// no derived Debug — that would print the raw key into logs.
 #[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct AiConfig {
     #[serde(default)]
@@ -102,7 +102,7 @@ impl From<&AiConfig> for AiConfigView {
 }
 
 fn config_path() -> PathBuf {
-    // REV-SUP-04: never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
+    // never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
     let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
         let temp =
             std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
@@ -117,13 +117,13 @@ pub fn load_config() -> AiConfig {
         return AiConfig::default();
     };
     let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
-    // R21-SUP-02: take ownership of the stored bytes so the pre-image is wiped
+    // take ownership of the stored bytes so the pre-image is wiped
     // explicitly instead of being dropped by the field assignment.
     let mut raw_key = std::mem::take(&mut c.api_key);
     c.api_key = decrypt_stored_key(&raw_key);
-    // S-R6-09: migrate a legacy plaintext key to DPAPI at rest on first load.
+    // migrate a legacy plaintext key to DPAPI at rest on first load.
     let migrate = !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX);
-    // REV-SUP-11: the ciphertext copy leaves no residue either.
+    // the ciphertext copy leaves no residue either.
     raw_key.zeroize();
     if migrate {
         // The wrap must not silently fail: a swallowed error leaves the
@@ -152,9 +152,14 @@ pub fn load_config() -> AiConfig {
 }
 
 /// Atomic config write (tmp + rename): a crash mid-write must not destroy the
-/// DPAPI-wrapped key or a half-migrated file.
+/// DPAPI-wrapped key or a half-migrated file. Serialized in-process so a
+/// concurrent save/migrate cannot interleave on a shared tmp name.
 fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
-    let tmp = p.with_extension("json.tmp");
+    static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut tmp_name = p.as_os_str().to_owned();
+    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp_name);
     std::fs::write(&tmp, s).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
@@ -170,7 +175,7 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    // R21-SUP-02: never clone the plaintext key into `out` — build the write
+    // never clone the plaintext key into `out` — build the write
     // payload without it and store only the ciphertext.
     let mut out = AiConfig {
         enabled: c.enabled,
@@ -240,7 +245,7 @@ fn encrypt_stored_key(key: &str) -> Result<String, String> {
             return Err("ai:encrypt_failed".to_string());
         }
         let enc = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
-        // CryptProtectData allocates pbData via LocalAlloc (NEW-C).
+        // CryptProtectData allocates pbData via LocalAlloc ().
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
@@ -286,11 +291,11 @@ fn decrypt_stored_key(stored: &str) -> String {
             return String::new();
         }
         let dec = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
-        // CryptUnprotectData allocates pbData via LocalAlloc (NEW-C).
+        // CryptUnprotectData allocates pbData via LocalAlloc ().
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
-        // R21-SUP-02: a failed UTF-8 decode still holds key bytes — wipe them.
+        // a failed UTF-8 decode still holds key bytes — wipe them.
         match String::from_utf8(dec) {
             Ok(s) => s,
             Err(e) => {
@@ -307,7 +312,7 @@ fn decrypt_stored_key(stored: &str) -> String {
     stored.to_string()
 }
 
-/// S-R6-10: replace the Windows profile-name segment after `Users\` with `*`.
+/// replace the Windows profile-name segment after `Users\` with `*`.
 /// ASCII case-insensitive so index alignment with the original string is preserved.
 pub fn mask_profile_usernames(s: &str) -> String {
     let sc: Vec<char> = s.chars().collect();
@@ -346,7 +351,7 @@ pub fn mask_profile_usernames(s: &str) -> String {
     out
 }
 
-/// Free text (reason / evidence) scrubbed before any cloud upload (S-R6-10):
+/// Free text (reason / evidence) scrubbed before any cloud upload ():
 /// profile names masked, absolute path tokens reduced via [`sanitize_path`].
 pub fn scrub_cloud_text(s: &str) -> String {
     let masked = mask_profile_usernames(s);
@@ -429,7 +434,7 @@ pub fn sanitize_path(path: &str, allow_full: bool) -> String {
             }
         }
     }
-    // Fallback last-segment reduction must never surface a profile name (S-R6-10).
+    // Fallback last-segment reduction must never surface a profile name ().
     let masked = mask_profile_usernames(&p);
     let parts: Vec<&str> = masked.split('\\').filter(|s| !s.is_empty()).collect();
     if parts.len() >= 2 {
@@ -477,7 +482,7 @@ fn cache_put(key: u64, value: String) {
                 at: now_secs(),
             },
         );
-        // REV-SUP-06: evict oldest ~25% instead of wiping the whole cache.
+        // evict oldest ~25% instead of wiping the whole cache.
         if map.len() > 400 {
             let mut by_age: Vec<(u64, u64)> = map.iter().map(|(k, e)| (e.at, *k)).collect();
             by_age.sort_unstable();
@@ -531,7 +536,7 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .set("x-api-key", key)
         .set("anthropic-version", "2023-06-01")
         .send_json(body)
-        // REV-SUP-05: transport detail survives to the command layer.
+        // transport detail survives to the command layer.
         .map_err(|e| format!("ai http failed: {e}"))?;
     let v: serde_json::Value = resp
         .into_json()
@@ -574,13 +579,13 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
         .post(&url)
         .set("Content-Type", "application/json");
     if !cfg.api_key.trim().is_empty() {
-        // REV-SUP-11: the header copy wipes from memory when it leaves scope.
+        // the header copy wipes from memory when it leaves scope.
         let auth = zeroize::Zeroizing::new(format!("Bearer {}", cfg.api_key.trim()));
         req = req.set("Authorization", &auth);
     }
     let resp = req
         .send_json(body)
-        // REV-SUP-05: transport detail survives to the command layer.
+        // transport detail survives to the command layer.
         .map_err(|e| format!("ai http failed: {e}"))?;
     let v: serde_json::Value = resp
         .into_json()
@@ -697,7 +702,7 @@ fn explain_items_with_completion(
                     "kind": it.kind,
                     "confidence": it.confidence,
                     "risk": it.risk,
-                    // S-R6-10: free text never goes to the cloud raw (usernames / deep paths).
+                    // free text never goes to the cloud raw (usernames / deep paths).
                     "reason": scrub_cloud_text(&it.reason),
                     "evidence": it
                         .evidence_labels
@@ -719,7 +724,7 @@ fn explain_items_with_completion(
         let parsed: Vec<ExplainOutput> =
             serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
 
-        // Match back by the exact strings SENT to the model (CODE-3 + R23-SUP-01):
+        // Match back by the exact strings SENT to the model ( + ):
         // the prompt asks the model to echo the sanitized path, and `sanitize_path`
         // is NOT idempotent — re-sanitizing the echo lost every multi-segment
         // AppData path. Never rely on array index alone; identical sanitized paths
@@ -797,7 +802,7 @@ const REPORT_SYSTEM: &str =
 是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
 
 pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
-    // R21-SUP-03: publisher is part of the prompt — without it two products from
+    // publisher is part of the prompt — without it two products from
     // different vendors with the same shape share a 7-day cache entry.
     let key = fnv1a64(&format!(
         "risk|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -853,7 +858,7 @@ pub struct ReportBriefInput {
 }
 
 pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
-    // R21-SUP-03: backup_dir / top_failed are rendered into the prompt — they
+    // backup_dir / top_failed are rendered into the prompt — they
     // must break the cache or the UI shows the previous run's path/failures.
     let key = fnv1a64(&format!(
         "report|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -969,7 +974,7 @@ mod tests {
 
     #[test]
     fn sanitize_fallback_never_leaks_username() {
-        // S-R6-10: last-segment reduction used to surface `alice\secret`.
+        // last-segment reduction used to surface `alice\secret`.
         for p in [
             r"C:\Users\alice\secret",
             r"C:\Users\alice",
@@ -1064,7 +1069,7 @@ mod tests {
         assert!(!serde_json::to_string(&v).unwrap().contains("sk-secret"));
     }
 
-    /// R21-SUP-02: Debug must never print the API key.
+    /// Debug must never print the API key.
     #[test]
     fn config_debug_redacts_key() {
         let mut c = AiConfig::default();
@@ -1073,7 +1078,7 @@ mod tests {
         assert!(!s.contains("sk-secret"), "Debug leaked api_key: {s}");
         assert!(s.contains("<redacted>"));
     }
-    /// R23-SUP-01/QA-03: `sanitize_path` is deliberately NOT idempotent for the
+    /// `sanitize_path` is deliberately NOT idempotent for the
     /// common AppData shape — the explain rematch must therefore consult the
     /// strings actually sent to the model instead of re-sanitizing the echo.
     #[test]
@@ -1090,7 +1095,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("remova-r23-ai-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ai.json");
-        let tmp = path.with_extension("json.tmp");
+        let mut tmp_name = path.as_os_str().to_owned();
+        tmp_name.push(format!(".{}.tmp", std::process::id()));
+        let tmp = std::path::PathBuf::from(tmp_name);
         std::fs::write(&tmp, "old partial").unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)
@@ -1101,7 +1108,7 @@ mod tests {
         assert!(!tmp.exists());
         assert!(!path.exists());
         drop(held);
-        std::fs::remove_dir(dir).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

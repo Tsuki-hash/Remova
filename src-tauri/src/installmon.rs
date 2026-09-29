@@ -1,4 +1,4 @@
-//! Explicit install-monitor snapshots (P2-1). User starts/stops; no driver.
+//! Explicit install-monitor snapshots (-1). User starts/stops; no driver.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -13,7 +13,7 @@ pub struct FsSnapshot {
 pub struct MonitorDiff {
     pub added_files: Vec<String>,
     pub added_reg_values: Vec<String>,
-    /// REV-BE-10: entries beyond the diff caps — honest truncation, not silence.
+    /// entries beyond the diff caps — honest truncation, not silence.
     #[serde(default)]
     pub files_truncated: usize,
     #[serde(default)]
@@ -27,7 +27,7 @@ pub struct MonitorEndResult {
     pub items: Vec<crate::scanner::CleanupItem>,
 }
 
-// Q-T01: tests must never touch the real PROGRAMDATA snapshot — the override
+// tests must never touch the real PROGRAMDATA snapshot — the override
 // is compile-time test-only and every test clears it when done.
 #[cfg(test)]
 static TEST_STATE_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
@@ -110,7 +110,7 @@ fn take_fs_snapshot() -> FsSnapshot {
     FsSnapshot { files }
 }
 
-// Q-T01: tests shrink the walk budget so begin/end roundtrips stay fast.
+// tests shrink the walk budget so begin/end roundtrips stay fast.
 #[cfg(test)]
 fn walk_budget() -> usize {
     std::cmp::min(
@@ -129,7 +129,7 @@ static TEST_BUDGET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 
 fn reg_value_names() -> BTreeSet<String> {
     let mut set = BTreeSet::new();
-    // R21-BE-08: align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
+    // align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
     // RunOnce views, Policies Explorer Run) so 32-bit / one-shot / policy
     // persistence shows up in the install-monitor diff.
     let mut keys: Vec<String> = vec![
@@ -160,7 +160,7 @@ struct FullSnapshot {
     reg: Vec<String>,
 }
 
-/// REV-BE-11: one monitor session per process — begin/end are serialized so
+/// one monitor session per process — begin/end are serialized so
 /// concurrent calls (UI double-fire, tests) cannot interleave snapshot writes.
 fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -218,7 +218,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
 /// Paths added during a monitored install are strong evidence (Confirmed/Low).
 /// Noise (cache/temp/log) is demoted to Suspected/Medium so it is not auto-selected as "safe".
-/// REV-BE-12: user-data / library red lines use the same classification as the
+/// user-data / library red lines use the same classification as the
 /// analyzer, never hardcoded `false`.
 pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupItem> {
     use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip_shape() {
-        // Q-T01: isolated state path — tests never touch real PROGRAMDATA.
+        // isolated state path — tests never touch real PROGRAMDATA.
         let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let state = tmp.join("monitor_snapshot.json");
@@ -371,7 +371,7 @@ mod tests {
         );
     }
 
-    /// REV-BE-12: monitor items carry the analyzer's user-data / library red lines.
+    /// monitor items carry the analyzer's user-data / library red lines.
     #[test]
     fn diff_to_cleanup_items_red_lines() {
         let diff = MonitorDiff {

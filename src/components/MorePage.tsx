@@ -239,7 +239,7 @@ export function MorePage({
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
-      {/* REV-UX-02: always render the monitor tool surface (not only after a diff arrives). */}
+      {/* always render the monitor tool surface (not only after a diff arrives). */}
       {(openTool === "monitor" || monitorDiff) && (
         <MonitorPanel
           diff={monitorDiff ?? { added_files: [], added_reg_values: [] }}

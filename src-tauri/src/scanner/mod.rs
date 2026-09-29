@@ -149,7 +149,7 @@ fn cmdline_refs_install(data: &str, install_low: &str) -> bool {
     false
 }
 
-/// R23-BE-12: a slug counts only at non-alphanumeric boundaries in the raw
+/// a slug counts only at non-alphanumeric boundaries in the raw
 /// lowercased text — `steam` hits `steam.exe`/`Steam Tray` but never
 /// `SteamTools` or `mysteam`.
 pub(crate) fn slug_boundary_hit(hay_low: &str, slug: &str) -> bool {
@@ -457,7 +457,7 @@ pub fn analyze_associations(
     source: &str,
 ) -> ScanResult {
     let name_slugs = slugify(name);
-    // Publisher slug matching lives in association.rs (REV-BE-19: no dead local table).
+    // Publisher slug matching lives in association.rs (no dead local table).
     let _ = publisher;
     let install = if install_location.trim().is_empty() {
         None
@@ -667,13 +667,13 @@ pub fn analyze_associations(
                 .to_string()
         })
         .unwrap_or_default();
-    // R23-BE-06: enumerate the same Run-family keys the manage view and the
+    // enumerate the same Run-family keys the manage view and the
     // install monitor use (HKLM32 / RunOnce / Policies\Explorer\Run included);
     // a scanner-only list missed 32-bit and one-shot autostarts.
     for key in crate::manage::run_key_paths() {
         for (vname, vdata) in crate::regscan::list_values(&key) {
             let hit_install = cmdline_refs_install(&vdata, &install_low);
-            // R23-BE-12: the name hit needs raw-text boundaries too — the
+            // the name hit needs raw-text boundaries too — the
             // normalized contains form hit `SteamTools` data for `Steam`.
             let data_low = vdata.to_lowercase();
             let hit_name = name_slugs
@@ -732,7 +732,7 @@ pub fn analyze_associations(
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
         {
-            // Frontend i18n renders the user-data hint (ARCH-4) — keep reason English-neutral.
+            // Frontend i18n renders the user-data hint () — keep reason English-neutral.
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {
@@ -744,7 +744,7 @@ pub fn analyze_associations(
     fill_item_sizes(&mut items);
     fill_item_buckets(&mut items, install_location);
 
-    // AR-04: drop leftovers under user-ignored path prefixes (no silent re-appearance).
+    // drop leftovers under user-ignored path prefixes (no silent re-appearance).
     let ignore = crate::ignore::load();
     items.retain(|it| !crate::ignore::should_skip_leftover_path(&ignore, &it.path));
 
@@ -786,9 +786,9 @@ mod tests {
         assert_eq!(finalize_score(5).1, RiskLevel::High);
     }
 
-    /// R22-BE-03: command-line install references need path-segment
+    /// command-line install references need path-segment
     /// boundaries — `C:\Steam` must not claim `C:\SteamTools\…`.
-    /// R23-BE-12: slug hits need non-alphanumeric boundaries in raw text.
+    /// slug hits need non-alphanumeric boundaries in raw text.
     #[test]
     fn slug_boundary_hit_rejects_prefix_collisions() {
         assert!(slug_boundary_hit(
@@ -938,7 +938,7 @@ mod tests {
         // Match: product-named Electron host dir.
         assert!(fs_scans::webview_mask_matches("ollama.exe", &slugs));
         assert!(fs_scans::webview_mask_matches("Ollama.exe", &slugs));
-        // False positive (SEC-2 discipline): unrelated .exe / bare EBWebView must not match
+        // False positive ( discipline): unrelated .exe / bare EBWebView must not match
         // even when the real folder on disk would contain EBWebView children.
         assert!(!fs_scans::webview_mask_matches("chrome.exe", &slugs));
         assert!(!fs_scans::webview_mask_matches("Code.exe", &slugs));

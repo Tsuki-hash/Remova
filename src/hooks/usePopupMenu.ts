@@ -1,7 +1,7 @@
 import { useEffect, type RefObject } from "react";
 
 /**
- * R23-UX-09: shared popup-menu focus behavior (single source for the
+ * shared popup-menu focus behavior (single source for the
  * AppDetailPanel and AppRow row menus).
  * - opening lands focus on the first `role="menuitem"`;
  * - ArrowDown/ArrowUp/Home/End roam the items;

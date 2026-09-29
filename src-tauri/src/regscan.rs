@@ -173,7 +173,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
                     Some(&mut data_len),
                 );
                 if st == ERROR_MORE_DATA {
-                    // REV-BE-09: one retry with the buffer sizes the API reported
+                    // one retry with the buffer sizes the API reported
                     // instead of silently dropping oversized names/values.
                     let need_name = vname_len as usize;
                     let need_data = data_len as usize;
@@ -222,7 +222,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
     }
 }
 
-/// Read REG_SZ/EXPAND_SZ value by name via RegQueryValueExW (PERF-5).
+/// Read REG_SZ/EXPAND_SZ value by name via RegQueryValueExW ().
 pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     #[cfg(not(windows))]
     {
@@ -261,7 +261,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
                 Some(&mut data_len),
             );
             if st == ERROR_MORE_DATA {
-                // REV-BE-09: re-query with the reported size — long UninstallString
+                // re-query with the reported size — long UninstallString
                 // / display values must not be silently dropped.
                 let need = data_len as usize;
                 if need > data.len() && need <= (1 << 20) {
@@ -286,7 +286,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     }
 }
 
-/// Read REG_DWORD value by name via RegQueryValueExW (REV-BE-03, O(1) — same path as `read_string`).
+/// Read REG_DWORD value by name via RegQueryValueExW (, O(1) — same path as `read_string`).
 pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     #[cfg(not(windows))]
     {
@@ -407,7 +407,7 @@ pub fn read_string_default(key: &str) -> Option<String> {
                 Some(&mut len),
             );
             if st == ERROR_MORE_DATA {
-                // REV-BE-09: re-query with the reported size instead of dropping.
+                // re-query with the reported size instead of dropping.
                 let need = len as usize;
                 if need > buf.len() && need <= (1 << 20) {
                     buf = vec![0u8; need];

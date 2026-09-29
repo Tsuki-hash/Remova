@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// REV-QA-03: close-choice store + theme application (previously ~0% covered).
+// close-choice store + theme application (previously ~0% covered).
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearCloseMode,

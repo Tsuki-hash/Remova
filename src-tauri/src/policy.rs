@@ -106,7 +106,7 @@ fn expand_path_env(entry: &str) -> String {
 }
 
 /// PATH segments that must never be scrubbed (system PATH).
-/// Public so write primitives can apply an intrinsic secondary gate (S-R6-06).
+/// Public so write primitives can apply an intrinsic secondary gate ().
 pub fn is_dangerous_path_entry(entry: &str) -> bool {
     let expanded = expand_path_env(entry);
     let joined = expanded
@@ -130,7 +130,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
     if s.ends_with(':') || !s.contains('\\') || s.contains('%') {
         return true;
     }
-    // Reject path traversal in PATH segments (S-4 class).
+    // Reject path traversal in PATH segments ( class).
     if joined.split('\\').any(|seg| seg == ".." || seg == ".") {
         return true;
     }
@@ -145,7 +145,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         r"c:\program files (x86)\powershell".into(),
         r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
-    // Env roots: only system PATH-shaped subtrees —not entire ProgramFiles/ProgramData (S-2).
+    // Env roots: only system PATH-shaped subtrees —not entire ProgramFiles/ProgramData ().
     if let Ok(sr) = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")) {
         let root = sr
             .replace('/', "\\")
@@ -189,8 +189,8 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         .any(|d| s == *d || s.starts_with(&format!("{d}\\")))
 }
 
-/// Shared leftover gate for dry-run and full delete (S-05 / A-02).
-/// Order: server-side user_data/shared recompute 鈫?client flags 鈫?ignore 鈫?AR-10 鈫?safety.
+/// Shared leftover gate for dry-run and full delete ( / A-02).
+/// Order: server-side user_data/shared recompute 鈫?client flags 鈫?ignore 鈫? 鈫?safety.
 pub fn gate_cleanup_item(
     app: Option<&InstalledApp>,
     item: &CleanupItem,
@@ -219,7 +219,7 @@ pub fn gate_cleanup_item(
     {
         return GateDecision::Skip("path not associated with app");
     }
-    // S-7B hard shared: client flag, name tokens, CF roots, Microsoft Shared, non-CF markers.
+    //  hard shared: client flag, name tokens, CF roots, Microsoft Shared, non-CF markers.
     if item.shared || crate::shared::is_hard_shared_item(&item.reason, &item.path, &item.reason) {
         return GateDecision::Skip("shared runtime");
     }
@@ -247,8 +247,8 @@ pub fn gate_cleanup_item(
     }
 
     if let Some(app) = app {
-        // S-R6-01: client cleanup_source alone must not disable association.
-        // S-R7-01: scoped scans (orphan/monitor/installer/toolcache) must come from the
+        // client cleanup_source alone must not disable association.
+        // scoped scans (orphan/monitor/installer/toolcache) must come from the
         // server-side scan allow-list. Forged empty InstalledApp + scoped source
         // must not delete arbitrary paths.
         let client_scoped = source.is_scoped_scan();
@@ -268,13 +268,13 @@ pub fn gate_cleanup_item(
         } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
             && crate::shared::is_common_files_vendor_path(&item.path)
         {
-            // S-7B/R1: CF vendor subpaths need vendor-segment association, not path substring.
+            //CF vendor subpaths need vendor-segment association, not path substring.
             // Scoped scans never get CF vendor allow (shared runtime).
             if client_scoped || !crate::association::cf_vendor_associated(app, &item.path) {
                 return GateDecision::Skip("shared runtime");
             }
         } else if !crate::association::path_associated_with_app(app, item) {
-            // S-R4-03: Registry/Path / non-CF FS also require association when app is known.
+            // Registry/Path / non-CF FS also require association when app is known.
             return GateDecision::Skip("path not associated with app");
         }
     } else if matches!(item.kind, ItemKind::File | ItemKind::Dir)
@@ -288,7 +288,7 @@ pub fn gate_cleanup_item(
             return GateDecision::Skip("path not associated with app");
         }
     } else {
-        // REV-SEC-08: no app context and not a scoped allow-list flow — never default-allow FS deletes.
+        // no app context and not a scoped allow-list flow — never default-allow FS deletes.
         if matches!(item.kind, ItemKind::File | ItemKind::Dir) {
             return GateDecision::Skip("path not associated with app");
         }
@@ -358,7 +358,7 @@ mod tests {
             gate_cleanup_item(None, &forged_ud, CleanupSource::Uninstall, &ignore),
             GateDecision::Skip("path not associated with app")
         );
-        // S-R4-01: exact profile roots without trailing segment.
+        // exact profile roots without trailing segment.
         for root in [
             r"C:\Users\a\Documents",
             r"C:\Users\a\Downloads",
@@ -370,7 +370,7 @@ mod tests {
                 "exact user_data root must skip: {root}"
             );
         }
-        // S-R4-02: exact Common Files root.
+        // exact Common Files root.
         for root in [
             r"C:\Program Files\Common Files",
             r"C:\Program Files (x86)\Common Files",
@@ -381,7 +381,7 @@ mod tests {
                 "exact shared root must skip: {root}"
             );
         }
-        // S-7B: Microsoft Shared hard skip; CF vendor needs association.
+        //Microsoft Shared hard skip; CF vendor needs association.
         let ms = item(
             r"C:\Program Files\Common Files\Microsoft Shared\VxOps",
             ItemKind::Dir,
@@ -419,7 +419,7 @@ mod tests {
             ItemKind::Dir,
         );
         assert!(!gate_cleanup_item(Some(&a), &un, CleanupSource::Uninstall, &ignore).is_allow());
-        // Associated via vendor **segment** equal to app name slug 鈫?allow (S-7B/R1).
+        // Associated via vendor **segment** equal to app name slug 鈫?allow ().
         let assoc = item(
             r"C:\Program Files\Common Files\DemoApp\plugins",
             ItemKind::Dir,
@@ -499,7 +499,7 @@ mod tests {
                 "expected allow for vendor PATH {p}, got {d:?}"
             );
         }
-        // %ProgramFiles%\Vendor\* is allowed only when ProgramFiles expands (S-2, not blanket deny).
+        // %ProgramFiles%\Vendor\* is allowed only when ProgramFiles expands (, not blanket deny).
         if let Ok(pf) = std::env::var("ProgramFiles") {
             if pf.trim().len() > 2 {
                 let it = item(r"%ProgramFiles%\Vendor\Tool", ItemKind::Path);
@@ -536,7 +536,7 @@ mod tests {
     fn registry_path_require_app_association() {
         let ignore = crate::ignore::IgnoreList::default();
         let a = app("DemoApp", r"C:\Program Files\DemoApp");
-        // Unrelated PATH / registry with real app context 鈫?skip (S-R4-03).
+        // Unrelated PATH / registry with real app context 鈫?skip ().
         let other_path = item(r"D:\TotallyOther\bin", ItemKind::Path);
         assert!(
             !gate_cleanup_item(Some(&a), &other_path, CleanupSource::Uninstall, &ignore).is_allow()
@@ -550,12 +550,12 @@ mod tests {
         assert!(
             gate_cleanup_item(Some(&a), &related, CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // Vendor PATH under Program Files is not system-danger (S-2) —still needs association when app known.
+        // Vendor PATH under Program Files is not system-danger () —still needs association when app known.
         let pf_vendor = item(r"C:\Program Files\UnrelatedVendor\bin", ItemKind::Path);
         assert!(
             !gate_cleanup_item(Some(&a), &pf_vendor, CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // S-R7-01: orphan-shaped app + Orphan source + unscanned path must skip.
+        // orphan-shaped app + Orphan source + unscanned path must skip.
         let orphan_app = app("孤儿扫描", "");
         assert!(!gate_cleanup_item(
             Some(&orphan_app),
@@ -604,7 +604,7 @@ mod tests {
         assert!(
             !gate_cleanup_item(Some(&a), &items[3], CleanupSource::Uninstall, &ignore).is_allow()
         );
-        // Related PATH under install root (S-R4-03 association).
+        // Related PATH under install root ( association).
         assert!(
             gate_cleanup_item(Some(&a), &items[4], CleanupSource::Uninstall, &ignore).is_allow()
         );
@@ -684,7 +684,7 @@ mod tests {
         // Related install path allows.
         let ok = item(r"C:\Program Files\DemoApp\bin\x.exe", ItemKind::File);
         assert!(gate_cleanup_item(Some(&a), &ok, CleanupSource::Uninstall, &ignore).is_allow());
-        // Related PATH under install root allows (S-R4-03 association).
+        // Related PATH under install root allows ( association).
         let ok_path = item(r"C:\Program Files\DemoApp\bin", ItemKind::Path);
         assert!(
             gate_cleanup_item(Some(&a), &ok_path, CleanupSource::Uninstall, &ignore).is_allow()
@@ -710,7 +710,7 @@ mod tests {
             !gate_cleanup_item(Some(&orphan_app), &win, CleanupSource::Orphan, &ignore).is_allow()
         );
     }
-    /// S-R7-01 for installer/toolcache: forged empty app + scoped source + arbitrary path must skip.
+    ///  for installer/toolcache: forged empty app + scoped source + arbitrary path must skip.
     #[test]
     fn adversarial_forged_scoped_scan_requires_allow_list() {
         let empty = app("安装包与更新缓存", "");
@@ -725,7 +725,7 @@ mod tests {
         }
     }
 
-    /// S-R7-01 adversarial: forged empty InstalledApp + cleanup_source=orphan.
+    ///  adversarial: forged empty InstalledApp + cleanup_source=orphan.
     #[test]
     fn adversarial_forged_orphan_app_cannot_delete_arbitrary_paths() {
         let ignore = crate::ignore::IgnoreList::default();

@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 /**
  * IPC contract smoke: every public api method must be present and map to the
  * snake/camel command names the Rust side registers. The command list is parsed
- * straight out of `src-tauri/src/lib.rs` (REV-QA-10) so Rust-side drift — a
+ * straight out of `src-tauri/src/lib.rs` () so Rust-side drift — a
  * renamed or newly registered command — fails here instead of silently
  * desyncing from ARCHITECTURE §3.
  */
@@ -118,16 +118,16 @@ describe("api IPC contract", () => {
   });
 
   it("invoke() targets match the commands Rust actually registers (lib.rs)", () => {
-    // REV-QA-10: real cross-check — a command registered on the Rust side with no
+    // real cross-check — a command registered on the Rust side with no
     // caller, or an invoke() targeting an unregistered command, fails here.
-    // R21-QA-10: backendOnly is parsed from check-commands.ps1 (single source).
+    // backendOnly is parsed from check-commands.ps1 (single source).
     const backendOnly = parseBackendOnlyFromPs1();
     const registered = rustRegisteredCommands().filter((c) => !backendOnly.includes(c));
     expect(feInvokedCommands()).toEqual(registered);
   });
 });
 
-/** R21-QA-10: extract `$backendOnly` names from scripts/check-commands.ps1. */
+/** extract `$backendOnly` names from scripts/check-commands.ps1. */
 function parseBackendOnlyFromPs1(): string[] {
   const ps1 = readFileSync("scripts/check-commands.ps1", "utf8");
   const m = ps1.match(/foreach \(\$n in @\(([^)]+)\)\)/);

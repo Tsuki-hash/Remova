@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Shortcut peek budget (REV-BE-01): LNK target strings sit near the header.
+/// Shortcut peek budget (): LNK target strings sit near the header.
 const SHORTCUT_PEEK_BYTES: usize = 8 * 1024;
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
@@ -14,7 +14,7 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
 
 pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     for letter in b'C'..=b'Z' {
-        // REV-BE-02: skip remote/CDROM — `exists()` on a dead network mapping can stall 30s+.
+        // skip remote/CDROM — `exists()` on a dead network mapping can stall 30s+.
         if !crate::diskradar::is_local_fixed_drive(letter as char) {
             continue;
         }
@@ -72,7 +72,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
 }
 
 /// Whether a LOCALAPPDATA/APPDATA child dir name looks like a product WebView2/Electron
-/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence (SEC-2).
+/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence ().
 pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> bool {
     let low = dir_name.to_lowercase();
     if !low.ends_with(".exe") && !low.contains("ebwebview") {
@@ -110,7 +110,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Name match is REQUIRED — WebView2 folder alone is not evidence (SEC-2).
+            // Name match is REQUIRED — WebView2 folder alone is not evidence ().
             if !webview_mask_matches(fname, name_slugs) {
                 continue;
             }
@@ -212,8 +212,8 @@ fn walk_shortcuts(
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
             || {
-                // REV-BE-01: peek at most 8KB (lnk target lives near the start) and
-                // search bytes — R23-BE-07: the read is bounded, never whole-file.
+                // peek at most 8KB (lnk target lives near the start) and
+                // search bytes — the read is bounded, never whole-file.
                 let mut peek_buf = [0u8; SHORTCUT_PEEK_BYTES];
                 if let Ok(n) = std::fs::File::open(&p).and_then(|mut f| {
                     use std::io::Read;
@@ -224,7 +224,7 @@ fn walk_shortcuts(
                     let peek_lc = peek.to_ascii_lowercase();
                     !install_low.is_empty() && {
                         find_bytes(&peek_lc, install_low.as_bytes()) || {
-                            // R23-BE-14: decode UTF-16LE and lowercase — byte-searching
+                            // decode UTF-16LE and lowercase — byte-searching
                             // a lowercase needle in raw-case UTF-16 always missed.
                             let u16s: Vec<u16> = peek
                                 .chunks_exact(2)
@@ -339,7 +339,7 @@ pub(super) fn temp_entry_matches(entry_name: &str, slugs: &[String]) -> bool {
 mod tests {
     use super::*;
 
-    /// R22-BE-02: only the entry name is matched, never the whole path.
+    /// only the entry name is matched, never the whole path.
     #[test]
     fn temp_match_uses_entry_name_not_full_path() {
         let slugs = vec![normalize_for_match("Steam")];

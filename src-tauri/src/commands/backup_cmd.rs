@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn delete_backup_session_rejects_dot_and_empty() {
-        // S-R6-04 / command boundary: `"."` / empty must never wipe the backup root.
+        // / command boundary: `"."` / empty must never wipe the backup root.
         assert!(crate::restore::delete_session_by_name("").is_err());
         assert!(crate::restore::delete_session_by_name(".").is_err());
         assert!(crate::restore::delete_session_by_name("..").is_err());
@@ -42,7 +42,7 @@ mod tests {
         assert!(crate::restore::delete_session_by_name("a\\b").is_err());
     }
 
-    // T-R7-01: commands-layer coverage for session-name shape (R-R7-02).
+    // -01: commands-layer coverage for session-name shape (R-R7-02).
     #[test]
     fn delete_backup_session_requires_timestamp_prefix() {
         // Non-session folder names must never be deleted by name.
@@ -57,7 +57,7 @@ mod tests {
         }
     }
 
-    // T-R7-01: restore_by_name still rejects traversal at the command boundary.
+    // -01: restore_by_name still rejects traversal at the command boundary.
     #[test]
     fn restore_session_by_name_rejects_traversal() {
         assert!(crate::restore::restore_by_name("").is_err());

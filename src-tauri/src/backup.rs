@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// R23-SEC-05: tmp + rename — a crash mid-write must not leave a half map/seal.
+/// tmp + rename — a crash mid-write must not leave a half map/seal.
 fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = p.with_extension("remova.tmp");
     fs::write(&tmp, bytes).map_err(|e| {
@@ -19,7 +19,7 @@ fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn backup_root() -> PathBuf {
-    // R23-SEC-08: the override is compile-time test-only — a production
+    // the override is compile-time test-only — a production
     // parent process must not relocate the backup root (the seal binding
     // assumes the default layout).
     #[cfg(test)]
@@ -36,7 +36,7 @@ pub fn backup_root() -> PathBuf {
 }
 
 /// Serializes tests that mutate process-wide `REMOVA_BACKUP_DIR` so parallel
-/// suites cannot steal each other's backup root (NEW-B).
+/// suites cannot steal each other's backup root ().
 #[cfg(test)]
 pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -44,7 +44,7 @@ pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
-    // REV-SEC-09: charset must match `is_session_name` (alnum + `-` `_` only).
+    // charset must match `is_session_name` (alnum + `-` `_` only).
     let safe: String = app_name
         .chars()
         .map(|c| {
@@ -60,14 +60,31 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Q-B13: two cleanups within the same second must not merge into one
-    // session directory — disambiguate with `_N` (still `is_session_name`-safe).
-    let mut dir = backup_root().join(format!("{ts}_{safe}"));
-    let mut n = 1u32;
-    while dir.exists() && n < 100 {
-        dir = backup_root().join(format!("{ts}_{safe}_{n}"));
-        n += 1;
+    // Claim the session dir with create_dir — never exists-then-reuse (race).
+    let root = backup_root();
+    fs::create_dir_all(&root)?;
+    let mut claimed = None;
+    for n in 0..100u32 {
+        let dir = if n == 0 {
+            root.join(format!("{ts}_{safe}"))
+        } else {
+            root.join(format!("{ts}_{safe}_{n}"))
+        };
+        match fs::create_dir(&dir) {
+            Ok(()) => {
+                claimed = Some(dir);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 99 => continue,
+            Err(e) => return Err(e),
+        }
     }
+    let dir = claimed.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "session name exhausted under backup root",
+        )
+    })?;
     let _pins = crate::fsutil::create_dirs_pinned(&dir.join("files"))?;
     let _pins_reg = crate::fsutil::create_dirs_pinned(&dir.join("registry"))?;
     Ok(dir)
@@ -86,22 +103,23 @@ fn safe_name(path: &str) -> String {
     let base = path
         .replace(['\\', '/'], "__")
         .replace(':', "")
-        .replace(['*', '?', '"', '<', '>', '|'], "_")
-        .chars()
-        .take(180)
-        .collect::<String>();
-    // R23-SEC-07: Win32 folds trailing dots/spaces on directory creation —
-    // two registry entries whose sanitized names differ only there would
-    // silently share (and overwrite) one backup directory. A digest suffix
-    // disambiguates exactly those.
-    if base.ends_with(['.', ' ']) {
+        .replace(['*', '?', '"', '<', '>', '|'], "_");
+    let truncated = base.chars().count() > 180;
+    let name: String = base.chars().take(180).collect();
+    // Any lossy fold, truncation, or Win32 trailing-dot fold needs a digest
+    // so two distinct registry keys never share one backup directory.
+    let lossy = path.contains(['*', '?', '"', '<', '>', '|'])
+        || truncated
+        || name.ends_with(['.', ' '])
+        || path.ends_with(['.', ' ']);
+    if lossy {
         return format!(
             "{}_{}",
-            base.trim_end_matches(['.', ' ']),
+            name.trim_end_matches(['.', ' ']),
             crate::fsutil::fnv1a64(path)
         );
     }
-    base
+    name
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -222,6 +240,14 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     }
     // All inputs are produced in the privileged private stage, never re-read
     // from the user-writable session. Capture digests before publishing.
+    if fail > 0 {
+        // Partial batches must not publish: half-written registry exports or
+        // missing files would be sealed and later restored as if complete.
+        return Err(format!(
+            "backup incomplete ({fail} failed); session not published: {}",
+            errors.join("; ")
+        ));
+    }
     #[cfg(windows)]
     stage.verify_snapshots()?;
     let digests = crate::path_seal::collect_reg_digests(private)?;
@@ -291,7 +317,7 @@ fn backup_item_with_map(
                 let meta = dir.join("value.txt");
                 fs::write(&meta, &item.path)
                     .map_err(|e| crate::error::backup_reg_err(e.to_string()).to_ipc())?;
-                // S-04: value.reg must succeed so restore can be single-value (not whole key).
+                // value.reg must succeed so restore can be single-value (not whole key).
                 match crate::regops::export_reg_value(key, vname, &dir.join("value.reg")) {
                     Ok(true) => {}
                     Ok(false) => {
@@ -316,7 +342,7 @@ fn backup_item_with_map(
             if !src.exists() {
                 return Ok(());
             }
-            // REV-SEC-03: never copy through junction/mount reparse (backup exfil / restore write-through).
+            // never copy through junction/mount reparse (backup exfil / restore write-through).
             if crate::fsutil::is_reparse_point(src) {
                 return Ok(());
             }
@@ -420,9 +446,105 @@ mod tests {
     }
 
     #[test]
+    fn safe_name_disambiguates_lossy_folds() {
+        let a = safe_name(r"HKCU\SOFTWARE\A*B");
+        let b = safe_name(r"HKCU\SOFTWARE\A?B");
+        assert_ne!(a, b, "folded distinct keys must not collide");
+        let t1 = safe_name(&format!(r"HKCU\SOFTWARE\{}", "X".repeat(200)));
+        let t2 = safe_name(&format!(r"HKCU\SOFTWARE\{}", "X".repeat(199) + "Y"));
+        assert_ne!(t1, t2, "truncation collisions must not share a dir");
+    }
+
+    #[test]
     fn session_dir_shape() {
         // do not create on disk in unit test —just path builder logic via create
         let _ = backup_root();
+    }
+
+    /// Partial batch must not publish a sealed session (failed items would
+    /// ride along or leave half registry exports).
+    #[test]
+    fn backup_partial_failure_does_not_publish_seal() {
+        let _guard = lock_backup_env();
+        let root = std::env::temp_dir().join(format!("remova_partial_pub_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        std::env::set_var("REMOVA_BACKUP_DIR", &root);
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.join("src.txt");
+        fs::write(&source, b"ok").unwrap();
+        let good = CleanupItem {
+            path: source.to_string_lossy().into_owned(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let bad = CleanupItem {
+            path: "ZZZ\\not-a-real-hive".into(),
+            kind: ItemKind::Registry,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let session = create_session("partial").unwrap();
+        let (ok, fail, errors) = backup_items(&[good, bad], &session);
+        assert!(fail >= 1, "{errors:?}");
+        assert_eq!(ok, 0, "nothing publishes on partial failure");
+        assert!(
+            !session.join("files/path_map.json").exists(),
+            "map must not publish on partial failure"
+        );
+        assert!(crate::path_seal::verified_seal(&session).is_err());
+        std::env::remove_var("REMOVA_BACKUP_DIR");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Session dir must be claimed with create_dir (no exists-then-reuse race).
+    #[test]
+    fn create_session_never_reuses_foreign_directory() {
+        let _guard = lock_backup_env();
+        let root = std::env::temp_dir().join(format!("remova_sess_claim_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        std::env::set_var("REMOVA_BACKUP_DIR", &root);
+        // Occupy timestamp names with foreign non-empty directories (span a
+        // few seconds so the test does not flake across a clock tick).
+        let base_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        for ts in base_ts..base_ts.saturating_add(3) {
+            for n in 0..100u32 {
+                let name = if n == 0 {
+                    format!("{ts}_raceapp")
+                } else {
+                    format!("{ts}_raceapp_{n}")
+                };
+                let occupied = root.join(name);
+                fs::create_dir_all(&occupied).unwrap();
+                fs::write(occupied.join("foreign.marker"), b"x").unwrap();
+            }
+        }
+        let err = create_session("raceapp").unwrap_err();
+        assert!(
+            err.kind() == std::io::ErrorKind::AlreadyExists || err.to_string().contains("exist"),
+            "{err}"
+        );
+        std::env::remove_var("REMOVA_BACKUP_DIR");
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

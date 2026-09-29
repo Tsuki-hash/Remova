@@ -79,7 +79,7 @@ export function ScanActionsBar({
       <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={onDryRun}>
         {L.dryRun}
       </button>
-      {/* REV-UX-03: scope summary before the destructive CTA */}
+      {/* scope summary before the destructive CTA */}
       {selectedPaths.size > 0 && (
         <span style={{ ...css.muted, fontSize: 12 }} title={L.dangerScopeHint}>
           {L.dangerScope(selectedPaths.size)}

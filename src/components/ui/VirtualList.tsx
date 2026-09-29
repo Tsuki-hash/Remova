@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 /**
- * REV-UX-18: shared windowed list for the tool panels (History / Disk / Idle).
+ * shared windowed list for the tool panels (History / Disk / Idle).
  * Rows are absolutely positioned and measured, so variable heights stay correct
  * while only the visible window renders.
  */
@@ -23,7 +23,7 @@ export function VirtualList<T>({
   height?: number;
   estimateSize?: number;
   rowGap?: number;
-  /** R21-UX-11: expose list/listitem semantics for screen readers. */
+  /** expose list/listitem semantics for screen readers. */
   listRole?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);

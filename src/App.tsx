@@ -235,7 +235,7 @@ export default function App() {
 
   const onAfterCleanup = useCallback(
     (app: InstalledApp) => {
-      // FN-04: re-analyze after cleanup when user preference is on.
+      // re-analyze after cleanup when user preference is on.
       if (!loadRescanAfterUninstall()) return;
       void analyzeRef.current(app, { fromUninstall: true });
     },
@@ -317,7 +317,7 @@ export default function App() {
 
   const checkup = useCheckupStats(apps, sizeOf);
 
-  // F-R7-03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
+  // -03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
   const {
     checkupOrphanBusy,
     elevate,
@@ -379,7 +379,7 @@ export default function App() {
     busyRef,
   });
 
-  // R23-FE-01: language loads once on mount; the theme effect only applies
+  // language loads once on mount; the theme effect only applies
   // the theme — switching themes must not rebuild every copy object.
   useEffect(() => {
     loadLang();
@@ -450,26 +450,26 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    // R21-FE-03: pendingBucket removed — closing the preview always resets the filter.
+    // pendingBucket removed — closing the preview always resets the filter.
     if (!scan) setKindFilter(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan]);
 
   const drillDownBucket = useCallback(
     (bucket: LinkedBucketId) => {
-      // REV-FE-04: same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
+      // same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
       if (scanning) return;
       if (scan && selected && scanMatchesApp(scan, selected)) {
         setKindFilter(bucket);
       } else if (selected) {
-        // R21-FE-03: no deferred bucket — analyze first; drill after results land.
+        // no deferred bucket — analyze first; drill after results land.
         void analyze(selected);
       }
     },
     [scan, selected, analyze, setKindFilter, scanning],
   );
 
-  // a scan in progress absorbs new row-analyze requests (REV-FE-04: one guard = `scanning`).
+  // a scan in progress absorbs new row-analyze requests (one guard = `scanning`).
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],

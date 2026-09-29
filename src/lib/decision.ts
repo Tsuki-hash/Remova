@@ -226,10 +226,10 @@ export function buildCleanupRiskBits(
 }
 
 /** Format risk callouts for a confirm message body (no raw warning glyphs). */
-/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (REV-FE-12). */
+/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (). */
 export const LARGE_APP_KB = 500 * 1024;
 
-/** REV-FE-13: callers must pass localized title. */
+/** callers must pass localized title. */
 export function formatRiskNote(bits: string[], title: string): string {
   return bits.length ? `\n\n${title}\n${bits.join("\n")}` : "";
 }
@@ -322,7 +322,7 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
   if (m.includes("path missing")) return L.reasonPathMissing;
   if (m.includes("not found in path")) return L.reasonNotInPath;
   if (m.includes("reboot delete")) return L.reasonRebootDelete;
-  // F-R6-09: common Chinese backend / reason copy (same buckets as the codes above).
+  // -09: common Chinese backend / reason copy (same buckets as the codes above).
   if (raw.includes("用户数据") || raw.includes("用户资料")) return L.reasonUserData;
   if (raw.includes("共享运行") || raw.includes("共享组件") || raw.includes("共享库")) {
     return L.reasonShared;

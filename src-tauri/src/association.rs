@@ -1,4 +1,4 @@
-//! Leftover-to-app association (AR-10 / S-R4-03 / S-7R1).
+//! Leftover-to-app association ( /  / ).
 //!
 //! Answers one question: *does this leftover plausibly belong to this app?* `policy` consumes the
 //! boolean verdicts; it deliberately knows nothing about how the evidence is weighed, so the
@@ -15,7 +15,7 @@ pub fn is_orphan_flow(app: &crate::apps::InstalledApp) -> bool {
             && app.quiet_uninstall_string.trim().is_empty())
 }
 
-/// Generic English tokens that create AR-10 false positives on short path segments.
+/// Generic English tokens that create  false positives on short path segments.
 const AR10_NAME_STOPWORDS: &[&str] = &[
     "app", "tool", "free", "pro", "data", "user", "file", "setup", "client", "server", "service",
     "manager", "helper", "plugin", "update", "code", "edit",
@@ -45,7 +45,7 @@ pub fn common_files_vendor_segment(path: &str) -> Option<String> {
     Some(seg.to_string())
 }
 
-/// S-7R1: CF vendor association —vendor **directory segment** equals install prefix
+/// : CF vendor association —vendor **directory segment** equals install prefix
 /// under Common Files, or equals a strong name/publisher slug (segment equality).
 pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool {
     if is_orphan_flow(app) {
@@ -133,10 +133,10 @@ fn is_safe_install_root(install: &str) -> bool {
     true
 }
 
-/// Light association for Registry / PATH leftovers when an installed app is known (S-R4-03).
-/// S-3: never trust client `reason` —path / registry / publisher signals only.
+/// Light association for Registry / PATH leftovers when an installed app is known ().
+/// never trust client `reason` —path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
-    // S-R7-01: orphan-shaped apps must not claim arbitrary leftovers as associated.
+    // orphan-shaped apps must not claim arbitrary leftovers as associated.
     // Policy enforces the server-side orphan allow-list separately.
     if is_orphan_flow(app) {
         return false;
@@ -165,7 +165,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     // hit `Adaptive`). The split set contains spaces, so segments never carry
     // them — a multi-word publisher matches a run of ADJACENT tokens
     // (`Acme Corp` inside `HKLM\\...\\Acme Corp\\bin`); the previous
-    // starts_with/ends_with arms were unreachable (R23-BE-09).
+    // starts_with/ends_with arms were unreachable ().
     if pub_low.len() >= 4 {
         let pub_words: Vec<&str> = pub_low
             .split([' ', '_'])
@@ -188,7 +188,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         }
     }
     let slugs = crate::scanner::slugify(&app.name);
-    // REV-BE-07: segment-boundary match (`codec` must not hit `mycodec`).
+    // segment-boundary match (`codec` must not hit `mycodec`).
     slugs.iter().any(|s| {
         if !ar10_name_slug_ok(s) {
             return false;
@@ -199,14 +199,14 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     })
 }
 
-/// Medium association gate (AR-10): leftovers must look related to the app.
+/// Medium association gate (): leftovers must look related to the app.
 /// Orphan/monitor sources skip association at the policy layer.
 /// R2-11: keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
         return false;
     }
-    // S-4: traversal segments never associate.
+    // traversal segments never associate.
     if item
         .path
         .replace('/', "\\")
@@ -220,7 +220,7 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
         ItemKind::File | ItemKind::Dir => {
             let path = item.path.replace('/', "\\");
             let low = path.to_lowercase();
-            // S-R7-01: orphan-shaped apps must not claim arbitrary FS paths as associated.
+            // orphan-shaped apps must not claim arbitrary FS paths as associated.
             // The orphan allow-list lives in policy (`was_recent_orphan_path`), not here.
             if is_orphan_flow(app) {
                 return false;
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn association_ignores_forged_client_reason() {
-        // S-3: `reason` is client-supplied and must never create an association.
+        // `reason` is client-supplied and must never create an association.
         let app = demo_app();
         let mut it = probe(r"D:\Totally\Unrelated\bin", ItemKind::Path);
         it.reason = format!("belongs to {}", app.install_location);
@@ -481,7 +481,7 @@ mod tests {
     fn orphan_flow_uses_safety_not_slug() {
         let app = orphan_app();
         assert!(is_orphan_flow(&app));
-        // S-R7-01: orphan-shaped apps must NOT claim arbitrary FS/non-FS paths as associated.
+        // orphan-shaped apps must NOT claim arbitrary FS/non-FS paths as associated.
         // The server-side orphan allow-list is enforced at the policy layer.
         assert!(!path_associated_with_app(
             &app,

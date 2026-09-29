@@ -28,7 +28,7 @@ pub async fn clear_cleanup_history() -> Result<(), String> {
 #[tauri::command]
 pub fn export_history_csv() -> Result<String, String> {
     let entries = history::load(crate::constants::HISTORY_CSV_CAP);
-    // R21-SUP-05: Excel (the default Windows .csv handler) needs a UTF-8 BOM
+    // Excel (the default Windows .csv handler) needs a UTF-8 BOM
     // or it decodes Chinese app names as ANSI.
     let mut out = String::from(
         "\u{FEFF}app_name,deleted,failed,skipped,delayed,aborted,backup_dir,created_at\n",

@@ -29,7 +29,7 @@ pub fn save_ai_config(
         // The IPC copy (possibly padded) holds the secret too — wipe it.
         k.zeroize();
         if !trimmed.is_empty() {
-            // R21-SUP-02: assignment would drop the old decrypted key without wipe.
+            // assignment would drop the old decrypted key without wipe.
             c.api_key.zeroize();
             c.api_key = trimmed;
         }
@@ -48,7 +48,7 @@ pub async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        // REV-SUP-05: keep the stable code, pass the underlying reason through —
+        // keep the stable code, pass the underlying reason through —
         // `code::detail` (formatError maps the code, the tail carries the cause).
         .map_err(|e| format!("ai:risk_brief_failed::{e}"))
 }
@@ -68,7 +68,7 @@ pub async fn ai_explain_items(
     })
     .await
     .map_err(|e| e.to_string())?
-    // REV-SUP-05: stable code + underlying reason (see ai_risk_brief).
+    // stable code + underlying reason (see ai_risk_brief).
     .map_err(|e| format!("ai:explain_failed::{e}"))
 }
 
@@ -82,7 +82,7 @@ pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
-        // REV-SUP-05: stable code + underlying reason (see ai_risk_brief).
+        // stable code + underlying reason (see ai_risk_brief).
         .map_err(|e| format!("ai:summarize_failed::{e}"))
 }
 

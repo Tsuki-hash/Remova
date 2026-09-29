@@ -57,7 +57,7 @@ export function useAnalyzeFlow({
   } = flow;
   const analyzeSeqRef = useRef(0);
   const analyzingRef = useRef(false);
-  /** F-R6-11: stage idle timers must be cleared on unmount / replacement. */
+  /** -11: stage idle timers must be cleared on unmount / replacement. */
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearStageTimer = useCallback(() => {
     if (stageTimerRef.current !== null) {
@@ -68,7 +68,7 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
-      // REV-FE-04: single in-flight ref (was dual scanningRef/analyzingRef).
+      // single in-flight ref (was dual scanningRef/analyzingRef).
       // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
@@ -154,7 +154,7 @@ export function useAnalyzeFlow({
       });
       if (!ok) return;
       if (busyRef.current) return;
-      // R23-FE-05: kill the previous run's stage timer here — its 2.2s tail
+      // kill the previous run's stage timer here — its 2.2s tail
       // would otherwise fire mid-run and flip the bar back to idle.
       clearStageTimer();
       saveRescanAfterUninstall(checked);
@@ -178,7 +178,7 @@ export function useAnalyzeFlow({
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
-          // R23-FE-04: arm the residual flag — the post-uninstall rescan must
+          // arm the residual flag — the post-uninstall rescan must
           // clean leftovers WITHOUT re-running the official uninstaller, and
           // the cleanup UI must hide the official-uninstall toggle. execReal
           // clears the flag once the residual pass finishes.
@@ -244,7 +244,7 @@ export function useAnalyzeFlow({
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
         else if (r.ok) toast.success(strings.uninstallOk);
         else toast.error(`${strings.uninstallFail}: ${r.message}`);
-        // FN-04: default-on rescan after successful official uninstall only.
+        // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
           await analyze(app, { fromUninstall: true });

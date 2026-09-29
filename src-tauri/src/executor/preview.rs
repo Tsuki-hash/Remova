@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{CleanupReport, ItemDetail};
 
-/// Dry-run with the same semantic gates as full delete when `app` is known (S-05 / A-02).
+/// Dry-run with the same semantic gates as full delete when `app` is known ( / A-02).
 pub fn run_cleanup_dry_for_app(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
@@ -36,7 +36,7 @@ pub fn run_cleanup_dry_for_app_source(
             });
             continue;
         }
-        // S-R4-08: align dry-run outcome probes with full delete.
+        // align dry-run outcome probes with full delete.
         match it.kind {
             ItemKind::File | ItemKind::Dir => {
                 if !Path::new(&it.path).exists() {

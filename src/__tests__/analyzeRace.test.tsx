@@ -153,7 +153,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(calls).toBe(1);
     expect(captured.scan?.app_name).toBe("AppA");
 
-    // R21-QA-05: a second run must replace the previous result.
+    // a second run must replace the previous result.
     await act(async () => {
       await result.current.analyze(app("AppB"));
     });

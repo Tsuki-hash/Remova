@@ -5,7 +5,7 @@ import type { InstalledApp } from "../types";
 
 type SizeEntry = { kb: number; capped: boolean };
 
-/** Auto-estimate missing install sizes after list load (P0-2). */
+/** Auto-estimate missing install sizes after list load (). */
 export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   const [estimating, setEstimating] = useState(false);
   const [sizeMap, setSizeMap] = useState<Record<string, SizeEntry>>({});
@@ -15,7 +15,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   // Native begin/cancel mutate one backend generation; keep their order even
   // when a refresh arrives while cancellation is still awaiting IPC.
   const nativeLifecycle = useRef<Promise<void>>(Promise.resolve());
-  // R23-FE-07: paths abandoned by an explicit stop — never auto-restarted by
+  // paths abandoned by an explicit stop — never auto-restarted by
   // a later apps refresh (they can still be estimated after a remount).
   const sizeSkipped = useRef(new Set<string>());
 
@@ -39,7 +39,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
         sizeCache.current.get(a.install_location) ??
         null;
       if (est && est.kb > 0) {
-        // R21-SUP-04: file-cap walk is a floor — never show it as a complete size.
+        // file-cap walk is a floor — never show it as a complete size.
         return est.capped ? `>=${formatSize(est.kb)}` : `~${formatSize(est.kb)}`;
       }
       return "—";

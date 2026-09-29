@@ -46,7 +46,7 @@ export type DriveInfo = {
 export type MonitorDiff = {
   added_files: string[];
   added_reg_values: string[];
-  /** REV-BE-10: entries beyond the diff caps (honest truncation, backend-filled). */
+  /** entries beyond the diff caps (honest truncation, backend-filled). */
   files_truncated?: number;
   reg_truncated?: number;
 };

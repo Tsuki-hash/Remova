@@ -1,7 +1,7 @@
 import type { NavId } from "./theme";
 import type { Strings } from "../i18n";
 
-/** Shell title for the active nav (F-R7-03: keep chrome labels out of App.tsx). */
+/** Shell title for the active nav (-03: keep chrome labels out of App.tsx). */
 export function navTitle(nav: NavId, L: Strings): string {
   switch (nav) {
     case "software":

@@ -190,7 +190,7 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}
-            // R23-FE-08: regenerate goes through the hook's seq-guarded
+            // regenerate goes through the hook's seq-guarded
             // runAiReport — the old inline path raced the auto effect.
             onClick={onRegenerate}
           >

@@ -1,4 +1,4 @@
-//! User ignore list (P2-3) persisted as JSON under ProgramData/Remova.
+//! User ignore list (-3) persisted as JSON under ProgramData/Remova.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), Strin
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    // REV-SUP-07: temp + rename so a crash mid-write cannot leave half a JSON file.
+    // temp + rename so a crash mid-write cannot leave half a JSON file.
     let tmp = p.with_extension("json.tmp");
     std::fs::write(&tmp, s).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
@@ -77,7 +77,7 @@ fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
     Ok(l)
 }
 
-/// IPC hygiene (REV-SEC-13): reject oversized or control-character names.
+/// IPC hygiene (): reject oversized or control-character names.
 fn validate_rule_text(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("empty name".into());
@@ -160,13 +160,13 @@ pub fn is_path_ignored(list: &IgnoreList, path: &str) -> bool {
         if pref.is_empty() {
             return false;
         }
-        // S-R6-12: prefix match only on path-segment boundaries (`C:\Foo` must not
+        // prefix match only on path-segment boundaries (`C:\Foo` must not
         // swallow `C:\Foobar\...`).
         p == pref || p.starts_with(&format!("{pref}\\"))
     })
 }
 
-/// Apply ignore rules to an installed-app row (AR-04 backend enforcement).
+/// Apply ignore rules to an installed-app row ( backend enforcement).
 pub fn is_app_ignored(
     list: &IgnoreList,
     name: &str,
@@ -193,7 +193,7 @@ pub struct IgnoreSuggestion {
 }
 
 const SHARED_ROOTS: &[&str] = &[
-    // Package Cache is NOT a global ignore (SEC-4) — too broad for all products.
+    // Package Cache is NOT a global ignore () — too broad for all products.
     r"C:\Program Files\Common Files",
     r"C:\Program Files (x86)\Common Files",
     r"C:\Program Files\Microsoft Shared",
@@ -382,7 +382,7 @@ mod tests {
             r"C:\Program Files\Common Files\Acme\lib.dll".to_string(),
         ];
         let s = suggest_from_leftovers("Acme Corp", &paths);
-        // SEC-4: Package Cache must NOT become a global ignore suggestion.
+        // Package Cache must NOT become a global ignore suggestion.
         assert!(!s
             .iter()
             .any(|x| x.kind == "path" && x.value.contains("Package Cache")));
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn path_ignore_requires_segment_boundary() {
-        // S-R6-12: `C:\Foo` must not swallow `C:\Foobar`.
+        // `C:\Foo` must not swallow `C:\Foobar`.
         let mut l = IgnoreList::default();
         l.paths.push(r"C:\Program Files\Vendor".into());
         assert!(is_path_ignored(&l, r"C:\Program Files\Vendor"));

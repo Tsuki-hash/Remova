@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// R23-QA-05: render the real App and domain hooks, substituting page surfaces
+// render the real App and domain hooks, substituting page surfaces
 // and native IO. Assert observable state and API calls across the App boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";

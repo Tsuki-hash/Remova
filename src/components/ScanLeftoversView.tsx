@@ -25,7 +25,7 @@ type LeftoverRowProps = {
   onEvidence: (text: string | null) => void;
 };
 
-/** F-R6-10: memoized row so virtual-list parent re-renders skip unchanged items. */
+/** -10: memoized row so virtual-list parent re-renders skip unchanged items. */
 const LeftoverRow = memo(function LeftoverRow({
   it,
   checked,
@@ -116,7 +116,7 @@ const LeftoverRow = memo(function LeftoverRow({
             style={{
               ...css.sourceBadge,
               marginLeft: 6,
-              // R23-UX-01: `--mid` never existed — the fallback amber was
+              // `--mid` never existed — the fallback amber was
               // unreadable on light panels as text (≈1.75:1).
               color: "var(--warn-ink)",
               borderColor: "var(--warn)",
