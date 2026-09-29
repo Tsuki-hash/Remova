@@ -690,12 +690,15 @@ mod tests {
         let base = unique_tmp("pinresolved");
         let real = base.join("real");
         fs::create_dir_all(&real).unwrap();
+        // CI's TEMP can contain RUNNER~1 even when our leaf is a long name.
+        // Compare to the expanded request, not the environment's short spelling.
+        let expected = long_path_form(&real).expect("expand real directory name");
 
         // A real directory resolves to itself.
         let pin = pin_dir_resolved(&real).expect("pin real dir");
         assert_eq!(
             pin.final_path().replace('/', "\\").to_lowercase(),
-            real.to_string_lossy().replace('/', "\\").to_lowercase()
+            expected.replace('/', "\\").to_lowercase()
         );
         drop(pin);
 
@@ -712,13 +715,14 @@ mod tests {
         let pin2 = pin_dir_resolved(&link).expect("pin junction");
         assert_eq!(
             pin2.final_path().to_lowercase(),
-            real.to_string_lossy().to_lowercase(),
+            expected.to_lowercase(),
             "final path must resolve through the junction"
         );
         assert_ne!(
             pin2.final_path().to_lowercase(),
             link.to_string_lossy().to_lowercase()
         );
-        let _ = fs::remove_dir_all(&base);
+        drop(pin2);
+        fs::remove_dir_all(&base).unwrap();
     }
 }

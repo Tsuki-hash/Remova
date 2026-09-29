@@ -1054,12 +1054,16 @@ mod tests {
             nanos
         ));
         fs::create_dir_all(&base).unwrap();
+        let pin = crate::fsutil::pin_dir_resolved(&base).unwrap();
+        let resolved = pin.final_path().to_string();
+        drop(pin);
+        assert!(super::same_dir_path(&resolved, &base));
         if let Some(short) = crate::fsutil::short_path_form(&base) {
-            if short != base.to_string_lossy() {
+            if short != resolved {
                 // Production direction: a = by-handle resolved (long), b = the
                 // short-name request.
                 assert!(
-                    super::same_dir_path(&base.to_string_lossy(), Path::new(&short)),
+                    super::same_dir_path(&resolved, Path::new(&short)),
                     "resolved form must match the short-name request: {short}"
                 );
             }
