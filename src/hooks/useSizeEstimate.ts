@@ -11,7 +11,10 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   const [sizeMap, setSizeMap] = useState<Record<string, SizeEntry>>({});
   const [sizeProgress, setSizeProgress] = useState({ done: 0, total: 0 });
   const sizeCache = useRef(new Map<string, SizeEntry>());
-  const sizeCancelRef = useRef(false);
+  const activeRun = useRef<{ remaining: Set<string>; cancelled: boolean } | null>(null);
+  // Native begin/cancel mutate one backend generation; keep their order even
+  // when a refresh arrives while cancellation is still awaiting IPC.
+  const nativeLifecycle = useRef<Promise<void>>(Promise.resolve());
   // R23-FE-07: paths abandoned by an explicit stop — never auto-restarted by
   // a later apps refresh (they can still be estimated after a remount).
   const sizeSkipped = useRef(new Set<string>());
@@ -62,13 +65,19 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     let disposed = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
-    sizeCancelRef.current = false;
+    const run = { remaining: new Set(pending), cancelled: false };
+    activeRun.current = run;
     setEstimating(true);
     const total = pending.length;
     setSizeProgress({ done: 0, total });
-    void api.beginSizeEstimate().catch(() => {});
 
     void (async () => {
+      const begin = nativeLifecycle.current.then(async () => {
+        if (!disposed && !run.cancelled) await api.beginSizeEstimate();
+      }).catch(() => {});
+      nativeLifecycle.current = begin;
+      await begin;
+      if (disposed || run.cancelled) return;
       let done = 0;
       let pendingFlush: Record<string, SizeEntry> = {};
       const flush = () => {
@@ -83,17 +92,12 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
         if (!flushTimer) flushTimer = setTimeout(flush, 80);
       };
       const workers = Array.from({ length: 2 }, async () => {
-        while (pending.length > 0 && !disposed && !sizeCancelRef.current) {
+        while (pending.length > 0 && !disposed && !run.cancelled) {
           const path = pending.shift();
           if (!path) break;
           try {
             const est = await api.estimateDirSizeKb(path);
-            if (disposed || sizeCancelRef.current) {
-              // R23-FE-07: the shifted path never reached the cache — record
-              // it so the stop sticks.
-              sizeSkipped.current.add(path);
-              break;
-            }
+            if (disposed || run.cancelled) break;
             const entry: SizeEntry = {
               kb: est.kb > 0 ? est.kb : 0,
               capped: est.capped,
@@ -101,14 +105,12 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
             sizeCache.current.set(path, entry);
             queueSet(path, entry);
           } catch {
-            if (disposed || sizeCancelRef.current) {
-              sizeSkipped.current.add(path);
-              break;
-            }
+            if (disposed || run.cancelled) break;
             const entry: SizeEntry = { kb: 0, capped: false };
             sizeCache.current.set(path, entry);
             queueSet(path, entry);
           }
+          run.remaining.delete(path);
           done += 1;
           if (!disposed) setSizeProgress({ done, total });
         }
@@ -117,9 +119,10 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
-        flush();
+        if (!disposed) flush();
       }
       if (!disposed) {
+        if (activeRun.current === run) activeRun.current = null;
         setEstimating(false);
         setSizeProgress({ done: 0, total: 0 });
       }
@@ -127,6 +130,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     return () => {
       disposed = true;
+      if (activeRun.current === run) activeRun.current = null;
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
@@ -136,10 +140,18 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   }, [apps, loading]);
 
   const stopSizeEstimate = useCallback(async () => {
-    sizeCancelRef.current = true;
+    const run = activeRun.current;
+    if (!run) return;
+    run.cancelled = true;
+    // Capture BOTH queued and in-flight paths synchronously. Refreshes can
+    // start a new run before old native calls return; cancellation is per run.
+    run.remaining.forEach(path => sizeSkipped.current.add(path));
     setEstimating(false);
+    setSizeProgress({ done: 0, total: 0 });
     try {
-      await api.cancelSizeEstimate();
+      const cancel = nativeLifecycle.current.then(() => api.cancelSizeEstimate()).then(() => {});
+      nativeLifecycle.current = cancel.catch(() => {});
+      await cancel;
     } catch {
       // ignore
     }

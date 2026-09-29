@@ -58,7 +58,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
                 evidence: vec![Evidence {
                     code: "cross_drive".into(),
                     label: "Folder on non-default drive matches product".into(),
-                    weight: 40,
+                    weight: if m == "confirmed" { 50 } else { 35 },
                     detail: p.to_string_lossy().chars().take(120).collect(),
                 }],
                 shared: false,

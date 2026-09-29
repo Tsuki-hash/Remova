@@ -395,6 +395,7 @@ export const dict = {
     loadingManage: "加载中…",
     loadingPage: "正在打开页面…",
     navBack: "返回",
+    idleEvSizePartial: "大小估算未完成，仅显示下限",
     loadingGeneric: "加载中…",
     idleScanning: "正在分析闲置候选…",
     radarScanning: "正在统计磁盘占用…",
@@ -529,4 +530,7 @@ export const dict = {
     showAllLeftovers: "显示全部",
     scanLinkedLeftovers: "扫描关联残留",
     itemCount: (n: number) => `${n} 项`,
+    errSealAdmin: "安全备份和还原需要管理员权限，请提权后重试。",
+    errSealLegacy: "旧版备份仅支持查看和手工导出，不能自动还原；请保留原始备份。",
+    errSealInvalid: "备份封印或密钥状态异常，已停止操作。请保留备份，勿删除或重建密钥。",
 } as const;

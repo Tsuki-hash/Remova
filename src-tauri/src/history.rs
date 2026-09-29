@@ -259,7 +259,10 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let tmp = p.with_extension("jsonl.tmp");
-    fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    fs::write(&tmp, contents).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     // R21-SUP-01: align with ignore.rs — rename failure cleans the temp file.
     fs::rename(&tmp, p)
         .inspect_err(|_| {
@@ -291,6 +294,29 @@ mod tests {
 
     /// Serializes tests that mutate process-wide PROGRAMDATA.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(windows)]
+    #[test]
+    fn history_write_failure_removes_existing_tmp() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("remova-r23-history-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("history.jsonl");
+        let tmp = path.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, "old partial").unwrap();
+        // Deny write but allow delete: write fails, cleanup can remove the file.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x4)
+            .open(&tmp)
+            .unwrap();
+        assert!(super::write_history_file(&path, "new data").is_err());
+        assert!(!tmp.exists());
+        assert!(!path.exists());
+        drop(held);
+        std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn entry_serde_skips_id() {

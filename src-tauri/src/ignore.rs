@@ -48,14 +48,21 @@ pub fn save(list: &IgnoreList) -> Result<(), String> {
 
 fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
     let p = ignore_path();
+    write_ignore_file(&p, list)
+}
+
+fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
     // REV-SUP-07: temp + rename so a crash mid-write cannot leave half a JSON file.
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, s).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &p).map_err(|e| {
+    std::fs::write(&tmp, s).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })?;
+    std::fs::rename(&tmp, p).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
     })
@@ -176,18 +183,6 @@ pub fn should_skip_leftover_path(list: &IgnoreList, path: &str) -> bool {
     is_path_ignored(list, path)
 }
 
-pub fn add_path(path: &str) -> Result<IgnoreList, String> {
-    let p = path.trim().replace('/', "\\");
-    if p.is_empty() {
-        return Err("empty path".into());
-    }
-    update_with(|l| {
-        if !l.paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
-            l.paths.push(p);
-        }
-    })
-}
-
 /// One proposed ignore rule with a human reason.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IgnoreSuggestion {
@@ -252,6 +247,14 @@ pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSu
 }
 
 pub fn apply_suggestions(items: &[IgnoreSuggestion]) -> Result<IgnoreList, String> {
+    // Validate the entire raw batch before loading/mutating/persisting rules.
+    // Trimming first would hide leading/trailing control characters.
+    for it in items {
+        validate_rule_text(&it.value)?;
+        if !matches!(it.kind.as_str(), "path" | "publisher" | "name") {
+            return Err("unsupported ignore rule kind".into());
+        }
+    }
     update_with(|l| {
         for it in items {
             match it.kind.as_str() {
@@ -282,6 +285,58 @@ pub fn apply_suggestions(items: &[IgnoreSuggestion]) -> Result<IgnoreList, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn ignore_write_failure_removes_existing_tmp() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("remova-r23-ignore-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ignore.json");
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, "old partial").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x4)
+            .open(&tmp)
+            .unwrap();
+        assert!(write_ignore_file(&path, &IgnoreList::default()).is_err());
+        assert!(!tmp.exists());
+        assert!(!path.exists());
+        drop(held);
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn apply_suggestions_rejects_whole_invalid_batch_before_io() {
+        for value in [
+            "\nVendor".to_string(),
+            "Vendor\u{0000}".to_string(),
+            "x".repeat(257),
+            " ".to_string(),
+        ] {
+            let items = [
+                IgnoreSuggestion {
+                    kind: "publisher".into(),
+                    value: "Good Vendor".into(),
+                    reason: String::new(),
+                },
+                IgnoreSuggestion {
+                    kind: "path".into(),
+                    value,
+                    reason: String::new(),
+                },
+            ];
+            assert!(apply_suggestions(&items).is_err());
+        }
+        assert!(apply_suggestions(&[IgnoreSuggestion {
+            kind: "other".into(),
+            value: "Vendor".into(),
+            reason: String::new()
+        }])
+        .is_err());
+    }
 
     #[test]
     fn ignore_match_helpers() {

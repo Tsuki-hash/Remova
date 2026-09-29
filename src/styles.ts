@@ -162,7 +162,7 @@ export const cssStyles = {
     background: "var(--accent-soft)",
     border: "1px solid transparent",
     fontSize: 11,
-    color: "var(--accent)",
+    color: "var(--accent-text)",
     fontWeight: 600,
   },
   chipDanger: {

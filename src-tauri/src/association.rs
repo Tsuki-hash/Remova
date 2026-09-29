@@ -1,4 +1,4 @@
-//! Leftover鈫攁pp association (AR-10 / S-R4-03 / S-7R1).
+//! Leftover-to-app association (AR-10 / S-R4-03 / S-7R1).
 //!
 //! Answers one question: *does this leftover plausibly belong to this app?* `policy` consumes the
 //! boolean verdicts; it deliberately knows nothing about how the evidence is weighed, so the
@@ -175,7 +175,9 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
             .split(['\\', '/', ':', ' ', '_'])
             .filter(|s| !s.is_empty())
             .collect();
-        let hit = if pub_words.len() == 1 {
+        let hit = if pub_words.is_empty() {
+            false
+        } else if pub_words.len() == 1 {
             toks.iter().any(|t| *t == pub_words[0])
         } else {
             toks.windows(pub_words.len())
@@ -295,7 +297,7 @@ mod tests {
 
     fn orphan_app() -> InstalledApp {
         InstalledApp {
-            name: "瀛ゅ効鎵弿".into(),
+            name: "孤儿扫描".into(),
             version: String::new(),
             publisher: String::new(),
             install_location: String::new(),
@@ -324,6 +326,25 @@ mod tests {
             size_kb: None,
             bucket: None,
         }
+    }
+
+    #[test]
+    fn publisher_tokens_handle_empty_and_adjacent_words() {
+        let mut app = demo_app();
+        app.publisher = "____".into();
+        assert!(!non_fs_associated_with_app(
+            &app,
+            &probe(r"HKCU\Software\Unrelated", ItemKind::Registry)
+        ));
+        app.publisher = "Acme Corp".into();
+        assert!(non_fs_associated_with_app(
+            &app,
+            &probe(r"HKCU\Software\Acme Corp\Tool", ItemKind::Registry)
+        ));
+        assert!(!non_fs_associated_with_app(
+            &app,
+            &probe(r"HKCU\Software\Acme Other Corp", ItemKind::Registry)
+        ));
     }
 
     #[test]

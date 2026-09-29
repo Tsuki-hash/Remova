@@ -55,6 +55,14 @@ jobs:
         run: cargo test --workspace
         working-directory: src-tauri
 
+      - name: file symlink swap regression (requires runner privilege)
+        run: cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored
+        working-directory: src-tauri
+
+      - name: privileged seal key ACL and lost-state regression
+        run: cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
+        working-directory: src-tauri
+
       - name: frontend lint
         run: npm run lint
 

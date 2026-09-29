@@ -22,10 +22,34 @@ pub fn is_reparse_point(p: &Path) -> bool {
 
 /// Recursively copy a directory tree (files + dirs). Symlinks and other reparse points are skipped.
 pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
+    copy_dir_before_file(src, dest, &mut |_| Ok(()))
+}
+
+/// Create one level at a time, holding every existing/created ancestor against
+/// replacement. Never follow a junction planted above an output directory.
+pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
+    let mut pins = vec![];
+    for ancestor in p.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        if !ancestor.exists() {
+            std::fs::create_dir(ancestor)?;
+        }
+        pins.push(pin_dir_with_access(ancestor, 0x0080)?);
+    }
+    Ok(pins)
+}
+
+fn copy_dir_before_file(
+    src: &Path,
+    dest: &Path,
+    before_file: &mut impl FnMut(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     // Per-level pin (same as the delete path): a child swapped for a junction
     // between the reparse check and this open is refused, not followed.
-    let _pin = pin_dir_no_reparse(src)?;
-    std::fs::create_dir_all(dest)?;
+    let _pin = pin_dir_with_access(src, 0x0080)?;
+    let _dest_pins = create_dirs_pinned(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
@@ -36,11 +60,12 @@ pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
         let ty = entry.file_type()?;
         let target = dest.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir(&path, &target)?;
+            copy_dir_before_file(&path, &target, before_file)?;
         } else if ty.is_file() {
             // R23-SEC-01: the reparse check above is a path stat — a child
             // swapped for a link before `fs::copy` re-opens the path would be
             // followed. The dedicated primitive opens by non-following handle.
+            before_file(&path)?;
             copy_file_no_reparse(&path, &target)?;
         }
     }
@@ -63,7 +88,44 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
             .read(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(src)?;
-        let mut out = std::fs::File::create(dest)?;
+        use std::os::windows::io::AsRawHandle;
+        let mut source_info =
+            windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+        unsafe {
+            windows::Win32::Storage::FileSystem::GetFileInformationByHandle(
+                windows::Win32::Foundation::HANDLE(f.as_raw_handle()),
+                &mut source_info,
+            )
+        }
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+        if source_info.dwFileAttributes & (0x400 | 0x10) != 0 {
+            return Err(std::io::Error::other(
+                "refusing reparse/directory copy source",
+            ));
+        }
+        let _parent_pins = create_dirs_pinned(
+            dest.parent()
+                .ok_or_else(|| std::io::Error::other("missing copy parent"))?,
+        )?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(dest)?;
+        let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+        unsafe {
+            windows::Win32::Storage::FileSystem::GetFileInformationByHandle(
+                windows::Win32::Foundation::HANDLE(out.as_raw_handle()),
+                &mut info,
+            )
+        }
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+        if info.dwFileAttributes & (0x400 | 0x10) != 0 {
+            return Err(std::io::Error::other(
+                "refusing reparse/directory copy destination",
+            ));
+        }
+        out.set_len(0)?;
         let n = std::io::copy(&mut f, &mut out)?;
         out.flush()?;
         Ok(n)
@@ -95,6 +157,10 @@ impl Drop for DirPin {
 
 /// Open `p` and verify it is not a reparse point — by handle, not by path.
 pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
+    pin_dir_with_access(p, 0x0001_0080)
+}
+
+fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin> {
     #[cfg(windows)]
     {
         use windows::core::PCWSTR;
@@ -106,8 +172,6 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
         };
         // DELETE (0x00010000) is not exported by this windows crate build (same
         // as regops); FILE_READ_ATTRIBUTES (0x0080) for the by-handle check.
-        const DELETE_RIGHT: u32 = 0x0001_0000;
-        const FILE_READ_ATTR: u32 = 0x0000_0080;
         // R21-SEC-09: lossy conversion would pin a U+FFFD-replaced path — fail closed.
         let Some(path_str) = p.to_str() else {
             return Err(std::io::Error::new(
@@ -121,7 +185,7 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
             // concurrent rename — a 0-access handle does not.
             let handle = CreateFileW(
                 PCWSTR(wide.as_ptr()),
-                DELETE_RIGHT | FILE_READ_ATTR,
+                desired_access,
                 FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0),
                 None,
                 OPEN_EXISTING,
@@ -145,6 +209,7 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
     }
     #[cfg(not(windows))]
     {
+        let _ = desired_access;
         if is_reparse_point(p) {
             return Err(std::io::Error::other(
                 "refusing to delete through reparse point",
@@ -438,6 +503,40 @@ mod tests {
         let missing = tmp.join("nope.bin");
         assert!(copy_file_no_reparse(&missing, &tmp.join("out.bin")).is_err());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires Windows symlink privilege or Developer Mode; run explicitly on the Windows CI runner"]
+    fn copy_dir_refuses_file_swapped_to_symlink_after_enumeration() {
+        let tmp = unique_tmp("swap_file");
+        let source = tmp.join("source");
+        let dest = tmp.join("dest");
+        fs::create_dir(&source).unwrap();
+        let secret = tmp.join("secret.bin");
+        fs::write(&secret, b"must never be copied").unwrap();
+        let child = source.join("child.bin");
+        fs::write(&child, b"safe").unwrap();
+        let mut swapped = false;
+        let result = copy_dir_before_file(&source, &dest, &mut |path| {
+            fs::remove_file(path)?;
+            std::os::windows::fs::symlink_file(&secret, path)?;
+            swapped = true;
+            Ok(())
+        });
+        // No skip/return: an unavailable fixture is a visible failed test.
+        assert!(
+            swapped,
+            "symlink fixture requires developer mode or symlink privilege: {result:?}"
+        );
+        assert!(result.is_err());
+        assert!(!dest.join("child.bin").exists());
+        assert_eq!(fs::read(&secret).unwrap(), b"must never be copied");
+        fs::remove_file(child).unwrap();
+        fs::remove_file(secret).unwrap();
+        fs::remove_dir(source).unwrap();
+        fs::remove_dir(dest).unwrap();
+        fs::remove_dir(tmp).unwrap();
     }
 
     #[test]

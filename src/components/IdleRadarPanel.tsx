@@ -74,7 +74,7 @@ export function IdleRadarPanel({
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{r.app.name}</div>
               <div style={{ ...css.muted, fontSize: 11.5, fontFamily: "var(--mono)" }}>
-                {L.idleDays(r.idle_days)} · {formatSize(Math.max(0, r.size_kb))}
+                {L.idleDays(r.idle_days)} · {r.evidence.some(e => e.code === "idle_size_partial") ? "≥" : ""}{formatSize(Math.max(0, r.size_kb))}
                 {r.app.install_date ? ` · ${r.app.install_date}` : ""}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
@@ -84,7 +84,9 @@ export function IdleRadarPanel({
                       ? L.idleEvInstallAge
                       : e.code === "idle_dir_mtime"
                         ? L.idleEvDirMtime
-                        : e.code,
+                        : e.code === "idle_size_partial"
+                          ? L.idleEvSizePartial
+                          : e.code,
                   )
                   .join(" · ")}
               </div>

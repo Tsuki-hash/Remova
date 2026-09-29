@@ -153,6 +153,9 @@ fn cmdline_refs_install(data: &str, install_low: &str) -> bool {
 /// lowercased text — `steam` hits `steam.exe`/`Steam Tray` but never
 /// `SteamTools` or `mysteam`.
 pub(crate) fn slug_boundary_hit(hay_low: &str, slug: &str) -> bool {
+    if slug.is_empty() {
+        return false;
+    }
     let mut from = 0usize;
     while let Some(i) = hay_low[from..].find(slug) {
         let s = from + i;
@@ -170,7 +173,8 @@ pub(crate) fn slug_boundary_hit(hay_low: &str, slug: &str) -> bool {
         if before_ok && after_ok {
             return true;
         }
-        from = s + 1;
+        // Advance by a whole character; CJK slugs must never split UTF-8.
+        from = s + hay_low[s..].chars().next().map_or(0, char::len_utf8);
     }
     false
 }
@@ -794,6 +798,12 @@ mod tests {
         assert!(slug_boundary_hit("steam tray helper", "steam"));
         assert!(!slug_boundary_hit(r"c:\\steamtools\\tool.exe", "steam"));
         assert!(!slug_boundary_hit("mysteam", "steam"));
+        assert!(!slug_boundary_hit("x软件", "软件"));
+        assert!(!slug_boundary_hit("软件工具", "软件"));
+        assert!(slug_boundary_hit("x软件 软件.exe", "软件"));
+        assert!(slug_boundary_hit(" 软件 ", "软件"));
+        assert!(!slug_boundary_hit("abc", ""));
+        assert!(!slug_boundary_hit("", ""));
     }
 
     #[test]

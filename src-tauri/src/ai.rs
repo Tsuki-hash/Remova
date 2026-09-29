@@ -155,7 +155,10 @@ pub fn load_config() -> AiConfig {
 /// DPAPI-wrapped key or a half-migrated file.
 fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, s).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, s).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     std::fs::rename(&tmp, p).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
@@ -638,6 +641,18 @@ pub fn explain_items(
     publisher: &str,
     items: &[ExplainInput],
 ) -> Result<Vec<ExplainOutput>, String> {
+    explain_items_with_completion(cfg, app_name, publisher, items, |user| {
+        chat_completion(cfg, EXPLAIN_SYSTEM, user)
+    })
+}
+
+fn explain_items_with_completion(
+    cfg: &AiConfig,
+    app_name: &str,
+    publisher: &str,
+    items: &[ExplainInput],
+    mut complete: impl FnMut(&str) -> Result<String, String>,
+) -> Result<Vec<ExplainOutput>, String> {
     if items.is_empty() {
         return Ok(vec![]);
     }
@@ -671,90 +686,89 @@ pub fn explain_items(
         return Ok(out);
     }
 
-    // Cap batch size for cost control; remaining items are explained in later calls.
-    let batch: Vec<&ExplainInput> = pending
-        .iter()
-        .take(crate::constants::AI_EXPLAIN_MAX_ITEMS)
-        .collect();
-    let payload: Vec<serde_json::Value> = batch
-        .iter()
-        .map(|it| {
-            serde_json::json!({
-                "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
-                "kind": it.kind,
-                "confidence": it.confidence,
-                "risk": it.risk,
-                // S-R6-10: free text never goes to the cloud raw (usernames / deep paths).
-                "reason": scrub_cloud_text(&it.reason),
-                "evidence": it
-                    .evidence_labels
-                    .iter()
-                    .map(|e| scrub_cloud_text(e))
-                    .collect::<Vec<_>>(),
+    // Bound each request, while processing every uncached item in this call.
+    for chunk in pending.chunks(crate::constants::AI_EXPLAIN_MAX_ITEMS) {
+        let batch: Vec<&ExplainInput> = chunk.iter().collect();
+        let payload: Vec<serde_json::Value> = batch
+            .iter()
+            .map(|it| {
+                serde_json::json!({
+                    "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
+                    "kind": it.kind,
+                    "confidence": it.confidence,
+                    "risk": it.risk,
+                    // S-R6-10: free text never goes to the cloud raw (usernames / deep paths).
+                    "reason": scrub_cloud_text(&it.reason),
+                    "evidence": it
+                        .evidence_labels
+                        .iter()
+                        .map(|e| scrub_cloud_text(e))
+                        .collect::<Vec<_>>(),
+                })
             })
-        })
-        .collect();
-    let user = format!(
+            .collect();
+        let user = format!(
         "软件: {}\n发布者: {}\n候选(脱敏路径):\n{}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。",
         app_name,
         publisher,
         serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
 
-    let text = chat_completion(cfg, EXPLAIN_SYSTEM, &user)?;
-    let cleaned = strip_code_fence(&text);
-    let parsed: Vec<ExplainOutput> =
-        serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
+        let text = complete(&user)?;
+        let cleaned = strip_code_fence(&text);
+        let parsed: Vec<ExplainOutput> =
+            serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
 
-    // Match back by the exact strings SENT to the model (CODE-3 + R23-SUP-01):
-    // the prompt asks the model to echo the sanitized path, and `sanitize_path`
-    // is NOT idempotent — re-sanitizing the echo lost every multi-segment
-    // AppData path. Never rely on array index alone; identical sanitized paths
-    // are indistinguishable to the model, so duplicates attribute in payload
-    // order among unconsumed indices.
-    let mut sent_map: std::collections::HashMap<String, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (idx, b) in batch.iter().enumerate() {
-        sent_map
-            .entry(sanitize_path(&b.path, cfg.allow_cloud_paths))
-            .or_default()
-            .push(idx);
-    }
-    let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for p in parsed.iter() {
-        let candidates = match sent_map.get(p.path.trim()) {
-            Some(v) if v.len() == 1 => v.clone(),
-            Some(v) => v
-                .iter()
-                .copied()
-                .filter(|i| !consumed.contains(i))
-                .collect(),
-            // Model echoed an original (unsanitized) path verbatim — last resort.
-            None => batch
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| b.path == p.path)
-                .map(|(i, _)| i)
-                .collect(),
-        };
-        let Some(idx) = candidates.iter().copied().find(|i| !consumed.contains(i)) else {
-            continue;
-        };
-        consumed.insert(idx);
-        let orig = &batch[idx];
-        let item = ExplainOutput {
-            path: orig.path.clone(),
-            summary: p.summary.clone(),
-            suggest_check: p.suggest_check && orig.risk.as_str() != "high",
-        };
-        let key = fnv1a64(&format!(
-            "{app_name}|{publisher}|{}|{}|{}|{}|{}",
-            item.path, orig.kind, orig.confidence, orig.risk, orig.reason
-        ));
-        if let Ok(s) = serde_json::to_string(&item) {
-            cache_put(key, s);
+        // Match back by the exact strings SENT to the model (CODE-3 + R23-SUP-01):
+        // the prompt asks the model to echo the sanitized path, and `sanitize_path`
+        // is NOT idempotent — re-sanitizing the echo lost every multi-segment
+        // AppData path. Never rely on array index alone; identical sanitized paths
+        // are indistinguishable to the model, so duplicates attribute in payload
+        // order among unconsumed indices.
+        let mut sent_map: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (idx, b) in batch.iter().enumerate() {
+            sent_map
+                .entry(sanitize_path(&b.path, cfg.allow_cloud_paths))
+                .or_default()
+                .push(idx);
         }
-        out.push(item);
+        let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for p in parsed.iter() {
+            let candidates = match sent_map.get(p.path.trim()) {
+                Some(v) if v.len() == 1 => v.clone(),
+                Some(v) => v
+                    .iter()
+                    .copied()
+                    .filter(|i| !consumed.contains(i))
+                    .collect(),
+                // Model echoed an original (unsanitized) path verbatim — last resort.
+                None => batch
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| b.path == p.path)
+                    .map(|(i, _)| i)
+                    .collect(),
+            };
+            let Some(idx) = candidates.iter().copied().find(|i| !consumed.contains(i)) else {
+                continue;
+            };
+            consumed.insert(idx);
+            let orig = &batch[idx];
+            let item = ExplainOutput {
+                path: orig.path.clone(),
+                summary: p.summary.clone(),
+                suggest_check: p.suggest_check && orig.risk.as_str() != "high",
+            };
+            let key = fnv1a64(&format!(
+                "{app_name}|{publisher}|{}|{}|{}|{}|{}",
+                item.path, orig.kind, orig.confidence, orig.risk, orig.reason
+            ));
+            if let Ok(s) = serde_json::to_string(&item) {
+                cache_put(key, s);
+            }
+            out.push(item);
+        }
     }
     Ok(out)
 }
@@ -1067,5 +1081,131 @@ mod tests {
         let once = sanitize_path(r"C:\Users\a\AppData\Local\Vendor\Product", false);
         assert_eq!(once, r"AppData\Vendor\Product");
         assert_ne!(sanitize_path(&once, false), once);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_write_failure_removes_existing_tmp() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("remova-r23-ai-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ai.json");
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, "old partial").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x4)
+            .open(&tmp)
+            .unwrap();
+        assert!(write_config_file(&path, "new data").is_err());
+        assert!(!tmp.exists());
+        assert!(!path.exists());
+        drop(held);
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn explain_batches_rematch_appdata_echoes_and_cache_every_result() {
+        let cfg = AiConfig::default();
+        let inputs: Vec<ExplainInput> = (0..25)
+            .map(|i| ExplainInput {
+                path: format!(r"C:\Users\a\AppData\Local\Vendor\R23Product{i}"),
+                kind: "dir".into(),
+                confidence: "confirmed".into(),
+                risk: if i == 0 { "high" } else { "medium" }.into(),
+                reason: "R23 regression".into(),
+                evidence_labels: vec![],
+            })
+            .collect();
+        let mut batches = vec![];
+        let out = explain_items_with_completion(
+            &cfg,
+            "R23-batching-cache-test",
+            "Vendor",
+            &inputs,
+            |user| {
+                let json = user
+                    .split_once("候选(脱敏路径):\n")
+                    .unwrap()
+                    .1
+                    .rsplit_once("\n请输出")
+                    .unwrap()
+                    .0;
+                let payload: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+                batches.push(payload.len());
+                // The model can reorder results, but still echoes payload paths.
+                let echoed: Vec<ExplainOutput> = payload
+                    .iter()
+                    .rev()
+                    .map(|item| {
+                        let path = item["path"].as_str().unwrap().to_string();
+                        ExplainOutput {
+                            summary: path.clone(),
+                            path,
+                            suggest_check: true,
+                        }
+                    })
+                    .collect();
+                Ok(serde_json::to_string(&echoed).unwrap())
+            },
+        )
+        .unwrap();
+        assert_eq!(batches, [12, 12, 1]);
+        assert_eq!(out.len(), inputs.len());
+        for input in &inputs {
+            let result = out.iter().find(|item| item.path == input.path).unwrap();
+            assert_eq!(result.summary, sanitize_path(&input.path, false));
+            assert_eq!(result.suggest_check, input.risk != "high");
+        }
+        let cached = explain_items_with_completion(
+            &cfg,
+            "R23-batching-cache-test",
+            "Vendor",
+            &inputs,
+            |_| panic!("all 25 explanations must hit cache, including the last batch"),
+        )
+        .unwrap();
+        assert_eq!(cached.len(), inputs.len());
+        assert!(cached
+            .iter()
+            .all(|item| out.iter().any(|v| v.path == item.path
+                && v.summary == item.summary
+                && v.suggest_check == item.suggest_check)));
+    }
+
+    #[test]
+    fn explain_duplicate_sanitized_echoes_consume_originals_once() {
+        let inputs: Vec<ExplainInput> = ["a", "b"]
+            .iter()
+            .map(|name| ExplainInput {
+                path: format!(r"C:\Users\{name}\AppData\Local\Vendor\R23Collision"),
+                kind: "dir".into(),
+                confidence: "confirmed".into(),
+                risk: "medium".into(),
+                reason: "duplicate fixture".into(),
+                evidence_labels: vec![],
+            })
+            .collect();
+        let path = sanitize_path(&inputs[0].path, false);
+        assert_eq!(path, sanitize_path(&inputs[1].path, false));
+        let outputs: Vec<_> = (0..3)
+            .map(|i| ExplainOutput {
+                path: path.clone(),
+                summary: format!("explanation-{i}"),
+                suggest_check: false,
+            })
+            .collect();
+        let result = explain_items_with_completion(
+            &AiConfig::default(),
+            "R23-collision-cache-test",
+            "Vendor",
+            &inputs,
+            |_| Ok(serde_json::to_string(&outputs).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, inputs[0].path);
+        assert_eq!(result[1].path, inputs[1].path);
+        assert_eq!(result[1].summary, "explanation-1");
     }
 }
