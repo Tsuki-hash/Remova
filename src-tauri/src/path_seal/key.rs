@@ -229,6 +229,14 @@ pub(super) fn program_data() -> Result<PathBuf, String> {
 }
 pub(super) fn load(initialize: bool) -> Result<Store, String> {
     #[cfg(test)]
+    if let Some(root) = TEST_KEY_ROOT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        return load_at(&program_data()?, &root, &super::seals_root(), initialize);
+    }
+    #[cfg(test)]
     if let Some(root) = super::TEST_ROOT
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -244,6 +252,9 @@ pub(super) fn load(initialize: bool) -> Result<Store, String> {
     let root = parent.join("RemovaSealKeys");
     load_at(&parent, &root, &super::seals_root(), initialize)
 }
+
+#[cfg(test)]
+static TEST_KEY_ROOT: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 fn load_at(
     parent: &Path,
@@ -454,6 +465,43 @@ mod tests {
         let store =
             load_at(&parent, &root, &public, true).expect("elevated key initialization required");
         let id = super::super::v2::sha256(store.key.as_ref()).unwrap();
+        let _seal_store = super::super::TestStore::new(public.join("seals"));
+        *TEST_KEY_ROOT.lock().unwrap() = Some(root.clone());
+        struct ClearKeyOverride;
+        impl Drop for ClearKeyOverride {
+            fn drop(&mut self) {
+                *TEST_KEY_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            }
+        }
+        let _key_override = ClearKeyOverride;
+        // Execute the production backup/restore chain with this actual ACL key,
+        // not the synthetic protocol key used by default permission-free tests.
+        let source = public.join("source/file.txt");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"privileged native backup").unwrap();
+        let session = public.join("1700000000_native");
+        fs::create_dir_all(session.join("files")).unwrap();
+        fs::create_dir_all(session.join("registry")).unwrap();
+        let item = crate::scanner::CleanupItem {
+            path: source.to_string_lossy().into_owned(),
+            kind: crate::scanner::ItemKind::File,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "test".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let (ok, fail, errors) = crate::backup::backup_items(&[item], &session);
+        assert_eq!((ok, fail), (1, 0), "{errors:?}");
+        fs::write(&source, b"changed").unwrap();
+        crate::restore::restore_session(&session).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"privileged native backup");
+        fs::write(&source, b"standard token must not restore").unwrap();
         publish(&root, "publish_sentinel", b"first").unwrap();
         assert!(publish(&root, "publish_sentinel", b"second").is_err());
         assert_eq!(fs::read(root.join("publish_sentinel")).unwrap(), b"first");
@@ -512,6 +560,11 @@ mod tests {
         // Same user, admin SID disabled and privileges stripped. Check ACLs
         // directly, rather than relying on the elevated process's open pins.
         assert!(fs::read(root.join("seal.key")).is_err());
+        assert!(crate::restore::restore_session(&session).is_err());
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"standard token must not restore"
+        );
         assert!(fs::write(root.join("seal.key"), [0; 32]).is_err());
         assert!(fs::remove_file(root.join("seal.key")).is_err());
         assert!(fs::rename(&root, parent.join(format!("remova_replaced_{nonce}"))).is_err());

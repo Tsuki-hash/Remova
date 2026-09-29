@@ -31,7 +31,8 @@ cargo clippy --all-targets -- -D warnings
 # CI and release run it explicitly; do not run every ignored system test.
 cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored
 # Elevated only: isolated ProgramData key store, restricted same-user token ACLs,
-# trusted staging, marker recovery and fail-closed key loss. No production key touched.
+# privileged backup/restore, restricted-token restore rejection, marker recovery
+# and fail-closed key loss. No production key touched.
 cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
 
 # Full app
