@@ -36,7 +36,9 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
         if !ancestor.exists() {
             std::fs::create_dir(ancestor)?;
         }
-        pins.push(pin_dir_with_access(ancestor, 0x0080)?);
+        let mut pin = pin_dir_with_access(ancestor, 0x0081)?;
+        pin.guard_empty()?;
+        pins.push(pin);
     }
     Ok(pins)
 }
@@ -48,10 +50,19 @@ fn copy_dir_before_file(
 ) -> std::io::Result<()> {
     // Per-level pin (same as the delete path): a child swapped for a junction
     // between the reparse check and this open is refused, not followed.
-    let _pin = pin_dir_with_access(src, 0x0080)?;
+    let mut pin = pin_dir_with_access(src, 0x0081)?;
+    pin.guard_empty()?;
     let _dest_pins = create_dirs_pinned(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
+        #[cfg(windows)]
+        if pin
+            .guard
+            .as_ref()
+            .is_some_and(|(name, _)| entry.file_name() == std::ffi::OsStr::new(name))
+        {
+            continue;
+        }
         let path = entry.path();
         // junction/mount reparse: `file_type().is_symlink()` is false on Windows — must use attributes.
         if is_reparse_point(&path) {
@@ -144,6 +155,169 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
 pub struct DirPin {
     #[cfg(windows)]
     handle: windows::Win32::Foundation::HANDLE,
+    #[cfg(windows)]
+    guard: Option<(String, std::fs::File)>,
+}
+
+impl DirPin {
+    fn guard_empty(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.guard = guard_empty_directory(self.handle)?;
+        }
+        Ok(())
+    }
+}
+
+/// An empty directory can be changed into a junction even while a handle pins
+/// its name. Keep a child pinned (or create an exclusive delete-on-close marker)
+/// through that verified handle. Never resolve its pathname a second time.
+#[cfg(windows)]
+pub(crate) fn guard_empty_directory(
+    handle: windows::Win32::Foundation::HANDLE,
+) -> std::io::Result<Option<(String, std::fs::File)>> {
+    use std::os::windows::io::FromRawHandle;
+    use windows::core::PWSTR;
+    use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows::Wdk::Storage::FileSystem::{
+        NtCreateFile, FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_OPTIONS,
+    };
+    use windows::Win32::Foundation::{HANDLE, UNICODE_STRING};
+    use windows::Win32::Storage::FileSystem::*;
+    use windows::Win32::System::IO::IO_STATUS_BLOCK;
+    let name = format!(
+        ".remova-guard-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let mut wide: Vec<u16> = name.encode_utf16().collect();
+    let unicode = UNICODE_STRING {
+        Length: (wide.len() * 2) as u16,
+        MaximumLength: (wide.len() * 2) as u16,
+        Buffer: PWSTR(wide.as_mut_ptr()),
+    };
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: handle,
+        ObjectName: &unicode,
+        Attributes: 0x40 | 0x1000,
+        ..Default::default()
+    };
+    let mut marker = HANDLE::default();
+    let mut status = IO_STATUS_BLOCK::default();
+    let marker_result = unsafe {
+        NtCreateFile(
+            &mut marker,
+            FILE_ACCESS_RIGHTS(0x0011_0082),
+            &attributes,
+            &mut status,
+            None,
+            FILE_FLAGS_AND_ATTRIBUTES(0x102),
+            FILE_SHARE_MODE(0),
+            FILE_CREATE,
+            NTCREATEFILE_CREATE_OPTIONS(
+                FILE_DELETE_ON_CLOSE.0
+                    | FILE_NON_DIRECTORY_FILE.0
+                    | FILE_OPEN_REPARSE_POINT.0
+                    | FILE_SYNCHRONOUS_IO_NONALERT.0,
+            ),
+            None,
+            0,
+        )
+        .ok()
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()));
+    if marker_result.is_ok() {
+        return Ok(Some((name, unsafe {
+            std::fs::File::from_raw_handle(marker.0)
+        })));
+    }
+    let mut buffer = vec![0u64; 8192];
+    let mut class = FileIdBothDirectoryRestartInfo;
+    loop {
+        let result = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                class,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+            )
+        };
+        if let Err(e) = result {
+            if e.code().0 as u32 == 0x80070012 {
+                break;
+            }
+            return Err(std::io::Error::other(e.to_string()));
+        }
+        let mut offset = 0usize;
+        loop {
+            let entry = unsafe {
+                &*(buffer
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_BOTH_DIR_INFO>())
+            };
+            let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+            let bytes = entry.FileNameLength as usize;
+            if bytes % 2 != 0 || offset + name_offset + bytes > buffer.len() * 8 {
+                return Err(std::io::Error::other("invalid directory information"));
+            }
+            let name = unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), bytes / 2) };
+            if name != [46] && name != [46, 46] {
+                let mut child_name = name.to_vec();
+                let unicode = UNICODE_STRING {
+                    Length: bytes as u16,
+                    MaximumLength: bytes as u16,
+                    Buffer: PWSTR(child_name.as_mut_ptr()),
+                };
+                let attributes = OBJECT_ATTRIBUTES {
+                    Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+                    RootDirectory: handle,
+                    ObjectName: &unicode,
+                    Attributes: 0x40 | 0x1000,
+                    ..Default::default()
+                };
+                let mut child = HANDLE::default();
+                let mut status = IO_STATUS_BLOCK::default();
+                let opened = unsafe {
+                    NtCreateFile(
+                        &mut child,
+                        FILE_ACCESS_RIGHTS(0x81),
+                        &attributes,
+                        &mut status,
+                        None,
+                        FILE_FLAGS_AND_ATTRIBUTES(0),
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        FILE_OPEN,
+                        FILE_OPEN_REPARSE_POINT,
+                        None,
+                        0,
+                    )
+                    .ok()
+                };
+                if opened.is_ok() {
+                    // Empty name means an existing child, which must still be copied.
+                    return Ok(Some((String::new(), unsafe {
+                        std::fs::File::from_raw_handle(child.0)
+                    })));
+                }
+            }
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            offset += entry.NextEntryOffset as usize;
+            if offset + name_offset > buffer.len() * 8 {
+                return Err(std::io::Error::other("invalid directory offset"));
+            }
+        }
+        class = FileIdBothDirectoryInfo;
+    }
+    Err(marker_result.unwrap_err())
 }
 
 impl Drop for DirPin {
@@ -181,8 +355,7 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
         };
         unsafe {
             let wide = to_wide(path_str);
-            // Holding DELETE ourselves while not sharing it is what blocks a
-            // concurrent rename — a 0-access handle does not.
+            // Denying DELETE sharing prevents later rename/delete opens.
             let handle = CreateFileW(
                 PCWSTR(wide.as_ptr()),
                 desired_access,
@@ -204,7 +377,10 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
                     "refusing to delete through reparse point",
                 ));
             }
-            Ok(DirPin { handle })
+            Ok(DirPin {
+                handle,
+                guard: None,
+            })
         }
     }
     #[cfg(not(windows))]
@@ -258,8 +434,7 @@ pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
             FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, GETFINALPATHNAMEBYHANDLE_FLAGS,
             OPEN_EXISTING,
         };
-        const DELETE_RIGHT: u32 = 0x0001_0000;
-        const FILE_READ_ATTR: u32 = 0x0000_0080;
+        const FILE_READ_ATTR: u32 = 0x0000_0081; // attributes + directory listing (sharing is enforced)
         let Some(path_str) = p.to_str() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -272,7 +447,7 @@ pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
             // chain target so the final path exposes any planted junction.
             let handle = CreateFileW(
                 PCWSTR(wide.as_ptr()),
-                DELETE_RIGHT | FILE_READ_ATTR,
+                FILE_READ_ATTR,
                 FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0),
                 None,
                 OPEN_EXISTING,
@@ -680,6 +855,101 @@ mod tests {
             "world"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn directory_pins_block_reparse_mutation_but_allow_child_io() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        fn make_junction(path: &Path, target: &Path) -> windows::core::Result<()> {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(0x0200_0000)
+                .open(path)
+                .unwrap();
+            let substitute: Vec<u16> = format!("\\??\\{}", target.display())
+                .encode_utf16()
+                .collect();
+            let print: Vec<u16> = target.to_str().unwrap().encode_utf16().collect();
+            let mut buffer = 0xa000_0003u32.to_le_bytes().to_vec();
+            buffer.extend_from_slice(
+                &((8 + (substitute.len() + print.len() + 2) * 2) as u16).to_le_bytes(),
+            );
+            buffer.extend_from_slice(&0u16.to_le_bytes());
+            for value in [
+                0,
+                substitute.len() * 2,
+                (substitute.len() + 1) * 2,
+                print.len() * 2,
+            ] {
+                buffer.extend_from_slice(&(value as u16).to_le_bytes());
+            }
+            for unit in substitute
+                .into_iter()
+                .chain(Some(0))
+                .chain(print)
+                .chain(Some(0))
+            {
+                buffer.extend_from_slice(&unit.to_le_bytes());
+            }
+            let mut written = 0;
+            unsafe {
+                windows::Win32::System::IO::DeviceIoControl(
+                    windows::Win32::Foundation::HANDLE(file.as_raw_handle()),
+                    0x0009_00a4,
+                    Some(buffer.as_ptr().cast()),
+                    buffer.len() as u32,
+                    None,
+                    0,
+                    Some(&mut written),
+                    None,
+                )
+            }
+        }
+        let root = unique_tmp("directory_write_pin");
+        let target = root.join("target");
+        let control = root.join("control");
+        let guarded = root.join("guarded");
+        fs::create_dir(&target).unwrap();
+        fs::create_dir(&control).unwrap();
+        fs::create_dir(&guarded).unwrap();
+        // First establish a real unprivileged in-place junction mutation fixture.
+        make_junction(&control, &target).expect("control junction mutation");
+        assert!(is_reparse_point(&control));
+        let pins = create_dirs_pinned(&guarded).unwrap();
+        let mutation = make_junction(&guarded, &target);
+        assert!(
+            mutation.is_err(),
+            "a pinned directory must refuse reparse mutation: {mutation:?}"
+        );
+        assert!(!is_reparse_point(&guarded));
+        fs::create_dir(guarded.join("child")).unwrap();
+        fs::write(guarded.join("child/file"), b"child IO is allowed").unwrap();
+        fs::rename(guarded.join("child/file"), guarded.join("child/moved")).unwrap();
+        fs::remove_file(guarded.join("child/moved")).unwrap();
+        fs::remove_dir(guarded.join("child")).unwrap();
+        drop(pins);
+        assert_eq!(
+            fs::read_dir(&guarded).unwrap().count(),
+            0,
+            "guard must disappear on close"
+        );
+        fs::write(guarded.join("existing"), b"keep directory nonempty").unwrap();
+        let pins = create_dirs_pinned(&guarded).unwrap();
+        fs::remove_file(guarded.join("existing")).unwrap();
+        assert!(make_junction(&guarded, &target).is_err());
+        drop(pins);
+        let copied = root.join("copied");
+        copy_dir(&guarded, &copied).unwrap();
+        assert_eq!(fs::read_dir(&guarded).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_dir(&copied).unwrap().count(),
+            0,
+            "guard must never enter a backup"
+        );
+        fs::remove_dir(control).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
     #[cfg(windows)]
     #[test]

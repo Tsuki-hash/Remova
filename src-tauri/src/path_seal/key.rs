@@ -132,13 +132,12 @@ fn pin(p: &Path, directory: bool) -> Result<File, String> {
     unsafe {
         let handle = CreateFileW(
             PCWSTR(w.as_ptr()),
-            0x0002_0080 | if directory { 0 } else { 0x8000_0000 },
-            FILE_SHARE_READ
-                | if directory {
-                    FILE_SHARE_WRITE
-                } else {
-                    FILE_SHARE_MODE(0)
-                },
+            0x0002_0080 | if directory { 1 } else { 0x8000_0000 },
+            if directory {
+                FILE_SHARE_READ | FILE_SHARE_WRITE
+            } else {
+                FILE_SHARE_READ
+            },
             None,
             OPEN_EXISTING,
             FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
@@ -266,6 +265,12 @@ fn load_at(
     for ancestor in parent.ancestors().collect::<Vec<_>>().into_iter().rev() {
         let parent_pin = pin(ancestor, true)?;
         validate(&parent_pin, false)?;
+        if let Some((_, guard)) =
+            crate::fsutil::guard_empty_directory(HANDLE(parent_pin.as_raw_handle()))
+                .map_err(|_| "seal:key_parent_guard")?
+        {
+            parent_pins.push(guard);
+        }
         parent_pins.push(parent_pin);
     }
     let created = if !root.exists() && initialize {
@@ -421,7 +426,7 @@ mod tests {
     #[test]
     fn atomic_publish_never_replaces_an_existing_key() {
         let root = std::env::temp_dir().join(format!("remova_publish_{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
+        let pins = crate::fsutil::create_dirs_pinned(&root).unwrap();
         let source = root.join("new");
         let target = root.join("key");
         fs::write(&source, b"new key").unwrap();
@@ -433,6 +438,7 @@ mod tests {
         move_no_replace(&source, &target).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"new key");
         assert!(!source.exists());
+        drop(pins);
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
