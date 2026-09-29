@@ -94,7 +94,7 @@ export function CleanupConclusion({
           style={{
             fontSize: 10.5,
             fontWeight: 650,
-            color: aiNote ? "var(--accent)" : "var(--muted)",
+            color: aiNote ? "var(--accent-text)" : "var(--muted)",
             background: aiNote ? "var(--accent-soft)" : "var(--surface-2)",
             border: "1px solid var(--border)",
             borderRadius: 999,
@@ -181,7 +181,7 @@ export function CleanupConclusion({
               }}
             >
               {aiNote}
-              <span style={{ opacity: 0.75 }}> · {L.aiDisclaimer}</span>
+              <span> · {L.aiDisclaimer}</span>
             </div>
           )}
           {!aiEnabled && onOpenSettings && (
@@ -214,7 +214,7 @@ export function CleanupConclusion({
               >
                 {L.conclusionEnableAi}
               </button>
-              <span style={{ opacity: 0.75 }}>· {L.aiNeverDelete}</span>
+              <span>· {L.aiNeverDelete}</span>
             </div>
           )}
         </>

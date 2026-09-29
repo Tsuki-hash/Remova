@@ -134,6 +134,7 @@ export function SoftwareToolbar({
               fontSize: 12.5,
               cursor: "pointer",
             }}
+            aria-pressed={category === id}
             onClick={() => onCategory(id)}
           >
             {label}
@@ -166,7 +167,7 @@ export function SoftwareToolbar({
         </button>
         {guideOpen && (
           <div
-            role="dialog"
+            role="note"
             aria-label={L.guided}
             style={{
               position: "absolute",

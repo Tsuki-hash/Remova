@@ -113,6 +113,7 @@ export type SoftwareControllerInput = {
   dryRun: () => Promise<void>;
   handleCleanupConfirm: () => Promise<void> | void;
   runAiExplain: () => Promise<void> | void;
+  runAiReport: (opts?: { force?: boolean }) => Promise<void>;
   checkupOrphanScan: () => void;
   batchCleanup: () => Promise<void>;
   setQ: (v: string) => void;
@@ -198,6 +199,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         onDryRun: () => void input.dryRun(),
         onCleanup: () => void input.handleCleanupConfirm(),
         onAiExplain: () => void input.runAiExplain(),
+        onRegenerateAiReport: () => void input.runAiReport({ force: true }),
         error: input.error,
         setError: core.setError,
         report: input.report,

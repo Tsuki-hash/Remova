@@ -229,7 +229,7 @@ export function CopilotPanel({
               style={{
                 fontSize: 10.5,
                 fontWeight: 650,
-                color: aiEnabled ? "var(--accent)" : "var(--muted)",
+                color: aiEnabled ? "var(--accent-text)" : "var(--muted)",
                 background: aiEnabled ? "var(--accent-soft)" : "var(--surface)",
                 border: "1px solid var(--border)",
                 borderRadius: 999,

@@ -210,7 +210,10 @@ pub fn gate_cleanup_item(
     if crate::safety::is_user_library_path(&item.path)
         && !matches!(
             source,
-            CleanupSource::Orphan | CleanupSource::Monitor | CleanupSource::Installer
+            CleanupSource::Orphan
+                | CleanupSource::Monitor
+                | CleanupSource::Installer
+                | CleanupSource::ToolCache
         )
         && (app.is_none() || !crate::association::path_associated_with_app(app.unwrap(), item))
     {

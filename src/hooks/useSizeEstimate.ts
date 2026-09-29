@@ -12,6 +12,9 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   const [sizeProgress, setSizeProgress] = useState({ done: 0, total: 0 });
   const sizeCache = useRef(new Map<string, SizeEntry>());
   const sizeCancelRef = useRef(false);
+  // R23-FE-07: paths abandoned by an explicit stop — never auto-restarted by
+  // a later apps refresh (they can still be estimated after a remount).
+  const sizeSkipped = useRef(new Set<string>());
 
   const sizeOf = useCallback(
     (a: InstalledApp): number => {
@@ -49,7 +52,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
           .filter((a) => !(a.estimated_size_kb > 0) && a.install_location?.trim())
           .map((a) => a.install_location.trim()),
       ),
-    ].filter((p) => !sizeCache.current.has(p));
+    ].filter((p) => !sizeCache.current.has(p) && !sizeSkipped.current.has(p));
     if (pending.length === 0) {
       // a re-run whose paths are all cached must not leave the footer spinner on.
       setEstimating(false);
@@ -85,7 +88,12 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
           if (!path) break;
           try {
             const est = await api.estimateDirSizeKb(path);
-            if (disposed || sizeCancelRef.current) break;
+            if (disposed || sizeCancelRef.current) {
+              // R23-FE-07: the shifted path never reached the cache — record
+              // it so the stop sticks.
+              sizeSkipped.current.add(path);
+              break;
+            }
             const entry: SizeEntry = {
               kb: est.kb > 0 ? est.kb : 0,
               capped: est.capped,
@@ -93,7 +101,10 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
             sizeCache.current.set(path, entry);
             queueSet(path, entry);
           } catch {
-            if (disposed || sizeCancelRef.current) break;
+            if (disposed || sizeCancelRef.current) {
+              sizeSkipped.current.add(path);
+              break;
+            }
             const entry: SizeEntry = { kb: 0, capped: false };
             sizeCache.current.set(path, entry);
             queueSet(path, entry);

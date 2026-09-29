@@ -94,6 +94,7 @@ export type SoftwarePageProps = {
   onDryRun: () => void;
   onCleanup: () => void;
   onAiExplain: () => void;
+  onRegenerateAiReport: () => void;
 
   // report / checkup / batch
   error: string | null;
@@ -204,8 +205,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
           onDismiss={() => p.setReport(null)}
-          onAiReportBusy={p.setAiReportBusy}
-          onAiReportNote={p.setAiReportNote}
+          onRegenerate={p.onRegenerateAiReport}
         />
       )}
 

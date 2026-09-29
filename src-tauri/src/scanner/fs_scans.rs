@@ -224,10 +224,15 @@ fn walk_shortcuts(
                     let peek_lc = peek.to_ascii_lowercase();
                     !install_low.is_empty() && {
                         find_bytes(&peek_lc, install_low.as_bytes()) || {
-                            let u16s: Vec<u16> = install_low.encode_utf16().collect();
-                            let bytes: Vec<u8> =
-                                u16s.iter().flat_map(|u| u.to_le_bytes()).collect();
-                            find_bytes(peek, &bytes)
+                            // R23-BE-14: decode UTF-16LE and lowercase — byte-searching
+                            // a lowercase needle in raw-case UTF-16 always missed.
+                            let u16s: Vec<u16> = peek
+                                .chunks_exact(2)
+                                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                                .collect();
+                            String::from_utf16_lossy(&u16s)
+                                .to_lowercase()
+                                .contains(install_low)
                         }
                     }
                 } else {

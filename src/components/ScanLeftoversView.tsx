@@ -79,7 +79,7 @@ const LeftoverRow = memo(function LeftoverRow({
             }}
           >
             <Deco ch="✦" /> {note}
-            <span style={{ opacity: 0.75, color: "var(--muted)" }}> · {L.aiDisclaimer}</span>
+            <span style={{ color: "var(--muted)" }}> · {L.aiDisclaimer}</span>
           </div>
         )}
       </div>

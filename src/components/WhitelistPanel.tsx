@@ -79,7 +79,7 @@ export function WhitelistPanel({
               <span style={{ ...css.muted, fontSize: 11, minWidth: 56 }}>
                 {r.kind === "publisher" ? L.ignorePub : L.ignoreApp}
               </span>
-              <span style={{ flex: 1, minWidth: 0 }} className="ell">
+              <span style={{ flex: 1, minWidth: 0 }} className="ell" title={r.value}>
                 {r.value}
               </span>
               <button

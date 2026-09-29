@@ -112,9 +112,13 @@ fn seals_root() -> PathBuf {
             return p.clone();
         }
     }
-    if let Ok(v) = std::env::var("REMOVA_SEALS_DIR") {
-        if !v.trim().is_empty() {
-            return PathBuf::from(v);
+    // R23-SEC-08: compile-time test-only (see backup_root).
+    #[cfg(test)]
+    {
+        if let Ok(v) = std::env::var("REMOVA_SEALS_DIR") {
+            if !v.trim().is_empty() {
+                return PathBuf::from(v);
+            }
         }
     }
     let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
@@ -204,7 +208,17 @@ pub fn write_seal(
     blob.extend(protect(json.as_bytes())?);
     let dir = seals_root();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(seal_path(&name), blob).map_err(|e| e.to_string())
+    // R23-SEC-05: tmp + rename — a torn seal fails closed and is unusable.
+    let target = seal_path(&name);
+    let tmp = target.with_extension("seal.tmp");
+    std::fs::write(&tmp, blob).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })?;
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// Load and DPAPI-verify the seal for `session`. `None` on missing/tampered/foreign-user.
