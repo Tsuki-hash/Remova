@@ -4,7 +4,7 @@ import type { InstalledApp } from "../types";
 import type { Strings } from "../i18n";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
-import { isRecentInstall, summarizeLeftovers } from "../lib/decision";
+import { isRecentInstall } from "../lib/decision";
 
 /** Grouped chrome/tool setters (same shape as CleanupFlowSetters). */
 export type AppChromeFlow = {
@@ -115,24 +115,6 @@ export function useAppChrome({
     [selected, L, flow],
   );
 
-  const runOrphanScan = useCallback(async () => {
-    toast.info(L.orphanScanning);
-    try {
-      const items = await api.orphanScan();
-      goNav("software");
-      flow.setScan({ app_name: L.orphanScan, items });
-      residual.clearSelection();
-      if (items.length === 0) toast.info(L.orphanScanEmpty);
-      else {
-        const s = summarizeLeftovers(items);
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep));
-      }
-    } catch (e) {
-      flow.setError(formatError(e, "analyze"));
-      toast.error(formatError(e, "analyze"));
-    }
-  }, [L, goNav, residual, flow]);
-
   const toggleMonitor = useCallback(async () => {
     // Repeated clicks during the filesystem snapshot used to queue work and
     // then dump a pile of toasts — one run at a time, one toast channel.
@@ -225,7 +207,6 @@ export function useAppChrome({
     openPathSafe,
     doIgnorePublisher,
     doIgnoreApp,
-    runOrphanScan,
     toggleMonitor,
     monitorDiffToCleanup,
     checkupOrphanScan,

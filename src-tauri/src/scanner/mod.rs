@@ -149,6 +149,32 @@ fn cmdline_refs_install(data: &str, install_low: &str) -> bool {
     false
 }
 
+/// R23-BE-12: a slug counts only at non-alphanumeric boundaries in the raw
+/// lowercased text — `steam` hits `steam.exe`/`Steam Tray` but never
+/// `SteamTools` or `mysteam`.
+pub(crate) fn slug_boundary_hit(hay_low: &str, slug: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(i) = hay_low[from..].find(slug) {
+        let s = from + i;
+        let e = s + slug.len();
+        let before_ok = s == 0
+            || !hay_low[..s]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric());
+        let after_ok = e >= hay_low.len()
+            || !hay_low[e..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        from = s + 1;
+    }
+    false
+}
+
 /// Classify one leftover into a display bucket (path heuristics; mirrors frontend linkedItems).
 pub fn classify_bucket(kind: &ItemKind, path: &str, install_location: &str) -> LinkedBucket {
     match kind {
@@ -643,10 +669,13 @@ pub fn analyze_associations(
     for key in crate::manage::run_key_paths() {
         for (vname, vdata) in crate::regscan::list_values(&key) {
             let hit_install = cmdline_refs_install(&vdata, &install_low);
+            // R23-BE-12: the name hit needs raw-text boundaries too — the
+            // normalized contains form hit `SteamTools` data for `Steam`.
+            let data_low = vdata.to_lowercase();
             let hit_name = name_slugs
                 .iter()
                 .map(|s| normalize_for_match(s))
-                .any(|n| n.len() >= 4 && normalize_for_match(&vdata).contains(&n));
+                .any(|n| n.len() >= 4 && slug_boundary_hit(&data_low, &n));
             if !hit_install && !hit_name {
                 continue;
             }
@@ -755,6 +784,18 @@ mod tests {
 
     /// R22-BE-03: command-line install references need path-segment
     /// boundaries — `C:\Steam` must not claim `C:\SteamTools\…`.
+    /// R23-BE-12: slug hits need non-alphanumeric boundaries in raw text.
+    #[test]
+    fn slug_boundary_hit_rejects_prefix_collisions() {
+        assert!(slug_boundary_hit(
+            r#""c:\\steam\\steam.exe" -silent"#,
+            "steam"
+        ));
+        assert!(slug_boundary_hit("steam tray helper", "steam"));
+        assert!(!slug_boundary_hit(r"c:\\steamtools\\tool.exe", "steam"));
+        assert!(!slug_boundary_hit("mysteam", "steam"));
+    }
+
     #[test]
     fn cmdline_install_refs_need_segment_boundary() {
         let install = r"C:\Steam";

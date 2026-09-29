@@ -3,7 +3,7 @@
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::ERROR_SUCCESS;
+use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER,
@@ -611,7 +611,7 @@ fn read_reg_path_value(key_path: &str) -> Result<String, String> {
             let mut typ = REG_VALUE_TYPE(0);
             let mut data = vec![0u8; 65_536];
             let mut data_len = data.len() as u32;
-            let st = RegQueryValueExW(
+            let mut st = RegQueryValueExW(
                 hk,
                 PCWSTR(vname.as_ptr()),
                 None,
@@ -619,6 +619,23 @@ fn read_reg_path_value(key_path: &str) -> Result<String, String> {
                 Some(data.as_mut_ptr()),
                 Some(&mut data_len),
             );
+            if st == ERROR_MORE_DATA {
+                // R23-SEC-10: re-query with the reported size — long PATH
+                // values must not fail the whole chain.
+                let need = data_len as usize;
+                if need > data.len() && need <= (1 << 20) {
+                    data = vec![0u8; need];
+                    data_len = data.len() as u32;
+                    st = RegQueryValueExW(
+                        hk,
+                        PCWSTR(vname.as_ptr()),
+                        None,
+                        Some(&mut typ),
+                        Some(data.as_mut_ptr()),
+                        Some(&mut data_len),
+                    );
+                }
+            }
             let _ = RegCloseKey(hk);
             if st != ERROR_SUCCESS {
                 return Err(

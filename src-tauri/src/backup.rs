@@ -5,10 +5,29 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// R23-SEC-05: tmp + rename — a crash mid-write must not leave a half map/seal.
+fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = p.with_extension("remova.tmp");
+    fs::write(&tmp, bytes).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })?;
+    fs::rename(&tmp, p).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
 pub fn backup_root() -> PathBuf {
-    if let Ok(v) = std::env::var("REMOVA_BACKUP_DIR") {
-        if !v.trim().is_empty() {
-            return PathBuf::from(v);
+    // R23-SEC-08: the override is compile-time test-only — a production
+    // parent process must not relocate the backup root (the seal binding
+    // assumes the default layout).
+    #[cfg(test)]
+    {
+        if let Ok(v) = std::env::var("REMOVA_BACKUP_DIR") {
+            if !v.trim().is_empty() {
+                return PathBuf::from(v);
+            }
         }
     }
     let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
@@ -63,12 +82,25 @@ fn reg_view_flag(key_path: &str) -> &'static str {
 }
 
 fn safe_name(path: &str) -> String {
-    path.replace(['\\', '/'], "__")
+    let base = path
+        .replace(['\\', '/'], "__")
         .replace(':', "")
         .replace(['*', '?', '"', '<', '>', '|'], "_")
         .chars()
         .take(180)
-        .collect()
+        .collect::<String>();
+    // R23-SEC-07: Win32 folds trailing dots/spaces on directory creation —
+    // two registry entries whose sanitized names differ only there would
+    // silently share (and overwrite) one backup directory. A digest suffix
+    // disambiguates exactly those.
+    if base.ends_with(['.', ' ']) {
+        return format!(
+            "{}_{}",
+            base.trim_end_matches(['.', ' ']),
+            crate::fsutil::fnv1a64(path)
+        );
+    }
+    base
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -155,7 +187,7 @@ pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
             let _ = fs::create_dir_all(p);
         }
         let map_json = serde_json::to_string_pretty(&existing).unwrap_or_default();
-        fs::write(&map_path, &map_json).map_err(|e| e.to_string())?;
+        write_bytes_atomic(&map_path, map_json.as_bytes())?;
         crate::path_seal::write_seal(session, &map_json, &existing, &reg_digests)
             .map_err(|e| e.to_string())?;
     } else if !reg_digests.is_empty() {
@@ -176,10 +208,18 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
     let mut errors = vec![];
     // Load path_map once; write once at end (PERF-6).
     let map_path = session.join("files").join("path_map.json");
-    let mut path_map: std::collections::BTreeMap<String, String> = fs::read_to_string(&map_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    // R23-SEC-06: create_session guarantees a fresh directory — a pre-existing
+    // path_map means a same-user race planted it, and merging would bless
+    // forged targets into the seal. Fail the batch instead.
+    if map_path.exists() {
+        return (
+            items.len() as u32,
+            items.len() as u32,
+            vec!["session path_map pre-exists; refusing to merge".to_string()],
+        );
+    }
+    let mut path_map: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for it in items {
         match backup_item_with_map(it, session, &mut path_map) {
             Ok(()) => ok += 1,
@@ -194,7 +234,7 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
     if !path_map.is_empty() {
         // BE-07: path_map write failure must abort cleanup (restore depends on it).
         let map_json = serde_json::to_string_pretty(&path_map).unwrap_or_default();
-        if let Err(e) = fs::write(&map_path, &map_json) {
+        if let Err(e) = write_bytes_atomic(&map_path, map_json.as_bytes()) {
             fail += 1;
             errors.push(format!("path_map write failed: {e}"));
         } else if let Err(e) =

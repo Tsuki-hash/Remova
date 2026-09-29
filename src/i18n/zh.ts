@@ -394,6 +394,7 @@ export const dict = {
     searchTasks: "搜索任务名 / 命令…",
     loadingManage: "加载中…",
     loadingPage: "正在打开页面…",
+    navBack: "返回",
     loadingGeneric: "加载中…",
     idleScanning: "正在分析闲置候选…",
     radarScanning: "正在统计磁盘占用…",

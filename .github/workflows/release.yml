@@ -69,6 +69,33 @@ jobs:
       - name: frontend dist smoke
         run: npm run smoke:dist
 
+      # R23-QA-06: launch smoke needs WebView2 on the runner, and the release
+      # path honors the same smoke depth as the ci package job.
+      - name: install WebView2 (launch smoke prerequisite)
+        shell: pwsh
+        run: |
+          $keys = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          )
+          $installed = $keys | ForEach-Object { (Get-ItemProperty -ErrorAction SilentlyContinue $_).pv } | Where-Object { $_ }
+          if ($installed) {
+            Write-Host "WebView2 already installed: @($installed)[0]"
+          } else {
+            $dl = "$env:RUNNER_TEMP\webview2.exe"
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
+            $p = Start-Process -FilePath $dl -Args "/silent /install" -PassThru -Wait
+            if ($p.ExitCode -notin 0, 3010) {
+              Write-Error "WebView2 installer exit code $($p.ExitCode)"
+              exit $p.ExitCode
+            }
+            Write-Host "WebView2 installed (exit $($p.ExitCode))"
+          }
+
+      - name: app launch smoke
+        shell: pwsh
+        run: npm run smoke:launch
+
       - name: app binary smoke
         shell: pwsh
         run: npm run smoke:app

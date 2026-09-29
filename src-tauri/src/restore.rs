@@ -213,16 +213,29 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 /// Case-/slash-insensitive directory identity check (requested parent vs the
 /// by-handle resolved path). Trailing separators and `\\?\` shapes normalize.
 fn same_dir_path(a: &str, b: &Path) -> bool {
+    // R23-SEC-04: Win32 strips per-segment trailing dots/spaces when resolving,
+    // and an 8.3 short-name request resolves to its LONG name by handle —
+    // normalize segments and fall back to the OS long form before declaring a
+    // redirect, or every `Users\RUNNER~1\...` restore is skipped.
     let norm = |s: &str| {
         s.replace('/', "\\")
             .to_lowercase()
             .trim_end_matches('\\')
-            .to_string()
+            .split('\\')
+            .map(|seg| seg.trim_end_matches(['.', ' ']))
+            .collect::<Vec<_>>()
+            .join("\\")
     };
     let Some(bs) = b.to_str() else {
         return false;
     };
-    norm(a) == norm(bs)
+    if norm(a) == norm(bs) {
+        return true;
+    }
+    match crate::fsutil::long_path_form(b) {
+        Some(long) => norm(a) == norm(&long),
+        None => false,
+    }
 }
 
 /// AR-05: within one backup entry directory, prefer the single-value
@@ -1004,5 +1017,39 @@ mod tests {
             super::path_restore_scopes(&partial),
             vec!["User".to_string()]
         );
+    }
+
+    /// R23-SEC-04: short-name requests and trailing-dot segments must not be
+    /// misread as redirects. Vacuous when the volume has 8.3 generation off.
+    #[cfg(windows)]
+    #[test]
+    fn same_dir_path_matches_short_and_normalized_forms() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "remova_LongDirName_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&base).unwrap();
+        if let Some(short) = crate::fsutil::short_path_form(&base) {
+            if short != base.to_string_lossy() {
+                // Production direction: a = by-handle resolved (long), b = the
+                // short-name request.
+                assert!(
+                    super::same_dir_path(&base.to_string_lossy(), Path::new(&short)),
+                    "resolved form must match the short-name request: {short}"
+                );
+            }
+        } else {
+            eprintln!("skip: volume has no 8.3 aliases");
+        }
+        assert!(super::same_dir_path(
+            &format!("{}.", base.to_string_lossy()),
+            &base
+        ));
+        let _ = fs::remove_dir_all(&base);
     }
 }

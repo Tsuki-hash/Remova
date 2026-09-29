@@ -154,6 +154,9 @@ export function useAnalyzeFlow({
       });
       if (!ok) return;
       if (busyRef.current) return;
+      // R23-FE-05: kill the previous run's stage timer here — its 2.2s tail
+      // would otherwise fire mid-run and flip the bar back to idle.
+      clearStageTimer();
       saveRescanAfterUninstall(checked);
       const key = appKey(app);
       setUninstallingKey(key);

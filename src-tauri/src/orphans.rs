@@ -102,9 +102,11 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
             continue;
         }
         let tokens = slug_tokens(&app.name);
+        // R23-BE-13: boundary-anchored like the install-path side — `Notepad`
+        // must not claim `NotepadPlusPlus`.
         if tokens
             .iter()
-            .any(|t| t.len() >= 4 && leaf.contains(t.as_str()))
+            .any(|t| t.len() >= 4 && crate::scanner::slug_boundary_hit(&leaf, t))
         {
             return true;
         }

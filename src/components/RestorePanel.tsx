@@ -81,7 +81,7 @@ export function RestorePanel({
                     checked={pick === s.name}
                     onChange={() => setPick(s.name)}
                   />
-                  <span style={{ flex: 1, minWidth: 0 }} className="ell">
+                  <span style={{ flex: 1, minWidth: 0 }} className="ell" title={s.name}>
                     {s.name}
                   </span>
                   <span style={{ ...css.muted, whiteSpace: "nowrap" }}>

@@ -21,7 +21,6 @@ export function ToastHost() {
   const L = t();
   return (
     <div
-      aria-live="polite"
       style={{
         position: "fixed",
         right: 16,

@@ -1,7 +1,6 @@
 import { api } from "../lib/api";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
-import { runAiReportSummary } from "../lib/aiNarrative";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -16,8 +15,7 @@ type Props = {
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
   onDismiss: () => void;
-  onAiReportBusy: (v: boolean) => void;
-  onAiReportNote: (v: string | null) => void;
+  onRegenerate: () => void;
 };
 
 export function ReportPanel({
@@ -27,8 +25,7 @@ export function ReportPanel({
   aiReportNote,
   verifyRows,
   onDismiss,
-  onAiReportBusy,
-  onAiReportNote,
+  onRegenerate,
 }: Props) {
   const L = t();
   return (
@@ -193,21 +190,9 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}
-            onClick={() => {
-              void (async () => {
-                onAiReportBusy(true);
-                try {
-                  const note = await runAiReportSummary(report);
-                  onAiReportNote(note);
-                  if (!note) toast.error(L.aiFailed);
-                } catch (e) {
-                  // REV-SUP-05: mapped backend cause instead of one generic string.
-                  toast.error(formatError(e));
-                } finally {
-                  onAiReportBusy(false);
-                }
-              })();
-            }}
+            // R23-FE-08: regenerate goes through the hook's seq-guarded
+            // runAiReport — the old inline path raced the auto effect.
+            onClick={onRegenerate}
           >
             {aiReportBusy ? L.aiReportBusy : L.aiReportSummary}
           </button>
@@ -234,12 +219,17 @@ export function ReportPanel({
           <div style={{ maxHeight: 120, overflow: "auto", fontSize: 12, color: "var(--muted)" }}>
             {verifyRows.slice(0, 40).map((v, i) => (
               <div key={`${v.path}-${i}`} className="ell" title={v.path}>
-                <span style={{ color: v.still_there ? "var(--danger)" : "var(--ok)" }}>
-                  {v.still_there ? "❌" : "✅"}
+                <span
+                  style={{
+                    color: v.still_there ? "var(--danger-text)" : "var(--ok-ink)",
+                  }}
+                >
+                  <Deco ch={v.still_there ? "×" : "✓"} />
                 </span>{" "}
                 [{v.kind}] {v.path}
               </div>
             ))}
+            {verifyRows.length > 40 && <div>… +{verifyRows.length - 40}</div>}
           </div>
         </div>
       )}

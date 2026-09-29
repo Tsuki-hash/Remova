@@ -189,6 +189,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn schedule_missing_path_no_panic() {
         if !allow_sys_mutation() {
             return;
@@ -197,6 +198,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn restore_point_nonfatal() {
         if !allow_sys_mutation() {
             return;

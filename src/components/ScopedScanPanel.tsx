@@ -240,7 +240,9 @@ export function ScopedScanPanel({
           </button>
           </div>
         )}
-        empty={<div style={css.muted}>{L.orphanScanEmpty}</div>}
+        empty={
+          items === null ? undefined : <div style={css.muted}>{L.orphanScanEmpty}</div>
+        }
       />
     </div>
   );

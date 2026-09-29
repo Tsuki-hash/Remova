@@ -409,6 +409,7 @@ export const dict: EnDict = {
     searchTasks: "Search task / command…",
     loadingManage: "Loading…",
     loadingPage: "Opening page…",
+    navBack: "Back",
     loadingGeneric: "Loading…",
     idleScanning: "Scanning idle candidates…",
     radarScanning: "Measuring disk usage…",

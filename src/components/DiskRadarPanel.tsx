@@ -78,6 +78,7 @@ export function DiskRadarPanel({
                 borderColor: drive === d.letter ? "var(--accent)" : undefined,
               }}
               disabled={busy}
+              aria-pressed={drive === d.letter}
               title={`${formatSize(Math.round(d.free_gb * 1024 * 1024))} / ${formatSize(Math.round(d.total_gb * 1024 * 1024))}`}
               onClick={() => void switchDrive(d.letter)}
             >
@@ -93,6 +94,7 @@ export function DiskRadarPanel({
           {crumbs.length > 0 && (
             <button
               style={{ ...css.btnGhost, height: 30 }}
+              aria-label={L.navBack}
               onClick={() => {
                 const next = crumbs.slice(0, -1);
                 setCrumbs(next);
@@ -119,6 +121,7 @@ export function DiskRadarPanel({
         items={rows ?? []}
         height={320}
         estimateSize={72}
+        listRole
         empty={rows === null ? undefined : <div style={css.muted}>{L.radarEmpty}</div>}
         keyOf={(r) => r.path}
         renderItem={(r) => (

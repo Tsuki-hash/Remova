@@ -78,6 +78,7 @@ export function Sidebar({
             key={it.id}
             onClick={() => onNav(it.id)}
             title={it.label}
+            aria-label={collapsed ? it.label : undefined}
             aria-current={active ? "page" : undefined}
             style={{
               display: "flex",

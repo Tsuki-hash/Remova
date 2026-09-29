@@ -349,7 +349,7 @@ export default function App() {
     setCheckupOrphanCount: shell.setCheckupOrphanCount,
   });
 
-  const { runAiExplain } = useAiScanNarrative({
+  const { runAiExplain, runAiReport } = useAiScanNarrative({
     scan,
     selected,
     report,
@@ -379,11 +379,16 @@ export default function App() {
     busyRef,
   });
 
+  // R23-FE-01: language loads once on mount; the theme effect only applies
+  // the theme — switching themes must not rebuild every copy object.
   useEffect(() => {
     loadLang();
-    applyTheme(theme);
     setLangVer((v) => v + 1);
-  }, [theme, setLangVer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -602,6 +607,7 @@ export default function App() {
     dryRun,
     handleCleanupConfirm,
     runAiExplain,
+    runAiReport,
     checkupOrphanScan,
     batchCleanup,
     setQ,
@@ -631,7 +637,7 @@ export default function App() {
             updateInfo={updateInfo}
             selectedCount={nav === "software" ? multi.size : undefined}
             totalCount={
-              nav === "software" ? (loading ? apps.length : filtered.length) : undefined
+              nav === "software" && !loading ? filtered.length : undefined
             }
             estimating={nav === "software" ? estimating : undefined}
             estimateLabel={

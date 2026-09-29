@@ -110,7 +110,7 @@ export function ToolCard({
                 fontSize: 10.5,
                 fontWeight: 650,
                 letterSpacing: 0.2,
-                color: "var(--accent)",
+                color: "var(--accent-text)",
                 background: "var(--accent-soft)",
                 borderRadius: 999,
                 padding: "1px 7px",

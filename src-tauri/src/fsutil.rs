@@ -262,6 +262,58 @@ pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
     }
 }
 
+/// R23-SEC-04: long (expanded) form of an existing path — `GetLongPathNameW`
+/// turns 8.3 components back into their long names so restore-target
+/// comparisons can match a short-name request against the resolved form.
+#[cfg(windows)]
+pub fn long_path_form(p: &Path) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+    let s = p.to_str()?;
+    let wide = to_wide(s);
+    unsafe {
+        let need = GetLongPathNameW(PCWSTR(wide.as_ptr()), None);
+        if need == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; need as usize];
+        let written = GetLongPathNameW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+        if written == 0 || written as usize > buf.len() {
+            return None;
+        }
+        while buf.last().copied() == Some(0) {
+            buf.pop();
+        }
+        Some(String::from_utf16_lossy(&buf))
+    }
+}
+
+/// R23-QA companion: short (8.3) form of an existing path, for tests that
+/// exercise short-name handling (`None`/identity when the volume has 8.3
+/// name generation disabled).
+#[cfg(windows)]
+pub fn short_path_form(p: &Path) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+    let s = p.to_str()?;
+    let wide = to_wide(s);
+    unsafe {
+        let need = GetShortPathNameW(PCWSTR(wide.as_ptr()), None);
+        if need == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; need as usize];
+        let written = GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+        if written == 0 || written as usize > buf.len() {
+            return None;
+        }
+        while buf.last().copied() == Some(0) {
+            buf.pop();
+        }
+        Some(String::from_utf16_lossy(&buf))
+    }
+}
+
 /// Delete a tree without following reparse points (REV-BE-05 / REV-SEC-06).
 /// Every level is pinned (no-DELETE-share handle + by-handle reparse check)
 /// before its children are cleared, so the path cannot be swapped for a
