@@ -192,6 +192,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
 
     // Import only the exact authenticated and validated bytes captured above.
     for (entry_dir, target, raw) in imports {
+        // Pin every staging ancestor as well as the file. A directory swap
+        // must not redirect an elevated staging write or reg.exe's reopen.
+        let _stage_pins = crate::fsutil::create_dirs_pinned(&entry_dir)
+            .map_err(|e| crate::error::restore_reg_err(e.to_string()).to_ipc())?;
         let pinned = entry_dir.join(format!(
             "value.import.{}.{}.reg",
             std::process::id(),

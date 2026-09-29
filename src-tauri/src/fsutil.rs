@@ -681,6 +681,28 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&root);
     }
+    #[cfg(windows)]
+    #[test]
+    fn output_directory_pins_refuse_junction_ancestors_before_creating_children() {
+        let root = unique_tmp("output_pins");
+        let target = root.join("target");
+        let link = root.join("link");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), b"unchanged").unwrap();
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(create_dirs_pinned(&link.join("child")).is_err());
+        assert!(!target.join("child").exists());
+        assert_eq!(fs::read(target.join("keep")).unwrap(), b"unchanged");
+        // Unlink only the fixture junction before recursively removing its sandbox.
+        fs::remove_dir(link).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
     /// R23-QA-02: the restore write-back relies on `pin_dir_resolved` to expose
     /// junction redirects — regressions here would silently reintroduce the
     /// planted-junction write path. Junctions need no admin rights.
