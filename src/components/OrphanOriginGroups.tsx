@@ -48,7 +48,7 @@ export function OrphanOriginGroups({
                 {L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
               </span>
               {g.keep > 0 && (
-                <span style={{ ...css.chip, fontFamily: "inherit", color: "var(--warn)" }}>
+                <span style={{ ...css.chip, fontFamily: "inherit", color: "var(--warn-ink)" }}>
                   {L.bucketKeep} {g.keep}
                 </span>
               )}

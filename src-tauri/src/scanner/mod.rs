@@ -637,11 +637,10 @@ pub fn analyze_associations(
                 .to_string()
         })
         .unwrap_or_default();
-    for (alias, sub) in [
-        ("HKLM64", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
-        ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
-    ] {
-        let key = format!("{alias}\\{sub}");
+    // R23-BE-06: enumerate the same Run-family keys the manage view and the
+    // install monitor use (HKLM32 / RunOnce / Policies\Explorer\Run included);
+    // a scanner-only list missed 32-bit and one-shot autostarts.
+    for key in crate::manage::run_key_paths() {
         for (vname, vdata) in crate::regscan::list_values(&key) {
             let hit_install = cmdline_refs_install(&vdata, &install_low);
             let hit_name = name_slugs
@@ -679,7 +678,7 @@ pub fn analyze_associations(
     reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
 
     // 7. Scheduled tasks (suspected / high — display only)
-    reg_scans::scan_scheduled_tasks(&name_slugs, &install_low, &mut items);
+    reg_scans::scan_scheduled_tasks(&name_slugs, &mut items);
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
     reg_scans::scan_software_keys(&name_slugs, &mut items);

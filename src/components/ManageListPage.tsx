@@ -207,6 +207,7 @@ export function ManageListPage({
         </span>
         <input
           style={{ ...css.input, maxWidth: 240, height: 34, flex: "0 1 240px" }}
+          aria-label={L.search}
           placeholder={
             tab === "startup"
               ? L.searchStartup

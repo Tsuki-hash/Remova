@@ -168,6 +168,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             type="checkbox"
             checked={cfg.enabled}
             onChange={(e) => setCfg((c) => ({ ...c, enabled: e.target.checked }))}
+            aria-label={L.aiEnable}
             style={{ accentColor: "var(--accent)", width: 16, height: 16 }}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -250,9 +251,9 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
             htmlFor="ai-api-key"
             hint={
               cfg.has_api_key ? (
-                <span style={{ color: "var(--ok)" }}>{L.aiApiKeySet}</span>
+                <span style={{ color: "var(--ok-ink)" }}>{L.aiApiKeySet}</span>
               ) : activePreset.needsKey ? (
-                <span style={{ color: "var(--warn)" }}>{L.aiApiKeyMissing}</span>
+                <span style={{ color: "var(--warn-ink)" }}>{L.aiApiKeyMissing}</span>
               ) : undefined
             }
           >

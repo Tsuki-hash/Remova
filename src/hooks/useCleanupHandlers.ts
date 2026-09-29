@@ -135,6 +135,10 @@ export function useCleanupHandlers({
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
         );
         setReport(report);
+        // R23-FE-03: a new report must never inherit the previous cleanup's
+        // post-cleanup verify list or AI narrative.
+        setVerifyRows(null);
+        setAiReportNote(null);
         void refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
@@ -166,6 +170,8 @@ export function useCleanupHandlers({
       });
       if (seq !== dryRunSeqRef.current) return;
       setReport(r);
+      setVerifyRows(null);
+      setAiReportNote(null);
     } catch (e) {
       if (seq !== dryRunSeqRef.current) return;
       setError(formatError(e, "cleanup"));
@@ -173,7 +179,16 @@ export function useCleanupHandlers({
       if (seq === dryRunSeqRef.current) setDryRunning(false);
       busyRef.current = false;
     }
-  }, [scan, selected, selectedPaths, setReport, setError, busyRef]);
+  }, [
+    scan,
+    selected,
+    selectedPaths,
+    setReport,
+    setVerifyRows,
+    setAiReportNote,
+    setError,
+    busyRef,
+  ]);
 
   const execReal = useCallback(async (opts?: { slotHeld?: boolean }) => {
     if (!scan || !selected) {

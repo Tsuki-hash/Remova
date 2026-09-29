@@ -706,28 +706,30 @@ pub fn explain_items(
     let parsed: Vec<ExplainOutput> =
         serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
 
-    // Match back by sanitized path (CODE-3) — never rely on array index alone.
-    // two distinct paths can sanitize to the same string; when they do we cannot prove
-    // which one the model meant, so fail closed (no explanation) instead of mis-attributing one.
-    let mut san_to_orig: std::collections::HashMap<String, Vec<usize>> =
+    // Match back by the exact strings SENT to the model (CODE-3 + R23-SUP-01):
+    // the prompt asks the model to echo the sanitized path, and `sanitize_path`
+    // is NOT idempotent — re-sanitizing the echo lost every multi-segment
+    // AppData path. Never rely on array index alone; identical sanitized paths
+    // are indistinguishable to the model, so duplicates attribute in payload
+    // order among unconsumed indices.
+    let mut sent_map: std::collections::HashMap<String, Vec<usize>> =
         std::collections::HashMap::new();
     for (idx, b) in batch.iter().enumerate() {
-        san_to_orig
+        sent_map
             .entry(sanitize_path(&b.path, cfg.allow_cloud_paths))
             .or_default()
             .push(idx);
     }
     let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for p in parsed.iter() {
-        let san = sanitize_path(&p.path, cfg.allow_cloud_paths);
-        let candidates = match san_to_orig.get(&san) {
+        let candidates = match sent_map.get(p.path.trim()) {
             Some(v) if v.len() == 1 => v.clone(),
-            // Ambiguous after sanitization: only safe if the echoed path is verbatim unique.
             Some(v) => v
                 .iter()
-                .filter(|i| batch[**i].path == p.path)
                 .copied()
+                .filter(|i| !consumed.contains(i))
                 .collect(),
+            // Model echoed an original (unsanitized) path verbatim — last resort.
             None => batch
                 .iter()
                 .enumerate()
@@ -1056,5 +1058,14 @@ mod tests {
         let s = format!("{c:?}");
         assert!(!s.contains("sk-secret"), "Debug leaked api_key: {s}");
         assert!(s.contains("<redacted>"));
+    }
+    /// R23-SUP-01/QA-03: `sanitize_path` is deliberately NOT idempotent for the
+    /// common AppData shape — the explain rematch must therefore consult the
+    /// strings actually sent to the model instead of re-sanitizing the echo.
+    #[test]
+    fn sanitize_path_is_not_idempotent_for_appdata_shapes() {
+        let once = sanitize_path(r"C:\Users\a\AppData\Local\Vendor\Product", false);
+        assert_eq!(once, r"AppData\Vendor\Product");
+        assert_ne!(sanitize_path(&once, false), once);
     }
 }

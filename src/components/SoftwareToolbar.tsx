@@ -96,6 +96,7 @@ export function SoftwareToolbar({
       <button
         type="button"
         onClick={onOpenAi}
+        aria-label={aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
         title={aiEnabled ? L.aiEnabledChip : L.aiDisabledChip}
         style={{
           height: 32,

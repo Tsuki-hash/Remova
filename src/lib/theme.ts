@@ -41,6 +41,9 @@ export function applyTheme(theme: Theme) {
     root.style.setProperty("--danger-soft", "rgba(248,113,113,.12)");
     root.style.setProperty("--warn", "#FBBF24");
     root.style.setProperty("--ok", "#4ADE80");
+    // Text-grade tokens: small-size text needs >=4.5:1 on light panels (R23-UX-03/04).
+    root.style.setProperty("--warn-ink", "#FBBF24");
+    root.style.setProperty("--ok-ink", "#4ADE80");
     root.style.setProperty("--th-bg", "#242424");
     root.style.setProperty("--row-hover", "#2A2A2A");
     root.style.setProperty("--row-selected", "rgba(96,165,250,.12)");
@@ -62,6 +65,8 @@ export function applyTheme(theme: Theme) {
     root.style.setProperty("--danger-soft", "rgba(220,38,38,.08)");
     root.style.setProperty("--warn", "#D97706");
     root.style.setProperty("--ok", "#16A34A");
+    root.style.setProperty("--warn-ink", "#B45309");
+    root.style.setProperty("--ok-ink", "#15803D");
     root.style.setProperty("--th-bg", "#FAFAFA");
     root.style.setProperty("--row-hover", "#F6F6F6");
     root.style.setProperty("--row-selected", "rgba(37,99,235,.08)");

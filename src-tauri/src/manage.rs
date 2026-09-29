@@ -173,7 +173,9 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                 .unwrap_or(fname)
                 .trim_end_matches(".remova-disabled")
                 .to_string();
-            let enabled = startup_folder_enabled(&stem)
+            // R23-BE-02: Explorer keys StartupApproved\StartupFolder by the FULL
+            // file name (with extension) — the stem never matches.
+            let enabled = startup_folder_enabled(fname)
                 .unwrap_or(!fname.to_lowercase().contains(".remova-disabled"));
             out.push({
                 let mut it = manage_row(
@@ -620,17 +622,14 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         if !dir_ok {
             return Err(crate::error::manage_err("protected_registry", dir).to_ipc());
         }
-        let stem = std::path::Path::new(fname)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(fname)
-            .trim_end_matches(".remova-disabled")
-            .to_string();
-        if stem.trim().is_empty() || stem.contains('\\') || stem.contains('/') {
+        // R23-BE-02: the approved-flag value name is the full file name —
+        // writing the stem created a value Explorer never reads (disable was a
+        // silent no-op) and the display stem stays list-side only.
+        if fname.trim().is_empty() || fname.contains('\\') || fname.contains('/') {
             return Err(crate::error::manage_err("bad_name", fname).to_ipc());
         }
         let _guard = lock_manage();
-        return write_startup_folder_approved(&stem, enabled);
+        return write_startup_folder_approved(fname, enabled);
     }
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err(crate::error::manage_err("bad_name", "startup location").to_ipc());
@@ -658,12 +657,15 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
     write_startup_approved(key, base, enabled)
 }
 
-fn write_startup_folder_approved(file_stem: &str, enabled: bool) -> Result<(), String> {
+/// `file_name` must be the FULL startup-folder file name incl. extension —
+/// Explorer reads `StartupApproved\StartupFolder` values by that name
+/// (R23-BE-02: a stem-named value is invisible to it).
+fn write_startup_folder_approved(file_name: &str, enabled: bool) -> Result<(), String> {
     let mut buf = [0u8; 12];
     buf[0] = if enabled { 0x02 } else { 0x03 };
     crate::regops::write_reg_binary(
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
-        file_stem,
+        file_name,
         &buf,
     )
 }
@@ -944,5 +946,23 @@ mod tests {
         assert!(keys.iter().any(|k| k.ends_with(r"\RunOnce")));
         assert!(keys.iter().any(|k| k.contains(r"Policies\Explorer\Run")));
         assert_eq!(keys.len(), super::RUN_KEYS.len());
+    }
+
+    /// R23-BE-02/QA-01: opt-in reality check — Explorer's StartupApproved\
+    /// StartupFolder value names are FULL file names (with extension). Only
+    /// asserts when this machine has folder startup flags recorded.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn startup_folder_approved_values_are_full_file_names() {
+        let vals = crate::regscan::list_values(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+        );
+        for (name, _) in &vals {
+            assert!(
+                name.contains('.'),
+                "approved value name must be the full file name: {name}"
+            );
+        }
     }
 }
