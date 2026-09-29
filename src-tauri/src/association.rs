@@ -161,15 +161,29 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         }
     }
     let pub_low = app.publisher.trim().to_lowercase();
-    // Publisher as a path/registry segment, not a raw substring (`Apt` must not hit `Adaptive`).
-    if pub_low.len() >= 4
-        && low.split(['\\', '/', ':', ' ', '_']).any(|seg| {
-            seg == pub_low
-                || seg.starts_with(&format!("{pub_low} "))
-                || seg.ends_with(&format!(" {pub_low}"))
-        })
-    {
-        return true;
+    // Publisher as a path/registry segment, not a raw substring (`Apt` must not
+    // hit `Adaptive`). The split set contains spaces, so segments never carry
+    // them — a multi-word publisher matches a run of ADJACENT tokens
+    // (`Acme Corp` inside `HKLM\\...\\Acme Corp\\bin`); the previous
+    // starts_with/ends_with arms were unreachable (R23-BE-09).
+    if pub_low.len() >= 4 {
+        let pub_words: Vec<&str> = pub_low
+            .split([' ', '_'])
+            .filter(|w| !w.is_empty())
+            .collect();
+        let toks: Vec<&str> = low
+            .split(['\\', '/', ':', ' ', '_'])
+            .filter(|s| !s.is_empty())
+            .collect();
+        let hit = if pub_words.len() == 1 {
+            toks.iter().any(|t| *t == pub_words[0])
+        } else {
+            toks.windows(pub_words.len())
+                .any(|w| w == pub_words.as_slice())
+        };
+        if hit {
+            return true;
+        }
     }
     let slugs = crate::scanner::slugify(&app.name);
     // REV-BE-07: segment-boundary match (`codec` must not hit `mycodec`).

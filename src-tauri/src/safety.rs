@@ -496,6 +496,12 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
+    // R23-SEC-03: absolute drive paths only — no relative targets, no UNC,
+    // not even drive-relative backslash-led forms (`\srv`, same rule as
+    // the delete gate enforces via `is_safe_fs`).
+    if !p.has_root() || trimmed.starts_with('\\') {
+        return false;
+    }
     // Reuse delete-adjacent system roots without the 8.3 ban.
     if trimmed.len() == 2 && trimmed.ends_with(':') {
         return false;
@@ -1222,5 +1228,22 @@ mod tests {
         assert!(super::is_user_library_path(
             r"C:\Users\a\Documents\App\file.txt"
         ));
+    }
+    /// R23-SEC-03: restore targets must be absolute drive paths — relative and
+    /// UNC shapes were previously accepted by the string gate.
+    #[test]
+    fn restore_target_refuses_relative_and_unc() {
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"Windows\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"\\srv\share\evil.dll"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"\srv\share\evil.dll"
+        )));
+        assert!(super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Local\App\f.txt"
+        )));
     }
 }

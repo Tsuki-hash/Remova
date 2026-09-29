@@ -123,8 +123,10 @@ pub(super) fn scan_shell_extensions(
                 let name_hit = name_norms
                     .iter()
                     .any(|s| s.len() >= 5 && blob.contains(s.as_str()));
-                let install_hit =
-                    !install_low.is_empty() && blob.contains(&normalize_for_match(install_low));
+                // R23-BE-05: boundary-anchored on the raw default string — the
+                // normalized contains form matched any class whose default merely
+                // contained the install slug (`C:\App` → `capp` in "captured").
+                let install_hit = super::cmdline_refs_install(&def, install_low);
                 if !name_hit && !install_hit {
                     continue;
                 }
@@ -172,10 +174,8 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
         if is_safe_to_delete_registry(&svc_path).is_err() {
             continue;
         }
-        let image = crate::regscan::read_string_default(&format!(r"{svc_path}\ImagePath"))
-            .unwrap_or_default();
-        let blob = format!("{svc} {image}").to_lowercase();
-        let hit_install = !install_low.is_empty() && blob.contains(install_low);
+        let image = service_image_string(&svc_path);
+        let hit_install = super::cmdline_refs_install(&image, install_low);
         let svc_n = normalize_for_match(&svc);
         let strong = hit_install
             || name_norms
@@ -262,8 +262,7 @@ pub(super) fn scan_services(
         if is_safe_to_delete_registry(&svc_path).is_err() {
             continue;
         }
-        let image = crate::regscan::read_string_default(&format!(r"{svc_path}\ImagePath"))
-            .unwrap_or_default();
+        let image = service_image_string(&svc_path);
         // Boundary-anchored install hit on the ImagePath only — a display
         // string or service name that merely contains the install prefix
         // must not look like an install reference.
@@ -301,11 +300,7 @@ pub(super) fn scan_services(
     }
 }
 
-pub(super) fn scan_scheduled_tasks(
-    name_slugs: &[String],
-    install_low: &str,
-    items: &mut Vec<CleanupItem>,
-) {
+pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
     let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for top in crate::regscan::list_subkeys(root) {
@@ -317,11 +312,12 @@ pub(super) fn scan_scheduled_tasks(
             continue;
         }
         let leaf_n = normalize_for_match(&top);
-        let hit_install = !install_low.is_empty() && key_path.to_lowercase().contains(install_low);
-        let strong = hit_install
-            || name_norms
-                .iter()
-                .any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
+        // R23-BE-04: TaskCache\Tree key paths never contain file-system install
+        // paths, and the action string lives in a binary blob under
+        // TaskCache\Actions — install evidence here is the task NAME only.
+        let strong = name_norms
+            .iter()
+            .any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
         if !strong {
             continue;
         }
@@ -345,5 +341,35 @@ pub(super) fn scan_scheduled_tasks(
             size_kb: None,
             bucket: None,
         });
+    }
+}
+
+/// Service/driver `ImagePath` is a VALUE under the service key — read it with
+/// `read_string`, never as a subkey default (R23-BE-01: the subkey form always
+/// opened nothing and silently killed the install-location channel).
+fn service_image_string(svc_path: &str) -> String {
+    crate::regscan::read_string(svc_path, "ImagePath").unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    /// R23-BE-01/QA-01: opt-in against the real registry (`cargo test -- --ignored`).
+    /// A healthy machine has many services with non-empty ImagePath strings; the
+    /// old read-as-subkey form returned empty for every single one.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn service_image_string_reads_real_image_paths() {
+        let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
+        let mut non_empty = 0;
+        for svc in crate::regscan::list_subkeys(root) {
+            if !super::service_image_string(&format!(r"{root}\{svc}")).is_empty() {
+                non_empty += 1;
+            }
+        }
+        assert!(
+            non_empty >= 5,
+            "expected real ImagePath reads, got {non_empty}"
+        );
     }
 }

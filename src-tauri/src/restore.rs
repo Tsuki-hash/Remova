@@ -397,8 +397,18 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 
 /// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else User only.
 fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
-    if !item.scopes.is_empty() {
-        return item.scopes.clone();
+    // R23-SEC-02: a tampered `scopes` field must not unlock the system PATH —
+    // Machine scope is honored only when the recorded snapshot actually
+    // contained the entry in the Machine value.
+    let machine_ok = crate::regops::path_contains_entry(&item.machine_path, &item.entry);
+    let recorded: Vec<String> = item
+        .scopes
+        .iter()
+        .filter(|s| !s.eq_ignore_ascii_case("Machine") || machine_ok)
+        .cloned()
+        .collect();
+    if !recorded.is_empty() {
+        return recorded;
     }
     let mut out = Vec::new();
     if crate::regops::path_contains_entry(&item.user_path, &item.entry) {
@@ -956,5 +966,43 @@ mod tests {
         );
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
+    }
+    /// R23-SEC-02: a recorded Machine scope without snapshot evidence must not
+    /// unlock the system PATH — it degrades to the evidence-based fallback.
+    #[test]
+    fn path_restore_scopes_machine_requires_evidence() {
+        use crate::backup::PathSnapshotItem;
+        let forged = PathSnapshotItem {
+            entry: r"C:\vendor\tool".into(),
+            scopes: vec!["Machine".into()],
+            user_path: String::new(),
+            machine_path: String::new(),
+        };
+        assert_eq!(
+            super::path_restore_scopes(&forged),
+            vec!["User".to_string()]
+        );
+
+        let evidence = PathSnapshotItem {
+            entry: r"C:\vendor\tool".into(),
+            scopes: vec!["Machine".into(), "User".into()],
+            user_path: r"C:\vendor\tool;C:\Windows".into(),
+            machine_path: r"C:\Windows;C:\vendor\tool".into(),
+        };
+        assert_eq!(
+            super::path_restore_scopes(&evidence),
+            vec!["Machine".to_string(), "User".to_string()]
+        );
+
+        let partial = PathSnapshotItem {
+            entry: r"C:\vendor\tool".into(),
+            scopes: vec!["Machine".into(), "User".into()],
+            user_path: r"C:\vendor\tool".into(),
+            machine_path: r"C:\Windows".into(),
+        };
+        assert_eq!(
+            super::path_restore_scopes(&partial),
+            vec!["User".to_string()]
+        );
     }
 }

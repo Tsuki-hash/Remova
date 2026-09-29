@@ -17,14 +17,14 @@ export function LeftoverSummaryBar({
       id: "safe" as const,
       label: L.bucketSafe,
       count: summary.safe,
-      color: "var(--ok)",
+      color: "var(--ok-ink)",
       hint: L.bucketSafeHint,
     },
     {
       id: "suggest" as const,
       label: L.bucketSuggest,
       count: summary.suggest,
-      color: "var(--warn)",
+      color: "var(--warn-ink)",
       hint: L.bucketSuggestHint,
     },
     {

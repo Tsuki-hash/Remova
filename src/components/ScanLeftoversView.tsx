@@ -90,7 +90,7 @@ const LeftoverRow = memo(function LeftoverRow({
             style={{
               ...css.sourceBadge,
               marginLeft: 6,
-              color: "var(--warn)",
+              color: "var(--warn-ink)",
               borderColor: "var(--warn)",
             }}
             title={L.sharedHint}
@@ -116,8 +116,10 @@ const LeftoverRow = memo(function LeftoverRow({
             style={{
               ...css.sourceBadge,
               marginLeft: 6,
-              color: "var(--mid, #FFB020)",
-              borderColor: "var(--mid, #FFB020)",
+              // R23-UX-01: `--mid` never existed — the fallback amber was
+              // unreadable on light panels as text (≈1.75:1).
+              color: "var(--warn-ink)",
+              borderColor: "var(--warn)",
             }}
             title={L.userLibraryHint}
           >

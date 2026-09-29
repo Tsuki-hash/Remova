@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { usePopupMenu } from "../hooks/usePopupMenu";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
@@ -57,49 +58,14 @@ export function AppDetailPanel({
     if (restoreFocus) menuBtnRef.current?.focus();
   };
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const items = (): HTMLButtonElement[] =>
-      Array.from(
-        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-      );
-    // R22-UX-16: opening lands focus on the first item; arrows/Home/End roam.
-    items()[0]?.focus();
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        closeMenu(false);
-      }
-    };
-    // R21-UX-10: Escape must work from menu items too, and focus returns to the trigger.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeMenu(true);
-        return;
-      }
-      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
-        const list = items();
-        if (list.length === 0) return;
-        e.preventDefault();
-        const idx = list.indexOf(document.activeElement as HTMLButtonElement);
-        const next =
-          e.key === "ArrowDown"
-            ? (idx + 1) % list.length
-            : e.key === "ArrowUp"
-              ? (idx - 1 + list.length) % list.length
-              : e.key === "Home"
-                ? 0
-                : list.length - 1;
-        list[next]?.focus();
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
+  // R23-UX-09: shared popup-menu behavior (open → first item, arrow/Home/End
+  // roam, Escape with focus return, outside close) — same source as AppRow.
+  usePopupMenu({
+    open: menuOpen,
+    menuRef,
+    triggerRef: menuBtnRef,
+    onClose: closeMenu,
+  });
 
   const runDeep = () => onDeepUninstall(app);
 

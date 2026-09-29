@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePopupMenu } from "../hooks/usePopupMenu";
 import { Deco } from "./ui/Glyph";
 import { createPortal } from "react-dom";
 import type { InstalledApp } from "../types";
@@ -15,12 +16,12 @@ function chipStyle(c: DecisionChip) {
     return {
       ...css.chip,
       fontFamily: "inherit" as const,
-      color: "var(--warn)",
+      color: "var(--warn-ink)",
       borderColor: "var(--warn)",
     };
   }
   if (c.tone === "ok") {
-    return { ...css.chip, fontFamily: "inherit" as const, color: "var(--ok)" };
+    return { ...css.chip, fontFamily: "inherit" as const, color: "var(--ok-ink)" };
   }
   return { ...css.chip, fontFamily: "inherit" as const };
 }
@@ -87,29 +88,24 @@ function RowMenu({
     setPos({ top, left, minWidth });
   }, [open, items.length]);
 
+  // R23-UX-09: shared focus management — open lands on the first item,
+  // arrows roam, Escape restores focus to the trigger, outside click closes.
+  usePopupMenu({
+    open,
+    menuRef,
+    triggerRef: btnRef,
+    onClose: (restoreFocus) => {
+      setOpen(false);
+      if (restoreFocus) btnRef.current?.focus();
+    },
+  });
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (
-        menuRef.current?.contains(e.target as Node) ||
-        btnRef.current?.contains(e.target as Node)
-      ) {
-        return;
-      }
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     const onScroll = () => setOpen(false);
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
     window.addEventListener("resize", onScroll);
     // Scroll closes menu — re-open on the new row position.
     document.addEventListener("scroll", onScroll, true);
     return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onScroll);
       document.removeEventListener("scroll", onScroll, true);
     };
@@ -127,6 +123,7 @@ function RowMenu({
           color: "var(--muted)",
         }}
         title={L.rowMore}
+        aria-label={L.rowMore}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={(e) => {

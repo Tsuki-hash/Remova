@@ -458,7 +458,11 @@ fn looks_system_update(name: &str) -> bool {
         return true;
     }
     let lower = n.to_lowercase();
-    if lower.starts_with("kb") && n.len() > 2 && n[2..].chars().all(|c| c.is_ascii_digit()) {
+    // R23-BE-08: slice the LOWERCASED string — U+212A KELVIN SIGN lowercases
+    // to ASCII 'k', so slicing the original at byte 2 could split a char and
+    // panic on registry-controlled DisplayNames.
+    if lower.starts_with("kb") && lower.len() > 2 && lower[2..].chars().all(|c| c.is_ascii_digit())
+    {
         return true;
     }
     lower.starts_with("update for") || lower.starts_with("security update")

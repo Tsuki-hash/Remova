@@ -227,7 +227,7 @@ export function OrphanPage({
                   marginLeft: "auto",
                   height: 32,
                   background: selected.size ? "var(--danger)" : undefined,
-                  color: selected.size ? "#fff" : undefined,
+                  color: selected.size ? "#1a0505" : undefined,
                 }}
                 disabled={busy || selected.size === 0}
                 onClick={() => void cleanSelected()}

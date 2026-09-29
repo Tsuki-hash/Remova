@@ -212,9 +212,14 @@ fn walk_shortcuts(
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
             || {
-                // REV-BE-01: peek at most 8KB (lnk target lives near the start) and search bytes.
-                if let Ok(data) = std::fs::read(&p) {
-                    let peek = &data[..data.len().min(SHORTCUT_PEEK_BYTES)];
+                // REV-BE-01: peek at most 8KB (lnk target lives near the start) and
+                // search bytes — R23-BE-07: the read is bounded, never whole-file.
+                let mut peek_buf = [0u8; SHORTCUT_PEEK_BYTES];
+                if let Ok(n) = std::fs::File::open(&p).and_then(|mut f| {
+                    use std::io::Read;
+                    f.read(&mut peek_buf)
+                }) {
+                    let peek = &peek_buf[..n];
                     // Case-insensitive ASCII peek (paths in LNK are mixed-case).
                     let peek_lc = peek.to_ascii_lowercase();
                     !install_low.is_empty() && {

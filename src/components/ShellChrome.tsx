@@ -31,7 +31,7 @@ export function ShellStatus({
           style={{
             border: "none",
             background: "transparent",
-            color: "var(--warn)",
+            color: "var(--warn-ink)",
             cursor: "pointer",
             fontSize: 12,
             padding: 0,

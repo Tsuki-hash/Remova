@@ -58,7 +58,7 @@ export function aiPanelReducer(state: AiPanelState, action: AiPanelAction): AiPa
     case "scanAi/clear":
       return { ...state, aiNotes: {}, aiRisk: null };
     case "reportAi/clear":
-      return { ...state, aiReportNote: null, aiReportBusy: false };
+      return { ...state, aiReportNote: null, aiReportBusy: false, verifyRows: null };
     default:
       return state;
   }

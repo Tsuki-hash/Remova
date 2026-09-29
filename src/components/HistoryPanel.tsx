@@ -70,6 +70,7 @@ export function HistoryPanel({
         <span style={css.muted}>{L.historyTimelineHint}</span>
         <input
           style={{ ...css.input, maxWidth: 220, height: 32, marginLeft: "auto" }}
+          aria-label={L.search}
           placeholder={L.search}
           value={histQ}
           onChange={(e) => setHistQ(e.target.value)}

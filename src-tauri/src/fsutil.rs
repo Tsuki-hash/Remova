@@ -38,7 +38,10 @@ pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
         if ty.is_dir() {
             copy_dir(&path, &target)?;
         } else if ty.is_file() {
-            std::fs::copy(&path, &target)?;
+            // R23-SEC-01: the reparse check above is a path stat — a child
+            // swapped for a link before `fs::copy` re-opens the path would be
+            // followed. The dedicated primitive opens by non-following handle.
+            copy_file_no_reparse(&path, &target)?;
         }
     }
     Ok(())
@@ -526,5 +529,45 @@ mod tests {
             "world"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+    /// R23-QA-02: the restore write-back relies on `pin_dir_resolved` to expose
+    /// junction redirects — regressions here would silently reintroduce the
+    /// planted-junction write path. Junctions need no admin rights.
+    #[cfg(windows)]
+    #[test]
+    fn pin_dir_resolved_resolves_junction_redirect() {
+        let base = unique_tmp("pinresolved");
+        let real = base.join("real");
+        fs::create_dir_all(&real).unwrap();
+
+        // A real directory resolves to itself.
+        let pin = pin_dir_resolved(&real).expect("pin real dir");
+        assert_eq!(
+            pin.final_path().replace('/', "\\").to_lowercase(),
+            real.to_string_lossy().replace('/', "\\").to_lowercase()
+        );
+        drop(pin);
+
+        let link = base.join("link");
+        let st = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .status()
+            .expect("mklink /J");
+        assert!(st.success(), "mklink /J failed");
+
+        // The junction path resolves to the TARGET, never to itself.
+        let pin2 = pin_dir_resolved(&link).expect("pin junction");
+        assert_eq!(
+            pin2.final_path().to_lowercase(),
+            real.to_string_lossy().to_lowercase(),
+            "final path must resolve through the junction"
+        );
+        assert_ne!(
+            pin2.final_path().to_lowercase(),
+            link.to_string_lossy().to_lowercase()
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 }

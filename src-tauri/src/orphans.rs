@@ -91,7 +91,11 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
         .unwrap_or_default();
     for app in installed {
         let loc = app.install_location.replace('/', "\\").to_lowercase();
-        if !loc.is_empty() && path_same_or_under(&d, &loc) {
+        let loc_trim = loc.trim_end_matches('\\');
+        // R23-BE-11: a broken InstallLocation of a drive root (`C:` / `C:\`)
+        // must not claim every path on that drive — require a real depth.
+        let rooted = loc_trim.split('\\').filter(|s| !s.is_empty()).count() >= 2;
+        if rooted && path_same_or_under(&d, loc_trim) {
             return true;
         }
         if leaf.is_empty() {
@@ -152,6 +156,10 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                     | "dotnet"
                     | "msbuild"
                     | "nuget"
+                    | "temp"
+                    | "tmp"
+                    | "crashdumps"
+                    | "squirreltemp"
             ) {
                 continue;
             }

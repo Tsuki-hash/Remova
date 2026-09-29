@@ -175,6 +175,11 @@ export function useAnalyzeFlow({
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
+          // R23-FE-04: arm the residual flag — the post-uninstall rescan must
+          // clean leftovers WITHOUT re-running the official uninstaller, and
+          // the cleanup UI must hide the official-uninstall toggle. execReal
+          // clears the flag once the residual pass finishes.
+          setResidualFromUninstall(true);
           await analyze(app, { fromUninstall: true });
           setUninstallStage("analyze");
           await new Promise((resolve) => setTimeout(resolve, 320));

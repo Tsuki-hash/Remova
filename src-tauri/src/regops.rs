@@ -267,6 +267,11 @@ pub fn merge_path_entry(path_value: &str, entry: &str) -> Option<String> {
 /// Returns Ok(true) if at least one scope was updated.
 /// S-R7-05: empty scopes restore to User only — never silently write Machine PATH.
 pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> {
+    // R23-SEC-02: symmetric gate with scrub_path_entry — the entry comes from
+    // the session's user-writable path.json and must never be a dangerous one.
+    if crate::policy::is_dangerous_path_entry(entry) {
+        return Err("protected PATH entry".into());
+    }
     let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
     let targets: Vec<&str> = if scopes.is_empty() {
