@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 /**
  * IPC contract smoke: every public api method must be present and map to the
  * snake/camel command names the Rust side registers. The command list is parsed
- * straight out of `src-tauri/src/lib.rs` () so Rust-side drift — a
+ * straight out of `src-tauri/src/lib.rs` so Rust-side drift — a
  * renamed or newly registered command — fails here instead of silently
  * desyncing from ARCHITECTURE §3.
  */
@@ -70,7 +70,7 @@ const COMMAND_KEYS = [
  * Parse the `generate_handler![...]` command list out of lib.rs (snake_case).
  */
 function rustRegisteredCommands(): string[] {
-  // Repo-relative via import.meta.url — no node globals needed in the test tsconfig.
+ // Repo-relative via import.meta.url — no node globals needed in the test tsconfig.
   const lib = readFileSync(
     new URL("../../src-tauri/src/lib.rs", import.meta.url),
     "utf8",
@@ -118,9 +118,9 @@ describe("api IPC contract", () => {
   });
 
   it("invoke() targets match the commands Rust actually registers (lib.rs)", () => {
-    // real cross-check — a command registered on the Rust side with no
-    // caller, or an invoke() targeting an unregistered command, fails here.
-    // backendOnly is parsed from check-commands.ps1 (single source).
+ // real cross-check — a command registered on the Rust side with no
+ // caller, or an invoke() targeting an unregistered command, fails here.
+ // backendOnly is parsed from check-commands.ps1 (single source).
     const backendOnly = parseBackendOnlyFromPs1();
     const registered = rustRegisteredCommands().filter((c) => !backendOnly.includes(c));
     expect(feInvokedCommands()).toEqual(registered);

@@ -75,7 +75,7 @@ function RowMenu({
       : []),
   ];
 
-  // Fixed + portal so virtualized list overflow does not clip the menu.
+ // Fixed + portal so virtualized list overflow does not clip the menu.
   useLayoutEffect(() => {
     if (!open || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
@@ -88,8 +88,8 @@ function RowMenu({
     setPos({ top, left, minWidth });
   }, [open, items.length]);
 
-  // shared focus management — open lands on the first item,
-  // arrows roam, Escape restores focus to the trigger, outside click closes.
+ // shared focus management — open lands on the first item,
+ // arrows roam, Escape restores focus to the trigger, outside click closes.
   usePopupMenu({
     open,
     menuRef,
@@ -103,7 +103,7 @@ function RowMenu({
     if (!open) return;
     const onScroll = () => setOpen(false);
     window.addEventListener("resize", onScroll);
-    // Scroll closes menu — re-open on the new row position.
+ // Scroll closes menu — re-open on the new row position.
     document.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("resize", onScroll);

@@ -180,7 +180,7 @@ describe("runBatchCleanup", () => {
     fullCleanup.mockResolvedValue(report({ deleted: 0, uninstall_ok: true }));
     const cb = makeCb();
     cb.onIndex.mockImplementation((i: number) => {
-      // cancel after the first real item starts (skip the initial onIndex(0) reset)
+ // cancel after the first real item starts (skip the initial onIndex(0) reset)
       if (i >= 1) cb.cancelRef.current = true;
     });
     await runBatchCleanup([app("D1"), app("D2")], true, keyOf, cb);

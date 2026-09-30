@@ -1,4 +1,4 @@
-//! Backup 鈫?official uninstall 鈫?per-item delete.
+//! Backup →official uninstall →per-item delete.
 
 use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
@@ -7,7 +7,7 @@ use super::preview::run_cleanup_dry_for_app_source;
 use super::uninstall::run_official_uninstall;
 use super::{cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail};
 
-/// Process-wide lock so batch + manual cleanup cannot race PATH/backup ().
+/// Process-wide lock so batch + manual cleanup cannot race PATH/backup.
 static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Stage 1: restore point + Safety Vault backup.
@@ -35,7 +35,7 @@ fn try_backup_phase(
         restore_point_ok = rp_ok;
         restore_point_msg = rp_msg;
     }
-    // Backup session is optional (product opt-in). Restore point stays decoupled ().
+    // Backup session is optional (product opt-in). Restore point stays decoupled.
     if !opts.backup_enabled {
         return BackupOutcome::Ready {
             backup_dir: String::new(),
@@ -100,7 +100,7 @@ fn try_backup_phase(
     }
 }
 
-/// Full scheduled-task name from a TaskCache\Tree registry path ().
+/// Full scheduled-task name from a TaskCache\Tree registry path.
 pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     let low = reg_path.replace('/', "\\");
     let marker = r"\TaskCache\Tree\";
@@ -124,7 +124,7 @@ struct DeleteOutcome {
 }
 
 /// Windows reparse point (junction/symlink) — refuse delete-through (TOCTOU).
-/// Shared with backup/restore copy paths via `fsutil` ().
+/// Shared with backup/restore copy paths via `fsutil`.
 use crate::fsutil::is_reparse_point;
 
 fn delete_cleanup_items_source(
@@ -307,7 +307,7 @@ fn delete_cleanup_items_source(
     }
 }
 
-/// Full cleanup: optional backup 鈫?official uninstall 鈫?residual delete.
+/// Full cleanup: optional backup →official uninstall →residual delete.
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],

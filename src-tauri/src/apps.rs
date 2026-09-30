@@ -15,7 +15,7 @@ fn trust_key(uninstall: &str, quiet: &str) -> String {
     format!("{uninstall}\n{quiet}")
 }
 
-/// Remember uninstall command pairs produced by the latest scan ().
+/// Remember uninstall command pairs produced by the latest scan.
 /// Build the next set first, then swap — never leave an empty trust window for concurrent uninstall.
 pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
     let mut next = HashSet::new();

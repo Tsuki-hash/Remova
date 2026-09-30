@@ -180,7 +180,7 @@ describe("useCleanupHandlers confirm / force pipeline (REV-QA-02)", () => {
     await act(async () => {
       await result.current.forceClean();
     });
-    // Second call no-ops while first is in flight
+ // Second call no-ops while first is in flight
     expect(analyze).toHaveBeenCalledTimes(1);
     await act(async () => {
       release(scan());
@@ -195,7 +195,7 @@ describe("useCleanupHandlers confirm / force pipeline (REV-QA-02)", () => {
     await act(async () => {
       await result.current.dryRun();
     });
-    // Guarded entry: stays true and never reaches api.dryRun (not called in mock).
+ // Guarded entry: stays true and never reaches api.dryRun (not called in mock).
     expect(busyRef.current).toBe(true);
     expect(fullCleanup).not.toHaveBeenCalled();
     expect(analyze).not.toHaveBeenCalled();
@@ -302,8 +302,8 @@ describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
     const a1 = mkApp("AppA");
     const a2 = mkApp("AppB");
     runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
-      // Mirror the engine contract: it owns the busy slot for the whole run
-      // and reports finished keys so multi can be pruned.
+ // Mirror the engine contract: it owns the busy slot for the whole run
+ // and reports finished keys so multi can be pruned.
       cb.busyRef.current = true;
       cb.onDoneKeys([appKey(a1)]);
       cb.busyRef.current = false;
@@ -348,7 +348,7 @@ describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
     const hook = setupDeep({ apps: [a1], multi: new Set([appKey(a1)]) });
     const busyRefRef = hook.busyRef;
     requestConfirmEx.mockImplementation(async () => {
-      // Another cleanup wins the busy slot while the dialog is open.
+ // Another cleanup wins the busy slot while the dialog is open.
       busyRefRef.current = true;
       return { ok: true, checked: false };
     });
@@ -356,7 +356,7 @@ describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
       await hook.result.current.batchCleanup();
     });
     expect(runBatchCleanupMock).not.toHaveBeenCalled();
-    // The other owner still holds the slot — batchCleanup must not free it.
+ // The other owner still holds the slot — batchCleanup must not free it.
     expect(hook.busyRef.current).toBe(true);
   });
 

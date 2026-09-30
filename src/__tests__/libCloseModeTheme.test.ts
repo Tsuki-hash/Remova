@@ -18,7 +18,7 @@ import { applyTheme, loadNav, loadTheme } from "../lib/theme";
 beforeEach(() => {
   localStorage.clear();
   clearCloseMode();
-  // Drain any leftover dialog state between tests.
+ // Drain any leftover dialog state between tests.
   if (isCloseChoiceOpen()) settleCloseChoice("cancel");
 });
 

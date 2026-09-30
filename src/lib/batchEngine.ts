@@ -52,8 +52,8 @@ export async function runBatchCleanup(
       try {
         const r = await api.analyze(app);
         const items = r.items.filter(defaultSelectable);
-        // F-1: do not skip the whole app when there are no default-selectable leftovers.
-        // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
+ // F-1: do not skip the whole app when there are no default-selectable leftovers.
+ // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
         const report = await api.fullCleanup(app, items, {
           dry_run: false,
           skip_official_uninstall: !useOfficial,
@@ -61,7 +61,7 @@ export async function runBatchCleanup(
           cleanup_source: "uninstall",
         });
         if (report.aborted && items.length) {
-          // backup/session abort must not look like success.
+ // backup/session abort must not look like success.
           results.push({
             key,
             name: app.name,

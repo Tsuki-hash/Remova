@@ -222,7 +222,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
     }
 }
 
-/// Read REG_SZ/EXPAND_SZ value by name via RegQueryValueExW ().
+/// Read REG_SZ/EXPAND_SZ value by name via RegQueryValueExW.
 pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     #[cfg(not(windows))]
     {

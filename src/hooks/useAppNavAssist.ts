@@ -47,7 +47,7 @@ export function usePendingAnalyze({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, apps]);
 }
 
@@ -61,8 +61,8 @@ export function useDragDropAnalyze({
   setSelected: (a: InstalledApp) => void;
   analyze: (a: InstalledApp) => void;
 }) {
-  // read the latest inputs through a ref so the webview channel is subscribed once
-  // instead of being torn down and rebuilt every time the app list changes.
+ // read the latest inputs through a ref so the webview channel is subscribed once
+ // instead of being torn down and rebuilt every time the app list changes.
   const latest = useRef({ apps, setSelected, analyze });
   useEffect(() => {
     latest.current = { apps, setSelected, analyze };
@@ -97,7 +97,7 @@ export function useDragDropAnalyze({
         if (cancelled) un();
         else unlisten = un;
       } catch {
-        // not in tauri
+ // not in tauri
       }
     })();
     return () => {

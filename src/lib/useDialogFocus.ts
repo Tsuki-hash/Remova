@@ -4,7 +4,7 @@ const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
- * Shared dialog focus trap (): initial focus, Tab/Shift+Tab cycle inside
+ * Shared dialog focus trap : initial focus, Tab/Shift+Tab cycle inside
  * the dialog, restore focus on close. Escape is left to each host (cancel semantics differ).
  */
 export function useDialogFocus(open: boolean, containerRef: RefObject<HTMLElement | null>) {

@@ -19,7 +19,7 @@ export function useShellState() {
     dispatch({ type: "lang/bump" });
   }, []);
   const goNav = useCallback((n: NavId) => {
-    // nav is not restored on boot (always software) — no dead persist.
+ // nav is not restored on boot (always software) — no dead persist.
     dispatch({ type: "nav/set", nav: n });
   }, []);
   const persistCloseMode = useCallback((m: CloseMode) => {

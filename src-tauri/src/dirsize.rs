@@ -37,7 +37,7 @@ pub fn walk_size_kb(root: &Path) -> i64 {
 }
 
 /// Like [`walk_size_kb`] but also reports whether the file cap truncated the walk
-/// (). Honors the global cancel flag.
+/// Honors the global cancel flag.
 pub fn walk_size_kb_capped(root: &Path) -> (i64, bool) {
     walk_size_kb_with_capped(root, &CANCELLED)
 }
@@ -103,7 +103,7 @@ fn walk_bytes_limited(dir: &Path, depth: u32, files_seen: &mut u64) -> Option<u6
 }
 
 /// Bounded walk returning (bytes, capped). `capped` means the file cap was hit
-/// and `bytes` is a floor, not a total ().
+/// and `bytes` is a floor, not a total.
 fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
     use std::collections::VecDeque;
     let mut total: u64 = 0;

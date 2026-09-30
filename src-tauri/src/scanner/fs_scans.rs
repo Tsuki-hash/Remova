@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Shortcut peek budget (): LNK target strings sit near the header.
+/// Shortcut peek budget : LNK target strings sit near the header.
 const SHORTCUT_PEEK_BYTES: usize = 8 * 1024;
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
@@ -72,7 +72,7 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
 }
 
 /// Whether a LOCALAPPDATA/APPDATA child dir name looks like a product WebView2/Electron
-/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence ().
+/// mask. Name match is REQUIRED — a folder that merely contains EBWebView is not evidence.
 pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> bool {
     let low = dir_name.to_lowercase();
     if !low.ends_with(".exe") && !low.contains("ebwebview") {
@@ -110,7 +110,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Name match is REQUIRED — WebView2 folder alone is not evidence ().
+            // Name match is REQUIRED — WebView2 folder alone is not evidence.
             if !webview_mask_matches(fname, name_slugs) {
                 continue;
             }

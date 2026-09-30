@@ -13,7 +13,7 @@ export function useResidualState() {
     dispatch({ type: "selection/toggle", path });
   }, []);
 
-  /** True React functional updates (). */
+  /** True React functional updates. */
   const setSelectedPaths = useCallback(
     (updater: Set<string> | ((s: Set<string>) => Set<string>)) => {
       if (typeof updater === "function") {

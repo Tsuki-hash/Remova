@@ -81,7 +81,7 @@ function mountBoot(spies: ReturnType<typeof bootSpies>) {
 describe("useAppBoot (REV-QA-02)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Boot's silent update check must no-op unless a test overrides it.
+ // Boot's silent update check must no-op unless a test overrides it.
     checkLatestRelease.mockResolvedValue({ ok: false });
     localStorage.clear();
   });

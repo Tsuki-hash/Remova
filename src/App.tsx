@@ -74,7 +74,7 @@ export default function App() {
     uninstallingKey,
     ignorePub,
     ignoreName,
-    // reducer setters are individually stable; alias them so memo deps stay constant.
+ // reducer setters are individually stable; alias them so memo deps stay constant.
     setSelected: coreSetSelected,
     setMulti: coreSetMulti,
     setIgnorePub: coreSetIgnorePub,
@@ -113,8 +113,8 @@ export default function App() {
   );
   const goNav = shellActions.goNav;
 
-  // stable action bags for the software controller — the whole `core`/`shell` objects
-  // change identity on every unrelated state update and would defeat SoftwarePage's memo.
+ // stable action bags for the software controller — the whole `core`/`shell` objects
+ // change identity on every unrelated state update and would defeat SoftwarePage's memo.
   const coreActions = useMemo(
     () => ({
       setSelected: coreSetSelected,
@@ -199,7 +199,7 @@ export default function App() {
   } = scanUiState;
   const dismissAiNudge = scanUi.dismissAiNudge;
 
-  // langVer forces t() after language switch (module dictionary is not reactive).
+ // langVer forces t() after language switch (module dictionary is not reactive).
   const L = useMemo(() => {
     void langVer;
     return t();
@@ -235,7 +235,7 @@ export default function App() {
 
   const onAfterCleanup = useCallback(
     (app: InstalledApp) => {
-      // re-analyze after cleanup when user preference is on.
+ // re-analyze after cleanup when user preference is on.
       if (!loadRescanAfterUninstall()) return;
       void analyzeRef.current(app, { fromUninstall: true });
     },
@@ -317,7 +317,7 @@ export default function App() {
 
   const checkup = useCheckupStats(apps, sizeOf);
 
-  // -03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
+ // -03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
   const {
     checkupOrphanBusy,
     elevate,
@@ -379,12 +379,12 @@ export default function App() {
     busyRef,
   });
 
-  // language loads once on mount; the theme effect only applies
-  // the theme — switching themes must not rebuild every copy object.
+ // language loads once on mount; the theme effect only applies
+ // the theme — switching themes must not rebuild every copy object.
   useEffect(() => {
     loadLang();
     setLangVer((v) => v + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     applyTheme(theme);
@@ -450,26 +450,26 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    // pendingBucket removed — closing the preview always resets the filter.
+ // pendingBucket removed — closing the preview always resets the filter.
     if (!scan) setKindFilter(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scan]);
 
   const drillDownBucket = useCallback(
     (bucket: LinkedBucketId) => {
-      // same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
+ // same in-flight guard as listAnalyze (scanningRef mirrors analyzing).
       if (scanning) return;
       if (scan && selected && scanMatchesApp(scan, selected)) {
         setKindFilter(bucket);
       } else if (selected) {
-        // no deferred bucket — analyze first; drill after results land.
+ // no deferred bucket — analyze first; drill after results land.
         void analyze(selected);
       }
     },
     [scan, selected, analyze, setKindFilter, scanning],
   );
 
-  // a scan in progress absorbs new row-analyze requests (one guard = `scanning`).
+ // a scan in progress absorbs new row-analyze requests (one guard = `scanning`).
   const listStartUninstall = useCallback(
     (a: InstalledApp) => void startUninstall(a),
     [startUninstall],
@@ -683,7 +683,7 @@ export default function App() {
           {nav === "orphans" && (
             <OrphanPage
               onLastReport={(r: FullCleanupReport) => {
-                // lastReport is derived from report by the reducer.
+ // lastReport is derived from report by the reducer.
                 core.setReport(r);
               }}
               onError={core.setError}

@@ -36,14 +36,14 @@ export function WindowControls() {
             try {
               setMaximized(await win.isMaximized());
             } catch {
-              // ignore
+ // ignore
             }
           })();
         });
         if (cancelled) un();
         else unlisten = un;
       } catch {
-        // not in tauri
+ // not in tauri
       }
     })();
     return () => {
@@ -52,7 +52,7 @@ export function WindowControls() {
     };
   }, []);
 
-  // Keep drag-region header from stealing control clicks.
+ // Keep drag-region header from stealing control clicks.
   const stopDrag = (e: React.SyntheticEvent) => {
     e.stopPropagation();
   };

@@ -93,7 +93,7 @@ describe("SoftwareListTable", () => {
       container.querySelectorAll<HTMLTableRowElement>("tbody tr[data-index]"),
     );
     expect(rows.length).toBeGreaterThan(0);
-    // data-index is what rowVirtualizer.measureElement keys measurements by.
+ // data-index is what rowVirtualizer.measureElement keys measurements by.
     expect(rows[0]?.dataset.index).toBeDefined();
     expect(screen.getAllByText(/Demo App/).length).toBeGreaterThan(0);
   });

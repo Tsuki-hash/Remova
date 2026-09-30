@@ -70,7 +70,7 @@ fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
     Some(age as i64)
 }
 
-/// Path prefix with segment boundary (): `C:\App` must not own `C:\AppEvil`.
+/// Path prefix with segment boundary : `C:\App` must not own `C:\AppEvil`.
 fn path_same_or_under(a: &str, b: &str) -> bool {
     let a = a.trim_end_matches('\\');
     let b = b.trim_end_matches('\\');
@@ -140,7 +140,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             let name = e.file_name().to_string_lossy().to_string();
-            // skip obvious system / installer cache folders ()
+            // skip obvious system / installer cache folders
             if matches!(
                 name.to_lowercase().as_str(),
                 "windows"
@@ -259,7 +259,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
     out
 }
 
-/// Server-side allow-list of paths from the latest `scan_orphans` ().
+/// Server-side allow-list of paths from the latest `scan_orphans`.
 static ORPHAN_PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
     std::sync::OnceLock::new();
 
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn match_installed_requires_path_segment_boundary() {
         let installed = [app("App", r"C:\Program Files\App")];
-        // Sibling that merely shares a string prefix must not match ().
+        // Sibling that merely shares a string prefix must not match.
         let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
         assert!(!match_installed(&installed, evil));
         let child = std::path::Path::new(r"C:\Program Files\App\bin");

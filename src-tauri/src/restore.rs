@@ -314,7 +314,7 @@ fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     String::from_utf8(raw).map_err(|e| e.to_string())
 }
 
-/// Parse `.reg` text and enforce the key-shape whitelist ().
+/// Parse `.reg` text and enforce the key-shape whitelist.
 fn reg_content_allowed(raw: &str) -> Result<(), String> {
     let mut saw_header = false;
     let mut current_key: Option<String> = None;
@@ -372,7 +372,7 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
                 current_key = Some(reg_hive_to_remova(body)?);
             }
             let key_ref = current_key.as_deref().unwrap_or("");
-            // Run/RunOnce roots are value-level restore targets only ().
+            // Run/RunOnce roots are value-level restore targets only.
             current_is_run = !key_ref.contains('|') && crate::safety::is_allowed_run_key(key_ref);
             continue;
         }
@@ -710,7 +710,7 @@ mod tests {
         assert!(removed >= 1);
         assert!(!old.exists());
         assert!(fresh.exists());
-        // Do not remove_var here (): the guard serializes env access; the
+        // Do not remove_var here : the guard serializes env access; the
         // process exits after the suite and no other test needs the default root.
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -931,7 +931,7 @@ mod tests {
         assert!(super::reg_content_allowed(plain).is_err());
     }
 
-    ///  target selection: value.reg preferred, export.reg fallback,
+    /// target selection: value.reg preferred, export.reg fallback,
     /// directories never count.
     #[test]
     fn pick_import_target_prefers_value_reg() {
@@ -985,7 +985,7 @@ mod tests {
         crate::regops::path_mock::clear();
     }
 
-    // /  adversarial: tampered path_map must not write system dirs.
+    // / adversarial: tampered path_map must not write system dirs.
     // protected targets skip + warn — the session still returns Ok (partial).
     #[test]
     fn restore_skips_tampered_path_map_system_targets() {

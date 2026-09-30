@@ -245,7 +245,7 @@ fn encrypt_stored_key(key: &str) -> Result<String, String> {
             return Err("ai:encrypt_failed".to_string());
         }
         let enc = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
-        // CryptProtectData allocates pbData via LocalAlloc ().
+        // CryptProtectData allocates pbData via LocalAlloc.
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
@@ -291,7 +291,7 @@ fn decrypt_stored_key(stored: &str) -> String {
             return String::new();
         }
         let dec = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
-        // CryptUnprotectData allocates pbData via LocalAlloc ().
+        // CryptUnprotectData allocates pbData via LocalAlloc.
         let _ = windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             out_blob.pbData as *mut core::ffi::c_void,
         ));
@@ -351,8 +351,7 @@ pub fn mask_profile_usernames(s: &str) -> String {
     out
 }
 
-/// Free text (reason / evidence) scrubbed before any cloud upload ():
-/// profile names masked, absolute path tokens reduced via [`sanitize_path`].
+/// Free text (reason / evidence) scrubbed before any cloud upload : /// profile names masked, absolute path tokens reduced via [`sanitize_path`].
 pub fn scrub_cloud_text(s: &str) -> String {
     let masked = mask_profile_usernames(s);
     let sc: Vec<char> = masked.chars().collect();
@@ -434,7 +433,7 @@ pub fn sanitize_path(path: &str, allow_full: bool) -> String {
             }
         }
     }
-    // Fallback last-segment reduction must never surface a profile name ().
+    // Fallback last-segment reduction must never surface a profile name.
     let masked = mask_profile_usernames(&p);
     let parts: Vec<&str> = masked.split('\\').filter(|s| !s.is_empty()).collect();
     if parts.len() >= 2 {
@@ -698,18 +697,18 @@ fn explain_items_with_completion(
             .iter()
             .map(|it| {
                 serde_json::json!({
-                    "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
-                    "kind": it.kind,
-                    "confidence": it.confidence,
-                    "risk": it.risk,
-                    // free text never goes to the cloud raw (usernames / deep paths).
-                    "reason": scrub_cloud_text(&it.reason),
-                    "evidence": it
-                        .evidence_labels
-                        .iter()
-                        .map(|e| scrub_cloud_text(e))
-                        .collect::<Vec<_>>(),
-                })
+                                   "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
+                                   "kind": it.kind,
+                                   "confidence": it.confidence,
+                                   "risk": it.risk,
+                // free text never goes to the cloud raw (usernames / deep paths).
+                                   "reason": scrub_cloud_text(&it.reason),
+                                   "evidence": it
+                                       .evidence_labels
+                                       .iter()
+                                       .map(|e| scrub_cloud_text(e))
+                                       .collect::<Vec<_>>(),
+                               })
             })
             .collect();
         let user = format!(

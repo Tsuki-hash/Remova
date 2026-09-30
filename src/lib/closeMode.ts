@@ -20,7 +20,7 @@ export function saveCloseMode(mode: CloseMode) {
   try {
     localStorage.setItem(KEY, mode);
   } catch {
-    // ignore
+ // ignore
   }
 }
 
@@ -28,7 +28,7 @@ export function clearCloseMode() {
   try {
     localStorage.removeItem(KEY);
   } catch {
-    // ignore
+ // ignore
   }
 }
 

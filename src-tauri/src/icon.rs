@@ -1,4 +1,4 @@
-//! Extract a file/app icon as PNG bytes (Windows). Optional disk cache ().
+//! Extract a file/app icon as PNG bytes (Windows). Optional disk cache.
 
 use crate::apps::parse_display_icon;
 use std::path::PathBuf;

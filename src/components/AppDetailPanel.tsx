@@ -58,8 +58,8 @@ export function AppDetailPanel({
     if (restoreFocus) menuBtnRef.current?.focus();
   };
 
-  // shared popup-menu behavior (open → first item, arrow/Home/End
-  // roam, Escape with focus return, outside close) — same source as AppRow.
+ // shared popup-menu behavior (open → first item, arrow/Home/End
+ // roam, Escape with focus return, outside close) — same source as AppRow.
   usePopupMenu({
     open: menuOpen,
     menuRef,

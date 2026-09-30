@@ -47,7 +47,7 @@ export function OrphanPage({
   const scan = async () => {
     if (busy) return;
     setBusy(true);
-    // One channel for the whole run — no sticky pile-up.
+ // One channel for the whole run — no sticky pile-up.
     toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
       const list = await api.orphanScan();
@@ -72,13 +72,13 @@ export function OrphanPage({
     }
   };
 
-  // Start immediately when the page opens so the click always shows work happening.
+ // Start immediately when the page opens so the click always shows work happening.
   const startedRef = useRef(false);
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
     void scan();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const cleanSelected = async () => {

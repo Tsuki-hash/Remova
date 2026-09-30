@@ -262,7 +262,7 @@ describe("App orchestration (R23-QA-05)", () => {
     native.listApps.mockRejectedValueOnce("refresh:broken");
     act(() => software().onBack());
     await waitFor(() => expect(software().error).toContain("refresh:broken"));
-    // Returning to the list keeps the drawer selection, but resets the preview.
+ // Returning to the list keeps the drawer selection, but resets the preview.
     expect(software()).toMatchObject({ selected: demo, scan: null, report: null,
       useOfficial: false, residualFromUninstall: false, evidence: null, aiRisk: null,
       aiReportNote: null, kindFilter: null, riskFilter: null, showBatchSummary: false });
@@ -365,7 +365,7 @@ describe("App orchestration (R23-QA-05)", () => {
     act(() => more().onDismissMonitor());
     expect(more().monitorDiff).toBeNull();
     act(() => more().onIgnorePublisher());
-    // Synthetic monitor app has no publisher, so ignore is a no-op.
+ // Synthetic monitor app has no publisher, so ignore is a no-op.
     expect(native.ignorePublisher).not.toHaveBeenCalled();
   });
 

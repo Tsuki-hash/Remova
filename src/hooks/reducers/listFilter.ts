@@ -35,7 +35,7 @@ export function listFilterReducer(state: ListFilterState, action: ListFilterActi
     case "sortDesc/set":
       return { ...state, sortDesc: action.value };
     case "sortDesc/update":
-      // functional update — never compute from a stale closure snapshot.
+ // functional update — never compute from a stale closure snapshot.
       return { ...state, sortDesc: action.value(state.sortDesc) };
     case "category/set":
       return { ...state, category: action.value };

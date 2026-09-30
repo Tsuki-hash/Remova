@@ -62,7 +62,7 @@ export function MorePage({
       desc: L.historyHint,
       icon: "history",
       action: () => {
-        // Open the panel first so the click always has visible feedback.
+ // Open the panel first so the click always has visible feedback.
         tools.setOpenTool("history");
         void hist.loadHistory();
       },
@@ -162,7 +162,7 @@ export function MorePage({
       style={{
         flex: 1,
         minHeight: 0,
-        // Not a flex column: children default to shrink:1 and squash the top card.
+ // Not a flex column: children default to shrink:1 and squash the top card.
         display: "block",
         overflow: "auto",
         paddingRight: 2,
@@ -249,8 +249,8 @@ export function MorePage({
             onDismissMonitor();
             if (openTool === "monitor") tools.setOpenTool(null);
           }}
-          // No separate Close: the panel also renders without openTool (once a
-          // diff exists), where clearing openTool alone could not dismiss it.
+ // No separate Close: the panel also renders without openTool (once a
+ // diff exists), where clearing openTool alone could not dismiss it.
         />
       )}
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>

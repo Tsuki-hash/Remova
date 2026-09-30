@@ -51,8 +51,8 @@ export function useAiScanNarrative({
   aiActions: AiScanActions;
 }) {
   const aiExplainSeqRef = useRef(0);
-  // scan identity by content, not by name + item count — two scans
-  // of the same app with the same count but different paths must re-trigger.
+ // scan identity by content, not by name + item count — two scans
+ // of the same app with the same count but different paths must re-trigger.
   const scanId = useMemo(() => {
     if (!scan) return null;
     let h = 5381;
@@ -65,9 +65,9 @@ export function useAiScanNarrative({
   }, [scan]);
   const runAiExplain = useCallback(async (opts?: { force?: boolean }) => {
     if (!scan || !aiEnabled) return;
-    // The auto effect runs right after force-clearing busy — the closure still
-    // sees the pre-clear aiBusy, so the effect path passes force (seq already
-    // supersedes any in-flight run; this effect owns the busy lifecycle).
+ // The auto effect runs right after force-clearing busy — the closure still
+ // sees the pre-clear aiBusy, so the effect path passes force (seq already
+ // supersedes any in-flight run; this effect owns the busy lifecycle).
     if (!opts?.force && aiBusy) return;
     const seq = ++aiExplainSeqRef.current;
     setAiBusy(true);
@@ -93,10 +93,10 @@ export function useAiScanNarrative({
         .filter(Boolean)
         .join(" ");
       setAiSummaryNote(brief || null);
-      // empty explain is not "AI disabled" — say so.
+ // empty explain is not "AI disabled" — say so.
       if (!out.length) toast.info(L.aiEmptyResult);
     } catch (e) {
-      // surface the mapped backend cause, not one generic string.
+ // surface the mapped backend cause, not one generic string.
       if (seq === aiExplainSeqRef.current) toast.error(formatError(e));
     } finally {
       if (seq === aiExplainSeqRef.current) setAiBusy(false);
@@ -104,11 +104,11 @@ export function useAiScanNarrative({
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
   useEffect(() => {
-    // Always invalidate in-flight explain when scan identity changes,
-    // even if this run is skipped because aiBusy.
+ // Always invalidate in-flight explain when scan identity changes,
+ // even if this run is skipped because aiBusy.
     aiExplainSeqRef.current += 1;
-    // a superseded run's `finally` only clears busy when seq still matches.
-    // Bumping seq above would otherwise leave aiBusy stuck true forever — force-clear here.
+ // a superseded run's `finally` only clears busy when seq still matches.
+ // Bumping seq above would otherwise leave aiBusy stuck true forever — force-clear here.
     setAiBusy(false);
     scanUi.clearAiSummary();
     scanUi.clearRiskFilter();
@@ -116,29 +116,29 @@ export function useAiScanNarrative({
     if (scan && scan.items.length > 0 && aiEnabled) {
       void runAiExplain({ force: true });
     }
-    // scanId () fully identifies scan content; runAiExplain is stable
-    // in the values it closes over.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // scanId fully identifies scan content; runAiExplain is stable
+ // in the values it closes over.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanId, aiEnabled]);
 
   const aiReportSeqRef = useRef(0);
   const runAiReport = useCallback(
     async (opts?: { force?: boolean }) => {
       if (!report || !("deleted" in report) || !aiEnabled) return;
-      // The auto effect runs right after force-clearing busy — the closure
-      // still sees the pre-clear aiReportBusy, so the effect path passes
-      // force (seq already supersedes any in-flight run; this effect owns
-      // the busy lifecycle).
+ // The auto effect runs right after force-clearing busy — the closure
+ // still sees the pre-clear aiReportBusy, so the effect path passes
+ // force (seq already supersedes any in-flight run; this effect owns
+ // the busy lifecycle).
       if (!opts?.force && aiReportBusy) return;
       const seq = ++aiReportSeqRef.current;
       setAiReportBusy(true);
       try {
         const note = await runAiReportSummary(report);
-        // -06: only the newest report summary may write aiReportNote.
+ // -06: only the newest report summary may write aiReportNote.
         if (seq !== aiReportSeqRef.current) return;
         setAiReportNote(note);
       } catch {
-        // rule narrative still shown
+ // rule narrative still shown
       } finally {
         if (seq === aiReportSeqRef.current) setAiReportBusy(false);
       }
@@ -147,12 +147,12 @@ export function useAiScanNarrative({
   );
 
   useEffect(() => {
-    // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
+ // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
     aiReportSeqRef.current += 1;
     setAiReportBusy(false);
     if (report && aiEnabled) void runAiReport({ force: true });
-    // key on report identity fields, not object identity only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // key on report identity fields, not object identity only.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, aiEnabled, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
 
   return { runAiExplain, runAiReport };

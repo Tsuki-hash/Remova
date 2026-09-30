@@ -1,5 +1,5 @@
 /**
- * Decorative / status glyphs ().
+ * Decorative / status glyphs.
  * Characters are always `aria-hidden` unless `label` is provided (then role=img + label).
  * Prefer pairing with real text so screen readers are not the only channel.
  */

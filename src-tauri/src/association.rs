@@ -1,4 +1,4 @@
-//! Leftover-to-app association ( /  / ).
+//! Leftover-to-app association ( / / ).
 //!
 //! Answers one question: *does this leftover plausibly belong to this app?* `policy` consumes the
 //! boolean verdicts; it deliberately knows nothing about how the evidence is weighed, so the
@@ -15,7 +15,7 @@ pub fn is_orphan_flow(app: &crate::apps::InstalledApp) -> bool {
             && app.quiet_uninstall_string.trim().is_empty())
 }
 
-/// Generic English tokens that create  false positives on short path segments.
+/// Generic English tokens that create false positives on short path segments.
 const AR10_NAME_STOPWORDS: &[&str] = &[
     "app", "tool", "free", "pro", "data", "user", "file", "setup", "client", "server", "service",
     "manager", "helper", "plugin", "update", "code", "edit",
@@ -133,7 +133,7 @@ fn is_safe_install_root(install: &str) -> bool {
     true
 }
 
-/// Light association for Registry / PATH leftovers when an installed app is known ().
+/// Light association for Registry / PATH leftovers when an installed app is known.
 /// never trust client `reason` —path / registry / publisher signals only.
 fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     // orphan-shaped apps must not claim arbitrary leftovers as associated.
@@ -152,7 +152,10 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
         .trim_end_matches('\\')
         .to_lowercase();
     // Segment-boundary prefix: `C:\Steam` must not match `C:\SteamTools\...`.
-    if !install.is_empty() && (low == install || low.starts_with(&format!("{install}\\"))) {
+    // Drive roots (`C:` / `C:\`) never claim every path on that drive.
+    if is_safe_install_root(&install)
+        && (low == install || low.starts_with(&format!("{install}\\")))
+    {
         return true;
     }
     if let Some(guid) = crate::shared::first_guid(&app.registry_key) {
@@ -165,7 +168,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     // hit `Adaptive`). The split set contains spaces, so segments never carry
     // them — a multi-word publisher matches a run of ADJACENT tokens
     // (`Acme Corp` inside `HKLM\\...\\Acme Corp\\bin`); the previous
-    // starts_with/ends_with arms were unreachable ().
+    // starts_with/ends_with arms were unreachable.
     if pub_low.len() >= 4 {
         let pub_words: Vec<&str> = pub_low
             .split([' ', '_'])
@@ -199,7 +202,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     })
 }
 
-/// Medium association gate (): leftovers must look related to the app.
+/// Medium association gate : leftovers must look related to the app.
 /// Orphan/monitor sources skip association at the policy layer.
 /// R2-11: keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
@@ -369,7 +372,7 @@ mod tests {
             &app,
             r"C:\Program Files\Common Files\DemoApp\plugins"
         ));
-        // substring hit in a *deeper* segment must not associate (S7-R1)
+        // substring hit in a *deeper* segment must not associate ()
         assert!(!cf_vendor_associated(
             &app,
             r"C:\Program Files\Common Files\Acme\demo_backup"
@@ -536,5 +539,47 @@ mod tests {
         // Library roots are never install roots.
         assert!(!is_safe_install_root(r"C:\Users\a\Documents"));
         assert!(!is_safe_install_root(r"C:\Users\a\Downloads"));
+    }
+
+    /// PATH/registry association must not treat a drive-root InstallLocation as
+    /// ownership of every path on that drive.
+    #[test]
+    fn non_fs_install_root_drive_root_never_claims() {
+        let app = crate::apps::InstalledApp {
+            name: "DriveRootApp".into(),
+            version: "1".into(),
+            publisher: "Vendor".into(),
+            install_location: r"C:\".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let item = CleanupItem {
+            path: r"C:\Totally\Other\Tool".into(),
+            kind: ItemKind::Path,
+            score: 40,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "path".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        assert!(!super::non_fs_associated_with_app(&app, &item));
+        // Real portable install root still associates.
+        let mut ok = app.clone();
+        ok.install_location = r"C:\Vendor\App".into();
+        let under = CleanupItem {
+            path: r"C:\Vendor\App\bin".into(),
+            ..item.clone()
+        };
+        assert!(super::non_fs_associated_with_app(&ok, &under));
     }
 }

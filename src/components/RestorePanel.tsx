@@ -92,7 +92,7 @@ export function RestorePanel({
                   style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
                   disabled={busy}
                   onClick={() => {
-                    // Confirm lives in useMoreRestore — no second dialog here.
+ // Confirm lives in useMoreRestore — no second dialog here.
                     onDelete(s.name);
                   }}
                 >

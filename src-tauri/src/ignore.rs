@@ -77,7 +77,7 @@ fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
     Ok(l)
 }
 
-/// IPC hygiene (): reject oversized or control-character names.
+/// IPC hygiene : reject oversized or control-character names.
 fn validate_rule_text(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("empty name".into());
@@ -193,7 +193,7 @@ pub struct IgnoreSuggestion {
 }
 
 const SHARED_ROOTS: &[&str] = &[
-    // Package Cache is NOT a global ignore () — too broad for all products.
+    // Package Cache is NOT a global ignore — too broad for all products.
     r"C:\Program Files\Common Files",
     r"C:\Program Files (x86)\Common Files",
     r"C:\Program Files\Microsoft Shared",

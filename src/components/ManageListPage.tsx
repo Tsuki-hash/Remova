@@ -21,7 +21,7 @@ async function ensureElevatedForManage(): Promise<boolean> {
     const elevated = await api.isElevated();
     if (elevated) return true;
   } catch {
-    // fall through to prompt
+ // fall through to prompt
   }
   const L = t();
   const ok = await requestConfirm({

@@ -57,7 +57,7 @@ function isUnderInstall(path: string, install: string): boolean {
 
 /** Classify one leftover into a display bucket (presentation only). */
 export function classifyItem(it: CleanupItem, app: InstalledApp): LinkedBucketId {
-  // Prefer backend bucket when present (1.1).
+ // Prefer backend bucket when present (1.1).
   const b = (it.bucket || "").trim();
   if (
     b === "programFiles" ||
