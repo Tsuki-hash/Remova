@@ -62,6 +62,21 @@ fn norm_path(path: &str) -> String {
 /// First valid GUID (`{36 hex/dash chars}`) across ALL brace groups,
 /// ASCII-folded to lowercase. Only ASCII is folded, so slicing the folded
 /// string is byte-safe (no Unicode indices touch the original `String`).
+/// `8-4-4-4-12` hex with hyphens at the canonical positions only.
+fn is_guid_shape(body: &str) -> bool {
+    if body.len() != 36 {
+        return false;
+    }
+    for (i, b) in body.bytes().enumerate() {
+        match (i, b) {
+            (8 | 13 | 18 | 23, b'-') => {}
+            (_, b) if b.is_ascii_hexdigit() => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 pub fn first_guid(s: &str) -> Option<String> {
     let low = s.to_ascii_lowercase();
     let mut from = 0usize;
@@ -72,7 +87,7 @@ pub fn first_guid(s: &str) -> Option<String> {
         };
         let end = start + end_rel;
         let body = &low[start + 1..end];
-        if body.len() == 36 && body.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        if is_guid_shape(body) {
             return Some(low[start..=end].to_string());
         }
         from = start + 1;
@@ -214,5 +229,8 @@ mod tests {
         assert_eq!(first_guid("{123}"), None);
         assert_eq!(first_guid("{ZZZZZZZZ-1234-1234-1234-123456789ABC}"), None);
         assert_eq!(first_guid("no braces at all"), None);
+        // Hyphens must sit at 8-4-4-4-12, not any 36-char hex/dash mix.
+        assert_eq!(first_guid("{----1234-1234-1234-123456789ABCDEF}"), None);
+        assert_eq!(first_guid("{123456781234-1234-1234-123456789ABC}"), None);
     }
 }
