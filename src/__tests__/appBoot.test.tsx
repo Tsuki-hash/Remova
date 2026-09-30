@@ -171,6 +171,25 @@ describe("checkUpdateNow flows", () => {
     );
   });
 
+  it("keeps in-app installs inside the app instead of opening a browser", async () => {
+    checkLatestRelease.mockResolvedValue({
+      ok: true,
+      info: { version: "99.0.0", downloadUrl: "https://example.com/dl", installInApp: true },
+    });
+    const setUpdateInfo = vi.fn();
+    const L = {
+      versionCheckFailed: "检查失败",
+      versionNew: "发现新版本",
+      versionUpToDate: () => "已是最新",
+      openReleasesToast: "去 Releases",
+    };
+    await act(async () => {
+      await checkUpdateNow(setUpdateInfo, L);
+    });
+    expect(setUpdateInfo).toHaveBeenCalled();
+    expect(openUpdateDownload).not.toHaveBeenCalled();
+  });
+
   it("keeps quiet when up to date", async () => {
     checkLatestRelease.mockResolvedValue({
       ok: true,

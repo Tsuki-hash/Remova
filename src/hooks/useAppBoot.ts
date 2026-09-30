@@ -187,11 +187,15 @@ export async function checkUpdateNow(
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
       setUpdateInfo(info);
       toast.success(`${L.versionNew}: v${info.version}`);
-      const { openUpdateDownload } = await import("../lib/updateCheck");
-      try {
-        await openUpdateDownload(info);
-      } catch {
-        toast.error(L.versionCheckFailed);
+      // In-app installs stay in-app: the footer install CTA takes over.
+      // Only manual installs jump to the browser.
+      if (!info.installInApp) {
+        const { openUpdateDownload } = await import("../lib/updateCheck");
+        try {
+          await openUpdateDownload(info);
+        } catch {
+          toast.error(L.versionCheckFailed);
+        }
       }
     } else {
       toast.success(L.versionUpToDate(__APP_VERSION__));
