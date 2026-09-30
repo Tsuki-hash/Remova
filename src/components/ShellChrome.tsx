@@ -2,7 +2,13 @@ import type { UpdateInfo } from "../lib/updateCheck";
 import { openUpdateDownload } from "../lib/updateCheck";
 import { t } from "../i18n";
 import { useRef, useState } from "react";
-import { installUpdate, updateErrorMessage, type UpdateProgress } from "../lib/installUpdate";
+import {
+  installUpdate,
+  progressAnnouncement,
+  updateErrorMessage,
+  type UpdateProgress,
+} from "../lib/installUpdate";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import { toast } from "../lib/toast";
 
 const linkBtn = {
@@ -70,6 +76,11 @@ export function ShellFooter({
 }) {
   const L = t();
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  // Same dialog contract as every other modal: focus moves in, Tab cycles,
+  // focus is restored on close. Escape is swallowed on purpose — an update
+  // that was already confirmed must not be cancellable from the backdrop.
+  useDialogFocus(!!progress, overlayRef);
   const installing = useRef(false);
   const blocked = useRef(false);
   blocked.current = Boolean(updateBlocked);
@@ -86,20 +97,29 @@ export function ShellFooter({
       installing.current = false;
     }
   };
+  const disabledReason = progress
+    ? progressAnnouncement(progress, L)
+    : updateBlocked
+      ? L.monitorRunning
+      : undefined;
   return (
     <>
       {progress && (
         <div role="dialog" aria-modal="true" aria-label={L.versionInstall}
           style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center" }}>
-          <div style={{ background: "var(--surface)", color: "var(--fg)", padding: 24, borderRadius: 12 }} aria-live="polite">
-            {progress.phase === "checking" ? L.versionCheck : progress.phase === "installing" ? L.versionInstalling : L.versionDownloading}
+          <div ref={overlayRef} tabIndex={-1}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") e.stopPropagation();
+            }}
+            style={{ background: "var(--surface)", color: "var(--fg)", padding: 24, borderRadius: 12 }}>
+            <span aria-live="polite">{progressAnnouncement(progress, L)}</span>
             {progress.percent !== undefined && ` ${progress.percent}%`}
           </div>
         </div>
       )}
       {updateInfo?.installInApp && busyRef && (
-        <button style={linkBtn} disabled={!!progress || updateBlocked} onClick={() => void onInstall()}>
-          {L.versionNew} v{updateInfo.version} → {L.versionInstall}
+        <button style={linkBtn} disabled={!!progress || updateBlocked} title={disabledReason} onClick={() => void onInstall()}>
+          {L.versionInstall} v{updateInfo.version}
         </button>
       )}
       {updateInfo && (
@@ -114,7 +134,7 @@ export function ShellFooter({
             });
           }}
         >
-          {L.versionNew} v{updateInfo.version} → {L.versionDownload}
+          {L.versionDownload} v{updateInfo.version}
         </button>
       )}
       {selectedCount !== undefined && <span>{L.footerSelected(selectedCount)}</span>}

@@ -74,7 +74,7 @@ describe("safe online update", () => {
   it("blocks installation during monitoring or for unsupported launches", async () => {
     await expect(installUpdate(info, { current: false }, () => true, vi.fn())).rejects.toThrow("update:busy");
     vi.mocked(api.onlineUpdateSupported).mockResolvedValue(false);
-    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:manual_only");
+    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:manual_only_env");
     expect(requestConfirm).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
   });
@@ -89,7 +89,8 @@ describe("safe online update", () => {
 
   it("maps update failure tokens to text without leaking internals", async () => {
     expect(updateErrorMessage(new Error("update:busy"))).not.toBe("update:busy");
-    expect(updateErrorMessage(new Error("update:manual_only"))).toBeTruthy();
+    expect(updateErrorMessage(new Error("update:manual_only_type"))).toBeTruthy();
+    expect(updateErrorMessage(new Error("update:manual_only_env"))).toBeTruthy();
     expect(updateErrorMessage(new Error("update:check_failed"))).toBeTruthy();
     expect(updateErrorMessage(new Error("update:version_changed"))).toBeTruthy();
     expect(updateErrorMessage("update:http_failed")).toBeTruthy();

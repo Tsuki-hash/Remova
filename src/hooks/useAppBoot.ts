@@ -202,25 +202,3 @@ export async function checkUpdateNow(
     await openReleases();
   }
 }
-
-/** Shell context-menu register/unregister toggle from toolbox. */
-export async function toggleShellMenuApi(
-  shellMenu: boolean,
-  setShellMenu: (v: boolean) => void,
-  setError: (e: string | null) => void,
-  L: { shellUnregister: string; shellMenuOn: string },
-) {
-  try {
-    if (shellMenu) {
-      await api.unregisterContextMenu();
-      setShellMenu(false);
-      toast.success(L.shellUnregister);
-    } else {
-      await api.registerContextMenu();
-      setShellMenu(true);
-      toast.success(L.shellMenuOn);
-    }
-  } catch (e) {
-    setError(formatError(e));
-  }
-}

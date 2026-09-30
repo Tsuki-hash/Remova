@@ -31,7 +31,6 @@ export type FullCleanupOptions = {
   dry_run: boolean;
   skip_official_uninstall: boolean;
   backup_enabled: boolean;
-  restore_point?: boolean;
   /** Gate source: uninstall | orphan | monitor | copilot | installer | toolcache */
   cleanup_source?: CleanupSourceId;
 };
