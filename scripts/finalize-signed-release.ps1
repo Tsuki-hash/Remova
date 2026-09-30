@@ -1,14 +1,21 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if ($env:SIGNPATH_ENABLED -and $env:SIGNPATH_ENABLED -cnotin @('true', 'false')) {
+    throw 'SIGNPATH_ENABLED must be true, false, or unset.'
+}
+$signPathEnabled = $env:SIGNPATH_ENABLED -ceq 'true'
 $bundle = Join-Path $root 'src-tauri/target/release/bundle'
 $nsis = @(Get-ChildItem -LiteralPath (Join-Path $bundle 'nsis') -Filter '*-setup.exe')
 $msi = @(Get-ChildItem -LiteralPath (Join-Path $bundle 'msi') -Filter '*.msi')
 if ($nsis.Count -ne 1 -or $msi.Count -ne 1) { throw 'Expected exactly one final NSIS and one MSI installer.' }
 if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -or
-    $null -eq $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) { throw 'Missing updater private key/password.' }
-# Both installers have already been returned by SignPath. Sign those exact bytes.
+    [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) -or
+    [string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) { throw 'Missing updater private key/password/public key.' }
+# Sign final bytes: SignPath output when enabled, otherwise the original installers.
 foreach ($installer in @($nsis[0], $msi[0])) {
-    & (Join-Path $PSScriptRoot 'verify-authenticode.ps1') -Paths @($installer.FullName)
+    if ($signPathEnabled) {
+        & (Join-Path $PSScriptRoot 'verify-authenticode.ps1') -Paths @($installer.FullName)
+    }
     & npx tauri signer sign $installer.FullName
     if ($LASTEXITCODE -ne 0) { throw 'Tauri updater signing failed.' }
     & cargo run --quiet --locked --manifest-path (Join-Path $root 'src-tauri/Cargo.toml') --bin verify_update -- $installer.FullName
