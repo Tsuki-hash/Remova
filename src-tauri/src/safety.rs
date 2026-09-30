@@ -507,6 +507,11 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
         return false;
     }
     let low = s.replace('/', "\\").to_lowercase();
+    // Reject traversal segments on the raw path first — trailing-dot strip
+    // below would turn `..` into an empty segment and hide it.
+    if low.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
     // Win32 strips per-segment trailing dots/spaces when resolving paths —
     // compare on the normalized form so `C:\Windows.` cannot slip past the
     // protected roots (same normalization the delete side uses).
@@ -1318,5 +1323,18 @@ mod tests {
         assert!(super::is_safe_restore_target(Path::new(
             r"C:\Users\a\AppData\Local\App\f.txt"
         )));
+    }
+
+    /// `..` / `.` segments must be refused on the raw request, not only after
+    /// Win32 trailing-dot stripping (which would empty `..`).
+    #[test]
+    fn restore_target_refuses_dot_segments() {
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\a\..\..\Windows\x"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(
+            r"C:\Users\a\AppData\Local\App\..\..\..\..\Windows\x"
+        )));
+        assert!(!super::is_safe_restore_target(Path::new(r"C:\a\.\x")));
     }
 }

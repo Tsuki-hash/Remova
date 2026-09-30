@@ -5,17 +5,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// tmp + rename — a crash mid-write must not leave a half map/seal.
+/// tmp + fsync + rename — a crash mid-write must not leave a half map/seal.
 fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
     let tmp = p.with_extension("remova.tmp");
-    fs::write(&tmp, bytes).map_err(|e| {
+    let result = (|| -> Result<(), String> {
+        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        f.write_all(bytes).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+        drop(f);
+        fs::rename(&tmp, p).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })?;
-    fs::rename(&tmp, p).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })
+    }
+    result
 }
 
 pub fn backup_root() -> PathBuf {
