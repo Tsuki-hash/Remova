@@ -182,6 +182,11 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
     if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
         return false;
     }
+    // Intrinsic gate: critical services are never natively deleted, even if a
+    // future caller routes around the pipeline's prefix anchoring.
+    if crate::safety::is_critical_service(svc_name) {
+        return false;
+    }
     use std::process::Command;
     let sc = sys_tool("sc.exe");
     let mut stop = Command::new(&sc);
@@ -199,6 +204,16 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
 /// Prefer full TaskCache tree remainder (`\Vendor\Foo\Task`) when provided.
 pub fn schtasks_delete(task_name: &str) -> bool {
     if task_name.is_empty() || task_name.contains('"') {
+        return false;
+    }
+    // Intrinsic gate: the whole \Microsoft\ tree is system-managed — the same
+    // rule the enable/disable gate enforces. Native deletion stays best-effort
+    // for vendor tasks only.
+    if task_name
+        .to_uppercase()
+        .replace('/', "\\")
+        .starts_with("\\MICROSOFT\\")
+    {
         return false;
     }
     use std::process::Command;

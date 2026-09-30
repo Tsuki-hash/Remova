@@ -130,6 +130,43 @@ pub fn service_name_from_reg_path(reg_path: &str) -> Option<String> {
     Some((*name).to_string())
 }
 
+/// Native stop/delete note for service/task registry keys — anchored to the
+/// canonical HKLM roots. A `contains`-style trigger would let a forged shape
+/// like `HKCU\x\...\Services\Spooler` drive `sc delete` at a REAL service or
+/// `schtasks /delete` at a system task; only normalized HKLM prefixes qualify.
+/// Returns None when no native path applies.
+fn native_delete_note(reg_path: &str) -> Option<String> {
+    let key_part = reg_path.split('|').next().unwrap_or(reg_path);
+    let key_norm = crate::safety::normalize_hklm(key_part);
+    if key_norm.starts_with(r"HKLM\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
+        // The service name is the segment AFTER Services — a leaf like
+        // `Parameters` is a subkey, never a service name.
+        let svc = service_name_from_reg_path(reg_path);
+        let native_ok = svc
+            .as_deref()
+            .map(crate::regops::sc_delete_service)
+            .unwrap_or(false);
+        return Some(match (svc, native_ok) {
+            (Some(name), true) => format!("sc delete {name}: ok"),
+            (Some(name), false) => format!("sc delete {name}: failed or not found"),
+            (None, _) => "service subkey without a service name".to_string(),
+        });
+    }
+    if key_norm
+        .starts_with(r"HKLM\SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\SCHEDULE\TASKCACHE\TREE\")
+    {
+        // Use the full task path from the TaskCache tree when possible.
+        let tn = task_full_name_from_reg_path(reg_path);
+        let native_ok = crate::regops::schtasks_delete(&tn);
+        return Some(if native_ok {
+            format!("schtasks delete {tn}: ok")
+        } else {
+            format!("schtasks delete {tn}: failed or not found")
+        });
+    }
+    None
+}
+
 struct DeleteOutcome {
     deleted: u32,
     failed: u32,
@@ -200,34 +237,7 @@ fn delete_cleanup_items_source(
                 }
             },
             ItemKind::Registry => {
-                let low = it.path.to_uppercase();
-                let mut native_note = String::new();
-                if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
-                    // The service name is the segment AFTER Services — a leaf
-                    // like `Parameters` or `Performance` is a subkey, never a
-                    // service name, and must not reach `sc delete`.
-                    let svc = service_name_from_reg_path(&it.path);
-                    let native_ok = svc
-                        .as_deref()
-                        .map(crate::regops::sc_delete_service)
-                        .unwrap_or(false);
-                    native_note = match (svc, native_ok) {
-                        (Some(name), true) => format!("sc delete {name}: ok"),
-                        (Some(name), false) => {
-                            format!("sc delete {name}: failed or not found")
-                        }
-                        (None, _) => "service subkey without a service name".to_string(),
-                    };
-                } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
-                    // use full task path from TaskCache tree when possible.
-                    let tn = task_full_name_from_reg_path(&it.path);
-                    let native_ok = crate::regops::schtasks_delete(&tn);
-                    native_note = if native_ok {
-                        format!("schtasks delete {tn}: ok")
-                    } else {
-                        format!("schtasks delete {tn}: failed or not found")
-                    };
-                }
+                let native_note = native_delete_note(&it.path).unwrap_or_default();
                 // `key|Value` must resolve to a non-empty value name; a trailing `|`
                 // must never fall through to deleting the whole key (Run root!).
                 let res = if it.path.contains('|') {
@@ -491,6 +501,49 @@ mod tests {
             service_name_from_reg_path(r"HKLM\SYSTEM\CurrentControlSet\Services"),
             None
         );
+    }
+
+    /// Native stop/delete triggers are anchored to canonical HKLM roots: a
+    /// forged `HKCU\...\Services\Spooler`-shaped path must not even reach the
+    /// native tools. (Red-state of this test ran `sc delete RemovaFakeSvc` —
+    /// against a nonexistent service, so the red was harmless.)
+    #[test]
+    fn native_delete_requires_canonical_hklm_prefix() {
+        assert_eq!(
+            native_delete_note(r"HKCU\Software\x\SYSTEM\CURRENTCONTROLSET\SERVICES\RemovaFakeSvc"),
+            None,
+            "forged service shape must not trigger sc delete"
+        );
+        assert_eq!(
+            native_delete_note(r"HKCU\Software\x\Schedule\TaskCache\Tree\Vendor\Foo"),
+            None,
+            "forged task shape must not trigger schtasks delete"
+        );
+        // Canonical shape reaches the arm; the intrinsic critical gate refuses
+        // any real execution (no process is spawned for a critical name).
+        let note = native_delete_note(r"HKLM64\SYSTEM\CurrentControlSet\Services\Spooler");
+        assert_eq!(
+            note.as_deref(),
+            Some("sc delete Spooler: failed or not found")
+        );
+        // Value-shaped paths judge the key part only.
+        assert_eq!(
+            native_delete_note(r"HKLM\SYSTEM\CurrentControlSet\Services\Spooler|Start"),
+            note
+        );
+    }
+
+    /// The native tools refuse critical services and the system task tree
+    /// themselves. These asserts pin the refusal only — the red state of these
+    /// calls would touch real system entries and was deliberately not executed.
+    #[test]
+    fn native_tools_refuse_critical_and_system_targets() {
+        assert!(!crate::regops::sc_delete_service("Spooler"));
+        assert!(!crate::regops::sc_delete_service("RpcSs"));
+        assert!(!crate::regops::schtasks_delete(
+            r"\Microsoft\Windows\Defrag\ScheduledDefrag"
+        ));
+        assert!(!crate::regops::schtasks_delete(""));
     }
 
     #[test]
