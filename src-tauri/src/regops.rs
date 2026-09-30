@@ -598,6 +598,36 @@ pub(crate) mod path_mock {
     }
 }
 
+/// Test-only `%VAR%` fallback source — deterministic resolution for variables
+/// the (test) process environment does not define. Consulted by
+/// [`fallback_var`] before the registry.
+#[cfg(test)]
+pub(crate) mod expand_mock {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static MAP: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+    pub fn install(entries: &[(&str, &str)]) {
+        let mut m = HashMap::new();
+        for (k, v) in entries {
+            m.insert((*k).to_string(), (*v).to_string());
+        }
+        *MAP.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
+    }
+
+    pub fn get(name: &str) -> Option<String> {
+        MAP.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|m| m.get(name).cloned())
+    }
+
+    pub fn clear() {
+        *MAP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 fn read_path_scope(scope: &str) -> Result<String, String> {
     let (raw, expand) = read_path_scope_raw(scope)?;
     Ok(if expand { expand_env_string(&raw) } else { raw })
@@ -619,12 +649,12 @@ fn read_path_scope_raw(scope: &str) -> Result<(String, bool), String> {
         "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
         _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
     };
-    read_reg_value_raw(key)
+    read_reg_value_raw(key, "Path")
 }
 
 /// Raw Path text plus its type (`true` = REG_EXPAND_SZ). Write-back must
 /// preserve these unexpanded bytes for REG_EXPAND_SZ values.
-fn read_reg_value_raw(key_path: &str) -> Result<(String, bool), String> {
+fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool), String> {
     #[cfg(not(windows))]
     {
         let _ = key_path;
@@ -642,7 +672,7 @@ fn read_reg_value_raw(key_path: &str) -> Result<(String, bool), String> {
             RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
                 .ok()
                 .map_err(|_| format!("open failed {key_path}"))?;
-            let vname = to_wide("Path");
+            let vname = to_wide(value_name);
             let mut typ = REG_VALUE_TYPE(0);
             let mut data = vec![0u8; 65_536];
             let mut data_len = data.len() as u32;
@@ -689,7 +719,11 @@ fn read_reg_value_raw(key_path: &str) -> Result<(String, bool), String> {
     }
 }
 
-/// Expand `%VAR%` references using the current environment block.
+/// Expand `%VAR%` references using the current environment block. Variables
+/// the process environment cannot resolve fall back to the registry
+/// environment (HKCU user vars, then HKLM machine vars) — service/SYSTEM or
+/// stripped-env processes otherwise leave variables literal, and the
+/// REG_EXPAND_SZ dedup/restore path would mis-judge what is "already there".
 pub(crate) fn expand_env_string(s: &str) -> String {
     #[cfg(not(windows))]
     {
@@ -697,26 +731,107 @@ pub(crate) fn expand_env_string(s: &str) -> String {
     }
     #[cfg(windows)]
     {
-        use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
-        if !s.contains('%') {
+        let expanded = api_expand(s);
+        resolve_unresolved_vars(&expanded, 0)
+    }
+}
+
+/// Windows API expansion against the process environment block.
+#[cfg(windows)]
+fn api_expand(s: &str) -> String {
+    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let wide = to_wide(s);
+    unsafe {
+        let needed = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), None);
+        if needed == 0 {
             return s.to_string();
         }
-        let wide = to_wide(s);
-        unsafe {
-            let needed = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), None);
-            if needed == 0 {
-                return s.to_string();
-            }
-            let mut buf = vec![0u16; needed as usize];
-            let written = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), Some(&mut buf));
-            if written == 0 {
-                return s.to_string();
-            }
-            while buf.last().copied() == Some(0) {
-                buf.pop();
-            }
-            String::from_utf16_lossy(&buf)
+        let mut buf = vec![0u16; needed as usize];
+        let written = ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), Some(&mut buf));
+        if written == 0 {
+            return s.to_string();
         }
+        while buf.last().copied() == Some(0) {
+            buf.pop();
+        }
+        String::from_utf16_lossy(&buf)
+    }
+}
+
+/// Resolve `%VAR%` tokens the API left literal. Depth-capped: registry values
+/// may themselves be REG_EXPAND_SZ. Unresolvable tokens stay verbatim — an
+/// entry whose value no source defines is genuinely unknowable.
+fn resolve_unresolved_vars(s: &str, depth: usize) -> String {
+    if depth >= 5 || !s.contains('%') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find('%') {
+        let after = &rest[start + 1..];
+        match after.find('%') {
+            Some(end) if end > 0 => {
+                let name = &after[..end];
+                match fallback_var(name, depth) {
+                    Some(v) => out.push_str(&v),
+                    None => out.push_str(&rest[start..start + end + 2]),
+                }
+                rest = &after[end + 1..];
+            }
+            _ => {
+                // no closing `%` — a literal percent, push the remainder as-is
+                out.push_str(rest);
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    let joined = out;
+    if joined != s {
+        // a resolved value may itself reference further variables
+        resolve_unresolved_vars(&joined, depth + 1)
+    } else {
+        joined
+    }
+}
+
+fn fallback_var(name: &str, depth: usize) -> Option<String> {
+    #[cfg(test)]
+    if let Some(v) = expand_mock::get(name) {
+        return Some(v);
+    }
+    registry_env_var(name, depth)
+}
+
+/// Registry-defined environment variables — the machine's truth when the
+/// process env lacks them (user vars first, then machine vars).
+fn registry_env_var(name: &str, depth: usize) -> Option<String> {
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        let _ = depth;
+        None
+    }
+    #[cfg(windows)]
+    {
+        for key in [
+            r"HKCU\Environment",
+            r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ] {
+            let Ok((text, expand)) = read_reg_value_raw(key, name) else {
+                continue;
+            };
+            return Some(if expand {
+                resolve_unresolved_vars(&api_expand(&text), depth + 1)
+            } else {
+                text
+            });
+        }
+        None
     }
 }
 
@@ -1234,15 +1349,19 @@ mod tests {
         use super::path_mock;
         let _lock = path_mock::lock_mock();
         path_mock::clear();
+        // Expansion sources are pinned for hermeticity: the machine's
+        // ProgramFiles may be relocated or absent, so the test pins its own
+        // variable that only the fallback source can resolve.
+        super::expand_mock::install(&[("RemovaVendorDir", r"C:\Program Files")]);
         path_mock::install_expand(
-            r"%SystemRoot%\system32;C:\Tools\App;%ProgramFiles%\Shared",
+            r"%SystemRoot%\system32;C:\Tools\App;%RemovaVendorDir%\Shared",
             r"%SystemRoot%",
         );
         // Scrub a literal entry: untouched %VAR% segments survive verbatim.
         assert!(super::scrub_path_entry(r"C:\Tools\App").unwrap());
         let (raw, expand) = path_mock::read_raw("User").unwrap();
         assert!(expand, "scrub must not flatten REG_EXPAND_SZ");
-        assert_eq!(raw, r"%SystemRoot%\system32;%ProgramFiles%\Shared");
+        assert_eq!(raw, r"%SystemRoot%\system32;%RemovaVendorDir%\Shared");
         // An entry already present in expanded form must not duplicate raw.
         assert!(!super::restore_path_entry(r"C:\Program Files\Shared", &["User"]).unwrap());
         // Restore appends raw bytes and keeps the type.
@@ -1251,7 +1370,7 @@ mod tests {
         assert!(expand);
         assert_eq!(
             raw,
-            r"%SystemRoot%\system32;%ProgramFiles%\Shared;C:\Tools\App"
+            r"%SystemRoot%\system32;%RemovaVendorDir%\Shared;C:\Tools\App"
         );
         // The literal entry now present must not be appended twice.
         assert!(!super::restore_path_entry(r"C:\Tools\App", &["User"]).unwrap());
@@ -1261,12 +1380,28 @@ mod tests {
         assert!(expand);
         assert_eq!(raw, r"%SystemRoot%\system32;C:\Tools\App");
         // REG_SZ scopes keep plain String semantics.
+        super::expand_mock::clear();
         path_mock::clear();
         path_mock::install(r"C:\A;C:\B", r"C:\Windows");
         assert!(super::scrub_path_entry(r"C:\A").unwrap());
         let (raw, expand) = path_mock::read_raw("User").unwrap();
         assert!(!expand);
         assert_eq!(raw, r"C:\B");
+        path_mock::clear();
+    }
+
+    /// A variable no source can resolve stays literal; restore appends
+    /// honestly (and keeps the raw form) instead of guessing a match.
+    #[test]
+    fn restore_appends_when_var_unresolvable() {
+        use super::path_mock;
+        let _lock = path_mock::lock_mock();
+        path_mock::clear();
+        path_mock::install_expand(r"%RemovaNowhereAtAll%\Shared", r"");
+        assert!(super::restore_path_entry(r"C:\Program Files\Shared", &["User"]).unwrap());
+        let (raw, expand) = path_mock::read_raw("User").unwrap();
+        assert!(expand);
+        assert_eq!(raw, r"%RemovaNowhereAtAll%\Shared;C:\Program Files\Shared");
         path_mock::clear();
     }
 }
