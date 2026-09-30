@@ -37,7 +37,11 @@ try {
     $packet[0] = 69; $packet[1] = 100
     $keyText = "untrusted comment: release policy test`n" + [Convert]::ToBase64String($packet)
     $env:TAURI_UPDATER_PUBLIC_KEY = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($keyText))
-    $env:TAURI_SIGNING_PRIVATE_KEY = 'test-placeholder-not-a-real-key'
+    # The policy rejects passwordless (unencrypted) private keys: the fixture
+    # must be a base64 payload carrying the minisign-encrypted-secret marker.
+    $script:fixturePrivateKey = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        "untrusted comment: release policy fixture`nminisign-encrypted-secret: Zml4dHVyZQ=="))
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
     $env:GITHUB_REF_NAME = 'v1.3.0'
     $env:GITHUB_REPOSITORY = 'Tsuki-hash/Remova'
@@ -55,7 +59,15 @@ try {
 
     $env:TAURI_SIGNING_PRIVATE_KEY = ''
     Assert-Throws { & $prepare } 'TAURI_SIGNING_PRIVATE_KEY'
-    $env:TAURI_SIGNING_PRIVATE_KEY = 'test-placeholder-not-a-real-key'
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
+    $passed++
+
+    # A private key WITHOUT the encrypted-secret marker must be refused even
+    # when it is valid base64 (passwordless keys make the password moot).
+    $env:TAURI_SIGNING_PRIVATE_KEY = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        "untrusted comment: passwordless fixture`nplain-unencrypted-payload"))
+    Assert-Throws { & $prepare } 'password-encrypted'
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
     $passed++
 
     $env:SIGNPATH_ENABLED = 'true'
@@ -81,6 +93,10 @@ try {
     $env:TAURI_UPDATER_PUBLIC_KEY = $public
     $passed++
 
+    # finalize drops the private-key material from the environment after
+    # signing; restore the fixture keys for the remaining finalize cases.
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
     $bundle = Join-Path $temp 'src-tauri/target/release/bundle'
     foreach ($kind in @('nsis', 'msi')) { New-Item -ItemType Directory -Path (Join-Path $bundle $kind) -Force | Out-Null }
     Set-Content -LiteralPath (Join-Path $bundle 'nsis/Remova_1.3.0_x64-setup.exe') -Value 'unsigned fixture'
