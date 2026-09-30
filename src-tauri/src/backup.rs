@@ -462,8 +462,14 @@ mod tests {
 
     #[test]
     fn session_dir_shape() {
-        // do not create on disk in unit test —just path builder logic via create
-        let _ = backup_root();
+        let _guard = lock_backup_env();
+        std::env::remove_var("REMOVA_BACKUP_DIR");
+        let root = backup_root();
+        assert!(!root.as_os_str().is_empty());
+        assert!(
+            root.to_string_lossy().replace('/', "\\").contains("Backup"),
+            "backup root should land under a Backup folder: {root:?}"
+        );
     }
 
     /// Partial batch must not publish a sealed session (failed items would
