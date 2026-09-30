@@ -20,12 +20,13 @@ jobs:
     # Two SignPath requests require maintainer approval. GitHub's job limit is 6h.
     timeout-minutes: 360
     env:
+      SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
       SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
       TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: require signing configuration
+      - name: require updater signing and validate optional SignPath configuration
         id: signing-config
         shell: pwsh
         run: pwsh -NoProfile -File scripts/prepare-signed-release.ps1
@@ -76,6 +77,9 @@ jobs:
       - name: check commands
         run: npm run check-commands
 
+      - name: release signing policy regression
+        run: pwsh -NoProfile -File scripts/test-release-signing-policy.ps1
+
       - name: cargo fmt
         run: cargo fmt --check
         working-directory: src-tauri
@@ -108,11 +112,13 @@ jobs:
         run: npx tauri build --no-bundle --config .release-signing/tauri.release.json -- --locked
 
       - name: read application signing metadata
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         id: app-metadata
         shell: pwsh
         run: pwsh -NoProfile -File scripts/read-signing-metadata.ps1 -Path src-tauri/target/release/remova.exe
 
       - name: upload unsigned application
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         id: unsigned-app
         uses: actions/upload-artifact@v4
         with:
@@ -121,6 +127,7 @@ jobs:
           if-no-files-found: error
 
       - name: sign application (maintainer approval required)
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         uses: signpath/github-action-submit-signing-request@4184a38a17e5b37d026a3ed443581c1f03ae1b3a # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -137,16 +144,18 @@ jobs:
             file-version: ${{ toJSON(steps.app-metadata.outputs.file-version) }}
 
       - name: verify and stage signed application
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         shell: pwsh
         run: |
           & scripts/verify-authenticode.ps1 -Paths @('.release-signing/application/remova.exe')
           Copy-Item -LiteralPath .release-signing/application/remova.exe -Destination src-tauri/target/release/remova.exe -Force
 
-      - name: bundle signed application
-        # Keep createUpdaterArtifacts disabled: final signatures are made AFTER SignPath.
+      - name: bundle final application
+        # Sign final installer bytes later, after optional SignPath signing.
         run: npx tauri bundle --config .release-signing/tauri.release.json
 
       - name: read installer signing metadata
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         id: installer-metadata
         shell: pwsh
         run: |
@@ -155,6 +164,7 @@ jobs:
           & scripts/read-signing-metadata.ps1 -Path $nsis[0].FullName -Prefix 'nsis-'
 
       - name: upload unsigned installers
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         id: unsigned-installers
         uses: actions/upload-artifact@v4
         with:
@@ -165,6 +175,7 @@ jobs:
           if-no-files-found: error
 
       - name: sign installers (maintainer approval required)
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         uses: signpath/github-action-submit-signing-request@4184a38a17e5b37d026a3ed443581c1f03ae1b3a # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -181,6 +192,7 @@ jobs:
             nsis-file-version: ${{ toJSON(steps.installer-metadata.outputs.nsis-file-version) }}
 
       - name: stage final signed installers
+        if: steps.signing-config.outputs.signpath-enabled == 'true'
         shell: pwsh
         run: |
           foreach ($kind in @('nsis', 'msi')) {
@@ -195,6 +207,7 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/finalize-signed-release.ps1
         env:
+          SIGNPATH_ENABLED: ${{ steps.signing-config.outputs.signpath-enabled }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -277,7 +290,7 @@ jobs:
           fail_on_unmatched_files: true
           draft: true
 
-      - name: publish complete signed release
+      - name: publish complete verified release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

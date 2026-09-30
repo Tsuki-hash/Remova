@@ -68,6 +68,9 @@ jobs:
       - name: updater signature regression
         run: pwsh -NoProfile -File scripts/test-updater-signature.ps1
 
+      - name: release signing policy regression (no build)
+        run: pwsh -NoProfile -File scripts/test-release-signing-policy.ps1
+
       - name: frontend lint
         run: npm run lint
 
