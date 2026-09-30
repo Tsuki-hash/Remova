@@ -5,21 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// tmp + fsync + rename — a crash mid-write must not leave a half map/seal.
+/// tmp + fsync + rename via the shared helper — a crash mid-write must not
+/// leave a half map/seal, and the tmp is pid/nonce-unique across processes.
 fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write as _;
-    let tmp = p.with_extension("remova.tmp");
-    let result = (|| -> Result<(), String> {
-        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(bytes).map_err(|e| e.to_string())?;
-        f.sync_all().map_err(|e| e.to_string())?;
-        drop(f);
-        fs::rename(&tmp, p).map_err(|e| e.to_string())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
+    crate::fsutil::write_bytes_atomic(p, bytes).map_err(|e| e.to_string())
 }
 
 pub fn backup_root() -> PathBuf {
@@ -160,7 +149,8 @@ fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
     let meta_dir = session.join("files").join("_path");
     fs::create_dir_all(&meta_dir).map_err(|e| e.to_string())?;
     let meta = meta_dir.join(format!("{}.txt", safe_name(entry)));
-    fs::write(&meta, entry.as_bytes()).map_err(|e| e.to_string())?;
+    // Atomic: a crash mid-backup must not leave a torn meta line.
+    write_bytes_atomic(&meta, entry.as_bytes())?;
 
     let pj = path_snapshot_file(session);
     let mut snap: PathSnapshot = fs::read_to_string(&pj)
@@ -179,8 +169,14 @@ fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
             user_path: user,
             machine_path: machine,
         });
-        fs::write(&pj, serde_json::to_string_pretty(&snap).unwrap_or_default())
-            .map_err(|e| e.to_string())?;
+        // Atomic: path.json is seal-digested — a torn write would poison the
+        // whole session on restore.
+        write_bytes_atomic(
+            &pj,
+            serde_json::to_string_pretty(&snap)
+                .unwrap_or_default()
+                .as_bytes(),
+        )?;
     }
     Ok(())
 }

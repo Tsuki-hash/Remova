@@ -1,6 +1,6 @@
 //! Shared filesystem helpers (dedupe backup/restore copy).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Windows reparse point (junction / mount / symlink). Never follow when copying.
 pub fn is_reparse_point(p: &Path) -> bool {
@@ -659,10 +659,58 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
     String::from_utf16_lossy(&u16s)
 }
 
+/// Unique tmp sibling for atomic publish: `p` + `.{pid}.{nonce}.tmp`.
+/// The pid keeps a second Remova process from clobbering our tmp; the
+/// nonce also unshares concurrent writers of the same target in-process.
+pub fn atomic_tmp_path(p: &Path) -> PathBuf {
+    static NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = p.as_os_str().to_owned();
+    name.push(format!(".{}.{}.tmp", std::process::id(), nonce));
+    PathBuf::from(name)
+}
+
+/// Write bytes to a unique tmp sibling, fsync, then rename over `p` — a
+/// crash mid-write never tears `p`, and a failed write leaves no tmp.
+pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let tmp = atomic_tmp_path(p);
+    let result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, p)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn atomic_write_publishes_and_leaves_no_tmp() {
+        let dir = std::env::temp_dir().join(format!("remova-r25-fsutil-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("data.bin");
+        write_bytes_atomic(&target, b"one").unwrap();
+        write_bytes_atomic(&target, b"two").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"two");
+        let leftovers = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "failed-or-done writes must not leave tmp");
+        // The tmp helper is unique per call even for the same target.
+        assert_ne!(atomic_tmp_path(&target), atomic_tmp_path(&target));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn unique_tmp(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
