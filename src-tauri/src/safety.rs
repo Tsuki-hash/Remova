@@ -141,7 +141,7 @@ pub fn allow_manage_reg_write(
 /// metadata), Run/RunOnce + StartupApproved (startup management), per-service
 /// keys (start type) and Remova's own context-menu key — so a value write can
 /// never land outside these shapes even if a future caller forgets its gate.
-pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
+pub fn allow_reg_value_write(key_path: &str, value_name: Option<&str>) -> Result<(), String> {
     let low = normalize_hklm(key_path);
     const UNINSTALL_ROOTS: &[&str] = &[
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
@@ -164,8 +164,17 @@ pub fn allow_reg_value_write(key_path: &str) -> Result<(), String> {
         return Ok(());
     }
     // Services: intrinsic gate must refuse critical / Microsoft-family names
-    // even if a future caller skips `allow_manage_service_write`.
+    // even if a future caller skips `allow_manage_service_write`. Writes are
+    // also value-name whitelisted: only the `Start` start-type value is ever
+    // legitimately managed — a planted `ServiceDll` or similar must not be
+    // overwritable through the write primitives.
     if low.starts_with(SERVICES_PREFIX) && low.len() > SERVICES_PREFIX.len() {
+        if !value_name.is_some_and(|v| v.eq_ignore_ascii_case("Start")) {
+            return Err(crate::error::safety_err(format!(
+                "registry write outside allowlist: {key_path} (services accept only Start)"
+            ))
+            .to_ipc());
+        }
         let leaf = registry_key_part(key_path)
             .replace('/', "\\")
             .rsplit('\\')
@@ -329,6 +338,19 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Drive-relative SYSTEM roots, protected on EVERY drive. Shared by the
+/// delete gate (`is_safe_fs`) and the restore gate (`is_safe_restore_target`)
+/// so deletion and restore cannot disagree about `D:\Windows\...`-shaped paths.
+/// Install roots (\program files*) are deliberately NOT here for delete:
+/// secondary-drive install dirs are legitimate cleanup targets — they stay
+/// delete-protected via `protected_fs_prefixes` subtrees on the system drive.
+const PROTECTED_AFTER_DRIVE_SUFFIXES: [&str; 3] =
+    [r"\windows", r"\windows.old", r"\programdata\microsoft"];
+
+/// Restore additionally refuses install roots on any drive: restore targets
+/// are user-writable locations; app reinstall owns these trees.
+const RESTORE_EXTRA_SUFFIXES: [&str; 2] = [r"\program files", r"\program files (x86)"];
+
 /// Unified filesystem safety gate (scanner + executor).
 /// Rejects protected prefixes, drive roots (`C:` / `C:\`), and shallow paths.
 /// Prefixes come from environment (SystemRoot / ProgramData / ProgramFiles…) with `c:\` fallbacks.
@@ -362,6 +384,17 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     let comps = p.components().count();
     if comps < 4 {
         return false;
+    }
+    // Drive-relative system roots are protected on EVERY drive — `D:\Windows\...`
+    // is as dangerous as `C:\Windows\...` (same table the restore gate uses).
+    let after_drive = trimmed
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    for pref in PROTECTED_AFTER_DRIVE_SUFFIXES {
+        if after_drive == pref || after_drive.starts_with(&format!("{pref}\\")) {
+            return false;
+        }
     }
     let protected = protected_fs_prefixes();
     !protected
@@ -540,14 +573,11 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
         .split_once(':')
         .map(|(_, rest)| rest)
         .unwrap_or(trimmed);
-    let protected_suffixes = [
-        r"\windows",
-        r"\windows.old",
-        r"\program files",
-        r"\program files (x86)",
-        r"\programdata\microsoft",
-    ];
-    for pref in protected_suffixes {
+    for pref in PROTECTED_AFTER_DRIVE_SUFFIXES
+        .iter()
+        .chain(RESTORE_EXTRA_SUFFIXES.iter())
+        .copied()
+    {
         if after_drive == pref || after_drive.starts_with(&format!("{pref}\\")) {
             return false;
         }
@@ -682,44 +712,81 @@ mod tests {
     fn reg_value_write_allowlist() {
         // Allowed shapes.
         assert!(allow_reg_value_write(
-            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\App"
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\App",
+            None
         )
         .is_ok());
         assert!(
-            allow_reg_value_write(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run").is_ok()
+            allow_reg_value_write(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", None)
+                .is_ok()
         );
         assert!(allow_reg_value_write(
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+            Some("DemoApp.exe"),
         )
         .is_ok());
+        assert!(allow_reg_value_write(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc",
+            Some("Start")
+        )
+        .is_ok());
+        // Services accept ONLY the Start value — anything else (or unknown)
+        // must be refused, a planted ServiceDll must not be overwritable.
+        assert!(allow_reg_value_write(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc",
+            Some("ServiceDll")
+        )
+        .is_err());
         assert!(
-            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc").is_ok()
+            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc", None)
+                .is_err()
         );
         assert!(allow_reg_value_write(
-            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall\command"
+            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall\command",
+            Some("")
         )
         .is_ok());
         assert!(
-            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall").is_ok()
+            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall", None)
+                .is_ok()
         );
         // sibling keys must not ride the Remova menu prefix.
         assert!(
-            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX").is_err()
+            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX", None)
+                .is_err()
         );
         assert!(allow_reg_value_write(
-            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX\command"
+            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX\command",
+            Some("")
         )
         .is_err());
         // Everything else is refused — even plausible-but-unlisted keys.
-        assert!(allow_reg_value_write(r"HKCU\Software\Vendor\Config").is_err());
+        assert!(allow_reg_value_write(r"HKCU\Software\Vendor\Config", Some("x")).is_err());
         assert!(allow_reg_value_write(
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe"
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe",
+            None
         )
         .is_err());
-        assert!(allow_reg_value_write(r"HKCU\Environment").is_err());
-        assert!(allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services").is_err());
-        assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool").is_err());
-        assert!(allow_reg_value_write("").is_err());
+        assert!(allow_reg_value_write(r"HKCU\Environment", None).is_err());
+        assert!(
+            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services", Some("Start"))
+                .is_err()
+        );
+        assert!(allow_reg_value_write(r"HKCU\Software\Classes\*\shell\OtherTool", None).is_err());
+        assert!(allow_reg_value_write("", Some("x")).is_err());
+    }
+
+    /// System roots are protected on EVERY drive on the delete side too,
+    /// matching the restore gate: `D:\Windows\...` must not become deletable
+    /// just because the env-derived roots are C:-anchored. Install roots on
+    /// secondary drives remain legitimate cleanup targets.
+    #[test]
+    fn delete_gate_protects_system_roots_on_any_drive() {
+        assert!(!is_safe_fs(Path::new(r"D:\Windows\Temp\x.dll")));
+        assert!(!is_safe_fs(Path::new(r"E:\Windows.old\Users\a\f.txt")));
+        assert!(!is_safe_fs(Path::new(r"D:\ProgramData\Microsoft\Crypto\x")));
+        assert!(is_safe_fs(Path::new(r"D:\Program Files\MyApp")));
+        assert!(is_safe_fs(Path::new(r"C:\Program Files\MyApp")));
     }
 
     /// Protected roots accept value deletes only when the key part is judged.
@@ -762,14 +829,16 @@ mod tests {
             r"HKLM\SYSTEM\CurrentControlSet\Services\MicrosoftEdgeUpdate",
         ] {
             assert!(
-                allow_reg_value_write(key).is_err(),
+                allow_reg_value_write(key, Some("Start")).is_err(),
                 "critical/Microsoft service write must be refused: {key}"
             );
         }
         // Non-critical vendor service still allowed.
-        assert!(
-            allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc").is_ok()
-        );
+        assert!(allow_reg_value_write(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc",
+            Some("Start")
+        )
+        .is_ok());
     }
 
     /// Value-shaped `Services|value` paths must not bypass the critical list.
