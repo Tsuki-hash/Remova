@@ -2,6 +2,17 @@
 
 use super::*;
 
+/// Red-line flags computed from the real path — hardcoding `false` shipped
+/// items inside user libraries as default-selectable (the FE decision logic
+/// trusts `user_data`).
+fn is_user_data(p: &std::path::Path) -> bool {
+    crate::safety::is_user_data_path(&p.to_string_lossy())
+}
+
+fn is_user_library(p: &std::path::Path) -> bool {
+    crate::safety::is_user_library_path(&p.to_string_lossy())
+}
+
 /// Shortcut peek budget : LNK target strings sit near the header.
 const SHORTCUT_PEEK_BYTES: usize = 8 * 1024;
 
@@ -62,8 +73,8 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
                     detail: p.to_string_lossy().chars().take(120).collect(),
                 }],
                 shared: false,
-                user_data: false,
-                user_library: false,
+                user_data: is_user_data(&p),
+                user_library: is_user_library(&p),
                 size_kb: None,
                 bucket: None,
             });
@@ -137,8 +148,8 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                     detail: fname.to_string(),
                 }],
                 shared: false,
-                user_data: false,
-                user_library: false,
+                user_data: is_user_data(&p),
+                user_library: is_user_library(&p),
                 size_kb: None,
                 bucket: None,
             });
@@ -256,8 +267,8 @@ fn walk_shortcuts(
                 detail: stem.to_string(),
             }],
             shared: false,
-            user_data: false,
-            user_library: false,
+            user_data: is_user_data(&p),
+            user_library: is_user_library(&p),
             size_kb: None,
             bucket: None,
         });
@@ -319,11 +330,33 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                     .to_string(),
             }],
             shared: false,
-            user_data: false,
-            user_library: false,
+            user_data: is_user_data(&p),
+            user_library: is_user_library(&p),
             size_kb: None,
             bucket: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod user_flag_tests {
+    use super::*;
+
+    /// Items inside a user library must carry the red-line flags — the
+    /// cross-drive scan's `D:\Users\a\Documents\...` shape previously shipped
+    /// with `user_data: false` and was default-selectable in the FE.
+    #[test]
+    fn red_line_flags_follow_the_real_path() {
+        let under_lib = std::path::Path::new(r"D:\Users\a\Documents\SomeGame\cache");
+        assert!(!is_user_data(under_lib));
+        assert!(is_user_library(under_lib));
+        let lib_root = std::path::Path::new(r"D:\Users\a\Documents");
+        assert!(is_user_data(lib_root));
+        assert!(!is_user_library(lib_root));
+        // Non-library shapes stay unflagged.
+        let plain = std::path::Path::new(r"D:\Games\SomeGame");
+        assert!(!is_user_data(plain));
+        assert!(!is_user_library(plain));
     }
 }
 
