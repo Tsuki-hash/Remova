@@ -104,11 +104,13 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
             };
             sizeCache.current.set(path, entry);
             queueSet(path, entry);
-          } catch {
+          } catch (err) {
             if (disposed || run.cancelled) break;
-            const entry: SizeEntry = { kb: 0, capped: false };
-            sizeCache.current.set(path, entry);
-            queueSet(path, entry);
+            // An update slot grabbed between two estimates surfaces as
+            // update:busy — stop without caching so a later refresh retries.
+            if (err instanceof Error && err.message === "update:busy") break;
+            // Real failures are not cached either: the path stays
+            // unestimated instead of freezing a kb:0 result forever.
           }
           run.remaining.delete(path);
           done += 1;

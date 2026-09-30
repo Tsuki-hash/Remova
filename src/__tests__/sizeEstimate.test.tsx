@@ -69,3 +69,46 @@ it("new begin waits for an earlier cancel before estimating a new path", async (
   expect(native.estimateDirSizeKb).toHaveBeenLastCalledWith("C:\\D");
   await finishOutstanding();
 });
+
+it("update:busy failures are neither cached nor skipped — next refresh retries", async () => {
+  let busyFired = false;
+  native.estimateDirSizeKb.mockImplementation((path: string) => {
+    if (path === "C:\\A" && !busyFired) {
+      busyFired = true;
+      return Promise.reject(new Error("update:busy"));
+    }
+    return new Promise<Size>(resolve => complete.push(resolve));
+  });
+  const { result, rerender } = renderHook(({ list }) => useSizeEstimate(list, false), { initialProps: { list: apps } });
+  // Worker A dies on the busy error, worker B hangs on B.
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(2));
+  await finishOutstanding(); // B resolves; worker B continues to C
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(3));
+  await finishOutstanding();
+  await waitFor(() => expect(result.current.estimating).toBe(false));
+  // The busy path stayed out of the cache (no frozen kb:0) and out of the
+  // explicit-stop list, so a later refresh estimates it again.
+  expect(result.current.sizeOf(apps[0]!)).toBe(0);
+  rerender({ list: [...apps] });
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenLastCalledWith("C:\\A"));
+  await act(async () => complete.splice(0).forEach(resolve => resolve({ kb: 7, capped: false })));
+  await waitFor(() => expect(result.current.sizeOf(apps[0]!)).toBe(7));
+});
+
+it("generic estimate failures are not cached — next refresh retries", async () => {
+  let failing = true;
+  native.estimateDirSizeKb.mockImplementation((path: string) =>
+    path === "C:\\B" && failing
+      ? Promise.reject(new Error("io error"))
+      : Promise.resolve({ kb: 10, capped: false }),
+  );
+  const { result, rerender } = renderHook(({ list }) => useSizeEstimate(list, false), { initialProps: { list: apps } });
+  await waitFor(() => expect(result.current.estimating).toBe(false));
+  expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(3);
+  expect(result.current.sizeOf(apps[1]!)).toBe(0);
+  failing = false;
+  rerender({ list: [...apps] });
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(4));
+  expect(native.estimateDirSizeKb).toHaveBeenLastCalledWith("C:\\B");
+  await waitFor(() => expect(result.current.sizeOf(apps[1]!)).toBe(10));
+});
