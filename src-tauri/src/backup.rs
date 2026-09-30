@@ -308,7 +308,7 @@ fn backup_item_with_map(
             if let Some((key, vname)) = item.path.split_once('|') {
                 let dir = session.join("registry").join(safe_name(&item.path));
                 let meta = dir.join("value.txt");
-                fs::write(&meta, &item.path)
+                write_bytes_atomic(&meta, item.path.as_bytes())
                     .map_err(|e| crate::error::backup_reg_err(e.to_string()).to_ipc())?;
                 // value.reg must succeed so restore can be single-value (not whole key).
                 match crate::regops::export_reg_value(key, vname, &dir.join("value.reg")) {
