@@ -4,9 +4,9 @@ import { t } from "../../i18n";
 import { dismissToast, getToasts, subscribeToasts, type ToastItem } from "../../lib/toast";
 
 const KIND_COLOR: Record<ToastItem["kind"], string> = {
-  success: "var(--ok)",
-  error: "var(--danger)",
-  info: "var(--accent)",
+  success: "var(--ok-ink)",
+  error: "var(--danger-text)",
+  info: "var(--accent-text)",
 };
 
 const KIND_BG: Record<ToastItem["kind"], string> = {
@@ -17,10 +17,12 @@ const KIND_BG: Record<ToastItem["kind"], string> = {
 
 export function ToastHost() {
   const items = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
-  if (!items.length) return null;
   const L = t();
+  // Keep the live region mounted so screen readers observe text changes.
   return (
     <div
+      aria-live="polite"
+      aria-atomic="false"
       style={{
         position: "fixed",
         right: 16,

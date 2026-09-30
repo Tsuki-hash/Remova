@@ -56,6 +56,7 @@ const LeftoverRow = memo(function LeftoverRow({
       <div>
         <input
           type="checkbox"
+          aria-label={it.path}
           checked={checked}
           onChange={() => onTogglePath(it.path)}
         />
@@ -72,7 +73,7 @@ const LeftoverRow = memo(function LeftoverRow({
           <div
             style={{
               fontSize: 11.5,
-              color: "var(--accent)",
+              color: "var(--accent-text)",
               marginTop: 2,
               lineHeight: 1.4,
               fontWeight: 500,
@@ -103,7 +104,7 @@ const LeftoverRow = memo(function LeftoverRow({
             style={{
               ...css.sourceBadge,
               marginLeft: 6,
-              color: "var(--danger)",
+              color: "var(--danger-text)",
               borderColor: "var(--danger)",
             }}
             title={L.userDataHint}
@@ -131,10 +132,10 @@ const LeftoverRow = memo(function LeftoverRow({
         style={{
           color:
             it.risk === "high"
-              ? "var(--danger)"
+              ? "var(--danger-text)"
               : it.confidence === "confirmed"
-                ? "var(--ok)"
-                : "var(--warn)",
+                ? "var(--ok-ink)"
+                : "var(--warn-ink)",
           fontWeight: 600,
           fontSize: 12,
         }}
@@ -250,7 +251,7 @@ export function ScanLeftoversView({
       Math.round(el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop),
     );
     setListMargin((m) => (Math.abs(m - next) > 0.5 ? next : m));
-  });
+  }, [displayItems.length, kindFilter]);
   const rowVirtualizer = useVirtualizer({
     count: displayItems.length,
     getScrollElement: () => scrollRef.current,

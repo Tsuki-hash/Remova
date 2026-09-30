@@ -7,7 +7,6 @@ pub(super) fn scan_path_env(
     install_low: &str,
     items: &mut Vec<CleanupItem>,
 ) {
-    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     let mut seen = std::collections::HashSet::new();
     for scope in ["User", "Machine"] {
         // Read the real per-scope PATH (not the merged process env).
@@ -29,9 +28,9 @@ pub(super) fn scan_path_env(
             // Boundary-anchored install hit: `C:\Steam` must not claim the
             // `C:\SteamTools\bin` PATH entry.
             let hit_install = is_under_install(low.trim_end_matches('\\'), install_low);
-            let hit_name = name_norms
+            let hit_name = name_slugs
                 .iter()
-                .any(|n| n.len() >= 5 && normalize_for_match(e).contains(n));
+                .any(|n| n.len() >= 5 && super::name_boundary_hit(e, n));
             if !hit_install && !hit_name {
                 continue;
             }
@@ -125,10 +124,9 @@ pub(super) fn scan_shell_extensions(
             for leaf in crate::regscan::list_subkeys(&root) {
                 let def = crate::regscan::read_string_default(&format!(r"{root}\{leaf}"))
                     .unwrap_or_default();
-                let blob = normalize_for_match(&format!("{leaf} {def}"));
-                let name_hit = name_norms
+                let name_hit = name_slugs
                     .iter()
-                    .any(|s| s.len() >= 5 && blob.contains(s.as_str()));
+                    .any(|s| s.len() >= 5 && super::name_boundary_hit(&format!("{leaf} {def}"), s));
                 // boundary-anchored on the raw default string — the
                 // normalized contains form matched any class whose default merely
                 // contained the install slug (`C:\App` → `capp` in "captured").
@@ -175,7 +173,6 @@ fn clsid_roots(alias: &str) -> Vec<String> {
 /// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
 pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
-    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for svc in crate::regscan::list_subkeys(root) {
         let svc_path = format!(r"{root}\{svc}");
         let Some(svc_type) = crate::regscan::read_dword(&svc_path, "Type") else {
@@ -190,11 +187,10 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
         }
         let image = service_image_string(&svc_path);
         let hit_install = super::cmdline_refs_install(&image, install_low);
-        let svc_n = normalize_for_match(&svc);
         let strong = hit_install
-            || name_norms
+            || name_slugs
                 .iter()
-                .any(|n| n.len() >= 5 && (n == &svc_n || svc_n.contains(n.as_str())));
+                .any(|n| n.len() >= 5 && super::name_boundary_hit(&svc, n));
         if !strong {
             continue;
         }
@@ -270,7 +266,6 @@ pub(super) fn scan_services(
     items: &mut Vec<CleanupItem>,
 ) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
-    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for svc in crate::regscan::list_subkeys(root) {
         let svc_path = format!("{root}\\{svc}");
         if is_safe_to_delete_registry(&svc_path).is_err() {
@@ -281,11 +276,10 @@ pub(super) fn scan_services(
         // string or service name that merely contains the install prefix
         // must not look like an install reference.
         let hit_install = super::cmdline_refs_install(&image, install_low);
-        let svc_n = normalize_for_match(&svc);
         let strong = hit_install
-            || name_norms
+            || name_slugs
                 .iter()
-                .any(|n| n.len() >= 6 && (n == &svc_n || svc_n.contains(n.as_str())));
+                .any(|n| n.len() >= 6 && super::name_boundary_hit(&svc, n));
         let _ = exe_stems;
         if !strong {
             continue;
@@ -316,7 +310,6 @@ pub(super) fn scan_services(
 
 pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
-    let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for top in crate::regscan::list_subkeys(root) {
         if top.eq_ignore_ascii_case("microsoft") {
             continue;
@@ -325,13 +318,12 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
         if is_safe_to_delete_registry(&key_path).is_err() {
             continue;
         }
-        let leaf_n = normalize_for_match(&top);
         // TaskCache\Tree key paths never contain file-system install
         // paths, and the action string lives in a binary blob under
         // TaskCache\Actions — install evidence here is the task NAME only.
-        let strong = name_norms
+        let strong = name_slugs
             .iter()
-            .any(|n| n == &leaf_n || (n.len() >= 6 && leaf_n.contains(n.as_str())));
+            .any(|n| n.len() >= 6 && super::name_boundary_hit(&top, n));
         if !strong {
             continue;
         }

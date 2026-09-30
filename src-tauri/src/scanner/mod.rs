@@ -107,7 +107,21 @@ fn is_config_path(path: &str) -> bool {
     p.contains("\\appdata\\") || p.contains("\\programdata\\") || p.contains("\\application data\\")
 }
 
+/// True when `install` is deep enough to act as an association prefix.
+/// Drive roots (`C:` / `C:\`) and empty strings never claim a whole drive.
+fn install_root_is_deep_enough(install: &str) -> bool {
+    let p = install.trim().replace('/', "\\");
+    let p = p.trim_end_matches('\\');
+    if p.is_empty() {
+        return false;
+    }
+    p.split('\\').filter(|s| !s.is_empty()).count() >= 2
+}
+
 fn is_under_install(path: &str, install: &str) -> bool {
+    if !install_root_is_deep_enough(install) {
+        return false;
+    }
     let a = path.to_lowercase().replace('/', "\\");
     let b = install
         .to_lowercase()
@@ -120,12 +134,27 @@ fn is_under_install(path: &str, install: &str) -> bool {
     a == b || a.starts_with(&format!("{b}\\"))
 }
 
+/// Product-name hit on a raw candidate string: exact normalize-equality or a
+/// boundary-anchored slug (`steam` hits `Steam Tray` / `steam.exe` but never
+/// `SteamToolsSvc` or `mysteamapp`).
+pub(crate) fn name_boundary_hit(candidate: &str, slug: &str) -> bool {
+    let cand_low = candidate.to_lowercase();
+    let slug_low = slug.to_lowercase();
+    if slug_low.is_empty() {
+        return false;
+    }
+    if normalize_for_match(candidate) == normalize_for_match(slug) {
+        return true;
+    }
+    slug_boundary_hit(&cand_low, &slug_low)
+}
+
 /// Install-location hit with path-segment boundaries for command-line data
 /// (`Run` values, service ImagePath): `C:\Steam` must not claim
 /// `C:\SteamTools\...`. Quoted tokens and the unquoted head are checked for a
 /// boundary-anchored install prefix (`install` itself or `install\…`).
 fn cmdline_refs_install(data: &str, install_low: &str) -> bool {
-    if install_low.is_empty() {
+    if install_low.is_empty() || !install_root_is_deep_enough(install_low) {
         return false;
     }
     let d = data.to_lowercase().replace('/', "\\");
@@ -804,6 +833,30 @@ mod tests {
         assert!(slug_boundary_hit(" 软件 ", "软件"));
         assert!(!slug_boundary_hit("abc", ""));
         assert!(!slug_boundary_hit("", ""));
+    }
+
+    /// Drive-root InstallLocation (`C:` / `C:\`) must never claim every path
+    /// on that drive in any association channel.
+    #[test]
+    fn install_root_drive_root_never_claims_whole_drive() {
+        assert!(!is_under_install(r"C:\Steam\bin", "c:"));
+        assert!(!is_under_install(r"C:\Steam\bin", r"c:\"));
+        assert!(!is_under_install(r"D:\Games\x", "d:"));
+        assert!(!cmdline_refs_install(r"C:\Steam\steam.exe", "c:"));
+        assert!(!cmdline_refs_install(r"C:\Steam\steam.exe", r"c:\"));
+        // Real portable install root still works.
+        assert!(is_under_install(r"C:\Steam\steam.exe", r"C:\Steam"));
+        assert!(cmdline_refs_install(r"C:\Steam\steam.exe", r"c:\steam"));
+    }
+
+    /// Name-side hits need non-alphanumeric boundaries — `steam` must not
+    /// claim `SteamToolsSvc` via bare substring containment.
+    #[test]
+    fn name_hit_requires_word_boundary() {
+        assert!(name_boundary_hit("Steam Tray Helper", "steam"));
+        assert!(name_boundary_hit("steamtray", "steamtray"));
+        assert!(!name_boundary_hit("SteamToolsSvc", "steam"));
+        assert!(!name_boundary_hit("mysteamapp", "steam"));
     }
 
     #[test]

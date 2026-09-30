@@ -354,9 +354,10 @@ fn backup_item_with_map(
             let rel = format!("{digest}_{name}");
             let dest = session.join("files").join(&rel);
             if src.is_dir() {
-                // Pin the source for the whole copy — the verified object is
-                // what gets enumerated, a swap-in junction cannot be followed.
-                let _pin = crate::fsutil::pin_dir_no_reparse(src).map_err(|e| e.to_string())?;
+                // copy_dir pins each level (including this root) with a
+                // non-following handle. A second outer pin that requests
+                // DELETE without FILE_SHARE_DELETE conflicts with that open
+                // (ERROR_SHARING_VIOLATION) — do not double-pin.
                 copy_dir(src, &dest).map_err(|e| e.to_string())?;
             } else {
                 if let Some(p) = dest.parent() {

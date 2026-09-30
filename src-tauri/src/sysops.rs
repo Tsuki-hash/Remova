@@ -191,18 +191,22 @@ mod tests {
     #[ignore = "real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn schedule_missing_path_no_panic() {
         if !allow_sys_mutation() {
-            return;
+            panic!("REMOVA_TEST_ALLOW_SYS_MUTATION=1 is required; refusing silent pass");
         }
-        let _ = super::schedule_delete_on_reboot(r"C:\remova_no_such_file_xyz");
+        // Missing path must not panic; the call returns a success flag.
+        let ok = super::schedule_delete_on_reboot(r"C:\remova_no_such_file_xyz");
+        let _ = ok;
     }
 
     #[test]
     #[ignore = "real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn restore_point_nonfatal() {
         if !allow_sys_mutation() {
-            return;
+            panic!("REMOVA_TEST_ALLOW_SYS_MUTATION=1 is required; refusing silent pass");
         }
-        let _ = super::create_restore_point("Remova test");
+        // Non-fatal helper: must return a flag + message, never panic.
+        let (ok, msg) = super::create_restore_point("Remova test");
+        assert!(!msg.is_empty() || ok, "restore point should report status");
     }
 
     #[cfg(windows)]

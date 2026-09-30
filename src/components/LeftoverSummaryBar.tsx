@@ -31,7 +31,7 @@ export function LeftoverSummaryBar({
       id: "keep" as const,
       label: L.bucketKeep,
       count: summary.keep,
-      color: "var(--danger)",
+      color: "var(--danger-text)",
       hint: L.bucketKeepHint,
     },
   ];
