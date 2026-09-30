@@ -187,7 +187,7 @@ pub fn allow_reg_value_write(key_path: &str, value_name: Option<&str>) -> Result
     Err(crate::error::safety_err(format!("registry write outside allowlist: {key_path}")).to_ipc())
 }
 
-fn normalize_hklm(key_path: &str) -> String {
+pub(crate) fn normalize_hklm(key_path: &str) -> String {
     let low = key_path.replace('/', "\\").to_uppercase();
     let low = low
         .strip_prefix("HKLM64\\")
