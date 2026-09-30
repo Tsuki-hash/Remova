@@ -2,11 +2,39 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use minisign_verify::{PublicKey, Signature};
 
+/// The updater key the app was BUILT with. The release pipeline injects it
+/// via `.release-signing/tauri.release.json` (tauri `--config` merge); dev
+/// builds have no patch file and keep the empty repo conf, where the
+/// environment key alone stays authoritative.
+fn expected_build_pubkey() -> Option<String> {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let patched = manifest.join("../.release-signing/tauri.release.json");
+    let text = std::fs::read_to_string(patched).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("plugins")?
+        .get("updater")?
+        .get("pubkey")?
+        .as_str()
+        .map(str::to_string)
+}
+
 fn verify() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args()
         .nth(1)
         .ok_or("usage: verify_update <installer>")?;
     let public = std::env::var("TAURI_UPDATER_PUBLIC_KEY")?;
+    // Cross-check: the verification key must be exactly the key the app was
+    // built with — a drifted or mismatched env key fails the gate before any
+    // signature is accepted.
+    if let Some(expected) = expected_build_pubkey() {
+        if public.trim() != expected.trim() {
+            return Err(
+                "TAURI_UPDATER_PUBLIC_KEY does not match the updater key the app was \
+                        built with (.release-signing/tauri.release.json)"
+                    .into(),
+            );
+        }
+    }
     let public = String::from_utf8(STANDARD.decode(public.trim())?)?;
     let signature = std::fs::read_to_string(format!("{file}.sig"))?;
     let signature = String::from_utf8(STANDARD.decode(signature.trim())?)?;

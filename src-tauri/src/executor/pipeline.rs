@@ -114,6 +114,22 @@ pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     crate::regops::leaf_name(reg_path)
 }
 
+/// Extract the SERVICE name from a `...\Services\<name>[\<subkey>]` registry
+/// path (value names via `|` are stripped first). Subkeys like `Parameters`
+/// are never service names — returning them would run `sc delete Parameters`.
+pub fn service_name_from_reg_path(reg_path: &str) -> Option<String> {
+    let key = reg_path.split('|').next().unwrap_or(reg_path);
+    let segs: Vec<&str> = key.split(['\\', '/']).collect();
+    let idx = segs
+        .iter()
+        .position(|s| s.eq_ignore_ascii_case("Services"))?;
+    let name = segs.get(idx + 1)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some((*name).to_string())
+}
+
 struct DeleteOutcome {
     deleted: u32,
     failed: u32,
@@ -187,12 +203,20 @@ fn delete_cleanup_items_source(
                 let low = it.path.to_uppercase();
                 let mut native_note = String::new();
                 if low.contains(r"\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
-                    let svc = crate::regops::leaf_name(&it.path);
-                    let native_ok = crate::regops::sc_delete_service(&svc);
-                    native_note = if native_ok {
-                        format!("sc delete {svc}: ok")
-                    } else {
-                        format!("sc delete {svc}: failed or not found")
+                    // The service name is the segment AFTER Services — a leaf
+                    // like `Parameters` or `Performance` is a subkey, never a
+                    // service name, and must not reach `sc delete`.
+                    let svc = service_name_from_reg_path(&it.path);
+                    let native_ok = svc
+                        .as_deref()
+                        .map(crate::regops::sc_delete_service)
+                        .unwrap_or(false);
+                    native_note = match (svc, native_ok) {
+                        (Some(name), true) => format!("sc delete {name}: ok"),
+                        (Some(name), false) => {
+                            format!("sc delete {name}: failed or not found")
+                        }
+                        (None, _) => "service subkey without a service name".to_string(),
                     };
                 } else if low.contains(r"\SCHEDULE\TASKCACHE\TREE\") {
                     // use full task path from TaskCache tree when possible.
@@ -437,6 +461,35 @@ mod tests {
         assert_eq!(
             task_full_name_from_reg_path(r"HKLM\...\TaskCache\Tree\Simple"),
             r"\Simple"
+        );
+    }
+
+    /// `sc delete` must target the segment after Services — subkeys like
+    /// Parameters are service configuration, never a service name.
+    #[test]
+    fn service_name_taken_from_services_segment() {
+        assert_eq!(
+            service_name_from_reg_path(
+                r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc\Parameters"
+            )
+            .as_deref(),
+            Some("VendorSvc")
+        );
+        assert_eq!(
+            service_name_from_reg_path(r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc")
+                .as_deref(),
+            Some("VendorSvc")
+        );
+        // value items keep the key part only.
+        assert_eq!(
+            service_name_from_reg_path(r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc|Start")
+                .as_deref(),
+            Some("VendorSvc")
+        );
+        // The Services root itself carries no service name.
+        assert_eq!(
+            service_name_from_reg_path(r"HKLM\SYSTEM\CurrentControlSet\Services"),
+            None
         );
     }
 

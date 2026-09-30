@@ -773,7 +773,9 @@ pub fn leaf_name(path: &str) -> String {
 /// Rename a registry value (copy data + delete old) under `key`.
 pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
     // intrinsic target gate — callers gate too, primitives enforce last.
-    crate::safety::allow_reg_value_write(key_path)?;
+    // Renames never target Services keys, so no value name is offered
+    // (the Services branch of the gate only whitelists the Start value).
+    crate::safety::allow_reg_value_write(key_path, None)?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, from, to);
@@ -855,7 +857,7 @@ fn normalize_reg_exe_hive(key_path: &str) -> String {
 
 pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(), String> {
     // intrinsic target gate — callers gate too, primitives enforce last.
-    crate::safety::allow_reg_value_write(key_path)?;
+    crate::safety::allow_reg_value_write(key_path, Some(value_name))?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -893,7 +895,7 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
 /// Write REG_BINARY under `key_path` (creates key tree via `reg add` fallback).
 pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result<(), String> {
     // intrinsic target gate — callers gate too, primitives enforce last.
-    crate::safety::allow_reg_value_write(key_path)?;
+    crate::safety::allow_reg_value_write(key_path, Some(value_name))?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name, data);
@@ -955,9 +957,10 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
     if crate::safety::is_critical_service(name) {
         return Err(format!("manage:protected:{svc_name}"));
     }
-    crate::safety::allow_reg_value_write(&format!(
-        r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"
-    ))?;
+    crate::safety::allow_reg_value_write(
+        &format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"),
+        Some("Start"),
+    )?;
     #[cfg(not(windows))]
     {
         let _ = (svc_name, start);

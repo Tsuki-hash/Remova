@@ -3,6 +3,15 @@ import { formatSize } from "../i18n";
 import { compareSemver } from "../semver";
 
 describe("compareSemver", () => {
+    // raw git tags with a single leading `v` must not compare as 0.0.0.
+    it("strips exactly one leading v on both sides", () => {
+      expect(compareSemver("v1.3.1", "1.3.0")).toBeGreaterThan(0);
+      expect(compareSemver("1.3.0", "v1.3.1")).toBeLessThan(0);
+      expect(compareSemver("v1.3.0", "v1.3.0")).toBe(0);
+      // a literal "vv1" keeps one v and parses as 0 — only one v is stripped.
+      expect(compareSemver("vv1.3.0", "0.3.0")).toBe(0);
+    });
+
   it("detects newer patch/minor/major", () => {
     expect(compareSemver("1.1.2", "1.1.1")).toBeGreaterThan(0);
     expect(compareSemver("1.2.0", "1.1.9")).toBeGreaterThan(0);

@@ -112,12 +112,13 @@ pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> 
             .map_err(|_| "update:read_body_failed".to_string())?;
         let v: serde_json::Value =
             serde_json::from_str(&body).map_err(|_| "update:parse_failed".to_string())?;
-        let tag = v
+        let raw_tag = v
             .get("tag_name")
             .and_then(|t| t.as_str())
             .unwrap_or("")
-            .trim_start_matches('v')
-            .to_string();
+            .trim();
+        // Strip exactly one leading `v` — matching the FE semver rule.
+        let tag = raw_tag.strip_prefix('v').unwrap_or(raw_tag).to_string();
         if tag.is_empty() {
             return Ok(None);
         }
