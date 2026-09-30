@@ -51,18 +51,28 @@ fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
     write_ignore_file(&p, list)
 }
 
+/// Deterministic tmp sibling — pid-suffixed so a second Remova process can
+/// never clobber our tmp; in-process writers serialize through FILE_LOCK.
+fn tmp_path(p: &std::path::Path) -> std::path::PathBuf {
+    p.with_extension(format!("json.{}.tmp", std::process::id()))
+}
+
 fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    // temp + rename so a crash mid-write cannot leave half a JSON file.
-    let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, s).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })?;
-    std::fs::rename(&tmp, p).map_err(|e| {
+    // tmp + fsync + rename — matches the shared atomic-write discipline.
+    let tmp = tmp_path(p);
+    let result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(s.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, p)
+    })();
+    result.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         e.to_string()
     })
@@ -294,7 +304,7 @@ mod tests {
             std::env::temp_dir().join(format!("remova-r23-ignore-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ignore.json");
-        let tmp = path.with_extension("json.tmp");
+        let tmp = super::tmp_path(&path);
         std::fs::write(&tmp, "old partial").unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)

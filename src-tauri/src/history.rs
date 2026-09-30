@@ -59,6 +59,12 @@ fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
 /// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
 /// one line at a time through a ring buffer — memory is O(keep), never O(file)
 /// (; also removes the old unbounded whole-file read on oversize).
+/// Deterministic tmp sibling — pid-suffixed so a second Remova process can
+/// never clobber our tmp; in-process writers serialize through FILE_LOCK.
+fn tmp_path(p: &Path) -> PathBuf {
+    p.with_extension(format!("jsonl.{}.tmp", std::process::id()))
+}
+
 /// Caller must hold [`FILE_LOCK`].
 fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
     let file = fs::File::open(p)?;
@@ -74,7 +80,7 @@ fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
         }
         ring.push_back(line);
     }
-    let tmp = p.with_extension("jsonl.tmp");
+    let tmp = tmp_path(p);
     let result = (|| -> std::io::Result<()> {
         let out = fs::File::create(&tmp)?;
         let mut w = BufWriter::new(out);
@@ -196,7 +202,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let Ok(file) = fs::File::open(&p) else {
         return Ok(0);
     };
-    let tmp = p.with_extension("jsonl.tmp");
+    let tmp = tmp_path(&p);
     let out = fs::File::create(&tmp).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(out);
     let mut reader = std::io::BufReader::new(file);
@@ -249,7 +255,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         let _ = fs::remove_file(&tmp);
         return Ok(0);
     }
-    // rename failure must not leave `history.jsonl.tmp` behind.
+    // rename failure must not leave the tmp file behind.
     fs::rename(&tmp, &p)
         .inspect_err(|_| {
             let _ = fs::remove_file(&tmp);
@@ -262,17 +268,19 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = p.with_extension("jsonl.tmp");
-    fs::write(&tmp, contents).map_err(|e| {
+    let tmp = tmp_path(p);
+    // tmp + fsync + rename — matches the shared atomic-write discipline.
+    let result = (|| -> std::io::Result<()> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, p)
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })?;
-    // align with ignore.rs — rename failure cleans the temp file.
-    fs::rename(&tmp, p)
-        .inspect_err(|_| {
-            let _ = fs::remove_file(&tmp);
-        })
-        .map_err(|e| e.to_string())
+    }
+    result.map_err(|e| e.to_string())
 }
 
 /// Clear all cleanup history rows (does not touch backup sessions).
@@ -307,7 +315,7 @@ mod tests {
             std::env::temp_dir().join(format!("remova-r23-history-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("history.jsonl");
-        let tmp = path.with_extension("jsonl.tmp");
+        let tmp = super::tmp_path(&path);
         std::fs::write(&tmp, "old partial").unwrap();
         // Deny write but allow delete: write fails, cleanup can remove the file.
         let held = std::fs::OpenOptions::new()
@@ -332,7 +340,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("history.jsonl");
         std::fs::write(&path, "{\"id\":\"L1\"}\n{\"id\":\"L2\"}\n").unwrap();
-        let tmp = path.with_extension("jsonl.tmp");
+        let tmp = super::tmp_path(&path);
         std::fs::write(&tmp, "old partial").unwrap();
         // Deny write but allow delete so create/write fails and cleanup can remove tmp.
         let held = std::fs::OpenOptions::new()
