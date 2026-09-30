@@ -85,7 +85,7 @@ export type SoftwareControllerInput = {
   riskFilter: "confirm" | "keep" | null;
   setRiskFilter: (v: "confirm" | "keep" | null) => void;
   detailPanel: ReactNode;
-  // domain action bags
+ // domain action bags
   core: {
     setSelected: (a: InstalledApp | null) => void;
     setMulti: SoftwarePageProps["setMulti"];
@@ -246,7 +246,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
           toast.info(L.batchUninstall);
         },
       }) satisfies SoftwarePageProps,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       input.apps,
       input.filtered,

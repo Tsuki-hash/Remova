@@ -116,8 +116,8 @@ export function useAppChrome({
   );
 
   const toggleMonitor = useCallback(async () => {
-    // Repeated clicks during the filesystem snapshot used to queue work and
-    // then dump a pile of toasts — one run at a time, one toast channel.
+ // Repeated clicks during the filesystem snapshot used to queue work and
+ // then dump a pile of toasts — one run at a time, one toast channel.
     if (monitorBusyRef.current) return;
     monitorBusyRef.current = true;
     const MON_CH = "install-monitor";
@@ -153,7 +153,7 @@ export function useAppChrome({
   const monitorDiffToCleanup = useCallback(
     (_diff: { added_files: string[]; added_reg_values: string[] }) => {
       try {
-        // Trusted items only: captured when the server finished the monitor snapshot.
+ // Trusted items only: captured when the server finished the monitor snapshot.
         const items = residual.monitorDiff?.items ?? [];
         if (!items.length) {
           toast.info(L.monitorNoSnap);
@@ -186,7 +186,7 @@ export function useAppChrome({
   );
 
   const checkupOrphanScan = useCallback(() => {
-    // -08: independent spinner — never touch the analyze `scanning` flag.
+ // -08: independent spinner — never touch the analyze `scanning` flag.
     void (async () => {
       setCheckupOrphanBusy(true);
       try {

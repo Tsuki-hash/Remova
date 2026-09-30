@@ -189,7 +189,7 @@ export function Shell({
               display: "flex",
               gap: 8,
               alignItems: "center",
-              // Keep controls clickable; only the chrome around them is draggable.
+ // Keep controls clickable; only the chrome around them is draggable.
             }}
           >
             {actions}
@@ -200,8 +200,8 @@ export function Shell({
           style={{
             flex: 1,
             minHeight: 0,
-            // block + own scroll: flex-column children were being height-shrunk
-            // (squashing banners and pushing tool panels off-screen).
+ // block + own scroll: flex-column children were being height-shrunk
+ // (squashing banners and pushing tool panels off-screen).
             display: "block",
             overflow: "auto",
             padding: "10px 14px 10px",

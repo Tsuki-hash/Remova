@@ -20,7 +20,7 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "schedule",
         "spooler",
         "themes",
-        // Manage-path expansions (): core OS / security / session services.
+        // Manage-path expansions : core OS / security / session services.
         "appinfo",
         "profsvc",
         "dcomlaunch",
@@ -399,7 +399,7 @@ fn env_dir_lower(name: &str) -> Option<String> {
     })
 }
 
-/// Protected FS prefixes: hardcoded C-drive defaults + live environment roots ().
+/// Protected FS prefixes: hardcoded C-drive defaults + live environment roots.
 pub fn protected_fs_prefixes() -> Vec<String> {
     let mut out = vec![
         r"c:\windows".to_string(),
@@ -441,7 +441,7 @@ pub fn protected_fs_prefixes() -> Vec<String> {
     out
 }
 
-/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits ().
+/// 8.3 short-name segment (`NAME~DIGITS` / `NAME~DIGITS.EXT`), 1–8 alnum + 1–8 digits.
 fn is_83_short_segment(seg: &str) -> bool {
     let low = seg.to_ascii_lowercase();
     let base = low.split('.').next().unwrap_or(low.as_str());
@@ -558,7 +558,7 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
             return false;
         }
     }
-    // S-R4: never write into Startup (persistence). Library *subpaths* stay restorable —
+    // : never write into Startup (persistence). Library *subpaths* stay restorable —
     // path_map is the server-side record of where the file came from (roots already blocked).
     if trimmed.contains("\\start menu\\programs\\startup")
         || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
@@ -1202,7 +1202,7 @@ mod tests {
         assert!(super::is_user_data_path(r"\\?\C:\Users\Aaron\Documents"));
     }
 
-    ///  adversarial: tampered path_map targeting system prefixes must be refused.
+    /// adversarial: tampered path_map targeting system prefixes must be refused.
     #[test]
     fn adversarial_restore_target_rejects_system_prefixes() {
         use std::path::Path;

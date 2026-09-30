@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-/// Windows reparse point (junction / mount / symlink). Never follow when copying ().
+/// Windows reparse point (junction / mount / symlink). Never follow when copying.
 pub fn is_reparse_point(p: &Path) -> bool {
     #[cfg(windows)]
     {
@@ -532,7 +532,7 @@ pub fn long_path_form(p: &Path) -> Option<String> {
     }
 }
 
-/// R23-QA companion: short (8.3) form of an existing path, for tests that
+/// companion: short (8.3) form of an existing path, for tests that
 /// exercise short-name handling (`None`/identity when the volume has 8.3
 /// name generation disabled).
 #[cfg(windows)]
@@ -874,7 +874,7 @@ mod tests {
         assert_eq!(csv_escape("plain"), "plain");
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
-        // OWASP CSV injection: formula prefixes are neutralized ().
+        // OWASP CSV injection: formula prefixes are neutralized.
         assert_eq!(csv_escape("=cmd|' /C calc'!A0"), "'=cmd|' /C calc'!A0");
         assert_eq!(csv_escape("+sum"), "'+sum");
         assert_eq!(csv_escape("-flag"), "'-flag");

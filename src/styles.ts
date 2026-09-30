@@ -175,8 +175,8 @@ export const cssStyles = {
     background: "var(--danger-soft)",
     border: "1px solid transparent",
     fontSize: 11,
-    // text-grade ink — the raw danger token sits below AA on the
-    // tinted chip background in the light theme.
+ // text-grade ink — the raw danger token sits below AA on the
+ // tinted chip background in the light theme.
     color: "var(--danger-text)",
     fontWeight: 600,
   },

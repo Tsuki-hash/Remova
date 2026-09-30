@@ -77,7 +77,7 @@ function isCompletedFullReport(
 export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppCoreState {
   switch (action.type) {
     case "apps/set": {
-      // refresh must not leave ghost selection / multi keys for vanished rows.
+ // refresh must not leave ghost selection / multi keys for vanished rows.
       const apps = action.value;
       const live = new Set(apps.map(appKey));
       const multi = new Set([...state.multi].filter((k) => live.has(k)));
@@ -111,7 +111,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
       return { ...state, scanning: action.value };
     case "report/set": {
       const value = action.value;
-      // `lastReport` is derived here and nowhere else — one writer, no drift.
+ // `lastReport` is derived here and nowhere else — one writer, no drift.
       const isFull = value !== null && isCompletedFullReport(value);
       return {
         ...state,

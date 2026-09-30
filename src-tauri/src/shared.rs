@@ -120,7 +120,7 @@ pub fn is_common_files_vendor_path(path: &str) -> bool {
 }
 
 /// Hard shared: exact CF roots, Microsoft Shared, name tokens, non-CF hard path markers.
-/// Matching is **name + path only** () — free-text `reason` must not force shared.
+/// Matching is **name + path only** — free-text `reason` must not force shared.
 pub fn is_hard_shared_item(name: &str, path: &str, reason: &str) -> bool {
     let _ = reason;
     let blob = format!("{}\n{}", lower(name), lower(path));

@@ -76,7 +76,7 @@ function isKnownIpcCode(code: string): boolean {
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   const L = t();
   const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-  // Backup errors may embed the seal code in a per-item failure message.
+ // Backup errors may embed the seal code in a per-item failure message.
   if (raw.includes("seal:")) {
     if (raw.includes("requires_admin")) return L.errSealAdmin;
     if (raw.includes("seal:legacy_manual_restore_only")) return L.errSealLegacy;
@@ -91,7 +91,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (kind === "not_found") return L.errElevateNotFound;
     return L.errElevateFailed(code);
   }
-  // RemovaError IPC: `code::message` (BE-01) — code must be a known domain prefix.
+ // RemovaError IPC: `code::message` (BE-01) — code must be a known domain prefix.
   const ipc = raw.trim().split("::");
   const head = ipc[0];
   if (head !== undefined && ipc.length >= 2 && isKnownIpcCode(head.toLowerCase().trim())) {
@@ -117,8 +117,8 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errCleanupFailed(name || code);
     }
     if (code.startsWith("ai:")) {
-      // backend now passes the underlying cause in the `::` tail —
-      // map the common ones to actionable text instead of one generic string.
+ // backend now passes the underlying cause in the `::` tail —
+ // map the common ones to actionable text instead of one generic string.
       const d = name.toLowerCase();
       if (d.includes("api key empty")) return L.aiErrKeyEmpty;
       if (d.includes("model empty")) return L.aiErrModelEmpty;
@@ -128,7 +128,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.aiFailed;
     }
   }
-  // manage:<kind>:<name>
+ // manage:<kind>:<name>
   const mg = raw.trim().match(/^manage:(access_denied|open_failed|write_failed|protected):(.*)$/i);
   if (mg) {
     const kind = mg[1]?.toLowerCase() ?? "";
@@ -139,7 +139,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
       return L.errServiceKey(name);
     }
   }
-  // open_path:* from open_path_in_explorer
+ // open_path:* from open_path_in_explorer
   if (raw === "open_path:empty" || raw.startsWith("open_path:empty:")) {
     return L.errOpenPathEmpty;
   }
@@ -161,7 +161,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   if (low.includes("critical system service protected") || low.includes("critical service")) {
     return L.errServiceProtected;
   }
-  // Legacy / untranslated leftovers
+ // Legacy / untranslated leftovers
   if (
     low.includes("open service key failed") ||
     low.includes("write start failed") ||

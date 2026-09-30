@@ -53,7 +53,7 @@ export function HistoryPanel({
     if (last && last.day === day) last.items.push(h);
     else groups.push({ day, items: [h] });
   }
-  // flatten day headers + entries into one windowed list.
+ // flatten day headers + entries into one windowed list.
   type HistoryUnit =
     | { kind: "header"; day: string }
     | { kind: "entry"; h: HistoryRow; idx: number };

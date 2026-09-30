@@ -58,7 +58,7 @@ describe("HistoryPanel", () => {
         onClose={onClose}
       />,
     );
-    // CloseGlyph is aria-hidden — the host button is the last action in the header.
+ // CloseGlyph is aria-hidden — the host button is the last action in the header.
     const buttons = within(container).getAllByRole("button");
     const close = buttons[buttons.length - 1]!;
     fireEvent.click(close);

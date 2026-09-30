@@ -28,7 +28,7 @@ export function OrphanOriginGroups({
 }) {
   const L = t();
   const [openPath, setOpenPath] = useState<string | null>(null);
-  // per-group expansion — the 8-item cap must not hide reachable paths.
+ // per-group expansion — the 8-item cap must not hide reachable paths.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   if (groups.length === 0) return null;
   return (

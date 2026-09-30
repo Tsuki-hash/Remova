@@ -54,8 +54,8 @@ export function ReportPanel({
               padding: "6px 10px",
               borderRadius: 8,
               background: "var(--ok)",
-              // Dark ink keeps AA contrast on the ok token in both themes
-              // (white on the dark-theme green falls below 4.5:1).
+ // Dark ink keeps AA contrast on the ok token in both themes
+ // (white on the dark-theme green falls below 4.5:1).
               color: "#0B1220",
               fontSize: 12,
               fontWeight: 600,
@@ -190,8 +190,8 @@ export function ReportPanel({
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}
-            // regenerate goes through the hook's seq-guarded
-            // runAiReport — the old inline path raced the auto effect.
+ // regenerate goes through the hook's seq-guarded
+ // runAiReport — the old inline path raced the auto effect.
             onClick={onRegenerate}
           >
             {aiReportBusy ? L.aiReportBusy : L.aiReportSummary}

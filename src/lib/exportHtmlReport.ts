@@ -33,7 +33,7 @@ export function exportHtmlReport(r: FullCleanupReport, L: Strings) {
         `<tr><td>${escapeHtml(d.kind)}</td><td>${escapeHtml(d.status)}</td><td>${escapeHtml(d.path)}</td><td>${escapeHtml(gateReasonText(d.message, L))}</td></tr>`,
     )
     .join("\n");
-  // the document language and labels follow the UI locale, not a hardcoded zh.
+ // the document language and labels follow the UI locale, not a hardcoded zh.
   const lang = currentLang() === "en" ? "en" : "zh-CN";
   const html = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>Remova report — ${escapeHtml(r.app_name)}</title>
 <style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef}</style>

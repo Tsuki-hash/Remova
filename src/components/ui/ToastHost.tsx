@@ -18,7 +18,7 @@ const KIND_BG: Record<ToastItem["kind"], string> = {
 export function ToastHost() {
   const items = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
   const L = t();
-  // Keep the live region mounted so screen readers observe text changes.
+ // Keep the live region mounted so screen readers observe text changes.
   return (
     <div
       aria-live="polite"

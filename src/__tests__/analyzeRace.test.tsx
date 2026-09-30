@@ -115,15 +115,15 @@ describe("useAnalyzeFlow request sequencing", () => {
     });
     expect(captured.scanning).toBe(true);
 
-    // Newest finishes first.
+ // Newest finishes first.
     await act(async () => {
       resolveB(scanB);
     });
     expect(captured.scan).toBe(scanB);
-    // The older request must not resurrect the spinner.
+ // The older request must not resurrect the spinner.
     expect(captured.scanning).toBe(false);
 
-    // Stale response lands afterwards — it must be ignored entirely.
+ // Stale response lands afterwards — it must be ignored entirely.
     await act(async () => {
       resolveA(scanA);
     });
@@ -153,7 +153,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(calls).toBe(1);
     expect(captured.scan?.app_name).toBe("AppA");
 
-    // a second run must replace the previous result.
+ // a second run must replace the previous result.
     await act(async () => {
       await result.current.analyze(app("AppB"));
     });

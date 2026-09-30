@@ -98,7 +98,7 @@ export function useCleanupHandlers({
       const aseq = ++forceAnalyzeSeqRef.current;
       try {
         const r = await api.analyze(target);
-        // -07: a newer force-clean/analyze started while this one was in flight.
+ // -07: a newer force-clean/analyze started while this one was in flight.
         if (aseq !== forceAnalyzeSeqRef.current) return;
         const items = r.items.filter(defaultSelectable);
         if (!items.length) {
@@ -135,8 +135,8 @@ export function useCleanupHandlers({
           `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
         );
         setReport(report);
-        // a new report must never inherit the previous cleanup's
-        // post-cleanup verify list or AI narrative.
+ // a new report must never inherit the previous cleanup's
+ // post-cleanup verify list or AI narrative.
         setVerifyRows(null);
         setAiReportNote(null);
         void refreshApps();
@@ -153,7 +153,7 @@ export function useCleanupHandlers({
 
   const dryRun = useCallback(async () => {
     if (!scan || !selected) return;
-    // -05: never overlap dry-run with another busy cleanup/uninstall.
+ // -05: never overlap dry-run with another busy cleanup/uninstall.
     if (busyRef.current) return;
     busyRef.current = true;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
@@ -196,7 +196,7 @@ export function useCleanupHandlers({
       return;
     }
     if (opts?.slotHeld) {
-      // Caller already owns busyRef (confirm pipeline).
+ // Caller already owns busyRef (confirm pipeline).
     } else if (busyRef.current) {
       return;
     } else {
@@ -208,8 +208,8 @@ export function useCleanupHandlers({
     try {
       const r = await api.fullCleanup(selected, items, {
         dry_run: false,
-        // Residual cleanup after official uninstall never re-runs official uninstaller.
-        // Deep-analyze path may still opt in via the checkbox.
+ // Residual cleanup after official uninstall never re-runs official uninstaller.
+ // Deep-analyze path may still opt in via the checkbox.
         skip_official_uninstall:
           residualFromUninstall ||
           !useOfficial ||
@@ -241,7 +241,7 @@ export function useCleanupHandlers({
       } else {
         toast.success(L.batchDetail(r.deleted, r.failed));
       }
-      // SOP checklist: re-probe cleaned paths
+ // SOP checklist: re-probe cleaned paths
       const vseq = ++verifySeqRef.current;
       void api
         .verifyLeftovers(items)
@@ -286,12 +286,12 @@ export function useCleanupHandlers({
       toast.info(L.taskBusy);
       return;
     }
-    // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
+ // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
     busyRef.current = true;
     try {
     const n = selectedPaths.size;
     if (n === 0) {
-      // FE-N3 / never confirm an empty cleanup set — say "select rows", not "cleanup".
+ // FE-N3 / never confirm an empty cleanup set — say "select rows", not "cleanup".
       toast.info(L.selectRowHint);
       busyRef.current = false;
       return;
@@ -301,7 +301,7 @@ export function useCleanupHandlers({
       n,
       residualFromUninstall || useOfficial,
     )}`;
-    // Never truncate: high-risk must stay visible.
+ // Never truncate: high-risk must stay visible.
     message = `${message}${formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle)}`;
     if (picked.some((it) => /\\common files\\/i.test(it.path))) {
       message = `${message}\n\n${L.confirmCommonFilesHint}`;
@@ -332,7 +332,7 @@ export function useCleanupHandlers({
           message = `${message}\n\n${L.aiRiskTitle}: ${brief.slice(0, 160)}`;
         }
       } catch {
-        // non-blocking
+ // non-blocking
       }
     }
     const { ok, checked } = await requestConfirmEx({
@@ -367,7 +367,7 @@ export function useCleanupHandlers({
 
   const batchCleanup = useCallback(
     async (queueOverride?: InstalledApp[]) => {
-      // one Set for the whole filter, not per row.
+ // one Set for the whole filter, not per row.
       const multiSet = new Set(multi);
       const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
       if (!queue.length) {
@@ -383,7 +383,7 @@ export function useCleanupHandlers({
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
       });
       if (!ok) return;
-      // confirm is async — another cleanup may have taken busyRef meanwhile.
+ // confirm is async — another cleanup may have taken busyRef meanwhile.
       if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
       try {
@@ -399,7 +399,7 @@ export function useCleanupHandlers({
             onShowSummary: setShowBatchSummary,
             onSetBatching: setBatching,
             onDoneKeys: (keys) => {
-              // remove finished keys without clearing failed multi selections.
+ // remove finished keys without clearing failed multi selections.
               setMulti((m) => {
                 const okSet = new Set(keys);
                 const n = new Set(m);
@@ -412,7 +412,7 @@ export function useCleanupHandlers({
           },
           checked,
         );
-        // List must reflect uninstalled apps immediately.
+ // List must reflect uninstalled apps immediately.
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));

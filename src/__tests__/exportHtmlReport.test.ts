@@ -114,7 +114,7 @@ afterEach(() => {
 describe("exportHtmlReport (real module)", () => {
   it("escapes path/message and triggers download with sanitized filename", async () => {
     exportHtmlReport(report(), L);
-    // Blob text resolves async in the mock — wait instead of guessing microtask depth.
+ // Blob text resolves async in the mock — wait instead of guessing microtask depth.
     await vi.waitFor(() => expect(captured.clicked).toBe(true));
 
     expect(captured.download).toBe("remova-report-Demo_App_.html");
@@ -124,7 +124,7 @@ describe("exportHtmlReport (real module)", () => {
     expect(captured.html).not.toContain("<script>");
     expect(captured.html).toContain("清理");
     expect(captured.html).toContain("备份: C:\\bak");
-    // labels come from the passed strings, not hardcoded English.
+ // labels come from the passed strings, not hardcoded English.
     expect(captured.html).toContain("<th>类型</th>");
     expect(captured.html).toContain("<th>结果</th>");
     expect(captured.html).toMatch(/<html lang="(zh|zh-CN|en)">/);

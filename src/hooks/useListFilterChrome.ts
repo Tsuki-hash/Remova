@@ -13,7 +13,7 @@ export function useListFilterChrome() {
   );
   const setSortDesc = useCallback((value: boolean | ((d: boolean) => boolean)) => {
     if (typeof value === "function") {
-      // reducer applies the updater to the latest state.
+ // reducer applies the updater to the latest state.
       dispatch({ type: "sortDesc/update", value });
     } else {
       dispatch({ type: "sortDesc/set", value });

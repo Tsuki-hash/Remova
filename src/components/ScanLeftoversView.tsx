@@ -117,8 +117,8 @@ const LeftoverRow = memo(function LeftoverRow({
             style={{
               ...css.sourceBadge,
               marginLeft: 6,
-              // `--mid` never existed — the fallback amber was
-              // unreadable on light panels as text (≈1.75:1).
+ // `--mid` never existed — the fallback amber was
+ // unreadable on light panels as text (≈1.75:1).
               color: "var(--warn-ink)",
               borderColor: "var(--warn)",
             }}
@@ -238,8 +238,8 @@ export function ScanLeftoversView({
     return L[key];
   }, [kindFilter, L]);
 
-  // The list starts below the column header and (for orphans) the origin-group
-  // block — tell the virtualizer where item 0 actually sits.
+ // The list starts below the column header and (for orphans) the origin-group
+ // block — tell the virtualizer where item 0 actually sits.
   const listRef = useRef<HTMLDivElement | null>(null);
   const [listMargin, setListMargin] = useState(0);
   useLayoutEffect(() => {
@@ -350,8 +350,8 @@ export function ScanLeftoversView({
         ) : (
           <div
             ref={listRef}
-            // getTotalSize() already excludes scrollMargin (TanStack v3) —
-            // subtracting listMargin here double-counted and clipped the tail.
+ // getTotalSize() already excludes scrollMargin (TanStack v3) —
+ // subtracting listMargin here double-counted and clipped the tail.
             style={{ height: totalSize, position: "relative" }}
           >
             {virtualRows.map((vr) => {

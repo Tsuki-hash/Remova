@@ -38,8 +38,8 @@ export function VirtualList<T>({
     return empty ? <>{empty}</> : null;
   }
   const virtualItems = virtualizer.getVirtualItems();
-  // Unmeasurable viewport (jsdom, display:none) yields an empty window —
-  // render everything rather than nothing. Real browsers always measure.
+ // Unmeasurable viewport (jsdom, display:none) yields an empty window —
+ // render everything rather than nothing. Real browsers always measure.
   const fallbackAll = virtualItems.length === 0;
   return (
     <div

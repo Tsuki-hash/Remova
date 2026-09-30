@@ -53,9 +53,9 @@ export function looksMicrosoft(it: ManageLike): boolean {
   if (SYSTEM_NAME_PREFIXES.some((p) => leaf.startsWith(p) && (leaf.length === p.length || !/[a-z]/.test(leaf[p.length] ?? "")))) {
     return true;
   }
-  // Short pure system-style names like "W32Time" / "WpnUserService"
+ // Short pure system-style names like "W32Time" / "WpnUserService"
   if (/^w[a-z0-9]{2,14}$/.test(leaf) && !leaf.includes("web") && !leaf.includes("winget")) {
-    // only when detail/path also looks system-ish or name is a known short token
+ // only when detail/path also looks system-ish or name is a known short token
     if (SYSTEM_NAME_PREFIXES.some((p) => leaf.startsWith(p))) return true;
   }
   return false;

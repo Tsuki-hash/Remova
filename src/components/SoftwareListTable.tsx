@@ -54,8 +54,8 @@ export function SoftwareListTable({
 }) {
   const L = t();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
-  // -10: read `selected` via ref so `ensureSelected` stays referentially stable
-  // and does not punch a hole through AppRow's memo when selection changes.
+ // -10: read `selected` via ref so `ensureSelected` stays referentially stable
+ // and does not punch a hole through AppRow's memo when selection changes.
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const ensureSelected = useCallback(

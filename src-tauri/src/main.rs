@@ -2,7 +2,7 @@
 
 fn main() {
     // Context menu: `Remova.exe --analyze "C:\path\to\app.exe"`
-    // Write the path for the webview to pick up after startup ().
+    // Write the path for the webview to pick up after startup.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(i) = args.iter().position(|a| a == "--analyze") {
         if let Some(target) = args.get(i + 1) {

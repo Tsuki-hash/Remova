@@ -68,8 +68,8 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
-      // single in-flight ref (was dual scanningRef/analyzingRef).
-      // Newer analyze supersedes via seq — do not early-return here (race tests require it).
+ // single in-flight ref (was dual scanningRef/analyzingRef).
+ // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
       goNav("software");
@@ -81,7 +81,7 @@ export function useAnalyzeFlow({
       setAiNotes({});
       setAiRisk(null);
       setIgnoreSuggestions([]);
-      // A new app's scan must not inherit the previous app's evidence bar.
+ // A new app's scan must not inherit the previous app's evidence bar.
       setEvidence(null);
       const t0 = performance.now();
       try {
@@ -154,8 +154,8 @@ export function useAnalyzeFlow({
       });
       if (!ok) return;
       if (busyRef.current) return;
-      // kill the previous run's stage timer here — its 2.2s tail
-      // would otherwise fire mid-run and flip the bar back to idle.
+ // kill the previous run's stage timer here — its 2.2s tail
+ // would otherwise fire mid-run and flip the bar back to idle.
       clearStageTimer();
       saveRescanAfterUninstall(checked);
       const key = appKey(app);
@@ -178,10 +178,10 @@ export function useAnalyzeFlow({
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
-          // arm the residual flag — the post-uninstall rescan must
-          // clean leftovers WITHOUT re-running the official uninstaller, and
-          // the cleanup UI must hide the official-uninstall toggle. execReal
-          // clears the flag once the residual pass finishes.
+ // arm the residual flag — the post-uninstall rescan must
+ // clean leftovers WITHOUT re-running the official uninstaller, and
+ // the cleanup UI must hide the official-uninstall toggle. execReal
+ // clears the flag once the residual pass finishes.
           setResidualFromUninstall(true);
           await analyze(app, { fromUninstall: true });
           setUninstallStage("analyze");
@@ -244,7 +244,7 @@ export function useAnalyzeFlow({
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
         else if (r.ok) toast.success(strings.uninstallOk);
         else toast.error(`${strings.uninstallFail}: ${r.message}`);
-        // default-on rescan after successful official uninstall only.
+ // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
           await analyze(app, { fromUninstall: true });

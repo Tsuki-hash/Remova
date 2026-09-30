@@ -27,7 +27,7 @@ export function useScanUiState() {
     dispatch({ type: "aiNudge/dismiss" });
   }, []);
 
-  // stable object identity — SoftwarePage memo depends on this bag.
+ // stable object identity — SoftwarePage memo depends on this bag.
   return useMemo(
     () => ({
       kindFilter: state.kindFilter,

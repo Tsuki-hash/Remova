@@ -40,7 +40,7 @@ pub fn backup_root() -> PathBuf {
 }
 
 /// Serializes tests that mutate process-wide `REMOVA_BACKUP_DIR` so parallel
-/// suites cannot steal each other's backup root ().
+/// suites cannot steal each other's backup root.
 #[cfg(test)]
 pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -46,7 +46,7 @@ use tauri::Manager;
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    // scan_installed_apps already refreshes the uninstall trust table ().
+    // scan_installed_apps already refreshes the uninstall trust table.
     tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
         .await
         .map_err(|e| e.to_string())
@@ -463,7 +463,7 @@ fn disk_usage() -> Result<DiskInfo, String> {
     {
         use windows::core::PCWSTR;
         use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-        // System drive, not hardcoded C: ()
+        // System drive, not hardcoded C:
         let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
         let drive = drive.trim_end_matches('\\').to_uppercase();
         let root = format!("{drive}\\\0");

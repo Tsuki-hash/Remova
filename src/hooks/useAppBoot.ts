@@ -72,7 +72,7 @@ export function useAppBoot({
         setDisk(`${drive} ${d.free_gb.toFixed(1)} / ${d.total_gb.toFixed(0)} GB`);
       })
       .catch((e) => console.warn("[boot] diskUsage", e));
-    // Silent update check on launch (never navigates)
+ // Silent update check on launch (never navigates)
     void checkLatestRelease()
       .then((res) => {
         if (!res.ok || !res.info) return;
@@ -83,8 +83,8 @@ export function useAppBoot({
         }
       })
       .catch(() => {});
-    // Context menu --analyze handoff runs after apps load (see nav-assist hooks)
-    // Custom chrome: close → tray (default) or quit; busy still asks first.
+ // Context menu --analyze handoff runs after apps load (see nav-assist hooks)
+ // Custom chrome: close → tray (default) or quit; busy still asks first.
     let unlistenClose: (() => void) | null = null;
     let chromeDisposed = false;
     void (async () => {
@@ -92,8 +92,8 @@ export function useAppBoot({
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
         const unlisten = await win.onCloseRequested(async (event) => {
-          // Tauri requires preventDefault SYNCHRONOUSLY or the window may
-          // close before async policy/dialog runs (X appeared dead after choice).
+ // Tauri requires preventDefault SYNCHRONOUSLY or the window may
+ // close before async policy/dialog runs (X appeared dead after choice).
           event.preventDefault();
           if (busyRef.current) {
             const ok = await requestConfirm({
@@ -108,7 +108,7 @@ export function useAppBoot({
             try {
               await win.destroy();
             } catch {
-              // ignore
+ // ignore
             }
             return;
           }
@@ -117,7 +117,7 @@ export function useAppBoot({
             try {
               await win.destroy();
             } catch {
-              // ignore
+ // ignore
             }
             return;
           }
@@ -125,15 +125,15 @@ export function useAppBoot({
             try {
               await win.hide();
             } catch {
-              // ignore
+ // ignore
             }
           }
         });
-        // the effect may already be gone when the dynamic import resolved.
+ // the effect may already be gone when the dynamic import resolved.
         if (chromeDisposed) unlisten();
         else unlistenClose = unlisten;
       } catch {
-        // not in tauri
+ // not in tauri
       }
     })();
     return () => {
@@ -141,7 +141,7 @@ export function useAppBoot({
       chromeDisposed = true;
       unlistenClose?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
 
@@ -166,7 +166,7 @@ export async function checkUpdateNow(
   try {
     const res = await checkLatestRelease();
     if (!res.ok) {
-      // Show the concrete reason first, then jump to Releases as a fallback path.
+ // Show the concrete reason first, then jump to Releases as a fallback path.
       toast.error(`${L.versionCheckFailed}: ${res.reason}`);
       await openReleases();
       return;

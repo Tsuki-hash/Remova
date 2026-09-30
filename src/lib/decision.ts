@@ -133,7 +133,7 @@ export function decisionChips(
       title: `${sizeKb} KB`,
     });
   }
-  // List rows: at most one high-signal chip —full metadata lives in detail panel.
+ // List rows: at most one high-signal chip —full metadata lives in detail panel.
   if (compact) {
     const priority = ["no-uninstall", "recommend", "large"] as const;
     for (const id of priority) {
@@ -203,7 +203,7 @@ export function riskTierLabel(
 ): string {
   if (tier === "high") return L.riskTierHigh;
   if (tier === "medium") return L.riskTierMedium;
-  // Safe only when nothing is medium/high — callers pass maxRisk so low means low-risk items only.
+ // Safe only when nothing is medium/high — callers pass maxRisk so low means low-risk items only.
   return L.riskTierLow;
 }
 
@@ -226,7 +226,7 @@ export function buildCleanupRiskBits(
 }
 
 /** Format risk callouts for a confirm message body (no raw warning glyphs). */
-/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it (). */
+/** Large-install threshold (KB). Single source — checkup tile and "large" filter share it. */
 export const LARGE_APP_KB = 500 * 1024;
 
 /** callers must pass localized title. */
@@ -322,7 +322,7 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
   if (m.includes("path missing")) return L.reasonPathMissing;
   if (m.includes("not found in path")) return L.reasonNotInPath;
   if (m.includes("reboot delete")) return L.reasonRebootDelete;
-  // -09: common Chinese backend / reason copy (same buckets as the codes above).
+ // -09: common Chinese backend / reason copy (same buckets as the codes above).
   if (raw.includes("用户数据") || raw.includes("用户资料")) return L.reasonUserData;
   if (raw.includes("共享运行") || raw.includes("共享组件") || raw.includes("共享库")) {
     return L.reasonShared;
@@ -357,7 +357,7 @@ export function originLabel(path: string): string {
     .filter((s) => s && !/^[A-Za-z]:$/.test(s));
   if (parts.length === 0) return path || "-";
   let last = parts[parts.length - 1] ?? path;
-  // File path → use parent folder as the origin hint.
+ // File path → use parent folder as the origin hint.
   if (parts.length >= 2 && /\.[A-Za-z0-9]{1,12}$/.test(last) && !last.startsWith(".")) {
     last = parts[parts.length - 2] ?? last;
   }

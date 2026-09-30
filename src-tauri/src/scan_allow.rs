@@ -1,5 +1,5 @@
 //! Server-side allow-lists for scoped scans (installer / toolcache).
-//! Same trust model as orphan paths (): only paths from the latest scan may be deleted.
+//! Same trust model as orphan paths : only paths from the latest scan may be deleted.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};

@@ -45,7 +45,7 @@ function push(
   };
   items = [...items, item].slice(-5);
   if (!item.sticky) {
-    // Auto-dismiss quickly (3s); sticky remains opt-in for rare blocking alerts.
+ // Auto-dismiss quickly (3s); sticky remains opt-in for rare blocking alerts.
     const ttl = opts?.ttl ?? 3000;
     timers.set(id, setTimeout(() => dismissToast(id), ttl));
   }
@@ -74,7 +74,7 @@ export const toast = {
     message: string,
     opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
   ) {
-    // Errors need longer on-screen time for screen readers / slow readers.
+ // Errors need longer on-screen time for screen readers / slow readers.
     return push("error", message, { ttl: 7000, ...opts });
   },
   info(

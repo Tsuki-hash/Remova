@@ -71,7 +71,7 @@ export function ToolCard({
         e.currentTarget.style.boxShadow = "none";
       }}
       onFocus={(e) => {
-        // keyboard focus must be as visible as hover.
+ // keyboard focus must be as visible as hover.
         if (active) return;
         e.currentTarget.style.borderColor = "var(--border-strong)";
         e.currentTarget.style.boxShadow = "0 0 0 2px var(--accent-soft)";

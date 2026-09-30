@@ -38,7 +38,7 @@ export function usePopupMenu({
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" || e.key === "Tab") {
-        // Tab must not leave focus outside an open menu — close and restore.
+ // Tab must not leave focus outside an open menu — close and restore.
         e.preventDefault();
         onClose(true);
         return;
@@ -65,7 +65,7 @@ export function usePopupMenu({
       document.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-    // The effect owns the open-lifecycle only; onClose is captured at open time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+ // The effect owns the open-lifecycle only; onClose is captured at open time.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, menuRef, triggerRef]);
 }

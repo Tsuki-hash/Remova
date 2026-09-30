@@ -27,7 +27,7 @@ describe("sourceLabel", () => {
 
 describe("formatError manage codes", () => {
   it("maps access_denied to Chinese admin guidance", () => {
-    // default lang is zh
+ // default lang is zh
     const msg = formatError("manage:access_denied:WslInstaller");
     expect(msg).toContain("权限不足");
     expect(msg).toContain("WslInstaller");
@@ -57,17 +57,17 @@ describe("formatError manage codes", () => {
   });
 
   it("does not misparse :: outside known IPC code prefixes (F-R6-09)", () => {
-    // PACKAGED location strings use `::` but are not RemovaError IPC.
+ // PACKAGED location strings use `::` but are not RemovaError IPC.
     const packaged = formatError(
       "PACKAGED::HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run::Evil",
     );
     expect(packaged).not.toContain("关键服务");
     expect(packaged).toContain("PACKAGED");
-    // Generic `foo: bar :: detail` is not a known code either.
+ // Generic `foo: bar :: detail` is not a known code either.
     const weird = formatError("error: something :: detail");
     expect(weird).not.toContain("关键服务");
     expect(weird).toContain("something");
-    // Known prefixes still map.
+ // Known prefixes still map.
     expect(formatError("manage:bad_name::svc")).toBeTruthy();
   });
 

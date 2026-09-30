@@ -98,7 +98,7 @@ describe("decisionChips compact", () => {
       { ...L, chipRecommend: "推荐清理" },
       { compact: true, now: NOW },
     );
-    // 3 GB app with an uninstall cmd → exactly the recommend chip, nothing else.
+ // 3 GB app with an uninstall cmd → exactly the recommend chip, nothing else.
     expect(chips.map((c) => c.id)).toEqual(["recommend"]);
   });
 
@@ -186,7 +186,7 @@ describe("decisionChips", () => {
       largeKb: 10_000_000,
       recentDays: 0,
     });
-    // no-uninstall + store
+ // no-uninstall + store
     expect(chips.some((c) => c.id === "store")).toBe(true);
   });
 });
@@ -215,7 +215,7 @@ describe("leftoverReasonLine / gateReasonText", () => {
     expect(leftoverReasonLine(item({ risk: "high" }), L)).toBe(L.reasonHigh);
     expect(leftoverReasonLine(item(), L)).toBe(L.reasonBelongs);
     expect(leftoverReasonLine(item({ confidence: "suspected" }), L)).toBe(L.reasonSuspect);
-    // library paths are never default-selected (confirm bucket)
+ // library paths are never default-selected (confirm bucket)
     expect(defaultSelectable(item({ user_library: true, confidence: "confirmed" }))).toBe(false);
     expect(isSuggestItem(item({ user_library: true, confidence: "confirmed" }))).toBe(true);
   });
@@ -289,7 +289,7 @@ describe("recommendScore / health / progress", () => {
     const a = app({ install_date: "20200101" });
     expect(isRecommendedCleanup(a, 3 * 1024 * 1024, NOW)).toBe(true);
     expect(isRecommendedCleanup(a, 10, NOW)).toBe(false);
-    // 1 GB + 90 days old → recommend; recent install → not yet.
+ // 1 GB + 90 days old → recommend; recent install → not yet.
     expect(isRecommendedCleanup(app({ install_date: "20260301" }), 1024 * 1024, NOW)).toBe(true);
     expect(isRecommendedCleanup(app({ install_date: "20260601" }), 1024 * 1024, NOW)).toBe(false);
     expect(recommendScore(a, 3 * 1024 * 1024, NOW)).toBeGreaterThan(50);

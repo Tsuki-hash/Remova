@@ -761,7 +761,7 @@ pub fn analyze_associations(
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
         {
-            // Frontend i18n renders the user-data hint () — keep reason English-neutral.
+            // Frontend i18n renders the user-data hint — keep reason English-neutral.
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {

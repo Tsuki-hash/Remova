@@ -727,7 +727,7 @@ pub fn set_service_running(name: &str, run: bool) -> Result<(), String> {
     crate::regops::sc_set_service_running(name, run)
 }
 
-/// Tasks seen in the latest `list_scheduled_tasks` ().
+/// Tasks seen in the latest `list_scheduled_tasks`.
 static TASK_TRUST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
     std::sync::OnceLock::new();
 
@@ -779,7 +779,7 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
         let action = if enabled { "/enable" } else { "/disable" };
         let mut cmd = Command::new(format!(r"{windir}\System32\schtasks.exe"));
         // No manual quotes: std::process::Command already quotes args containing spaces.
-        // Manual quotes make schtasks look for a name with literal quote chars ().
+        // Manual quotes make schtasks look for a name with literal quote chars.
         cmd.args(["/change", "/tn", task_name, action]);
         crate::regops::hide_console(&mut cmd);
         let st = cmd.output().map_err(|e| e.to_string())?;

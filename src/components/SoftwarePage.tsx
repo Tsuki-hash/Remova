@@ -32,7 +32,7 @@ import { BatchActionBar } from "./BatchActionBar";
 import { CleanupConclusion } from "./CleanupConclusion";
 
 export type SoftwarePageProps = {
-  // list
+ // list
   apps: InstalledApp[];
   filtered: InstalledApp[];
   loading: boolean;
@@ -57,7 +57,7 @@ export type SoftwarePageProps = {
   appKey: (a: InstalledApp) => string;
   setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
 
-  // toolbar / chrome
+ // toolbar / chrome
   estimating: boolean;
   scanning: boolean;
   aiEnabled: boolean;
@@ -69,7 +69,7 @@ export type SoftwarePageProps = {
   onStopEstimate: () => void;
   onOpenAi: () => void;
 
-  // scan / cleanup
+ // scan / cleanup
   scan: ScanResult | null;
   selectedPaths: Set<string>;
   evidence: string | null;
@@ -96,7 +96,7 @@ export type SoftwarePageProps = {
   onAiExplain: () => void;
   onRegenerateAiReport: () => void;
 
-  // report / checkup / batch
+ // report / checkup / batch
   error: string | null;
   setError: (e: string | null) => void;
   report: CleanupReport | FullCleanupReport | null;
@@ -124,7 +124,7 @@ export type SoftwarePageProps = {
   cancelBatch: () => void;
   batchCleanup: () => void;
 
-  // conclusion / filters / detail
+ // conclusion / filters / detail
   kindFilter: LinkedBucketId | null;
   setKindFilter: (v: LinkedBucketId | null) => void;
   riskFilter: "confirm" | "keep" | null;

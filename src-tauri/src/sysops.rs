@@ -76,9 +76,9 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
 /// Relaunch current exe elevated via ShellExecuteW "runas".
 /// On failure returns a stable `elevate:<kind>:<code>` string for UI localization:
 /// denied / cancelled / not_found / failed.
-/// Quote one Windows command-line argument ().
+/// Quote one Windows command-line argument.
 /// Follows CommandLineToArgvW: `\"` for embedded quotes, and trailing
-/// backslashes before a closing quote are doubled ().
+/// backslashes before a closing quote are doubled.
 fn quote_win_arg(arg: &str) -> String {
     if arg.is_empty() {
         return "\"\"".to_string();
@@ -182,7 +182,7 @@ fn elevate_error_token(code: isize) -> String {
 mod tests {
     /// These helpers mutate real system state (PendingFileRenameOperations / restore
     /// point). Default suite skips the call so CI and `cargo test` stay side-effect free
-    /// (). Opt in locally with REMOVA_TEST_ALLOW_SYS_MUTATION=1.
+    /// Opt in locally with REMOVA_TEST_ALLOW_SYS_MUTATION=1.
     fn allow_sys_mutation() -> bool {
         std::env::var_os("REMOVA_TEST_ALLOW_SYS_MUTATION").is_some()
     }

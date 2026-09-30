@@ -504,7 +504,7 @@ fn powershell_exe() -> String {
     format!(r"{windir}\System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
-/// Test-only PATH I/O mock (): production path is untouched when inactive.
+/// Test-only PATH I/O mock : production path is untouched when inactive.
 #[cfg(test)]
 pub(crate) mod path_mock {
     use std::collections::HashMap;
@@ -588,7 +588,7 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
 }
 
 /// Read the Path value (REG_SZ or REG_EXPAND_SZ) as Unicode text.
-/// `%VAR%` is expanded only for REG_EXPAND_SZ ().
+/// `%VAR%` is expanded only for REG_EXPAND_SZ.
 fn read_reg_path_value(key_path: &str) -> Result<String, String> {
     #[cfg(not(windows))]
     {
