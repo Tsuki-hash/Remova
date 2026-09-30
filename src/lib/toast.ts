@@ -74,8 +74,8 @@ export const toast = {
     message: string,
     opts?: { sticky?: boolean; detail?: string; channel?: string; ttl?: number },
   ) {
-    // Errors auto-dismiss like other toasts (3s); pass sticky only when action is required.
-    return push("error", message, opts);
+    // Errors need longer on-screen time for screen readers / slow readers.
+    return push("error", message, { ttl: 7000, ...opts });
   },
   info(
     message: string,

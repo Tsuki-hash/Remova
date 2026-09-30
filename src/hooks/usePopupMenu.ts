@@ -37,7 +37,8 @@ export function usePopupMenu({
       onClose(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.key === "Tab") {
+        // Tab must not leave focus outside an open menu — close and restore.
         e.preventDefault();
         onClose(true);
         return;

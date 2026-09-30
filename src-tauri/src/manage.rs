@@ -957,6 +957,10 @@ mod tests {
         let vals = crate::regscan::list_values(
             r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
         );
+        assert!(
+            !vals.is_empty(),
+            "no StartupFolder approved values on this machine — empty loop would be a silent pass"
+        );
         for (name, _) in &vals {
             assert!(
                 name.contains('.'),

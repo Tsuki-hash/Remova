@@ -32,6 +32,13 @@ pub mod storeapps;
 pub mod sysops;
 pub mod toolcache;
 
+// End-to-end smokes (temp dirs / path mock only) — kept in the module tree so
+// `cargo test` actually compiles and runs them.
+#[cfg(test)]
+mod path_value_smoke;
+#[cfg(test)]
+mod pipeline_smoke;
+
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
 use scanner::{CleanupItem, ScanResult};
