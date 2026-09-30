@@ -1,9 +1,8 @@
 import type { UpdateInfo } from "../lib/updateCheck";
 import { openUpdateDownload } from "../lib/updateCheck";
-import { api } from "../lib/api";
 import { t } from "../i18n";
 import { useRef, useState } from "react";
-import { installUpdate, type UpdateProgress } from "../lib/installUpdate";
+import { installUpdate, updateErrorMessage, type UpdateProgress } from "../lib/installUpdate";
 import { toast } from "../lib/toast";
 
 const linkBtn = {
@@ -80,7 +79,9 @@ export function ShellFooter({
     try {
       await installUpdate(updateInfo, busyRef, () => blocked.current, setProgress);
     } catch (e) {
-      toast.error(L.versionInstallFailed, { detail: String(e), sticky: true });
+      // Raw error goes to the console for diagnosis; the toast stays localized.
+      console.error("[update] install failed", e);
+      toast.error(L.versionInstallFailed, { detail: updateErrorMessage(e), sticky: true });
     } finally {
       installing.current = false;
     }
@@ -106,9 +107,10 @@ export function ShellFooter({
           style={linkBtn}
           title={updateInfo.downloadUrl || updateInfo.url}
           onClick={() => {
-            const target = updateInfo.downloadUrl || updateInfo.url;
-            void api.openPath(target).catch(() => {
-              if (updateInfo.downloadUrl) void openUpdateDownload(updateInfo);
+            // openUpdateDownload falls back to the release page when the
+            // asset URL cannot be opened.
+            void openUpdateDownload(updateInfo).catch(() => {
+              toast.error(L.versionCheckFailed);
             });
           }}
         >

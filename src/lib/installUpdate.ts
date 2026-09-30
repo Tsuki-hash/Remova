@@ -14,9 +14,9 @@ export async function installUpdate(
   onProgress: (progress: UpdateProgress | null) => void,
 ): Promise<void> {
   const L = t();
-  if (busyRef.current || isMonitoring()) throw new Error(L.taskBusy);
+  if (busyRef.current || isMonitoring()) throw new Error("update:busy");
   if (!info.installInApp || !(await api.onlineUpdateSupported())) {
-    throw new Error(L.versionManualOnly);
+    throw new Error("update:manual_only");
   }
   if (!(await requestConfirm({
     title: `${L.versionInstall} v${info.version}`,
@@ -25,17 +25,17 @@ export async function installUpdate(
     cancelLabel: L.cancel,
   }))) return;
   // Recheck after the asynchronous confirmation, then hold both task slots.
-  if (busyRef.current || isMonitoring()) throw new Error(L.taskBusy);
+  if (busyRef.current || isMonitoring()) throw new Error("update:busy");
   const release = acquireUpdateSlot();
-  if (!release) throw new Error(L.taskBusy);
+  if (!release) throw new Error("update:busy");
   busyRef.current = true;
   let update: Awaited<ReturnType<typeof check>> = null;
   try {
     onProgress({ phase: "checking" });
     update = await check({ target: "windows-x86_64-nsis", timeout: 30000 });
-    if (!update) throw new Error(L.versionCheckFailed);
+    if (!update) throw new Error("update:check_failed");
     if (update.version.replace(/^v/, "") !== info.version.replace(/^v/, "")) {
-      throw new Error(L.versionChanged);
+      throw new Error("update:version_changed");
     }
     let downloaded = 0;
     let total: number | undefined;
@@ -55,4 +55,18 @@ export async function installUpdate(
     release();
     onProgress(null);
   }
+}
+
+/** User-facing message for an update-flow failure — never leaks internals.
+ * `update:*` tokens map to their text; anything else (updater-plugin errors,
+ * unknowns) collapses to the generic install-failed string. */
+export function updateErrorMessage(e: unknown): string {
+  const L = t();
+  const raw = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
+  if (raw === "update:busy") return L.taskBusy;
+  if (raw === "update:manual_only") return L.versionManualOnly;
+  if (raw === "update:check_failed") return L.versionCheckFailed;
+  if (raw === "update:version_changed") return L.versionChanged;
+  if (raw.startsWith("update:")) return L.versionCheckFailed;
+  return L.versionInstallFailed;
 }

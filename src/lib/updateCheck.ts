@@ -37,8 +37,16 @@ export async function checkLatestRelease(): Promise<UpdateCheckResult> {
   }
 }
 
-/** Open the installer download when available; otherwise the release page. */
+/** Open the installer download when available; on failure fall back to the
+ * release page (never re-open the same dead download URL). */
 export async function openUpdateDownload(info: UpdateInfo): Promise<void> {
-  const target = info.downloadUrl || info.url;
-  await api.openPath(target);
+  if (info.downloadUrl) {
+    try {
+      await api.openPath(info.downloadUrl);
+      return;
+    } catch {
+      // fall through to the release page
+    }
+  }
+  await api.openPath(info.url || RELEASES_URL);
 }
