@@ -280,11 +280,28 @@ pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> 
         scopes.to_vec()
     };
     for scope in targets {
-        let current = read_path_scope(scope)?;
-        if let Some(next) = merge_path_entry(&current, entry) {
-            write_path_scope(scope, &next)?;
-            changed = true;
+        let (raw, expand) = read_path_scope_raw(scope)?;
+        // Presence is judged on the expanded form; the raw bytes are what get
+        // written back, so `%VAR%` segments survive a REG_EXPAND_SZ restore.
+        let current = if expand {
+            expand_env_string(&raw)
+        } else {
+            raw.clone()
+        };
+        if path_contains_entry(&current, entry) {
+            continue;
         }
+        let trimmed = entry.trim().trim_matches('"');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let next = if raw.trim().is_empty() {
+            trimmed.to_string()
+        } else {
+            format!("{raw};{trimmed}")
+        };
+        write_path_scope(scope, &next, expand)?;
+        changed = true;
     }
     if changed {
         broadcast_env_change();
@@ -455,25 +472,27 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
     }
     let mut changed = false;
     for scope in ["User", "Machine"] {
-        let current = read_path_scope(scope)?;
-        let parts: Vec<&str> = current
-            .split(';')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let (raw, expand) = read_path_scope_raw(scope)?;
+        // Match on the expanded form, keep the raw segment text: a
+        // REG_EXPAND_SZ value must not come back with `%VAR%` baked in.
         let mut kept: Vec<&str> = Vec::new();
         let mut hit = false;
-        for p in parts {
-            if normalize_path_entry(p) == needle {
+        for seg in raw.split(';') {
+            let expanded = if expand {
+                expand_env_string(seg)
+            } else {
+                seg.to_string()
+            };
+            if normalize_path_entry(&expanded) == needle || normalize_path_entry(seg) == needle {
                 hit = true;
                 continue;
             }
-            kept.push(p);
+            kept.push(seg);
         }
         if !hit {
             continue;
         }
-        write_path_scope(scope, &kept.join(";"))?;
+        write_path_scope(scope, &kept.join(";"), expand)?;
         changed = true;
     }
     if changed {
@@ -510,15 +529,26 @@ pub(crate) mod path_mock {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    static STATE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    /// Stored as (raw value, is REG_EXPAND_SZ).
+    static STATE: Mutex<Option<HashMap<String, (String, bool)>>> = Mutex::new(None);
     static FAIL_READ: Mutex<bool> = Mutex::new(false);
 
-    pub fn install(user: &str, machine: &str) {
+    fn put(user: &str, machine: &str, expand: bool) {
         let mut map = HashMap::new();
-        map.insert("User".to_string(), user.to_string());
-        map.insert("Machine".to_string(), machine.to_string());
+        map.insert("User".to_string(), (user.to_string(), expand));
+        map.insert("Machine".to_string(), (machine.to_string(), expand));
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(map);
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+
+    pub fn install(user: &str, machine: &str) {
+        put(user, machine, false);
+    }
+
+    /// Install REG_EXPAND_SZ scopes: `read_raw` yields these bytes verbatim,
+    /// `read` yields them expanded through the process environment.
+    pub fn install_expand(user: &str, machine: &str) {
+        put(user, machine, true);
     }
 
     #[allow(dead_code)]
@@ -535,19 +565,19 @@ pub(crate) mod path_mock {
         STATE.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 
-    pub fn read(scope: &str) -> Result<String, String> {
+    pub fn read_raw(scope: &str) -> Result<(String, bool), String> {
         if *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) {
             return Err(format!("read Path {scope} failed"));
         }
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let map = guard.as_ref().expect("path mock not installed");
-        Ok(map.get(scope).cloned().unwrap_or_default())
+        Ok(map.get(scope).cloned().unwrap_or((String::new(), false)))
     }
 
-    pub fn write(scope: &str, value: &str) -> Result<(), String> {
+    pub fn write(scope: &str, value: &str, expand: bool) -> Result<(), String> {
         let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let map = guard.as_mut().expect("path mock not installed");
-        map.insert(scope.to_string(), value.to_string());
+        map.insert(scope.to_string(), (value.to_string(), expand));
         Ok(())
     }
 
@@ -557,7 +587,7 @@ pub(crate) mod path_mock {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .and_then(|m| m.get(scope))
-            .cloned()
+            .map(|(raw, _)| raw.clone())
             .unwrap_or_default()
     }
 
@@ -569,10 +599,16 @@ pub(crate) mod path_mock {
 }
 
 fn read_path_scope(scope: &str) -> Result<String, String> {
+    let (raw, expand) = read_path_scope_raw(scope)?;
+    Ok(if expand { expand_env_string(&raw) } else { raw })
+}
+
+/// Raw Path text plus its type (`true` = REG_EXPAND_SZ, unexpanded bytes).
+fn read_path_scope_raw(scope: &str) -> Result<(String, bool), String> {
     #[cfg(test)]
     {
         if path_mock::active() {
-            return path_mock::read(scope);
+            return path_mock::read_raw(scope);
         }
     }
     // read Path straight from the registry — no PowerShell round-trip
@@ -583,13 +619,12 @@ fn read_path_scope(scope: &str) -> Result<String, String> {
         "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
         _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
     };
-    let raw = read_reg_path_value(key)?;
-    Ok(raw)
+    read_reg_value_raw(key)
 }
 
-/// Read the Path value (REG_SZ or REG_EXPAND_SZ) as Unicode text.
-/// `%VAR%` is expanded only for REG_EXPAND_SZ.
-fn read_reg_path_value(key_path: &str) -> Result<String, String> {
+/// Raw Path text plus its type (`true` = REG_EXPAND_SZ). Write-back must
+/// preserve these unexpanded bytes for REG_EXPAND_SZ values.
+fn read_reg_value_raw(key_path: &str) -> Result<(String, bool), String> {
     #[cfg(not(windows))]
     {
         let _ = key_path;
@@ -649,11 +684,7 @@ fn read_reg_path_value(key_path: &str) -> Result<String, String> {
                 .to_ipc());
             }
             let text = crate::fsutil::wstring_from_reg_data(&data[..data_len as usize]);
-            if typ == REG_EXPAND_SZ {
-                Ok(expand_env_string(&text))
-            } else {
-                Ok(text)
-            }
+            Ok((text, typ == REG_EXPAND_SZ))
         }
     }
 }
@@ -694,22 +725,37 @@ pub fn read_path_scope_public(scope: &str) -> Result<String, String> {
     read_path_scope(scope)
 }
 
-pub(crate) fn write_path_scope(scope: &str, value: &str) -> Result<(), String> {
+pub(crate) fn write_path_scope(scope: &str, value: &str, expand: bool) -> Result<(), String> {
     #[cfg(test)]
     {
         if path_mock::active() {
-            return path_mock::write(scope, value);
+            return path_mock::write(scope, value, expand);
         }
     }
     use std::process::Command;
+    // Explicit registry kind: SetEnvironmentVariable would silently rewrite a
+    // REG_EXPAND_SZ Path as REG_SZ (and the content is raw %VAR% text here).
+    let kind = if expand { "ExpandString" } else { "String" };
+    let (root, subkey) = match scope {
+        "User" => ("CurrentUser", r"Environment"),
+        "Machine" => (
+            "LocalMachine",
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+        _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
+    };
+    let script = format!(
+        "$b=[Microsoft.Win32.RegistryKey]::OpenBaseKey('{root}','Default');\
+         $k=$b.CreateSubKey('{subkey}');\
+         $k.SetValue('Path',$env:REMOVA_PATH_VALUE,[Microsoft.Win32.RegistryValueKind]::{kind});\
+         $k.Close()"
+    );
     let mut child_cmd = Command::new(powershell_exe());
     child_cmd.env("REMOVA_PATH_VALUE", value).args([
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        &format!(
-            "[Environment]::SetEnvironmentVariable('Path', $env:REMOVA_PATH_VALUE, '{scope}')"
-        ),
+        &script,
     ]);
     hide_console(&mut child_cmd);
     let mut child = child_cmd.spawn().map_err(|e| e.to_string())?;
@@ -1175,5 +1221,49 @@ mod tests {
             raw.contains(';') || raw.contains('\\') || raw.contains('/') || raw.is_empty(),
             "unexpected user PATH shape: {raw:?}"
         );
+    }
+
+    /// REG_EXPAND_SZ PATH values must be rewritten with their raw `%VAR%`
+    /// bytes and type intact — scrub/restore must not bake in expansions.
+    #[cfg(windows)]
+    #[test]
+    fn scrub_and_restore_preserve_expand_sz_raw_bytes() {
+        use super::path_mock;
+        let _lock = path_mock::lock_mock();
+        path_mock::clear();
+        path_mock::install_expand(
+            r"%SystemRoot%\system32;C:\Tools\App;%ProgramFiles%\Shared",
+            r"%SystemRoot%",
+        );
+        // Scrub a literal entry: untouched %VAR% segments survive verbatim.
+        assert!(super::scrub_path_entry(r"C:\Tools\App").unwrap());
+        let (raw, expand) = path_mock::read_raw("User").unwrap();
+        assert!(expand, "scrub must not flatten REG_EXPAND_SZ");
+        assert_eq!(raw, r"%SystemRoot%\system32;%ProgramFiles%\Shared");
+        // An entry already present in expanded form must not duplicate raw.
+        assert!(!super::restore_path_entry(r"C:\Program Files\Shared", &["User"]).unwrap());
+        // Restore appends raw bytes and keeps the type.
+        assert!(super::restore_path_entry(r"C:\Tools\App", &["User"]).unwrap());
+        let (raw, expand) = path_mock::read_raw("User").unwrap();
+        assert!(expand);
+        assert_eq!(
+            raw,
+            r"%SystemRoot%\system32;%ProgramFiles%\Shared;C:\Tools\App"
+        );
+        // The literal entry now present must not be appended twice.
+        assert!(!super::restore_path_entry(r"C:\Tools\App", &["User"]).unwrap());
+        // Scrub an entry that only matches after expansion.
+        assert!(super::scrub_path_entry(r"C:\Program Files\Shared").unwrap());
+        let (raw, expand) = path_mock::read_raw("User").unwrap();
+        assert!(expand);
+        assert_eq!(raw, r"%SystemRoot%\system32;C:\Tools\App");
+        // REG_SZ scopes keep plain String semantics.
+        path_mock::clear();
+        path_mock::install(r"C:\A;C:\B", r"C:\Windows");
+        assert!(super::scrub_path_entry(r"C:\A").unwrap());
+        let (raw, expand) = path_mock::read_raw("User").unwrap();
+        assert!(!expand);
+        assert_eq!(raw, r"C:\B");
+        path_mock::clear();
     }
 }

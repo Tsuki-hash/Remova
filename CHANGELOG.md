@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 图标缓存读取校验 PNG 魔数、写入改为原子替换：损坏文件不会被当作图标输出
 - 删除门禁拒绝空服务名的「Services|值」形态
 - PATH 还原与删除同一门禁:危险条目拒绝写回;系统 PATH 仅在备份快照含实证时恢复
+- PATH 修改按注册表原始字节与类型回写：REG_EXPAND_SZ 的 `%VAR%` 段（如 `%SystemRoot%`）不再被展开固化，值类型不再被降级为 REG_SZ
 - 目录复制的子文件改用不跟随链接的复制原语,检查与复制之间换入的联接不再被跟随
 - 还原目标门禁拒绝相对路径与 UNC 形态(含盘符相对的 `\srv` 形式)
 - 明文 http 仅环回的判定改为解析四段 IP,`127.0.0.1.evil.com` 不再被前缀放行
