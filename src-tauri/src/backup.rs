@@ -108,22 +108,15 @@ fn safe_name(path: &str) -> String {
         .replace(['\\', '/'], "__")
         .replace(':', "")
         .replace(['*', '?', '"', '<', '>', '|'], "_");
-    let truncated = base.chars().count() > 180;
     let name: String = base.chars().take(180).collect();
-    // Any lossy fold, truncation, or Win32 trailing-dot fold needs a digest
-    // so two distinct registry keys never share one backup directory.
-    let lossy = path.contains(['*', '?', '"', '<', '>', '|'])
-        || truncated
-        || name.ends_with(['.', ' '])
-        || path.ends_with(['.', ' ']);
-    if lossy {
-        return format!(
-            "{}_{}",
-            name.trim_end_matches(['.', ' ']),
-            crate::fsutil::fnv1a64(path)
-        );
-    }
-    name
+    // `\`→`__` and `:` deletion are inherently lossy (a literal `C__A__B`
+    // key folds the same), so every backup directory carries a digest
+    // suffix — two distinct registry keys can never share one directory.
+    format!(
+        "{}_{}",
+        name.trim_end_matches(['.', ' ']),
+        crate::fsutil::fnv1a64(path)
+    )
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -447,11 +440,32 @@ mod tests {
 
     #[test]
     fn safe_name_stable() {
-        assert_eq!(safe_name(r"HKCU\SOFTWARE\A"), "HKCU__SOFTWARE__A");
+        // Digest-suffixed form is deterministic for the same input.
+        assert_eq!(
+            safe_name(r"HKCU\SOFTWARE\A"),
+            format!(
+                "HKCU__SOFTWARE__A_{}",
+                crate::fsutil::fnv1a64(r"HKCU\SOFTWARE\A")
+            )
+        );
+        assert_eq!(safe_name(r"HKCU\SOFTWARE\A"), safe_name(r"HKCU\SOFTWARE\A"));
     }
 
     #[test]
     fn safe_name_disambiguates_lossy_folds() {
+        // The `\`→`__` and `:` folds must not collide with literal keys.
+        let folded = safe_name(r"HKCU\SOFTWARE\A B");
+        let literal = safe_name(r"HKCU\SOFTWARE\A__B");
+        assert_ne!(
+            folded, literal,
+            "space fold must not collide with literal __"
+        );
+        let colon_folded = safe_name(r"C:\Tools");
+        let colon_literal = safe_name(r"C__Tools");
+        assert_ne!(
+            colon_folded, colon_literal,
+            "colon deletion must not collide"
+        );
         let a = safe_name(r"HKCU\SOFTWARE\A*B");
         let b = safe_name(r"HKCU\SOFTWARE\A?B");
         assert_ne!(a, b, "folded distinct keys must not collide");

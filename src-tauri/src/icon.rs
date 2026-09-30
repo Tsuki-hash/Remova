@@ -77,8 +77,12 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
 }
 
 fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<()> {
+    // pid alone is not enough: two threads rendering the same app icon
+    // concurrently would share one tmp file and tear the PNG — add a nonce.
+    static TMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = TMP_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut tmp_name = cache_file.as_os_str().to_owned();
-    tmp_name.push(format!(".{}.png.tmp", std::process::id()));
+    tmp_name.push(format!(".{}_{}.png.tmp", std::process::id(), nonce));
     let tmp = std::path::PathBuf::from(tmp_name);
     let result = std::fs::write(&tmp, png).and_then(|_| std::fs::rename(&tmp, cache_file));
     if result.is_err() {
@@ -353,5 +357,36 @@ mod tests {
     fn cache_key_stable_for_missing_source() {
         let k = super::cache_key(r"C:\no\such\file.dll,0");
         assert!(k.ends_with(".png"));
+    }
+
+    /// Two threads writing the SAME cache entry must not share a tmp file:
+    /// each write gets its own nonce so both renames succeed and the final
+    /// PNG is always one whole write (never a tear).
+    #[test]
+    fn concurrent_writes_stay_whole_and_leave_no_tmp() {
+        let dir = std::env::temp_dir().join(format!("remova-r25-icon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("app.png");
+        let whole_a = vec![0xAu8; 8192];
+        let whole_b = vec![0xBu8; 8192];
+        std::thread::scope(|s| {
+            let t1 = s.spawn(|| write_cache_png(&cache, &whole_a));
+            let t2 = s.spawn(|| write_cache_png(&cache, &whole_b));
+            t1.join().unwrap().expect("write A must succeed");
+            t2.join().unwrap().expect("write B must succeed");
+        });
+        let written = std::fs::read(&cache).unwrap();
+        assert!(
+            written == whole_a || written == whole_b,
+            "final PNG must be one whole write, not a tear"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".png.tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
