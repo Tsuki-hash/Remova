@@ -15,13 +15,12 @@ export async function installUpdate(
 ): Promise<void> {
   const L = t();
   if (busyRef.current || isMonitoring()) throw new Error("update:busy");
-  if (!info.installInApp || !(await api.onlineUpdateSupported())) {
-    throw new Error("update:manual_only");
-  }
+  if (!info.installInApp) throw new Error("update:manual_only_type");
+  if (!(await api.onlineUpdateSupported())) throw new Error("update:manual_only_env");
   if (!(await requestConfirm({
     title: `${L.versionInstall} v${info.version}`,
     message: L.versionInstallConfirm,
-    confirmLabel: L.versionInstall,
+    confirmLabel: L.versionInstallClose,
     cancelLabel: L.cancel,
   }))) return;
   // Recheck after the asynchronous confirmation, then hold both task slots.
@@ -64,9 +63,24 @@ export function updateErrorMessage(e: unknown): string {
   const L = t();
   const raw = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
   if (raw === "update:busy") return L.taskBusy;
-  if (raw === "update:manual_only") return L.versionManualOnly;
+  if (raw === "update:manual_only_type") return L.updateManualOnlyType;
+  if (raw === "update:manual_only_env") return L.updateManualOnlyElevated;
   if (raw === "update:check_failed") return L.versionCheckFailed;
   if (raw === "update:version_changed") return L.versionChanged;
   if (raw.startsWith("update:")) return L.versionCheckFailed;
   return L.versionInstallFailed;
+}
+
+/** Screen-reader text for the update overlay — changes in 10% steps so the
+ * aria-live region does not announce every download chunk. */
+export function progressAnnouncement(
+  progress: UpdateProgress,
+  L: { versionCheck: string; versionDownloading: string; versionInstalling: string },
+): string {
+  if (progress.phase === "downloading") {
+    if (progress.percent === undefined) return L.versionDownloading;
+    const step = Math.min(100, Math.floor(progress.percent / 10) * 10);
+    return `${L.versionDownloading} ${step}%`;
+  }
+  return progress.phase === "checking" ? L.versionCheck : L.versionInstalling;
 }
