@@ -7,14 +7,47 @@ on:
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-latest
     # R-R6-06: release builds are slow; fail the job instead of hanging the runner.
-    timeout-minutes: 90
+    # Two SignPath requests require maintainer approval. GitHub's job limit is 6h.
+    timeout-minutes: 360
+    env:
+      SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: require signing configuration
+        id: signing-config
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/prepare-signed-release.ps1
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: refuse to replace a published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $existing = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            if (-not (($existing | Out-String | ConvertFrom-Json).draft)) { throw 'This tag already has a published release.' }
+          } elseif (($existing | Out-String) -notmatch 'HTTP 404') {
+            throw 'Could not determine existing release state.'
+          }
 
       - uses: actions/setup-node@v4
         with:
@@ -71,8 +104,99 @@ jobs:
         run: npm run coverage
 
       # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
-      - name: tauri build
-        run: npx tauri build
+      - name: build app before signing
+        run: npx tauri build --no-bundle --config .release-signing/tauri.release.json -- --locked
+
+      - name: read application signing metadata
+        id: app-metadata
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/read-signing-metadata.ps1 -Path src-tauri/target/release/remova.exe
+
+      - name: upload unsigned application
+        id: unsigned-app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Remova-unsigned-application
+          path: src-tauri/target/release/remova.exe
+          if-no-files-found: error
+
+      - name: sign application (maintainer approval required)
+        uses: signpath/github-action-submit-signing-request@4184a38a17e5b37d026a3ed443581c1f03ae1b3a # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: application
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: .release-signing/application
+          parameters: |
+            product-version: ${{ toJSON(steps.app-metadata.outputs.product-version) }}
+            file-version: ${{ toJSON(steps.app-metadata.outputs.file-version) }}
+
+      - name: verify and stage signed application
+        shell: pwsh
+        run: |
+          & scripts/verify-authenticode.ps1 -Paths @('.release-signing/application/remova.exe')
+          Copy-Item -LiteralPath .release-signing/application/remova.exe -Destination src-tauri/target/release/remova.exe -Force
+
+      - name: bundle signed application
+        # Keep createUpdaterArtifacts disabled: final signatures are made AFTER SignPath.
+        run: npx tauri bundle --config .release-signing/tauri.release.json
+
+      - name: read installer signing metadata
+        id: installer-metadata
+        shell: pwsh
+        run: |
+          $nsis = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($nsis.Count -ne 1) { throw 'Expected one NSIS installer.' }
+          & scripts/read-signing-metadata.ps1 -Path $nsis[0].FullName -Prefix 'nsis-'
+
+      - name: upload unsigned installers
+        id: unsigned-installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: Remova-unsigned-installers
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: sign installers (maintainer approval required)
+        uses: signpath/github-action-submit-signing-request@4184a38a17e5b37d026a3ed443581c1f03ae1b3a # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installers
+          github-artifact-id: ${{ steps.unsigned-installers.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: .release-signing/installers
+          parameters: |
+            nsis-product-version: ${{ toJSON(steps.installer-metadata.outputs.nsis-product-version) }}
+            nsis-file-version: ${{ toJSON(steps.installer-metadata.outputs.nsis-file-version) }}
+
+      - name: stage final signed installers
+        shell: pwsh
+        run: |
+          foreach ($kind in @('nsis', 'msi')) {
+            $extension = if ($kind -eq 'nsis') { '*.exe' } else { '*.msi' }
+            $files = @(Get-ChildItem -LiteralPath ".release-signing/installers/$kind" -Filter $extension)
+            if ($files.Count -ne 1) { throw "Expected one signed $kind installer." }
+            & scripts/verify-authenticode.ps1 -Paths @($files[0].FullName)
+            Copy-Item -LiteralPath $files[0].FullName -Destination "src-tauri/target/release/bundle/$kind/" -Force
+          }
+
+      - name: sign and verify final updater artifacts
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/finalize-signed-release.ps1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: frontend dist smoke
         run: npm run smoke:dist
@@ -144,7 +268,19 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/portable/*.zip
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/msi/*.sig
+            src-tauri/target/release/bundle/latest.json
           body_path: .release-notes/${{ github.ref_name }}.md
           generate_release_notes: false
           # a renamed/moved bundle must fail the job, not publish an asset-less Release.
           fail_on_unmatched_files: true
+          draft: true
+
+      - name: publish complete signed release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit $env:GITHUB_REF_NAME --draft=false
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the completed draft.' }

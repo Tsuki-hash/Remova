@@ -1,5 +1,32 @@
 //! Update check: GitHub latest release resolved on the Rust side to avoid WebView CORS/CSP issues.
 
+const INSTALL_CHANNEL: &str = "nsis-current-user-v1";
+
+fn is_nsis_install(dir: &std::path::Path) -> bool {
+    dir.join("uninstall.exe").is_file()
+        && std::fs::read_to_string(dir.join(".remova-install-channel"))
+            .is_ok_and(|s| s.trim() == INSTALL_CHANNEL)
+}
+
+/// Never run an NSIS updater for MSI, portable, development, or elevated launches.
+#[tauri::command]
+pub fn online_update_supported(app: tauri::AppHandle) -> bool {
+    let configured = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|v| v.get("pubkey"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    configured
+        && !crate::is_elevated().unwrap_or(true)
+        && std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(is_nsis_install))
+            .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LatestReleaseInfo {
     pub version: String,
@@ -40,7 +67,12 @@ pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> 
             .unwrap_or(crate::constants::GITHUB_RELEASES_PAGE)
             .to_string();
         let mut download_url = None;
-        if let Some(assets) = v.get("assets").and_then(|a| a.as_array()) {
+        // MSI and portable users choose the matching package on the release page.
+        let nsis = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(is_nsis_install))
+            .unwrap_or(false);
+        if let Some(assets) = v.get("assets").and_then(|a| a.as_array()).filter(|_| nsis) {
             for a in assets {
                 let name = a
                     .get("name")

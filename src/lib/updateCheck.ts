@@ -5,6 +5,7 @@ export type UpdateInfo = {
   version: string;
   url: string;
   downloadUrl?: string;
+  installInApp?: boolean;
 };
 
 export type UpdateCheckResult =
@@ -20,12 +21,14 @@ export async function checkLatestRelease(): Promise<UpdateCheckResult> {
     if (!raw?.version) {
       return { ok: true, info: null };
     }
+    const installInApp = await api.onlineUpdateSupported().catch(() => false);
     return {
       ok: true,
       info: {
         version: raw.version,
         url: raw.url || RELEASES_URL,
         downloadUrl: raw.download_url || undefined,
+        installInApp,
       },
     };
   } catch (e) {

@@ -65,6 +65,9 @@ jobs:
       - name: check commands
         run: npm run check-commands
 
+      - name: updater signature regression
+        run: pwsh -NoProfile -File scripts/test-updater-signature.ps1
+
       - name: frontend lint
         run: npm run lint
 

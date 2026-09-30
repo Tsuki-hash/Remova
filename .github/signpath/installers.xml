@@ -1,0 +1,14 @@
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="nsis-product-version" required="true" />
+    <parameter name="nsis-file-version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="nsis/Remova_*-setup.exe" product-name="Remova" product-version="${nsis-product-version}" file-version="${nsis-file-version}">
+      <authenticode-sign />
+    </pe-file>
+    <msi-file path="msi/Remova_*.msi">
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

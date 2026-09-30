@@ -4,6 +4,7 @@ import { checkLatestRelease, openUpdateDownload, RELEASES_URL } from "../lib/upd
 vi.mock("../lib/api", () => ({
   api: {
     checkGithubLatest: vi.fn(),
+    onlineUpdateSupported: vi.fn().mockResolvedValue(false),
     openPath: vi.fn(),
   },
 }));

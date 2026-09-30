@@ -3,6 +3,8 @@
   "description": "Main window: list, cleanup, and custom chrome controls",
   "windows": ["main"],
   "permissions": [
+    "updater:default",
+    "core:resources:allow-close",
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
