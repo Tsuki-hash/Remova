@@ -5,17 +5,23 @@ use minisign_verify::{PublicKey, Signature};
 /// The updater key the app was BUILT with. The release pipeline injects it
 /// via `.release-signing/tauri.release.json` (tauri `--config` merge); dev
 /// builds have no patch file and keep the empty repo conf, where the
-/// environment key alone stays authoritative.
-fn expected_build_pubkey() -> Option<String> {
+/// environment key alone stays authoritative. A patch file that exists but
+/// cannot be read/parsed is an error — never a silent fallback.
+fn expected_build_pubkey() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let patched = manifest.join("../.release-signing/tauri.release.json");
-    let text = std::fs::read_to_string(patched).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("plugins")?
-        .get("updater")?
-        .get("pubkey")?
-        .as_str()
-        .map(str::to_string)
+    if !patched.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(patched)?;
+    let v: serde_json::Value = serde_json::from_str(&text)?;
+    let key = v
+        .get("plugins")
+        .and_then(|p| p.get("updater"))
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .ok_or("patch file is missing plugins.updater.pubkey")?;
+    Ok(Some(key.to_string()))
 }
 
 fn verify() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +32,7 @@ fn verify() -> Result<(), Box<dyn std::error::Error>> {
     // Cross-check: the verification key must be exactly the key the app was
     // built with — a drifted or mismatched env key fails the gate before any
     // signature is accepted.
-    if let Some(expected) = expected_build_pubkey() {
+    if let Some(expected) = expected_build_pubkey()? {
         if public.trim() != expected.trim() {
             return Err(
                 "TAURI_UPDATER_PUBLIC_KEY does not match the updater key the app was \
