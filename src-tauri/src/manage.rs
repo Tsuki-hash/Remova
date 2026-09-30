@@ -663,6 +663,21 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
         )
         .to_ipc());
     }
+    // Policy Explorer\Run values execute at logon regardless of any
+    // StartupApproved flag — Explorer never consults the flag for policy
+    // keys, so a disable here would be a silent no-op. Fail loudly.
+    if !enabled
+        && key
+            .to_uppercase()
+            .replace('/', "\\")
+            .contains(r"\POLICIES\EXPLORER\RUN")
+    {
+        return Err(crate::error::manage_err(
+            "policy_run_no_disable",
+            "Policy Run entries ignore the disable flag; remove the policy entry instead",
+        )
+        .to_ipc());
+    }
     allow_manage_reg_write(key, false)?;
     let base = vname.trim_end_matches(".remova-disabled");
     let cur_disabled = vname.ends_with(".remova-disabled");
@@ -847,6 +862,17 @@ mod tests {
         let err = super::set_startup_enabled(loc, false).unwrap_err();
         assert!(err.contains("runonce_no_disable"), "got {err}");
         let loc2 = r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce::Setup";
+        assert!(super::set_startup_enabled(loc2, false).is_err());
+    }
+
+    /// Policy Explorer\Run values ignore StartupApproved flags — a disable
+    /// would be a silent no-op, so it must be rejected loudly.
+    #[test]
+    fn policy_run_disable_rejected() {
+        let loc = r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
+        let err = super::set_startup_enabled(loc, false).unwrap_err();
+        assert!(err.contains("policy_run_no_disable"), "got {err}");
+        let loc2 = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
         assert!(super::set_startup_enabled(loc2, false).is_err());
     }
 

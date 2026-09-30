@@ -106,6 +106,8 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (code === "manage:bad_name") {
       return L.errServiceKey(name || "?");
     }
+    if (code === "manage:runonce_no_disable") return L.manageRunOnceNoDisable;
+    if (code === "manage:policy_run_no_disable") return L.managePolicyRunNoDisable;
     if (code === "safety:protected") {
       return name ? L.errPathProtectedNamed(name) : L.errPathProtected;
     }
