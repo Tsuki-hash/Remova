@@ -135,6 +135,8 @@ export const dict: EnDict = {
     manageDisable: "Disable",
     manageEnabledDone: (name: string) => `Enabled "${name}"`,
     manageDisabledDone: (name: string) => `Disabled "${name}"`,
+    manageRunOnceNoDisable: "RunOnce entries always run at next logon and cannot be disabled — delete the entry instead",
+    managePolicyRunNoDisable: "Policy Run entries ignore the disable flag — remove the policy entry instead",
     manageStatusEnabled: "Enabled",
     manageStatusDisabled: "Disabled",
     manageStatusRunning: "Running",

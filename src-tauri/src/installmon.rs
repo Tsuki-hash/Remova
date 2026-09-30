@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FsSnapshot {
     pub files: BTreeSet<String>,
+    /// True when the walk hit the budget or depth cap — the file set is
+    /// incomplete, so end() must never arm the allow-list from it.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,8 +80,15 @@ fn is_noise_path(p: &str) -> bool {
         || low.contains("\\telemetry\\")
 }
 
-fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize, depth: usize) {
+fn walk_names(
+    root: &Path,
+    out: &mut BTreeSet<String>,
+    budget: &mut usize,
+    depth: usize,
+    truncated: &mut bool,
+) {
     if *budget == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
+        *truncated = true;
         return;
     }
     let Ok(rd) = std::fs::read_dir(root) else {
@@ -85,6 +96,7 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize, depth
     };
     for e in rd.flatten() {
         if *budget == 0 {
+            *truncated = true;
             return;
         }
         let p = e.path();
@@ -98,18 +110,19 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize, depth
         // `is_symlink()` classifies junctions version-dependently and misses
         // non-symlink reparse dirs (cloud placeholders) — check the attribute.
         if p.is_dir() && !crate::fsutil::is_reparse_point(&p) {
-            walk_names(&p, out, budget, depth + 1);
+            walk_names(&p, out, budget, depth + 1, truncated);
         }
     }
 }
 
 fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
+    let mut truncated = false;
     let mut budget = walk_budget();
     for r in roots() {
-        walk_names(&r, &mut files, &mut budget, 0);
+        walk_names(&r, &mut files, &mut budget, 0, &mut truncated);
     }
-    FsSnapshot { files }
+    FsSnapshot { files, truncated }
 }
 
 // tests shrink the walk budget so begin/end roundtrips stay fast.
@@ -207,13 +220,19 @@ pub fn end() -> Result<MonitorEndResult, String> {
         files_truncated,
         reg_truncated,
     };
-    // Allow-list is armed only from this server-computed diff (never from client IPC).
+    // Allow-list is armed only from this server-computed diff (never from
+    // client IPC) — and never from a truncated snapshot: entries missed by
+    // the walk would resurface as ghost "added" paths and arm deletions the
+    // user never actually saw in the diff.
     let items = diff_to_cleanup_items(&diff);
     let mut scanned = std::collections::HashSet::new();
     for it in &items {
         scanned.insert(it.path.clone());
     }
-    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+    let degraded = before.fs.truncated || after.truncated;
+    if !degraded {
+        crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+    }
     Ok(MonitorEndResult { diff, items })
 }
 
@@ -306,8 +325,14 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 mod tests {
     use super::*;
 
+    /// Serializes tests that swap the process-global state path / walk budget —
+    /// begin()/end() take monitor_lock() themselves, so those must never be
+    /// held while acquiring this one.
+    static TEST_SEQ: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn snapshot_roundtrip_shape() {
+        let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         // isolated state path — tests never touch real PROGRAMDATA.
         let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
@@ -506,7 +531,8 @@ mod tests {
         );
         let mut files = BTreeSet::new();
         let mut budget = 100usize;
-        walk_names(&a, &mut files, &mut budget, 0);
+        let mut truncated = false;
+        walk_names(&a, &mut files, &mut budget, 0, &mut truncated);
         assert!(
             files.contains(&a.join("own.txt").to_string_lossy().to_string()),
             "own file must be walked"
@@ -542,7 +568,9 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
         let mut files = BTreeSet::new();
         let mut budget = 10_000usize;
-        walk_names(&base, &mut files, &mut budget, 0);
+        let mut truncated = false;
+        walk_names(&base, &mut files, &mut budget, 0, &mut truncated);
+        assert!(truncated, "hitting the depth cap must flag the snapshot");
         let cap = crate::constants::INSTALLMON_MAX_WALK_DEPTH;
         assert!(
             files
@@ -556,5 +584,32 @@ mod tests {
             "walk must stop at INSTALLMON_MAX_WALK_DEPTH"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A budget-truncated snapshot cannot distinguish "existed at begin"
+    /// from "added" — end() must degrade (return the diff unarmed), never
+    /// arm deletions the user did not see.
+    #[test]
+    fn budget_exhausted_end_returns_diff_without_arming() {
+        let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("remova_mon_budget_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let state = tmp.join("monitor_snapshot.json");
+        set_test_state_path(Some(state.clone()));
+        TEST_BUDGET.store(3, std::sync::atomic::Ordering::SeqCst);
+        super::begin().unwrap();
+        let res = super::end();
+        TEST_BUDGET.store(200, std::sync::atomic::Ordering::SeqCst);
+        set_test_state_path(None);
+        let _ = std::fs::remove_dir_all(&tmp);
+        let res = res.expect("end must succeed even on a truncated walk");
+        // Whatever items the diff produced, none may be armed.
+        for it in &res.items {
+            assert!(
+                !crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Monitor, &it.path),
+                "truncated walk must not arm: {}",
+                it.path
+            );
+        }
     }
 }

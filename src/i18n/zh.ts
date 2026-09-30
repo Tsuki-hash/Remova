@@ -132,6 +132,8 @@ export const dict = {
     manageDisable: "禁用",
     manageEnabledDone: (name: string) => `已启用「${name}」`,
     manageDisabledDone: (name: string) => `已禁用「${name}」`,
+    manageRunOnceNoDisable: "RunOnce 条目在下次登录必然执行，无法禁用——请直接删除该条目",
+    managePolicyRunNoDisable: "策略 Run 条目不受禁用开关管辖——请在组策略中移除该策略项",
     manageStatusEnabled: "已启用",
     manageStatusDisabled: "已禁用",
     manageStatusRunning: "运行中",
