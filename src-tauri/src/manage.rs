@@ -628,7 +628,24 @@ pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> 
             return Err(crate::error::manage_err("bad_name", fname).to_ipc());
         }
         let _guard = lock_manage();
-        return write_startup_folder_approved(fname, enabled);
+        // Legacy disable renamed the shortcut to `Name.ext.remova-disabled`.
+        // Enable must restore the file name or Explorer will not execute it
+        // even when the StartupApproved flag says enabled.
+        let mut approved_name = fname.to_string();
+        if enabled {
+            if let Some(base) = fname.strip_suffix(".remova-disabled") {
+                let from = std::path::Path::new(&dir_norm).join(fname);
+                let to = std::path::Path::new(&dir_norm).join(base);
+                if from.exists() {
+                    std::fs::rename(&from, &to).map_err(|e| {
+                        let msg = format!("{fname}: {e}");
+                        crate::error::manage_err("write_failed", &msg).to_ipc()
+                    })?;
+                }
+                approved_name = base.to_string();
+            }
+        }
+        return write_startup_folder_approved(&approved_name, enabled);
     }
     let Some((key, vname)) = location.rsplit_once("::") else {
         return Err(crate::error::manage_err("bad_name", "startup location").to_ipc());
