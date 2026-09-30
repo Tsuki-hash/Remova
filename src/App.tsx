@@ -635,6 +635,8 @@ export default function App() {
         footer={
           <ShellFooter
             updateInfo={updateInfo}
+            busyRef={busyRef}
+            updateBlocked={monitoring || scanning || !!uninstallingKey}
             selectedCount={nav === "software" ? multi.size : undefined}
             totalCount={
               nav === "software" && !loading ? filtered.length : undefined

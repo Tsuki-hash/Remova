@@ -2,6 +2,9 @@ import type { UpdateInfo } from "../lib/updateCheck";
 import { openUpdateDownload } from "../lib/updateCheck";
 import { api } from "../lib/api";
 import { t } from "../i18n";
+import { useRef, useState } from "react";
+import { installUpdate, type UpdateProgress } from "../lib/installUpdate";
+import { toast } from "../lib/toast";
 
 const linkBtn = {
   border: "none",
@@ -54,6 +57,8 @@ export function ShellFooter({
   estimating,
   estimateLabel,
   monitoring,
+  busyRef,
+  updateBlocked,
 }: {
   updateInfo: UpdateInfo | null;
   selectedCount?: number;
@@ -61,10 +66,41 @@ export function ShellFooter({
   estimating?: boolean;
   estimateLabel?: string;
   monitoring?: boolean;
+  busyRef?: { current: boolean };
+  updateBlocked?: boolean;
 }) {
   const L = t();
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const installing = useRef(false);
+  const blocked = useRef(false);
+  blocked.current = Boolean(updateBlocked);
+  const onInstall = async () => {
+    if (!updateInfo || !busyRef || installing.current) return;
+    installing.current = true;
+    try {
+      await installUpdate(updateInfo, busyRef, () => blocked.current, setProgress);
+    } catch (e) {
+      toast.error(L.versionInstallFailed, { detail: String(e), sticky: true });
+    } finally {
+      installing.current = false;
+    }
+  };
   return (
     <>
+      {progress && (
+        <div role="dialog" aria-modal="true" aria-label={L.versionInstall}
+          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center" }}>
+          <div style={{ background: "var(--surface)", color: "var(--fg)", padding: 24, borderRadius: 12 }} aria-live="polite">
+            {progress.phase === "checking" ? L.versionCheck : progress.phase === "installing" ? L.versionInstalling : L.versionDownloading}
+            {progress.percent !== undefined && ` ${progress.percent}%`}
+          </div>
+        </div>
+      )}
+      {updateInfo?.installInApp && busyRef && (
+        <button style={linkBtn} disabled={!!progress || updateBlocked} onClick={() => void onInstall()}>
+          {L.versionNew} v{updateInfo.version} → {L.versionInstall}
+        </button>
+      )}
       {updateInfo && (
         <button
           style={linkBtn}

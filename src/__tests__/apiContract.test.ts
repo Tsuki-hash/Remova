@@ -27,6 +27,7 @@ const COMMAND_KEYS = [
   "elevateRestart",
   "openPath",
   "checkGithubLatest",
+  "onlineUpdateSupported",
   "getAiConfig",
   "saveAiConfig",
   "aiRiskBrief",

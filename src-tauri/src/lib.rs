@@ -618,6 +618,7 @@ pub fn run() {
         let _ = restore::prune_old_sessions(crate::constants::BACKUP_RETENTION_DAYS);
     });
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Focus the existing window when a second launch happens
         // (e.g. Explorer context menu while Remova is already open).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -696,6 +697,7 @@ pub fn run() {
             begin_size_estimate,
             open_path_in_explorer,
             commands::update::check_github_latest,
+            commands::update::online_update_supported,
             analyze_associations,
             run_cleanup_dry_run,
             run_full_cleanup,

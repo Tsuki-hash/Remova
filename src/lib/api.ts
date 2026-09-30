@@ -1,5 +1,6 @@
 /** Thin typed wrappers around Tauri invoke — single frontend data layer. */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { trackNativeCall } from "./nativeActivity";
 import type {
   AiConfigView,
   AiExplainInput,
@@ -54,7 +55,12 @@ export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
 
+function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return trackNativeCall(() => tauriInvoke<T>(command, args));
+}
+
 export const api = {
+  onlineUpdateSupported: () => invoke<boolean>("online_update_supported"),
   listApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   analyze: (app: InstalledApp) => invoke<ScanResult>("analyze_associations", { app }),
   dryRun: (
