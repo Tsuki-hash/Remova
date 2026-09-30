@@ -80,7 +80,12 @@ fn pick_setup_asset(assets: &[serde_json::Value], version: &str) -> Option<Strin
             continue;
         }
         let arch_ok = name.contains("x86_64") || name.contains("x64");
-        if arch_ok && name.contains(&version_low) {
+        // Whole-token version match: a substring check would anchor 1.3.0 to
+        // a Remova_11.3.0 asset.
+        let version_ok = name
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
+            .any(|t| t == version_low);
+        if arch_ok && version_ok {
             return Some(link.to_string());
         }
     }
@@ -160,6 +165,8 @@ mod tests {
             asset("Remova-setup.exe", "https://x/1"), // no arch/version
             asset("Remova_1.2.0_x64-setup.exe", "https://x/2"), // wrong version
             asset("Remova_1.3.0_arm64-setup.exe", "https://x/3"), // wrong arch
+            // version must match as a whole token, not a substring
+            asset("Remova_11.3.0_x64-setup.exe", "https://x/6"),
             asset("Remova_1.3.0_x64-setup.exe", "https://x/4"),
             asset("Remova_1.3.0.msi", "https://x/5"), // not the NSIS exe
         ];
