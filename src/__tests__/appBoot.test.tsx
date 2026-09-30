@@ -121,6 +121,23 @@ describe("useAppBoot (REV-QA-02)", () => {
     expect(spies.setLoading).not.toHaveBeenCalled();
     expect(spies.setError).not.toHaveBeenCalled();
   });
+
+  it("late side-channel boot responses after unmount do not touch state", async () => {
+    const { api } = await import("../lib/api");
+    let resolveElevated!: (v: boolean) => void;
+    vi.mocked(api.isElevated).mockReturnValue(
+      new Promise<boolean>((r) => (resolveElevated = r)),
+    );
+    const spies = bootSpies();
+    const { unmount } = mountBoot(spies);
+    await vi.waitFor(() => expect(spies.setApps).toHaveBeenCalled());
+    unmount();
+    await act(async () => {
+      resolveElevated(true);
+      await Promise.resolve();
+    });
+    expect(spies.setAdmin).not.toHaveBeenCalled();
+  });
 });
 
 describe("checkUpdateNow flows", () => {

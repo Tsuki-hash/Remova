@@ -49,22 +49,29 @@ export function useAppBoot({
     })();
     void api
       .isElevated()
-      .then(setAdmin)
+      .then((v) => {
+        if (!cancelled) setAdmin(v);
+      })
       .catch((e) => console.warn("[boot] isElevated", e));
     void api
       .getAiConfig()
-      .then((c) => setAiEnabled(c.enabled))
+      .then((c) => {
+        if (!cancelled) setAiEnabled(c.enabled);
+      })
       .catch((e) => console.warn("[boot] getAiConfig", e));
     void api
       .loadIgnore()
       .then((ig) => {
-        setIgnorePub(ig.publishers || []);
-        setIgnoreName(ig.names || []);
+        if (!cancelled) {
+          setIgnorePub(ig.publishers || []);
+          setIgnoreName(ig.names || []);
+        }
       })
       .catch((e) => console.warn("[boot] loadIgnore", e));
     void api
       .diskUsage()
       .then((d) => {
+        if (cancelled) return;
         const drive = (d.drive || localStorage.getItem("remova_disk_drive") || "C:")
           .slice(0, 2)
           .toUpperCase();
@@ -75,7 +82,7 @@ export function useAppBoot({
  // Silent update check on launch (never navigates)
     void checkLatestRelease()
       .then((res) => {
-        if (!res.ok || !res.info) return;
+        if (cancelled || !res.ok || !res.info) return;
         const info = res.info;
         if (compareSemver(info.version, __APP_VERSION__) > 0) {
           setUpdateInfo(info);
