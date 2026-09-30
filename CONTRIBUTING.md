@@ -35,6 +35,16 @@ cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignor
 # and fail-closed key loss. No production key touched.
 cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
 
+# Every ignored test has an owner command here; a skipped test is not
+# acceptance evidence, so release verification runs this list explicitly.
+#   real registry / real machine state (stock machines may lack the fixture):
+cargo test read_reg_path_value_reads_real_user_environment -- --ignored
+cargo test service_image_string_reads_real_image_paths -- --ignored
+cargo test startup_folder_approved_values_are_full_file_names -- --ignored
+#   real-system side effects; also opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1:
+cargo test schedule_missing_path_no_panic -- --ignored
+cargo test restore_point_nonfatal -- --ignored
+
 # Full app
 npx tauri dev
 npx tauri build

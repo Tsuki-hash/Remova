@@ -44,7 +44,7 @@ export async function installUpdate(
       if (event.event === "Started") total = event.data.contentLength;
       if (event.event === "Progress") downloaded += event.data.chunkLength;
       onProgress({ phase: "downloading", percent: total ? Math.min(100, Math.floor(downloaded * 100 / total)) : undefined });
-    }, { timeout: 120000 });
+    }, { timeout: 600000 });
     onProgress({ phase: "installing" });
     // On Windows the plugin launches the installer and exits the application.
     await update.install();

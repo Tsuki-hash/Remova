@@ -55,7 +55,7 @@ export type VerifyRow = { path: string; kind: string; still_there: boolean };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return trackNativeCall(() => tauriInvoke<T>(command, args));
+  return trackNativeCall(() => tauriInvoke<T>(command, args), command);
 }
 
 export const api = {

@@ -87,6 +87,27 @@ describe("safe online update", () => {
     expect(update.close).toHaveBeenCalledOnce();
   });
 
+  it("reports download progress in percent and installs after the download", async () => {
+    update.download.mockImplementation(async (cb: (e: { event: string; data: { chunkLength?: number; contentLength?: number } }) => void) => {
+      cb({ event: "Started", data: { contentLength: 200 } });
+      cb({ event: "Progress", data: { chunkLength: 50 } });
+      cb({ event: "Progress", data: { chunkLength: 150 } });
+    });
+    const progress = vi.fn();
+    await installUpdate(info, { current: false }, () => false, progress);
+    expect(progress).toHaveBeenCalledWith({ phase: "downloading", percent: 25 });
+    expect(progress).toHaveBeenCalledWith({ phase: "downloading", percent: 100 });
+    expect(progress).toHaveBeenLastCalledWith(null);
+    expect(update.install).toHaveBeenCalledOnce();
+  });
+
+  it("refuses in-app install when this install type cannot update in place", async () => {
+    await expect(
+      installUpdate({ ...info, installInApp: false }, { current: false }, () => false, vi.fn()),
+    ).rejects.toThrow("update:manual_only_type");
+    expect(check).not.toHaveBeenCalled();
+  });
+
   it("maps update failure tokens to text without leaking internals", async () => {
     expect(updateErrorMessage(new Error("update:busy"))).not.toBe("update:busy");
     expect(updateErrorMessage(new Error("update:manual_only_type"))).toBeTruthy();
