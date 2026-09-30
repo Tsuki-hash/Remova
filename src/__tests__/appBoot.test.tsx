@@ -40,6 +40,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 import { useAppBoot, checkUpdateNow } from "../hooks/useAppBoot";
 import { toast } from "../lib/toast";
+import { formatError } from "../lib/format";
 
 function app(): InstalledApp {
   return {
@@ -222,7 +223,26 @@ describe("checkUpdateNow flows", () => {
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);
     });
-    expect(toast.error).toHaveBeenCalledWith("检查失败: offline");
+    // The reason goes through the shared error formatter — known update:*
+    // tokens become localized text instead of leaking internals.
+    expect(toast.error).toHaveBeenCalledWith(formatError("offline"));
+    expect(openPath).toHaveBeenCalledWith("https://example.com/releases");
+  });
+
+  it("localizes known update tokens instead of leaking the raw reason", async () => {
+    checkLatestRelease.mockResolvedValue({ ok: false, reason: "update:http_failed" });
+    const setUpdateInfo = vi.fn();
+    const L = {
+      versionCheckFailed: "检查失败",
+      versionNew: "发现新版本",
+      versionUpToDate: () => "已是最新",
+      openReleasesToast: "去 Releases",
+    };
+    await act(async () => {
+      await checkUpdateNow(setUpdateInfo, L);
+    });
+    const shown = String(vi.mocked(toast.error).mock.calls[0]?.[0]);
+    expect(shown).not.toContain("update:http_failed");
     expect(openPath).toHaveBeenCalledWith("https://example.com/releases");
   });
 });
