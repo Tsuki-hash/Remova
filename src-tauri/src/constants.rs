@@ -12,6 +12,10 @@ pub const AI_EXPLAIN_MAX_ITEMS: usize = 12;
 /// Install-monitor path budget.
 pub const INSTALLMON_PATH_BUDGET: usize = 80_000;
 
+/// Install-monitor walk depth cap. Junctions are refused outright; this bounds
+/// recursion on pathological (non-reparse) trees regardless of std version.
+pub const INSTALLMON_MAX_WALK_DEPTH: usize = 64;
+
 /// Orphan scan result cap.
 pub const ORPHAN_RESULT_CAP: usize = 80;
 

@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### 正确性
 
 - 安装位置关联（App Paths / Run 启动值 / PATH 条目 / 服务 ImagePath）要求路径段边界：`C:\Steam` 不再认领 `C:\SteamTools` 的残留
+- Common Files 厂商目录关联同样要求安装位置是合法安装根：盘符根或系统浅根（如 `C:\`、`C:\Windows`）不再能借前缀认领该盘全部 Common Files 厂商目录
+- 安装监控快照遍历改按 reparse 属性跳过目录联接/云占位目录，并新增 64 层深度上限，不再依赖随 Rust 版本变化的 symlink 判定
 - TEMP 残留只匹配条目名，不再因用户名/上级目录含产品词而误报整个目录
 - 注册表默认值只接受字符串类型，DWORD 不再被解码成乱码参与匹配
 - 扫描结果携带稳定的应用标识（来源+注册表键+名称），同名不同源的软件扫描结果不再互相串台

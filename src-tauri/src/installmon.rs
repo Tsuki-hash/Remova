@@ -76,8 +76,8 @@ fn is_noise_path(p: &str) -> bool {
         || low.contains("\\telemetry\\")
 }
 
-fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
-    if *budget == 0 {
+fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize, depth: usize) {
+    if *budget == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
         return;
     }
     let Ok(rd) = std::fs::read_dir(root) else {
@@ -95,8 +95,10 @@ fn walk_names(root: &Path, out: &mut BTreeSet<String>, budget: &mut usize) {
         };
         *budget = budget.saturating_sub(1);
         out.insert(rel);
-        if p.is_dir() && !e.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
-            walk_names(&p, out, budget);
+        // `is_symlink()` classifies junctions version-dependently and misses
+        // non-symlink reparse dirs (cloud placeholders) — check the attribute.
+        if p.is_dir() && !crate::fsutil::is_reparse_point(&p) {
+            walk_names(&p, out, budget, depth + 1);
         }
     }
 }
@@ -105,7 +107,7 @@ fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
     let mut budget = walk_budget();
     for r in roots() {
-        walk_names(&r, &mut files, &mut budget);
+        walk_names(&r, &mut files, &mut budget, 0);
     }
     FsSnapshot { files }
 }
@@ -467,5 +469,92 @@ mod tests {
                 "armed monitor item must pass gate: {it:?} → {d:?}"
             );
         }
+    }
+
+    /// Junctions are reparse points, not symlinks — `is_symlink` misses them
+    /// (the same trap dirsize.rs hit). A planted junction must never be
+    /// followed into its target, or a cycle can recurse to stack overflow.
+    #[cfg(windows)]
+    #[test]
+    fn walk_names_never_follows_junctions() {
+        let base = std::env::temp_dir().join(format!(
+            "remova_walk_junction_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let a = base.join("A");
+        let b = base.join("B");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("own.txt"), b"x").unwrap();
+        std::fs::write(b.join("target.txt"), b"y").unwrap();
+        // Junctions need no privilege, unlike dir symlinks.
+        let link = a.join("link");
+        let mk = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&b)
+            .output()
+            .unwrap();
+        assert!(
+            mk.status.success(),
+            "mklink /J failed: {}",
+            String::from_utf8_lossy(&mk.stderr)
+        );
+        let mut files = BTreeSet::new();
+        let mut budget = 100usize;
+        walk_names(&a, &mut files, &mut budget, 0);
+        assert!(
+            files.contains(&a.join("own.txt").to_string_lossy().to_string()),
+            "own file must be walked"
+        );
+        let via_link = a
+            .join("link")
+            .join("target.txt")
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            !files.contains(&via_link),
+            "junction target contents must never enter the snapshot: {via_link}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Depth cap is defense-in-depth: NTFS dirs cannot cycle without a reparse
+    /// point, but the walk must stay bounded regardless of std version behavior.
+    #[test]
+    fn walk_names_caps_depth() {
+        let base = std::env::temp_dir().join(format!(
+            "remova_walk_depth_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut deep = base.clone();
+        for i in 0..80 {
+            deep = deep.join(format!("d{i}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        let mut files = BTreeSet::new();
+        let mut budget = 10_000usize;
+        walk_names(&base, &mut files, &mut budget, 0);
+        let cap = crate::constants::INSTALLMON_MAX_WALK_DEPTH;
+        assert!(
+            files
+                .iter()
+                .any(|p| p.ends_with(&format!(r"\d{}", cap - 1))),
+            "walk should reach just under the cap boundary (d{})",
+            cap - 1
+        );
+        assert!(
+            !files.iter().any(|p| p.contains(&format!(r"\d{cap}"))),
+            "walk must stop at INSTALLMON_MAX_WALK_DEPTH"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

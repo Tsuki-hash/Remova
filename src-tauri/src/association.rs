@@ -65,7 +65,11 @@ pub fn cf_vendor_associated(app: &crate::apps::InstalledApp, path: &str) -> bool
         .trim_end_matches('\\')
         .to_lowercase();
     if !install.is_empty() {
-        if low == install || low.starts_with(&format!(r"{install}\")) {
+        // Drive/system roots must never act as association prefixes —
+        // same install-root gate as the non-fs twin below.
+        if is_safe_install_root(&install)
+            && (low == install || low.starts_with(&format!(r"{install}\")))
+        {
             return true;
         }
         if let Some(inst_vendor) = common_files_vendor_segment(&install) {
@@ -399,6 +403,33 @@ mod tests {
         assert!(!cf_vendor_associated(
             &orphan_app(),
             r"C:\Program Files\Common Files\DemoApp\x"
+        ));
+    }
+
+    /// Unsafe install roots must never act as CF association prefixes — a
+    /// drive-root or system-root InstallLocation would otherwise swallow every
+    /// Common Files vendor folder on that drive (delete-side leak).
+    #[test]
+    fn cf_vendor_associated_rejects_unsafe_install_roots() {
+        let path = r"C:\Common Files\SomeVendor\plugins";
+        for install in [r"C:\", "C:", r"C:\Windows", r"C:\Users"] {
+            let app = InstalledApp {
+                install_location: install.into(),
+                ..demo_app()
+            };
+            assert!(
+                !cf_vendor_associated(&app, path),
+                "install root '{install}' must not claim {path}"
+            );
+        }
+        // A deep, legitimate install still associates by prefix.
+        let deep = InstalledApp {
+            install_location: r"C:\Program Files\DemoApp".into(),
+            ..demo_app()
+        };
+        assert!(cf_vendor_associated(
+            &deep,
+            r"C:\Program Files\DemoApp\Common Files\extra"
         ));
     }
 
