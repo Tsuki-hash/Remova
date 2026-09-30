@@ -43,7 +43,7 @@ pub fn export_history_csv() -> Result<String, String> {
             e.delayed,
             e.aborted,
             fsutil::csv_escape(&e.backup_dir),
-            e.created_at
+            fsutil::csv_escape(&e.created_at)
         ));
     }
     Ok(out)

@@ -605,7 +605,10 @@ pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
 /// formula when the export is opened in Excel — neutralize with a leading
 /// apostrophe before any quoting so it stays part of the cell value.
 pub fn csv_escape(s: &str) -> String {
-    let safe = if matches!(s.chars().next(), Some('=' | '+' | '-' | '@' | '\t')) {
+    let safe = if matches!(
+        s.chars().next(),
+        Some('=' | '+' | '-' | '@' | '\t' | '\r' | '\n')
+    ) {
         format!("'{s}")
     } else {
         s.to_string()
@@ -877,6 +880,8 @@ mod tests {
         assert_eq!(csv_escape("-flag"), "'-flag");
         assert_eq!(csv_escape("@import"), "'@import");
         assert_eq!(csv_escape("\t=1"), "'\t=1");
+        assert_eq!(csv_escape("\r=1+1"), "\"'\r=1+1\"");
+        assert_eq!(csv_escape("\n=1+1"), "\"'\n=1+1\"");
         // Quoted fields keep the apostrophe inside the cell value.
         assert_eq!(csv_escape("=a,\"b"), "\"'=a,\"\"b\"");
         // Ordinary names (CJK, digits, drive paths) are untouched.
