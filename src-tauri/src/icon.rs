@@ -77,7 +77,9 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
 }
 
 fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<()> {
-    let tmp = cache_file.with_extension("png.tmp");
+    let mut tmp_name = cache_file.as_os_str().to_owned();
+    tmp_name.push(format!(".{}.png.tmp", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp_name);
     let result = std::fs::write(&tmp, png).and_then(|_| std::fs::rename(&tmp, cache_file));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -265,7 +267,13 @@ mod tests {
         let blocked = dir.join("blocked.png");
         std::fs::create_dir_all(&blocked).unwrap();
         assert!(write_cache_png(&blocked, b"png").is_err());
-        assert!(!blocked.with_extension("png.tmp").exists());
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".png.tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
         let keep = dir.join("keep.png");
         let stale = dir.join("stale.png.tmp");
         let unrelated = dir.join("unrelated.tmp");
