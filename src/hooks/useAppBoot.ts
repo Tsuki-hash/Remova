@@ -174,7 +174,7 @@ export async function checkUpdateNow(
     const res = await checkLatestRelease();
     if (!res.ok) {
  // Show the concrete reason first, then jump to Releases as a fallback path.
-      toast.error(`${L.versionCheckFailed}: ${res.reason}`);
+      toast.error(formatError(res.reason));
       await openReleases();
       return;
     }
@@ -201,8 +201,7 @@ export async function checkUpdateNow(
       toast.success(L.versionUpToDate(__APP_VERSION__));
     }
   } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    toast.error(`${L.versionCheckFailed}: ${reason}`);
+    toast.error(formatError(e));
     await openReleases();
   }
 }

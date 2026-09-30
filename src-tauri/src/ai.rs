@@ -160,14 +160,20 @@ fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
     let mut tmp_name = p.as_os_str().to_owned();
     tmp_name.push(format!(".{}.tmp", std::process::id()));
     let tmp = std::path::PathBuf::from(tmp_name);
-    std::fs::write(&tmp, s).map_err(|e| {
+    // tmp + fsync + rename — matches the shared atomic-write discipline; a
+    // crash must not leave a half-written ciphertext.
+    let result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(s.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, p)
+    })();
+    if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })?;
-    std::fs::rename(&tmp, p).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    }
+    result.map_err(|e| e.to_string())
 }
 
 pub fn save_config(c: &AiConfig) -> Result<(), String> {

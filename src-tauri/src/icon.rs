@@ -84,7 +84,15 @@ fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<
     let mut tmp_name = cache_file.as_os_str().to_owned();
     tmp_name.push(format!(".{}_{}.png.tmp", std::process::id(), nonce));
     let tmp = std::path::PathBuf::from(tmp_name);
-    let result = std::fs::write(&tmp, png).and_then(|_| std::fs::rename(&tmp, cache_file));
+    // tmp + fsync + rename — matches the shared atomic-write discipline.
+    let result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(png)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, cache_file)
+    })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }

@@ -21,6 +21,19 @@ const linkBtn = {
   fontWeight: 650,
 } as const;
 
+/** Off-screen live region: announced but never painted. */
+const visuallyHidden = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+} as const;
+
 export function ShellStatus({
   disk,
   admin,
@@ -92,7 +105,13 @@ export function ShellFooter({
     } catch (e) {
       // Raw error goes to the console for diagnosis; the toast stays localized.
       console.error("[update] install failed", e);
-      toast.error(L.versionInstallFailed, { detail: updateErrorMessage(e), sticky: true });
+      const raw = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
+      if (raw === "update:busy") {
+        // Nothing failed — another task holds the slot. Not an error.
+        toast.info(L.taskBusy);
+      } else {
+        toast.error(L.versionInstallFailed, { detail: updateErrorMessage(e), sticky: true });
+      }
     } finally {
       installing.current = false;
     }
@@ -112,7 +131,16 @@ export function ShellFooter({
               if (e.key === "Escape") e.stopPropagation();
             }}
             style={{ background: "var(--surface)", color: "var(--fg)", padding: 24, borderRadius: 12 }}>
-            <span aria-live="polite">{progressAnnouncement(progress, L)}</span>
+            {/* Screen readers get the stepped announcement (hidden); the
+                visible line keeps the exact raw percent — no doubled %. */}
+            <span aria-live="polite" style={visuallyHidden}>
+              {progressAnnouncement(progress, L)}
+            </span>
+            {progress.phase === "checking"
+              ? L.versionCheck
+              : progress.phase === "installing"
+                ? L.versionInstalling
+                : L.versionDownloading}
             {progress.percent !== undefined && ` ${progress.percent}%`}
           </div>
         </div>
