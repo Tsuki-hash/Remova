@@ -187,9 +187,9 @@ export async function checkUpdateNow(
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
       setUpdateInfo(info);
       toast.success(`${L.versionNew}: v${info.version}`);
-      const target = info.downloadUrl || info.url;
+      const { openUpdateDownload } = await import("../lib/updateCheck");
       try {
-        await api.openPath(target);
+        await openUpdateDownload(info);
       } catch {
         toast.error(L.versionCheckFailed);
       }

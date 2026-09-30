@@ -128,3 +128,11 @@ describe("seal failure guidance", () => {
     expect(formatError("seal:key_lost")).toContain("勿删除或重建密钥");
   });
 });
+
+describe("update token contract", () => {
+  it("maps update:* tokens to localized text without leaking internals", () => {
+    expect(formatError("update:busy")).not.toBe("update:busy");
+    expect(formatError("update:http_failed")).not.toContain("http_failed");
+    expect(formatError("update:parse_failed")).not.toBe("update:parse_failed");
+  });
+});

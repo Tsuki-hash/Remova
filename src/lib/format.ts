@@ -76,6 +76,9 @@ function isKnownIpcCode(code: string): boolean {
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   const L = t();
   const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+ // update:* tokens from the update slot and the update commands.
+  if (raw === "update:busy") return L.taskBusy;
+  if (raw.startsWith("update:")) return L.versionCheckFailed;
  // Backup errors may embed the seal code in a per-item failure message.
   if (raw.includes("seal:")) {
     if (raw.includes("requires_admin")) return L.errSealAdmin;

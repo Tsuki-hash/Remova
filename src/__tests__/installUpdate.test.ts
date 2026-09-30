@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installUpdate } from "../lib/installUpdate";
+import { installUpdate, updateErrorMessage } from "../lib/installUpdate";
 import { acquireUpdateSlot, trackNativeCall } from "../lib/nativeActivity";
 import { check } from "@tauri-apps/plugin-updater";
 import { api } from "../lib/api";
@@ -58,7 +58,7 @@ describe("safe online update", () => {
   it("rechecks tasks after confirmation to prevent a race", async () => {
     const busy = { current: false };
     vi.mocked(requestConfirm).mockImplementation(async () => { busy.current = true; return true; });
-    await expect(installUpdate(info, busy, () => false, vi.fn())).rejects.toThrow();
+    await expect(installUpdate(info, busy, () => false, vi.fn())).rejects.toThrow("update:busy");
     expect(check).not.toHaveBeenCalled();
   });
 
@@ -66,25 +66,38 @@ describe("safe online update", () => {
     let finish!: () => void;
     const pending = trackNativeCall(() => new Promise<void>((resolve) => { finish = resolve; }));
     try {
-      await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow();
+      await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:busy");
       expect(check).not.toHaveBeenCalled();
     } finally { finish(); await pending; }
   });
 
   it("blocks installation during monitoring or for unsupported launches", async () => {
-    await expect(installUpdate(info, { current: false }, () => true, vi.fn())).rejects.toThrow();
+    await expect(installUpdate(info, { current: false }, () => true, vi.fn())).rejects.toThrow("update:busy");
     vi.mocked(api.onlineUpdateSupported).mockResolvedValue(false);
-    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow();
+    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:manual_only");
     expect(requestConfirm).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
   });
 
   it("does not install a newly published version that the user has not confirmed", async () => {
     vi.mocked(check).mockResolvedValue({ ...update, version: "1.3.2" } as unknown as Awaited<ReturnType<typeof check>>);
-    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow();
+    await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:version_changed");
     expect(update.download).not.toHaveBeenCalled();
     expect(update.install).not.toHaveBeenCalled();
     expect(update.close).toHaveBeenCalledOnce();
+  });
+
+  it("maps update failure tokens to text without leaking internals", async () => {
+    expect(updateErrorMessage(new Error("update:busy"))).not.toBe("update:busy");
+    expect(updateErrorMessage(new Error("update:manual_only"))).toBeTruthy();
+    expect(updateErrorMessage(new Error("update:check_failed"))).toBeTruthy();
+    expect(updateErrorMessage(new Error("update:version_changed"))).toBeTruthy();
+    expect(updateErrorMessage("update:http_failed")).toBeTruthy();
+    // Unknown / plugin errors collapse to the generic message — the raw
+    // English string must never reach the toast.
+    const generic = updateErrorMessage(new Error("download failed: hyper::x"));
+    expect(generic).not.toContain("hyper");
+    expect(generic).toBe(updateErrorMessage(new Error("anything else")));
   });
 
   it("releases both slots when launching the installer fails", async () => {

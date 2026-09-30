@@ -53,4 +53,28 @@ describe("updateCheck", () => {
     await openUpdateDownload({ version: "1.3.0", url: RELEASES_URL });
     expect(api.openPath).toHaveBeenCalledWith(RELEASES_URL);
   });
+
+  it("falls back to the release page when the asset URL cannot be opened", async () => {
+    const openPath = api.openPath as ReturnType<typeof vi.fn>;
+    openPath.mockImplementation((target: string) =>
+      target === "https://example/d.exe"
+        ? Promise.reject(new Error("open failed"))
+        : Promise.resolve(),
+    );
+    await openUpdateDownload({
+      version: "1.3.0",
+      url: RELEASES_URL,
+      downloadUrl: "https://example/d.exe",
+    });
+    expect(openPath).toHaveBeenCalledWith("https://example/d.exe");
+    expect(openPath).toHaveBeenLastCalledWith(RELEASES_URL);
+  });
+
+  it("propagates failure when no target can be opened", async () => {
+    const openPath = api.openPath as ReturnType<typeof vi.fn>;
+    openPath.mockRejectedValue(new Error("no shell"));
+    await expect(
+      openUpdateDownload({ version: "1.3.0", url: RELEASES_URL }),
+    ).rejects.toThrow("no shell");
+  });
 });

@@ -8,6 +8,7 @@ import type { InstalledApp } from "../types";
 const listApps = vi.fn();
 const openPath = vi.fn();
 const checkLatestRelease = vi.fn();
+const openUpdateDownload = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -22,6 +23,7 @@ vi.mock("../lib/api", () => ({
 vi.mock("../lib/updateCheck", () => ({
   RELEASES_URL: "https://example.com/releases",
   checkLatestRelease: (...a: unknown[]) => checkLatestRelease(...a),
+  openUpdateDownload: (...a: unknown[]) => openUpdateDownload(...a),
 }));
 vi.mock("../lib/closeMode", () => ({
   consumeQuitIntent: vi.fn().mockReturnValue(false),
@@ -164,7 +166,9 @@ describe("checkUpdateNow flows", () => {
       expect.objectContaining({ version: "99.0.0" }),
     );
     expect(toast.success).toHaveBeenCalled();
-    expect(openPath).toHaveBeenCalledWith("https://example.com/dl");
+    expect(openUpdateDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ version: "99.0.0", downloadUrl: "https://example.com/dl" }),
+    );
   });
 
   it("keeps quiet when up to date", async () => {
