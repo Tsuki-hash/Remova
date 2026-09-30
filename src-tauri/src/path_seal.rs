@@ -403,6 +403,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An empty `map_digest` must never authorize — fail closed.
+    #[test]
+    fn map_matches_rejects_empty_digest() {
+        let map = std::collections::BTreeMap::from([("a.bin".to_string(), r"C:\x".to_string())]);
+        let mut seal = PathMapSeal {
+            session: "s".into(),
+            map_digest: String::new(),
+            targets: vec![],
+            reg_digests: Default::default(),
+        };
+        assert!(!map_matches(&seal, &map));
+        seal.map_digest = map_digest_of(&map);
+        assert!(map_matches(&seal, &map));
+    }
+
     #[test]
     fn seal_roundtrip_and_tamper_detection() {
         with_seals_dir(|| {

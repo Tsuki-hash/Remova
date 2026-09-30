@@ -659,7 +659,7 @@ fn read_reg_path_value(key_path: &str) -> Result<String, String> {
 }
 
 /// Expand `%VAR%` references using the current environment block.
-fn expand_env_string(s: &str) -> String {
+pub(crate) fn expand_env_string(s: &str) -> String {
     #[cfg(not(windows))]
     {
         s.to_string()
@@ -1169,6 +1169,11 @@ mod tests {
         assert!(!super::path_mock::active());
         // Must not fall back to the process env or error out on a healthy box.
         let raw = super::read_path_scope("User").expect("native user PATH read");
-        let _ = raw; // shape is machine-specific; reaching here is the assertion
+        // A successful read returns a string (possibly empty on a stripped
+        // account) — never process-env-shaped noise, never Err.
+        assert!(
+            raw.contains(';') || raw.contains('\\') || raw.contains('/') || raw.is_empty(),
+            "unexpected user PATH shape: {raw:?}"
+        );
     }
 }

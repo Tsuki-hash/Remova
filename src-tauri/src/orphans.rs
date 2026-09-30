@@ -160,6 +160,12 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                     | "nuget"
                     | "temp"
                     | "tmp"
+                    | "cache"
+                    | "fontcache"
+                    | "gpucache"
+                    | "shadercache"
+                    | "d3dshadercache"
+                    | "code cache"
                     | "crashdumps"
                     | "squirreltemp"
             ) {

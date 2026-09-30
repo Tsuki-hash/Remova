@@ -71,15 +71,15 @@ pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
         let meta = root.metadata().ok()?;
         return Some(meta.len().div_ceil(1024));
     }
-    walk_bytes_limited(root, 0).map(|b| b.div_ceil(1024))
+    let mut files_seen = 0u64;
+    walk_bytes_limited(root, 0, &mut files_seen).map(|b| b.div_ceil(1024))
 }
 
-fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
+fn walk_bytes_limited(dir: &Path, depth: u32, files_seen: &mut u64) -> Option<u64> {
     if depth > MAX_WALK_DEPTH {
         return None;
     }
     let mut total: u64 = 0;
-    let mut files_seen: u64 = 0;
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
@@ -88,12 +88,13 @@ fn walk_bytes_limited(dir: &Path, depth: u32) -> Option<u64> {
             continue;
         }
         if meta.is_dir() {
-            let sub = walk_bytes_limited(&entry.path(), depth + 1)?;
+            let sub = walk_bytes_limited(&entry.path(), depth + 1, files_seen)?;
             total = total.saturating_add(sub);
         } else if meta.is_file() {
             total = total.saturating_add(meta.len());
-            files_seen += 1;
-            if files_seen >= MAX_WALK_FILES {
+            *files_seen += 1;
+            // Budget is tree-wide — a wide directory must not reset the cap.
+            if *files_seen >= MAX_WALK_FILES {
                 return None;
             }
         }

@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn backup_missing_file_ok() {
-        let tmp = std::env::temp_dir().join("remova_bk_test");
+        let tmp = std::env::temp_dir().join(format!("remova_bk_test_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let item = CleanupItem {

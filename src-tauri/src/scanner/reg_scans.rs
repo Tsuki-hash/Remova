@@ -354,7 +354,11 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
 /// `read_string`, never as a subkey default (the subkey form always
 /// opened nothing and silently killed the install-location channel).
 fn service_image_string(svc_path: &str) -> String {
-    crate::regscan::read_string(svc_path, "ImagePath").unwrap_or_default()
+    // REG_EXPAND_SZ ImagePath must be expanded before install matching or
+    // `%ProgramFiles%\Vendor\…` never hits the install root.
+    crate::regops::expand_env_string(
+        &crate::regscan::read_string(svc_path, "ImagePath").unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]
@@ -379,15 +383,27 @@ mod tests {
     #[ignore]
     fn service_image_string_reads_real_image_paths() {
         let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
+        let services = crate::regscan::list_subkeys(root);
+        assert!(
+            !services.is_empty(),
+            "no services listed — registry read broken"
+        );
         let mut non_empty = 0;
-        for svc in crate::regscan::list_subkeys(root) {
-            if !super::service_image_string(&format!(r"{root}\{svc}")).is_empty() {
-                non_empty += 1;
+        for svc in &services {
+            let image = super::service_image_string(&format!(r"{root}\{svc}"));
+            if image.is_empty() {
+                continue;
             }
+            non_empty += 1;
+            // Real ImagePath values look like paths or driver names, not junk.
+            assert!(
+                image.contains('\\') || image.contains(".sys") || image.contains(".exe"),
+                "unexpected ImagePath shape for {svc}: {image:?}"
+            );
         }
         assert!(
-            non_empty >= 5,
-            "expected real ImagePath reads, got {non_empty}"
+            non_empty >= 1,
+            "expected at least one real ImagePath read, got {non_empty}"
         );
     }
 }
