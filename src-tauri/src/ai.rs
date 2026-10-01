@@ -1116,6 +1116,27 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Rename-target failure (dest is a directory) must also clean the tmp —
+    /// mirrors the icon-cache failure test for the same write discipline.
+    #[cfg(windows)]
+    #[test]
+    fn config_write_rename_failure_removes_tmp() {
+        let dir = std::env::temp_dir().join(format!("remova-r27-ai-write-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The publish target is a DIRECTORY: write succeeds, rename fails.
+        let path = dir.join("ai.json");
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(write_config_file(&path, "new data").is_err());
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn explain_batches_rematch_appdata_echoes_and_cache_every_result() {
         let cfg = AiConfig::default();

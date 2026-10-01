@@ -37,7 +37,9 @@ if ($expected -and $pkg -ne $expected) {
 }
 
 # The newest CHANGELOG section must be the released version.
-if (Test-Path "CHANGELOG.md") {
+if (-not (Test-Path "CHANGELOG.md")) {
+    $errors += "CHANGELOG.md is missing"
+} elseif ($true) {
     $cl = Get-Content "CHANGELOG.md"
     $head = $cl | Where-Object { $_ -match '^## \[(v?)([0-9]+\.[0-9]+\.[0-9]+)\]' } | Select-Object -First 1
     if (-not $head) {

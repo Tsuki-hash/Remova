@@ -144,8 +144,8 @@ pub fn allow_manage_reg_write(
 
 /// intrinsic write-target allowlist for registry value primitives.
 /// Covers every legitimate writer in the codebase — Uninstall roots (product
-/// metadata), Run/RunOnce + StartupApproved (startup management), per-service
-/// keys (start type) and Remova's own context-menu key — so a value write can
+/// metadata), Run/RunOnce + StartupApproved (startup management) and
+/// per-service keys (start type) — so a value write can
 /// never land outside these shapes even if a future caller forgets its gate.
 pub fn allow_reg_value_write(key_path: &str, value_name: Option<&str>) -> Result<(), String> {
     let low = normalize_hklm(key_path);

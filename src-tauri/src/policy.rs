@@ -87,6 +87,25 @@ fn expand_path_env(entry: &str) -> String {
     crate::regops::expand_env_string(entry)
 }
 
+/// Resolve an environment-variable ROOT through the shared expander.
+/// `None` when the variable resolves nowhere (stays literal or empty).
+fn env_root(var: &str) -> Option<String> {
+    let v = expand_path_env(&format!("%{var}%"));
+    if v.contains('%') {
+        return None;
+    }
+    let root = v
+        .replace('/', "\\")
+        .to_lowercase()
+        .trim_end_matches('\\')
+        .to_string();
+    if root.len() > 2 {
+        Some(root)
+    } else {
+        None
+    }
+}
+
 /// PATH segments that must never be scrubbed (system PATH).
 /// Public so write primitives can apply an intrinsic secondary gate.
 pub fn is_dangerous_path_entry(entry: &str) -> bool {
@@ -133,44 +152,28 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         r"c:\program files (x86)\powershell".into(),
         r"c:\programdata\microsoft\windows\start menu\programs\startup".into(),
     ];
-    // Env roots: only system PATH-shaped subtrees —not entire ProgramFiles/ProgramData.
-    if let Ok(sr) = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")) {
-        let root = sr
-            .replace('/', "\\")
-            .to_lowercase()
-            .trim_end_matches('\\')
-            .to_string();
-        if root.len() > 2 {
-            danger.push(root.clone());
-            danger.push(format!(r"{root}\system32"));
-            danger.push(format!(r"{root}\syswow64"));
-            danger.push(format!(r"{root}\system32\wbem"));
-            danger.push(format!(r"{root}\system32\windowspowershell\v1.0"));
-            danger.push(format!(r"{root}\system32\openssh"));
-        }
+    // Env roots: only system PATH-shaped subtrees — not entire ProgramFiles/ProgramData.
+    // Sourced through the SAME expander the entries use: in service/SYSTEM or
+    // stripped-env contexts the process env may lack a variable the registry
+    // defines, and divergent sources would leave those roots unprotected
+    // exactly there.
+    if let Some(root) = env_root("SystemRoot").or_else(|| env_root("windir")) {
+        danger.push(root.clone());
+        danger.push(format!(r"{root}\system32"));
+        danger.push(format!(r"{root}\syswow64"));
+        danger.push(format!(r"{root}\system32\wbem"));
+        danger.push(format!(r"{root}\system32\windowspowershell\v1.0"));
+        danger.push(format!(r"{root}\system32\openssh"));
     }
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        let low = pf
-            .replace('/', "\\")
-            .to_lowercase()
-            .trim_end_matches('\\')
-            .to_string();
-        if low.len() > 2 {
-            danger.push(format!(r"{low}\windowsapps"));
-            danger.push(format!(r"{low}\powershell"));
-            danger.push(format!(r"{low}\powershell\7"));
-        }
+    if let Some(low) = env_root("ProgramFiles") {
+        danger.push(format!(r"{low}\windowsapps"));
+        danger.push(format!(r"{low}\powershell"));
+        danger.push(format!(r"{low}\powershell\7"));
     }
-    if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-        let low = pf86
-            .replace('/', "\\")
-            .to_lowercase()
-            .trim_end_matches('\\')
-            .to_string();
-        if low.len() > 2 {
-            danger.push(format!(r"{low}\windowsapps"));
-            danger.push(format!(r"{low}\powershell"));
-        }
+    if let Some(low) = env_root("ProgramFiles(x86)") {
+        danger.push(format!(r"{low}\windowsapps"));
+        danger.push(format!(r"{low}\powershell"));
+        danger.push(format!(r"{low}\powershell\7"));
     }
     danger
         .iter()

@@ -20,6 +20,20 @@ const check = args.includes("--check");
 
 const zh = fs.readFileSync(zhPath, "utf8");
 const keys = [...zh.matchAll(/^    ([A-Za-z0-9_]+):/gm)].map((m) => m[1]);
+// zh/en key-set parity — the compile-time check in i18n/index.ts also guards
+// this, but the gate stays independent of the compiler invocation.
+const en = fs.readFileSync(enPath, "utf8");
+const enKeys = [...en.matchAll(/^    ([A-Za-z0-9_]+):/gm)].map((m) => m[1]);
+const onlyZh = keys.filter((k) => !enKeys.includes(k));
+const onlyEn = enKeys.filter((k) => !keys.includes(k));
+if (onlyZh.length || onlyEn.length) {
+  const msg = `i18n key parity broken — zh only: ${onlyZh.join(", ") || "(none)"}; en only: ${onlyEn.join(", ") || "(none)"}`;
+  if (check || prune) {
+    console.error(msg);
+    process.exit(1);
+  }
+  console.warn(msg);
+}
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
