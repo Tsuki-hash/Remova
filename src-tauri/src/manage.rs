@@ -701,26 +701,31 @@ fn write_startup_folder_approved(file_name: &str, enabled: bool) -> Result<(), S
     )
 }
 
-fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Result<(), String> {
-    // Map Run key → matching StartupApproved hive/view.
-    // HKCU\...\Run → HKCU\...\Explorer\StartupApproved\Run
-    // HKLM64/32\...\Run → same hive Explorer\StartupApproved\Run (Run32 for 32-bit view)
+/// Map a Run-family key to its StartupApproved companion. `None` = the family
+/// has no live companion (RunOnce always runs; Policies\Explorer\Run ignores
+/// the flag) — enable must be a no-op and disable is rejected upstream.
+fn startup_approved_key_for(run_key: &str) -> Option<&'static str> {
     let low = run_key.to_uppercase().replace('/', "\\");
-    let sa_key = if low.contains("\\RUNONCE") {
-        // RunOnce has no StartupApproved companion; nothing to write for an
-        // enable (disables are rejected before reaching this point).
-        return Ok(());
-    } else if low.contains(r"\POLICIES\EXPLORER\RUN") {
-        // Policy Run entries ignore StartupApproved flags entirely — writing
-        // one would plant a dead value Explorer never reads. Enable is a
-        // no-op (policy entries always run); disable is rejected upstream.
-        return Ok(());
-    } else if low.contains("HKLM32") {
+    if low.contains("\\RUNONCE") || low.contains(r"\POLICIES\EXPLORER\RUN") {
+        return None;
+    }
+    Some(if low.contains("HKLM32") {
         r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     } else if low.starts_with("HKLM") {
         r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     } else {
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    })
+}
+
+fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Result<(), String> {
+    // Map Run key → matching StartupApproved hive/view.
+    // HKCU\...\Run → HKCU\...\Explorer\StartupApproved\Run
+    // HKLM64/32\...\Run → same hive Explorer\StartupApproved\Run (Run32 for 32-bit view)
+    let Some(sa_key) = startup_approved_key_for(run_key) else {
+        // RunOnce / Policies\Explorer\Run have no live companion: nothing to
+        // write for an enable (disables are rejected before reaching here).
+        return Ok(());
     };
     if !is_allowed_startup_approved_key(sa_key) {
         return Err(crate::error::manage_err("protected_registry", sa_key).to_ipc());
@@ -889,6 +894,25 @@ mod tests {
         assert!(super::set_startup_enabled(loc, true).is_ok());
         let loc2 = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
         assert!(super::set_startup_enabled(loc2, true).is_ok());
+    }
+
+    /// The mapping itself refuses companions for RunOnce / policy Run keys —
+    /// pinned on the pure helper so the red state never touches the registry
+    /// (the old inline branch wrote a live value when the branch was removed).
+    #[test]
+    fn startup_approved_mapping_skips_companionless_families() {
+        assert!(super::startup_approved_key_for(
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run"
+        )
+        .is_none());
+        assert!(super::startup_approved_key_for(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
+        )
+        .is_none());
+        assert_eq!(
+            super::startup_approved_key_for(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+            Some(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run")
+        );
     }
 
     #[test]

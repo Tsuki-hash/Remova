@@ -48,6 +48,12 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
         // DELETE (0x00010000) is not exported by this windows crate build.
         const DELETE_RIGHT: REG_SAM_FLAGS = REG_SAM_FLAGS(0x0001_0000);
         let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        // A trailing separator makes the effective leaf empty — RegDeleteTreeW
+        // with an empty subkey operates on the PARENT's contents. Refuse the
+        // shape here as defense in depth behind the key gate.
+        if sub.is_empty() || sub.ends_with('\\') {
+            return Err("registry key leaf must not be empty".into());
+        }
         unsafe {
             // Split into parent + leaf so RegDeleteTreeW can target the child under a view-aware handle.
             let (parent, leaf) = match sub.rsplit_once('\\') {
@@ -1205,6 +1211,29 @@ mod tests {
         assert!(
             super::delete_key(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall").is_err()
         );
+    }
+
+    /// A trailing separator makes the effective leaf empty — RegDeleteTreeW
+    /// with an empty subkey would wipe the PARENT's contents. The primitive
+    /// must refuse the shape before any registry access, and the key gate
+    /// must refuse root shapes with a trailing separator (an allow arm
+    /// matched `...\Uninstall\` as a prefix before the trim was added).
+    #[test]
+    fn delete_key_refuses_trailing_separator_shapes() {
+        assert!(super::delete_key(r"HKCU\Software\RemovaShapeTest\").is_err());
+        // Gate level: every root family must refuse the trailing-separator form.
+        for shape in [
+            r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\",
+            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\",
+            r"HKLM\SYSTEM\CurrentControlSet\Services\",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\",
+        ] {
+            assert!(
+                crate::safety::is_safe_to_delete_registry(shape).is_err(),
+                "root with trailing separator must be refused: {shape}"
+            );
+        }
     }
 
     #[test]

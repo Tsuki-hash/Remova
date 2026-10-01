@@ -192,7 +192,11 @@ pub(crate) fn normalize_hklm(key_path: &str) -> String {
         .strip_prefix("HKLM32\\")
         .map(|s| format!("HKLM\\{s}"))
         .unwrap_or(low);
-    low
+    // A trailing separator must never survive normalization: root-refusal
+    // arms compare equality, while allow arms match `{root}\` prefixes — an
+    // untrimmed `...\Uninstall\` would pass the allow arm and authorize
+    // deleting the protected root itself.
+    low.trim_end_matches(['\\', '/']).to_string()
 }
 
 /// Registry paths may carry a trailing `|ValueName`. Gates that judge the key
@@ -828,12 +832,15 @@ mod tests {
             r"HKLM\SYSTEM\CurrentControlSet\Services\VendorSvc|Start"
         )
         .is_ok());
-        // Empty service name in the value shape must not pass either.
+        // Empty service name in the value shape must not pass either — with
+        // trailing-separator normalization this lands on the services-root
+        // refusal (`Services\` == the root itself).
         let empty_name =
             is_safe_to_delete_registry(r"HKLM\SYSTEM\CurrentControlSet\Services\|Start")
                 .unwrap_err();
         assert!(
-            empty_name.contains("service key name must not be empty"),
+            empty_name.contains("services root protected")
+                || empty_name.contains("service key name must not be empty"),
             "{empty_name}"
         );
     }

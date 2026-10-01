@@ -247,6 +247,10 @@ export function useAnalyzeFlow({
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
+          // Same contract as startUninstall's rescan: the post-uninstall
+          // pass cleans leftovers WITHOUT re-running the official
+          // uninstaller — without this flag a re-run aborts the cleanup.
+          setResidualFromUninstall(true);
           await analyze(app, { fromUninstall: true });
           setUninstallStage("analyze");
           await new Promise((resolve) => setTimeout(resolve, 280));

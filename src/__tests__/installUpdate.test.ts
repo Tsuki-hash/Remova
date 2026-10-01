@@ -109,12 +109,18 @@ describe("safe online update", () => {
   });
 
   it("maps update failure tokens to text without leaking internals", async () => {
-    expect(updateErrorMessage(new Error("update:busy"))).not.toBe("update:busy");
-    expect(updateErrorMessage(new Error("update:manual_only_type"))).toBeTruthy();
-    expect(updateErrorMessage(new Error("update:manual_only_env"))).toBeTruthy();
-    expect(updateErrorMessage(new Error("update:check_failed"))).toBeTruthy();
-    expect(updateErrorMessage(new Error("update:version_changed"))).toBeTruthy();
-    expect(updateErrorMessage("update:http_failed")).toBeTruthy();
+    for (const token of [
+      "update:busy",
+      "update:manual_only_type",
+      "update:manual_only_env",
+      "update:check_failed",
+      "update:version_changed",
+      "update:http_failed",
+    ]) {
+      const msg = updateErrorMessage(new Error(token));
+      expect(msg).not.toContain("update:");
+      expect(msg).not.toBe(token);
+    }
     // Unknown / plugin errors collapse to the generic message — the raw
     // English string must never reach the toast.
     const generic = updateErrorMessage(new Error("download failed: hyper::x"));

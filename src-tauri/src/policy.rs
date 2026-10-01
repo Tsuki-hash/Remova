@@ -112,8 +112,14 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
     if s.ends_with(':') || !s.contains('\\') || s.contains('%') {
         return true;
     }
-    // Reject path traversal in PATH segments ( class).
+    // Reject path traversal in PATH segments.
     if joined.split('\\').any(|seg| seg == ".." || seg == ".") {
+        return true;
+    }
+    // 8.3 / extended-length shapes must not be judged by prefix matching —
+    // `C:\PROGRA~1\WindowsApps` would otherwise slip past the
+    // `c:\program files\windowsapps` danger root its long form is refused by.
+    if crate::safety::is_abnormal_path_shape(&s) {
         return true;
     }
     let mut danger: Vec<String> = vec![

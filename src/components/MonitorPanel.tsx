@@ -53,6 +53,11 @@ export function MonitorPanel({
           {L.monitorTruncated(diff.files_truncated ?? 0, diff.reg_truncated ?? 0)}
         </div>
       )}
+      {diff.walk_degraded && (
+        <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
+          {L.monitorDegraded}
+        </div>
+      )}
       <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
         {total === 0 ? (
           <div style={{ ...css.muted, padding: "8px 0" }}>{L.monitorEmptyHint}</div>
