@@ -224,9 +224,10 @@ describe("checkUpdateNow flows", () => {
       await checkUpdateNow(setUpdateInfo, L);
     });
     // The reason goes through the shared error formatter — known update:*
-    // tokens become localized text instead of leaking internals.
+    // tokens become localized text instead of leaking internals. A failed
+    // check no longer auto-opens the browser.
     expect(toast.error).toHaveBeenCalledWith(formatError("offline"));
-    expect(openPath).toHaveBeenCalledWith("https://example.com/releases");
+    expect(openPath).not.toHaveBeenCalled();
   });
 
   it("localizes known update tokens instead of leaking the raw reason", async () => {
@@ -243,6 +244,6 @@ describe("checkUpdateNow flows", () => {
     });
     const shown = String(vi.mocked(toast.error).mock.calls[0]?.[0]);
     expect(shown).not.toContain("update:http_failed");
-    expect(openPath).toHaveBeenCalledWith("https://example.com/releases");
+    expect(openPath).not.toHaveBeenCalled();
   });
 });

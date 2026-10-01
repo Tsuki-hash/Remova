@@ -111,7 +111,14 @@ export function ShellFooter({
         // Nothing failed — another task holds the slot. Not an error.
         toast.info(L.taskBusy);
       } else {
-        toast.error(L.versionInstallFailed, { detail: updateErrorMessage(e), sticky: true });
+        const msg = updateErrorMessage(e);
+        // A detail identical to the headline reads as a stutter — only add
+        // it when it actually says something more.
+        if (msg === L.versionInstallFailed) {
+          toast.error(msg, { sticky: true });
+        } else {
+          toast.error(L.versionInstallFailed, { detail: msg, sticky: true });
+        }
       }
     } finally {
       installing.current = false;
@@ -147,14 +154,19 @@ export function ShellFooter({
         </div>
       )}
       {updateInfo?.installInApp && busyRef && (
-        <button style={linkBtn} disabled={!!progress || updateBlocked} title={disabledReason} onClick={() => void onInstall()}>
+        <button
+          style={disabledReason ? { ...linkBtn, opacity: 0.55, cursor: "not-allowed" } : linkBtn}
+          disabled={!!progress || updateBlocked}
+          title={disabledReason}
+          onClick={() => void onInstall()}
+        >
           {L.versionInstall} v{updateInfo.version}
         </button>
       )}
       {updateInfo && (
         <button
           style={linkBtn}
-          title={updateInfo.downloadUrl || updateInfo.url}
+          title={L.versionDownloadHint}
           onClick={() => {
             // openUpdateDownload falls back to the release page when the
             // asset URL cannot be opened.

@@ -395,7 +395,7 @@ export const dict: EnDict = {
     riskTierPrefix: (tier: string) => `Risk level: ${tier}`,
     confirmForceRiskPrefix: (tier: string) => `Force-clean risk: ${tier}`,
     orphanCleanupRiskPrefix: (tier: string, n: number) => `Cleaning ${n} item(s) · ${tier}`,
-    openReleasesToast: "Opened Releases in browser",
+    versionDownloadHint: "Open the installer download page in your browser",
     ignoreSuggestTitle: "Ignore suggestions",
     ignoreSuggestApply: "Apply ignores",
     ignoreSuggestDone: "Ignore rules applied",

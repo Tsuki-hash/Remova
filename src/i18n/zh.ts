@@ -380,7 +380,7 @@ export const dict = {
     riskTierPrefix: (tier: string) => `风险层级：${tier}`,
     confirmForceRiskPrefix: (tier: string) => `强制清理风险：${tier}`,
     orphanCleanupRiskPrefix: (tier: string, n: number) => `将清理 ${n} 项 · ${tier}`,
-    openReleasesToast: "已在浏览器打开 Releases",
+    versionDownloadHint: "在浏览器中打开安装包下载页",
     ignoreSuggestTitle: "忽略建议",
     ignoreSuggestApply: "应用忽略",
     ignoreSuggestDone: "已应用忽略规则",

@@ -219,8 +219,11 @@ describe("App orchestration (R23-QA-05)", () => {
     await nav("more");
     act(() => more().onExportReport());
     expect(exportHtmlReport).not.toHaveBeenCalled();
+    // A failed check surfaces the localized reason only — it must not
+    // auto-open the browser (the download CTA is the manual path).
     act(() => more().onCheckUpdate());
-    await waitFor(() => expect(native.openPath).toHaveBeenCalledWith("https://example.com/releases"));
+    await waitFor(() => expect(native.checkLatestRelease.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(native.openPath).not.toHaveBeenCalled();
   });
 
   it("guards list and bucket analysis while scanning, then drills only into matching scans", async () => {
