@@ -233,6 +233,8 @@ export const dict: EnDict = {
     monitorInstall: "Install tracking",
     monitorStop: "Stop tracking",
     monitorRunning: "Install tracking on… stop after the install finishes",
+    scanInProgress: "A software scan is running",
+    uninstallRunning: "Official uninstall in progress",
     monitorStarting: "Creating pre-install snapshot…",
     monitorFinishing: "Building the install change set…",
     monitorDiff: "Install changes",

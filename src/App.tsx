@@ -637,6 +637,15 @@ export default function App() {
             updateInfo={updateInfo}
             busyRef={busyRef}
             updateBlocked={monitoring || scanning || !!uninstallingKey}
+            updateBlockedReason={
+              monitoring
+                ? L.monitorRunning
+                : scanning
+                  ? L.scanInProgress
+                  : uninstallingKey
+                    ? L.uninstallRunning
+                    : undefined
+            }
             selectedCount={nav === "software" ? multi.size : undefined}
             totalCount={
               nav === "software" && !loading ? filtered.length : undefined

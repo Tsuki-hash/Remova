@@ -396,8 +396,31 @@ pub fn export_reg_value(
                 .collect();
             format!("\"{value_name}\"=hex:{}", hex.join(","))
         }
+        "REG_SZ" | "REG_EXPAND_SZ" => {
+            // reg.exe text output is OEM-codepage encoded and mangles
+            // non-ASCII REG_SZ data — and value.reg is the seal-digested
+            // restore source. Read the raw UTF-16LE bytes natively and emit
+            // hex the import restores byte-exact (hex(1)=REG_SZ,
+            // hex(2)=REG_EXPAND_SZ).
+            let kind = if reg_type == "REG_EXPAND_SZ" {
+                "hex(2)"
+            } else {
+                "hex(1)"
+            };
+            let (bytes, _typ) = read_reg_value_bytes(key_path, value_name)?
+                .ok_or_else(|| format!("export_reg_value: value vanished for {key_path}"))?;
+            // registry strings arrive NUL-terminated — normalize to exactly one.
+            let mut core = bytes.as_slice();
+            while core.len() >= 2 && core[core.len() - 2..] == [0, 0] {
+                core = &core[..core.len() - 2];
+            }
+            let mut payload = core.to_vec();
+            payload.extend_from_slice(&[0, 0]);
+            let hex: Vec<String> = payload.iter().map(|b| format!("{b:02x}")).collect();
+            format!("\"{value_name}\"={kind}:{}", hex.join(","))
+        }
         _ => {
-            // REG_SZ / REG_EXPAND_SZ — escape backslashes for .reg
+            // Unknown string-ish types — previous text-based escape path.
             let esc = data_raw.replace('\\', "\\\\").replace('"', "\\\"");
             if reg_type == "REG_EXPAND_SZ" {
                 format!("\"{value_name}\"=hex(2):{}", utf16_hex_expand(&data_raw))
@@ -737,6 +760,58 @@ fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool)
             let text = crate::fsutil::wstring_from_reg_data(&data[..data_len as usize]);
             Ok((text, typ == REG_EXPAND_SZ))
         }
+    }
+}
+
+/// Raw registry value bytes plus the native type code. reg.exe text output is
+/// OEM-codepage encoded and mangles non-ASCII string data — the seal-digested
+/// .reg exporter must carry the exact registry bytes instead.
+#[cfg(windows)]
+fn read_reg_value_bytes(
+    key_path: &str,
+    value_name: &str,
+) -> Result<Option<(Vec<u8>, u32)>, String> {
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
+    let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+    unsafe {
+        let w = to_wide(&sub);
+        let mut hk = HKEY::default();
+        RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
+            .ok()
+            .map_err(|_| format!("open failed {key_path}"))?;
+        let vname = to_wide(value_name);
+        let mut typ = REG_VALUE_TYPE(0);
+        let mut data = vec![0u8; 16 * 1024];
+        let mut data_len = data.len() as u32;
+        let mut st = RegQueryValueExW(
+            hk,
+            PCWSTR(vname.as_ptr()),
+            None,
+            Some(&mut typ),
+            Some(data.as_mut_ptr()),
+            Some(&mut data_len),
+        );
+        if st == ERROR_MORE_DATA {
+            let need = data_len as usize;
+            if need > data.len() && need <= (1 << 20) {
+                data = vec![0u8; need];
+                data_len = data.len() as u32;
+                st = RegQueryValueExW(
+                    hk,
+                    PCWSTR(vname.as_ptr()),
+                    None,
+                    Some(&mut typ),
+                    Some(data.as_mut_ptr()),
+                    Some(&mut data_len),
+                );
+            }
+        }
+        let _ = RegCloseKey(hk);
+        if st != ERROR_SUCCESS {
+            return Ok(None);
+        }
+        data.truncate(data_len as usize);
+        Ok(Some((data, typ.0)))
     }
 }
 
@@ -1241,6 +1316,63 @@ mod tests {
         // PATH scrub refuses system segments even without caller checks.
         assert!(super::scrub_path_entry(r"C:\Windows\System32").is_err());
         assert!(super::scrub_path_entry(r"C:\Windows").is_err());
+    }
+
+    /// Non-ASCII REG_SZ data must survive export byte-exact: reg.exe text
+    /// output is OEM-codepage encoded and used to bake mojibake into the
+    /// seal-digested value.reg (the only authorized restore source).
+    #[cfg(windows)]
+    #[test]
+    fn export_reg_value_preserves_non_ascii_bytes() {
+        let key = r"HKCU\Software\RemovaExportTest";
+        let tmp = std::env::temp_dir().join(format!("remova_value_reg_cjk_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dest = tmp.join("value.reg");
+        // reg.exe argv is UTF-16 — the fixture data lands byte-exact (the
+        // write primitives are allowlist-gated and refuse this test key).
+        let add = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args([
+                "add",
+                r"HKCU\Software\RemovaExportTest",
+                "/v",
+                "Path",
+                "/t",
+                "REG_SZ",
+                "/d",
+                r"C:\Users\张三\工具",
+                "/f",
+            ])
+            .output()
+            .unwrap();
+        assert!(add.status.success(), "fixture key write failed");
+        let exported = super::export_reg_value(key, "Path", &dest).unwrap();
+        assert!(exported, "test key must exist for the export");
+        let text = std::fs::read_to_string(&dest).unwrap();
+        // hex(1) payload: decode back to UTF-16LE and compare with the truth.
+        let payload = text
+            .split("=hex(1):")
+            .nth(1)
+            .expect("REG_SZ must export as hex(1)");
+        let bytes: Vec<u8> = payload
+            .split(',')
+            .filter_map(|b| u8::from_str_radix(b.trim(), 16).ok())
+            .collect();
+        let wide: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let decoded = String::from_utf16(&wide)
+            .expect("payload must decode cleanly")
+            .trim_end_matches('\0')
+            .to_string();
+        assert_eq!(decoded, r"C:\Users\张三\工具");
+        assert!(
+            !decoded.contains('\u{FFFD}'),
+            "no replacement chars allowed"
+        );
+        super::delete_key(key).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
