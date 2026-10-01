@@ -159,6 +159,7 @@ export async function checkUpdateNow(
     versionCheckFailed: string;
     versionNew: string;
     versionUpToDate: (v: string) => string;
+    versionDownloadOpenFailed: string;
   },
 ) {
   // Check failures no longer auto-open the browser (usually offline anyway) —
@@ -184,7 +185,7 @@ export async function checkUpdateNow(
         try {
           await openUpdateDownload(info);
         } catch {
-          toast.error(L.versionCheckFailed);
+          toast.error(L.versionDownloadOpenFailed);
         }
       }
     } else {

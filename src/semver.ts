@@ -1,13 +1,22 @@
-/** Compare dotted semver-ish tags. Returns >0 if a newer than b. */
+/** Compare dotted semver-ish tags. Returns >0 if a newer than b.
+ * A prerelease suffix (-rc1) sorts BEFORE the same release, and one leading
+ * `v`/`V` is stripped — the same single-v rule the backend applies. */
 export function compareSemver(a: string, b: string): number {
-  // Strip exactly one leading `v` so a raw git tag never compares as 0.0.0 —
-  // the same single-v rule the backend applies to release tags.
-  const strip = (s: string) => (s.startsWith("v") ? s.slice(1) : s);
-  const pa = strip(a).split(".").map((x) => parseInt(x, 10) || 0);
-  const pb = strip(b).split(".").map((x) => parseInt(x, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
+  const parse = (raw: string): { core: number[]; pre: boolean } => {
+    const s = raw.trim().replace(/^[vV]/, "");
+    const m = /^(\d+(?:\.\d+)*)(-[^+]*)?(\+.*)?$/.exec(s);
+    if (!m) return { core: [0], pre: false };
+    return {
+      core: (m[1] ?? "0").split(".").map((x) => parseInt(x, 10) || 0),
+      pre: m[2] !== undefined,
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.core.length, pb.core.length); i++) {
+    const d = (pa.core[i] || 0) - (pb.core[i] || 0);
     if (d !== 0) return d;
   }
+  if (pa.pre !== pb.pre) return pa.pre ? -1 : 1;
   return 0;
 }

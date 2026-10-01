@@ -158,7 +158,7 @@ describe("checkUpdateNow flows", () => {
       versionCheckFailed: "检查失败",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
-      openReleasesToast: "去 Releases",
+      versionDownloadOpenFailed: "无法打开浏览器",
     };
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);
@@ -182,7 +182,7 @@ describe("checkUpdateNow flows", () => {
       versionCheckFailed: "检查失败",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
-      openReleasesToast: "去 Releases",
+      versionDownloadOpenFailed: "无法打开浏览器",
     };
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);
@@ -201,7 +201,7 @@ describe("checkUpdateNow flows", () => {
       versionCheckFailed: "检查失败",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
-      openReleasesToast: "去 Releases",
+      versionDownloadOpenFailed: "无法打开浏览器",
     };
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);
@@ -218,7 +218,7 @@ describe("checkUpdateNow flows", () => {
       versionCheckFailed: "检查失败",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
-      openReleasesToast: "去 Releases",
+      versionDownloadOpenFailed: "无法打开浏览器",
     };
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);
@@ -237,7 +237,7 @@ describe("checkUpdateNow flows", () => {
       versionCheckFailed: "检查失败",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
-      openReleasesToast: "去 Releases",
+      versionDownloadOpenFailed: "无法打开浏览器",
     };
     await act(async () => {
       await checkUpdateNow(setUpdateInfo, L);

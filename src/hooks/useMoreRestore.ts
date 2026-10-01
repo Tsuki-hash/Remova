@@ -67,8 +67,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreMsgs([]);
     try {
       const msgs = await api.restoreSessionByName(restorePick);
-      setRestoreMsgs(msgs.length ? msgs : ["ok"]);
-      toast.success(L.restoreResult);
+      setRestoreMsgs(msgs.length ? msgs : [L.restoreNoDetail]);
+      toast.success(L.restoreDone);
     } catch (e) {
       setRestoreMsgs([formatError(e)]);
       toast.error(formatError(e));

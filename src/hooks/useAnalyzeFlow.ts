@@ -173,7 +173,7 @@ export function useAnalyzeFlow({
         } else if (r.ok) {
           toast.success(strings.uninstallOk);
         } else {
-          toast.error(`${strings.uninstallFail}: ${r.message}`);
+          uninstallFailToast(r.message, strings);
         }
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
@@ -223,7 +223,22 @@ export function useAnalyzeFlow({
     [startUninstall],
   );
 
-  const openOfficialOnly = useCallback(
+  
+/** Official-uninstall failures carry free-form technical messages. 1602 is
+ * MSI's "user cancelled" — worth its own friendly wording; everything else
+ * keeps the localized headline and moves the raw message into the detail. */
+function uninstallFailToast(
+  msg: string,
+  strings: ReturnType<typeof t>,
+): void {
+  if (msg.includes("1602")) {
+    toast.info(strings.uninstallCancelled);
+    return;
+  }
+  toast.error(strings.uninstallFail, { detail: msg });
+}
+
+const openOfficialOnly = useCallback(
     async (app: InstalledApp) => {
       if (busyRef.current) return;
       const strings = t();
@@ -243,7 +258,7 @@ export function useAnalyzeFlow({
         const r = await api.officialUninstall(app);
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
         else if (r.ok) toast.success(strings.uninstallOk);
-        else toast.error(`${strings.uninstallFail}: ${r.message}`);
+        else uninstallFailToast(r.message, strings);
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
