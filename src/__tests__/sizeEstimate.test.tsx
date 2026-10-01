@@ -70,6 +70,19 @@ it("new begin waits for an earlier cancel before estimating a new path", async (
   await finishOutstanding();
 });
 
+it("a zero-KB success is not frozen into the cache — next refresh retries", async () => {
+  native.estimateDirSizeKb.mockImplementation((path: string) =>
+    path === "C:\\B" ? Promise.resolve({ kb: 0, capped: false }) : Promise.resolve({ kb: 10, capped: false }),
+  );
+  const { result, rerender } = renderHook(({ list }) => useSizeEstimate(list, false), { initialProps: { list: apps } });
+  await waitFor(() => expect(result.current.estimating).toBe(false));
+  expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(3);
+  expect(result.current.sizeOf(apps[1]!)).toBe(0);
+  rerender({ list: [...apps] });
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(4));
+  expect(native.estimateDirSizeKb).toHaveBeenLastCalledWith("C:\\B");
+});
+
 it("update:busy failures are neither cached nor skipped — next refresh retries", async () => {
   let busyFired = false;
   native.estimateDirSizeKb.mockImplementation((path: string) => {

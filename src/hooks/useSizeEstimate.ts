@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatSize } from "../lib/format";
 import { api } from "../lib/api";
+import { UPDATE_BUSY } from "../lib/nativeActivity";
 import type { InstalledApp } from "../types";
 
 type SizeEntry = { kb: number; capped: boolean };
@@ -98,17 +99,19 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
           try {
             const est = await api.estimateDirSizeKb(path);
             if (disposed || run.cancelled) break;
-            const entry: SizeEntry = {
-              kb: est.kb > 0 ? est.kb : 0,
-              capped: est.capped,
-            };
-            sizeCache.current.set(path, entry);
-            queueSet(path, entry);
+            // A 0 KB result is not a stable fact (near-empty dir or a source
+            // that failed silently) — leave it uncached so the next refresh
+            // re-estimates instead of freezing a zero forever.
+            if (est.kb > 0) {
+              const entry: SizeEntry = { kb: est.kb, capped: est.capped };
+              sizeCache.current.set(path, entry);
+              queueSet(path, entry);
+            }
           } catch (err) {
             if (disposed || run.cancelled) break;
             // An update slot grabbed between two estimates surfaces as
             // update:busy — stop without caching so a later refresh retries.
-            if (err instanceof Error && err.message === "update:busy") break;
+            if (err instanceof Error && err.message === UPDATE_BUSY) break;
             // Real failures are not cached either: the path stays
             // unestimated instead of freezing a kb:0 result forever.
           }

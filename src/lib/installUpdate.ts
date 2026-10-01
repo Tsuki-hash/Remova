@@ -1,6 +1,7 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { api } from "./api";
-import { acquireUpdateSlot } from "./nativeActivity";
+import { acquireUpdateSlot, UPDATE_BUSY } from "./nativeActivity";
+import { formatError } from "./format";
 import { requestConfirm } from "./confirm";
 import { t } from "../i18n";
 import type { UpdateInfo } from "./updateCheck";
@@ -14,7 +15,7 @@ export async function installUpdate(
   onProgress: (progress: UpdateProgress | null) => void,
 ): Promise<void> {
   const L = t();
-  if (busyRef.current || isMonitoring()) throw new Error("update:busy");
+  if (busyRef.current || isMonitoring()) throw new Error(UPDATE_BUSY);
   if (!info.installInApp) throw new Error("update:manual_only_type");
   if (!(await api.onlineUpdateSupported())) throw new Error("update:manual_only_env");
   if (!(await requestConfirm({
@@ -24,9 +25,9 @@ export async function installUpdate(
     cancelLabel: L.cancel,
   }))) return;
   // Recheck after the asynchronous confirmation, then hold both task slots.
-  if (busyRef.current || isMonitoring()) throw new Error("update:busy");
+  if (busyRef.current || isMonitoring()) throw new Error(UPDATE_BUSY);
   const release = acquireUpdateSlot();
-  if (!release) throw new Error("update:busy");
+  if (!release) throw new Error(UPDATE_BUSY);
   busyRef.current = true;
   let update: Awaited<ReturnType<typeof check>> = null;
   try {
@@ -57,18 +58,13 @@ export async function installUpdate(
 }
 
 /** User-facing message for an update-flow failure — never leaks internals.
- * `update:*` tokens map to their text; anything else (updater-plugin errors,
- * unknowns) collapses to the generic install-failed string. */
+ * `update:*` tokens map through the shared formatter (single token table);
+ * anything else (updater-plugin errors, unknowns) collapses to the generic
+ * install-failed string. */
 export function updateErrorMessage(e: unknown): string {
-  const L = t();
   const raw = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
-  if (raw === "update:busy") return L.taskBusy;
-  if (raw === "update:manual_only_type") return L.updateManualOnlyType;
-  if (raw === "update:manual_only_env") return L.updateManualOnlyElevated;
-  if (raw === "update:check_failed") return L.versionCheckFailed;
-  if (raw === "update:version_changed") return L.versionChanged;
-  if (raw.startsWith("update:")) return L.versionCheckFailed;
-  return L.versionInstallFailed;
+  if (raw.startsWith("update:")) return formatError(raw);
+  return t().versionInstallFailed;
 }
 
 /** Screen-reader text for the update overlay — changes in 10% steps so the
