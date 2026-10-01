@@ -342,6 +342,11 @@ fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
     let low = run_key.to_uppercase().replace('/', "\\");
     let sa_key = if low.contains("\\RUNONCE") {
         return None;
+    } else if low.contains(r"\POLICIES\EXPLORER\RUN") {
+        // Policy Run entries ignore the flag entirely — a stale dead value
+        // planted before the no-op fix would otherwise show them "disabled"
+        // forever, with no way to clear it. There is no flag to read.
+        return None;
     } else if low.contains("HKLM32") {
         r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     } else if low.starts_with("HKLM") {
