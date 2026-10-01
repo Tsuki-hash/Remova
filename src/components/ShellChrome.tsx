@@ -188,7 +188,7 @@ export function ShellFooter({
             // openUpdateDownload falls back to the release page when the
             // asset URL cannot be opened.
             void openUpdateDownload(updateInfo).catch(() => {
-              toast.error(L.versionCheckFailed);
+              toast.error(L.versionDownloadOpenFailed);
             });
           }}
         >

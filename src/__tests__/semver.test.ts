@@ -8,8 +8,15 @@ describe("compareSemver", () => {
       expect(compareSemver("v1.3.1", "1.3.0")).toBeGreaterThan(0);
       expect(compareSemver("1.3.0", "v1.3.1")).toBeLessThan(0);
       expect(compareSemver("v1.3.0", "v1.3.0")).toBe(0);
-      // a literal "vv1" keeps one v and parses as 0 — only one v is stripped.
-      expect(compareSemver("vv1.3.0", "0.3.0")).toBe(0);
+      // A malformed tag ("vv1.3.0" — only one v stripped) parses as 0.0.0.
+      expect(compareSemver("vv1.3.0", "1.3.0")).toBeLessThan(0);
+    });
+
+    // prerelease suffixes sort BEFORE the same release; uppercase V counts.
+    it("orders prereleases before releases", () => {
+      expect(compareSemver("1.2.1-beta.1", "1.2.1")).toBeLessThan(0);
+      expect(compareSemver("1.2.1", "1.2.1-rc1")).toBeGreaterThan(0);
+      expect(compareSemver("V1.2.3", "1.2.3")).toBe(0);
     });
 
   it("detects newer patch/minor/major", () => {
