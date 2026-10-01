@@ -79,30 +79,12 @@ impl GateDecision {
 }
 
 /// Expand `%VAR%` environment references in a PATH segment (gate-time only).
+/// Delegates to the shared expander so the gate judges the SAME expanded
+/// truth the scrub/restore path sees — a second, process-env-only expander
+/// would disagree with it on machines where variables live in the registry
+/// (service/SYSTEM or relocated-variable contexts).
 fn expand_path_env(entry: &str) -> String {
-    let mut out = String::with_capacity(entry.len());
-    let bytes: Vec<char> = entry.chars().collect();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == '%' {
-            if let Some(end) = bytes[i + 1..].iter().position(|c| *c == '%') {
-                let name: String = bytes[i + 1..i + 1 + end].iter().collect();
-                if name.is_empty() {
-                    out.push('%');
-                    i += 1;
-                    continue;
-                }
-                if let Ok(val) = std::env::var(&name) {
-                    out.push_str(&val);
-                    i += end + 2;
-                    continue;
-                }
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    out
+    crate::regops::expand_env_string(entry)
 }
 
 /// PATH segments that must never be scrubbed (system PATH).

@@ -22,6 +22,11 @@ pub struct MonitorDiff {
     pub files_truncated: usize,
     #[serde(default)]
     pub reg_truncated: usize,
+    /// A walk hit its budget or depth cap: the diff may miss entries that
+    /// never changed (they were armed nowhere — see `end`). Consumers should
+    /// surface this instead of presenting the diff as complete.
+    #[serde(default)]
+    pub walk_degraded: bool,
 }
 
 /// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
@@ -219,6 +224,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
         added_reg_values,
         files_truncated,
         reg_truncated,
+        walk_degraded: before.fs.truncated || after.truncated,
     };
     // Allow-list is armed only from this server-computed diff (never from
     // client IPC) — and never from a truncated snapshot: entries missed by
@@ -362,6 +368,7 @@ mod tests {
             ],
             files_truncated: 0,
             reg_truncated: 0,
+            walk_degraded: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 2);
@@ -386,6 +393,7 @@ mod tests {
             added_reg_values: vec![],
             files_truncated: 0,
             reg_truncated: 0,
+            walk_degraded: false,
         };
         let items = diff_to_cleanup_items(&forged);
         assert_eq!(items.len(), 1);
@@ -410,6 +418,7 @@ mod tests {
             added_reg_values: vec![],
             files_truncated: 0,
             reg_truncated: 0,
+            walk_degraded: false,
         };
         let items = diff_to_cleanup_items(&diff);
         let under_docs = items.iter().find(|i| i.path.ends_with("saves.db")).unwrap();
@@ -439,6 +448,7 @@ mod tests {
             ],
             files_truncated: 0,
             reg_truncated: 0,
+            walk_degraded: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);
@@ -603,6 +613,9 @@ mod tests {
         set_test_state_path(None);
         let _ = std::fs::remove_dir_all(&tmp);
         let res = res.expect("end must succeed even on a truncated walk");
+        // The diff itself reports the degradation so the UI can say the scan
+        // is incomplete instead of presenting a possibly-empty diff as truth.
+        assert!(res.diff.walk_degraded, "truncated walk must flag the diff");
         // Whatever items the diff produced, none may be armed.
         for it in &res.items {
             assert!(
