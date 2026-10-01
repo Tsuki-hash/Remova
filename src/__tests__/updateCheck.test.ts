@@ -62,12 +62,15 @@ describe("updateCheck", () => {
     });
     supported.mockResolvedValue(true);
     const r = await checkLatestRelease();
+    expect(r.ok).toBe(true);
     if (r.ok) expect(r.info?.installInApp).toBe(true);
     supported.mockResolvedValue(false);
     const r2 = await checkLatestRelease();
+    expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.info?.installInApp).toBe(false);
     supported.mockRejectedValue(new Error("ipc gone"));
     const r3 = await checkLatestRelease();
+    expect(r3.ok).toBe(true);
     if (r3.ok) expect(r3.info?.installInApp).toBe(false);
   });
 

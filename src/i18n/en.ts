@@ -59,6 +59,7 @@ export const dict: EnDict = {
       `Files ${files} · Registry ${regs}`,
     monitorTruncated: (files: number, regs: number) =>
       `${files} more file(s) / ${regs} more registry entries not shown`,
+    monitorDegraded: "The tracking scan was truncated and the list may be incomplete — re-run tracking later to confirm",
     admin: "Admin",
     nonAdmin: "Not admin",
     disk: "Disk",

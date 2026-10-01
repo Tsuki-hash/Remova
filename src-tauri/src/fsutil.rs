@@ -88,9 +88,10 @@ fn copy_dir_before_file(
 /// `dest`. A mid-copy failure leaves any pre-existing `dest` bytes intact and
 /// removes the tmp — never truncate-in-place.
 fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::Result<u64> {
-    let mut tmp_name = dest.as_os_str().to_owned();
-    tmp_name.push(".remova-copy-tmp");
-    let tmp = std::path::PathBuf::from(tmp_name);
+    // pid+nonce tmp: a fixed sibling name let a second Remova process (or a
+    // concurrent restore in-process) truncate and interleave into the same
+    // tmp file, tearing the restored/backed-up bytes.
+    let tmp = atomic_tmp_path(dest);
     let result = (|| {
         let mut out = std::fs::File::create(&tmp)?;
         let n = std::io::copy(&mut reader, &mut out)?;

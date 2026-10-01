@@ -46,6 +46,7 @@ export const dict = {
       `文件 ${files} · 注册表 ${regs}`,
     monitorTruncated: (files: number, regs: number) =>
       `另有 ${files} 个文件 / ${regs} 条注册表未展示`,
+    monitorDegraded: "追踪扫描被截断，列表可能不完整——建议稍后重新追踪确认",
     admin: "管理员",
     nonAdmin: "非管理员",
     disk: "磁盘",

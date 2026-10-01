@@ -49,6 +49,9 @@ export type MonitorDiff = {
   /** entries beyond the diff caps (honest truncation, backend-filled). */
   files_truncated?: number;
   reg_truncated?: number;
+  /** the monitor walk hit its budget/depth cap — the diff may miss entries
+   * that never changed; present it as incomplete, not authoritative. */
+  walk_degraded?: boolean;
 };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean };
