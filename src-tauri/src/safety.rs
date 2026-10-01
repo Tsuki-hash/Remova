@@ -96,25 +96,31 @@ pub fn is_allowed_run_key(key_path: &str) -> bool {
     ALLOWED.iter().any(|a| low == *a)
 }
 
-/// Unified write-policy for manage IPC ( light): critical service + startup-approved keys.
-pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
-    let n = name.trim();
-    if n.is_empty() || n.contains('\\') || n.contains('/') {
-        return Err(crate::error::manage_err("bad_name", "bad service name").to_ipc());
+/// Critical by name OR Microsoft-family — the single rule that manage writes
+/// AND native deletions/stop-start must agree on, so a service the write gate
+/// protects can never be removed or stopped through another path.
+pub(crate) fn is_protected_service_name(name: &str) -> bool {
+    if is_critical_service(name) {
+        return true;
     }
-    if is_critical_service(n) {
-        return Err(crate::error::manage_err("protected", n).to_ipc());
-    }
-    // / Microsoft-family services (MSMQ, MsSqlServer, Microsoft*, MS *).
-    let low = n.to_lowercase();
-    if low.starts_with("microsoft")
+    // Microsoft-family services (MSMQ, MsSqlServer, Microsoft*, MS *).
+    let low = name.trim().to_lowercase();
+    low.starts_with("microsoft")
         || low.starts_with("ms ")
         || low == "msmq"
         || low.starts_with("mssql")
         || low.starts_with("msdtc")
         || low.starts_with("mspq")
         || low.starts_with("mstee")
-    {
+}
+
+/// Unified write-policy for manage IPC ( light): critical service + startup-approved keys.
+pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
+    let n = name.trim();
+    if n.is_empty() || n.contains('\\') || n.contains('/') {
+        return Err(crate::error::manage_err("bad_name", "bad service name").to_ipc());
+    }
+    if is_protected_service_name(n) {
         return Err(crate::error::manage_err("protected", n).to_ipc());
     }
     Ok(())
@@ -202,7 +208,7 @@ pub(crate) fn normalize_hklm(key_path: &str) -> String {
 /// Registry paths may carry a trailing `|ValueName`. Gates that judge the key
 /// tree (protected prefixes, service names) must compare the key part only —
 /// otherwise `HKLM\SYSTEM|X` slips past `HKLM\SYSTEM` / `HKLM\SYSTEM\`.
-fn registry_key_part(key_path: &str) -> &str {
+pub(crate) fn registry_key_part(key_path: &str) -> &str {
     match key_path.rsplit_once('|') {
         Some((key, _)) => key,
         None => key_path,
@@ -273,10 +279,7 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
             // `Services\|Start` — no service named; never authorize.
             return Err(crate::error::safety_err("service key name must not be empty").to_ipc());
         }
-        if critical_service_names()
-            .iter()
-            .any(|n| rest == n.to_uppercase())
-        {
+        if is_protected_service_name(rest) {
             return Err(crate::error::safety_err("critical system service protected").to_ipc());
         }
         return Ok(());
@@ -371,8 +374,11 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
     if trimmed.split('\\').any(|seg| seg == ".." || seg == ".") {
         return false;
     }
-    // absolute drive path only — no relative, no UNC/device shares.
-    if !p.has_root() || trimmed.starts_with("\\\\") {
+    // absolute drive path only — no relative paths, no UNC/device shares, and
+    // no drive-relative `\foo` forms (RootDir counts as has_root but resolves
+    // against the process's current drive, the same rule the restore gate
+    // enforces).
+    if !p.has_root() || trimmed.starts_with('\\') {
         return false;
     }
     //exact Common Files roots are never deletable (vendor subpaths via policy association).
