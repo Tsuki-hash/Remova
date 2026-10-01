@@ -199,7 +199,7 @@ export function maxRiskOf(items: CleanupItem[]): RiskTier {
 
 export function riskTierLabel(
   tier: RiskTier,
-  L: { riskTierSafe: string; riskTierLow: string; riskTierMedium: string; riskTierHigh: string },
+  L: { riskTierLow: string; riskTierMedium: string; riskTierHigh: string },
 ): string {
   if (tier === "high") return L.riskTierHigh;
   if (tier === "medium") return L.riskTierMedium;

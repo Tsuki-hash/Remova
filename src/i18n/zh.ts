@@ -1,6 +1,5 @@
 /** Language dictionary — keep zh/en key parity. */
 export const dict = {
-    title: "Remova",
     subtitle: "Deep Uninstall",
     search: "搜索软件名称…",
     history: "历史",
@@ -12,7 +11,6 @@ export const dict = {
     cleanup: "清理选中项",
     closePreview: "返回列表",
     useOfficial: "调用官方卸载器",
-    batch: "批量清理",
     colName: "名称",
     colSource: "来源",
     colLocation: "安装路径",
@@ -47,7 +45,6 @@ export const dict = {
     monitorTruncated: (files: number, regs: number) =>
       `另有 ${files} 个文件 / ${regs} 条注册表未展示`,
     monitorDegraded: "追踪扫描被截断，列表可能不完整——建议稍后重新追踪确认",
-    admin: "管理员",
     nonAdmin: "非管理员",
     disk: "磁盘",
     guided:
@@ -130,7 +127,6 @@ export const dict = {
     restoreRun: "确认还原",
     restoreClose: "关闭",
     restoreResult: "还原结果",
-    manage: "管理",
     manageEnable: "启用",
     manageDisable: "禁用",
     manageEnabledDone: (name: string) => `已启用「${name}」`,
@@ -203,7 +199,6 @@ export const dict = {
     manageReload: "刷新",
     forceClean: "强制清理残留",
     forceCleanHint: "跳过官方卸载器，仅清理已确认的残留项；备份为可选项",
-    shellMenu: "注册右键菜单",
     winMinimize: "最小化",
     winMaximize: "最大化",
     winRestore: "还原",
@@ -280,7 +275,6 @@ export const dict = {
     historyDeleted: "已删除清理记录",
     historyCleared: "已清空清理历史",
     monitorToCleanup: "转入清理列表",
-    batchOfficial: "批量含官方卸载",
     batchOfficialHint: "批量清理时先调用各软件的官方卸载器（更慢但更干净）",
     uninstall: "卸载",
     uninstalling: "卸载中…",
@@ -376,7 +370,6 @@ export const dict = {
     copilotInlinePlaceholder: "想清理什么？例如：大于 2GB 的 Adobe",
     aiEnabledChip: "模型已配置",
     aiDisabledChip: "模型未配置",
-    riskTierSafe: "安全",
     riskTierLow: "低风险",
     riskTierMedium: "中风险",
     riskTierHigh: "高风险",

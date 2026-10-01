@@ -12,7 +12,6 @@ type EnDict = {
 };
 
 export const dict: EnDict = {
-    title: "Remova",
     subtitle: "Deep Uninstall",
     search: "Search apps…",
     history: "History",
@@ -24,7 +23,6 @@ export const dict: EnDict = {
     cleanup: "Clean selected",
     closePreview: "Back to list",
     useOfficial: "Run official uninstaller",
-    batch: "Batch cleanup",
     colName: "Name",
     colSource: "Source",
     colLocation: "Install path",
@@ -60,7 +58,6 @@ export const dict: EnDict = {
     monitorTruncated: (files: number, regs: number) =>
       `${files} more file(s) / ${regs} more registry entries not shown`,
     monitorDegraded: "The tracking scan was truncated and the list may be incomplete — re-run tracking later to confirm",
-    admin: "Admin",
     nonAdmin: "Not admin",
     disk: "Disk",
     guided:
@@ -133,7 +130,6 @@ export const dict: EnDict = {
     restoreRun: "Restore",
     restoreClose: "Close",
     restoreResult: "Restore result",
-    manage: "Manage",
     manageEnable: "Enable",
     manageDisable: "Disable",
     manageEnabledDone: (name: string) => `Enabled "${name}"`,
@@ -206,7 +202,6 @@ export const dict: EnDict = {
     manageReload: "Reload",
     forceClean: "Force clean leftovers",
     forceCleanHint: "Skip the official uninstaller and clean only confirmed leftovers (backup optional)",
-    shellMenu: "Register context menu",
     winMinimize: "Minimize",
     winMaximize: "Maximize",
     winRestore: "Restore",
@@ -294,7 +289,6 @@ export const dict: EnDict = {
     historyDeleted: "Cleanup record deleted",
     historyCleared: "Cleanup history cleared",
     monitorToCleanup: "Add to cleanup list",
-    batchOfficial: "Official uninstall in batch",
     batchOfficialHint: "Run each app's official uninstaller during batch (slower but cleaner)",
     uninstall: "Uninstall",
     uninstalling: "Uninstalling…",
@@ -391,7 +385,6 @@ export const dict: EnDict = {
     copilotInlinePlaceholder: "What to clean? e.g. Adobe over 2GB",
     aiEnabledChip: "Model ready",
     aiDisabledChip: "Model not set",
-    riskTierSafe: "Safe",
     riskTierLow: "Low risk",
     riskTierMedium: "Medium risk",
     riskTierHigh: "High risk",

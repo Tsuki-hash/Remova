@@ -9,7 +9,6 @@ export type ShellState = {
   theme: Theme;
   nav: NavId;
   langVer: number;
-  shellMenu: boolean;
   closeMode: CloseMode | null;
   updateInfo: UpdateInfo | null;
   checkupOpen: boolean;
@@ -24,7 +23,6 @@ export type ShellAction =
   | { type: "lang/bump" }
   | { type: "lang/set"; value: number }
   | { type: "nav/set"; nav: NavId }
-  | { type: "shellMenu/set"; value: boolean }
   | { type: "closeMode/set"; value: CloseMode | null }
   | { type: "update/set"; value: UpdateInfo | null }
   | { type: "checkup/open" }
@@ -39,7 +37,6 @@ export function initialShellState(): ShellState {
     theme: loadTheme(),
     nav: loadNav(),
     langVer: 0,
-    shellMenu: false,
     closeMode: loadCloseMode(),
     updateInfo: null,
     checkupOpen: false,
@@ -61,8 +58,6 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       return { ...state, langVer: action.value };
     case "nav/set":
       return { ...state, nav: action.nav };
-    case "shellMenu/set":
-      return { ...state, shellMenu: action.value };
     case "closeMode/set":
       return { ...state, closeMode: action.value };
     case "update/set":
