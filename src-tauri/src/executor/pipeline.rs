@@ -134,23 +134,38 @@ pub fn service_name_from_reg_path(reg_path: &str) -> Option<String> {
 /// canonical HKLM roots. A `contains`-style trigger would let a forged shape
 /// like `HKCU\x\...\Services\Spooler` drive `sc delete` at a REAL service or
 /// `schtasks /delete` at a system task; only normalized HKLM prefixes qualify.
-/// Returns None when no native path applies.
-fn native_delete_note(reg_path: &str) -> Option<String> {
-    let key_part = reg_path.split('|').next().unwrap_or(reg_path);
-    let key_norm = crate::safety::normalize_hklm(key_part);
+/// Returns `(native_ok, note)` when a native path applies, else None.
+fn native_delete_note(reg_path: &str) -> Option<(bool, String)> {
+    // Native stop/delete is a KEY-shaped, TOP-LEVEL operation only:
+    // - a value item (`Services\X|Start`) removes one value, never the whole
+    //   service;
+    // - a subkey item (`Services\X\Parameters`) is refused by the registry
+    //   gate and must not widen into deleting the whole service;
+    // - a multi-pipe shape can never resolve cleanly. All of them stay on the
+    //   gated registry path below.
+    if reg_path.contains('|') {
+        return None;
+    }
+    let key_norm = crate::safety::normalize_hklm(reg_path);
     if key_norm.starts_with(r"HKLM\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
         // The service name is the segment AFTER Services — a leaf like
-        // `Parameters` is a subkey, never a service name.
-        let svc = service_name_from_reg_path(reg_path);
-        let native_ok = svc
-            .as_deref()
-            .map(crate::regops::sc_delete_service)
-            .unwrap_or(false);
-        return Some(match (svc, native_ok) {
-            (Some(name), true) => format!("sc delete {name}: ok"),
-            (Some(name), false) => format!("sc delete {name}: failed or not found"),
-            (None, _) => "service subkey without a service name".to_string(),
-        });
+        // `Parameters` is a subkey, never a service name; anything deeper
+        // than the service key itself is not a whole-service deletion.
+        let svc = service_name_from_reg_path(reg_path)?;
+        let top_level = key_norm
+            .eq_ignore_ascii_case(&format!(r"HKLM\SYSTEM\CURRENTCONTROLSET\SERVICES\{svc}"));
+        if !top_level {
+            return None;
+        }
+        let native_ok = crate::regops::sc_delete_service(&svc);
+        return Some((
+            native_ok,
+            if native_ok {
+                format!("sc delete {svc}: ok")
+            } else {
+                format!("sc delete {svc}: failed or not found")
+            },
+        ));
     }
     if key_norm
         .starts_with(r"HKLM\SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\SCHEDULE\TASKCACHE\TREE\")
@@ -158,11 +173,14 @@ fn native_delete_note(reg_path: &str) -> Option<String> {
         // Use the full task path from the TaskCache tree when possible.
         let tn = task_full_name_from_reg_path(reg_path);
         let native_ok = crate::regops::schtasks_delete(&tn);
-        return Some(if native_ok {
-            format!("schtasks delete {tn}: ok")
-        } else {
-            format!("schtasks delete {tn}: failed or not found")
-        });
+        return Some((
+            native_ok,
+            if native_ok {
+                format!("schtasks delete {tn}: ok")
+            } else {
+                format!("schtasks delete {tn}: failed or not found")
+            },
+        ));
     }
     None
 }
@@ -237,10 +255,18 @@ fn delete_cleanup_items_source(
                 }
             },
             ItemKind::Registry => {
-                let native_note = native_delete_note(&it.path).unwrap_or_default();
+                let native = native_delete_note(&it.path);
+                let native_note = native.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
+                // A successful native stop/delete removes the service (with
+                // its key) or the task registration itself — the follow-up
+                // registry delete would only fail "not found". That outcome
+                // is the SUCCESS it is, not a failed item.
+                let native_done = matches!(&native, Some((true, _)));
                 // `key|Value` must resolve to a non-empty value name; a trailing `|`
                 // must never fall through to deleting the whole key (Run root!).
-                let res = if it.path.contains('|') {
+                let res: Result<(), String> = if native_done {
+                    Ok(())
+                } else if it.path.contains('|') {
                     match crate::regops::split_value_path(&it.path) {
                         Some((k, v)) => crate::regops::delete_value(k, v),
                         None => Err("registry value name must not be empty".into()),
@@ -519,17 +545,24 @@ mod tests {
             None,
             "forged task shape must not trigger schtasks delete"
         );
-        // Canonical shape reaches the arm; the intrinsic critical gate refuses
-        // any real execution (no process is spawned for a critical name).
+        // Canonical shape reaches the arm; the intrinsic protected-service gate
+        // refuses any real execution (no process is spawned for such a name).
         let note = native_delete_note(r"HKLM64\SYSTEM\CurrentControlSet\Services\Spooler");
         assert_eq!(
-            note.as_deref(),
-            Some("sc delete Spooler: failed or not found")
+            note,
+            Some((false, "sc delete Spooler: failed or not found".to_string()))
         );
-        // Value-shaped paths judge the key part only.
+        // A VALUE item removes one value, never the whole service — the native
+        // arm must not fire for it (over-reach fixed in this round).
         assert_eq!(
             native_delete_note(r"HKLM\SYSTEM\CurrentControlSet\Services\Spooler|Start"),
-            note
+            None
+        );
+        // A subkey item is gated to a registry refusal, not a whole-service
+        // native deletion.
+        assert_eq!(
+            native_delete_note(r"HKLM64\SYSTEM\CurrentControlSet\Services\Spooler\Parameters"),
+            None
         );
     }
 
@@ -540,6 +573,14 @@ mod tests {
     fn native_tools_refuse_critical_and_system_targets() {
         assert!(!crate::regops::sc_delete_service("Spooler"));
         assert!(!crate::regops::sc_delete_service("RpcSs"));
+        // Microsoft-family services are write-protected — native deletion and
+        // stop/start must refuse them equally.
+        assert!(!crate::regops::sc_delete_service("MicrosoftEdgeUpdate"));
+        assert!(crate::regops::sc_set_service_running("MicrosoftEdgeUpdate", false).is_err());
+        assert!(crate::safety::is_safe_to_delete_registry(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\MicrosoftEdgeUpdate"
+        )
+        .is_err());
         assert!(!crate::regops::schtasks_delete(
             r"\Microsoft\Windows\Defrag\ScheduledDefrag"
         ));

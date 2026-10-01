@@ -161,6 +161,11 @@ pub fn sc_set_service_running(svc_name: &str, run: bool) -> Result<(), String> {
         if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
             return Err(crate::error::manage_err("bad_name", "service name").to_ipc());
         }
+        // Intrinsic gate: a service the write gate protects must not be
+        // stopped/started through a caller that skips manage.rs either.
+        if crate::safety::is_protected_service_name(svc_name) {
+            return Err(crate::error::manage_err("protected", svc_name).to_ipc());
+        }
         use std::process::Command;
         let sc = sys_tool("sc.exe");
         let arg = if run { "start" } else { "stop" };
@@ -188,9 +193,10 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
     if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
         return false;
     }
-    // Intrinsic gate: critical services are never natively deleted, even if a
-    // future caller routes around the pipeline's prefix anchoring.
-    if crate::safety::is_critical_service(svc_name) {
+    // Intrinsic gate: critical or Microsoft-family services are never
+    // natively deleted, even if a future caller routes around the pipeline's
+    // prefix anchoring — the write gate refuses the same family.
+    if crate::safety::is_protected_service_name(svc_name) {
         return false;
     }
     use std::process::Command;
