@@ -128,7 +128,7 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"])) {
   return { ...hook, busyRef };
 }
 
-describe("useCleanupHandlers confirm / force pipeline (REV-QA-02)", () => {
+describe("useCleanupHandlers confirm / force pipeline", () => {
   beforeEach(() => {
     requestConfirmEx.mockReset();
     fullCleanup.mockReset();
@@ -202,7 +202,7 @@ describe("useCleanupHandlers confirm / force pipeline (REV-QA-02)", () => {
   });
 });
 
-describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
+describe("useCleanupHandlers deep pipeline", () => {
   const mkApp = (n: string): InstalledApp => ({ ...app(), name: n, registry_key: n });
 
   function setupDeep(
@@ -343,7 +343,7 @@ describe("useCleanupHandlers deep pipeline (REV-QA-02/03)", () => {
     expect(runBatchCleanupMock).not.toHaveBeenCalled();
   });
 
-  it("REV-FE-10: busyRef taken while the dialog was open blocks the engine", async () => {
+  it("busyRef taken while the dialog was open blocks the engine", async () => {
     const a1 = mkApp("AppA");
     const hook = setupDeep({ apps: [a1], multi: new Set([appKey(a1)]) });
     const busyRefRef = hook.busyRef;

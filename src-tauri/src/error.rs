@@ -1,4 +1,4 @@
-//! Structured Remova errors (BE-01): stable codes for UI mapping, human message for logs.
+//! Structured Remova errors: stable codes for UI mapping, human message for logs.
 
 use std::fmt;
 

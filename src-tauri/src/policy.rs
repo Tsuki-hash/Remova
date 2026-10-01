@@ -179,7 +179,7 @@ pub fn gate_cleanup_item(
     source: CleanupSource,
     ignore: &crate::ignore::IgnoreList,
 ) -> GateDecision {
-    // S-N1: never trust client-only flags —recompute red lines server-side.
+    // Never trust client-only flags — recompute red lines server-side.
     if item.user_data || crate::safety::is_user_data_path(&item.path) {
         return GateDecision::Skip("user_data red line");
     }
@@ -211,7 +211,7 @@ pub fn gate_cleanup_item(
 
     match item.kind {
         ItemKind::Path => {
-            // S-N2: PATH scrub must not touch system segments.
+            // PATH scrub must not touch system segments.
             if is_dangerous_path_entry(&item.path) {
                 return GateDecision::Skip("protected PATH entry");
             }
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn rejects_forged_user_data_and_shared_flags() {
         let ignore = crate::ignore::IgnoreList::default();
-        // Client says user_data=false but path is a library root — must skip (S-N1).
+        // Client says user_data=false but path is a library root — must skip.
         let forged_root = item(r"C:\Users\a\Documents", ItemKind::Dir);
         assert_eq!(
             gate_cleanup_item(None, &forged_root, CleanupSource::Uninstall, &ignore),

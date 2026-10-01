@@ -46,7 +46,7 @@ fn try_backup_phase(
     match crate::backup::create_session(&app.name) {
         Ok(session) => {
             let backup_dir = session.to_string_lossy().to_string();
-            // A-N2 / S-N1: only backup items that pass the cleanup gate.
+            // Only backup items that pass the cleanup gate.
             let ignore = crate::ignore::load();
             let source = cleanup_source_from_opts(opts);
             let allow: Vec<CleanupItem> = items
@@ -277,7 +277,7 @@ fn delete_cleanup_items_source(
             }
             _ => {
                 let p = Path::new(&it.path);
-                // S-N6: a path that is already gone is not a successful delete.
+                // A path that is already gone is not a successful delete.
                 if !p.exists() {
                     skipped += 1;
                     details.push(ItemDetail {
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn missing_path_is_skipped_not_deleted() {
-        // S-N6: full delete must not count non-existent File/Dir as deleted.
+        // A full delete must not count non-existent File/Dir as deleted.
         let app = crate::apps::InstalledApp {
             name: "DemoApp".into(),
             publisher: "Vendor".into(),

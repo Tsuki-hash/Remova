@@ -129,7 +129,7 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
   } as SoftwareControllerInput;
 }
 
-describe("useSoftwareController mapping (REV-QA-02)", () => {
+describe("useSoftwareController mapping", () => {
   it("composes busy from dryRun/batch/scan/ai states", () => {
     const { result } = renderHook(() =>
       useSoftwareController(input({ dryRunning: true })),

@@ -997,7 +997,7 @@ pub fn create_reg_sz(key_path: &str, value_name: &str, data: &str) -> Result<(),
     {
         use std::process::Command;
         // Prefer reg.exe for reliable key creation under HKCU\Software\Classes\*\shell
-        // S-N4: translate Remova hive aliases (HKLM64/32 → HKLM / WOW6432NODE) for reg.exe.
+        // Translate Remova hive aliases (HKLM64/32 → HKLM / WOW6432NODE) for reg.exe.
         let exe_key = normalize_reg_exe_hive(key_path);
         let mut args = vec!["add".to_string(), exe_key, "/f".to_string()];
         if !value_name.is_empty() {

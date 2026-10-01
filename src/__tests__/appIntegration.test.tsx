@@ -157,7 +157,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-describe("App orchestration (R23-QA-05)", () => {
+describe("App orchestration", () => {
   it("boots, filters categories and toggles multi selection through page callbacks", async () => {
     await mount();
     expect(software().apps).toEqual([demo, other]);

@@ -135,7 +135,7 @@ export type SoftwarePageProps = {
   onCopilotBatch: (list: InstalledApp[]) => void;
 };
 
-/** Software nav page: toolbar + scan/cleanup + list (extracted from App, FE-02). */
+/** Software nav page: toolbar + scan/cleanup + list (extracted from App). */
 export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);

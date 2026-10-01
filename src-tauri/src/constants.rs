@@ -1,4 +1,4 @@
-//! Shared product constants (BE-06) — keep magic numbers out of business logic.
+//! Shared product constants — keep magic numbers out of business logic.
 
 /// Official uninstaller wait cap.
 pub const UNINSTALL_TIMEOUT_SECS: u64 = 300;

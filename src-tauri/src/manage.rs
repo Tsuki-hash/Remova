@@ -591,7 +591,7 @@ fn split_csv_line(line: &str) -> Vec<String> {
 pub fn set_startup_enabled(location: &str, enabled: bool) -> Result<(), String> {
     if let Some(svc) = location.strip_prefix("SVC::") {
         allow_manage_service_write(svc)?;
-        // S-N5: align with set_service_start_disabled — never auto-start (2); manual=3 / disabled=4.
+        // Align with set_service_start_disabled — never auto-start (2); manual=3 / disabled=4.
         let start: u32 = if enabled { 3 } else { 4 };
         let _guard = lock_manage();
         return crate::regops::write_service_start(svc, start);

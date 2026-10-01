@@ -27,7 +27,7 @@ export function shortPath(p: string): string {
   return `${s.slice(0, 20)}…${s.slice(-20)}`;
 }
 
-/** Canonical size formatter (C-05) — i18n re-exports this for compatibility. */
+/** Canonical size formatter — i18n re-exports this for compatibility. */
 export function formatSize(kb: number): string {
   if (!kb || kb <= 0) return "—";
   if (kb < 1024) return `${kb} KB`;
@@ -98,7 +98,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (kind === "not_found") return L.errElevateNotFound;
     return L.errElevateFailed(code);
   }
- // RemovaError IPC: `code::message` (BE-01) — code must be a known domain prefix.
+ // RemovaError IPC: `code::message` — code must be a known domain prefix.
   const ipc = raw.trim().split("::");
   const head = ipc[0];
   if (head !== undefined && ipc.length >= 2 && isKnownIpcCode(head.toLowerCase().trim())) {

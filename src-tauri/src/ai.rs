@@ -1130,12 +1130,8 @@ mod tests {
             })
             .collect();
         let mut batches = vec![];
-        let out = explain_items_with_completion(
-            &cfg,
-            "R23-batching-cache-test",
-            "Vendor",
-            &inputs,
-            |user| {
+        let out =
+            explain_items_with_completion(&cfg, "batching-cache-test", "Vendor", &inputs, |user| {
                 let json = user
                     .split_once("候选(脱敏路径):\n")
                     .unwrap()
@@ -1159,9 +1155,8 @@ mod tests {
                     })
                     .collect();
                 Ok(serde_json::to_string(&echoed).unwrap())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         assert_eq!(batches, [12, 12, 1]);
         assert_eq!(out.len(), inputs.len());
         for input in &inputs {
@@ -1169,14 +1164,11 @@ mod tests {
             assert_eq!(result.summary, sanitize_path(&input.path, false));
             assert_eq!(result.suggest_check, input.risk != "high");
         }
-        let cached = explain_items_with_completion(
-            &cfg,
-            "R23-batching-cache-test",
-            "Vendor",
-            &inputs,
-            |_| panic!("all 25 explanations must hit cache, including the last batch"),
-        )
-        .unwrap();
+        let cached =
+            explain_items_with_completion(&cfg, "batching-cache-test", "Vendor", &inputs, |_| {
+                panic!("all 25 explanations must hit cache, including the last batch")
+            })
+            .unwrap();
         assert_eq!(cached.len(), inputs.len());
         assert!(cached
             .iter()
@@ -1209,7 +1201,7 @@ mod tests {
             .collect();
         let result = explain_items_with_completion(
             &AiConfig::default(),
-            "R23-collision-cache-test",
+            "collision-cache-test",
             "Vendor",
             &inputs,
             |_| Ok(serde_json::to_string(&outputs).unwrap()),

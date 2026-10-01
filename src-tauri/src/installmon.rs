@@ -62,7 +62,7 @@ fn monitor_state_path() -> PathBuf {
 }
 
 fn roots() -> Vec<PathBuf> {
-    // Tighter than full Program Files: common install roots only (A-8).
+    // Tighter than full Program Files: common install roots only.
     let mut v = vec![];
     for e in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
         if let Ok(p) = std::env::var(e) {
