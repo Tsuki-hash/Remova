@@ -44,9 +44,6 @@ export function useShellState() {
       dispatch({ type: "lang/set", value: next });
     }
   }, []);
-  const setShellMenu = useCallback((v: boolean) => {
-    dispatch({ type: "shellMenu/set", value: v });
-  }, []);
   const setCloseModeState = useCallback((m: CloseMode | null) => {
     dispatch({ type: "closeMode/set", value: m });
   }, []);
@@ -90,8 +87,6 @@ export function useShellState() {
       setNav,
       langVer: state.langVer,
       setLangVer,
-      shellMenu: state.shellMenu,
-      setShellMenu,
       closeMode: state.closeMode,
       setCloseModeState,
       updateInfo: state.updateInfo,
@@ -110,7 +105,6 @@ export function useShellState() {
       state.theme,
       state.nav,
       state.langVer,
-      state.shellMenu,
       state.closeMode,
       state.updateInfo,
       state.checkupOpen,
@@ -120,7 +114,6 @@ export function useShellState() {
       setTheme,
       setNav,
       setLangVer,
-      setShellMenu,
       setCloseModeState,
       setUpdateInfo,
       setCheckupOpen,

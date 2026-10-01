@@ -67,8 +67,17 @@ export function ToastHost() {
             <div style={{ fontWeight: 600, color: "var(--fg)" }}>{item.message}</div>
             {item.detail && (
               <div
-                className="ell"
-                style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}
+                // The detail often carries the actionable reason — wrap it
+                // for error/sticky toasts; keep one-line ellipsis for the rest.
+                className={item.kind === "error" || item.sticky ? undefined : "ell"}
+                style={{
+                  color: "var(--muted)",
+                  fontSize: 12,
+                  marginTop: 2,
+                  ...(item.kind === "error" || item.sticky
+                    ? { whiteSpace: "normal" as const, wordBreak: "break-word" as const }
+                    : {}),
+                }}
                 title={item.detail}
               >
                 {item.detail}

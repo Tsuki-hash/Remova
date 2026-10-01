@@ -69,8 +69,10 @@ function HoldButton({
     position: "relative",
     overflow: "hidden",
     opacity: disabled ? 0.45 : 1,
-    background: danger ? "var(--danger)" : "var(--accent)",
-    color: danger ? "#1a0505" : "var(--accent-ink)",
+    // --danger-text doubles as the AA-safe button background: light #B91C1C
+    // with surface text ≈5.9:1, dark #F87171 with dark text ≈7.1:1.
+    background: danger ? "var(--danger-text)" : "var(--accent)",
+    color: danger ? "var(--surface)" : "var(--accent-ink)",
     minWidth: 108,
     whiteSpace: "nowrap" as const,
   };
