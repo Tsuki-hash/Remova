@@ -12,6 +12,9 @@ pub struct DirSizeRow {
     pub name: String,
     pub size_kb: i64,
     pub parent: String,
+    /// Entry/depth budget ran out during the walk — size is a floor, not a total.
+    #[serde(default)]
+    pub capped: bool,
 }
 
 /// One local fixed drive available to the radar.
@@ -120,16 +123,21 @@ pub fn list_local_drives() -> Vec<DriveInfo> {
 }
 
 /// Bounded size walk for radar rows — deep trees (Users/Windows) must not stall the UI.
-fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> i64 {
+/// Returns (size_kb, capped) — `capped` marks walks that hit the entry
+/// budget or depth cap, so callers can present a floor instead of a total
+/// (the same honesty the other size walkers report).
+fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
     if *budget == 0 || max_depth == 0 {
-        return 0;
+        return (0, true);
     }
     let mut bytes = 0i64;
+    let mut capped = false;
     let Ok(rd) = std::fs::read_dir(root) else {
-        return 0;
+        return (0, false);
     };
     for ent in rd.flatten() {
         if *budget == 0 {
+            capped = true;
             break;
         }
         *budget -= 1;
@@ -139,16 +147,15 @@ fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> 
             continue;
         }
         if p.is_dir() {
-            bytes += shallow_size_kb(&p, max_depth - 1, budget) * 1024;
+            let (sub, sub_capped) = shallow_size_kb(&p, max_depth - 1, budget);
+            bytes += sub * 1024;
+            capped |= sub_capped;
         } else if let Ok(meta) = ent.metadata() {
             bytes += meta.len() as i64;
         }
     }
-    if bytes <= 0 {
-        0
-    } else {
-        (bytes + 1023) / 1024
-    }
+    let kb = if bytes <= 0 { 0 } else { (bytes + 1023) / 1024 };
+    (kb, capped)
 }
 
 fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
@@ -163,7 +170,7 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
         }
         let name = ent.file_name().to_string_lossy().to_string();
         let mut budget = 2_500u64;
-        let size_kb = shallow_size_kb(&p, 3, &mut budget);
+        let (size_kb, capped) = shallow_size_kb(&p, 3, &mut budget);
         if size_kb <= 0 {
             continue;
         }
@@ -172,6 +179,7 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             name,
             size_kb,
             parent: parent.to_string_lossy().to_string(),
+            capped,
         });
     }
     rows.sort_by_key(|a| std::cmp::Reverse(a.size_kb));

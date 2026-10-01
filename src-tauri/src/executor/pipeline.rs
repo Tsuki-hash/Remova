@@ -419,8 +419,10 @@ pub fn run_full_cleanup(
         };
     }
 
+    let owned_selected: Vec<CleanupItem> = selected.iter().map(|it| (*it).clone()).collect();
+
     let (mut backup_dir, mut restore_point_ok, mut restore_point_msg) =
-        match try_backup_phase(app, items, opts) {
+        match try_backup_phase(app, &owned_selected, opts) {
             BackupOutcome::Ready {
                 backup_dir,
                 restore_point_ok,
@@ -462,7 +464,10 @@ pub fn run_full_cleanup(
         };
     }
 
-    let del = delete_cleanup_items_source(app, items, cleanup_source_from_opts(opts));
+    // Only items with a real path enter backup/delete — the emptiness check
+    // above already declares empty-path items invalid, and feeding them to
+    // the deleter only manufactured spurious failures.
+    let del = delete_cleanup_items_source(app, &owned_selected, cleanup_source_from_opts(opts));
 
     FullCleanupReport {
         app_name: app.name.clone(),
