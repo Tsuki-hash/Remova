@@ -252,23 +252,6 @@ mod tests {
     }
 }
 
-const CONTEXT_MENU_KEY: &str = r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall";
-
-/// Register Explorer right-click “Remova Deep Uninstall”.
-pub fn register_context_menu() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe = exe.to_string_lossy().to_string();
-    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "MUIVerb", "Remova Deep Uninstall")?;
-    crate::regops::create_reg_sz(CONTEXT_MENU_KEY, "Icon", &format!("\"{exe}\""))?;
-    let cmd_key = format!(r"{CONTEXT_MENU_KEY}\command");
-    crate::regops::create_reg_sz(&cmd_key, "", &format!("\"{exe}\" --analyze \"%1\""))?;
-    Ok(())
-}
-
-pub fn unregister_context_menu() -> Result<(), String> {
-    crate::regops::delete_key(CONTEXT_MENU_KEY)
-}
-
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct VerifyRow {
     pub path: String,
