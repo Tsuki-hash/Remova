@@ -219,6 +219,8 @@ export const dict = {
     monitorInstall: "安装追踪",
     monitorStop: "结束追踪",
     monitorRunning: "安装追踪中…完成安装后再结束",
+    scanInProgress: "软件扫描进行中",
+    uninstallRunning: "官方卸载进行中",
     monitorStarting: "正在建立安装前快照…",
     monitorFinishing: "正在生成安装变更对比…",
     monitorDiff: "安装变更",
