@@ -9,6 +9,7 @@ import {
   type UpdateProgress,
 } from "../lib/installUpdate";
 import { useDialogFocus } from "../lib/useDialogFocus";
+import { UPDATE_BUSY } from "../lib/nativeActivity";
 import { toast } from "../lib/toast";
 
 const linkBtn = {
@@ -106,7 +107,7 @@ export function ShellFooter({
       // Raw error goes to the console for diagnosis; the toast stays localized.
       console.error("[update] install failed", e);
       const raw = e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
-      if (raw === "update:busy") {
+      if (raw === UPDATE_BUSY) {
         // Nothing failed — another task holds the slot. Not an error.
         toast.info(L.taskBusy);
       } else {

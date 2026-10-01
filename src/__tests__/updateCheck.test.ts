@@ -54,6 +54,23 @@ describe("updateCheck", () => {
     expect(api.openPath).toHaveBeenCalledWith(RELEASES_URL);
   });
 
+  it("marks installInApp from the backend capability, failing closed", async () => {
+    const supported = api.onlineUpdateSupported as ReturnType<typeof vi.fn>;
+    (api.checkGithubLatest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      version: "1.3.0",
+      url: "https://example/r",
+    });
+    supported.mockResolvedValue(true);
+    const r = await checkLatestRelease();
+    if (r.ok) expect(r.info?.installInApp).toBe(true);
+    supported.mockResolvedValue(false);
+    const r2 = await checkLatestRelease();
+    if (r2.ok) expect(r2.info?.installInApp).toBe(false);
+    supported.mockRejectedValue(new Error("ipc gone"));
+    const r3 = await checkLatestRelease();
+    if (r3.ok) expect(r3.info?.installInApp).toBe(false);
+  });
+
   it("falls back to the release page when the asset URL cannot be opened", async () => {
     const openPath = api.openPath as ReturnType<typeof vi.fn>;
     openPath.mockImplementation((target: string) =>
