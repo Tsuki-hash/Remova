@@ -5,7 +5,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import { compareSemver } from "../semver";
-import { checkLatestRelease, RELEASES_URL, type UpdateInfo } from "../lib/updateCheck";
+import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
 import { consumeQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
 import type { InstalledApp } from "../types";
 
@@ -159,29 +159,19 @@ export async function checkUpdateNow(
     versionCheckFailed: string;
     versionNew: string;
     versionUpToDate: (v: string) => string;
-    openReleasesToast: string;
   },
 ) {
-  const openReleases = async () => {
-    try {
-      await api.openPath(RELEASES_URL);
-      toast.info(L.openReleasesToast);
-    } catch {
-      /* keep the error toast as the primary signal */
-    }
-  };
+  // Check failures no longer auto-open the browser (usually offline anyway) —
+  // the localized reason is the signal; the download CTA is the manual path.
   try {
     const res = await checkLatestRelease();
     if (!res.ok) {
- // Show the concrete reason first, then jump to Releases as a fallback path.
       toast.error(formatError(res.reason));
-      await openReleases();
       return;
     }
     const info = res.info;
     if (!info) {
       toast.error(L.versionCheckFailed);
-      await openReleases();
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {
@@ -202,6 +192,5 @@ export async function checkUpdateNow(
     }
   } catch (e) {
     toast.error(formatError(e));
-    await openReleases();
   }
 }
