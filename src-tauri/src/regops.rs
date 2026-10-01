@@ -301,39 +301,53 @@ pub fn restore_path_entry(entry: &str, scopes: &[&str]) -> Result<bool, String> 
     }
     let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut changed = false;
+    let mut errors: Vec<String> = vec![];
     let targets: Vec<&str> = if scopes.is_empty() {
         vec!["User"]
     } else {
         scopes.to_vec()
     };
     for scope in targets {
-        let (raw, expand) = read_path_scope_raw(scope)?;
-        // Presence is judged on the expanded form; the raw bytes are what get
-        // written back, so `%VAR%` segments survive a REG_EXPAND_SZ restore.
-        let current = if expand {
-            expand_env_string(&raw)
-        } else {
-            raw.clone()
-        };
-        if path_contains_entry(&current, entry) {
-            continue;
+        // Aggregate per-scope errors instead of aborting on the first one: a
+        // User write that already succeeded must still broadcast, and the
+        // caller must learn about the partial failure.
+        let outcome = (|| -> Result<bool, String> {
+            let (raw, expand) = read_path_scope_raw(scope)?;
+            // Presence is judged on the expanded form; the raw bytes are what get
+            // written back, so `%VAR%` segments survive a REG_EXPAND_SZ restore.
+            let current = if expand {
+                expand_env_string(&raw)
+            } else {
+                raw.clone()
+            };
+            if path_contains_entry(&current, entry) {
+                return Ok(false);
+            }
+            let trimmed = entry.trim().trim_matches('"');
+            if trimmed.is_empty() {
+                return Ok(false);
+            }
+            let next = if raw.trim().is_empty() {
+                trimmed.to_string()
+            } else {
+                format!("{raw};{trimmed}")
+            };
+            write_path_scope(scope, &next, expand)?;
+            Ok(true)
+        })();
+        match outcome {
+            Ok(wrote) => changed |= wrote,
+            Err(e) => errors.push(format!("{scope}: {e}")),
         }
-        let trimmed = entry.trim().trim_matches('"');
-        if trimmed.is_empty() {
-            continue;
-        }
-        let next = if raw.trim().is_empty() {
-            trimmed.to_string()
-        } else {
-            format!("{raw};{trimmed}")
-        };
-        write_path_scope(scope, &next, expand)?;
-        changed = true;
     }
     if changed {
         broadcast_env_change();
     }
-    Ok(changed)
+    if errors.is_empty() {
+        Ok(changed)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Export a single registry value to a .reg file ( value-level restore).
@@ -392,6 +406,21 @@ pub fn export_reg_value(
             let bytes = n.to_le_bytes();
             let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
             format!("\"{value_name}\"=hex(b):{}", hex.join(","))
+        }
+        "REG_MULTI_SZ" => {
+            // reg.exe text output joins items with spaces (lossy, type lost) —
+            // read the raw UTF-16LE bytes and emit hex(7) so item structure
+            // survives restore.
+            let (bytes, _typ) = read_reg_value_bytes(key_path, value_name)?
+                .ok_or_else(|| format!("export_reg_value: value vanished for {key_path}"))?;
+            let mut payload = bytes;
+            while payload.ends_with(&[0, 0]) {
+                payload.truncate(payload.len() - 2);
+            }
+            // items are NUL-terminated; the list ends with an extra NUL.
+            payload.extend_from_slice(&[0, 0, 0, 0]);
+            let hex: Vec<String> = payload.iter().map(|b| format!("{b:02x}")).collect();
+            format!("\"{value_name}\"=hex(7):{}", hex.join(","))
         }
         "REG_BINARY" => {
             // reg query prints hex bytes space-separated
@@ -521,34 +550,48 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
         return Err("empty path entry".into());
     }
     let mut changed = false;
+    let mut errors: Vec<String> = vec![];
     for scope in ["User", "Machine"] {
-        let (raw, expand) = read_path_scope_raw(scope)?;
-        // Match on the expanded form, keep the raw segment text: a
-        // REG_EXPAND_SZ value must not come back with `%VAR%` baked in.
-        let mut kept: Vec<&str> = Vec::new();
-        let mut hit = false;
-        for seg in raw.split(';') {
-            let expanded = if expand {
-                expand_env_string(seg)
-            } else {
-                seg.to_string()
-            };
-            if normalize_path_entry(&expanded) == needle || normalize_path_entry(seg) == needle {
-                hit = true;
-                continue;
+        // Aggregate per-scope errors: a User scrub that already succeeded must
+        // still broadcast, and Machine failures must not hide the partial win.
+        let outcome = (|| -> Result<bool, String> {
+            let (raw, expand) = read_path_scope_raw(scope)?;
+            // Match on the expanded form, keep the raw segment text: a
+            // REG_EXPAND_SZ value must not come back with `%VAR%` baked in.
+            let mut kept: Vec<&str> = Vec::new();
+            let mut hit = false;
+            for seg in raw.split(';') {
+                let expanded = if expand {
+                    expand_env_string(seg)
+                } else {
+                    seg.to_string()
+                };
+                if normalize_path_entry(&expanded) == needle || normalize_path_entry(seg) == needle
+                {
+                    hit = true;
+                    continue;
+                }
+                kept.push(seg);
             }
-            kept.push(seg);
+            if !hit {
+                return Ok(false);
+            }
+            write_path_scope(scope, &kept.join(";"), expand)?;
+            Ok(true)
+        })();
+        match outcome {
+            Ok(wrote) => changed |= wrote,
+            Err(e) => errors.push(format!("{scope}: {e}")),
         }
-        if !hit {
-            continue;
-        }
-        write_path_scope(scope, &kept.join(";"), expand)?;
-        changed = true;
     }
     if changed {
         broadcast_env_change();
     }
-    Ok(changed)
+    if errors.is_empty() {
+        Ok(changed)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Notify Explorer/new processes that PATH changed (WM_SETTINGCHANGE).
@@ -763,10 +806,27 @@ fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool)
                 ))
                 .to_ipc());
             }
-            let text = crate::fsutil::wstring_from_reg_data(&data[..data_len as usize]);
-            Ok((text, typ == REG_EXPAND_SZ))
+            // Strict decode for the read-modify-write path: a lossy decode
+            // would bake U+FFFD into the registry value on write-back.
+            decode_reg_utf16(&data[..data_len as usize]).map(|text| (text, typ == REG_EXPAND_SZ))
         }
     }
+}
+
+/// Decode NUL-terminated UTF-16LE registry string data — strictly. Unpaired
+/// surrogates are an error so the read-modify-write path never rewrites a
+/// value containing replacement characters.
+fn decode_reg_utf16(data: &[u8]) -> Result<String, String> {
+    let wide: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let mut text = String::from_utf16(&wide)
+        .map_err(|_| "registry string data is not valid UTF-16".to_string())?;
+    while text.ends_with('\0') {
+        text.pop();
+    }
+    Ok(text)
 }
 
 /// Raw registry value bytes plus the native type code. reg.exe text output is
@@ -948,6 +1008,14 @@ pub(crate) fn write_path_scope(scope: &str, value: &str, expand: bool) -> Result
         if path_mock::active() {
             return path_mock::write(scope, value, expand);
         }
+    }
+    // A single environment variable is capped at 32,767 chars in the process
+    // environment block — fail with a clear code instead of a spawn failure.
+    if value.chars().count() > 30_000 {
+        return Err(crate::error::path_io_err(
+            "PATH value exceeds the environment variable size limit".to_string(),
+        )
+        .to_ipc());
     }
     use std::process::Command;
     // Explicit registry kind: SetEnvironmentVariable would silently rewrite a
