@@ -150,16 +150,11 @@ pub fn allow_reg_value_write(key_path: &str, value_name: Option<&str>) -> Result
         "HKCU\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
     ];
     const SERVICES_PREFIX: &str = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES\\";
-    // require a path separator after the base key so sibling keys
-    // like `RemovaDeepUninstallX` are not treated as subkeys.
-    const REMOVA_MENU_BASE: &str = "HKCU\\SOFTWARE\\CLASSES\\*\\SHELL\\REMOVADEEPUNINSTALL";
     if UNINSTALL_ROOTS
         .iter()
         .any(|r| low == *r || low.starts_with(&format!("{r}\\")))
         || is_allowed_run_key(key_path)
         || is_allowed_startup_approved_key(key_path)
-        || low == REMOVA_MENU_BASE
-        || low.starts_with(&format!("{REMOVA_MENU_BASE}\\"))
     {
         return Ok(());
     }
@@ -741,25 +736,6 @@ mod tests {
             allow_reg_value_write(r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorSvc", None)
                 .is_err()
         );
-        assert!(allow_reg_value_write(
-            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall\command",
-            Some("")
-        )
-        .is_ok());
-        assert!(
-            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstall", None)
-                .is_ok()
-        );
-        // sibling keys must not ride the Remova menu prefix.
-        assert!(
-            allow_reg_value_write(r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX", None)
-                .is_err()
-        );
-        assert!(allow_reg_value_write(
-            r"HKCU\Software\Classes\*\shell\RemovaDeepUninstallX\command",
-            Some("")
-        )
-        .is_err());
         // Everything else is refused — even plausible-but-unlisted keys.
         assert!(allow_reg_value_write(r"HKCU\Software\Vendor\Config", Some("x")).is_err());
         assert!(allow_reg_value_write(

@@ -6,7 +6,6 @@
 
 pub mod ai_cmd;
 pub mod backup_cmd;
-pub mod context_menu;
 pub mod history_cmd;
 pub mod ignore_cmd;
 pub mod manage_cmd;
@@ -14,7 +13,6 @@ pub mod update;
 
 pub use ai_cmd::*;
 pub use backup_cmd::*;
-pub use context_menu::*;
 pub use history_cmd::*;
 pub use ignore_cmd::*;
 pub use manage_cmd::*;

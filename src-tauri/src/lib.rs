@@ -720,8 +720,6 @@ pub fn run() {
             commands::manage_cmd::set_service_start_disabled,
             commands::manage_cmd::set_service_running,
             commands::manage_cmd::set_task_enabled,
-            commands::context_menu::register_context_menu,
-            commands::context_menu::unregister_context_menu,
             commands::ignore_cmd::load_ignore,
             commands::ignore_cmd::ignore_publisher,
             commands::ignore_cmd::ignore_app_name,

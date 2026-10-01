@@ -55,8 +55,6 @@ const COMMAND_KEYS = [
   "takePendingAnalyze",
   "beginInstallMonitor",
   "endInstallMonitor",
-  "registerContextMenu",
-  "unregisterContextMenu",
   "setStartupEnabled",
   "setServiceStartDisabled",
   "setServiceRunning",

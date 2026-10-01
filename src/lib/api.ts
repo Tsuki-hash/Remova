@@ -129,8 +129,6 @@ export const api = {
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
   beginInstallMonitor: () => invoke("begin_install_monitor"),
   endInstallMonitor: () => invoke<MonitorEndResult>("end_install_monitor"),
-  registerContextMenu: () => invoke("register_context_menu"),
-  unregisterContextMenu: () => invoke("unregister_context_menu"),
   setStartupEnabled: (location: string, enabled: boolean) =>
     invoke("set_startup_enabled", { location, enabled }),
   setServiceStartDisabled: (name: string, disable: boolean) =>
