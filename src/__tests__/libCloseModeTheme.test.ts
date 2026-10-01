@@ -22,7 +22,7 @@ beforeEach(() => {
   if (isCloseChoiceOpen()) settleCloseChoice("cancel");
 });
 
-describe("closeMode (REV-QA-03)", () => {
+describe("closeMode", () => {
   it("persists and clears the close preference", () => {
     expect(loadCloseMode()).toBeNull();
     saveCloseMode("tray");
@@ -69,7 +69,7 @@ describe("closeMode (REV-QA-03)", () => {
   });
 });
 
-describe("theme (REV-QA-03)", () => {
+describe("theme", () => {
   it("defaults to light when nothing stored", () => {
     expect(loadTheme()).toBe("light");
   });

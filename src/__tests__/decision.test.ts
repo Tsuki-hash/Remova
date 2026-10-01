@@ -23,7 +23,7 @@ import {
 } from "../lib/decision";
 import type { CleanupItem, InstalledApp } from "../types";
 
-// QA-12: frozen clock — install-date branches must not silently change as the
+// Frozen clock — install-date branches must not silently change as the
 // wall clock moves (the old Date.now() assertions decayed after 2026-01-31).
 const NOW = Date.UTC(2026, 6, 1);
 

@@ -133,7 +133,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                 path: p.to_string_lossy().to_string(),
                 kind: ItemKind::Dir,
                 score: 40,
-                // AppData / WebView caches are name-match only —require user confirm (BE-03).
+                // AppData / WebView caches are name-match only — require user confirm.
                 confidence: Confidence::Suspected,
                 risk: RiskLevel::Medium,
                 reason: if has_web {
