@@ -710,6 +710,11 @@ fn write_startup_approved(run_key: &str, value_name: &str, enabled: bool) -> Res
         // RunOnce has no StartupApproved companion; nothing to write for an
         // enable (disables are rejected before reaching this point).
         return Ok(());
+    } else if low.contains(r"\POLICIES\EXPLORER\RUN") {
+        // Policy Run entries ignore StartupApproved flags entirely — writing
+        // one would plant a dead value Explorer never reads. Enable is a
+        // no-op (policy entries always run); disable is rejected upstream.
+        return Ok(());
     } else if low.contains("HKLM32") {
         r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
     } else if low.starts_with("HKLM") {
@@ -874,6 +879,16 @@ mod tests {
         assert!(err.contains("policy_run_no_disable"), "got {err}");
         let loc2 = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
         assert!(super::set_startup_enabled(loc2, false).is_err());
+    }
+
+    /// Enabling a policy Run entry is a no-op — policy entries always run and
+    /// must not get a dead StartupApproved value written for them.
+    #[test]
+    fn policy_run_enable_is_a_noop() {
+        let loc = r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
+        assert!(super::set_startup_enabled(loc, true).is_ok());
+        let loc2 = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run::Forced";
+        assert!(super::set_startup_enabled(loc2, true).is_ok());
     }
 
     #[test]
