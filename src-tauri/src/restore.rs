@@ -55,7 +55,9 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                     return Err("seal:registry_snapshot_mismatch".into());
                 }
                 selected.insert(rel);
-                imports.push((entry.path(), target, validate_reg_bytes(bytes)?));
+                let text = validate_reg_bytes(bytes)?;
+                let view = registry_import_view(&text)?;
+                imports.push((entry.path(), target, text, view));
             }
         }
     }
@@ -91,6 +93,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 .to_ipc());
             }
             if !src.exists() {
+                messages.push(format!("skipped missing backup entry: {rel}"));
                 continue;
             }
             let dest = PathBuf::from(&original);
@@ -194,7 +197,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     }
 
     // Import only the exact authenticated and validated bytes captured above.
-    for (entry_dir, target, raw) in imports {
+    for (entry_dir, target, raw, view) in imports {
         // Pin every staging ancestor as well as the file. A directory swap
         // must not redirect an elevated staging write or reg.exe's reopen.
         let _stage_pins = crate::fsutil::create_dirs_pinned(&entry_dir)
@@ -225,7 +228,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             .to_ipc());
         }
         let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
-        cmd.args(["import", &pinned.to_string_lossy()]);
+        cmd.args(["import", &pinned.to_string_lossy(), view]);
         crate::regops::hide_console(&mut cmd);
         let out = cmd.output();
         let import_res = match out {
@@ -300,7 +303,7 @@ fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
 
 /// Accept UTF-16LE (reg.exe native), UTF-8 with BOM and plain UTF-8; anything
 /// else fails closed.
-fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
+pub(crate) fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     if raw.starts_with(&[0xFF, 0xFE]) {
         let units: Vec<u16> = raw[2..]
             .chunks_exact(2)
@@ -312,6 +315,29 @@ fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
         return String::from_utf8(raw[3..].to_vec()).map_err(|e| e.to_string());
     }
     String::from_utf8(raw).map_err(|e| e.to_string())
+}
+
+fn registry_import_view(text: &str) -> Result<&'static str, String> {
+    let views: Vec<_> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("; Remova registry view: "))
+        .collect();
+    match views.as_slice() {
+        ["32"] => Ok("/reg:32"),
+        ["64"] => Ok("/reg:64"),
+        [] if !text.lines().any(|line| {
+            line.trim()
+                .to_ascii_uppercase()
+                .starts_with("[HKEY_LOCAL_MACHINE\\")
+        }) =>
+        {
+            Ok("/reg:64")
+        }
+        // Older machine exports do not bind a view. Never guess and silently
+        // import a 32-bit backup into the 64-bit registry.
+        [] => Err("seal:legacy_manual_restore_only".into()),
+        _ => Err("seal:registry_snapshot_mismatch".into()),
+    }
 }
 
 /// Parse `.reg` text and enforce the key-shape whitelist.
@@ -646,6 +672,27 @@ fn is_session_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn registry_import_requires_authenticated_machine_view() {
+        let machine =
+            "Windows Registry Editor Version 5.00\n[HKEY_LOCAL_MACHINE\\SOFTWARE\\Vendor]";
+        assert!(super::registry_import_view(machine).is_err());
+        for (n, expected) in [("32", "/reg:32"), ("64", "/reg:64")] {
+            assert_eq!(
+                super::registry_import_view(&format!("; Remova registry view: {n}\n{machine}"))
+                    .unwrap(),
+                expected
+            );
+        }
+        assert!(super::registry_import_view(
+            "; Remova registry view: 32\n; Remova registry view: 64"
+        )
+        .is_err());
+        assert_eq!(
+            super::registry_import_view("[HKEY_CURRENT_USER\\Software\\Vendor]").unwrap(),
+            "/reg:64"
+        );
+    }
     use super::*;
     use std::fs;
 

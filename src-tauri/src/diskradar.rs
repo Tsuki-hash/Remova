@@ -127,6 +127,11 @@ pub fn list_local_drives() -> Vec<DriveInfo> {
 /// budget or depth cap, so callers can present a floor instead of a total
 /// (the same honesty the other size walkers report).
 fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
+    let (bytes, capped) = shallow_size_bytes(root, max_depth, budget);
+    (if bytes <= 0 { 0 } else { (bytes + 1023) / 1024 }, capped)
+}
+
+fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
     if *budget == 0 || max_depth == 0 {
         return (0, true);
     }
@@ -147,15 +152,14 @@ fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> 
             continue;
         }
         if p.is_dir() {
-            let (sub, sub_capped) = shallow_size_kb(&p, max_depth - 1, budget);
-            bytes += sub * 1024;
+            let (sub, sub_capped) = shallow_size_bytes(&p, max_depth - 1, budget);
+            bytes += sub;
             capped |= sub_capped;
         } else if let Ok(meta) = ent.metadata() {
             bytes += meta.len() as i64;
         }
     }
-    let kb = if bytes <= 0 { 0 } else { (bytes + 1023) / 1024 };
-    (kb, capped)
+    (bytes, capped)
 }
 
 fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
@@ -295,6 +299,24 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nested_small_files_are_rounded_only_once_and_caps_are_reported() {
+        let root = std::env::temp_dir().join(format!(
+            "remova_radar_bytes_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for name in ["a", "b"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("file"), b"x").unwrap();
+        }
+        assert_eq!(super::shallow_size_kb(&root, 3, &mut 100), (1, false));
+        assert!(super::shallow_size_kb(&root, 3, &mut 1).1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     use super::*;
 
     #[test]
