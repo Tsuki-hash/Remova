@@ -307,7 +307,7 @@ function AppRowImpl({
             style={{
               ...css.btnSm,
               height: 28,
-              color: "var(--accent)",
+              color: "var(--accent-text)",
               borderColor: "var(--border)",
               background: "var(--surface)",
               fontWeight: 550,

@@ -1683,7 +1683,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn export_reg_value_rejects_unsafe_names() {
-        let tmp = std::env::temp_dir().join("remova_reg_inject_test");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp =
+            std::env::temp_dir().join(format!("remova_reg_inject_{}_{nonce}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let dest = tmp.join("value.reg");
         assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\"name", &dest).is_err());
@@ -1697,8 +1702,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn export_reg_value_writes_existing_value() {
-        let tmp = std::env::temp_dir().join(format!("remova_value_reg_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp =
+            std::env::temp_dir().join(format!("remova_value_reg_{}_{nonce}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let dest = tmp.join("value.reg");
         // Read-only OS fixture: do not mutate the user's PATH or registry.
