@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, cleanup } from "@testing-library/react";
 import { useMoreHistory } from "../hooks/useMoreHistory";
 
 vi.mock("../lib/api", () => ({
@@ -20,6 +20,8 @@ vi.mock("../lib/toast", () => ({
 
 const { api } = await import("../lib/api");
 const { requestConfirm } = await import("../lib/confirm");
+const { toast } = await import("../lib/toast");
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("useMoreHistory", () => {
   beforeEach(() => {
@@ -62,5 +64,65 @@ describe("useMoreHistory", () => {
     });
     expect(api.deleteHistory).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("reloads after confirmed deletion and retains rows on failure", async () => {
+    const rows = [{ id: "L1", app_name: "Demo", deleted: 1, failed: 0, skipped: 0, delayed: 0, aborted: false, dry_run: false, backup_dir: "", created_at: "1" }];
+    vi.mocked(api.history).mockResolvedValue(rows);
+    const error = vi.fn();
+    const { result } = renderHook(() => useMoreHistory(error));
+    await act(async () => { await result.current.loadHistory(); });
+    vi.mocked(api.deleteHistory).mockRejectedValueOnce(new Error("denied"));
+    await act(async () => { await result.current.deleteHistory("L1"); });
+    expect(result.current.history).toEqual(rows);
+    expect(error).toHaveBeenCalledOnce();
+    expect(toast.success).not.toHaveBeenCalled();
+    vi.mocked(api.deleteHistory).mockResolvedValueOnce(1);
+    vi.mocked(api.history).mockResolvedValueOnce([]);
+    await act(async () => { await result.current.deleteHistory("L1"); });
+    expect(api.deleteHistory).toHaveBeenCalledWith(["L1"]);
+    expect(result.current.history).toEqual([]);
+    expect(toast.success).toHaveBeenCalledOnce();
+  });
+
+  it("only clears history after confirmation and a successful native write", async () => {
+    const rows = [{ id: "L1", app_name: "Demo", deleted: 1, failed: 0, skipped: 0, delayed: 0, aborted: false, dry_run: false, backup_dir: "", created_at: "1" }];
+    vi.mocked(api.history).mockResolvedValue(rows);
+    const error = vi.fn();
+    const { result } = renderHook(() => useMoreHistory(error));
+    await act(async () => { await result.current.loadHistory(); });
+    vi.mocked(requestConfirm).mockResolvedValueOnce(false);
+    await act(async () => { await result.current.clearHistory(); });
+    expect(api.clearHistory).not.toHaveBeenCalled();
+    vi.mocked(api.clearHistory).mockRejectedValueOnce("denied");
+    await act(async () => { await result.current.clearHistory(); });
+    expect(result.current.history).toEqual(rows);
+    expect(error).toHaveBeenCalledOnce();
+    vi.mocked(api.clearHistory).mockResolvedValueOnce(undefined);
+    await act(async () => { await result.current.clearHistory(); });
+    expect(result.current.history).toEqual([]);
+    expect(toast.success).toHaveBeenCalledOnce();
+  });
+
+  it("downloads CSV and releases its URL and temporary anchor", async () => {
+    vi.mocked(api.exportHistoryCsv).mockResolvedValueOnce("name,count\nDemo,1");
+    const create = vi.fn(() => "blob:csv"), revoke = vi.fn();
+    vi.stubGlobal("URL", class extends URL { static createObjectURL = create; static revokeObjectURL = revoke; });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      expect(this.download).toBe("remova-history.csv");
+      expect(this.href).toBe("blob:csv");
+      expect(this.isConnected).toBe(true);
+    });
+    const error = vi.fn();
+    const { result } = renderHook(() => useMoreHistory(error));
+    await act(async () => { await result.current.exportCsv(); });
+    expect(create).toHaveBeenCalledWith(expect.any(Blob));
+    expect(click).toHaveBeenCalledOnce();
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:csv");
+    expect(document.querySelector('a[download="remova-history.csv"]')).toBeNull();
+    vi.mocked(api.exportHistoryCsv).mockRejectedValueOnce("denied");
+    await act(async () => { await result.current.exportCsv(); });
+    expect(error).toHaveBeenCalledOnce();
+    expect(click).toHaveBeenCalledOnce();
   });
 });

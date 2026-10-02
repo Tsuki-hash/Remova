@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 
-const native = vi.hoisted(() => ({ backupSessions: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn() }));
+const native = vi.hoisted(() => ({ backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn() }));
 vi.mock("../lib/api", () => ({ api: native }));
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
@@ -75,4 +75,51 @@ it("does not replace the root view with a stale child response after going back"
   await act(async () => { resolveChild([{ path: "stale", name: "stale child", size_kb: 10, capped: false }]); });
   expect(screen.queryByText("stale child")).toBeNull();
   expect(screen.getByText(/>= 1 KB/)).toBeTruthy();
+});
+
+it("updates the selected backup after deletion and preserves selection when another is deleted", async () => {
+  const older = { name: "older-backup", size_kb: 1, created_at: "" };
+  const newer = { ...older, name: "newer-backup" };
+  native.backupSessions.mockResolvedValueOnce([older, newer]);
+  native.deleteBackupSession.mockResolvedValue(undefined);
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  native.backupSessions.mockResolvedValueOnce([newer]);
+  await act(async () => { await result.current.deleteSession(older.name); });
+  expect(native.deleteBackupSession).toHaveBeenCalledWith(older.name);
+  expect(result.current.restorePick).toBe(newer.name);
+  native.backupSessions.mockResolvedValueOnce([newer]);
+  await act(async () => { await result.current.deleteSession("another-backup"); });
+  expect(result.current.restorePick).toBe(newer.name);
+  native.backupSessions.mockResolvedValueOnce([]);
+  await act(async () => { await result.current.deleteSession(newer.name); });
+  expect(result.current.restorePick).toBe("");
+});
+
+it("preserves backups on deletion cancellation or failure", async () => {
+  const error = vi.fn();
+  const { result } = renderHook(() => useMoreRestore(error));
+  await act(async () => { await result.current.loadRestore(); });
+  vi.mocked(requestConfirm).mockResolvedValueOnce(false);
+  await act(async () => { await result.current.deleteSession("older-backup"); });
+  expect(native.deleteBackupSession).not.toHaveBeenCalled();
+  native.deleteBackupSession.mockRejectedValueOnce("denied");
+  await act(async () => { await result.current.deleteSession("older-backup"); });
+  expect(error).toHaveBeenCalledOnce();
+  expect(result.current.sessions).toHaveLength(1);
+  expect(result.current.restorePick).toBe("older-backup");
+});
+
+it("reports rejected restore IPC and releases busy state so it can be retried", async () => {
+  native.restoreSessionByName.mockRejectedValueOnce("denied");
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  await act(async () => { await result.current.runRestore(); });
+  expect(result.current.restoreBusy).toBe(false);
+  expect(result.current.restoreMsgs).toHaveLength(1);
+  expect(toast.error).toHaveBeenCalledOnce();
+  expect(toast.success).not.toHaveBeenCalled();
+  native.restoreSessionByName.mockResolvedValueOnce(["restored file"]);
+  await act(async () => { await result.current.runRestore(); });
+  expect(toast.success).toHaveBeenCalledOnce();
 });
