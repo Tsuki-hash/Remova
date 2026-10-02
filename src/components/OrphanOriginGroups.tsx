@@ -3,6 +3,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { OriginGroup } from "../lib/decision";
 import { bucketItem } from "../lib/decision";
+import { evidenceText } from "../lib/evidenceText";
 import type { CleanupItem } from "../types";
 
 function riskChip(it: CleanupItem, L: ReturnType<typeof t>) {
@@ -147,7 +148,7 @@ export function OrphanOriginGroups({
                         </div>
                         {it.evidence && it.evidence.length > 0 ? (
                           <ul style={{ margin: 0, paddingLeft: 16, color: "var(--muted)" }}>
-                            {it.evidence.map((ev) => (
+                            {it.evidence.map(raw => ({ ...raw, ...evidenceText(raw) })).map((ev) => (
                               <li key={ev.code || ev.detail || ev.label} style={{ marginBottom: 2 }}>
                                 <strong style={{ color: "var(--fg)" }}>{ev.label}</strong>
                                 {ev.detail ? ` — ${ev.detail}` : ""}
@@ -157,6 +158,12 @@ export function OrphanOriginGroups({
                         ) : (
                           <div style={{ color: "var(--muted)" }}>{L.orphanNoEvidence}</div>
                         )}
+                        {it.evidence.length > 0 && <details style={{ marginTop: 6 }}>
+                          <summary>{L.backendTechnicalDetails}</summary>
+                          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 11 }}>
+                            {it.evidence.map(ev => `${ev.code}: ${ev.label} — ${ev.detail}`).join("\n")}
+                          </pre>
+                        </details>}
                         <div style={{ marginTop: 6, color: "var(--muted)" }}>
                           {L.orphanRiskLabel}:{" "}
                           {it.risk === "low"

@@ -15,6 +15,7 @@ import {
 } from "../lib/decision";
 import { filterItemsByBucket, linkedBucketLabelKey } from "../lib/linkedItems";
 import { backendText } from "../lib/backendText";
+import { evidenceText } from "../lib/evidenceText";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
 
@@ -158,6 +159,7 @@ const LeftoverRow = memo(function LeftoverRow({
           onClick={() =>
             onEvidence(
               it.evidence
+                .map(raw => ({ ...raw, ...evidenceText(raw) }))
                 .map((e) => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
                 .join("\n") || it.reason,
             )
