@@ -221,6 +221,7 @@ mod tests {
 
     #[test]
     fn scan_runs_without_panic() {
+        let _allow = crate::scan_allow::test_lock();
         let items = scan_installer_caches();
         // May be empty on CI; must not panic and must stay under cap.
         assert!(items.len() <= SPECIALTY_RESULT_CAP);

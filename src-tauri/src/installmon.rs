@@ -365,6 +365,7 @@ mod tests {
     #[test]
     fn snapshot_roundtrip_shape() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
+        let _allow = crate::scan_allow::test_lock();
         // isolated state path — tests never touch real PROGRAMDATA.
         let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
@@ -464,6 +465,7 @@ mod tests {
     /// Convert path only; allow-list is armed by `end()` on the server diff.
     #[test]
     fn diff_to_cleanup_items_shapes() {
+        let _allow = crate::scan_allow::test_lock();
         let diff = MonitorDiff {
             added_files: vec![
                 r"C:\Program Files\Vendor\App\new.dll".into(),
@@ -628,6 +630,7 @@ mod tests {
     #[test]
     fn budget_exhausted_end_returns_diff_without_arming() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
+        let _allow = crate::scan_allow::test_lock();
         let tmp = std::env::temp_dir().join(format!("remova_mon_budget_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let state = tmp.join("monitor_snapshot.json");
