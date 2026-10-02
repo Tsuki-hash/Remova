@@ -132,10 +132,24 @@ pub fn split_value_path(path: &str) -> Option<(&str, &str)> {
     Some((&path[..i], &path[i + 1..]))
 }
 
-/// System32 absolute path for a tool (avoid PATH hijack).
+/// Absolute path to a system tool (avoid PATH hijack and mutable
+/// `SystemRoot` environment input). The OS API returns the trusted System32
+/// directory even when the process environment is attacker-controlled.
+pub fn system32_dir() -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+        let mut buf = [0u16; 260];
+        let n = unsafe { GetSystemDirectoryW(Some(&mut buf)) } as usize;
+        if n > 0 && n < buf.len() {
+            return String::from_utf16_lossy(&buf[..n]);
+        }
+    }
+    std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()) + r"\System32"
+}
+
 pub fn sys_tool(name: &str) -> String {
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    format!(r"{windir}\System32\{name}")
+    format!(r"{}\{name}", system32_dir())
 }
 
 /// CREATE_NO_WINDOW — avoid flashing a console for child tools (schtasks/sc/reg/…).
@@ -612,8 +626,7 @@ fn broadcast_env_change() {
 }
 
 fn powershell_exe() -> String {
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    format!(r"{windir}\System32\WindowsPowerShell\v1.0\powershell.exe")
+    format!(r"{}\WindowsPowerShell\v1.0\powershell.exe", system32_dir())
 }
 
 /// Test-only PATH I/O mock : production path is untouched when inactive.
@@ -1406,17 +1419,39 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn export_reg_value_preserves_non_ascii_bytes() {
-        let key = r"HKCU\Software\RemovaExportTest";
-        let tmp = std::env::temp_dir().join(format!("remova_value_reg_cjk_{}", std::process::id()));
+        struct RegistryKeyCleanup(String);
+        impl Drop for RegistryKeyCleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(super::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+
+        let key = format!(
+            r"HKCU\Software\RemovaExportTest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let _cleanup = RegistryKeyCleanup(key.clone());
+        let tmp = std::env::temp_dir().join(format!(
+            "remova_value_reg_cjk_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let dest = tmp.join("value.reg");
-        // reg.exe argv is UTF-16 — the fixture data lands byte-exact (the
-        // write primitives are allowlist-gated and refuse this test key).
         let add = std::process::Command::new(super::sys_tool("reg.exe"))
+            .arg("add")
+            .arg(&key)
             .args([
-                "add",
-                r"HKCU\Software\RemovaExportTest",
                 "/v",
                 "Path",
                 "/t",
@@ -1428,10 +1463,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(add.status.success(), "fixture key write failed");
-        let exported = super::export_reg_value(key, "Path", &dest).unwrap();
+        let exported = super::export_reg_value(&key, "Path", &dest).unwrap();
         assert!(exported, "test key must exist for the export");
         let text = std::fs::read_to_string(&dest).unwrap();
-        // hex(1) payload: decode back to UTF-16LE and compare with the truth.
         let payload = text
             .split("=hex(1):")
             .nth(1)
@@ -1453,7 +1487,6 @@ mod tests {
             !decoded.contains('\u{FFFD}'),
             "no replacement chars allowed"
         );
-        super::delete_key(key).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
