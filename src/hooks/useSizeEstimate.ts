@@ -12,12 +12,12 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   const [sizeMap, setSizeMap] = useState<Record<string, SizeEntry>>({});
   const [sizeProgress, setSizeProgress] = useState({ done: 0, total: 0 });
   const sizeCache = useRef(new Map<string, SizeEntry>());
+  const inventory = useRef(new Map<string, string>());
   const activeRun = useRef<{ remaining: Set<string>; cancelled: boolean } | null>(null);
  // Native begin/cancel mutate one backend generation; keep their order even
  // when a refresh arrives while cancellation is still awaiting IPC.
   const nativeLifecycle = useRef<Promise<void>>(Promise.resolve());
- // paths abandoned by an explicit stop — never auto-restarted by
- // a later apps refresh (they can still be estimated after a remount).
+ // Stop applies to the current inventory; an explicit reload starts fresh.
   const sizeSkipped = useRef(new Set<string>());
 
   const sizeOf = useCallback(
@@ -49,6 +49,26 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
   );
 
   useEffect(() => {
+    const groups = new Map<string, string[]>();
+    for (const a of apps) {
+      const path = a.install_location?.trim();
+      if (!path) continue;
+      const group = groups.get(path) ?? [];
+      group.push(JSON.stringify([a.source, a.registry_key, a.name, a.version,
+        a.publisher, a.install_date, a.uninstall_string, a.quiet_uninstall_string]));
+      groups.set(path, group);
+    }
+    const next = new Map([...groups].map(([path, identities]) => [path, JSON.stringify(identities.sort())]));
+    const expired = new Set([...inventory.current].filter(([path, identity]) =>
+      loading || next.get(path) !== identity).map(([path]) => path));
+    for (const path of expired) {
+      sizeCache.current.delete(path);
+      sizeSkipped.current.delete(path);
+    }
+    if (expired.size) {
+      setSizeMap(previous => Object.fromEntries(Object.entries(previous).filter(([path]) => !expired.has(path))));
+    }
+    inventory.current = loading ? new Map<string, string>() : next;
     if (loading || apps.length === 0) return;
     const pending = [
       ...new Set(
