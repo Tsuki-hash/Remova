@@ -701,6 +701,20 @@ pub fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Names passed as PCWSTR must have exactly the same extent as policy input.
+pub fn validate_native_name(name: &str) -> Result<(), String> {
+    if name.contains('\0') {
+        return Err(crate::error::safety_err("native name contains NUL").to_ipc());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn to_wide_name(name: &str) -> Result<Vec<u16>, String> {
+    validate_native_name(name)?;
+    Ok(to_wide(name))
+}
+
 /// Decode a REG_SZ / REG_EXPAND_SZ UTF-16LE blob, trimming the trailing NUL.
 #[cfg(windows)]
 pub fn wstring_from_reg_data(data: &[u8]) -> String {

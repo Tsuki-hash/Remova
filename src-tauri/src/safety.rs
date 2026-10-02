@@ -122,6 +122,7 @@ pub(crate) fn is_protected_service_name(name: &str) -> bool {
 
 /// Unified write-policy for manage IPC ( light): critical service + startup-approved keys.
 pub fn allow_manage_service_write(name: &str) -> Result<(), String> {
+    crate::fsutil::validate_native_name(name)?;
     let n = name.trim();
     if n.is_empty() || n.contains('\\') || n.contains('/') {
         return Err(crate::error::manage_err("bad_name", "bad service name").to_ipc());
@@ -136,6 +137,7 @@ pub fn allow_manage_reg_write(
     key_path: &str,
     require_startup_approved: bool,
 ) -> Result<(), String> {
+    crate::fsutil::validate_native_name(key_path)?;
     if require_startup_approved {
         if !is_allowed_startup_approved_key(key_path) {
             return Err(crate::error::manage_err("protected_registry", key_path).to_ipc());
@@ -154,6 +156,10 @@ pub fn allow_manage_reg_write(
 /// per-service keys (start type) — so a value write can
 /// never land outside these shapes even if a future caller forgets its gate.
 pub fn allow_reg_value_write(key_path: &str, value_name: Option<&str>) -> Result<(), String> {
+    crate::fsutil::validate_native_name(key_path)?;
+    if let Some(name) = value_name {
+        crate::fsutil::validate_native_name(name)?;
+    }
     let low = normalize_hklm(key_path);
     const UNINSTALL_ROOTS: &[&str] = &[
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
@@ -223,6 +229,7 @@ pub(crate) fn registry_key_part(key_path: &str) -> &str {
 
 /// Final gate for registry key/value paths (same shape as Python `is_safe_to_delete_registry`).
 pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
+    crate::fsutil::validate_native_name(key_path)?;
     if key_path.trim().is_empty() {
         return Err(crate::error::safety_err("empty registry path").to_ipc());
     }
@@ -715,6 +722,31 @@ pub fn looks_like_sync_conflict(p: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_names_reject_nul_before_policy_and_wide_conversion() {
+        use super::*;
+        let run = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        for name in ["\0Vendor", "Vendor\0Tail", "Vendor\0"] {
+            assert!(allow_manage_service_write(name).is_err());
+            assert!(allow_reg_value_write(run, Some(name)).is_err());
+            assert!(is_safe_to_delete_registry(&format!("{run}|{name}")).is_err());
+            assert!(allow_manage_reg_write(&format!("{run}\0{name}"), false).is_err());
+            assert!(crate::fsutil::validate_native_name(name).is_err());
+            #[cfg(windows)]
+            assert!(crate::fsutil::to_wide_name(name).is_err());
+        }
+        assert!(allow_manage_service_write("VendorHelper").is_ok());
+        assert!(allow_reg_value_write(run, Some("VendorHelper")).is_ok());
+        #[cfg(windows)]
+        assert_eq!(
+            crate::fsutil::to_wide_name("厂商").unwrap(),
+            "厂商"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn protected_service_families_are_symmetric() {
         for name in [
