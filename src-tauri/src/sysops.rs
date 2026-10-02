@@ -14,6 +14,15 @@ pub fn schedule_delete_on_reboot(path: &str) -> bool {
     }
     #[cfg(windows)]
     {
+        // An unsafe immediate delete must never fall through to an unchecked
+        // reboot-delete request. Keep the validated chain pinned while queuing.
+        let p = std::path::Path::new(path);
+        let Ok(_parents) = crate::fsutil::pin_existing_parents(p) else {
+            return false;
+        };
+        let Ok(_target) = crate::fsutil::pin_dir_no_reparse(p) else {
+            return false;
+        };
         let w: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
         let null: Vec<u16> = vec![0];
         unsafe {

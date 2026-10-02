@@ -564,12 +564,48 @@ pub fn short_path_form(p: &Path) -> Option<String> {
 /// before its children are cleared, so the path cannot be swapped for a
 /// junction mid-recursion; child junctions are unlinked as links only.
 pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
+    let _parents = pin_existing_parents(p)?;
+    remove_tree_pinned(p)
+}
+
+/// Hold every ancestor from the volume root before resolving a deletion path.
+/// Do not create missing ancestors or follow junctions in the chain.
+pub fn pin_existing_parents(p: &Path) -> std::io::Result<Vec<DirPin>> {
+    if !p.is_absolute() {
+        return Err(std::io::Error::other("deletion requires an absolute path"));
+    }
+    let mut pins = Vec::new();
+    for ancestor in p
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        let mut pin = pin_dir_with_access(ancestor, 0x0081)?;
+        pin.guard_empty()?;
+        pins.push(pin);
+    }
+    Ok(pins)
+}
+
+fn remove_tree_pinned(p: &Path) -> std::io::Result<()> {
     let is_dir = {
-        let _pin = pin_dir_no_reparse(p)?;
+        let mut pin = pin_dir_no_reparse(p)?;
         let meta = std::fs::symlink_metadata(p)?;
         if meta.is_dir() {
+            pin.guard_empty()?;
             for entry in std::fs::read_dir(p)? {
                 let entry = entry?;
+                #[cfg(windows)]
+                if pin
+                    .guard
+                    .as_ref()
+                    .is_some_and(|(name, _)| entry.file_name() == std::ffi::OsStr::new(name))
+                {
+                    continue;
+                }
                 let child = entry.path();
                 if is_reparse_point(&child) {
                     // Unlink the reparse itself (file link / dir junction) without descending.
@@ -580,7 +616,7 @@ pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
                 }
                 let ty = entry.file_type()?;
                 if ty.is_dir() {
-                    remove_tree_no_reparse(&child)?;
+                    remove_tree_pinned(&child)?;
                 } else {
                     std::fs::remove_file(&child)?;
                 }
@@ -1081,6 +1117,10 @@ mod tests {
             .unwrap();
         assert!(status.success());
         assert!(create_dirs_pinned(&link.join("child")).is_err());
+        assert!(remove_tree_no_reparse(&link.join("keep")).is_err());
+        assert!(!crate::sysops::schedule_delete_on_reboot(
+            link.join("keep").to_str().unwrap()
+        ));
         assert!(!target.join("child").exists());
         assert_eq!(fs::read(target.join("keep")).unwrap(), b"unchanged");
         // Unlink only the fixture junction before recursively removing its sandbox.

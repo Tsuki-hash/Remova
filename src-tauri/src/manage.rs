@@ -456,8 +456,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-        let mut cmd = Command::new(format!(r"{windir}\System32\schtasks.exe"));
+        let mut cmd = Command::new(crate::regops::sys_tool("schtasks.exe"));
         cmd.args(["/query", "/fo", "CSV", "/v"]);
         crate::regops::hide_console(&mut cmd);
         let Ok(out) = cmd.output() else {
@@ -804,9 +803,8 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
         let action = if enabled { "/enable" } else { "/disable" };
-        let mut cmd = Command::new(format!(r"{windir}\System32\schtasks.exe"));
+        let mut cmd = Command::new(crate::regops::sys_tool("schtasks.exe"));
         // No manual quotes: std::process::Command already quotes args containing spaces.
         // Manual quotes make schtasks look for a name with literal quote chars.
         cmd.args(["/change", "/tn", task_name, action]);
