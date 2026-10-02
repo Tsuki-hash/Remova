@@ -34,7 +34,7 @@ export function useAppCoreState() {
     [],
   );
   const setScan = useCallback(
-    (value: ScanResult | null) => dispatch({ type: "scan/set", value }),
+    (value: ScanResult | null, target?: InstalledApp) => dispatch({ type: "scan/set", value, target }),
     [],
   );
   const setScanning = useCallback((value: boolean) => dispatch({ type: "scanning/set", value }), []);

@@ -16,7 +16,7 @@ import type { UninstallStage } from "../components/UninstallStageBar";
 export type AnalyzeFlowSetters = {
   setSelected: (a: InstalledApp | null) => void;
   setScanning: (v: boolean) => void;
-  setScan: (r: ScanResult | null) => void;
+  setScan: (r: ScanResult | null, target?: InstalledApp) => void;
   setReport: (r: CleanupReport | FullCleanupReport | null) => void;
   setAiNotes: (m: Record<string, string>) => void;
   setAiRisk: (v: string | null) => void;
@@ -88,7 +88,7 @@ export function useAnalyzeFlow({
       try {
         const r = await api.analyze(app);
         if (seq !== analyzeSeqRef.current) return;
-        setScan(r);
+        setScan(r, app);
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
           void api
