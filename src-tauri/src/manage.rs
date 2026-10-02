@@ -856,7 +856,14 @@ mod tests {
         let bad2 =
             r"PACKAGED::HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\evil.exe::x";
         assert!(super::set_startup_enabled(bad2, false).is_err());
-        let _ = good;
+        let (key, value) = good
+            .strip_prefix("PACKAGED::")
+            .unwrap()
+            .rsplit_once("::")
+            .unwrap();
+        assert_eq!(value, "PackageFamily!App");
+        assert!(crate::safety::allow_manage_reg_write(key, true).is_ok());
+        assert!(crate::safety::allow_reg_value_write(key, Some(value)).is_ok());
     }
 
     #[test]

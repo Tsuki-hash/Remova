@@ -203,6 +203,15 @@ fn delete_cleanup_items_source(
     items: &[CleanupItem],
     source: crate::policy::CleanupSource,
 ) -> DeleteOutcome {
+    delete_cleanup_items_with_native(app, items, source, &mut native_delete_note)
+}
+
+fn delete_cleanup_items_with_native(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
+    native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
+) -> DeleteOutcome {
     let mut deleted = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
@@ -255,7 +264,7 @@ fn delete_cleanup_items_source(
                 }
             },
             ItemKind::Registry => {
-                let native = native_delete_note(&it.path);
+                let native = native_delete(&it.path);
                 let native_note = native.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
                 // A successful native stop/delete removes the service (with
                 // its key) or the task registration itself — the follow-up
@@ -623,6 +632,33 @@ mod tests {
             size_kb: None,
             bucket: None,
         }];
+        let mut native_items = items.clone();
+        let mut native_app = app.clone();
+        native_app.name = format!(
+            "RemovaNativeCountFixture{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        native_items[0].path = format!(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\{}",
+            native_app.name
+        );
+        native_items[0].kind = ItemKind::Registry;
+        let mut calls = 0;
+        let native = delete_cleanup_items_with_native(
+            &native_app,
+            &native_items,
+            crate::policy::CleanupSource::Uninstall,
+            &mut |_| {
+                calls += 1;
+                Some((true, "native service deleted".into()))
+            },
+        );
+        assert_eq!(calls, 1);
+        assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
+        assert_eq!(native.details[0].status, "deleted");
         let report = crate::executor::run_full_cleanup(
             &app,
             &items,

@@ -8,7 +8,7 @@ $names = @('SIGNPATH_ENABLED', 'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID',
 $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $passed = 0
-$policyState = @{ SignCalls = 0; VerifyCalls = 0; FailVerification = $false }
+$policyState = @{ SignCalls = 0; VerifyCalls = 0; FailVerification = $false; SignTargets = @(); VerifyTargets = @() }
 function Assert-Throws([scriptblock]$Call, [string]$Expected) {
     try { & $Call } catch {
         if ($_.Exception.Message -notlike "*$Expected*") { throw }
@@ -18,12 +18,21 @@ function Assert-Throws([scriptblock]$Call, [string]$Expected) {
 }
 # Stubs verify orchestration only. Real cryptographic verification has its own regression.
 function npx {
+    if ($args.Count -ne 4 -or ($args[0..2] -join ' ') -cne 'tauri signer sign' -or
+        -not (Test-Path -LiteralPath $args[3] -PathType Leaf)) { throw 'Invalid updater signing arguments.' }
     $policyState.SignCalls++
+    $policyState.SignTargets += [IO.Path]::GetFullPath($args[3])
     Set-Content -LiteralPath "$($args[-1]).sig" -Value 'fixture-signature' -NoNewline
     $global:LASTEXITCODE = 0
 }
 function cargo {
+    # PowerShell consumes the standalone -- when dispatching to a function stub.
+    if ($args.Count -ne 8 -or ($args[0..3] -join ' ') -cne 'run --quiet --locked --manifest-path' -or
+        ($args[5..6] -join ' ') -cne '--bin verify_update' -or
+        [IO.Path]::GetFullPath($args[4]) -cne [IO.Path]::GetFullPath((Join-Path $temp 'src-tauri/Cargo.toml')) -or
+        -not (Test-Path -LiteralPath "$($args[7]).sig" -PathType Leaf)) { throw 'Invalid updater verification arguments.' }
     $policyState.VerifyCalls++
+    $policyState.VerifyTargets += [IO.Path]::GetFullPath($args[7])
     $global:LASTEXITCODE = if ($policyState.FailVerification) { 1 } else { 0 }
 }
 try {
@@ -104,6 +113,12 @@ try {
     $finalize = Join-Path $temp 'scripts/finalize-signed-release.ps1'
     $policyState.SignCalls = 0; $policyState.VerifyCalls = 0; $policyState.FailVerification = $false
     & $finalize
+    $expectedTargets = @('nsis/Remova_1.3.0_x64-setup.exe', 'msi/Remova_1.3.0_x64.msi') |
+        ForEach-Object { [IO.Path]::GetFullPath((Join-Path $bundle $_)) } | Sort-Object
+    if (($policyState.SignTargets | Sort-Object) -join '|' -cne ($expectedTargets -join '|') -or
+        ($policyState.VerifyTargets | Sort-Object) -join '|' -cne ($expectedTargets -join '|')) {
+        throw 'Signing and verification must each cover the exact NSIS and MSI targets once.'
+    }
     $manifest = Join-Path $bundle 'latest.json'
     $json = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
     if ($policyState.SignCalls -ne 2 -or $policyState.VerifyCalls -ne 2 -or
