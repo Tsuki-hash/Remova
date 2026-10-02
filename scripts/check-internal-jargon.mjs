@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 
 const roots = ["src", "src-tauri/src", "src-tauri/tests"];
 const idRe =
-  /(?:^|[^A-Za-z0-9])(?:REV-[A-Z]+-\d+|R2[123]-[A-Z]+-\d+(?:\/[A-Z]+-\d+)?|R2[123]-(?:FE|BE|SEC|SUP|UX|QA)-\d+|FN-\d+|CODE-\d+|ARCH-\d+|AR-\d+|SEC-\d+|PERF-\d+|FUNC-\d+|NEW-[A-Z]|FE-P\d+[a-z]?|P0-\d|Q-[A-Z]\d+|S-R\d+-\d+|S-\d+|T-R\d+|F-R\d+|M\d+\+\d+|P[0-3]\b)/;
+  /(?:^|[^A-Za-z0-9])(?:REV-[A-Z]+-\d+|R\d+-(?:[A-Z]+-)?\d+(?:\/[A-Z]+-\d+)?|R-R\d+-\d+|(?:FE|BE|SEC|SUP|UX|QA)-R\d+-\d+|FN-\d+|CODE-\d+|ARCH-\d+|AR-\d+|SEC-\d+|PERF-\d+|FUNC-\d+|NEW-[A-Z]|FE-P\d+[a-z]?|P0-\d|Q-[A-Z]\d+|S-R\d+-\d+|S-\d+|T-R\d+|F-R\d+|M\d+\+\d+|P[0-3]\b)/;
 
 function walk(dir, out) {
   let entries;
