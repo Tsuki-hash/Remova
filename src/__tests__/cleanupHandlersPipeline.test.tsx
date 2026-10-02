@@ -33,6 +33,7 @@ vi.mock("../lib/batchEngine", () => ({
 }));
 
 import { useCleanupHandlers } from "../hooks/useCleanupHandlers";
+import { useAppCoreState } from "../hooks/useAppCoreState";
 import { runBatchCleanup } from "../lib/batchEngine";
 import { toast } from "../lib/toast";
 
@@ -129,6 +130,37 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"]), resid
 }
 
 describe("useCleanupHandlers confirm / force pipeline", () => {
+  it("cleans bound residuals after the app disappears and rejects a mismatched target", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    fullCleanup.mockResolvedValue(report({ uninstall_ok: false }));
+    const busyRef = { current: false };
+    const hook = renderHook(() => {
+      const core = useAppCoreState();
+      const cleanup = useCleanupHandlers({
+        L: t(), selected: core.selected, scanTarget: core.scanTarget, scan: core.scan,
+        selectedPaths: new Set(scan().items.map(it => it.path)),
+        residualFromUninstall: true, useOfficial: true, aiEnabled: false,
+        apps: core.apps, multi: core.multi, flow, refreshApps: async () => {}, busyRef,
+      });
+      return { core, cleanup };
+    });
+    act(() => {
+      hook.result.current.core.setSelected(app());
+      hook.result.current.core.setScan(scan(), app());
+      hook.result.current.core.setApps([]);
+    });
+    expect(hook.result.current.core.selected).toBeNull();
+    await act(async () => { await hook.result.current.cleanup.handleCleanupConfirm(); });
+    expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items,
+      expect.objectContaining({ skip_official_uninstall: true }));
+    fullCleanup.mockClear();
+    requestConfirmEx.mockClear();
+    act(() => hook.result.current.core.setScan(scan(), { ...app(), name: "Other" }));
+    await act(async () => { await hook.result.current.cleanup.handleCleanupConfirm(); });
+    expect(requestConfirmEx).not.toHaveBeenCalled();
+    expect(fullCleanup).not.toHaveBeenCalled();
+  });
+
   it("never repeats official uninstall during residual cleanup even when the toggle is on", async () => {
     fullCleanup.mockResolvedValue(report());
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });

@@ -13,7 +13,7 @@ import {
   maxRiskOf,
   riskTierLabel,
 } from "../lib/decision";
-import { appKey } from "../lib/appKey";
+import { appKey, scanMatchesApp } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
 import type { BatchItemResult } from "../components/BatchPanels";
 
@@ -31,7 +31,8 @@ export type CleanupFlowSetters = {
 /** Force-clean / dry-run / real cleanup / beginner batch handlers. */
 export function useCleanupHandlers({
   L,
-  selected,
+  selected: listSelected,
+  scanTarget = listSelected,
   scan,
   selectedPaths,
   residualFromUninstall,
@@ -47,6 +48,7 @@ export function useCleanupHandlers({
 }: {
   L: Strings;
   selected: InstalledApp | null;
+  scanTarget?: InstalledApp | null;
   scan: ScanResult | null;
   selectedPaths: Set<string>;
   residualFromUninstall: boolean;
@@ -61,6 +63,7 @@ export function useCleanupHandlers({
   onAfterCleanup?: (app: InstalledApp, report: FullCleanupReport) => void;
   busyRef: { current: boolean };
 }) {
+  const selected = scan && scanTarget && scanMatchesApp(scan, scanTarget) ? scanTarget : null;
   const {
     setMulti,
     setResidualFromUninstall,
@@ -92,7 +95,7 @@ export function useCleanupHandlers({
 
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
-      const target = appOverride ?? selected;
+      const target = appOverride ?? listSelected;
       if (!target || forceBusy || busyRef.current) return;
       setForceBusy(true);
       busyRef.current = true;
@@ -149,7 +152,7 @@ export function useCleanupHandlers({
         setForceBusy(false);
       }
     },
-    [selected, forceBusy, L, refreshApps, setError, setReport, busyRef, setVerifyRows, setAiReportNote],
+    [listSelected, forceBusy, L, refreshApps, setError, setReport, busyRef, setVerifyRows, setAiReportNote],
   );
 
   const dryRun = useCallback(async () => {
@@ -282,7 +285,7 @@ export function useCleanupHandlers({
 
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
   const handleCleanupConfirm = useCallback(async () => {
-    if (!scan) return;
+    if (!scan || !selected) return;
     if (busyRef.current) {
       toast.info(L.taskBusy);
       return;
