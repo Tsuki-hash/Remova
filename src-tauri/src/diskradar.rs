@@ -132,6 +132,9 @@ fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> 
 }
 
 fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
+    if crate::fsutil::is_reparse_point(root) {
+        return (0, false);
+    }
     if *budget == 0 || max_depth == 0 {
         return (0, true);
     }
@@ -164,12 +167,15 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
 
 fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
     let mut rows = Vec::new();
+    if crate::fsutil::is_reparse_point(parent) {
+        return rows;
+    }
     let Ok(rd) = std::fs::read_dir(parent) else {
         return rows;
     };
     for ent in rd.flatten() {
         let p = ent.path();
-        if !p.is_dir() {
+        if !p.is_dir() || crate::fsutil::is_reparse_point(&p) {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
@@ -299,6 +305,36 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(windows)]
+    fn radar_skips_root_junctions_and_child_junction_rows() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-radar-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("data"), b"kept").unwrap();
+        let link = root.join("link");
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(super::shallow_size_kb(&link, 3, &mut 100), (0, false));
+        assert!(super::child_rows(&link).is_empty());
+        assert_eq!(super::child_rows(&root).len(), 1);
+        assert_eq!(super::shallow_size_kb(&target, 3, &mut 100), (1, false));
+        std::fs::remove_dir(&link).unwrap();
+        crate::fsutil::remove_tree_no_reparse(&root).unwrap();
+    }
     #[test]
     fn nested_small_files_are_rounded_only_once_and_caps_are_reported() {
         let root = std::env::temp_dir().join(format!(

@@ -28,7 +28,7 @@ pub fn batch_stale(gen: u64) -> bool {
 }
 
 /// Limits for scan-time leftover size attachment (never block analyze).
-const MAX_WALK_FILES: u64 = 5_000;
+const MAX_WALK_ENTRIES: u64 = 5_000;
 const MAX_WALK_DEPTH: u32 = 8;
 
 /// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
@@ -71,32 +71,31 @@ pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
         let meta = root.metadata().ok()?;
         return Some(meta.len().div_ceil(1024));
     }
-    let mut files_seen = 0u64;
-    walk_bytes_limited(root, 0, &mut files_seen).map(|b| b.div_ceil(1024))
+    let mut entries_seen = 0u64;
+    walk_bytes_limited(root, 0, &mut entries_seen).map(|b| b.div_ceil(1024))
 }
 
-fn walk_bytes_limited(dir: &Path, depth: u32, files_seen: &mut u64) -> Option<u64> {
+fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<u64> {
     if depth > MAX_WALK_DEPTH {
         return None;
     }
     let mut total: u64 = 0;
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
+        *entries_seen += 1;
+        if *entries_seen >= MAX_WALK_ENTRIES {
+            return None;
+        }
         let Ok(meta) = entry.metadata() else { continue };
         // `is_symlink()` misses Windows junctions — check reparse attributes.
         if crate::fsutil::is_reparse_point(&entry.path()) {
             continue;
         }
         if meta.is_dir() {
-            let sub = walk_bytes_limited(&entry.path(), depth + 1, files_seen)?;
+            let sub = walk_bytes_limited(&entry.path(), depth + 1, entries_seen)?;
             total = total.saturating_add(sub);
         } else if meta.is_file() {
             total = total.saturating_add(meta.len());
-            *files_seen += 1;
-            // Budget is tree-wide — a wide directory must not reset the cap.
-            if *files_seen >= MAX_WALK_FILES {
-                return None;
-            }
         }
     }
     Some(total)
@@ -110,7 +109,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
     // depth + entry caps — same budget as `walk_bytes_limited`.
     let mut stack: VecDeque<(std::path::PathBuf, u32)> = VecDeque::new();
     stack.push_back((root.to_path_buf(), 0));
-    let mut files_seen: u64 = 0;
+    let mut entries_seen: u64 = 0;
     let mut capped = false;
 
     while let Some((dir, depth)) = stack.pop_front() {
@@ -126,6 +125,10 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
         for entry in entries.flatten() {
             if cancelled.load(Ordering::SeqCst) {
                 return (0, false);
+            }
+            entries_seen += 1;
+            if entries_seen >= MAX_WALK_ENTRIES {
+                return (total, true);
             }
             let Ok(meta) = entry.metadata() else {
                 continue;
@@ -144,12 +147,7 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
                 }
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
-                files_seen += 1;
-                if files_seen >= MAX_WALK_FILES {
-                    // cap → partial floor, never a silent "complete" total.
-                    return (total, true);
-                }
-                if files_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
+                if entries_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
                     return (0, false);
                 }
             }
@@ -195,7 +193,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("remova_dirsize_cap_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        for i in 0..MAX_WALK_FILES {
+        for i in 0..MAX_WALK_ENTRIES {
             let mut f = fs::File::create(tmp.join(format!("f{i}.bin"))).unwrap();
             f.write_all(&[0u8; 8]).unwrap();
         }
@@ -228,6 +226,28 @@ mod tests {
             .unwrap();
         assert_eq!(walk_size_kb_limited(&tmp), Some(3));
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn empty_directory_width_consumes_the_tree_budget() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-empty-width-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        for index in 0..MAX_WALK_ENTRIES {
+            fs::create_dir(root.join(index.to_string())).unwrap();
+        }
+        assert_eq!(walk_size_kb_limited(&root), None);
+        assert_eq!(
+            walk_size_kb_with_capped(&root, &AtomicBool::new(false)),
+            (0, true)
+        );
+        crate::fsutil::remove_tree_no_reparse(&root).unwrap();
     }
 
     #[test]
