@@ -34,6 +34,7 @@ export function useCleanupHandlers({
   L,
   selected: listSelected,
   scanTarget = listSelected,
+  currentReport,
   scan,
   selectedPaths,
   residualFromUninstall,
@@ -50,6 +51,7 @@ export function useCleanupHandlers({
   L: Strings;
   selected: InstalledApp | null;
   scanTarget?: InstalledApp | null;
+  currentReport?: { current: CleanupReport | FullCleanupReport | null };
   scan: ScanResult | null;
   selectedPaths: Set<string>;
   residualFromUninstall: boolean;
@@ -249,7 +251,7 @@ export function useCleanupHandlers({
       void api
         .verifyLeftovers(items)
         .then((rows) => {
-          if (vseq === verifySeqRef.current) setVerifyRows(rows);
+          if (vseq === verifySeqRef.current && (!currentReport || currentReport.current === r)) setVerifyRows(rows);
         })
         .catch(() => {});
       if (r.uninstall_ok && selected) {
@@ -280,6 +282,7 @@ export function useCleanupHandlers({
     setResidualFromUninstall,
     setError,
     busyRef,
+    currentReport,
   ]);
 
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */

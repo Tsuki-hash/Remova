@@ -1,5 +1,5 @@
 import { api } from "./lib/api";
-import type { FullCleanupReport, InstalledApp } from "./types";
+import type { CleanupReport, FullCleanupReport, InstalledApp } from "./types";
 import { loadLang, t } from "./i18n";
 import { cssStyles as css, globalCss } from "./styles";
 import { formatError } from "./lib/format";
@@ -81,10 +81,15 @@ export default function App() {
     setIgnoreName: coreSetIgnoreName,
     setUseOfficial: coreSetUseOfficial,
     setError: coreSetError,
-    setReport: coreSetReport,
+    setReport: rawSetReport,
     toggleMulti: coreToggleMulti,
     closePreviewCore: coreClosePreview,
   } = core;
+  const currentReport = useRef<CleanupReport | FullCleanupReport | null>(null);
+  const coreSetReport = useCallback((value: CleanupReport | FullCleanupReport | null) => {
+    currentReport.current = value;
+    rawSetReport(value);
+  }, [rawSetReport]);
 
   const { q, setQ, sortCol, setSortCol, sortDesc, setSortDesc, category, setCategoryState } =
     useListFilterChrome();
@@ -173,6 +178,10 @@ export default function App() {
     setCopilotList,
     actions: aiActions,
   } = ai;
+  useEffect(() => {
+    setVerifyRows(null);
+    setAiReportNote(null);
+  }, [report, setVerifyRows, setAiReportNote]);
 
   const setCategory = useCallback(
     (id: "all" | "desktop" | "store" | "large" | "recent") => {
@@ -262,6 +271,7 @@ export default function App() {
     L,
     selected,
     scanTarget: core.scanTarget,
+    currentReport,
     scan,
     selectedPaths,
     residualFromUninstall,
@@ -274,7 +284,7 @@ export default function App() {
       setMulti: core.setMulti,
       setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setAiRisk,
-      setReport: core.setReport,
+      setReport: coreSetReport,
       setVerifyRows,
       setAiReportNote,
       setError: core.setError,
@@ -297,7 +307,7 @@ export default function App() {
       setSelected: core.setSelected,
       setScanning: core.setScanning,
       setScan: core.setScan,
-      setReport: core.setReport,
+      setReport: coreSetReport,
       setAiNotes,
       setAiRisk,
       setIgnoreSuggestions: residualActions.setIgnoreSuggestions,
@@ -428,6 +438,7 @@ export default function App() {
   );
 
   const closePreview = useCallback(() => {
+    currentReport.current = null;
     coreClosePreview();
     coreActions.setUseOfficial(false);
     residualActions.setResidualFromUninstall(false);
@@ -696,7 +707,7 @@ export default function App() {
             <OrphanPage
               onLastReport={(r: FullCleanupReport) => {
  // lastReport is derived from report by the reducer.
-                core.setReport(r);
+                coreSetReport(r);
               }}
               onError={core.setError}
             />

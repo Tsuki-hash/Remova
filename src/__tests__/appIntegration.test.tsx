@@ -16,6 +16,7 @@ const native = vi.hoisted(() => ({
   openPath: vi.fn(), elevateRestart: vi.fn(), takePendingAnalyze: vi.fn(),
   ignorePublisher: vi.fn(), ignoreAppName: vi.fn(),
   beginInstallMonitor: vi.fn(), endInstallMonitor: vi.fn(),
+  verifyLeftovers: vi.fn(), aiSummarizeReport: vi.fn(),
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
   drag: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
 }));
@@ -33,7 +34,6 @@ vi.mock("../lib/api", () => ({ api: {
   getAiConfig: vi.fn().mockResolvedValue({ enabled: false }),
   loadIgnore: vi.fn().mockResolvedValue({ publishers: [], names: [] }),
   diskUsage: vi.fn().mockResolvedValue({ free_gb: 10, total_gb: 100, drive: "C:" }),
-  verifyLeftovers: vi.fn().mockResolvedValue([]),
 } }));
 vi.mock("../lib/updateCheck", () => ({
   RELEASES_URL: "https://example.com/releases",
@@ -156,10 +156,36 @@ beforeEach(() => {
   native.endInstallMonitor.mockResolvedValue({
     diff: { added_files: [scan.items[0]!.path], added_reg_values: [] }, items: scan.items,
   });
+  native.verifyLeftovers.mockResolvedValue([]);
+  native.aiSummarizeReport.mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); });
 
 describe("App orchestration", () => {
+  it("clears old report notes and rejects verification belonging to another report", async () => {
+    saveRescanAfterUninstall(false);
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    await mount();
+    await nav("more");
+    act(() => more().onAiEnabledChange?.(true));
+    await nav("software");
+    await analyzeDemo();
+    native.aiSummarizeReport.mockResolvedValueOnce("Previous summary");
+    act(() => software().onCleanup());
+    await waitFor(() => expect(software().aiReportNote).toBe("Previous summary"));
+    let resolveVerify!: (rows: { path: string; kind: string; still_there: boolean }[]) => void;
+    native.verifyLeftovers.mockReturnValueOnce(new Promise(resolve => { resolveVerify = resolve; }));
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.verifyLeftovers).toHaveBeenCalledTimes(2));
+    await nav("more");
+    native.aiSummarizeReport.mockRejectedValueOnce(new Error("summary failed"));
+    act(() => more().onLastReport?.({ ...report, app_name: "New tool report" }));
+    await act(async () => resolveVerify([{ path: "old-path", kind: "file", still_there: true }]));
+    await nav("software");
+    expect(software().aiReportNote).toBeNull();
+    expect(software().verifyRows).toBeNull();
+  });
+
   it("matches full path boundaries in pending and drag entry points", async () => {
     const adjacent = { ...other, install_location: `${demo.install_location}Bar` };
     const nested = { ...other, name: "Nested", install_location: `${demo.install_location}\\Nested` };
