@@ -212,6 +212,24 @@ fn delete_cleanup_items_with_native(
     source: crate::policy::CleanupSource,
     native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
 ) -> DeleteOutcome {
+    delete_cleanup_items_with_io(
+        app,
+        items,
+        source,
+        native_delete,
+        &mut crate::fsutil::remove_tree_no_reparse,
+        &mut crate::sysops::schedule_delete_on_reboot,
+    )
+}
+
+fn delete_cleanup_items_with_io(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
+    native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
+    delete_fs: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    schedule: &mut impl FnMut(&str) -> bool,
+) -> DeleteOutcome {
     let mut deleted = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
@@ -336,7 +354,7 @@ fn delete_cleanup_items_with_native(
                 }
                 // recursive delete that refuses to walk child reparse points
                 // (std remove_dir_all can follow a junction swapped after the root check).
-                let res = crate::fsutil::remove_tree_no_reparse(p);
+                let res = delete_fs(p);
                 match res {
                     Ok(()) => {
                         deleted += 1;
@@ -347,9 +365,9 @@ fn delete_cleanup_items_with_native(
                             message: String::new(),
                         });
                     }
-                    Err(_e) => {
+                    Err(error) => {
                         // try schedule delete on reboot for locked files
-                        if crate::sysops::schedule_delete_on_reboot(&it.path) {
+                        if schedule(&it.path) {
                             delayed += 1;
                             details.push(ItemDetail {
                                 path: it.path.clone(),
@@ -359,7 +377,13 @@ fn delete_cleanup_items_with_native(
                             });
                         } else {
                             failed += 1;
-                            errors.push(format!("{}: delete failed", it.path));
+                            errors.push(format!("{}: delete failed: {error}", it.path));
+                            details.push(ItemDetail {
+                                path: it.path.clone(),
+                                kind: format!("{:?}", it.kind).to_lowercase(),
+                                status: "failed".into(),
+                                message: error.to_string(),
+                            });
                         }
                     }
                 }
@@ -659,6 +683,33 @@ mod tests {
         assert_eq!(calls, 1);
         assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
         assert_eq!(native.details[0].status, "deleted");
+        let fixture = std::env::temp_dir().join(&native_app.name);
+        std::fs::create_dir(&fixture).unwrap();
+        let locked = fixture.join("locked.bin");
+        std::fs::write(&locked, b"preserved").unwrap();
+        let mut failed_app = app.clone();
+        failed_app.install_location = fixture.to_string_lossy().into_owned();
+        let mut failed_items = items.clone();
+        failed_items[0].path = locked.to_string_lossy().into_owned();
+        let outcome = delete_cleanup_items_with_io(
+            &failed_app,
+            &failed_items,
+            crate::policy::CleanupSource::Uninstall,
+            &mut |_| None,
+            &mut |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "fixture denied",
+                ))
+            },
+            &mut |_| false,
+        );
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(outcome.details[0].path, failed_items[0].path);
+        assert_eq!(outcome.details[0].status, "failed");
+        assert!(outcome.details[0].message.contains("fixture denied"));
+        assert_eq!(std::fs::read(&locked).unwrap(), b"preserved");
+        crate::fsutil::remove_tree_no_reparse(&fixture).unwrap();
         let report = crate::executor::run_full_cleanup(
             &app,
             &items,
