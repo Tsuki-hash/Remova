@@ -45,7 +45,7 @@ pub fn apply_ignore_suggestions(
 
 #[cfg(test)]
 mod tests {
-    // R-R6-07: command-layer boundary coverage (was zero).
+    // Command-layer boundary coverage.
 
     #[test]
     fn ignore_publisher_rejects_blank_name() {

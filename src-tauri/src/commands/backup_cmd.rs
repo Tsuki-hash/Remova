@@ -30,7 +30,7 @@ pub async fn restore_session_by_name(name: String) -> Result<Vec<String>, String
 
 #[cfg(test)]
 mod tests {
-    // R-R6-07: command-layer boundary coverage.
+    // Command-layer boundary coverage.
 
     #[test]
     fn delete_backup_session_rejects_dot_and_empty() {
@@ -42,7 +42,7 @@ mod tests {
         assert!(crate::restore::delete_session_by_name("a\\b").is_err());
     }
 
-    // -01: commands-layer coverage for session-name shape (R-R7-02).
+    // Command-layer coverage for session-name shape.
     #[test]
     fn delete_backup_session_requires_timestamp_prefix() {
         // Non-session folder names must never be deleted by name.

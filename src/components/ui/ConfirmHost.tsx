@@ -130,7 +130,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
   useDialogFocus(true, dialogRef);
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
   const [checked, setChecked] = useState(getConfirmChecked());
- // FE-R4-04: re-seed when a new dialog replaces a pending one without unmount.
+ // Re-seed when a new dialog replaces a pending one without unmount.
   useEffect(() => {
     setChecked(getConfirmChecked());
   }, [opts]);
