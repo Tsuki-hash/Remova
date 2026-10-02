@@ -80,15 +80,7 @@ pub fn is_allowed_startup_approved_key(key_path: &str) -> bool {
 /// Run / RunOnce keys that manage may enable/disable (StartupApproved companions).
 pub fn is_allowed_run_key(key_path: &str) -> bool {
     let low = key_path.trim().replace('/', "\\").to_uppercase();
-    // Normalized HKLM64/HKLM32 → HKLM for comparison.
-    let low = low
-        .strip_prefix("HKLM64\\")
-        .map(|s| format!("HKLM\\{s}"))
-        .unwrap_or(low);
-    let low = low
-        .strip_prefix("HKLM32\\")
-        .map(|s| format!(r"HKLM\WOW6432NODE\{s}"))
-        .unwrap_or(low);
+    let low = crate::regops::normalize_reg_exe_hive(&low).to_uppercase();
     const ALLOWED: &[&str] = &[
         r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUN",
         r"HKLM\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\RUNONCE",
@@ -745,6 +737,20 @@ mod tests {
                 .chain(std::iter::once(0))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn startup_write_policy_accepts_both_registry_views() {
+        for alias in ["HKLM64", "HKLM32", "HKCU"] {
+            for leaf in ["Run", "RunOnce"] {
+                let key = format!(r"{alias}\SOFTWARE\Microsoft\Windows\CurrentVersion\{leaf}");
+                assert!(crate::policy::allow_manage_reg_write(&key, false).is_ok());
+                assert!(super::allow_reg_value_write(&key, Some("Vendor")).is_ok());
+                assert!(
+                    crate::policy::allow_manage_reg_write(&format!("{key}Extra"), false).is_err()
+                );
+            }
+        }
     }
 
     #[test]
