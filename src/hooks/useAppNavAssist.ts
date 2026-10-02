@@ -5,6 +5,23 @@ import { toast } from "../lib/toast";
 import { prettyAppName } from "../lib/format";
 import { t } from "../i18n";
 
+/** Require a complete directory boundary and a unique most-specific owner. */
+export function appForPath(apps: InstalledApp[], path: string): InstalledApp | null {
+  const normalize = (value: string) => {
+    const windows = value.replace(/\//g, "\\").toLowerCase();
+    if (!/^(?:[a-z]:\\|\\\\[^\\]+\\[^\\]+)/.test(windows) ||
+      windows.split("\\").some(part => part === "." || part === "..")) return "";
+    return windows.replace(/\\+$/, "");
+  };
+  const target = normalize(path);
+  if (!target) return null;
+  const hits = apps.map(app => ({ app, root: normalize(app.install_location || "") }))
+    .filter(({ root }) => root && (target === root || target.startsWith(`${root}\\`)))
+    .sort((a, b) => b.root.length - a.root.length);
+  if (!hits.length || (hits[1] && hits[0]!.root.length === hits[1].root.length)) return null;
+  return hits[0]!.app;
+}
+
 /** Context menu --analyze: match pending path after list load. */
 export function usePendingAnalyze({
   loading,
@@ -28,12 +45,7 @@ export function usePendingAnalyze({
       .takePendingAnalyze()
       .then((p) => {
         if (cancelled || !p) return;
-        const low = p.toLowerCase();
-        const hit = apps.find(
-          (a) =>
-            a.install_location &&
-            low.startsWith(a.install_location.replace(/\//g, "\\").toLowerCase()),
-        );
+        const hit = appForPath(apps, p);
         if (hit) {
           goNav("software");
           setSelected(hit);
@@ -79,13 +91,8 @@ export function useDragDropAnalyze({
           if (event.payload.type !== "drop") return;
           const path = (event.payload.paths || [])[0];
           if (!path) return;
-          const norm = path.replace(/\//g, "\\").toLowerCase();
           const { apps, setSelected, analyze } = latest.current;
-          const hit =
-            apps.find((a) => {
-              const loc = (a.install_location || "").replace(/\//g, "\\").toLowerCase();
-              return loc && (norm.startsWith(loc) || loc.startsWith(norm) || norm === loc);
-            }) ?? null;
+          const hit = appForPath(apps, path);
           if (hit) {
             setSelected(hit);
             analyze(hit);
