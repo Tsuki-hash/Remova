@@ -16,6 +16,7 @@ function fixture(t, unused = true) {
   for (const lang of ["zh", "en"]) fs.writeFileSync(path.join(root, `src/i18n/${lang}.ts`), dict);
   fs.writeFileSync(path.join(root, "src/App.tsx"), unused ? "L.used" : "L.used; L.unused");
   return {
+    root,
     run: (...args) => spawnSync(process.execPath, [script, ...args], { cwd: root, encoding: "utf8" }),
     unchanged: () => {
       for (const lang of ["zh", "en"]) {
@@ -31,6 +32,20 @@ test("check fails on dead keys and leaves both dictionaries byte-for-byte unchan
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stdout, /dead: 1\nunused/);
   f.unchanged();
+});
+
+test("parity failures refuse check and prune without modifying dictionaries", (t) => {
+  const f = fixture(t, false);
+  const en = path.join(f.root, "src/i18n/en.ts");
+  fs.writeFileSync(en, 'export const dict = {\n    used: "used",\n    extra: "extra",\n};\n');
+  const paths = [en, path.join(f.root, "src/i18n/zh.ts")];
+  const before = paths.map(p => fs.readFileSync(p, "utf8"));
+  for (const mode of ["--check", "--prune"]) {
+    const result = f.run(mode);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /i18n key parity broken/);
+    assert.deepEqual(paths.map(p => fs.readFileSync(p, "utf8")), before);
+  }
 });
 
 test("check succeeds when all keys are referenced and remains read-only", (t) => {

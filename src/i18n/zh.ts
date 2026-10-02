@@ -151,7 +151,7 @@ export const dict = {
     manageStartDone: (name: string) => `已启动服务「${name}」`,
     manageSourceRegistry: "注册表",
     manageSourceFolder: "启动文件夹",
-    manageSourceStore: "Store",
+    manageSourceStore: "应用商店",
     manageSourceService: "服务自启",
     confirmStopService: (name: string) =>
       `将停止正在运行的服务「${name}」。停止 ≠ 禁用：服务可能被其它程序再次启动。确定停止？`,
