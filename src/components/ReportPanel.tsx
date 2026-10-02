@@ -253,9 +253,9 @@ export function ReportPanel({
           <span
             style={{
               color: report.restore_point_ok
-                ? "var(--ok)"
+                ? "var(--ok-ink)"
                 : report.restore_point_msg
-                  ? "var(--warn)"
+                  ? "var(--warn-ink)"
                   : "var(--muted)",
               fontWeight: 600,
             }}

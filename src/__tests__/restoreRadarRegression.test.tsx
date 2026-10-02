@@ -21,6 +21,16 @@ beforeEach(() => {
   native.openPath.mockResolvedValue(undefined);
 });
 
+it("keeps restore failures beyond the twentieth row in a bounded scroll area", () => {
+  const messages = Array.from({ length: 25 }, (_, i) => `restore-row-${i + 1}`);
+  const { container } = render(<RestorePanel sessions={[]} pick="" setPick={() => {}}
+    busy={false} msgs={messages} onRun={() => {}} onDelete={() => {}} onClose={() => {}} />);
+  const details = container.querySelector("pre")!;
+  expect(details.textContent).toContain("restore-row-25");
+  expect(details.style.maxHeight).toBe("240px");
+  expect(details.style.overflow).toBe("auto");
+});
+
 it("names the selected backup and reports skipped or failed rows without a success toast", async () => {
   native.restoreSessionByName.mockResolvedValue(["restored file", "skipped protected restore target: protected", "restore failed for broken: denied"]);
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
