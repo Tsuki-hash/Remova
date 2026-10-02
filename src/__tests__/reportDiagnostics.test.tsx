@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { setLang, t } from "../i18n";
 import { ReportPanel } from "../components/ReportPanel";
 import { ScanLeftoversView } from "../components/ScanLeftoversView";
-import type { FullCleanupReport } from "../types";
+import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
+import { groupByOrigin } from "../lib/decision";
+import type { CleanupItem, FullCleanupReport } from "../types";
 vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
@@ -43,4 +45,27 @@ it.each(["zh", "en"] as const)("names evidence buttons by action and path in %s"
     onTogglePath={() => {}} onEvidence={onEvidence} />);
   fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: fixture-path` }));
   expect(onEvidence).toHaveBeenCalledWith("fixture");
+});
+
+it.each(["zh", "en"] as const)("uses translated evidence in both leftover surfaces in %s", lang => {
+  setLang(lang);
+  const evidence = [{ code: "orphan_no_owner", label: "No matching uninstall entry", weight: 30,
+    detail: "folder `Vendor` not matched to installed software" }];
+  const item: CleanupItem = { path: "fixture-path", kind: "dir", score: 30,
+    confidence: "suspected", risk: "medium", reason: "orphan", evidence };
+  const onEvidence = vi.fn();
+  const view = render(<ScanLeftoversView scan={{ app_name: "Vendor", items: [item] }}
+    scanning={false} selectedPaths={new Set()} evidence={null} aiNotes={{}} orphanLabel="Orphans"
+    onTogglePath={() => {}} onEvidence={onEvidence} />);
+  fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: fixture-path` }));
+  expect(onEvidence).toHaveBeenCalledWith(`${t().orphanEvNoOwner} (30)`);
+  view.unmount();
+  render(<OrphanOriginGroups groups={groupByOrigin([item])} selectedPaths={new Set()}
+    onToggle={() => {}} onToggleMany={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: t().orphanExpandEvidence }));
+  expect(screen.getByText(t().orphanEvNoOwner)).toBeTruthy();
+  expect(screen.queryByText("No matching uninstall entry")).toBeNull();
+  const technical = screen.getByText(t().backendTechnicalDetails).closest("details")!;
+  expect(technical.open).toBe(false);
+  expect(technical.textContent).toContain(evidence[0]!.detail);
 });
