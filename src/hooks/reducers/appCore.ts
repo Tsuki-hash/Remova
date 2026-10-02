@@ -13,6 +13,7 @@ export type AppCoreState = {
   selected: InstalledApp | null;
   multi: Set<string>;
   scan: ScanResult | null;
+  scanTarget: InstalledApp | null;
   scanning: boolean;
   report: CleanupReport | FullCleanupReport | null;
   /**
@@ -37,7 +38,7 @@ export type AppCoreAction =
   | { type: "multi/toggle"; key: string }
   | { type: "multi/set"; value: Set<string> }
   | { type: "multi/update"; updater: (m: Set<string>) => Set<string> }
-  | { type: "scan/set"; value: ScanResult | null }
+  | { type: "scan/set"; value: ScanResult | null; target?: InstalledApp }
   | { type: "scanning/set"; value: boolean }
   | { type: "report/set"; value: CleanupReport | FullCleanupReport | null }
   | { type: "useOfficial/set"; value: boolean }
@@ -56,6 +57,7 @@ export function initialAppCoreState(): AppCoreState {
     selected: null,
     multi: new Set(),
     scan: null,
+    scanTarget: null,
     scanning: false,
     report: null,
     lastReport: null,
@@ -105,8 +107,14 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
       return { ...state, multi: action.value };
     case "multi/update":
       return { ...state, multi: action.updater(state.multi) };
-    case "scan/set":
-      return { ...state, scan: action.value };
+    case "scan/set": {
+      const target = action.target ?? state.selected;
+      return {
+        ...state,
+        scan: action.value,
+        scanTarget: action.value && target ? { ...target } : null,
+      };
+    }
     case "scanning/set":
       return { ...state, scanning: action.value };
     case "report/set": {
@@ -135,6 +143,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
       return {
         ...state,
         scan: null,
+        scanTarget: null,
         report: null,
         error: null,
       };

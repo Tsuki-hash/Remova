@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appCoreReducer, initialAppCoreState } from "../hooks/reducers/appCore";
-import type { CleanupReport, FullCleanupReport } from "../types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 
 function fullReport(over: Partial<FullCleanupReport> = {}): FullCleanupReport {
   return {
@@ -36,6 +36,21 @@ function dryReport(): CleanupReport {
 }
 
 describe("appCore report reducer (single source)", () => {
+  it("keeps an immutable scan target after uninstall removes the list selection", () => {
+    const target = { name: "Removed", source: "Registry", publisher: "Vendor" } as InstalledApp;
+    const scan = { app_name: target.name, items: [] } as unknown as ScanResult;
+    let state = appCoreReducer(initialAppCoreState(), { type: "selected/set", value: target });
+    state = appCoreReducer(state, { type: "scan/set", value: scan, target });
+    target.publisher = "Changed";
+    state = appCoreReducer(state, { type: "apps/set", value: [] });
+    expect(state.selected).toBeNull();
+    expect(state.scanTarget?.publisher).toBe("Vendor");
+    state = appCoreReducer(state, { type: "selected/set", value: { ...target, name: "Other" } });
+    expect(state.scanTarget?.name).toBe("Removed");
+    expect(appCoreReducer(state, { type: "preview/close" }).scanTarget).toBeNull();
+    expect(appCoreReducer(state, { type: "scan/set", value: null }).scanTarget).toBeNull();
+  });
+
   it("derives lastReport from a completed full cleanup", () => {
     const next = appCoreReducer(initialAppCoreState(), {
       type: "report/set",
