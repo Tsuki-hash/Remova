@@ -87,6 +87,18 @@ describe("safe online update", () => {
     expect(update.close).toHaveBeenCalledOnce();
   });
 
+  it.each(["V1.3.1", "1.3.1+build.7"])("accepts equivalent update version %s", async (version) => {
+    vi.mocked(check).mockResolvedValueOnce({ ...update, version } as unknown as Awaited<ReturnType<typeof check>>);
+    await installUpdate({ ...info, version: "1.3.1" }, { current: false }, () => false, vi.fn());
+    expect(update.install).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a different prerelease before downloading", async () => {
+    vi.mocked(check).mockResolvedValueOnce({ ...update, version: "1.3.1-beta.2" } as unknown as Awaited<ReturnType<typeof check>>);
+    await expect(installUpdate({ ...info, version: "1.3.1-beta.1" }, { current: false }, () => false, vi.fn())).rejects.toThrow("update:version_changed");
+    expect(update.download).not.toHaveBeenCalled();
+  });
+
   it("reports download progress in percent and installs after the download", async () => {
     update.download.mockImplementation(async (cb: (e: { event: string; data: { chunkLength?: number; contentLength?: number } }) => void) => {
       cb({ event: "Started", data: { contentLength: 200 } });

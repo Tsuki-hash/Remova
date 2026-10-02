@@ -105,6 +105,7 @@ export function useAnalyzeFlow({
         );
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return;
+        setResidualFromUninstall(false);
         setError(formatError(e, "analyze"));
         toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
       } finally {
@@ -282,7 +283,7 @@ const openOfficialOnly = useCallback(
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer],
+    [refreshApps, setSelected, setResidualFromUninstall, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer],
   );
 
   const openAnalyzeFromDrawer = useCallback(

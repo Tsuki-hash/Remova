@@ -3,6 +3,14 @@ import { formatSize } from "../i18n";
 import { compareSemver } from "../semver";
 
 describe("compareSemver", () => {
+  it("orders prerelease identifiers by semver precedence", () => {
+    const versions = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"];
+    for (let i = 1; i < versions.length; i++) {
+      expect(compareSemver(versions[i - 1]!, versions[i]!)).toBeLessThan(0);
+      expect(compareSemver(versions[i]!, versions[i - 1]!)).toBeGreaterThan(0);
+    }
+    expect(compareSemver("1.0.0+build.1", "V1.0.0+build.2")).toBe(0);
+  });
     // raw git tags with a single leading `v` must not compare as 0.0.0.
     it("strips exactly one leading v on both sides", () => {
       expect(compareSemver("v1.3.1", "1.3.0")).toBeGreaterThan(0);
