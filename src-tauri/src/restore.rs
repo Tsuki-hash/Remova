@@ -598,7 +598,7 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
                 .map(|d| d.as_secs() < cutoff)
                 .unwrap_or(false)
         };
-        if expired && fs::remove_dir_all(&p).is_ok() {
+        if expired && crate::fsutil::remove_tree_no_reparse(&p).is_ok() {
             removed += 1;
         }
     }
@@ -630,7 +630,7 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     if !path.is_dir() {
         return Err("session not found".into());
     }
-    fs::remove_dir_all(&path).map_err(|e| e.to_string())
+    crate::fsutil::remove_tree_no_reparse(&path).map_err(|e| e.to_string())
 }
 
 /// Backup map keys are opaque `{digest}_{name}` tokens written by backup — one path segment only.
@@ -757,9 +757,56 @@ mod tests {
         assert!(removed >= 1);
         assert!(!old.exists());
         assert!(fresh.exists());
+        delete_session_by_name(fresh.file_name().unwrap().to_str().unwrap()).unwrap();
+        assert!(!fresh.exists());
         // Do not remove_var here : the guard serializes env access; the
         // process exits after the suite and no other test needs the default root.
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn session_delete_and_retention_refuse_junction_ancestors() {
+        let _lock = crate::backup::lock_backup_env();
+        struct SavedEnv(Option<std::ffi::OsString>);
+        impl Drop for SavedEnv {
+            fn drop(&mut self) {
+                if let Some(value) = &self.0 {
+                    std::env::set_var("REMOVA_BACKUP_DIR", value);
+                } else {
+                    std::env::remove_var("REMOVA_BACKUP_DIR");
+                }
+            }
+        }
+        let saved = SavedEnv(std::env::var_os("REMOVA_BACKUP_DIR"));
+        let root = std::env::temp_dir().join(format!(
+            "remova-session-parent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        let session = target.join("Backup/1700000000_fixture");
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("sentinel"), b"preserved").unwrap();
+        let alias = root.join("alias");
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::env::set_var("REMOVA_BACKUP_DIR", alias.join("Backup"));
+        assert!(delete_session_by_name("1700000000_fixture").is_err());
+        assert_eq!(prune_old_sessions_at(0, Some(1_800_000_000)), 0);
+        assert_eq!(fs::read(session.join("sentinel")).unwrap(), b"preserved");
+        drop(saved);
+        fs::remove_dir(alias).unwrap();
+        crate::fsutil::remove_tree_no_reparse(&root).unwrap();
     }
 
     #[test]
