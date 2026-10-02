@@ -42,6 +42,12 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "wcmsvc",
         "wlansvc",
         "wudfsvc",
+        "w32time",
+        "usosvc",
+        "waasmedicsvc",
+        "dosvc",
+        "sppsvc",
+        "winrm",
     ]
 }
 
@@ -709,6 +715,33 @@ pub fn looks_like_sync_conflict(p: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn protected_service_families_are_symmetric() {
+        for name in [
+            "MicrosoftEdgeUpdate",
+            "MS Example",
+            "MSMQ",
+            "MSSQLSERVER",
+            "MSDTC",
+            "MSPQ",
+            "MSTEE",
+            "W32Time",
+            "UsoSvc",
+            "WaaSMedicSvc",
+            "DoSvc",
+            "sppsvc",
+            "WinRM",
+        ] {
+            assert!(super::is_protected_service_name(name));
+            assert!(super::allow_manage_service_write(name).is_err());
+            let key = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}");
+            assert!(super::is_safe_to_delete_registry(&key).is_err());
+            assert!(super::allow_reg_value_write(&key, Some("Start")).is_err());
+            assert!(!crate::regops::sc_delete_service(name));
+            assert!(crate::regops::sc_set_service_running(name, false).is_err());
+        }
+        assert!(super::allow_manage_service_write("VendorService").is_ok());
+    }
     use super::*;
     use std::path::Path;
 

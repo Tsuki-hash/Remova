@@ -96,10 +96,23 @@ fn walk_names(
         *truncated = true;
         return;
     }
-    let Ok(rd) = std::fs::read_dir(root) else {
-        return;
+    let rd = match std::fs::read_dir(root) {
+        Ok(rd) => rd,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                *truncated = true;
+            }
+            return;
+        }
     };
-    for e in rd.flatten() {
+    for e in rd {
+        let e = match e {
+            Ok(e) => e,
+            Err(_) => {
+                *truncated = true;
+                continue;
+            }
+        };
         if *budget == 0 {
             *truncated = true;
             return;
@@ -108,6 +121,7 @@ fn walk_names(
         // Keep original casing for display/delete; NTFS compare is case-insensitive.
         // Non-UTF-8 never enters snapshots/allow-lists (fail-closed).
         let Some(rel) = crate::fsutil::path_utf8(&p) else {
+            *truncated = true;
             continue;
         };
         *budget = budget.saturating_sub(1);
@@ -191,6 +205,7 @@ fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
 
 pub fn begin() -> Result<(), String> {
     let _guard = monitor_lock();
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &Default::default());
     let snap = FullSnapshot {
         fs: take_fs_snapshot(),
         reg: reg_value_names().into_iter().collect(),
@@ -236,9 +251,10 @@ pub fn end() -> Result<MonitorEndResult, String> {
         scanned.insert(it.path.clone());
     }
     let degraded = before.fs.truncated || after.truncated;
-    if !degraded {
-        crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+    if degraded {
+        scanned.clear();
     }
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
     Ok(MonitorEndResult { diff, items })
 }
 
@@ -335,6 +351,16 @@ mod tests {
     /// begin()/end() take monitor_lock() themselves, so those must never be
     /// held while acquiring this one.
     static TEST_SEQ: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn invalid_directory_snapshot_is_degraded() {
+        let tmp = std::env::temp_dir().join(format!("remova_mon_file_{}", std::process::id()));
+        std::fs::write(&tmp, b"not a directory").unwrap();
+        let mut degraded = false;
+        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded);
+        assert!(degraded);
+        std::fs::remove_file(tmp).unwrap();
+    }
 
     #[test]
     fn snapshot_roundtrip_shape() {
@@ -606,8 +632,21 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         let state = tmp.join("monitor_snapshot.json");
         set_test_state_path(Some(state.clone()));
+        let stale = "stale_monitor_authorization".to_string();
+        crate::scan_allow::remember(
+            crate::scan_allow::AllowScope::Monitor,
+            &[stale.clone()].into(),
+        );
         TEST_BUDGET.store(3, std::sync::atomic::Ordering::SeqCst);
         super::begin().unwrap();
+        assert!(!crate::scan_allow::was_recent(
+            crate::scan_allow::AllowScope::Monitor,
+            &stale
+        ));
+        crate::scan_allow::remember(
+            crate::scan_allow::AllowScope::Monitor,
+            &[stale.clone()].into(),
+        );
         let res = super::end();
         TEST_BUDGET.store(200, std::sync::atomic::Ordering::SeqCst);
         set_test_state_path(None);
@@ -616,6 +655,10 @@ mod tests {
         // The diff itself reports the degradation so the UI can say the scan
         // is incomplete instead of presenting a possibly-empty diff as truth.
         assert!(res.diff.walk_degraded, "truncated walk must flag the diff");
+        assert!(!crate::scan_allow::was_recent(
+            crate::scan_allow::AllowScope::Monitor,
+            &stale
+        ));
         // Whatever items the diff produced, none may be armed.
         for it in &res.items {
             assert!(
