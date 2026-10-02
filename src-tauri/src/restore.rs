@@ -606,7 +606,7 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
 }
 
 /// Delete one backup session by name. Path-traversal guarded.
-/// R-R7-02: session names must match `^[0-9]{8}-[0-9]{6}` (`YYYYMMDD-HHMMSS…`).
+/// Session names must match `^[0-9]{8}-[0-9]{6}` (`YYYYMMDD-HHMMSS…`).
 pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     // Reject `.`, `..`, separators, and anything that is not a real session folder name
     // (`YYYYMMDD-HHMMSS-…`). `backup_root().join(".")` is the backup root itself.
@@ -905,7 +905,7 @@ mod tests {
 
     #[test]
     fn delete_session_requires_timestamp_name() {
-        // R-R7-02: only `YYYYMMDD-HHMMSS…` session folders are deletable by name.
+        // Only `YYYYMMDD-HHMMSS…` session folders are deletable by name.
         assert!(super::is_session_name("20260922-120000"));
         assert!(super::is_session_name("20260922-120000_extra"));
         assert!(!super::is_session_name(""));

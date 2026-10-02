@@ -208,7 +208,7 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
 
 /// Medium association gate : leftovers must look related to the app.
 /// Orphan/monitor sources skip association at the policy layer.
-/// R2-11: keep fail-closed; tighten short/generic slug false positives.
+/// Keep fail-closed; tighten short/generic slug false positives.
 pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupItem) -> bool {
     if item.path.trim().is_empty() {
         return false;
