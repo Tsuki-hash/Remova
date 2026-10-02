@@ -18,6 +18,9 @@ vi.mock("../i18n", () => ({
     batchDetail: (d: number, f: number) => `del${d} fail${f}`,
     batchCancelled: "cancelled",
     batchDone: "done",
+    backendBackupFailed: "backup stopped cleanup",
+    backendDetailUnavailable: "diagnostic unavailable",
+    uninstallFail: "uninstall failed",
   }),
 }));
 

@@ -29,7 +29,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "no uninstall string": L.uninstallNoCmd,
     "uninstall command not from latest app scan": L.backendScanExpired,
     "uninstall launch failed": L.backendLaunchFailed, "uninstall wait failed": L.backendWaitFailed,
-    "backup session failed": L.backendBackupFailed,
+    "backup session failed": L.backendBackupFailed, "backup failed": L.backendBackupFailed,
     "dry-run: official uninstaller not launched": L.backendDryRun,
     "[dry-run]": L.backendDryRun, "PATH entry removed": L.backendPathRemoved,
     "reparse point": L.backendReparse,

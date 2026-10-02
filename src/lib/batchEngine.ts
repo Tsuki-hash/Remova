@@ -2,6 +2,7 @@
 import { api } from "./api";
 import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
+import { backendText } from "./backendText";
 import { defaultSelectable } from "../lib/decision";
 import { toast } from "../lib/toast";
 import type { InstalledApp } from "../types";
@@ -66,7 +67,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "failed",
-            detail: report.uninstall_message || formatError("cleanup aborted", "cleanup"),
+            detail: backendText(report.uninstall_message) || L.uninstallFail,
           });
           cb.onResults([...results]);
           continue;
