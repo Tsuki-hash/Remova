@@ -88,6 +88,7 @@ import App from "../App";
 import * as i18n from "../i18n";
 import { exportHtmlReport } from "../lib/exportHtmlReport";
 import { appKey } from "../lib/appKey";
+import { appForPath } from "../hooks/useAppNavAssist";
 import { toast } from "../lib/toast";
 import { saveRescanAfterUninstall } from "../lib/rescanPref";
 
@@ -159,6 +160,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); });
 
 describe("App orchestration", () => {
+  it("matches full path boundaries in pending and drag entry points", async () => {
+    const adjacent = { ...other, install_location: `${demo.install_location}Bar` };
+    const nested = { ...other, name: "Nested", install_location: `${demo.install_location}\\Nested` };
+    expect(appForPath([demo, adjacent], `${adjacent.install_location}\\file.exe`)).toEqual(adjacent);
+    expect(appForPath([demo, nested], `${nested.install_location}\\file.exe`)).toEqual(nested);
+    expect(appForPath([demo, { ...other, install_location: demo.install_location }], demo.install_location)).toBeNull();
+    expect(appForPath([demo], "C:\\Apps")).toBeNull();
+    native.listApps.mockResolvedValue([demo, adjacent]);
+    native.takePendingAnalyze.mockResolvedValueOnce(`${demo.install_location}Extra/app.exe`);
+    await mount();
+    await waitFor(() => expect(native.takePendingAnalyze).toHaveBeenCalled());
+    expect(native.analyze).not.toHaveBeenCalled();
+    await waitFor(() => expect(native.drag).toBeTruthy());
+    act(() => native.drag!({ payload: { type: "drop", paths: ["C:\\Apps"] } }));
+    expect(native.analyze).not.toHaveBeenCalled();
+    act(() => native.drag!({ payload: { type: "drop", paths: [`${adjacent.install_location}/app.exe`] } }));
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent));
+  });
+
   it("applies saved AI state and removed ignore rules immediately across pages", async () => {
     await mount();
     act(() => software().listIgnorePublisher(demo));
@@ -392,6 +412,7 @@ describe("App orchestration", () => {
   });
 
   it("hands pending analyze and native drag-drop into the App scan flow", async () => {
+    native.listApps.mockResolvedValue([demo]);
     native.takePendingAnalyze.mockResolvedValueOnce("C:\\Apps\\Demo\\app.exe");
     await mount();
     await waitFor(() => expect(software().scan).toEqual(scan));
