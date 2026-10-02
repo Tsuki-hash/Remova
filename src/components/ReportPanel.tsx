@@ -221,6 +221,8 @@ export function ReportPanel({
             {verifyRows.slice(0, 40).map((v, i) => (
               <div key={`${v.path}-${i}`} className="ell" title={v.path}>
                 <span
+                  role="img"
+                  aria-label={v.still_there ? L.verifyStillPresent : L.verifyRemoved}
                   style={{
                     color: v.still_there ? "var(--danger-text)" : "var(--ok-ink)",
                   }}

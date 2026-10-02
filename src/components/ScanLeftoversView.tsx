@@ -154,6 +154,7 @@ const LeftoverRow = memo(function LeftoverRow({
       <div>
         <button
           style={{ ...css.btnGhost, height: 28, width: 32, padding: 0 }}
+          aria-label={`${L.orphanEvidenceTitle}: ${it.path}`}
           onClick={() =>
             onEvidence(
               it.evidence

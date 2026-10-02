@@ -335,6 +335,8 @@ export const dict: EnDict = {
     userDataHint: "May be Documents/Downloads/sync — unchecked by default; confirm cache before cleaning",
     userLibraryHint: "App data under a user library (may include saves) — confirm before cleaning",
     verifyChecklist: "Post-clean verify",
+    verifyStillPresent: "Still present",
+    verifyRemoved: "Removed",
     aiReportSummary: "Smart report summary",
     aiReportBusy: "Summarizing…",
     badgeNew: "New",
