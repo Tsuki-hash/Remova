@@ -16,6 +16,33 @@ beforeEach(() => {
   native.estimateDirSizeKb.mockImplementation(() => new Promise<Size>(resolve => complete.push(resolve)));
 });
 afterEach(cleanup);
+
+it("changed app version at the same path invalidates a completed estimate", async () => {
+  native.estimateDirSizeKb.mockResolvedValue({ kb: 10, capped: false });
+  const list = [{ ...apps[0]!, version: "1" }];
+  const { result, rerender } = renderHook(({ list }) => useSizeEstimate(list, false), { initialProps: { list } });
+  await waitFor(() => expect(result.current.sizeOf(list[0]!)).toBe(10));
+  native.estimateDirSizeKb.mockResolvedValue({ kb: 20, capped: false });
+  const newer = [{ ...list[0]!, version: "2" }];
+  rerender({ list: newer });
+  await waitFor(() => expect(result.current.sizeOf(newer[0]!)).toBe(20));
+  expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(2);
+});
+
+it("explicit reload clears stopped paths and discards older in-flight responses", async () => {
+  const list = apps.slice(0, 1);
+  const { result, rerender } = renderHook(({ loading }) => useSizeEstimate(list, loading), { initialProps: { loading: false } });
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(1));
+  const old = complete.shift()!;
+  await act(async () => result.current.stopSizeEstimate());
+  rerender({ loading: true });
+  rerender({ loading: false });
+  await waitFor(() => expect(native.estimateDirSizeKb).toHaveBeenCalledTimes(2));
+  await act(async () => old({ kb: 100, capped: false }));
+  expect(result.current.sizeOf(list[0]!)).toBe(0);
+  await finishOutstanding();
+  await waitFor(() => expect(result.current.sizeOf(list[0]!)).toBe(10));
+});
 async function finishOutstanding() {
   await act(async () => complete.splice(0).forEach(resolve => resolve({ kb: 10, capped: false })));
 }
