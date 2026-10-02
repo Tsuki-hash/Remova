@@ -199,6 +199,7 @@ mod tests {
 
     #[test]
     fn scan_runs_under_cap() {
+        let _allow = crate::scan_allow::test_lock();
         let items = scan_tool_caches();
         assert!(items.len() <= SPECIALTY_RESULT_CAP);
         for it in &items {
