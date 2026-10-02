@@ -862,34 +862,33 @@ pub struct ReportBriefInput {
     pub top_failed: Vec<String>,
 }
 
-pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
-    // backup_dir / top_failed are rendered into the prompt — they
-    // must break the cache or the UI shows the previous run's path/failures.
-    let key = fnv1a64(&format!(
-        "report|{}|{}|{}|{}|{}|{}|{}|{}",
-        input.app_name,
-        input.deleted,
-        input.failed,
-        input.skipped,
-        input.aborted,
-        input.restore_point_ok,
-        input.backup_dir,
-        serde_json::to_string(&input.top_failed).unwrap_or_default()
-    ));
-    if let Some(c) = cache_get(key) {
-        return Ok(c);
-    }
-    let user = format!(
+fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput) -> String {
+    let failed = input
+        .top_failed
+        .iter()
+        .map(|path| sanitize_path(path, cfg.allow_cloud_paths))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    format!(
         "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n备份目录: {}\n还原点: {}\n失败样例: {}",
         input.app_name,
         input.deleted,
         input.failed,
         input.skipped,
         input.aborted,
-        sanitize_path(&input.backup_dir, true),
+        sanitize_path(&input.backup_dir, cfg.allow_cloud_paths),
         input.restore_point_ok,
-        input.top_failed.join(" | ")
-    );
+        failed
+    )
+}
+
+pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
+    let user = report_user_prompt(cfg, input);
+    // Cache exactly the privacy-aware payload; changing permission invalidates it.
+    let key = fnv1a64(&format!("report|{}|{user}", cfg.allow_cloud_paths));
+    if let Some(c) = cache_get(key) {
+        return Ok(c);
+    }
     let text = chat_completion(cfg, REPORT_SYSTEM, &user)?;
     cache_put(key, text.clone());
     Ok(text)
@@ -960,6 +959,31 @@ pub fn parse_nl_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_prompt_respects_path_privacy_without_network_requests() {
+        let input = ReportBriefInput {
+            app_name: "Vendor".into(),
+            deleted: 0,
+            failed: 1,
+            skipped: 0,
+            aborted: false,
+            restore_point_ok: false,
+            backup_dir: r"C:\Users\PrivacyUser\private\backup\session".into(),
+            top_failed: vec![r"C:\Users\PrivacyUser\private\product\failed.bin".into()],
+        };
+        let mut cfg = AiConfig::default();
+        let scrubbed = report_user_prompt(&cfg, &input);
+        assert!(!scrubbed.contains("PrivacyUser"));
+        assert!(!scrubbed.contains("private"));
+        assert!(!scrubbed.contains(r"C:\Users"));
+        assert!(scrubbed.contains(r"product\failed.bin"));
+        cfg.allow_cloud_paths = true;
+        let allowed = report_user_prompt(&cfg, &input);
+        assert!(allowed.contains(r"C:\Users\*\private\product\failed.bin"));
+        assert!(!allowed.contains("PrivacyUser"));
+        assert_ne!(allowed, scrubbed);
+    }
 
     #[test]
     fn sanitize_strips_username() {
