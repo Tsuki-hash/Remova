@@ -1,5 +1,6 @@
 /** Decision chips & leftover risk buckets — only use data we already have. */
 import type { CleanupItem, InstalledApp } from "../types";
+import { backendText } from "./backendText";
 
 export type ChipTone = "accent" | "warn" | "muted" | "danger" | "ok";
 
@@ -346,7 +347,7 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
   if (raw.includes("重启后删除") || raw.includes("已安排重启") || raw.includes("重启删除")) {
     return L.reasonRebootDelete;
   }
-  return message;
+  return backendText(message);
 }
 
 /** Last path segment as a human "origin" hint (folder name, not full path). */

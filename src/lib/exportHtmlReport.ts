@@ -1,6 +1,7 @@
 import { escapeHtml } from "./format";
 import { gateReasonText } from "./decision";
-import { currentLang } from "../i18n";
+import { backendText } from "./backendText";
+import { currentLang, t } from "../i18n";
 import type { FullCleanupReport } from "../types";
 
 type Strings = {
@@ -39,9 +40,11 @@ export function exportHtmlReport(r: FullCleanupReport, L: Strings) {
 <style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef}</style>
 </head><body><h1>Remova — ${escapeHtml(r.app_name)}</h1>
 <p>${r.dry_run ? L.dryRunSummary : L.batchSummary} · ${L.batchOk}: ${r.deleted} · ${L.batchFailed}: ${r.failed} · ${L.batchSkipped}: ${r.skipped}${r.aborted ? ` · ${L.reportAborted}` : ""}</p>
-<p>${escapeHtml(r.uninstall_message || "")}</p>
+<p>${escapeHtml(backendText(r.uninstall_message || ""))}</p>
 <p>${L.reportBackup}: ${escapeHtml(r.backup_dir || "")}</p>
 <table><tr><th>${L.reportKind}</th><th>${L.reportStatus}</th><th>${L.reportPath}</th><th>${L.reportMessage}</th></tr>${rows}</table>
+<details><summary>${escapeHtml(t().backendTechnicalDetails)}</summary><pre>${escapeHtml([r.uninstall_message,
+  r.restore_point_msg, ...r.errors, ...r.item_details.map(d => `${d.path}: ${d.message}`)].filter(Boolean).join("\n"))}</pre></details>
 </body></html>`;
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);

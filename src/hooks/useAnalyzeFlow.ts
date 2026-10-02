@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
+import { backendText } from "../lib/backendText";
 import { requestConfirm, requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
@@ -236,7 +237,7 @@ function uninstallFailToast(
     toast.info(strings.uninstallCancelled);
     return;
   }
-  toast.error(strings.uninstallFail, { detail: msg });
+  toast.error(strings.uninstallFail, { detail: backendText(msg) });
 }
 
 const openOfficialOnly = useCallback(
