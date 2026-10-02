@@ -79,18 +79,31 @@ const inputStyle: CSSProperties = {
   maxWidth: "none",
 };
 
-export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
+export function AiSettingsPanel({ onClose, onEnabledChange }: {
+  onClose: () => void;
+  onEnabledChange?: (enabled: boolean) => void;
+}) {
   const L = t();
   const [cfg, setCfg] = useState<AiConfigView>(empty);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [dirtyPreset, setDirtyPreset] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     void api.getAiConfig()
-      .then(setCfg)
-      .catch(() => {});
-  }, []);
+      .then((config) => {
+        if (cancelled) return;
+        setCfg(config);
+        setLoaded(true);
+        setLoadError(null);
+      })
+      .catch((e) => { if (!cancelled) setLoadError(formatError(e)); });
+    return () => { cancelled = true; };
+  }, [loadAttempt]);
 
   const applyPreset = (p: Preset) => {
     setCfg((c) => ({
@@ -103,6 +116,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
   };
 
   const save = async () => {
+    if (!loaded || busy) return;
     setBusy(true);
     try {
       const next = await api.saveAiConfig({
@@ -114,6 +128,7 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
         apiKey: apiKey.trim() || null,
       });
       setCfg(next);
+      onEnabledChange?.(next.enabled);
       setApiKey("");
       toast.success(L.aiSaved);
     } catch (e) {
@@ -152,7 +167,14 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div style={{ padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+      {!loaded && <div style={{ padding: "14px 16px" }} role={loadError ? "alert" : "status"}>
+        {loadError ?? L.loadingGeneric}
+        {loadError && <button style={css.btnSm} onClick={() => {
+          setLoadError(null); setLoadAttempt(n => n + 1);
+        }}>{L.aiConfigRetry}</button>}
+      </div>}
+      <fieldset disabled={!loaded || busy} style={{ margin: 0, minWidth: 0, border: 0,
+        padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div
           style={{
             display: "flex",
@@ -296,14 +318,14 @@ export function AiSettingsPanel({ onClose }: { onClose: () => void }) {
         </label>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button style={css.btn} disabled={busy} onClick={() => void save()}>
+          <button style={css.btn} disabled={!loaded || busy} onClick={() => void save()}>
             {busy ? "…" : L.aiSave}
           </button>
           <span style={css.muted}>
             {cfg.provider} · {cfg.model || "—"}
           </span>
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

@@ -402,6 +402,7 @@ export const dict = {
     navBack: "返回",
     idleEvSizePartial: "大小估算未完成，仅显示下限",
     loadingGeneric: "加载中…",
+    aiConfigRetry: "重新读取配置",
     idleScanning: "正在分析闲置候选…",
     radarScanning: "正在统计磁盘占用…",
     radarEmpty: "当前盘面没有可列出的目录",
