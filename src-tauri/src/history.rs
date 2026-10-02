@@ -246,7 +246,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
             }
         }
     }
-    if w.flush().is_err() {
+    if w.flush().and_then(|_| w.get_ref().sync_all()).is_err() {
         let _ = fs::remove_file(&tmp);
         return Err("history rewrite failed".into());
     }

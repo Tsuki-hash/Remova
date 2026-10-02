@@ -304,6 +304,17 @@ fn backup_item_with_map(
                 ))
                 .to_ipc());
             }
+            // The view belongs inside the authenticated export bytes; an
+            // unsigned sidecar could redirect a sealed backup to another hive view.
+            let raw = crate::restore::decode_reg_text(fs::read(&dest).map_err(|e| e.to_string())?)?;
+            write_bytes_atomic(
+                &dest,
+                format!(
+                    "; Remova registry view: {}\r\n{raw}",
+                    reg_view_flag(export_path).trim_start_matches("/reg:")
+                )
+                .as_bytes(),
+            )?;
             // Record the specific value name for Run items so restore knows what was targeted.
             if let Some((key, vname)) = item.path.split_once('|') {
                 let dir = session.join("registry").join(safe_name(&item.path));
