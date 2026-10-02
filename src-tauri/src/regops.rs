@@ -1010,6 +1010,7 @@ fn resolve_unresolved_vars(s: &str, depth: usize) -> String {
         let after = &rest[start + 1..];
         match after.find('%') {
             Some(end) if end > 0 => {
+                out.push_str(&rest[..start]);
                 let name = &after[..end];
                 match fallback_var(name, depth) {
                     Some(v) => out.push_str(&v),
@@ -1207,7 +1208,7 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
 }
 
 /// Write REG_SZ under `key_path` (creates key tree via `reg add` fallback).
-fn normalize_reg_exe_hive(key_path: &str) -> String {
+pub(crate) fn normalize_reg_exe_hive(key_path: &str) -> String {
     let (alias, rest) = match key_path.split_once('\\') {
         Some(p) => p,
         None => return key_path.to_string(),
@@ -1218,11 +1219,17 @@ fn normalize_reg_exe_hive(key_path: &str) -> String {
         "HKCU" => "HKCU",
         other => other,
     };
-    // HKLM32 → WOW6432NODE view under HKLM when path is not already under WOW6432NODE.
-    if alias_up == "HKLM32" {
-        let low = rest.to_uppercase();
-        if !low.contains("WOW6432NODE") {
-            return format!(r"HKLM\WOW6432NODE\{rest}");
+    // Only SOFTWARE is redirected; WOW6432Node belongs beneath that segment.
+    if alias_up == "HKLM32"
+        && rest
+            .get(..9)
+            .is_some_and(|s| s.eq_ignore_ascii_case("SOFTWARE\\"))
+    {
+        let tail = &rest[9..];
+        if !tail.eq_ignore_ascii_case("WOW6432NODE")
+            && !tail.to_uppercase().starts_with("WOW6432NODE\\")
+        {
+            return format!(r"HKLM\{}\WOW6432Node\{tail}", &rest[..8]);
         }
     }
     format!("{hive}\\{rest}")
@@ -1478,11 +1485,19 @@ mod tests {
         );
         assert_eq!(
             super::normalize_reg_exe_hive(r"HKLM32\SOFTWARE\Foo"),
-            r"HKLM\WOW6432NODE\SOFTWARE\Foo"
+            r"HKLM\SOFTWARE\WOW6432Node\Foo"
         );
         assert_eq!(
             super::normalize_reg_exe_hive(r"HKCU\Software\Bar"),
             r"HKCU\Software\Bar"
+        );
+        assert_eq!(
+            super::normalize_reg_exe_hive(r"HKLM32\SOFTWARE\WOW6432Node\Foo"),
+            r"HKLM\SOFTWARE\WOW6432Node\Foo"
+        );
+        assert_eq!(
+            super::normalize_reg_exe_hive(r"HKLM32\SYSTEM\Vendor"),
+            r"HKLM\SYSTEM\Vendor"
         );
     }
 
@@ -1812,6 +1827,21 @@ mod tests {
         // ProgramFiles may be relocated or absent, so the test pins its own
         // variable that only the fallback source can resolve.
         super::expand_mock::install(&[("RemovaVendorDir", r"C:\Program Files")]);
+        assert_eq!(
+            super::resolve_unresolved_vars("PREFIX%RemovaUnknownFixture%TAIL", 0),
+            "PREFIX%RemovaUnknownFixture%TAIL"
+        );
+        assert_eq!(
+            super::resolve_unresolved_vars(
+                r"PRE%RemovaVendorDir%\mid%RemovaUnknownFixture%TAIL",
+                0
+            ),
+            r"PREC:\Program Files\mid%RemovaUnknownFixture%TAIL"
+        );
+        assert_eq!(
+            super::resolve_unresolved_vars("literal%unfinished", 0),
+            "literal%unfinished"
+        );
         path_mock::install_expand(
             r"%SystemRoot%\system32;C:\Tools\App;%RemovaVendorDir%\Shared",
             r"%SystemRoot%",
