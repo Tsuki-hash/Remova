@@ -150,6 +150,7 @@ export function useAiScanNarrative({
  // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
     aiReportSeqRef.current += 1;
     setAiReportBusy(false);
+    setAiReportNote(null);
     if (report && aiEnabled) void runAiReport({ force: true });
  // key on report identity fields, not object identity only.
  // eslint-disable-next-line react-hooks/exhaustive-deps
