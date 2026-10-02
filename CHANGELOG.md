@@ -268,15 +268,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Portable zip unified via `pwsh` + `scripts/package-portable.ps1`
 
 ### Fixed
-- Cleanup gate (P0): server-side recompute of `user_data` / sync-conflict / `shared` — forged IPC flags cannot delete Documents/Downloads/etc.; exact user profile red-line roots and `Common Files` roots are skipped even when IPC flags claim otherwise
-- Cleanup gate (P0): PATH scrub rejects system entries (`Windows`/`System32`/PowerShell…)
+- Cleanup protection: server-side checks preserve user data, shared components and protected folders even when a request supplies incorrect flags
+- PATH cleanup preserves system entries such as Windows, System32 and PowerShell
 - **PATH leftover Safety Vault**: production backup snapshots PATH segments to `path.json` (no tree copy); restore merges missing segments only
 - **Manage IPC safety**: PackagedStartup writes restricted to StartupApproved keys; Run locations must map to known Run/RunOnce keys; `set_task_enabled` rejects `\Microsoft\Windows\*` system tasks
 - Expanded critical service names for manage disable/list; `is_safe_fs` protected prefixes include SystemRoot / ProgramData / ProgramFiles / SystemDrive
 - **Ignore rules enforced in backend**; registry value restore prefers `value.reg`
-- Medium association gate: unrelated filesystem leftovers skipped at delete time (AR-10); name/publisher slug gate keeps fail-closed — min token length 5, generic English stopwords rejected, name-slug hits require an install root when `install_location` is empty
+- Association checks skip unrelated leftovers; name matching requires enough evidence and rejects generic names
 - Orphan flow uses the safety gate only (no fake slug gate)
-- dry-run shares delete gates: user_data / shared / ignore / AR-10 association
+- Cleanup previews apply the same user-data, shared-component, ignore-list and association checks as deletion
 - `setMulti` / `setSelectedPaths` functional React updaters resolved inside the reducer (no lost concurrent updaters; residual checkbox & batch multi)
 - Uninstall / official-uninstall entry points reject re-entry while busy; empty leftover selection cannot confirm cleanup
 - Backup only processes items that pass the cleanup gate; skipped items failing backup do not abort; `path_map.json` write failure counts as a backup fail and aborts cleanup; value.reg export failure aborts backup with `backup:value_reg`
