@@ -339,6 +339,11 @@ pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
     pin_dir_with_access(p, 0x0001_0080)
 }
 
+/// Validate a locked target with read access so denied DELETE sharing is enforced.
+pub fn pin_target_readonly(p: &Path) -> std::io::Result<DirPin> {
+    pin_dir_with_access(p, 0x0081)
+}
+
 fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin> {
     #[cfg(windows)]
     {
@@ -729,6 +734,32 @@ pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    #[cfg(windows)]
+    fn reboot_target_pin_accepts_a_read_locked_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "remova-lock-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, b"locked").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        assert!(pin_dir_no_reparse(&path).is_err());
+        let readonly = pin_target_readonly(&path);
+        drop(lock);
+        let pinned = readonly.unwrap();
+        assert!(fs::rename(&path, path.with_extension("moved")).is_err());
+        drop(pinned);
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn atomic_write_publishes_and_leaves_no_tmp() {
