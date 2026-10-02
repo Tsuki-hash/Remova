@@ -4,6 +4,7 @@ import { api, type CleanupSourceId } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
@@ -225,7 +226,7 @@ export function ScopedScanPanel({
                 {it.path}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {it.bucket || it.reason}
+                {backendText(it.bucket || it.reason, "scan")}
                 {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary}` : ""}
                 {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
               </div>

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
+import { backendText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import {
@@ -124,8 +125,8 @@ export function useCleanupHandlers({
               : "uninstall",
         });
         if (report.aborted) {
-          toast.error(report.uninstall_message || L.errCleanupFailed("aborted"));
-          setError(report.uninstall_message || L.errCleanupFailed("aborted"));
+          toast.error(backendText(report.uninstall_message) || L.uninstallFail);
+          setError(backendText(report.uninstall_message) || L.uninstallFail);
           setReport(report);
           setVerifyRows(null);
           setAiReportNote(null);
@@ -225,7 +226,7 @@ export function useCleanupHandlers({
       });
       setReport(r);
       if (r.aborted) {
-        const msg = r.uninstall_message || L.errCleanupFailed("aborted");
+        const msg = backendText(r.uninstall_message) || L.uninstallFail;
         toast.error(msg);
         setError(msg);
         setVerifyRows(null);

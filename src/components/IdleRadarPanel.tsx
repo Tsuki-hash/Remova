@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendText } from "../lib/backendText";
 import type { IdleApp } from "../types";
 
 /** Idle software radar — read-only ranking; jump back to the software list to uninstall. */
@@ -79,15 +80,7 @@ export function IdleRadarPanel({
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
                 {r.evidence
-                  .map((e) =>
-                    e.code === "idle_install_age"
-                      ? L.idleEvInstallAge
-                      : e.code === "idle_dir_mtime"
-                        ? L.idleEvDirMtime
-                        : e.code === "idle_size_partial"
-                          ? L.idleEvSizePartial
-                          : e.code,
-                  )
+                  .map((e) => backendText(e.code, "idle"))
                   .join(" · ")}
               </div>
             </div>
