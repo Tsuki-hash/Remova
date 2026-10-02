@@ -52,8 +52,7 @@ fn start_type_label(start: u32) -> &'static str {
 fn query_running_service_names() -> std::collections::HashSet<String> {
     use std::process::Command;
     let mut set = std::collections::HashSet::new();
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    let mut cmd = Command::new(format!(r"{windir}\System32\sc.exe"));
+    let mut cmd = Command::new(crate::regops::sys_tool("sc.exe"));
     cmd.args(["query", "type=", "service", "state=", "active"]);
     crate::regops::hide_console(&mut cmd);
     let Ok(out) = cmd.output() else {
