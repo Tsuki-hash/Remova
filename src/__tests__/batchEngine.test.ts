@@ -107,6 +107,14 @@ beforeEach(() => {
 });
 
 describe("runBatchCleanup", () => {
+  it.each([true, false])("does not clear selection after an empty official failure (aborted=%s)", async (aborted) => {
+    analyze.mockResolvedValue(scan("A", []));
+    fullCleanup.mockResolvedValue(report({ deleted: 0, failed: 0, aborted, uninstall_ok: false }));
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe("failed");
+    expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
+  });
   it("marks ok when leftovers cleaned", async () => {
     analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
     fullCleanup.mockResolvedValue(report({ deleted: 1, failed: 0 }));
