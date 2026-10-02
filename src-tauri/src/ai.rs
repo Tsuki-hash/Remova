@@ -403,7 +403,7 @@ pub fn scrub_cloud_text(s: &str) -> String {
 /// Reduce a path to vendor/product-ish tokens; drop usernames and deep trees.
 pub fn sanitize_path(path: &str, allow_full: bool) -> String {
     let p = path.replace('/', "\\");
-    let low = p.to_lowercase();
+    let low = p.to_ascii_lowercase();
     if allow_full {
         if let Some(idx) = low.find("\\users\\") {
             let rest = &p[idx + 7..];
@@ -963,6 +963,10 @@ mod tests {
 
     #[test]
     fn sanitize_strips_username() {
+        assert_eq!(
+            sanitize_path(r"C:\Users\İ\AppData\Local\厂商", false),
+            r"AppData\厂商"
+        );
         let p = r"C:\Users\alice\AppData\Local\Foo\App\bin";
         let s = sanitize_path(p, false);
         assert!(s.contains("Foo"), "{s}");

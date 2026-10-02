@@ -128,7 +128,13 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         return true;
     }
     // Drive root, relative junk, or unexpanded env
-    if s.ends_with(':') || !s.contains('\\') || s.contains('%') {
+    let bytes = s.as_bytes();
+    if bytes.len() < 3
+        || !bytes[0].is_ascii_alphabetic()
+        || bytes[1] != b':'
+        || bytes[2] != b'\\'
+        || s.contains('%')
+    {
         return true;
     }
     // Reject path traversal in PATH segments.
@@ -466,6 +472,11 @@ mod tests {
             "",
             r"C:",
             r"C:\Program Files\DemoApp\bin\..\..\..\Windows",
+            r"C:Windows\System32",
+            r"C:Vendor\bin",
+            r"\Vendor\bin",
+            r"C:\PROGRA~1\WindowsApps",
+            r"C:\WINDOW~1\System32",
         ] {
             let it = item(p, ItemKind::Path);
             let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);
