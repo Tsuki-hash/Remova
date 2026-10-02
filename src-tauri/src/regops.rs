@@ -145,11 +145,28 @@ pub fn system32_dir() -> String {
             return String::from_utf16_lossy(&buf[..n]);
         }
     }
-    std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()) + r"\System32"
+    // API failure must not restore the untrusted environment fallback.
+    String::new()
 }
 
 pub fn sys_tool(name: &str) -> String {
+    if system32_dir().is_empty() {
+        return String::new();
+    }
     format!(r"{}\{name}", system32_dir())
+}
+
+pub fn explorer_exe() -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetWindowsDirectoryW;
+        let mut buf = [0u16; 260];
+        let n = unsafe { GetWindowsDirectoryW(Some(&mut buf)) } as usize;
+        if n > 0 && n < buf.len() {
+            return format!(r"{}\explorer.exe", String::from_utf16_lossy(&buf[..n]));
+        }
+    }
+    String::new()
 }
 
 /// CREATE_NO_WINDOW — avoid flashing a console for child tools (schtasks/sc/reg/…).
@@ -626,6 +643,9 @@ fn broadcast_env_change() {
 }
 
 fn powershell_exe() -> String {
+    if system32_dir().is_empty() {
+        return String::new();
+    }
     format!(r"{}\WindowsPowerShell\v1.0\powershell.exe", system32_dir())
 }
 

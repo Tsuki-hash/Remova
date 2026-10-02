@@ -224,29 +224,21 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     }
     use std::process::Command;
     let is_file = p.is_file();
-    let mut last_err: Option<std::io::Error> = None;
-    for explorer in [
-        regops::sys_tool("explorer.exe"),
-        "explorer.exe".to_string(),
-        "explorer".to_string(),
-    ] {
-        let mut cmd = Command::new(&explorer);
-        if is_file {
-            // Single argument form so Explorer selects the file in its parent.
-            cmd.arg(format!("/select,{path}"));
-        } else {
-            cmd.arg(path);
-        }
-        regops::hide_console(&mut cmd);
-        match cmd.spawn() {
-            Ok(_) => return Ok(()),
-            Err(e) => last_err = Some(e),
-        }
+    let explorer = regops::explorer_exe();
+    if explorer.is_empty() {
+        return Err("open_path:failed".into());
     }
-    Err(match last_err {
-        Some(e) if e.kind() == std::io::ErrorKind::NotFound => "open_path:not_found".into(),
-        Some(_e) => "open_path:failed".into(),
-        None => "open_path:failed".into(),
+    let mut cmd = Command::new(&explorer);
+    if is_file {
+        // Single argument form so Explorer selects the file in its parent.
+        cmd.arg(format!("/select,{path}"));
+    } else {
+        cmd.arg(path);
+    }
+    regops::hide_console(&mut cmd);
+    cmd.spawn().map(|_| ()).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => "open_path:not_found".into(),
+        _ => "open_path:failed".into(),
     })
 }
 
@@ -429,7 +421,7 @@ fn is_elevated() -> Result<bool, String> {
             )
             .is_err()
             {
-                return Ok(false);
+                return Err("elevation:query_failed".into());
             }
             let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
             let mut ret = 0u32;
@@ -441,7 +433,8 @@ fn is_elevated() -> Result<bool, String> {
                 &mut ret,
             );
             let _ = CloseHandle(token);
-            Ok(ok.is_ok() && elev.TokenIsElevated != 0)
+            ok.map_err(|_| "elevation:query_failed".to_string())?;
+            Ok(elev.TokenIsElevated != 0)
         }
     }
     #[cfg(not(windows))]
