@@ -121,6 +121,8 @@ describe("exportHtmlReport (real module)", () => {
     expect(captured.html).toContain("Demo &lt;App&gt;");
     expect(captured.html).toContain("C:\\evil&lt;script&gt;");
     expect(captured.html).toContain("a &amp; b");
+    expect(captured.html).toContain("<details><summary>技术详情</summary>");
+    expect(captured.html).toContain("此项诊断尚无本地化说明");
     expect(captured.html).not.toContain("<script>");
     expect(captured.html).toContain("清理");
     expect(captured.html).toContain("备份: C:\\bak");

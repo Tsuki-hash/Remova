@@ -188,22 +188,21 @@ fn elevate_error_token(code: isize) -> String {
 
 #[cfg(test)]
 mod tests {
-    /// These helpers mutate real system state (PendingFileRenameOperations / restore
-    /// point). Default suite skips the call so CI and `cargo test` stay side-effect free
-    /// Opt in locally with REMOVA_TEST_ALLOW_SYS_MUTATION=1.
+    /// Creating a restore point requires explicit local opt-in.
     fn allow_sys_mutation() -> bool {
         std::env::var_os("REMOVA_TEST_ALLOW_SYS_MUTATION").is_some()
     }
 
     #[test]
-    #[ignore = "real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn schedule_missing_path_no_panic() {
-        if !allow_sys_mutation() {
-            panic!("REMOVA_TEST_ALLOW_SYS_MUTATION=1 is required; refusing silent pass");
-        }
-        // Missing path must not panic; the call returns a success flag.
-        let ok = super::schedule_delete_on_reboot(r"C:\remova_no_such_file_xyz");
-        let _ = ok;
+        // A missing target is refused before MoveFileEx, with no queue write.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("remova-missing-{nonce}"));
+        assert!(!path.exists());
+        assert!(!super::schedule_delete_on_reboot(path.to_str().unwrap()));
     }
 
     #[test]

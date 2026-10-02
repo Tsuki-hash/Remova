@@ -17,6 +17,9 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("idle_size_partial", "idle")).toBe(L.idleEvSizePartial);
   expect(backendText("future_unknown: raw")).toBe(L.backendDetailUnavailable);
   expect(backendText("future_unknown", "idle")).toBe(L.backendDetailUnavailable);
-  expect(backendText("future scanner reason", "scan")).toBe(L.reasonSuspect);
+  expect(backendText("future scanner reason", "scan")).toBe(L.backendDetailUnavailable);
+  expect(backendText("AppData folder matching product name", "scan")).toBe(L.linkedConfigFiles);
+  expect(backendText("WebView2 / Electron cache folder", "scan")).toBe(L.linkedConfigFiles);
+  expect(backendText("Run startup: Vendor", "scan")).toBe(L.linkedStartup);
   expect(backendText("")).toBe("");
 });

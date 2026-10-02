@@ -20,9 +20,14 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
       ["Driver leftover: ", L.backendDriver], ["Windows service leftover: ", L.backendService],
       ["Scheduled task leftover: ", L.backendTask], ["App Paths: ", L.backendAppPath],
       ["PATH entry (", L.backendPathEntry], ["Shortcut", L.linkedShortcuts],
-      ["TEMP name match", L.backendTempMatch]];
+      ["TEMP name match", L.backendTempMatch], ["AppData folder matching product name", L.linkedConfigFiles],
+      ["WebView2 / Electron cache folder", L.linkedConfigFiles], ["Run startup: ", L.linkedStartup],
+      ["installer package", L.installerTitle], ["updater cache", L.linkedConfigFiles],
+      ["tool cache (", L.toolcacheTitle], ["Orphan app-like folder", L.orphanScan],
+      ["Install monitor: new registry entry", L.linkedRegistry],
+      ["Install monitor: cache/log-like path", L.linkedConfigFiles], ["Install monitor: new path", L.monitorDiff]];
     const rule = rules.find(([prefix]) => raw.startsWith(prefix));
-    return rule ? rule[1] : L.reasonSuspect;
+    return rule ? rule[1] : L.backendDetailUnavailable;
   }
   const exact: Record<string, string> = {
     skipped: L.backendOfficialSkipped, "no items": L.backendNoItems,
