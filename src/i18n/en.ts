@@ -417,6 +417,7 @@ export const dict: EnDict = {
     navBack: "Back",
     idleEvSizePartial: "Partial size estimate; lower bound shown",
     loadingGeneric: "Loading…",
+    aiConfigRetry: "Reload configuration",
     idleScanning: "Scanning idle candidates…",
     radarScanning: "Measuring disk usage…",
     radarEmpty: "Nothing to list on this drive",
