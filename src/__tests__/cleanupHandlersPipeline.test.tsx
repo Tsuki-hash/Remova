@@ -106,7 +106,7 @@ const flow: CleanupFlowSetters = {
   setError: noop,
 };
 
-function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"])) {
+function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"]), residual = false) {
   const busyRef = { current: false };
   const hook = renderHook(() =>
     useCleanupHandlers({
@@ -114,8 +114,8 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"])) {
       selected: app(),
       scan: scan(),
       selectedPaths,
-      residualFromUninstall: false,
-      useOfficial: false,
+      residualFromUninstall: residual,
+      useOfficial: residual,
       aiEnabled: false,
       aiRisk: null,
       apps: [],
@@ -129,6 +129,13 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"])) {
 }
 
 describe("useCleanupHandlers confirm / force pipeline", () => {
+  it("never repeats official uninstall during residual cleanup even when the toggle is on", async () => {
+    fullCleanup.mockResolvedValue(report());
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const { result } = setup(undefined, true);
+    await act(async () => { await result.current.handleCleanupConfirm(); });
+    expect(fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ skip_official_uninstall: true }));
+  });
   beforeEach(() => {
     requestConfirmEx.mockReset();
     fullCleanup.mockReset();

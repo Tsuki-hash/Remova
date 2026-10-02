@@ -132,6 +132,17 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(captured.scanning).toBe(false);
   });
 
+  it("clears the residual flag after a failed post-uninstall scan", async () => {
+    const residual = vi.fn();
+    flow.setResidualFromUninstall = residual;
+    analyzeMock.mockRejectedValue(new Error("scan failed"));
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never, refreshApps: async () => {}, busyRef: { current: false } }));
+    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
+    expect(residual).toHaveBeenLastCalledWith(false);
+    expect(captured.scan).toBeNull();
+    expect(captured.scanning).toBe(false);
+  });
+
   it("a settled scan can be re-run and replaces the previous result", async () => {
     let calls = 0;
     analyzeMock.mockImplementation(() => {
