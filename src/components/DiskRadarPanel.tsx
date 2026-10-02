@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { VirtualList } from "./ui/VirtualList";
 import { api, type DriveInfo } from "../lib/api";
@@ -21,18 +21,20 @@ export function DiskRadarPanel({
   const [drive, setDrive] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
+  const requestSeq = useRef(0);
 
   const load = async (parent?: string, letter?: string) => {
+    const seq = ++requestSeq.current;
     setBusy(true);
     try {
       const list = parent
         ? await api.listDirChildren(parent)
         : await api.listTopDirSizes(letter);
-      setRows(list);
+      if (seq === requestSeq.current) setRows(list);
     } catch (e) {
-      onError(formatError(e));
+      if (seq === requestSeq.current) onError(formatError(e));
     } finally {
-      setBusy(false);
+      if (seq === requestSeq.current) setBusy(false);
     }
   };
 
@@ -107,7 +109,7 @@ export function DiskRadarPanel({
           <button
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy}
-            onClick={() => void load(undefined, drive)}
+            onClick={() => { setCrumbs([]); void load(undefined, drive); }}
           >
             {L.manageReload}
           </button>
@@ -139,8 +141,7 @@ export function DiskRadarPanel({
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{r.name}</div>
               <div style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
-                {r.capped ? ">=" : ""}
-                {L.diskSizeApprox(formatSize(Math.max(0, r.size_kb)))} · {r.path}
+                {r.capped ? `>= ${r.size_kb > 0 ? formatSize(r.size_kb) : "0 KB"}` : L.diskSizeApprox(formatSize(Math.max(0, r.size_kb)))} · {r.path}
               </div>
             </div>
             <button
@@ -154,7 +155,7 @@ export function DiskRadarPanel({
             </button>
             <button
               style={{ ...css.btnGhost, height: 26, padding: "0 8px" }}
-              onClick={() => void api.openPath(r.path)}
+              onClick={() => void api.openPath(r.path).catch((e) => onError(formatError(e)))}
             >
               {L.openLocation}
             </button>

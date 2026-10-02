@@ -23,6 +23,11 @@ const READ_ONLY_COMMANDS = new Set([
   "list_dir_children",
   "rank_idle_apps",
   "app_icon_data",
+  "estimate_dir_size_kb",
+  "list_startup_items",
+  "list_services",
+  "list_scheduled_tasks",
+  "verify_cleanup_leftovers",
 ]);
 
 let active = 0;

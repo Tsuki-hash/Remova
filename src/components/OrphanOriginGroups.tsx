@@ -10,7 +10,7 @@ function riskChip(it: CleanupItem, L: ReturnType<typeof t>) {
   const label =
     bucket === "safe" ? L.bucketSafe : bucket === "suggest" ? L.bucketSuggest : L.bucketKeep;
   const color =
-    bucket === "safe" ? "var(--ok)" : bucket === "suggest" ? "var(--warn)" : "var(--danger)";
+    bucket === "safe" ? "var(--ok-ink)" : bucket === "suggest" ? "var(--warn-ink)" : "var(--danger-text)";
   return { label, color, bucket };
 }
 

@@ -9,6 +9,15 @@ import { CheckupPanel } from "../components/CheckupPanel";
 afterEach(cleanup);
 
 describe("MonitorPanel", () => {
+  it("shows degradation and blocks cleanup even when rows exist", () => {
+    const onToCleanup = vi.fn();
+    render(<MonitorPanel diff={{ added_files: ["test-file"], added_reg_values: [], walk_degraded: true }} onToCleanup={onToCleanup} onDismiss={() => {}} />);
+    expect(screen.getByText(/追踪扫描被截断/)).toBeTruthy();
+    const btn = screen.getByRole("button", { name: "转入清理列表" });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onToCleanup).not.toHaveBeenCalled();
+  });
   it("shows empty state and disables cleanup CTA", () => {
     const onToCleanup = vi.fn();
     const { container } = render(
