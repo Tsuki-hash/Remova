@@ -142,10 +142,10 @@ export function CleanupConclusion({
             >
               {L.conclusionCleanSafe(s.safe)}
             </button>
-            <button style={{ ...css.btnGhost, height: 32 }} onClick={onShowConfirm}>
+            <button style={{ ...css.btnGhost, height: 32 }} disabled={s.suggest === 0} onClick={onShowConfirm}>
               {L.conclusionShowConfirm(s.suggest)}
             </button>
-            <button style={{ ...css.btnGhost, height: 32 }} onClick={onShowKeep}>
+            <button style={{ ...css.btnGhost, height: 32 }} disabled={s.keep === 0} onClick={onShowKeep}>
               {L.conclusionShowKeep(s.keep)}
             </button>
             {aiEnabled ? (
