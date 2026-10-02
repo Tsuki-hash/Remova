@@ -274,7 +274,7 @@ export function ManageListPage({
             {virtualizer.getVirtualItems().map((vr) => {
               const it = rows[vr.index];
               if (!it) return null;
-              const statusTone = it.enabled ? "var(--ok)" : "var(--muted)";
+              const statusTone = it.enabled ? "var(--ok-ink)" : "var(--muted)";
               return (
                 <div
                   key={it.location + it.name}
@@ -371,7 +371,7 @@ export function ManageListPage({
                           style={{
                             fontSize: 12,
                             fontWeight: 600,
-                            color: it.running ? "var(--ok)" : "var(--muted)",
+                            color: it.running ? "var(--ok-ink)" : "var(--muted)",
                             whiteSpace: "nowrap",
                           }}
                         >
@@ -409,10 +409,11 @@ export function ManageListPage({
                           ...css.btnSm,
                           height: 32,
                           borderColor: it.running ? "var(--danger)" : "var(--border)",
-                          color: it.running ? "var(--danger)" : "var(--accent)",
+                          color: it.running ? "var(--danger-text)" : "var(--accent)",
                         }}
                         disabled={busy}
                         title={it.running ? L.confirmStopService(it.name) : L.confirmStartService(it.name)}
+                        aria-label={`${it.running ? L.manageStop : L.manageStartBtn}: ${it.name}`}
                         onClick={() => void setRunning(it, !it.running)}
                       >
                         {it.running ? L.manageStop : L.manageStartBtn}
@@ -426,6 +427,7 @@ export function ManageListPage({
                         color: it.enabled ? "var(--muted)" : "var(--accent)",
                       }}
                       disabled={busy}
+                      aria-label={`${it.enabled ? L.manageDisable : L.manageEnable}: ${it.name}`}
                       title={
                         tab === "services" && it.enabled
                           ? L.confirmDisableServiceVsStop(it.name)

@@ -86,7 +86,7 @@ export function ScanActionsBar({
         </span>
       )}
       <button
-        style={{ ...css.btn, background: "var(--danger)", color: "#1a0505" }}
+        style={{ ...css.btn, background: "var(--danger-text)", color: "var(--surface)" }}
         disabled={dryRunning || selectedPaths.size === 0 || busy}
         onClick={onCleanup}
         title={L.dangerScopeHint}

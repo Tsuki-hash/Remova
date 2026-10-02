@@ -1,7 +1,7 @@
 import type { UpdateInfo } from "../lib/updateCheck";
 import { openUpdateDownload } from "../lib/updateCheck";
 import { t } from "../i18n";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   installUpdate,
   progressAnnouncement,
@@ -95,6 +95,7 @@ export function ShellFooter({
 }) {
   const L = t();
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const blockedReasonId = useId();
   const overlayRef = useRef<HTMLDivElement>(null);
   // Same dialog contract as every other modal: focus moves in, Tab cycles,
   // focus is restored on close. Escape is swallowed on purpose — an update
@@ -179,10 +180,14 @@ export function ShellFooter({
           style={disabledReason ? { ...linkBtn, opacity: 0.55, cursor: "not-allowed" } : linkBtn}
           disabled={!!progress || updateBlocked}
           title={disabledReason}
+          aria-describedby={disabledReason ? blockedReasonId : undefined}
           onClick={() => void onInstall()}
         >
           {L.versionInstall} v{updateInfo.version}
         </button>
+      )}
+      {updateInfo?.installInApp && disabledReason && (
+        <span id={blockedReasonId} style={{ color: "var(--muted)", fontSize: 12 }}>{disabledReason}</span>
       )}
       {updateInfo && (
         <button
