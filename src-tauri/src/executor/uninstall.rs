@@ -2,6 +2,11 @@
 
 use super::OfficialUninstallResult;
 
+fn system_uninstall_tool(relative: &str) -> Option<String> {
+    let tool = crate::regops::sys_tool(relative);
+    (!tool.is_empty()).then_some(tool)
+}
+
 /// Build argv for the official uninstaller (parity with Python `build_uninstall_command`).
 /// Store packages (`remova-store:<PackageFullName>`) map to PowerShell Remove-AppxPackage.
 pub fn build_uninstall_command(
@@ -32,7 +37,7 @@ pub fn build_uninstall_command(
             return None;
         }
         return Some(vec![
-            "powershell.exe".into(),
+            system_uninstall_tool(r"WindowsPowerShell\v1.0\powershell.exe")?,
             "-NoProfile".into(),
             "-NonInteractive".into(),
             "-Command".into(),
@@ -48,7 +53,7 @@ pub fn build_uninstall_command(
         let bare_guid = trimmed == guid || trimmed.trim_matches('"').eq_ignore_ascii_case(&guid);
         if lower.contains("msiexec") || bare_guid {
             return Some(vec![
-                "msiexec.exe".into(),
+                system_uninstall_tool("msiexec.exe")?,
                 "/x".into(),
                 guid,
                 "/qn".into(),
@@ -233,7 +238,10 @@ mod tests {
     fn msi_only_for_msiexec_or_bare_guid() {
         // MSI product code string
         let bare = build_uninstall_command(r"{9A1B2C3D-1111-2222-3333-444455556666}", "", false);
-        assert!(matches!(bare.as_deref(), Some([msi, ..]) if msi == "msiexec.exe"));
+        assert!(
+            matches!(bare.as_deref(), Some([msi, ..]) if msi == &crate::regops::sys_tool("msiexec.exe"))
+        );
+        assert!(std::path::Path::new(&bare.unwrap()[0]).is_absolute());
         // msiexec with extra args
         let msi = build_uninstall_command(
             r#"C:\Windows\System32\msiexec.exe /x {9A1B2C3D-1111-2222-3333-444455556666}"#,
@@ -260,7 +268,11 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(cmd[0], "powershell.exe");
+        assert_eq!(
+            cmd[0],
+            crate::regops::sys_tool(r"WindowsPowerShell\v1.0\powershell.exe")
+        );
+        assert!(std::path::Path::new(&cmd[0]).is_absolute());
         assert!(cmd.iter().any(|a| a.contains("Remove-AppxPackage")));
         assert!(cmd
             .iter()
@@ -275,7 +287,7 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(cmd[0].to_lowercase(), "msiexec.exe");
+        assert_eq!(cmd[0], crate::regops::sys_tool("msiexec.exe"));
         assert!(
             cmd.contains(&"/x".to_string()) || cmd.iter().any(|x| x.eq_ignore_ascii_case("/x"))
         );
