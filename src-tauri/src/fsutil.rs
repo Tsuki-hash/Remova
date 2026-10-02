@@ -91,9 +91,8 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
     // pid+nonce tmp: a fixed sibling name let a second Remova process (or a
     // concurrent restore in-process) truncate and interleave into the same
     // tmp file, tearing the restored/backed-up bytes.
-    let tmp = atomic_tmp_path(dest);
+    let (tmp, mut out) = create_atomic_tmp_with(|| atomic_tmp_path(dest))?;
     let result = (|| {
-        let mut out = std::fs::File::create(&tmp)?;
         let n = std::io::copy(&mut reader, &mut out)?;
         out.sync_all()?;
         drop(out);
@@ -744,13 +743,33 @@ pub fn atomic_tmp_path(p: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn create_atomic_tmp_with(
+    mut next_path: impl FnMut() -> PathBuf,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
+    for _ in 0..32 {
+        let tmp = next_path();
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "temporary file collisions",
+    ))
+}
+
 /// Write bytes to a unique tmp sibling, fsync, then rename over `p` — a
 /// crash mid-write never tears `p`, and a failed write leaves no tmp.
 pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
-    let tmp = atomic_tmp_path(p);
+    let (tmp, mut f) = create_atomic_tmp_with(|| atomic_tmp_path(p))?;
     let result = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -766,6 +785,52 @@ pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(windows)]
+    fn fixture_junction(link: &Path, target: &Path) {
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "junction fixture creation failed");
+        assert!(is_reparse_point(link));
+    }
+
+    #[test]
+    fn atomic_tmp_collisions_never_truncate_or_remove_foreign_files() {
+        use std::io::Write;
+        let root = unique_tmp("exclusive_tmp");
+        let sentinel = root.join("sentinel");
+        fs::write(&sentinel, b"original").unwrap();
+        let foreign = root.join("foreign.tmp");
+        fs::hard_link(&sentinel, &foreign).unwrap();
+        let owned = root.join("owned.tmp");
+        let mut first = true;
+        let (path, mut file) = create_atomic_tmp_with(|| {
+            if std::mem::take(&mut first) {
+                foreign.clone()
+            } else {
+                owned.clone()
+            }
+        })
+        .unwrap();
+        file.write_all(b"new").unwrap();
+        drop(file);
+        assert_eq!(path, owned);
+        assert_eq!(fs::read(&sentinel).unwrap(), b"original");
+        assert_eq!(fs::read(&foreign).unwrap(), b"original");
+        let error = create_atomic_tmp_with(|| foreign.clone()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(foreign.exists());
+        assert_eq!(fs::read(&sentinel).unwrap(), b"original");
+        let destination = root.join("directory");
+        fs::create_dir(&destination).unwrap();
+        assert!(write_bytes_atomic(&destination, b"cannot publish").is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 4);
+        remove_tree_no_reparse(&root).unwrap();
+    }
 
     #[test]
     #[cfg(windows)]
@@ -932,8 +997,8 @@ mod tests {
         let target = tmp.join("target");
         fs::create_dir_all(&target).unwrap();
         fs::write(target.join("f.txt"), b"x").unwrap();
-        let _ = std::os::windows::fs::symlink_dir(&target, &link);
-        if is_reparse_point(&link) {
+        fixture_junction(&link, &target);
+        {
             assert!(remove_tree_no_reparse(&link).is_err());
             assert!(
                 target.join("f.txt").exists(),
@@ -968,8 +1033,8 @@ mod tests {
         fs::create_dir_all(&target).unwrap();
         fs::write(target.join("keep.txt"), b"keep").unwrap();
         let junc = tmp.join("junc");
-        let _ = std::os::windows::fs::symlink_dir(&target, &junc);
-        if is_reparse_point(&junc) {
+        fixture_junction(&junc, &target);
+        {
             assert!(pin_dir_no_reparse(&junc).is_err());
             assert!(target.join("keep.txt").exists());
         }
@@ -986,7 +1051,7 @@ mod tests {
         fs::write(outside.join("keep.txt"), b"keep").unwrap();
         fs::write(tree.join("ok").join("a.txt"), b"a").unwrap();
         let junc = tree.join("junc");
-        let _ = std::os::windows::fs::symlink_dir(&outside, &junc);
+        fixture_junction(&junc, &outside);
         remove_tree_no_reparse(&tree).unwrap();
         assert!(!tree.exists());
         assert!(
@@ -997,14 +1062,16 @@ mod tests {
     }
 
     #[test]
-    fn copy_dir_skips_symlink_entries() {
+    fn copy_dir_skips_reparse_entries() {
         let tmp = unique_tmp("link");
         let src = tmp.join("src");
         let dest = tmp.join("dest");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("ok.txt"), b"x").unwrap();
-        // Best-effort symlink: skip assertion on platforms that cannot create one.
-        let _ = std::os::windows::fs::symlink_file(src.join("ok.txt"), src.join("link.txt"));
+        let outside = tmp.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep"), b"outside").unwrap();
+        fixture_junction(&src.join("link.txt"), &outside);
         copy_dir(&src, &dest).unwrap();
         assert!(dest.join("ok.txt").exists());
         assert!(!dest.join("link.txt").exists());
