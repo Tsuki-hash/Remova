@@ -410,20 +410,45 @@ pub fn export_reg_value(
         other => return Err(format!("unsupported hive {other}")),
     };
     let key_win = format!(r"{hive}\{rest}");
-    use std::process::Command;
-    let mut cmd = Command::new(sys_tool("reg.exe"));
-    cmd.args(["query", &key_win, "/v", value_name, view]);
-    hide_console(&mut cmd);
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Ok(false);
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let Some((reg_type, data_raw)) = parse_reg_query(&text) else {
+    let Some((native_bytes, native_type)) = read_reg_value_bytes(key_path, value_name)? else {
         return Ok(false);
     };
+    let reg_type = match native_type {
+        1 => "REG_SZ",
+        2 => "REG_EXPAND_SZ",
+        3 => "REG_BINARY",
+        4 => "REG_DWORD",
+        7 => "REG_MULTI_SZ",
+        11 => "REG_QWORD",
+        _ => return Err("unsupported registry value type".into()),
+    };
+    let data_raw = match native_type {
+        4 => format!(
+            "0x{:x}",
+            u32::from_le_bytes(
+                native_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "invalid DWORD length")?
+            )
+        ),
+        11 => format!(
+            "0x{:x}",
+            u64::from_le_bytes(
+                native_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "invalid QWORD length")?
+            )
+        ),
+        _ => native_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    };
     let key_reg = format!("[{key_win}]");
-    let body = match reg_type.as_str() {
+    let body = match reg_type {
         "REG_DWORD" => {
             // data like 0x2 — parse failure must not silently become 0.
             let n = u32::from_str_radix(data_raw.trim_start_matches("0x"), 16)
@@ -442,9 +467,7 @@ pub fn export_reg_value(
             // reg.exe text output joins items with spaces (lossy, type lost) —
             // read the raw UTF-16LE bytes and emit hex(7) so item structure
             // survives restore.
-            let (bytes, _typ) = read_reg_value_bytes(key_path, value_name)?
-                .ok_or_else(|| format!("export_reg_value: value vanished for {key_path}"))?;
-            let mut payload = bytes;
+            let mut payload = native_bytes.clone();
             while payload.ends_with(&[0, 0]) {
                 payload.truncate(payload.len() - 2);
             }
@@ -473,8 +496,7 @@ pub fn export_reg_value(
             } else {
                 "hex(1)"
             };
-            let (bytes, _typ) = read_reg_value_bytes(key_path, value_name)?
-                .ok_or_else(|| format!("export_reg_value: value vanished for {key_path}"))?;
+            let bytes = &native_bytes;
             // registry strings arrive NUL-terminated — normalize to exactly one.
             let mut core = bytes.as_slice();
             while core.len() >= 2 && core[core.len() - 2..] == [0, 0] {
@@ -495,7 +517,7 @@ pub fn export_reg_value(
             }
         }
     };
-    let reg = format!("Windows Registry Editor Version 5.00\r\n\r\n{key_reg}\r\n{body}\r\n");
+    let reg = format!("Windows Registry Editor Version 5.00\r\n; Remova registry view: {}\r\n\r\n{key_reg}\r\n{body}\r\n", view.trim_start_matches("/reg:"));
     if let Some(p) = dest.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
@@ -508,6 +530,7 @@ pub fn export_reg_value(
 /// multi-line hex continuations until the next key header — long REG_BINARY
 /// data used to be silently truncated at the first line (data corruption in
 /// the backup safety net). Returns (type, data) or None.
+#[cfg(test)]
 fn parse_reg_query(text: &str) -> Option<(String, String)> {
     const KNOWN: &[&str] = &[
         "REG_SZ",
@@ -658,6 +681,7 @@ pub(crate) mod path_mock {
     /// Stored as (raw value, is REG_EXPAND_SZ).
     static STATE: Mutex<Option<HashMap<String, (String, bool)>>> = Mutex::new(None);
     static FAIL_READ: Mutex<bool> = Mutex::new(false);
+    static FAIL_MACHINE_WRITE: Mutex<bool> = Mutex::new(false);
 
     fn put(user: &str, machine: &str, expand: bool) {
         let mut map = HashMap::new();
@@ -683,6 +707,7 @@ pub(crate) mod path_mock {
     }
 
     pub fn clear() {
+        *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) = false;
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
@@ -701,6 +726,9 @@ pub(crate) mod path_mock {
     }
 
     pub fn write(scope: &str, value: &str, expand: bool) -> Result<(), String> {
+        if scope == "Machine" && *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) {
+            return Err("injected Machine write failure".into());
+        }
         let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let map = guard.as_mut().expect("path mock not installed");
         map.insert(scope.to_string(), (value.to_string(), expand));
@@ -715,6 +743,10 @@ pub(crate) mod path_mock {
             .and_then(|m| m.get(scope))
             .map(|(raw, _)| raw.clone())
             .unwrap_or_default()
+    }
+
+    pub fn fail_machine_write() {
+        *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     /// Serialize tests that install/use/clear the process-wide PATH mock.
@@ -1102,6 +1134,9 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
     // Renames never target Services keys, so no value name is offered
     // (the Services branch of the gate only whitelists the Start value).
     crate::safety::allow_reg_value_write(key_path, None)?;
+    if from.eq_ignore_ascii_case(to) {
+        return Ok(());
+    }
     #[cfg(not(windows))]
     {
         let _ = (key_path, from, to);
@@ -1140,6 +1175,11 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
                 return Err(format!("query failed {from}"));
             }
             let to_w = to_wide(to);
+            let existing = RegQueryValueExW(hk, PCWSTR(to_w.as_ptr()), None, None, None, None);
+            if existing.0 != 2 {
+                let _ = RegCloseKey(hk);
+                return Err("registry rename destination exists or cannot be checked".into());
+            }
             let st = RegSetValueExW(
                 hk,
                 PCWSTR(to_w.as_ptr()),
@@ -1148,7 +1188,11 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
                 Some(&data[..data_len as usize]),
             );
             if st == ERROR_SUCCESS {
-                let _ = RegDeleteValueW(hk, PCWSTR(from_w.as_ptr()));
+                let deleted = RegDeleteValueW(hk, PCWSTR(from_w.as_ptr()));
+                if deleted != ERROR_SUCCESS {
+                    let _ = RegCloseKey(hk);
+                    return Err("registry rename copied but source deletion failed".into());
+                }
             }
             let _ = RegCloseKey(hk);
             if st != ERROR_SUCCESS {
@@ -1325,6 +1369,71 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn path_partial_failure_preserves_successful_user_write() {
+        let _lock = super::path_mock::lock_mock();
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                super::path_mock::clear();
+            }
+        }
+        let _reset = Reset;
+        super::path_mock::install(r"C:\Vendor\bin", r"C:\Vendor\bin");
+        super::path_mock::fail_machine_write();
+        assert!(super::scrub_path_entry(r"C:\Vendor\bin")
+            .unwrap_err()
+            .contains("Machine"));
+        assert_eq!(super::path_mock::get("User"), "");
+        assert_eq!(super::path_mock::get("Machine"), r"C:\Vendor\bin");
+        super::path_mock::install("", "");
+        assert!(
+            super::restore_path_entry(r"C:\Vendor\bin", &["User", "Machine"])
+                .unwrap_err()
+                .contains("Machine")
+        );
+        assert_eq!(super::path_mock::get("User"), r"C:\Vendor\bin");
+        assert_eq!(super::path_mock::get("Machine"), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rename_value_refuses_existing_destination_without_changing_either() {
+        const KEY: &str = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        struct Cleanup(Vec<String>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                for name in &self.0 {
+                    let _ = super::delete_value(KEY, name);
+                }
+            }
+        }
+        let prefix = format!(
+            "RemovaRenameTest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let from = format!("{prefix}.remova-disabled");
+        let to = prefix;
+        let _cleanup = Cleanup(vec![from.clone(), to.clone()]);
+        super::create_reg_sz(KEY, &from, "old command").unwrap();
+        super::create_reg_sz(KEY, &to, "new command").unwrap();
+        let before_from = super::read_reg_value_bytes(KEY, &from).unwrap();
+        let before_to = super::read_reg_value_bytes(KEY, &to).unwrap();
+        assert!(super::rename_reg_value(KEY, &from, &to).is_err());
+        assert_eq!(
+            super::read_reg_value_bytes(KEY, &from).unwrap(),
+            before_from
+        );
+        assert_eq!(super::read_reg_value_bytes(KEY, &to).unwrap(), before_to);
+        super::delete_value(KEY, &to).unwrap();
+        super::rename_reg_value(KEY, &from, &to).unwrap();
+        assert!(super::read_reg_value_bytes(KEY, &from).unwrap().is_none());
+        assert_eq!(super::read_reg_value_bytes(KEY, &to).unwrap(), before_from);
+    }
     #[test]
     fn parse_reg_query_multi_line_binary_and_name_with_reg_token() {
         // Long REG_BINARY data wraps onto continuation lines; a value NAME may
@@ -1507,6 +1616,25 @@ mod tests {
             !decoded.contains('\u{FFFD}'),
             "no replacement chars allowed"
         );
+        let add = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args([
+                "add",
+                &key,
+                "/v",
+                "REG_SZ",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f",
+            ])
+            .output()
+            .unwrap();
+        assert!(add.status.success());
+        assert!(super::export_reg_value(&key, "REG_SZ", &dest).unwrap());
+        assert!(std::fs::read_to_string(&dest)
+            .unwrap()
+            .contains("\"REG_SZ\"=dword:00000001"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
