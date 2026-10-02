@@ -32,8 +32,8 @@ export function MonitorPanel({
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
-            style={{ ...css.btn, height: 30, opacity: total === 0 ? 0.5 : 1 }}
-            disabled={total === 0}
+            style={{ ...css.btn, height: 30, opacity: total === 0 || diff.walk_degraded ? 0.5 : 1 }}
+            disabled={total === 0 || diff.walk_degraded}
             onClick={onToCleanup}
           >
             {L.monitorToCleanup}

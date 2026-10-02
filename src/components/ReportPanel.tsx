@@ -95,7 +95,7 @@ export function ReportPanel({
           <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 650 }}>
             · {aiReportNote ? L.conclusionSourceAi : L.conclusionSourceRule}
           </span>
-          {"deleted" in report && "uninstall_ok" in report && (
+          {"uninstall_ok" in report && !report.aborted && report.uninstall_ok && (
             <div style={{ marginTop: 4, fontWeight: 600, color: "var(--fg)" }}>
               {L.reportFlowDone}
             </div>

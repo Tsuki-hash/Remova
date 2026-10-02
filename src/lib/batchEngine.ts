@@ -60,7 +60,7 @@ export async function runBatchCleanup(
           backup_enabled: backupEnabled,
           cleanup_source: "uninstall",
         });
-        if (report.aborted && items.length) {
+        if ((report.aborted && (items.length > 0 || useOfficial)) || (useOfficial && !report.uninstall_ok)) {
  // backup/session abort must not look like success.
           results.push({
             key,
@@ -74,6 +74,7 @@ export async function runBatchCleanup(
         if (report.aborted && !items.length && !useOfficial) {
           results.push({ key, name: app.name, status: "skipped", detail: "" });
           okKeys.add(key);
+          cb.onResults([...results]);
           continue;
         }
         const detail = L.batchDetail(report.deleted, report.failed);

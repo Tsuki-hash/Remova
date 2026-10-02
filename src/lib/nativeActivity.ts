@@ -18,6 +18,11 @@ const READ_ONLY_COMMANDS = new Set([
   "list_backup_sessions",
   "check_github_latest",
   "online_update_supported",
+  "list_local_drives",
+  "list_top_dir_sizes",
+  "list_dir_children",
+  "rank_idle_apps",
+  "app_icon_data",
 ]);
 
 let active = 0;
