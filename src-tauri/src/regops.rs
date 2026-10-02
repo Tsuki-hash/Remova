@@ -1653,20 +1653,11 @@ mod tests {
             "DisplayName"
         )
         .is_err());
-        // Run value-level shape is allowed by the safety gate (actual OS delete is best-effort).
-        // Use a non-existent Run value name so the OS call fails safely after the gate.
-        let r = super::delete_value(
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-            "RemovaNoSuchValue_Test",
-        );
-        // Gate passed (not a "registry delete blocked" error); OS may report delete failure.
-        match r {
-            Ok(()) => {}
-            Err(e) => assert!(
-                !e.contains("registry delete blocked"),
-                "gate must allow Run value shape, got {e}"
-            ),
-        }
+        // Validate the allowed shape without deleting anything in the real Run key.
+        assert!(crate::safety::is_safe_to_delete_registry(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|DemoVendorStartup"
+        )
+        .is_ok());
     }
 
     #[test]
