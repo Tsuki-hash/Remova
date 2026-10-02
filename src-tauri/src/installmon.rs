@@ -161,7 +161,7 @@ fn walk_budget() -> usize {
 #[cfg(test)]
 static TEST_BUDGET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(200);
 
-fn reg_value_names() -> BTreeSet<String> {
+fn reg_value_names() -> Result<BTreeSet<String>, String> {
     let mut set = BTreeSet::new();
     // align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
     // RunOnce views, Policies Explorer Run) so 32-bit / one-shot / policy
@@ -173,10 +173,11 @@ fn reg_value_names() -> BTreeSet<String> {
     ];
     keys.extend(crate::manage::run_key_paths());
     for k in keys {
-        for sub in crate::regscan::list_subkeys(&k) {
+        let (subkeys, values) = crate::regscan::snapshot_names(&k)?;
+        for sub in subkeys {
             set.insert(format!("{k}\\{sub}").to_lowercase());
         }
-        for (v, _) in crate::regscan::list_values(&k) {
+        for v in values {
             // Value paths must use the pipeline-wide `key|value` shape — the
             // cleanup pipeline, backup and restore all split on `|`, so a
             // monitored Run value written as `key::value` can never be deleted.
@@ -185,13 +186,19 @@ fn reg_value_names() -> BTreeSet<String> {
             }
         }
     }
-    set
+    Ok(set)
+}
+
+fn unknown_registry_snapshot() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullSnapshot {
     fs: FsSnapshot,
     reg: Vec<String>,
+    #[serde(default = "unknown_registry_snapshot")]
+    reg_degraded: bool,
 }
 
 /// one monitor session per process — begin/end are serialized so
@@ -206,9 +213,12 @@ fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
 pub fn begin() -> Result<(), String> {
     let _guard = monitor_lock();
     crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &Default::default());
+    let reg = reg_value_names();
+    let reg_degraded = reg.is_err();
     let snap = FullSnapshot {
         fs: take_fs_snapshot(),
-        reg: reg_value_names().into_iter().collect(),
+        reg: reg.unwrap_or_default().into_iter().collect(),
+        reg_degraded,
     };
     let p = monitor_state_path();
     if let Some(dir) = p.parent() {
@@ -225,8 +235,16 @@ pub fn end() -> Result<MonitorEndResult, String> {
         std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
     let before: FullSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&p);
-    let after = take_fs_snapshot();
-    let after_reg = reg_value_names();
+    Ok(diff_and_arm(before, take_fs_snapshot(), reg_value_names()))
+}
+
+fn diff_and_arm(
+    before: FullSnapshot,
+    after: FsSnapshot,
+    after_reg: Result<BTreeSet<String>, String>,
+) -> MonitorEndResult {
+    let registry_degraded = before.reg_degraded || after_reg.is_err();
+    let after_reg = after_reg.unwrap_or_default();
     let added_files_all: Vec<String> = after.files.difference(&before.fs.files).cloned().collect();
     let files_truncated = added_files_all.len().saturating_sub(200);
     let added_files: Vec<String> = added_files_all.into_iter().take(200).collect();
@@ -239,7 +257,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
         added_reg_values,
         files_truncated,
         reg_truncated,
-        walk_degraded: before.fs.truncated || after.truncated,
+        walk_degraded: before.fs.truncated || after.truncated || registry_degraded,
     };
     // Allow-list is armed only from this server-computed diff (never from
     // client IPC) — and never from a truncated snapshot: entries missed by
@@ -250,12 +268,12 @@ pub fn end() -> Result<MonitorEndResult, String> {
     for it in &items {
         scanned.insert(it.path.clone());
     }
-    let degraded = before.fs.truncated || after.truncated;
+    let degraded = diff.walk_degraded;
     if degraded {
         scanned.clear();
     }
     crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
-    Ok(MonitorEndResult { diff, items })
+    MonitorEndResult { diff, items }
 }
 
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
@@ -345,6 +363,42 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn incomplete_registry_snapshots_never_arm_existing_items() {
+        let _allow = crate::scan_allow::test_lock();
+        let path = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|Vendor".to_lowercase();
+        for failed_before in [true, false] {
+            crate::scan_allow::remember(
+                crate::scan_allow::AllowScope::Monitor,
+                &[path.clone()].into(),
+            );
+            let before = super::FullSnapshot {
+                fs: super::FsSnapshot::default(),
+                reg: vec![],
+                reg_degraded: failed_before,
+            };
+            let after_reg = if failed_before {
+                Ok([path.clone()].into())
+            } else {
+                Err("denied".into())
+            };
+            let result = super::diff_and_arm(before, super::FsSnapshot::default(), after_reg);
+            assert!(result.diff.walk_degraded);
+            assert!(!crate::scan_allow::was_recent(
+                crate::scan_allow::AllowScope::Monitor,
+                &path
+            ));
+            for item in result.items {
+                assert!(!crate::scan_allow::was_recent(
+                    crate::scan_allow::AllowScope::Monitor,
+                    &item.path
+                ));
+            }
+        }
+        let legacy: super::FullSnapshot =
+            serde_json::from_str(r#"{"fs":{"files":[]},"reg":[]}"#).unwrap();
+        assert!(legacy.reg_degraded, "unknown completeness must fail closed");
+    }
     use super::*;
 
     /// Serializes tests that swap the process-global state path / walk budget —
