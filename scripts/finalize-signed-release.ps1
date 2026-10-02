@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+try {
 if ($env:SIGNPATH_ENABLED -and $env:SIGNPATH_ENABLED -cnotin @('true', 'false')) {
     throw 'SIGNPATH_ENABLED must be true, false, or unset.'
 }
@@ -20,6 +21,9 @@ foreach ($installer in @($nsis[0], $msi[0])) {
     if ($LASTEXITCODE -ne 0) { throw 'Tauri updater signing failed.' }
     & cargo run --quiet --locked --manifest-path (Join-Path $root 'src-tauri/Cargo.toml') --bin verify_update -- $installer.FullName
     if ($LASTEXITCODE -ne 0) { throw 'Updater signature does not match the public key embedded in this release.' }
+}
+} finally {
+    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 }
 $version = (Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
 if ($env:GITHUB_REF_NAME -cne "v$version") { throw 'Version/tag mismatch.' }

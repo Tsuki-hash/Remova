@@ -9,6 +9,11 @@ $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $passed = 0
 $policyState = @{ SignCalls = 0; VerifyCalls = 0; FailVerification = $false; SignTargets = @(); VerifyTargets = @() }
+function Assert-PrivateKeysCleared {
+    foreach ($name in @('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD')) {
+        if ($null -ne [Environment]::GetEnvironmentVariable($name)) { throw 'Signing credentials remained in the environment.' }
+    }
+}
 function Assert-Throws([scriptblock]$Call, [string]$Expected) {
     try { & $Call } catch {
         if ($_.Exception.Message -notlike "*$Expected*") { throw }
@@ -113,6 +118,7 @@ try {
     $finalize = Join-Path $temp 'scripts/finalize-signed-release.ps1'
     $policyState.SignCalls = 0; $policyState.VerifyCalls = 0; $policyState.FailVerification = $false
     & $finalize
+    Assert-PrivateKeysCleared
     $expectedTargets = @('nsis/Remova_1.3.0_x64-setup.exe', 'msi/Remova_1.3.0_x64.msi') |
         ForEach-Object { [IO.Path]::GetFullPath((Join-Path $bundle $_)) } | Sort-Object
     if (($policyState.SignTargets | Sort-Object) -join '|' -cne ($expectedTargets -join '|') -or
@@ -127,13 +133,19 @@ try {
 
     Remove-Item -LiteralPath $manifest
     $env:SIGNPATH_ENABLED = 'true'
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
     Assert-Throws { & $finalize } 'Authenticode'
+    Assert-PrivateKeysCleared
     if (Test-Path -LiteralPath $manifest) { throw 'Unsigned Windows binaries were published with SignPath enabled.' }
     $passed++
 
     $env:SIGNPATH_ENABLED = 'false'
     $policyState.FailVerification = $true
+    $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
     Assert-Throws { & $finalize } 'Updater signature does not match'
+    Assert-PrivateKeysCleared
     if (Test-Path -LiteralPath $manifest) { throw 'Invalid updater signature produced a release manifest.' }
     $passed++
     Write-Host "OK: $passed release policy cases passed (no build or packaging)."
