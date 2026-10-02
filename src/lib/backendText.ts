@@ -5,14 +5,15 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   const L = t();
   if (!raw) return "";
   if (context === "idle") {
-    return ({ idle_install_age: L.idleEvInstallAge, idle_dir_mtime: L.idleEvDirMtime,
-      idle_size_partial: L.idleEvSizePartial } as Record<string, string>)[raw] ?? L.backendDetailUnavailable;
+    const labels: Record<string, string> = { idle_install_age: L.idleEvInstallAge,
+      idle_dir_mtime: L.idleEvDirMtime, idle_size_partial: L.idleEvSizePartial };
+    return Object.hasOwn(labels, raw) ? labels[raw]! : L.backendDetailUnavailable;
   }
   const buckets: Record<string, string> = { programFiles: L.linkedProgramFiles,
     configFiles: L.linkedConfigFiles, registry: L.linkedRegistry, shortcuts: L.linkedShortcuts,
     startup: L.linkedStartup, other: L.linkedOther };
   if (context === "scan") {
-    if (buckets[raw]) return buckets[raw];
+    if (Object.hasOwn(buckets, raw)) return buckets[raw]!;
     const rules: Array<[string, string]> = [["Install location", L.linkedProgramFiles],
       ["Product dir under ", L.linkedProgramFiles], ["Other-drive product folder: ", L.linkedProgramFiles],
       ["Software key: ", L.linkedRegistry], ["Uninstall registry key", L.linkedRegistry],
@@ -40,7 +41,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "reparse point": L.backendReparse,
     "SRSetRestorePointW failed": L.restorePointFail, "not windows": L.backendUnsupported,
   };
-  if (exact[raw]) return exact[raw];
+  if (Object.hasOwn(exact, raw)) return exact[raw]!;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");
