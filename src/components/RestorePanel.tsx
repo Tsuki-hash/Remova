@@ -122,9 +122,11 @@ export function RestorePanel({
               whiteSpace: "pre-wrap",
               fontSize: 12,
               color: "var(--muted)",
+              maxHeight: 240,
+              overflow: "auto",
             }}
           >
-            {msgs.slice(0, 20).join("\n")}
+            {msgs.join("\n")}
           </pre>
         </div>
       )}
