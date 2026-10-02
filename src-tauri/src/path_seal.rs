@@ -318,6 +318,13 @@ pub(crate) fn backup_stage() -> Result<BackupStage, String> {
     Ok(BackupStage(key::load(true)?.stage()?))
 }
 
+#[cfg(windows)]
+pub(crate) fn cleanup_abandoned_stages() {
+    if let Ok(store) = key::load(false) {
+        store.cleanup_abandoned();
+    }
+}
+
 /// True when this original path is a sealed restore target **and** the decoded
 /// `path_map` still matches the digest recorded at backup time.
 #[cfg(test)]
