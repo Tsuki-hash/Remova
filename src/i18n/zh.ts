@@ -321,6 +321,8 @@ export const dict = {
     userDataHint: "可能是文档/下载/同步目录，默认不勾选；确认是缓存后再清理",
     userLibraryHint: "用户库中的应用数据（可能含存档），确认后再清理",
     verifyChecklist: "清理后复核",
+    verifyStillPresent: "仍存在",
+    verifyRemoved: "已移除",
     aiReportSummary: "智能解读报告",
     aiReportBusy: "解读中…",
     copilotParse: "生成计划",
