@@ -272,9 +272,17 @@ fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    fn unique_dir(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{label}_{}_{nonce}", std::process::id()))
+    }
+
     #[test]
     fn failed_publish_removes_tmp_and_prune_includes_stale_tmp() {
-        let dir = std::env::temp_dir().join(format!("remova-r23-icon-{}", std::process::id()));
+        let dir = unique_dir("remova_icon_publish");
         std::fs::create_dir_all(&dir).unwrap();
         let blocked = dir.join("blocked.png");
         std::fs::create_dir_all(&blocked).unwrap();
@@ -346,7 +354,7 @@ mod tests {
 
     #[test]
     fn cache_key_changes_with_source_fingerprint() {
-        let dir = std::env::temp_dir().join("remova-icon-cache-key-test");
+        let dir = unique_dir("remova_icon_fingerprint");
         let _ = std::fs::create_dir_all(&dir);
         let exe = dir.join("app.exe");
         std::fs::write(&exe, b"v1").unwrap();
@@ -372,7 +380,7 @@ mod tests {
     /// PNG is always one whole write (never a tear).
     #[test]
     fn concurrent_writes_stay_whole_and_leave_no_tmp() {
-        let dir = std::env::temp_dir().join(format!("remova-r25-icon-{}", std::process::id()));
+        let dir = unique_dir("remova_icon_concurrent");
         std::fs::create_dir_all(&dir).unwrap();
         let cache = dir.join("app.png");
         let whole_a = vec![0xAu8; 8192];

@@ -213,7 +213,12 @@ mod tests {
 
     #[test]
     fn manifest_display_name() {
-        let dir = std::env::temp_dir().join("remova_manifest_test");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("remova_manifest_{}_{nonce}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let xml = dir.join("AppxManifest.xml");
         std::fs::write(
