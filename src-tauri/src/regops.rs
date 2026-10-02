@@ -11,6 +11,7 @@ use windows::Win32::System::Registry::{
 };
 
 fn parse(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
+    crate::fsutil::validate_native_name(key).ok()?;
     let (alias, rest) = key.split_once('\\')?;
     let rest = rest.to_string();
     match alias.to_uppercase().as_str() {
@@ -24,7 +25,7 @@ fn parse(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
 
 // Shared Windows string helper lives in `fsutil`.
 #[cfg(windows)]
-use crate::fsutil::to_wide;
+use crate::fsutil::{to_wide, to_wide_name};
 
 /// Delete registry key tree. Caller must have run safety checks.
 /// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
@@ -63,10 +64,11 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
             let parent_w = if parent.is_empty() {
                 Vec::new()
             } else {
-                to_wide(&parent)
+                to_wide_name(&parent)?
             };
             let rights =
                 DELETE_RIGHT | KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE | KEY_SET_VALUE | access;
+            let leaf_w = to_wide_name(&leaf)?;
             let mut parent_hk = HKEY::default();
             let open = if parent.is_empty() {
                 RegOpenKeyExW(hive, PCWSTR::null(), 0, rights, &mut parent_hk)
@@ -76,7 +78,6 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
             if open.is_err() {
                 return Err(format!("open parent failed for {key_path}"));
             }
-            let leaf_w = to_wide(&leaf);
             let st = RegDeleteTreeW(parent_hk, PCWSTR(leaf_w.as_ptr()));
             let _ = RegCloseKey(parent_hk);
             if st != ERROR_SUCCESS {
@@ -107,13 +108,13 @@ pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        let vw = to_wide_name(value_name)?;
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
             RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk)
                 .ok()
                 .map_err(|_| format!("open failed {key_path}"))?;
-            let vw = to_wide(value_name);
             let st = RegDeleteValueW(hk, PCWSTR(vw.as_ptr()));
             let _ = RegCloseKey(hk);
             if st != ERROR_SUCCESS {
@@ -1130,6 +1131,8 @@ pub fn leaf_name(path: &str) -> String {
 
 /// Rename a registry value (copy data + delete old) under `key`.
 pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), String> {
+    crate::fsutil::validate_native_name(from)?;
+    crate::fsutil::validate_native_name(to)?;
     // intrinsic target gate — callers gate too, primitives enforce last.
     // Renames never target Services keys, so no value name is offered
     // (the Services branch of the gate only whitelists the Start value).
@@ -1146,6 +1149,8 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
     {
         use windows::Win32::System::Registry::{RegQueryValueExW, RegSetValueExW, REG_VALUE_TYPE};
         let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        let from_w = to_wide_name(from)?;
+        let to_w = to_wide_name(to)?;
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
@@ -1158,7 +1163,6 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
             )
             .ok()
             .map_err(|_| format!("open failed {key_path}"))?;
-            let from_w = to_wide(from);
             let mut typ = REG_VALUE_TYPE(0);
             let mut data = vec![0u8; 8192];
             let mut data_len = data.len() as u32;
@@ -1174,7 +1178,6 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
                 let _ = RegCloseKey(hk);
                 return Err(format!("query failed {from}"));
             }
-            let to_w = to_wide(to);
             let existing = RegQueryValueExW(hk, PCWSTR(to_w.as_ptr()), None, None, None, None);
             if existing.0 != 2 {
                 let _ = RegCloseKey(hk);
@@ -1317,6 +1320,7 @@ pub fn write_reg_binary(key_path: &str, value_name: &str, data: &[u8]) -> Result
 /// Errors use stable codes for the UI:
 /// `manage:access_denied:<name>` | `manage:open_failed:<name>` | `manage:write_failed:<name>`
 pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
+    crate::fsutil::validate_native_name(svc_name)?;
     // intrinsic gate — service names are single leaves under Services.
     let name = svc_name.trim();
     if name.is_empty() || name.contains('\\') || name.contains('/') || name.contains("..") {
@@ -1658,6 +1662,22 @@ mod tests {
             r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|DemoVendorStartup"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn native_primitives_reject_nul_names_before_system_access() {
+        use super::*;
+        let name = "Vendor\0Tail";
+        assert!(parse(&format!(r"HKCU\Software\{name}")).is_none());
+        for result in [
+            delete_key(&format!(r"HKCU\Software\{name}")),
+            delete_value("invalid", name),
+            rename_reg_value("invalid", name, name),
+            create_reg_sz("invalid", name, "data"),
+            write_service_start(name, 4),
+        ] {
+            assert!(result.unwrap_err().contains("native name contains NUL"));
+        }
     }
 
     #[test]
