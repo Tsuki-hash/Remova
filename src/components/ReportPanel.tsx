@@ -6,6 +6,7 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { cleanupProgress, gateReasonText } from "../lib/decision";
+import { backendText } from "../lib/backendText";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
 type Props = {
@@ -245,7 +246,7 @@ export function ReportPanel({
         </div>
       )}
       {"uninstall_message" in report && report.uninstall_message && (
-        <div style={{ marginTop: 6, color: "var(--muted)" }}>{report.uninstall_message}</div>
+        <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
       )}
       {"restore_point_ok" in report && (
         <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>
@@ -265,9 +266,16 @@ export function ReportPanel({
                 ? L.restorePointFail
                 : L.restorePointSkipped}
           </span>
-          {report.restore_point_msg ? ` — ${report.restore_point_msg}` : ""}
+          {report.restore_point_msg ? ` — ${backendText(report.restore_point_msg)}` : ""}
         </div>
       )}
+      <details style={{ marginTop: 8, fontSize: 12 }}>
+        <summary>{L.backendTechnicalDetails}</summary>
+        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {[report.uninstall_message, "restore_point_msg" in report ? report.restore_point_msg : "",
+            ...report.item_details.map(d => `${d.path}: ${d.message}`), ...report.errors].filter(Boolean).join("\n")}
+        </pre>
+      </details>
     </div>
   );
 }
