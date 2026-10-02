@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ruleParseFilter } from "../components/CopilotPanel";
 import type { InstalledApp } from "../types";
 
@@ -32,6 +32,17 @@ const apps: InstalledApp[] = [
 ];
 
 describe("ruleParseFilter", () => {
+  it("filters recent installs by date and rejects unavailable conditions", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-10T12:00:00"));
+    try {
+      const result = ruleParseFilter(apps, "最近安装的软件");
+      expect(result.list.map(a => a.name)).toEqual(["TinyTool"]);
+      expect(result.intent.filter.installed_after).toBe("20251211");
+      for (const query of ["可能是残留的软件", "apps with startup items", "unrecognized condition"])
+        expect(() => ruleParseFilter(apps, query)).toThrow();
+    } finally { vi.useRealTimers(); }
+  });
   it("filters by brand name", () => {
     const { list, intent } = ruleParseFilter(apps, "找出 Adobe 相关软件");
     expect(list.map((a) => a.name)).toContain("Adobe Acrobat");
