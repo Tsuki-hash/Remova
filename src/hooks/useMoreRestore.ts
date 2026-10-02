@@ -13,18 +13,21 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
+  const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
 
   const loadRestore = useCallback(async () => {
     setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
     setRestoreLoading(true);
+    setRestoreLoadError(null);
     try {
       const list = await api.backupSessions();
       setSessions(list);
       if (list[0]) setRestorePick(list[0].name);
       setOpenRestore(true);
     } catch (e) {
+      setRestoreLoadError(formatError(e));
       onError(formatError(e));
     } finally {
       setRestoreLoading(false);
@@ -58,7 +61,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     if (!restorePick || restoreBusy) return;
     const ok = await requestConfirm({
       title: L.restore,
-      message: L.restoreConfirm,
+      message: L.restoreConfirm(restorePick),
       confirmLabel: L.restoreRun,
       danger: true,
     });
@@ -67,8 +70,17 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreMsgs([]);
     try {
       const msgs = await api.restoreSessionByName(restorePick);
-      setRestoreMsgs(msgs.length ? msgs : [L.restoreNoDetail]);
-      toast.success(L.restoreDone);
+      setRestoreMsgs(msgs.length ? msgs.map((msg) => {
+        if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
+        if (msg.startsWith("imported ")) return `${L.restoreDone}: ${msg.slice(9)}`;
+        if (msg.startsWith("PATH entry already present: ")) return `${L.restoreAlreadyPresent}: ${msg.slice(28)}`;
+        if (msg.startsWith("skipped ")) return `${L.restoreSkipped}: ${msg.slice(msg.indexOf(": ") + 2)}`;
+        if (msg.startsWith("restore failed for ")) return `${L.restoreIncomplete}: ${msg.slice(19).split(": ")[0]}`;
+        return L.restoreNoDetail;
+      }) : [L.restoreNoDetail]);
+      const complete = msgs.length > 0 && msgs.every((msg) => msg.startsWith("restored ") || msg.startsWith("imported ") || msg.startsWith("PATH entry already present: "));
+      if (complete) toast.success(L.restoreDone);
+      else toast.info(msgs.length ? L.restoreIncomplete : L.restoreNoDetail);
     } catch (e) {
       setRestoreMsgs([formatError(e)]);
       toast.error(formatError(e));
@@ -82,6 +94,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   return {
     sessions,
     restoreLoading,
+    restoreLoadError,
     restorePick,
     setRestorePick,
     restoreBusy,

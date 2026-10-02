@@ -11,6 +11,8 @@ export type SessionInfo = {
 export function RestorePanel({
   sessions,
   loading,
+  loadError,
+  onReload,
   pick,
   setPick,
   busy,
@@ -21,6 +23,8 @@ export function RestorePanel({
 }: {
   sessions: SessionInfo[];
   loading?: boolean;
+  loadError?: string | null;
+  onReload?: () => void;
   pick: string;
   setPick: (v: string) => void;
   busy: boolean;
@@ -38,7 +42,7 @@ export function RestorePanel({
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
             style={{ ...css.btn, height: 32, opacity: busy || !pick ? 0.5 : 1 }}
-            disabled={busy || !pick}
+            disabled={busy || loading || !!loadError || !pick}
             onClick={onRun}
           >
             {L.restoreRun}
@@ -48,7 +52,12 @@ export function RestorePanel({
           </button>
         </div>
       </div>
-      {sessions.length === 0 ? (
+      {loadError ? (
+        <div role="alert">
+          <span>{L.restoreLoadFailed}: {loadError}</span>
+          <button style={css.btnGhost} onClick={onReload}>{L.manageReload}</button>
+        </div>
+      ) : sessions.length === 0 ? (
         <div style={css.muted}>{loading ? L.loadingGeneric : L.restoreNoSessions}</div>
       ) : (
         <>
@@ -79,6 +88,7 @@ export function RestorePanel({
                     type="radio"
                     name="restore-session"
                     checked={pick === s.name}
+                    disabled={busy}
                     onChange={() => setPick(s.name)}
                   />
                   <span style={{ flex: 1, minWidth: 0 }} className="ell" title={s.name}>
