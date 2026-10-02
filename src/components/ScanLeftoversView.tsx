@@ -14,6 +14,7 @@ import {
   summarizeLeftovers,
 } from "../lib/decision";
 import { filterItemsByBucket, linkedBucketLabelKey } from "../lib/linkedItems";
+import { backendText } from "../lib/backendText";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
 
@@ -67,7 +68,7 @@ const LeftoverRow = memo(function LeftoverRow({
         </span>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.4 }}>
           {reasonLine}
-          {it.reason && it.reason !== reasonLine ? ` · ${it.reason}` : ""}
+          {it.reason ? ` · ${backendText(it.reason, "scan")}` : ""}
         </div>
         {note && (
           <div
