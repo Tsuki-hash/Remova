@@ -3,7 +3,9 @@
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS,
+};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryInfoKeyW, HKEY,
@@ -62,6 +64,96 @@ pub fn find_app_paths(exe_name: &str) -> Vec<String> {
             }
         }
         hits
+    }
+}
+
+fn collect_complete_names(
+    mut read: impl FnMut(u32) -> Result<Option<String>, String>,
+) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for index in 0..10_000 {
+        match read(index)? {
+            Some(name) => names.push(name),
+            None => return Ok(names),
+        }
+    }
+    Err("registry snapshot entry budget exceeded".into())
+}
+
+/// Monitor snapshots need explicit completeness and names of every value type.
+pub fn snapshot_names(key: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    #[cfg(not(windows))]
+    {
+        let _ = key;
+        Ok((vec![], vec![]))
+    }
+    #[cfg(windows)]
+    {
+        let (hive, sub, access) = parse_alias(key).ok_or("invalid registry alias")?;
+        let sub_w = crate::fsutil::to_wide_name(&sub)?;
+        unsafe {
+            let mut root = HKEY::default();
+            let opened = RegOpenKeyExW(
+                hive,
+                PCWSTR(sub_w.as_ptr()),
+                0,
+                KEY_READ | access,
+                &mut root,
+            );
+            if opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND {
+                return Ok((vec![], vec![]));
+            }
+            if opened != ERROR_SUCCESS {
+                return Err(format!("registry snapshot open: {}", opened.0));
+            }
+            let result = (|| {
+                let keys = collect_complete_names(|index| {
+                    let mut buffer = vec![0u16; 256];
+                    let mut len = buffer.len() as u32;
+                    let status = RegEnumKeyExW(
+                        root,
+                        index,
+                        windows::core::PWSTR(buffer.as_mut_ptr()),
+                        &mut len,
+                        None,
+                        windows::core::PWSTR::null(),
+                        None,
+                        None,
+                    );
+                    match status {
+                        ERROR_SUCCESS => {
+                            Ok(Some(String::from_utf16_lossy(&buffer[..len as usize])))
+                        }
+                        ERROR_NO_MORE_ITEMS => Ok(None),
+                        _ => Err(format!("registry snapshot subkey: {}", status.0)),
+                    }
+                })?;
+                let values = collect_complete_names(|index| {
+                    let mut buffer = vec![0u16; 16_384];
+                    let mut len = buffer.len() as u32;
+                    let status = RegEnumValueW(
+                        root,
+                        index,
+                        windows::core::PWSTR(buffer.as_mut_ptr()),
+                        &mut len,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    match status {
+                        ERROR_SUCCESS => {
+                            Ok(Some(String::from_utf16_lossy(&buffer[..len as usize])))
+                        }
+                        ERROR_NO_MORE_ITEMS => Ok(None),
+                        _ => Err(format!("registry snapshot value: {}", status.0)),
+                    }
+                })?;
+                Ok((keys, values))
+            })();
+            let _ = RegCloseKey(root);
+            result
+        }
     }
 }
 
@@ -435,5 +527,36 @@ pub fn read_string_default(key: &str) -> Option<String> {
             }
             Some(wstring_from_reg_data(&buf[..len as usize]))
         }
+    }
+}
+
+#[cfg(test)]
+mod completeness_tests {
+    #[test]
+    fn late_enumeration_errors_and_caps_never_publish_partial_names() {
+        assert!(super::collect_complete_names(|index| {
+            if index == 0 {
+                Ok(Some("existing".into()))
+            } else {
+                Err("access denied".into())
+            }
+        })
+        .is_err());
+        assert!(super::collect_complete_names(|_| Ok(Some("entry".into()))).is_err());
+        assert_eq!(
+            super::collect_complete_names(|_| Ok(None)).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            super::collect_complete_names(|index| Ok((index == 0).then(|| "entry".into())))
+                .unwrap(),
+            vec!["entry"]
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_names_before_native_access() {
+        assert!(super::snapshot_names("INVALID").is_err());
+        assert!(super::snapshot_names("HKCU\\Software\\Vendor\0Tail").is_err());
     }
 }
