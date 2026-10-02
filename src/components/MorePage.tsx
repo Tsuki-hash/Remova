@@ -7,7 +7,7 @@ import { WhitelistPanel } from "./WhitelistPanel";
 import { IdleRadarPanel } from "./IdleRadarPanel";
 import { ScopedScanPanel } from "./ScopedScanPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
-import { api } from "../lib/api";
+import { api, type IgnoreLists } from "../lib/api";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolItem } from "./MoreToolCard";
@@ -32,6 +32,8 @@ export function MorePage({
   onCheckUpdate,
   onGoSoftware,
   onLastReport,
+  onAiEnabledChange,
+  onIgnoreListsChange,
 }: {
   selected: InstalledApp | null;
   monitoring: boolean;
@@ -48,6 +50,8 @@ export function MorePage({
   onCheckUpdate: () => void;
   onGoSoftware: () => void;
   onLastReport?: (r: FullCleanupReport) => void;
+  onAiEnabledChange?: (enabled: boolean) => void;
+  onIgnoreListsChange?: (lists: IgnoreLists) => void;
 }) {
   const L = t();
   const tools = useMoreTools({ selected, onGoSoftware });
@@ -204,9 +208,10 @@ export function MorePage({
           onClose={() => tools.setOpenTool(null)}
           onError={onError}
           onIgnorePublisher={onIgnorePublisher}
+          onListsChange={onIgnoreListsChange}
         />
       )}
-      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} onEnabledChange={onAiEnabledChange} />}
       {openTool === "idle" && (
         <IdleRadarPanel
           onClose={() => tools.setOpenTool(null)}

@@ -720,6 +720,11 @@ export default function App() {
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
               onGoSoftware={() => goNav("software")}
               onLastReport={(r) => coreSetReport(r)}
+              onAiEnabledChange={setAiEnabled}
+              onIgnoreListsChange={(lists) => {
+                coreSetIgnorePub(lists.publishers);
+                coreSetIgnoreName(lists.names);
+              }}
             />
           )}
           {nav === "software" && (
