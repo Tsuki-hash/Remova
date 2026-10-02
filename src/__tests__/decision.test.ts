@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { t } from "../i18n";
 import {
   appHealth,
   bucketItem,
@@ -230,7 +231,8 @@ describe("leftoverReasonLine / gateReasonText", () => {
     expect(gateReasonText("path missing", L)).toBe(L.reasonPathMissing);
     expect(gateReasonText("not found in PATH", L)).toBe(L.reasonNotInPath);
     expect(gateReasonText("reboot delete", L)).toBe(L.reasonRebootDelete);
-    expect(gateReasonText("something else", L)).toBe("something else");
+    expect(gateReasonText("something else", L)).toBe(t().backendDetailUnavailable);
+    expect(gateReasonText("sc delete Vendor: ok", L)).toBe(t().backendNativeDeleted);
   });
 
   it("gateReasonText maps common Chinese backend copy (F-R6-09)", () => {
