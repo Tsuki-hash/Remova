@@ -136,18 +136,22 @@ export function ShellFooter({
       : undefined;
   return (
     <>
-      <button
-        style={linkBtn}
-        title={L.openReleases}
+      {/* Manual path when no update CTA is showing — once updateInfo exists
+          the Install/Download CTAs already cover the Releases flow. */}
+      {!updateInfo && (
+        <button
+          style={linkBtn}
+          title={L.openReleases}
         onClick={() => {
           void import("../lib/updateCheck").then(({ RELEASES_URL }) => api.openPath(RELEASES_URL)).catch((e) => {
             console.error("[update] open releases failed", e);
             toast.error(formatError(e));
           });
         }}
-      >
-        {L.openReleases}
-      </button>
+        >
+          {L.openReleases}
+        </button>
+      )}
       {progress && (
         <div role="dialog" aria-modal="true" aria-label={L.versionInstall}
           style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center" }}>

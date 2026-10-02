@@ -139,6 +139,7 @@ export function DiskRadarPanel({
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{r.name}</div>
               <div style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
+                {r.capped ? ">=" : ""}
                 {L.diskSizeApprox(formatSize(Math.max(0, r.size_kb)))} · {r.path}
               </div>
             </div>

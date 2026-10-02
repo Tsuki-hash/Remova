@@ -146,6 +146,8 @@ export type DirSizeRow = {
   name: string;
   size_kb: number;
   parent: string;
+  /** entry/depth budget ran out — size is a floor, not a total */
+  capped?: boolean;
 };
 
 export type HistoryEntry = {

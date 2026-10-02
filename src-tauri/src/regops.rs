@@ -832,6 +832,14 @@ fn decode_reg_utf16(data: &[u8]) -> Result<String, String> {
 /// Raw registry value bytes plus the native type code. reg.exe text output is
 /// OEM-codepage encoded and mangles non-ASCII string data — the seal-digested
 /// .reg exporter must carry the exact registry bytes instead.
+#[cfg(not(windows))]
+fn read_reg_value_bytes(
+    _key_path: &str,
+    _value_name: &str,
+) -> Result<Option<(Vec<u8>, u32)>, String> {
+    Err("not windows".into())
+}
+
 #[cfg(windows)]
 fn read_reg_value_bytes(
     key_path: &str,
