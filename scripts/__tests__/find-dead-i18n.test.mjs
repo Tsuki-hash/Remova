@@ -69,3 +69,40 @@ test("conflicting or unknown flags fail before any write", (t) => {
     f.unchanged();
   }
 });
+
+test("prune handles multiline templates, comments and regex without cutting retained entries", (t) => {
+  const f = fixture(t);
+  const originals = [
+    'export const dict = {\n    used: "(",\n    unused: (n: number) => `line (\n${n},\n`,\n};\n',
+    'export const dict = {\n    used: "}",\n    unused: (n: number) => { /* ( { */ return /[(){}]/.test(String(n)) ? `,${n}` : "{"; },\n};\n',
+  ];
+  const paths = ["zh", "en"].map(lang => path.join(f.root, `src/i18n/${lang}.ts`));
+  paths.forEach((file, index) => fs.writeFileSync(file, originals[index]));
+  const result = f.run("--prune");
+  assert.equal(result.status, 0, result.stderr);
+  for (const [index, file] of paths.entries()) {
+    const next = fs.readFileSync(file, "utf8");
+    assert.ok(!next.includes("unused:"));
+    assert.ok(next.includes(index === 0 ? 'used: "("' : 'used: "}"'));
+  }
+  assert.equal(f.run("--check").status, 0);
+});
+
+test("a malformed second dictionary refuses prune without publishing the first", (t) => {
+  const f = fixture(t);
+  const paths = ["zh", "en"].map(lang => path.join(f.root, `src/i18n/${lang}.ts`));
+  fs.writeFileSync(paths[1], 'export const dict = {\n    used: "used",\n    unused: (n: number) => ,\n};\n');
+  const before = paths.map(file => fs.readFileSync(file, "utf8"));
+  assert.notEqual(f.run("--prune").status, 0);
+  assert.deepEqual(paths.map(file => fs.readFileSync(file, "utf8")), before);
+});
+
+test("a second publish failure restores both dictionaries and removes owned staging files", (t) => {
+  const f = fixture(t);
+  const preload = path.join(f.root, "publish-failure.cjs");
+  fs.writeFileSync(preload, "const fs = require('node:fs'); const rename = fs.renameSync; fs.renameSync = (from, to) => { if (to.endsWith('en.ts')) throw new Error('denied'); return rename(from, to); };");
+  const result = spawnSync(process.execPath, ["--require", preload, script, "--prune"], { cwd: f.root, encoding: "utf8" });
+  assert.equal(result.status, 1, result.stderr);
+  f.unchanged();
+  assert.deepEqual(fs.readdirSync(path.join(f.root, "src/i18n")).sort(), ["en.ts", "zh.ts"]);
+});

@@ -6,6 +6,7 @@
 //   node scripts/find-dead-i18n.mjs --prune  # remove dead keys from both files
 import fs from "node:fs";
 import path from "node:path";
+import { dictionaryEntries } from "./i18n-dictionary.mjs";
 
 const zhPath = "src/i18n/zh.ts";
 const enPath = "src/i18n/en.ts";
@@ -19,11 +20,13 @@ const prune = args.includes("--prune");
 const check = args.includes("--check");
 
 const zh = fs.readFileSync(zhPath, "utf8");
-const keys = [...zh.matchAll(/^    ([A-Za-z0-9_]+):/gm)].map((m) => m[1]);
+const zhEntries = dictionaryEntries(zh, zhPath);
+const keys = zhEntries.map(entry => entry.name);
 // zh/en key-set parity — the compile-time check in i18n/index.ts also guards
 // this, but the gate stays independent of the compiler invocation.
 const en = fs.readFileSync(enPath, "utf8");
-const enKeys = [...en.matchAll(/^    ([A-Za-z0-9_]+):/gm)].map((m) => m[1]);
+const enEntries = dictionaryEntries(en, enPath);
+const enKeys = enEntries.map(entry => entry.name);
 const onlyZh = keys.filter((k) => !enKeys.includes(k));
 const onlyEn = enKeys.filter((k) => !keys.includes(k));
 if (onlyZh.length || onlyEn.length) {
@@ -59,56 +62,37 @@ if (!prune) {
   console.log(dead.join("\n"));
   if (check && dead.length > 0) process.exitCode = 1;
 } else {
-  // R21-QA-07: depth-aware entry end (a value's internal line may also end in
-  // a comma). An entry starts at `    key:` and ends at the first line that
-  // terminates the value — depth back to 0 and a trailing comma.
   const deadSet = new Set(dead);
-  for (const file of [zhPath, enPath]) {
-    const original = fs.readFileSync(file, "utf8");
-    const lines = original.split("\n");
-    const out = [];
-    let skipping = false;
-    let depth = 0;
-    let removed = 0;
-    for (const line of lines) {
-      if (skipping) {
-        for (const ch of line) {
-          if (ch === "(" || ch === "[" || ch === "{") depth++;
-          else if (ch === ")" || ch === "]" || ch === "}") depth--;
-        }
-        if (depth <= 0 && /,\s*$/.test(line)) {
-          skipping = false;
-          depth = 0;
-        }
-        continue;
-      }
-      const m = line.match(/^    ([A-Za-z0-9_]+):/);
-      if (m && deadSet.has(m[1])) {
-        removed++;
-        if (!/,\s*$/.test(line)) {
-          skipping = true;
-          depth = 0;
-          for (const ch of line) {
-            if (ch === "(" || ch === "[" || ch === "{") depth++;
-            else if (ch === ")" || ch === "]" || ch === "}") depth--;
-          }
-        }
-        continue;
-      }
-      out.push(line);
+  const candidates = [[zhPath, zh, zhEntries], [enPath, en, enEntries]].map(([file, original, entries]) => {
+    let next = original;
+    for (const entry of [...entries].reverse()) {
+      if (deadSet.has(entry.name)) next = next.slice(0, entry.start) + next.slice(entry.end);
     }
-    const next = out.join("\n");
-    // R21-QA-07: write-back only if the pruned file still looks like a valid
-    // object literal — a mid-entry cut must roll back, not ship broken TS.
-    const opens = (next.match(/\{/g) || []).length;
-    const closes = (next.match(/\}/g) || []).length;
-    const parensOpen = (next.match(/\(/g) || []).length;
-    const parensClose = (next.match(/\)/g) || []).length;
-    if (opens !== closes || parensOpen !== parensClose) {
-      console.error(`${file}: prune would unbalance braces/parens — rolled back`);
-      continue;
+    const remaining = dictionaryEntries(next, file).map(entry => entry.name);
+    if (remaining.join("\0") !== entries.filter(entry => !deadSet.has(entry.name)).map(entry => entry.name).join("\0"))
+      throw new Error(`${file}: prune changed retained keys`);
+    return { file, original, next };
+  });
+  const staged = [], published = [];
+  try {
+    for (const candidate of candidates) {
+      const temp = `${candidate.file}.prune-${process.pid}`;
+      const fd = fs.openSync(temp, "wx");
+      staged.push(temp);
+      try { fs.writeFileSync(fd, candidate.next); } finally { fs.closeSync(fd); }
     }
-    fs.writeFileSync(file, next);
-    console.log(`${file}: removed ${removed} keys`);
+    if (candidates.some(candidate => fs.readFileSync(candidate.file, "utf8") !== candidate.original))
+      throw new Error("dictionary changed while preparing prune");
+    for (const [index, candidate] of candidates.entries()) {
+      fs.renameSync(staged[index], candidate.file);
+      published.push(candidate);
+    }
+    for (const candidate of candidates) console.log(`${candidate.file}: removed ${dead.length} keys`);
+  } catch (error) {
+    for (const candidate of published) fs.writeFileSync(candidate.file, candidate.original);
+    console.error(error.message);
+    process.exitCode = 1;
+  } finally {
+    for (const temp of staged) fs.rmSync(temp, { force: true });
   }
 }
