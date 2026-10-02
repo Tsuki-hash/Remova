@@ -609,6 +609,8 @@ pub fn run() {
     // One-shot Safety Vault retention (not on list/read paths).
     std::thread::spawn(|| {
         let _ = restore::prune_old_sessions(crate::constants::BACKUP_RETENTION_DAYS);
+        #[cfg(windows)]
+        path_seal::cleanup_abandoned_stages();
     });
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())

@@ -9,6 +9,7 @@ use windows::Win32::Security::Authorization::*;
 use windows::Win32::Security::*;
 use windows::Win32::Storage::FileSystem::*;
 use zeroize::Zeroizing;
+mod recovery;
 
 pub(super) struct Store {
     pub key: Zeroizing<[u8; 32]>,
@@ -62,10 +63,10 @@ fn privileged(sid: PSID) -> Result<bool, String> {
     ))
 }
 /// Validate security on the pinned object, including the parent's DELETE_CHILD.
-fn validate(file: &File, private: bool) -> Result<(), String> {
+fn validate(file: &impl AsRawHandle, private: bool) -> Result<(), String> {
     validate_object(file, private, true)
 }
-fn validate_object(file: &File, private: bool, protected: bool) -> Result<(), String> {
+fn validate_object(file: &impl AsRawHandle, private: bool, protected: bool) -> Result<(), String> {
     unsafe {
         let mut owner = PSID::default();
         let mut acl = std::ptr::null_mut();
@@ -365,6 +366,7 @@ pub(super) struct Stage {
 }
 impl Store {
     pub fn stage(self) -> Result<Stage, String> {
+        self.cleanup_abandoned();
         let n = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "seal:key_clock")?

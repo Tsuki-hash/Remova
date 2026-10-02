@@ -334,6 +334,19 @@ impl Drop for DirPin {
     }
 }
 
+#[cfg(windows)]
+impl std::os::windows::io::AsRawHandle for DirPin {
+    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
+        self.handle.0
+    }
+}
+
+/// Reserve deletion and security inspection together; active staging pins refuse this open.
+#[cfg(windows)]
+pub(crate) fn pin_private_delete(p: &Path) -> std::io::Result<DirPin> {
+    pin_dir_with_access(p, 0x0003_0081)
+}
+
 /// Open `p` and verify it is not a reparse point — by handle, not by path.
 pub fn pin_dir_no_reparse(p: &Path) -> std::io::Result<DirPin> {
     pin_dir_with_access(p, 0x0001_0080)
@@ -596,8 +609,12 @@ pub fn pin_existing_parents(p: &Path) -> std::io::Result<Vec<DirPin>> {
 }
 
 fn remove_tree_pinned(p: &Path) -> std::io::Result<()> {
+    remove_tree_with_pin(p, pin_dir_no_reparse(p)?)
+}
+
+/// Consume the already verified deletion pin without reopening against its sharing mode.
+pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result<()> {
     let is_dir = {
-        let mut pin = pin_dir_no_reparse(p)?;
         let meta = std::fs::symlink_metadata(p)?;
         if meta.is_dir() {
             pin.guard_empty()?;
@@ -631,6 +648,7 @@ fn remove_tree_pinned(p: &Path) -> std::io::Result<()> {
             false
         }
     };
+    drop(pin);
     // Pin is dropped first: removing needs a DELETE-open, which our own
     // no-DELETE-share pin would otherwise block. The window left here is
     // benign — a swapped-in junction link or empty dir is removed as-is,
