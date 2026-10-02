@@ -4,6 +4,7 @@ import { acquireUpdateSlot, UPDATE_BUSY } from "./nativeActivity";
 import { formatError } from "./format";
 import { requestConfirm } from "./confirm";
 import { t } from "../i18n";
+import { compareSemver } from "../semver";
 import type { UpdateInfo } from "./updateCheck";
 
 export type UpdateProgress = { phase: "checking" | "downloading" | "installing"; percent?: number };
@@ -34,7 +35,7 @@ export async function installUpdate(
     onProgress({ phase: "checking" });
     update = await check({ target: "windows-x86_64-nsis", timeout: 30000 });
     if (!update) throw new Error("update:check_failed");
-    if (update.version.replace(/^v/, "") !== info.version.replace(/^v/, "")) {
+    if (compareSemver(update.version, info.version) !== 0) {
       throw new Error("update:version_changed");
     }
     let downloaded = 0;
