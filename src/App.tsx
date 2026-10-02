@@ -261,6 +261,7 @@ export default function App() {
   } = useCleanupHandlers({
     L,
     selected,
+    scanTarget: core.scanTarget,
     scan,
     selectedPaths,
     residualFromUninstall,
