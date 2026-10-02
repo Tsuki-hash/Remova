@@ -4,6 +4,7 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendText } from "../lib/backendText";
+import { cleanupFeedback } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
@@ -45,11 +46,11 @@ export function OrphanPage({
     return L.orphanSelectedMeta(picked.length, kb > 0 ? formatSize(kb) : "");
   }, [items, selected, L]);
 
-  const scan = async () => {
+  const scan = async (quiet = false) => {
     if (busy) return;
     setBusy(true);
  // One channel for the whole run — no sticky pile-up.
-    toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
+    if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
       const list = await api.orphanScan();
       setItems(list);
@@ -58,8 +59,8 @@ export function OrphanPage({
       setLastScanLabel(
         list.length === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${s.total}`,
       );
-      if (list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
-      else
+      if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
+      else if (!quiet)
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
           channel: ORPHAN_CHANNEL,
           ttl: 3000,
@@ -67,7 +68,7 @@ export function OrphanPage({
     } catch (e) {
       const msg = formatError(e, "analyze");
       onError?.(msg);
-      toast.error(msg, { channel: ORPHAN_CHANNEL });
+      toast.error(msg, { channel: quiet ? `${ORPHAN_CHANNEL}-refresh` : ORPHAN_CHANNEL });
     } finally {
       setBusy(false);
     }
@@ -123,11 +124,8 @@ export function OrphanPage({
         return;
       }
       onLastReport(report);
-      toast.success(L.batchDetail(report.deleted, report.failed), {
-        channel: ORPHAN_CHANNEL,
-        ttl: 3000,
-      });
-      await scan();
+      cleanupFeedback(report, L, ORPHAN_CHANNEL);
+      await scan(true);
     } catch (e) {
       const msg = formatError(e, "cleanup");
       onError?.(msg);

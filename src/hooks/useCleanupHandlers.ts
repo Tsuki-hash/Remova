@@ -15,6 +15,7 @@ import {
 } from "../lib/decision";
 import { appKey, scanMatchesApp } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
+import { cleanupFeedback } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
 
 /** Grouped cleanup setters (A-4). */
@@ -135,9 +136,7 @@ export function useCleanupHandlers({
           setAiReportNote(null);
           return;
         }
-        toast.success(
-          `${L.forceClean}: ${prettyAppName(target.name, target.source)} · ${L.batchDetail(report.deleted, report.failed)}`,
-        );
+        cleanupFeedback(report, L, undefined, `${L.forceClean}: ${prettyAppName(target.name, target.source)} · `);
         setReport(report);
  // a new report must never inherit the previous cleanup's
  // post-cleanup verify list or AI narrative.
