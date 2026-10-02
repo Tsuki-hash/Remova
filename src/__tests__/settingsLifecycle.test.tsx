@@ -2,16 +2,28 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AiSettingsPanel } from "../components/AiSettingsPanel";
+import { WhitelistPanel } from "../components/WhitelistPanel";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import type { AiConfigView } from "../types";
 
-vi.mock("../lib/api", () => ({ api: { getAiConfig: vi.fn(), saveAiConfig: vi.fn() } }));
+vi.mock("../lib/api", () => ({ api: { getAiConfig: vi.fn(), saveAiConfig: vi.fn(),
+  loadIgnore: vi.fn(), unignorePublisher: vi.fn(), unignoreAppName: vi.fn() } }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const config: AiConfigView = { enabled: false, provider: "ollama", base_url: "http://localhost/v1",
   model: "saved-model", allow_cloud_paths: false, has_api_key: false };
 beforeEach(() => vi.resetAllMocks());
 afterEach(cleanup);
+
+it("publishes the complete ignore lists after a successful removal", async () => {
+  vi.mocked(api.loadIgnore).mockResolvedValue({ publishers: ["Vendor"], names: ["Hidden"] });
+  vi.mocked(api.unignorePublisher).mockResolvedValue({ publishers: [], names: ["Hidden"] });
+  const onListsChange = vi.fn();
+  render(<WhitelistPanel onClose={() => {}} onError={vi.fn()} onListsChange={onListsChange} />);
+  await screen.findByText("Vendor");
+  fireEvent.click(screen.getAllByRole("button", { name: t().whitelistRemove })[0]!);
+  await waitFor(() => expect(onListsChange).toHaveBeenCalledWith({ publishers: [], names: ["Hidden"] }));
+});
 
 it("blocks edits and saves until the real configuration arrives", async () => {
   let resolve!: (value: AiConfigView) => void;

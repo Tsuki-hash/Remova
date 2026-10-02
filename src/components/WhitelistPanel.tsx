@@ -11,10 +11,12 @@ export function WhitelistPanel({
   onClose,
   onError,
   onIgnorePublisher,
+  onListsChange,
 }: {
   onClose: () => void;
   onError: (msg: string) => void;
   onIgnorePublisher?: () => void;
+  onListsChange?: (lists: IgnoreLists) => void;
 }) {
   const L = t();
   const [lists, setLists] = useState<IgnoreLists | null>(null);
@@ -92,6 +94,7 @@ export function WhitelistPanel({
                   void p
                     .then((next) => {
                       setLists(next);
+                      onListsChange?.(next);
                       toast.success(L.ignoreSuggestDone);
                     })
                     .catch((e) => onError(formatError(e)));

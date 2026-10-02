@@ -88,6 +88,7 @@ import App from "../App";
 import * as i18n from "../i18n";
 import { exportHtmlReport } from "../lib/exportHtmlReport";
 import { appKey } from "../lib/appKey";
+import { toast } from "../lib/toast";
 import { saveRescanAfterUninstall } from "../lib/rescanPref";
 
 const demo: InstalledApp = {
@@ -155,9 +156,27 @@ beforeEach(() => {
     diff: { added_files: [scan.items[0]!.path], added_reg_values: [] }, items: scan.items,
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); });
 
 describe("App orchestration", () => {
+  it("applies saved AI state and removed ignore rules immediately across pages", async () => {
+    await mount();
+    act(() => software().listIgnorePublisher(demo));
+    await waitFor(() => expect(software().filtered).not.toContainEqual(demo));
+    await nav("more");
+    act(() => {
+      more().onAiEnabledChange?.(true);
+      more().onIgnoreListsChange?.({ publishers: [], names: [] });
+    });
+    await nav("software");
+    expect(software().aiEnabled).toBe(true);
+    expect(software().filtered).toContainEqual(demo);
+    await nav("more");
+    act(() => more().onAiEnabledChange?.(false));
+    await nav("software");
+    expect(software().aiEnabled).toBe(false);
+  });
+
   it("boots, filters categories and toggles multi selection through page callbacks", async () => {
     await mount();
     expect(software().apps).toEqual([demo, other]);
