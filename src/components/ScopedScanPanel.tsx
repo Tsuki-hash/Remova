@@ -5,6 +5,7 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendText } from "../lib/backendText";
+import { cleanupFeedback } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
@@ -48,22 +49,22 @@ export function ScopedScanPanel({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
-  const runScan = useCallback(async () => {
+  const runScan = useCallback(async (quiet = false) => {
     setBusy(true);
-    toast.info(L.orphanScanProgress, { channel });
+    if (!quiet) toast.info(L.orphanScanProgress, { channel });
     try {
       const list = await scan();
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
-      if (list.length === 0) toast.info(L.orphanScanEmpty, { channel });
-      else {
+      if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel });
+      else if (!quiet) {
         const s = summarizeLeftovers(list);
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel, ttl: 2500 });
       }
     } catch (e) {
       const msg = formatError(e, "analyze");
       onError(msg);
-      toast.error(msg, { channel });
+      toast.error(msg, { channel: quiet ? `${channel}-refresh` : channel });
     } finally {
       setBusy(false);
     }
@@ -108,9 +109,10 @@ export function ScopedScanPanel({
         cleanup_source: cleanupSource,
       });
       onLastReport(report);
+      const message = cleanupFeedback(report, L, channel);
+      if (report.aborted) onError(message);
       if (!report.aborted) {
-        toast.success(L.batchDetail(report.deleted, report.failed), { channel, ttl: 2500 });
-        await runScan();
+        await runScan(true);
       }
     } catch (e) {
       const msg = formatError(e, "cleanup");
@@ -235,7 +237,7 @@ export function ScopedScanPanel({
           <button
             type="button"
             style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0, alignSelf: "flex-start" }}
-            onClick={() => void api.openPath(it.path)}
+            onClick={() => void api.openPath(it.path).catch(e => onError(formatError(e)))}
           >
             {L.openLocation}
           </button>
