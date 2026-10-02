@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
@@ -68,6 +68,21 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
         ? "force_clean"
         : "list";
 
+  let installedAfter: string | null = null;
+  if (/最近(?:30天)?安装|recently installed|installed in the last 30 days/i.test(raw)) {
+    const dateKey = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+    const today = dateKey(new Date());
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const after = dateKey(cutoff);
+    installedAfter = after;
+    list = list.filter(a => /^\d{8}$/.test(a.install_date) && a.install_date >= after && a.install_date <= today);
+  }
+  if (/启动项|startup|可能.*残留|possible.*leftover/i.test(raw) ||
+    (!nameLike && !pubLike && !sizeGtKb && !installedAfter && !/^(所有软件|全部软件|all apps)$/i.test(raw))) {
+    throw new Error(t().copilotOfflineUnsupported);
+  }
+
   return {
     list,
     intent: {
@@ -76,7 +91,7 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
         name_like: nameLike || null,
         publisher: pubLike || null,
         size_gt_kb: sizeGtKb,
-        installed_after: null,
+        installed_after: installedAfter,
       },
       include_leftovers: /残留|leftover/i.test(raw),
       note: raw,
@@ -104,10 +119,30 @@ export function CopilotPanel({
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<NlIntent | null>(null);
   const [matches, setMatches] = useState<InstalledApp[]>([]);
+  const requestSeq = useRef(0);
+  const busyRef = useRef(false);
+  const changeQuery = (value: string) => {
+    requestSeq.current += 1;
+    busyRef.current = false;
+    setBusy(false);
+    setIntent(null);
+    setMatches([]);
+    setQ(value);
+  };
+  useEffect(() => {
+    requestSeq.current += 1;
+    busyRef.current = false;
+    setBusy(false);
+    setIntent(null);
+    setMatches([]);
+    return () => { requestSeq.current += 1; };
+  }, [apps, aiEnabled]);
 
   const parse = async () => {
     const text = q.trim();
-    if (!text) return;
+    if (!text || busyRef.current) return;
+    busyRef.current = true;
+    const seq = ++requestSeq.current;
     setBusy(true);
     setIntent(null);
     setMatches([]);
@@ -121,14 +156,15 @@ export function CopilotPanel({
         return;
       }
       const parsed = await api.aiParseIntent(text, apps.map((a) => a.name).slice(0, 40));
+      if (seq !== requestSeq.current) return;
       const hit = applyFilter(apps, parsed.filter || {});
       setIntent(parsed);
       setMatches(hit);
       if (hit.length === 0) toast.info(L.copilotNoMatch);
     } catch (e) {
-      toast.error(formatError(e));
+      if (seq === requestSeq.current) toast.error(formatError(e));
     } finally {
-      setBusy(false);
+      if (seq === requestSeq.current) { busyRef.current = false; setBusy(false); }
     }
   };
 
@@ -159,7 +195,7 @@ export function CopilotPanel({
           style={{ ...css.input, flex: "1 1 220px", height: 32, minWidth: 180 }}
           placeholder={L.copilotInlinePlaceholder}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => changeQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") void parse();
           }}
@@ -178,8 +214,7 @@ export function CopilotPanel({
             style={{ ...css.btnSm, height: 32 }}
             aria-label={L.panelClose}
             onClick={() => {
-              setIntent(null);
-              setMatches([]);
+              changeQuery(q);
             }}
           >
             <CloseGlyph />
@@ -191,8 +226,7 @@ export function CopilotPanel({
         {[
           L.smartFilterExample1,
           L.smartFilterExample2,
-          L.smartFilterExample3,
-          L.smartFilterExample4,
+          ...(aiEnabled ? [L.smartFilterExample3, L.smartFilterExample4] : []),
         ].map((ex) => (
           <button
             key={ex}
@@ -203,7 +237,7 @@ export function CopilotPanel({
               cursor: "pointer",
               background: "var(--surface)",
             }}
-            onClick={() => setQ(ex)}
+            onClick={() => changeQuery(ex)}
           >
             {ex}
           </button>
