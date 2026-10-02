@@ -38,7 +38,6 @@ export function ToastHost() {
       {items.map((item) => (
         <div
           key={item.id}
-          role={item.kind === "error" ? "alert" : "status"}
           style={{
             pointerEvents: "auto",
             display: "flex",

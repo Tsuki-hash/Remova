@@ -172,6 +172,7 @@ function RowMenu({
                 onClick={(e) => {
                   e.stopPropagation();
                   setOpen(false);
+                  btnRef.current?.focus();
                   it.fn(app);
                 }}
               >
