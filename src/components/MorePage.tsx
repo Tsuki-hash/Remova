@@ -184,7 +184,9 @@ export function MorePage({
       {openTool === "restore" && (
         <RestorePanel
           sessions={rest.sessions}
-          loading={rest.restoreLoading}
+            loading={rest.restoreLoading}
+            loadError={rest.restoreLoadError}
+            onReload={() => void rest.loadRestore()}
           pick={rest.restorePick}
           setPick={rest.setRestorePick}
           busy={rest.restoreBusy}
