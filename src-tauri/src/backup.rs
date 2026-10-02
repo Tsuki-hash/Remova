@@ -11,6 +11,18 @@ fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
     crate::fsutil::write_bytes_atomic(p, bytes).map_err(|e| e.to_string())
 }
 
+fn export_with_view(raw: &str, view: &str) -> Result<String, String> {
+    let (header, body) = raw
+        .split_once('\n')
+        .ok_or("missing registry export header")?;
+    if header.trim_end_matches('\r') != "Windows Registry Editor Version 5.00" {
+        return Err("invalid registry export header".into());
+    }
+    Ok(format!(
+        "{header}\n; Remova registry view: {view}\r\n{body}"
+    ))
+}
+
 pub fn backup_root() -> PathBuf {
     // the override is compile-time test-only — a production
     // parent process must not relocate the backup root (the seal binding
@@ -309,11 +321,8 @@ fn backup_item_with_map(
             let raw = crate::restore::decode_reg_text(fs::read(&dest).map_err(|e| e.to_string())?)?;
             write_bytes_atomic(
                 &dest,
-                format!(
-                    "; Remova registry view: {}\r\n{raw}",
-                    reg_view_flag(export_path).trim_start_matches("/reg:")
-                )
-                .as_bytes(),
+                export_with_view(&raw, reg_view_flag(export_path).trim_start_matches("/reg:"))?
+                    .as_bytes(),
             )?;
             // Record the specific value name for Run items so restore knows what was targeted.
             if let Some((key, vname)) = item.path.split_once('|') {
@@ -383,6 +392,36 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
+
+    #[test]
+    #[cfg(windows)]
+    fn view_annotation_keeps_native_import_header_valid() {
+        // No keys or values: native format acceptance without registry writes.
+        let raw = "Windows Registry Editor Version 5.00\r\n\r\n";
+        let path = std::env::temp_dir().join(format!(
+            "remova-header-{}.reg",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let text = export_with_view(raw, "32").unwrap();
+        assert_eq!(
+            text.lines().next(),
+            Some("Windows Registry Editor Version 5.00")
+        );
+        let bytes: Vec<u8> = std::iter::once(0xfeffu16)
+            .chain(text.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        fs::write(&path, bytes).unwrap();
+        let result = Command::new(crate::regops::sys_tool("reg.exe"))
+            .args(["import", path.to_str().unwrap(), "/reg:32"])
+            .output();
+        fs::remove_file(&path).unwrap();
+        assert!(result.unwrap().status.success());
+        assert!(export_with_view("; comment\nWindows Registry Editor Version 5.00", "32").is_err());
+    }
 
     #[test]
     fn private_stage_backup_file_and_path_roundtrip_refuses_existing_snapshots() {
