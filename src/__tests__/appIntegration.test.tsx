@@ -226,6 +226,9 @@ describe("App orchestration", () => {
   it("boots, filters categories and toggles multi selection through page callbacks", async () => {
     await mount();
     expect(software().apps).toEqual([demo, other]);
+    // The admin chip asks for consent (same dialog as the manage pages)
+    // before firing UAC and relaunching.
+    native.requestConfirm.mockResolvedValueOnce(true);
     fireEvent.click(screen.getByRole("button", { name: i18n.t().nonAdmin }));
     await waitFor(() => expect(native.elevateRestart).toHaveBeenCalledTimes(1));
     act(() => software().onCategory("store"));

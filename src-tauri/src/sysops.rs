@@ -350,3 +350,33 @@ mod verification_tests {
         assert!(rows[..3].iter().all(|row| row.error.is_none()));
     }
 }
+
+/// Elevated-relaunch handshake: the freshly spawned admin instance waits for
+/// the old (non-admin) process to terminate before starting, so the
+/// single-instance lock is free when Tauri initializes. Returns false on
+/// timeout — the old run stayed alive (e.g. the user cancelled the busy
+/// confirm) and the caller should exit quietly.
+pub fn wait_for_process_exit(pid: u32, timeout_ms: u32) -> bool {
+    #[cfg(not(windows))]
+    {
+        let _ = (pid, timeout_ms);
+        true
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+        unsafe {
+            // A vanished old instance (fast clean exit) must proceed — an
+            // unopenable PID is treated as "already gone".
+            let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+                return true;
+            };
+            let waited = WaitForSingleObject(handle, timeout_ms);
+            let _ = CloseHandle(handle);
+            waited == WAIT_OBJECT_0
+        }
+    }
+}

@@ -493,9 +493,15 @@ fn disk_usage() -> Result<DiskInfo, String> {
 
 #[tauri::command]
 async fn elevate_restart(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| sysops::elevate_relaunch(&[]))
-        .await
-        .map_err(|e| e.to_string())??;
+    tauri::async_runtime::spawn_blocking(|| {
+        // The elevated copy waits for this process to exit before starting
+        // (see main.rs) — the single-instance lock is then free regardless of
+        // how long the guarded quit below takes.
+        let handoff = format!("--elevated-relaunch={}", std::process::id());
+        sysops::elevate_relaunch(&[handoff])
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     // The elevated copy must find the single-instance lock free, or it exits
     // itself and the stale non-admin window wins. Hand the old window the
     // same guarded quit the tray menu uses — a running critical write still
