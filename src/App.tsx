@@ -1,7 +1,7 @@
 import { api } from "./lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp } from "./types";
 import { loadLang, t } from "./i18n";
-import { cssStyles as css, globalCss } from "./styles";
+import { cssStyles as css } from "./styles";
 import { formatError } from "./lib/format";
 import { applyTheme } from "./lib/theme";
 import { navSubtitle, navTitle } from "./lib/appNav";
@@ -630,7 +630,6 @@ export default function App() {
 
   return (
     <>
-      <style>{globalCss}</style>
       <ConfirmHost />
       <CloseChoiceHost />
       <ToastHost />

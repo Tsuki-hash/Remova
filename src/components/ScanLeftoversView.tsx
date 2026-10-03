@@ -63,8 +63,18 @@ const LeftoverRow = memo(function LeftoverRow({
           onChange={() => onTogglePath(it.path)}
         />
       </div>
-      <div style={{ minWidth: 0 }}>
-        <span className="ell" style={{ display: "block", fontSize: 12.5 }} title={it.path}>
+      <div style={{ minWidth: 0, overflow: "hidden" }}>
+        <span
+          className="ell"
+          style={{
+            display: "block",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 12.5,
+          }}
+          title={it.path}
+        >
           {it.path}
         </span>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2, lineHeight: 1.4 }}>
