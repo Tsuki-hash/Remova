@@ -5,6 +5,9 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MonitorPanel } from "../components/MonitorPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { CheckupPanel } from "../components/CheckupPanel";
+import { ScanActionsBar } from "../components/ScanActionsBar";
+import { t } from "../i18n";
+import type { CleanupItem } from "../types";
 
 afterEach(cleanup);
 
@@ -115,5 +118,36 @@ describe("CheckupPanel", () => {
     expect(screen.getByText("3")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("ScanActionsBar", () => {
+  const baseScan = { app_name: "App", items: [] };
+  const baseProps = {
+    scan: baseScan,
+    scanning: false,
+    dryRunning: false,
+    residualFromUninstall: false,
+    useOfficial: false,
+    aiEnabled: false,
+    aiBusy: false,
+    busy: false,
+    onBack: vi.fn(),
+    onUseOfficial: vi.fn(),
+    onDryRun: vi.fn(),
+    onCleanup: vi.fn(),
+    onAiExplain: vi.fn(),
+  };
+
+  it("hides the cleanup plan card while nothing is selected", () => {
+    render(<ScanActionsBar {...baseProps} selectedPaths={new Set()} />);
+    expect(screen.queryByRole("region", { name: t().cleanupPlanTitle })).toBeNull();
+    expect(screen.getByRole("button", { name: `${t().cleanup} (0)` }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows the cleanup plan card once a row is selected", () => {
+    const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
+    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} />);
+    expect(screen.getByRole("region", { name: t().cleanupPlanTitle })).toBeTruthy();
   });
 });
