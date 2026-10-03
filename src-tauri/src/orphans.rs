@@ -128,6 +128,14 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
             roots.push(std::path::PathBuf::from(v));
         }
     }
+    scan_orphans_in_roots(installed, &ignore, roots)
+}
+
+fn scan_orphans_in_roots(
+    installed: &[InstalledApp],
+    ignore: &crate::ignore::IgnoreList,
+    roots: Vec<std::path::PathBuf>,
+) -> Vec<CleanupItem> {
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
     for root in roots {
@@ -175,7 +183,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
                 continue;
             }
             // honor ignore path rules for orphan candidates.
-            if crate::ignore::should_skip_leftover_path(&ignore, &p.to_string_lossy()) {
+            if crate::ignore::should_skip_leftover_path(ignore, &p.to_string_lossy()) {
                 continue;
             }
             if !looks_like_app_dir(&p) {
@@ -350,6 +358,7 @@ mod tests {
 
     #[test]
     fn orphan_allow_list_normalizes_case_and_trailing_slash() {
+        let _guard = crate::scan_allow::test_lock();
         // -02: case / trailing `\` / slash style must not bypass the allow-list.
         use std::collections::HashSet;
         let mut set = HashSet::new();
@@ -366,7 +375,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn scan_orphans_runs() {
-        let apps = crate::apps::scan_installed_apps();
+        let _guard = crate::scan_allow::test_lock();
+        let apps = crate::apps::scan_installed_inventory();
         let items = scan_orphans(&apps);
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
@@ -380,5 +390,43 @@ mod tests {
                 .iter()
                 .any(|e| e.code == "orphan_no_owner" || e.code == "orphan_dir"));
         }
+    }
+
+    #[test]
+    fn hidden_installed_products_never_gain_orphan_authorization() {
+        let _guard = crate::scan_allow::test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "remova-owned-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let product = root.join("OwnedProduct");
+        std::fs::create_dir_all(&product).unwrap();
+        std::fs::write(product.join("app.exe"), b"mz").unwrap();
+        let path = product.to_string_lossy().into_owned();
+        let mut owner = app("OwnedProduct", &path);
+        owner.publisher = "OwnedVendor".into();
+        let inventory = vec![owner];
+        for ignore in [
+            crate::ignore::IgnoreList {
+                names: vec!["OwnedProduct".into()],
+                ..Default::default()
+            },
+            crate::ignore::IgnoreList {
+                publishers: vec!["OwnedVendor".into()],
+                ..Default::default()
+            },
+        ] {
+            let mut visible = inventory.clone();
+            crate::apps::filter_visible_apps(&mut visible, &ignore);
+            assert!(visible.is_empty());
+            let rows = scan_orphans_in_roots(&inventory, &ignore, vec![root.clone()]);
+            assert!(rows.is_empty());
+            assert!(!was_recent_orphan_path(&path));
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

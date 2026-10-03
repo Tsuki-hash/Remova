@@ -69,6 +69,22 @@ pub struct InstalledApp {
 
 /// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
 pub fn scan_installed_apps() -> Vec<InstalledApp> {
+    let mut out = scan_installed_inventory();
+    let ignore = crate::ignore::load();
+    filter_visible_apps(&mut out, &ignore);
+    remember_uninstall_commands(&out);
+    out
+}
+
+pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::ignore::IgnoreList) {
+    out.retain(|a| {
+        !crate::ignore::is_app_ignored(ignore, &a.name, &a.publisher, &a.install_location)
+    });
+}
+
+/// Complete ownership inventory, including products hidden from the app list.
+/// This read-only scan must not expand or replace uninstall authorization.
+pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
     let mut out: Vec<InstalledApp> = Vec::new();
     #[cfg(windows)]
     {
@@ -99,13 +115,6 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
         out.extend(crate::storeapps::scan_store_apps());
     }
     dedup_same_products(&mut out);
-    // backend-enforce ignore rules (publisher / name / install path).
-    let ignore = crate::ignore::load();
-    out.retain(|a| {
-        !crate::ignore::is_app_ignored(&ignore, &a.name, &a.publisher, &a.install_location)
-    });
-    // S-RCE: every scan path refreshes the uninstall trust table (not only list IPC).
-    remember_uninstall_commands(&out);
     out
 }
 
