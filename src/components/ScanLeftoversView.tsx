@@ -42,7 +42,7 @@ const LeftoverRow = memo(function LeftoverRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "28px 1fr 120px 90px 40px",
+        gridTemplateColumns: "28px minmax(0, 1fr) 120px 90px 40px",
         gap: 8,
         alignItems: "start",
         padding: "10px 14px",
@@ -320,7 +320,17 @@ export function ScanLeftoversView({
       )}
       <div
         ref={scrollRef}
-        style={{ ...css.scroll, position: "relative" }}
+        style={{
+          ...css.scroll,
+          position: "relative",
+          // The page (Shell main) is the outer scroller; without a bound this
+          // container grows with its content and, with `contain`, becomes a
+          // wheel dead zone. Cap it so long lists scroll here (and the
+          // virtualizer engages), and let wheel chaining reach the page when
+          // the inner list is at its end.
+          maxHeight: "60vh",
+          overscrollBehavior: "auto",
+        }}
       >
         {isOrphan && originGroups.length > 0 && (
           <div style={{ padding: "10px 14px 0" }}>
@@ -337,7 +347,9 @@ export function ScanLeftoversView({
             fontSize: 11,
             color: "var(--muted)",
             display: "grid",
-            gridTemplateColumns: "28px 1fr 120px 90px 40px",
+            // minmax(0,1fr): an unbreakable long path must shrink to the
+            // track (ellipsis via .ell), not push the 来源/判定 columns over.
+            gridTemplateColumns: "28px minmax(0, 1fr) 120px 90px 40px",
             gap: 8,
             padding: "8px 14px",
             borderBottom: "1px solid var(--border)",
