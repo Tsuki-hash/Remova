@@ -22,41 +22,51 @@ export function DiskRadarPanel({
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
   const requestSeq = useRef(0);
+  const busyRef = useRef(false);
 
-  const load = async (parent?: string, letter?: string) => {
+  const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = []) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     const seq = ++requestSeq.current;
     setBusy(true);
     try {
       const list = parent
         ? await api.listDirChildren(parent)
         : await api.listTopDirSizes(letter);
-      if (seq === requestSeq.current) setRows(list);
+      if (seq === requestSeq.current) {
+        setRows(list);
+        setCrumbs(nextCrumbs);
+        if (letter !== undefined) setDrive(letter);
+      }
     } catch (e) {
       if (seq === requestSeq.current) onError(formatError(e));
     } finally {
-      if (seq === requestSeq.current) setBusy(false);
+      if (seq === requestSeq.current) {
+        busyRef.current = false;
+        setBusy(false);
+      }
     }
   };
 
   useEffect(() => {
+    let alive = true;
     void (async () => {
       try {
         const list = await api.listLocalDrives();
+        if (!alive) return;
         setDrives(list);
         const sys = list.find((d) => d.is_system) ?? list[0];
         const letter = sys?.letter ?? "";
-        setDrive(letter);
         await load(undefined, letter);
       } catch (e) {
-        onError(formatError(e));
+        if (alive) onError(formatError(e));
       }
     })();
+    return () => { alive = false; requestSeq.current += 1; busyRef.current = false; };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const switchDrive = async (letter: string) => {
-    setDrive(letter);
-    setCrumbs([]);
     await load(undefined, letter);
   };
 
@@ -97,10 +107,10 @@ export function DiskRadarPanel({
             <button
               style={{ ...css.btnGhost, height: 30 }}
               aria-label={L.navBack}
+              disabled={busy}
               onClick={() => {
                 const next = crumbs.slice(0, -1);
-                setCrumbs(next);
-                void load(next[next.length - 1]?.path, drive);
+                void load(next[next.length - 1]?.path, drive, next);
               }}
             >
               ←
@@ -109,7 +119,7 @@ export function DiskRadarPanel({
           <button
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy}
-            onClick={() => { setCrumbs([]); void load(undefined, drive); }}
+            onClick={() => void load(undefined, drive)}
           >
             {L.manageReload}
           </button>
@@ -146,9 +156,9 @@ export function DiskRadarPanel({
             </div>
             <button
               style={{ ...css.btnGhost, height: 26, padding: "0 8px" }}
+              disabled={busy}
               onClick={() => {
-                setCrumbs((c) => [...c, r]);
-                void load(r.path);
+                void load(r.path, drive, [...crumbs, r]);
               }}
             >
               {L.detailShow}

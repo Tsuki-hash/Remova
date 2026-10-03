@@ -74,17 +74,50 @@ it("shows capped sizes as one floor marker and catches open failures", async () 
   await waitFor(() => expect(onError).toHaveBeenCalledOnce());
 });
 
-it("does not replace the root view with a stale child response after going back", async () => {
+it("rejects old sibling rows while loading and commits navigation only with the response", async () => {
+  native.listTopDirSizes.mockResolvedValue([
+    { path: "A", name: "A", size_kb: 1, capped: true },
+    { path: "B", name: "B", size_kb: 1, capped: false },
+  ]);
   let resolveChild!: (value: unknown[]) => void;
   native.listDirChildren.mockImplementationOnce(() => new Promise(resolve => { resolveChild = resolve; }));
   render(<DiskRadarPanel onClose={() => {}} onError={vi.fn()} />);
   await screen.findByText(/>= 1 KB/);
-  fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
+  const drill = screen.getAllByRole("button", { name: t().detailShow });
+  fireEvent.click(drill[0]!);
+  fireEvent.click(drill[1]!);
+  expect(native.listDirChildren).toHaveBeenCalledTimes(1);
+  expect(native.listDirChildren).toHaveBeenCalledWith("A");
+  expect((drill[1] as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: t().navBack })).toBeNull();
+  await act(async () => { resolveChild([{ path: "A/child", name: "A child", size_kb: 10, capped: false }]); });
+  expect(screen.getByText("A child")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
-  await act(async () => { resolveChild([{ path: "stale", name: "stale child", size_kb: 10, capped: false }]); });
-  expect(screen.queryByText("stale child")).toBeNull();
+  expect(native.listDirChildren).toHaveBeenCalledTimes(1);
   expect(screen.getByText(/>= 1 KB/)).toBeTruthy();
+});
+
+it("keeps the current parent after a failed drill and disables back while pending", async () => {
+  native.listDirChildren.mockResolvedValueOnce([{ path: "A/child", name: "A child", size_kb: 1, capped: false }]);
+  const error = vi.fn();
+  render(<DiskRadarPanel onClose={() => {}} onError={error} />);
+  await screen.findByText(/>= 1 KB/);
+  fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
+  await screen.findByText("A child");
+  let reject!: (error: Error) => void;
+  native.listDirChildren.mockImplementationOnce(() => new Promise((_, no) => { reject = no; }));
+  fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
+  const back = screen.getByRole("button", { name: t().navBack });
+  expect((back as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(back);
+  expect(native.listTopDirSizes).toHaveBeenCalledTimes(1);
+  await act(async () => reject(new Error("read failed")));
+  expect(error).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("A child")).toBeTruthy();
+  fireEvent.click(back);
+  await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
+  expect(native.listDirChildren).toHaveBeenCalledTimes(2);
 });
 
 it("updates the selected backup after deletion and preserves selection when another is deleted", async () => {
