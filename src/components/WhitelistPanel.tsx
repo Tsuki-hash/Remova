@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -15,11 +15,31 @@ export function WhitelistPanel({
 }: {
   onClose: () => void;
   onError: (msg: string) => void;
-  onIgnorePublisher?: () => void;
+  onIgnorePublisher?: () => Promise<IgnoreLists | undefined>;
   onListsChange?: (lists: IgnoreLists) => void;
 }) {
   const L = t();
   const [lists, setLists] = useState<IgnoreLists | null>(null);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+
+  const mutate = async (write: () => Promise<IgnoreLists | undefined>) => {
+    if (pendingRef.current || lists === null) return;
+    pendingRef.current = true;
+    setPending(true);
+    try {
+      const next = await write();
+      if (next) {
+        setLists(next);
+        onListsChange?.(next);
+      }
+    } catch (e) {
+      onError(formatError(e));
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
 
   useEffect(() => {
     void api
@@ -48,10 +68,8 @@ export function WhitelistPanel({
         {onIgnorePublisher && (
           <button
             style={{ ...css.btnSm, height: 28 }}
-            onClick={() => {
-              onIgnorePublisher();
-              void api.loadIgnore().then(setLists).catch((e) => onError(formatError(e)));
-            }}
+            disabled={pending || lists === null}
+            onClick={() => void mutate(onIgnorePublisher)}
           >
             {L.ignorePub}
           </button>
@@ -86,19 +104,15 @@ export function WhitelistPanel({
               </span>
               <button
                 style={{ ...css.btnSm, height: 26 }}
-                onClick={() => {
-                  const p =
+                disabled={pending}
+                onClick={() => void mutate(async () => {
+                  const next = await (
                     r.kind === "publisher"
                       ? api.unignorePublisher(r.value)
-                      : api.unignoreAppName(r.value);
-                  void p
-                    .then((next) => {
-                      setLists(next);
-                      onListsChange?.(next);
-                      toast.success(L.ignoreSuggestDone);
-                    })
-                    .catch((e) => onError(formatError(e)));
-                }}
+                      : api.unignoreAppName(r.value));
+                  toast.success(L.ignoreSuggestDone);
+                  return next;
+                })}
               >
                 {L.whitelistRemove}
               </button>

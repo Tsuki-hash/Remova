@@ -93,6 +93,7 @@ export function useAppChrome({
         const ig = await api.ignorePublisher(pub);
         flow.setIgnorePub(ig.publishers || []);
         toast.success(L.ignoreLoaded);
+        return ig;
       } catch (e) {
         flow.setError(formatError(e));
       }

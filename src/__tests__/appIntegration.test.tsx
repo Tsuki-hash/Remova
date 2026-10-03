@@ -432,7 +432,7 @@ describe("App orchestration", () => {
     expect(more().monitorDiff).toBeNull();
     act(() => more().onDismissMonitor());
     expect(more().monitorDiff).toBeNull();
-    act(() => more().onIgnorePublisher());
+    await act(async () => { await more().onIgnorePublisher(); });
  // Synthetic monitor app has no publisher, so ignore is a no-op.
     expect(native.ignorePublisher).not.toHaveBeenCalled();
   });
