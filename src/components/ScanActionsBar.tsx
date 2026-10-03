@@ -38,7 +38,9 @@ export function ScanActionsBar({
   const L = t();
   return (
     <>
-    <CleanupPlanPreview items={scan.items} selected={selectedPaths} />
+    {selectedPaths.size > 0 && (
+      <CleanupPlanPreview items={scan.items} selected={selectedPaths} />
+    )}
     <div
       style={{
         ...css.toolbar,
