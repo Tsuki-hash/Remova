@@ -132,6 +132,8 @@ export const dict = {
     batchDismiss: "关闭",
     restoreNoSessions: "暂无备份会话",
     restoreSelect: "选择要还原的会话",
+    restoreConflict: (n: number) => `${n} 个目标已存在：目录将合并，同名文件可能覆盖。`,
+    restoreUnavailable: (n: number) => `${n} 个文件目标缺失或被保护，预计无法还原；请查看执行结果。`,
     restoreRun: "确认还原",
     restoreClose: "关闭",
     restoreResult: "还原结果",

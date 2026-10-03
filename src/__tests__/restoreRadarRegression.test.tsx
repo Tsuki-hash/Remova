@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 
-const native = vi.hoisted(() => ({ backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn() }));
+const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn() }));
 vi.mock("../lib/api", () => ({ api: native }));
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
@@ -16,6 +16,7 @@ afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
   native.backupSessions.mockResolvedValue([{ name: "older-backup", size_kb: 1, created_at: "" }]);
+  native.previewRestore.mockImplementation(async (name: string) => ({ name, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] }));
   native.listLocalDrives.mockResolvedValue([{ letter: "C", is_system: true, total_gb: 1, free_gb: 1 }]);
   native.listTopDirSizes.mockResolvedValue([{ path: "root", name: "root", size_kb: 1, capped: true }]);
   native.openPath.mockResolvedValue(undefined);
@@ -165,4 +166,36 @@ it("reports rejected restore IPC and releases busy state so it can be retried", 
   native.restoreSessionByName.mockResolvedValueOnce(["restored file"]);
   await act(async () => { await result.current.runRestore(); });
   expect(toast.success).toHaveBeenCalledOnce();
+});
+
+it("discards an old backup preview after selection changes", async () => {
+  let finish!: (preview: unknown) => void;
+  native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  await act(async () => { result.current.setRestorePick("newer-backup"); });
+  await act(async () => { finish({ name: "older-backup", files: 999, entries: [] }); });
+  expect(result.current.restorePreview?.name).toBe("newer-backup");
+  expect(result.current.previewLoading).toBe(false);
+});
+
+it("rejects a failed fresh preview before confirmation or any restore write", async () => {
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
+  await act(async () => { await result.current.runRestore(); });
+  expect(requestConfirm).not.toHaveBeenCalled();
+  expect(native.restoreSessionByName).not.toHaveBeenCalled();
+  expect(result.current.restoreBusy).toBe(false);
+});
+
+it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  native.previewRestore.mockResolvedValueOnce({ name: "older-backup", existing: 2, unavailable: 1, entries: [] });
+  native.restoreSessionByName.mockResolvedValueOnce(["restored file"]);
+  await act(async () => { await Promise.all([result.current.runRestore(), result.current.runRestore()]); });
+  expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    message: [t().restoreConfirm("older-backup"), t().restoreConflict(2), t().restoreUnavailable(1)].join("\n") }));
+  expect(native.restoreSessionByName).toHaveBeenCalledOnce();
 });

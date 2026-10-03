@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
-import type { BackupSession } from "../lib/api";
+import type { BackupSession, RestorePreview } from "../lib/api";
 
 export function useMoreRestore(onError: (msg: string) => void) {
   const [sessions, setSessions] = useState<BackupSession[]>([]);
@@ -14,8 +14,28 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
   const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
+  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const operation = useRef(false);
+
+  useEffect(() => {
+    let current = true;
+    setRestorePreview(null);
+    setPreviewError(null);
+    setPreviewLoading(!!restorePick && openRestore);
+    if (restorePick && openRestore) {
+      void api.previewRestore(restorePick).then(preview => {
+        if (current) setRestorePreview(preview);
+      }).catch(error => {
+        if (current) setPreviewError(formatError(error));
+      }).finally(() => { if (current) setPreviewLoading(false); });
+    }
+    return () => { current = false; };
+  }, [restorePick, openRestore]);
 
   const loadRestore = useCallback(async () => {
+    if (operation.current) return;
     setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
@@ -36,7 +56,11 @@ export function useMoreRestore(onError: (msg: string) => void) {
 
   const deleteSession = useCallback(
     async (name: string) => {
+      if (operation.current) return;
+      operation.current = true;
+      setRestoreBusy(true);
       const L = t();
+      try {
       const ok = await requestConfirm({
         title: L.deleteSession,
         message: L.deleteSessionConfirm(name),
@@ -44,13 +68,15 @@ export function useMoreRestore(onError: (msg: string) => void) {
         danger: true,
       });
       if (!ok) return;
-      try {
         await api.deleteBackupSession(name);
         const list = await api.backupSessions();
         setSessions(list);
         setRestorePick((cur) => (cur === name ? (list[0]?.name ?? "") : cur));
       } catch (e) {
         onError(formatError(e));
+      } finally {
+        operation.current = false;
+        setRestoreBusy(false);
       }
     },
     [onError],
@@ -58,17 +84,24 @@ export function useMoreRestore(onError: (msg: string) => void) {
 
   const runRestore = useCallback(async () => {
     const L = t();
-    if (!restorePick || restoreBusy) return;
+    if (!restorePick || operation.current) return;
+    operation.current = true;
+    setRestoreBusy(true);
+    setRestoreMsgs([]);
+    try {
+    // Refresh before confirmation; the backend independently revalidates on restore.
+    const preview = await api.previewRestore(restorePick);
+    setRestorePreview(preview);
+    setPreviewError(null);
     const ok = await requestConfirm({
       title: L.restore,
-      message: L.restoreConfirm(restorePick),
+      message: [L.restoreConfirm(restorePick),
+        preview.existing ? L.restoreConflict(preview.existing) : "",
+        preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
       confirmLabel: L.restoreRun,
       danger: true,
     });
     if (!ok) return;
-    setRestoreBusy(true);
-    setRestoreMsgs([]);
-    try {
       const msgs = await api.restoreSessionByName(restorePick);
       setRestoreMsgs(msgs.length ? msgs.map((msg) => {
         if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
@@ -85,9 +118,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
       setRestoreMsgs([formatError(e)]);
       toast.error(formatError(e));
     } finally {
+      operation.current = false;
       setRestoreBusy(false);
     }
-  }, [restorePick, restoreBusy]);
+  }, [restorePick]);
 
   const closeRestore = useCallback(() => setOpenRestore(false), []);
 
@@ -95,6 +129,9 @@ export function useMoreRestore(onError: (msg: string) => void) {
     sessions,
     restoreLoading,
     restoreLoadError,
+    restorePreview: restorePreview?.name === restorePick ? restorePreview : null,
+    previewError,
+    previewLoading,
     restorePick,
     setRestorePick,
     restoreBusy,

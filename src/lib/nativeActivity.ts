@@ -16,6 +16,7 @@ const READ_ONLY_COMMANDS = new Set([
   "load_ignore",
   "list_cleanup_history",
   "list_backup_sessions",
+  "preview_restore_session",
   "check_github_latest",
   "online_update_supported",
   "list_local_drives",
