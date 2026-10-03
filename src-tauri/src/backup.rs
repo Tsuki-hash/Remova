@@ -653,6 +653,15 @@ mod tests {
     #[test]
     fn path_backup_writes_snapshot_not_tree_copy() {
         let _guard = lock_backup_env();
+        let _path_guard = crate::regops::path_mock::lock_mock();
+        struct ClearPath;
+        impl Drop for ClearPath {
+            fn drop(&mut self) {
+                crate::regops::path_mock::clear();
+            }
+        }
+        let _clear = ClearPath;
+        crate::regops::path_mock::install("", "");
         let tmp = std::env::temp_dir().join(format!("remova_path_bk_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("files")).unwrap();

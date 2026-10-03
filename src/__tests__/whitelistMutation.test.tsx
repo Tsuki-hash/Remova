@@ -14,10 +14,10 @@ it("shows initial read failure and retries without allowing untrusted writes", a
   render(<WhitelistPanel onClose={() => {}} onError={vi.fn()} onIgnorePublisher={write} />);
   await screen.findByRole("alert");
   expect(screen.queryByText(t().loadingGeneric)).toBeNull();
-  expect((screen.getByRole("button", { name: t().ignorePub }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: t().ignorePub }).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
   await screen.findByText("Recovered Vendor");
-  expect((screen.getByRole("button", { name: t().ignorePub }) as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: t().ignorePub }).disabled).toBe(false);
   expect(write).not.toHaveBeenCalled();
   loadIgnore.mockClear();
 });
