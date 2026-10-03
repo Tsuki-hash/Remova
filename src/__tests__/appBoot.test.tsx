@@ -215,6 +215,7 @@ describe("checkUpdateNow flows", () => {
     const setUpdateInfo = vi.fn();
     const L = {
       versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
       versionDownloadOpenFailed: "无法打开浏览器",
@@ -239,6 +240,7 @@ describe("checkUpdateNow flows", () => {
     const setUpdateInfo = vi.fn();
     const L = {
       versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
       versionDownloadOpenFailed: "无法打开浏览器",
@@ -258,6 +260,7 @@ describe("checkUpdateNow flows", () => {
     const setUpdateInfo = vi.fn();
     const L = {
       versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
       versionDownloadOpenFailed: "无法打开浏览器",
@@ -270,11 +273,31 @@ describe("checkUpdateNow flows", () => {
     expect(openPath).not.toHaveBeenCalled();
   });
 
+  it("reports an unpublished repository as info instead of failure", async () => {
+    checkLatestRelease.mockResolvedValue({ ok: true, info: null });
+    const setUpdateInfo = vi.fn();
+    const L = {
+      versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
+      versionNew: "发现新版本",
+      versionUpToDate: () => "已是最新",
+      versionDownloadOpenFailed: "无法打开浏览器",
+    };
+    await act(async () => {
+      await checkUpdateNow(setUpdateInfo, L);
+    });
+    expect(toast.info).toHaveBeenCalledWith("还没有已发布版本");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(setUpdateInfo).not.toHaveBeenCalled();
+    expect(openPath).not.toHaveBeenCalled();
+  });
+
   it("falls back to the Releases page when the check fails", async () => {
     checkLatestRelease.mockResolvedValue({ ok: false, reason: "offline" });
     const setUpdateInfo = vi.fn();
     const L = {
       versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
       versionDownloadOpenFailed: "无法打开浏览器",
@@ -294,6 +317,7 @@ describe("checkUpdateNow flows", () => {
     const setUpdateInfo = vi.fn();
     const L = {
       versionCheckFailed: "检查失败",
+      versionNoRelease: "还没有已发布版本",
       versionNew: "发现新版本",
       versionUpToDate: () => "已是最新",
       versionDownloadOpenFailed: "无法打开浏览器",
