@@ -13,7 +13,7 @@ const apps: InstalledApp[] = [
     source: "HKLM64",
     registry_key: "HKLM\\x",
     estimated_size_kb: 3 * 1024 * 1024,
-    install_date: "20250101",
+    install_date: "2025-01-01",
     display_icon: "",
   },
   {
@@ -26,7 +26,7 @@ const apps: InstalledApp[] = [
     source: "HKCU",
     registry_key: "HKCU\\x",
     estimated_size_kb: 1024,
-    install_date: "20260101",
+    install_date: "2026-01-01",
     display_icon: "",
   },
 ];
@@ -36,9 +36,11 @@ describe("ruleParseFilter", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-10T12:00:00"));
     try {
-      const result = ruleParseFilter(apps, "最近安装的软件");
+      const invalid = ["", "2026-02-01", "2025-12-32", "2025-13-01", "20260101", "invalid"]
+        .map((install_date, i) => ({ ...apps[1]!, name: `Invalid ${i}`, install_date }));
+      const result = ruleParseFilter([...apps, ...invalid], "最近安装的软件");
       expect(result.list.map(a => a.name)).toEqual(["TinyTool"]);
-      expect(result.intent.filter.installed_after).toBe("20251211");
+      expect(result.intent.filter.installed_after).toBe("2025-12-11");
       for (const query of ["可能是残留的软件", "apps with startup items", "unrecognized condition"])
         expect(() => ruleParseFilter(apps, query)).toThrow();
     } finally { vi.useRealTimers(); }

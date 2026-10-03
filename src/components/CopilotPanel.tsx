@@ -70,13 +70,17 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
 
   let installedAfter: string | null = null;
   if (/最近(?:30天)?安装|recently installed|installed in the last 30 days/i.test(raw)) {
-    const dateKey = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+    const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     const today = dateKey(new Date());
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 30);
     const after = dateKey(cutoff);
     installedAfter = after;
-    list = list.filter(a => /^\d{8}$/.test(a.install_date) && a.install_date >= after && a.install_date <= today);
+    list = list.filter(a => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(a.install_date)) return false;
+      const parsed = new Date(Number(a.install_date.slice(0, 4)), Number(a.install_date.slice(5, 7)) - 1, Number(a.install_date.slice(8, 10)));
+      return dateKey(parsed) === a.install_date && a.install_date >= after && a.install_date <= today;
+    });
   }
   if (/启动项|startup|可能.*残留|possible.*leftover/i.test(raw) ||
     (!nameLike && !pubLike && !sizeGtKb && !installedAfter && !/^(所有软件|全部软件|all apps)$/i.test(raw))) {
