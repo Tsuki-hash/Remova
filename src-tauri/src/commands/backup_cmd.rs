@@ -4,14 +4,14 @@ use crate::restore;
 
 #[tauri::command]
 pub fn list_restore_sessions() -> Result<Vec<String>, String> {
-    Ok(restore::list_session_names())
+    restore::list_session_names()
 }
 
 #[tauri::command]
 pub async fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String> {
     tauri::async_runtime::spawn_blocking(restore::list_session_info)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -72,6 +72,25 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.dir);
             }
         }
+    }
+
+    #[test]
+    fn session_list_distinguishes_missing_empty_and_read_failure() {
+        let isolated = IsolatedBackupRoot::new();
+        assert!(super::list_restore_sessions().unwrap().is_empty());
+        std::fs::remove_dir(&isolated.dir).unwrap();
+        assert!(super::list_restore_sessions().unwrap().is_empty());
+        std::fs::write(&isolated.dir, b"not a directory").unwrap();
+        assert!(super::list_restore_sessions().is_err());
+        assert!(crate::restore::list_session_info().is_err());
+        std::fs::remove_file(&isolated.dir).unwrap();
+        std::fs::create_dir(&isolated.dir).unwrap();
+        std::fs::create_dir(isolated.dir.join("20261003-120000_test")).unwrap();
+        assert_eq!(
+            super::list_restore_sessions().unwrap(),
+            ["20261003-120000_test"]
+        );
+        assert_eq!(crate::restore::list_session_info().unwrap().len(), 1);
     }
 
     #[test]
