@@ -54,7 +54,7 @@ export type MonitorDiff = {
   walk_degraded?: boolean;
 };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
-export type VerifyRow = { path: string; kind: string; still_there: boolean };
+export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

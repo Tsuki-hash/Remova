@@ -337,6 +337,7 @@ export const dict: EnDict = {
     verifyChecklist: "Post-clean verify",
     verifyStillPresent: "Still present",
     verifyRemoved: "Removed",
+    verifyUnknown: "Unable to verify: read failed",
     orphanEvNoOwner: "No matching installed app",
     orphanEvExe: "Contains executable files",
     orphanEvFiles: "Contains multiple files",

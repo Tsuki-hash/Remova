@@ -226,14 +226,15 @@ export function ReportPanel({
               <div key={`${v.path}-${i}`} className="ell" title={v.path}>
                 <span
                   role="img"
-                  aria-label={v.still_there ? L.verifyStillPresent : L.verifyRemoved}
+                  aria-label={v.error ? L.verifyUnknown : v.still_there ? L.verifyStillPresent : L.verifyRemoved}
                   style={{
-                    color: v.still_there ? "var(--danger-text)" : "var(--ok-ink)",
+                    color: v.error ? "var(--warn-ink)" : v.still_there ? "var(--danger-text)" : "var(--ok-ink)",
                   }}
                 >
-                  <Deco ch={v.still_there ? "×" : "✓"} />
+                  <Deco ch={v.error ? "ⓘ" : v.still_there ? "×" : "✓"} />
                 </span>{" "}
                 [{v.kind}] {v.path}
+                {v.error ? ` — ${L.verifyUnknown}` : ""}
               </div>
             ))}
             {verifyRows.length > 40 && <div>… +{verifyRows.length - 40}</div>}
