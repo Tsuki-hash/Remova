@@ -25,7 +25,7 @@ describe("update slot vs read-only commands", () => {
   it("lets read-only commands through while mutating ones see update:busy", async () => {
     const release = acquireUpdateSlot();
     expect(release).not.toBeNull();
-    for (const command of ["list_installed_apps", "list_local_drives", "list_top_dir_sizes", "list_dir_children", "rank_idle_apps", "app_icon_data", "estimate_dir_size_kb", "list_startup_items", "list_services", "list_scheduled_tasks", "verify_cleanup_leftovers"]) {
+    for (const command of ["preview_restore_session", "list_installed_apps", "list_local_drives", "list_top_dir_sizes", "list_dir_children", "rank_idle_apps", "app_icon_data", "estimate_dir_size_kb", "list_startup_items", "list_services", "list_scheduled_tasks", "verify_cleanup_leftovers"]) {
       await expect(trackNativeCall(async () => "apps", command)).resolves.toBe("apps");
     }
     for (const command of ["scan_orphan_leftovers", "take_pending_analyze"]) {

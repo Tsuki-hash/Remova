@@ -71,9 +71,7 @@ export function AppDetailPanel({
 
   const infoRows: { label: string; value: string; mono?: boolean; action?: boolean }[] = [
     { label: L.detailPath, value: app.install_location || "—", mono: true, action: true },
-    { label: L.colSize, value: sizeText, mono: true },
     { label: L.detailDate, value: app.install_date || "—" },
-    { label: L.detailVersion, value: app.version || "—" },
   ];
 
   const menuItems: { label: string; onClick: () => void; danger?: boolean }[] = [
@@ -88,12 +86,9 @@ export function AppDetailPanel({
       <div style={css.panelHeader}>
         <AppIcon displayIcon={app.display_icon} name={app.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14.5, lineHeight: 1.3 }}>{name}</div>
-          <div className="ell" style={{ ...css.muted, marginTop: 2 }}>
-            {app.version || "—"}
-          </div>
-          <div className="ell" style={{ ...css.muted }}>
-            {app.publisher || "—"}
+          <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.4, overflowWrap: "anywhere" }}>{name}</div>
+          <div className="ell" style={{ ...css.muted, marginTop: 4 }} title={`${app.publisher} · ${app.version}`}>
+            {app.publisher || "—"} · {app.version || "—"}
           </div>
         </div>
         <button
@@ -106,6 +101,11 @@ export function AppDetailPanel({
       </div>
 
       <div style={css.panelBody}>
+        <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+          <span style={css.muted}>{L.colSize}</span>
+          <strong style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 600 }}>{sizeText}</strong>
+          <span style={{ ...css.sourceBadge, marginLeft: "auto" }} title={`${L.detailSource}: ${sourceLabel(app.source, L)}`}>{sourceLabel(app.source, L)}</span>
+        </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
           <button
             style={{
@@ -136,6 +136,7 @@ export function AppDetailPanel({
               aria-label={L.rowMore}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
+              disabled={uninstalling}
               onClick={() => setMenuOpen((v) => !v)}
             >
               <Deco ch="⋯" />
@@ -187,15 +188,16 @@ export function AppDetailPanel({
         <div
           style={{
             marginBottom: 12,
-            fontSize: 11.5,
+            fontSize: 12,
             color: "var(--muted)",
             lineHeight: 1.45,
           }}
         >
-          {L.deepUninstallExpect}
+          {hasCmd ? L.deepUninstallExpect : L.detailNoUninstall}
         </div>
 
-        <div style={css.sectionTitle}>{L.basicInfo}</div>
+        <details style={{ marginBottom: 14 }}>
+        <summary style={{ ...css.sectionTitle, cursor: "pointer" }}>{L.basicInfo}</summary>
         <div style={{ ...css.card, padding: "4px 10px", marginBottom: 14 }}>
           {infoRows.map((r) => (
             <div key={r.label} style={css.detailRow}>
@@ -206,7 +208,7 @@ export function AppDetailPanel({
                   flex: 1,
                   minWidth: 0,
                   fontFamily: r.mono ? "var(--mono)" : undefined,
-                  fontSize: r.mono ? 11.5 : 12.5,
+                  fontSize: 12.5,
                 }}
                 title={r.value}
               >
@@ -223,20 +225,13 @@ export function AppDetailPanel({
               )}
             </div>
           ))}
-          <div style={{ padding: "7px 0", fontSize: 12, color: "var(--muted)" }}>
-            {L.detailSource}: {sourceLabel(app.source, L)}
-          </div>
         </div>
+        </details>
 
         <div style={css.sectionTitle}>{L.linkedItems}</div>
         {buckets.length === 0 ? (
           <div style={{ ...css.muted, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
             {L.linkedNotScanned || L.drawerAnalyzeHint}
-            <div style={{ marginTop: 8 }}>
-              <button style={{ ...css.btnGhost, height: 30 }} onClick={() => onAnalyze(app)}>
-                {L.drawerAnalyze}
-              </button>
-            </div>
           </div>
         ) : (
           <div style={{ ...css.card, padding: "4px 10px", marginBottom: 12 }}>
@@ -315,7 +310,8 @@ export function AppDetailPanel({
           </div>
         ) : (
           <button
-            style={{ ...css.btn, height: 34, width: "100%", marginBottom: 8 }}
+            style={{ ...css.btnGhost, height: 32, width: "100%", marginBottom: 8 }}
+            disabled={uninstalling}
             onClick={() => onAnalyze(app)}
           >
             {L.scanLinkedLeftovers}
