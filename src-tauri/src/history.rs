@@ -59,12 +59,6 @@ fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
 /// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
 /// one line at a time through a ring buffer — memory is O(keep), never O(file)
 /// (; also removes the old unbounded whole-file read on oversize).
-/// Deterministic tmp sibling — pid-suffixed so a second Remova process can
-/// never clobber our tmp; in-process writers serialize through FILE_LOCK.
-fn tmp_path(p: &Path) -> PathBuf {
-    p.with_extension(format!("jsonl.{}.tmp", std::process::id()))
-}
-
 /// Caller must hold [`FILE_LOCK`].
 fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
     let file = fs::File::open(p)?;
@@ -80,9 +74,8 @@ fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
         }
         ring.push_back(line);
     }
-    let tmp = tmp_path(p);
+    let (tmp, out) = crate::fsutil::create_atomic_tmp(p)?;
     let result = (|| -> std::io::Result<()> {
-        let out = fs::File::create(&tmp)?;
         let mut w = BufWriter::new(out);
         for l in &ring {
             writeln!(w, "{l}")?;
@@ -202,8 +195,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let Ok(file) = fs::File::open(&p) else {
         return Ok(0);
     };
-    let tmp = tmp_path(&p);
-    let out = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    let (tmp, out) = crate::fsutil::create_atomic_tmp(&p).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(out);
     let mut reader = std::io::BufReader::new(file);
     let mut seen: HashMap<String, usize> = HashMap::new();
@@ -213,9 +205,14 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let mut raw: Vec<u8> = Vec::new();
     loop {
         raw.clear();
-        let n = reader
-            .read_until(b'\n', &mut raw)
-            .map_err(|e| e.to_string())?;
+        let n = match reader.read_until(b'\n', &mut raw) {
+            Ok(n) => n,
+            Err(error) => {
+                drop(w);
+                let _ = fs::remove_file(&tmp);
+                return Err(error.to_string());
+            }
+        };
         if n == 0 {
             break;
         }
@@ -268,19 +265,7 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = tmp_path(p);
-    // tmp + fsync + rename — matches the shared atomic-write discipline.
-    let result = (|| -> std::io::Result<()> {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(contents.as_bytes())?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&tmp, p)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.map_err(|e| e.to_string())
+    crate::fsutil::write_bytes_atomic(p, contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Clear all cleanup history rows (does not touch backup sessions).
@@ -309,47 +294,48 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn history_write_failure_removes_existing_tmp() {
+    fn history_write_preserves_preexisting_temporary_file() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir =
             std::env::temp_dir().join(format!("remova-r23-history-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("history.jsonl");
-        let tmp = super::tmp_path(&path);
+        let tmp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
         std::fs::write(&tmp, "old partial").unwrap();
-        // Deny write but allow delete: write fails, cleanup can remove the file.
+        // A pre-existing file is not owned by this write, even if it is locked.
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0x1 | 0x4)
             .open(&tmp)
             .unwrap();
-        assert!(super::write_history_file(&path, "new data").is_err());
-        assert!(!tmp.exists());
-        assert!(!path.exists());
+        super::write_history_file(&path, "new data").unwrap();
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "old partial");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new data");
         drop(held);
-        std::fs::remove_dir(dir).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// compact_keep_newest must remove tmp on write failure (same as write_history_file).
+    /// Compaction cannot take ownership of an old staging file.
     #[cfg(windows)]
     #[test]
-    fn compact_keep_newest_failure_removes_tmp() {
+    fn compact_keep_newest_preserves_preexisting_temporary_file() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir =
             std::env::temp_dir().join(format!("remova-r23-history-compact-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("history.jsonl");
         std::fs::write(&path, "{\"id\":\"L1\"}\n{\"id\":\"L2\"}\n").unwrap();
-        let tmp = super::tmp_path(&path);
+        let tmp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
         std::fs::write(&tmp, "old partial").unwrap();
-        // Deny write but allow delete so create/write fails and cleanup can remove tmp.
+        // Deny writes to the pre-existing file.
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0x1 | 0x4)
             .open(&tmp)
             .unwrap();
-        assert!(super::compact_keep_newest(&path, 1).is_err());
-        assert!(!tmp.exists());
+        super::compact_keep_newest(&path, 1).unwrap();
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "old partial");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"id\":\"L2\"}\n");
         drop(held);
         std::fs::remove_dir_all(dir).unwrap();
     }
