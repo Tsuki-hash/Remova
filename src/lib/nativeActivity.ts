@@ -31,7 +31,12 @@ const READ_ONLY_COMMANDS = new Set([
 ]);
 
 let active = 0;
+let writes = 0;
 let updating = false;
+
+export function hasPendingNativeWrites(): boolean {
+  return updating || writes > 0;
+}
 
 export async function trackNativeCall<T>(
   call: () => Promise<T>,
@@ -41,10 +46,13 @@ export async function trackNativeCall<T>(
     throw new Error(UPDATE_BUSY);
   }
   active++;
+  const writing = !command || !READ_ONLY_COMMANDS.has(command);
+  if (writing) writes++;
   try {
     return await call();
   } finally {
     active--;
+    if (writing) writes--;
   }
 }
 

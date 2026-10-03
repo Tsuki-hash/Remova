@@ -6,7 +6,8 @@ import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import { compareSemver } from "../semver";
 import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
-import { consumeQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
+import { consumeQuitIntent, markQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
+import { hasPendingNativeWrites } from "../lib/nativeActivity";
 import type { InstalledApp } from "../types";
 
 declare const __APP_VERSION__: string;
@@ -93,6 +94,8 @@ export function useAppBoot({
  // Context menu --analyze handoff runs after apps load (see nav-assist hooks)
  // Custom chrome: close → tray (default) or quit; busy still asks first.
     let unlistenClose: (() => void) | null = null;
+    let unlistenQuit: (() => void) | null = null;
+    let closePending = false;
     let chromeDisposed = false;
     void (async () => {
       try {
@@ -102,14 +105,17 @@ export function useAppBoot({
  // Tauri requires preventDefault SYNCHRONOUSLY or the window may
  // close before async policy/dialog runs (X appeared dead after choice).
           event.preventDefault();
-          if (busyRef.current) {
+          if (closePending) return;
+          closePending = true;
+          try {
+          if (busyRef.current || hasPendingNativeWrites()) {
             const ok = await requestConfirm({
               title: t().closeConfirmBusy,
               confirmLabel: t().confirmOk,
               cancelLabel: t().cancel,
               danger: true,
             });
-            if (!ok) return;
+            if (!ok) { consumeQuitIntent(); return; }
           }
           if (consumeQuitIntent() || loadCloseMode() === "quit") {
             try {
@@ -135,10 +141,17 @@ export function useAppBoot({
  // ignore
             }
           }
+          } finally { closePending = false; }
         });
  // the effect may already be gone when the dynamic import resolved.
-        if (chromeDisposed) unlisten();
-        else unlistenClose = unlisten;
+        if (chromeDisposed) { unlisten(); return; }
+        unlistenClose = unlisten;
+        const quitUnlisten = await win.listen("remova:request-quit", () => {
+          markQuitIntent();
+          void win.close().catch(() => { consumeQuitIntent(); });
+        });
+        if (chromeDisposed) quitUnlisten();
+        else unlistenQuit = quitUnlisten;
       } catch {
  // not in tauri
       }
@@ -147,6 +160,7 @@ export function useAppBoot({
       cancelled = true;
       chromeDisposed = true;
       unlistenClose?.();
+      unlistenQuit?.();
     };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

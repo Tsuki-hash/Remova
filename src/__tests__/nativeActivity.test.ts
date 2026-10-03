@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { acquireUpdateSlot, trackNativeCall, UPDATE_BUSY } from "../lib/nativeActivity";
+import { acquireUpdateSlot, hasPendingNativeWrites, trackNativeCall, UPDATE_BUSY } from "../lib/nativeActivity";
 
 afterEach(() => {
   // release the slot even if an assertion fired
@@ -7,6 +7,21 @@ afterEach(() => {
 });
 
 describe("update slot vs read-only commands", () => {
+  it("tracks critical writes through rejection and keeps read-only calls distinct", async () => {
+    let finish!: () => void;
+    const read = trackNativeCall(() => new Promise<void>(resolve => { finish = resolve; }), "disk_usage");
+    expect(hasPendingNativeWrites()).toBe(false);
+    finish(); await read;
+    let reject!: (error: Error) => void;
+    const write = trackNativeCall(() => new Promise<void>((_, no) => { reject = no; }), "restore_session_by_name");
+    expect(hasPendingNativeWrites()).toBe(true);
+    const failed = expect(write).rejects.toThrow("failed");
+    reject(new Error("failed")); await failed;
+    expect(hasPendingNativeWrites()).toBe(false);
+    const release = acquireUpdateSlot();
+    try { expect(hasPendingNativeWrites()).toBe(true); } finally { release?.(); }
+    expect(hasPendingNativeWrites()).toBe(false);
+  });
   it("lets read-only commands through while mutating ones see update:busy", async () => {
     const release = acquireUpdateSlot();
     expect(release).not.toBeNull();
