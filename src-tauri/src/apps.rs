@@ -78,7 +78,9 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
 
 pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::ignore::IgnoreList) {
     out.retain(|a| {
-        !crate::ignore::is_app_ignored(ignore, &a.name, &a.publisher, &a.install_location)
+        (!a.uninstall_string.trim().is_empty() || !a.quiet_uninstall_string.trim().is_empty())
+            && !looks_system_update(&a.name)
+            && !crate::ignore::is_app_ignored(ignore, &a.name, &a.publisher, &a.install_location)
     });
 }
 
@@ -379,11 +381,7 @@ unsafe fn read_uninstall_entry(
     }
     let _ = RegCloseKey(hk);
 
-    if display.trim().is_empty() || (uninstall_string.trim().is_empty() && quiet.trim().is_empty())
-    {
-        return None;
-    }
-    if looks_system_update(&display) {
+    if display.trim().is_empty() {
         return None;
     }
 
@@ -490,6 +488,57 @@ mod tests {
         assert!(looks_system_update("KB5021234"));
         assert!(looks_system_update("Update for Windows 10"));
         assert!(!looks_system_update("7-Zip 24.08"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_inventory_keeps_non_uninstallable_component_owners() {
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(crate::regops::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+        let sub = format!(
+            r"Software\RemovaInventoryTest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let key = format!(r"HKCU\{sub}\Component");
+        let _cleanup = Cleanup(format!(r"HKCU\{sub}"));
+        for (name, kind, data) in [
+            ("DisplayName", "REG_SZ", "Owned Component"),
+            ("InstallLocation", "REG_SZ", r"C:\Vendor\OwnedComponent"),
+            ("SystemComponent", "REG_DWORD", "1"),
+            ("NoRemove", "REG_DWORD", "1"),
+        ] {
+            let output = std::process::Command::new(crate::regops::sys_tool("reg.exe"))
+                .args(["add", &key, "/v", name, "/t", kind, "/d", data, "/f"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
+        let owner = unsafe {
+            read_uninstall_entry(
+                HKEY_CURRENT_USER,
+                &sub,
+                KEY_WOW64_64KEY,
+                "HKCU",
+                "Component",
+                256,
+            )
+        }
+        .expect("component must retain ownership without uninstall commands");
+        assert_eq!(owner.install_location, r"C:\Vendor\OwnedComponent");
+        assert!(owner.uninstall_string.is_empty());
+        let mut visible = vec![owner];
+        filter_visible_apps(&mut visible, &crate::ignore::IgnoreList::default());
+        assert!(visible.is_empty());
     }
 
     #[test]

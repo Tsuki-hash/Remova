@@ -409,8 +409,11 @@ mod tests {
         let path = product.to_string_lossy().into_owned();
         let mut owner = app("OwnedProduct", &path);
         owner.publisher = "OwnedVendor".into();
+        owner.uninstall_string.clear();
+        owner.quiet_uninstall_string.clear();
         let inventory = vec![owner];
         for ignore in [
+            crate::ignore::IgnoreList::default(),
             crate::ignore::IgnoreList {
                 names: vec!["OwnedProduct".into()],
                 ..Default::default()

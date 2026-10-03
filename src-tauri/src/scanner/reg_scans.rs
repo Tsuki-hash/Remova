@@ -217,6 +217,14 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
 }
 
 pub(super) fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+    scan_software_keys_with(name_slugs, items, crate::regscan::target_exists);
+}
+
+fn scan_software_keys_with(
+    name_slugs: &[String],
+    items: &mut Vec<CleanupItem>,
+    exists: impl Fn(&str) -> Result<bool, String>,
+) {
     let pubs: [(&str, &str); 3] = [
         ("HKLM64", r"SOFTWARE"),
         ("HKLM32", r"SOFTWARE"),
@@ -229,9 +237,7 @@ pub(super) fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupI
             if is_safe_to_delete_registry(&key).is_err() {
                 continue;
             }
-            if crate::regscan::list_subkeys(&key).is_empty()
-                && crate::regscan::list_values(&key).is_empty()
-            {
+            if !matches!(exists(&key), Ok(true)) {
                 continue;
             }
             let score = 40;
@@ -363,6 +369,15 @@ fn service_image_string(svc_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn software_scan_uses_checked_existence_without_content_requirements() {
+        let slugs = vec!["OwnedProductFixture".to_string()];
+        for state in [Ok(true), Ok(false), Err("access denied".to_string())] {
+            let mut items = Vec::new();
+            super::scan_software_keys_with(&slugs, &mut items, |_| state.clone());
+            assert_eq!(items.len(), if state == Ok(true) { 3 } else { 0 });
+        }
+    }
     #[test]
     fn clsid_roots_do_not_duplicate_machine_views() {
         assert_eq!(
