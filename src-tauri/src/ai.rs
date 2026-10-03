@@ -129,11 +129,12 @@ fn load_config_file(p: &std::path::Path) -> Result<AiConfig, String> {
     // take ownership of the stored bytes so the pre-image is wiped
     // explicitly instead of being dropped by the field assignment.
     let mut raw_key = std::mem::take(&mut c.api_key);
-    c.api_key = decrypt_stored_key(&raw_key);
+    let decrypted = decrypt_stored_key(&raw_key);
     // migrate a legacy plaintext key to DPAPI at rest on first load.
     let migrate = !raw_key.is_empty() && !raw_key.starts_with(KEY_PREFIX);
     // the ciphertext copy leaves no residue either.
     raw_key.zeroize();
+    c.api_key = decrypted?;
     if migrate {
         // The wrap must not silently fail: a swallowed error leaves the
         // plaintext key on disk while the UI reports it protected.
@@ -271,15 +272,15 @@ fn encrypt_stored_key(key: &str) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-fn decrypt_stored_key(stored: &str) -> String {
+fn decrypt_stored_key(stored: &str) -> Result<String, String> {
     let Some(hex) = stored.strip_prefix(KEY_PREFIX) else {
-        return stored.to_string();
+        return Ok(stored.to_string());
     };
     let Some(raw) = from_hex(hex) else {
-        return String::new();
+        return Err("ai:config_read_failed::invalid encrypted key".into());
     };
     if raw.is_empty() {
-        return String::new();
+        return Err("ai:config_read_failed::empty encrypted key".into());
     }
     unsafe {
         use windows::Win32::Security::Cryptography::{
@@ -300,7 +301,7 @@ fn decrypt_stored_key(stored: &str) -> String {
             &mut out_blob,
         );
         if ok.is_err() {
-            return String::new();
+            return Err("ai:config_read_failed::cannot decrypt key".into());
         }
         let dec = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
         // CryptUnprotectData allocates pbData via LocalAlloc.
@@ -309,19 +310,19 @@ fn decrypt_stored_key(stored: &str) -> String {
         ));
         // a failed UTF-8 decode still holds key bytes — wipe them.
         match String::from_utf8(dec) {
-            Ok(s) => s,
+            Ok(s) => Ok(s),
             Err(e) => {
                 let mut bad = e.into_bytes();
                 bad.zeroize();
-                String::new()
+                Err("ai:config_read_failed::invalid decrypted key".into())
             }
         }
     }
 }
 
 #[cfg(not(windows))]
-fn decrypt_stored_key(stored: &str) -> String {
-    stored.to_string()
+fn decrypt_stored_key(stored: &str) -> Result<String, String> {
+    Ok(stored.to_string())
 }
 
 /// replace the Windows profile-name segment after `Users\` with `*`.
@@ -1026,6 +1027,31 @@ mod tests {
         std::fs::remove_file(p).unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn undecryptable_keys_abort_updates_and_preserve_ciphertext() {
+        let p = std::env::temp_dir().join(format!(
+            "remova-bad-key-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for key in ["dpapi:zz", "dpapi:00", "dpapi:"] {
+            let mut config = AiConfig::default();
+            config.api_key = key.into();
+            let original = serde_json::to_vec(&config).unwrap();
+            std::fs::write(&p, &original).unwrap();
+            assert!(load_config_file(&p).is_err());
+            let error = update_config_file(&p, |_| panic!("must not overwrite an unreadable key"))
+                .unwrap_err();
+            assert!(error.starts_with("ai:config_read_failed"));
+            assert_eq!(std::fs::read(&p).unwrap(), original);
+        }
+        std::fs::remove_file(p).unwrap();
+    }
+
     #[test]
     fn report_prompt_respects_path_privacy_without_network_requests() {
         let input = ReportBriefInput {
@@ -1192,7 +1218,7 @@ mod tests {
         match e {
             Ok(wrapped) => {
                 assert!(!wrapped.is_empty());
-                assert_eq!(decrypt_stored_key(&wrapped), "sk-abc");
+                assert_eq!(decrypt_stored_key(&wrapped).unwrap(), "sk-abc");
             }
             Err(code) => assert_eq!(code, "ai:encrypt_failed"),
         }

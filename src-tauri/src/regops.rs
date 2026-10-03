@@ -411,8 +411,7 @@ pub fn export_reg_value(
     value_name: &str,
     dest: &std::path::Path,
 ) -> Result<bool, String> {
-    let value_name = value_name.trim();
-    if value_name.is_empty() {
+    if value_name.trim().is_empty() {
         return Err("empty value name".into());
     }
     // Value names are interpolated into .reg text — reject quote/newline injection.
@@ -436,6 +435,7 @@ pub fn export_reg_value(
     let Some((native_bytes, native_type)) = read_reg_value_bytes(key_path, value_name)? else {
         return Ok(false);
     };
+    let value_name = value_name.replace('\\', "\\\\");
     let reg_type = match native_type {
         1 => "REG_SZ",
         2 => "REG_EXPAND_SZ",
@@ -1781,6 +1781,81 @@ mod tests {
             !decoded.contains('\u{FFFD}'),
             "no replacement chars allowed"
         );
+        let reg = super::sys_tool("reg.exe");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&reg)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "registry fixture operation failed: {output:?}"
+            );
+        };
+        run(&[
+            "add",
+            &key,
+            "/v",
+            "Tool",
+            "/t",
+            "REG_SZ",
+            "/d",
+            "untouched",
+            "/f",
+        ]);
+        for name in [" Tool ", r"Tool\Sub"] {
+            use windows::Win32::System::Registry::{RegSetValueExW, REG_SZ};
+            let (hive, sub, view) = super::parse(&key).unwrap();
+            let sub = super::to_wide(&sub);
+            let name_w = super::to_wide(name);
+            let data: Vec<u8> = super::to_wide("original")
+                .iter()
+                .flat_map(|c| c.to_le_bytes())
+                .collect();
+            let mut hk = super::HKEY::default();
+            unsafe {
+                super::RegOpenKeyExW(
+                    hive,
+                    super::PCWSTR(sub.as_ptr()),
+                    0,
+                    super::KEY_SET_VALUE | view,
+                    &mut hk,
+                )
+                .ok()
+                .unwrap();
+                RegSetValueExW(hk, super::PCWSTR(name_w.as_ptr()), 0, REG_SZ, Some(&data))
+                    .ok()
+                    .unwrap();
+                let _ = super::RegCloseKey(hk);
+            }
+            let original = super::read_reg_value_bytes(&key, name).unwrap().unwrap();
+            assert!(super::export_reg_value(&key, name, &dest).unwrap());
+            unsafe {
+                super::RegOpenKeyExW(
+                    hive,
+                    super::PCWSTR(sub.as_ptr()),
+                    0,
+                    super::KEY_SET_VALUE | view,
+                    &mut hk,
+                )
+                .ok()
+                .unwrap();
+                super::RegDeleteValueW(hk, super::PCWSTR(name_w.as_ptr()))
+                    .ok()
+                    .unwrap();
+                let _ = super::RegCloseKey(hk);
+            }
+            run(&["import", dest.to_str().unwrap(), "/reg:64"]);
+            assert_eq!(
+                super::read_reg_value_bytes(&key, name).unwrap().unwrap(),
+                original
+            );
+            assert_eq!(
+                super::read_reg_value_raw(&key, "Tool").unwrap().0,
+                "untouched"
+            );
+        }
+        assert!(!super::export_reg_value(&key, " Tool missing ", &dest).unwrap());
         let add = std::process::Command::new(super::sys_tool("reg.exe"))
             .args([
                 "add",
