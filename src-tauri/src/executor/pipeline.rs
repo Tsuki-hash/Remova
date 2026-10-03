@@ -25,6 +25,10 @@ fn try_backup_phase(
     items: &[CleanupItem],
     opts: &FullCleanupOptions,
 ) -> BackupOutcome {
+    let ignore = match crate::ignore::load_checked() {
+        Ok(ignore) => ignore,
+        Err(e) => return BackupOutcome::Abort(Box::new(ignore_read_abort(app, false, e))),
+    };
     let mut restore_point_ok = false;
     let mut restore_point_msg = String::new();
     if opts.restore_point {
@@ -47,7 +51,6 @@ fn try_backup_phase(
         Ok(session) => {
             let backup_dir = session.to_string_lossy().to_string();
             // Only backup items that pass the cleanup gate.
-            let ignore = crate::ignore::load();
             let source = cleanup_source_from_opts(opts);
             let allow: Vec<CleanupItem> = items
                 .iter()
@@ -236,7 +239,27 @@ fn delete_cleanup_items_with_io(
     let mut delayed = 0u32;
     let mut errors = vec![];
     let mut details = vec![];
-    let ignore = crate::ignore::load();
+    let ignore = match crate::ignore::load_checked() {
+        Ok(ignore) => ignore,
+        Err(e) => {
+            return DeleteOutcome {
+                deleted: 0,
+                failed: items.len() as u32,
+                skipped: 0,
+                delayed: 0,
+                errors: vec![e.clone()],
+                details: items
+                    .iter()
+                    .map(|it| ItemDetail {
+                        path: it.path.clone(),
+                        kind: format!("{:?}", it.kind).to_lowercase(),
+                        status: "failed".into(),
+                        message: e.clone(),
+                    })
+                    .collect(),
+            }
+        }
+    };
 
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
@@ -401,12 +424,38 @@ fn delete_cleanup_items_with_io(
 }
 
 /// Full cleanup: optional backup →official uninstall →residual delete.
+fn ignore_read_abort(
+    app: &crate::apps::InstalledApp,
+    dry_run: bool,
+    error: String,
+) -> FullCleanupReport {
+    FullCleanupReport {
+        app_name: app.name.clone(),
+        dry_run,
+        backup_dir: String::new(),
+        uninstall_ok: false,
+        uninstall_message: error.clone(),
+        deleted: 0,
+        failed: 0,
+        skipped: 0,
+        delayed: 0,
+        aborted: true,
+        restore_point_ok: false,
+        restore_point_msg: String::new(),
+        errors: vec![error],
+        item_details: vec![],
+    }
+}
+
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
     opts: &FullCleanupOptions,
 ) -> FullCleanupReport {
     let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Err(e) = crate::ignore::load_checked() {
+        return ignore_read_abort(app, opts.dry_run, e);
+    }
     if opts.dry_run {
         let dry = run_cleanup_dry_for_app_source(app, items, cleanup_source_from_opts(opts));
         return FullCleanupReport {

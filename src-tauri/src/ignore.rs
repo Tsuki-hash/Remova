@@ -25,20 +25,22 @@ fn ignore_path() -> PathBuf {
 }
 
 pub fn load() -> IgnoreList {
-    let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let p = ignore_path();
-    let Ok(s) = std::fs::read_to_string(p) else {
-        return IgnoreList::default();
-    };
-    serde_json::from_str(&s).unwrap_or_default()
+    // Read-only scan compatibility. Mutations and cleanup must use load_checked.
+    load_checked().unwrap_or_default()
 }
 
-fn load_unlocked() -> IgnoreList {
-    let p = ignore_path();
-    let Ok(s) = std::fs::read_to_string(p) else {
-        return IgnoreList::default();
+pub fn load_checked() -> Result<IgnoreList, String> {
+    let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    read_ignore_file(&ignore_path())
+}
+
+fn read_ignore_file(p: &std::path::Path) -> Result<IgnoreList, String> {
+    let s = match std::fs::read_to_string(p) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(IgnoreList::default()),
+        Err(e) => return Err(format!("exec:ignore_read_failed::{e}")),
     };
-    serde_json::from_str(&s).unwrap_or_default()
+    serde_json::from_str(&s).map_err(|e| format!("exec:ignore_read_failed::{e}"))
 }
 
 pub fn save(list: &IgnoreList) -> Result<(), String> {
@@ -61,10 +63,14 @@ fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), Strin
 
 /// Load → mutate → save under one lock (avoids lost updates).
 fn update_with(f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
+    update_file(&ignore_path(), f)
+}
+
+fn update_file(p: &std::path::Path, f: impl FnOnce(&mut IgnoreList)) -> Result<IgnoreList, String> {
     let _g = FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut l = load_unlocked();
+    let mut l = read_ignore_file(p)?;
     f(&mut l);
-    save_unlocked(&l)?;
+    write_ignore_file(p, &l)?;
     Ok(l)
 }
 
@@ -275,6 +281,25 @@ pub fn apply_suggestions(items: &[IgnoreSuggestion]) -> Result<IgnoreList, Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn checked_ignore_updates_preserve_corrupt_original_bytes() {
+        let p = std::env::temp_dir().join(format!(
+            "remova-ignore-read-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(super::read_ignore_file(&p).unwrap().names.is_empty());
+        std::fs::write(&p, b"{ damaged ignore list").unwrap();
+        assert!(super::update_file(&p, |_| panic!("must not mutate unreadable rules")).is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"{ damaged ignore list");
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        assert!(super::read_ignore_file(&p).is_err());
+        std::fs::remove_dir(p).unwrap();
+    }
     use super::*;
 
     #[cfg(windows)]
