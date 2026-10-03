@@ -52,7 +52,7 @@ export const dict = {
     closeGuide: "知道了",
     guideStep1: "1. 在列表点软件行 → 「深度卸载」调用官方卸载程序",
     guideStep2: "2. 卸载完成自动扫描残留，按 可清理 / 建议确认 / 保留 分类",
-    guideStep3: "3. 勾选要清理的项（可选先备份）→ 清理；出问题可在「还原」找回",
+    guideStep3: "3. 勾选清理项 → 清理；仅有效备份可还原，未备份无法找回",
     versionNew: "发现新版本",
     versionDownload: "去下载",
     versionInstallClose: "关闭并安装",

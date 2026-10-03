@@ -20,6 +20,8 @@ export function WhitelistPanel({
 }) {
   const L = t();
   const [lists, setLists] = useState<IgnoreLists | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
 
@@ -42,11 +44,19 @@ export function WhitelistPanel({
   };
 
   useEffect(() => {
+    let alive = true;
+    setLoadError(null);
     void api
       .loadIgnore()
-      .then(setLists)
-      .catch((e) => onError(formatError(e)));
-  }, [onError]);
+      .then(next => { if (alive) setLists(next); })
+      .catch((e) => {
+        if (!alive) return;
+        const message = formatError(e);
+        setLoadError(message);
+        onError(message);
+      });
+    return () => { alive = false; };
+  }, [onError, retry]);
 
   const rows: { kind: "publisher" | "name"; value: string }[] = [
     ...(lists?.publishers ?? []).map((value) => ({ kind: "publisher" as const, value })),
@@ -79,7 +89,10 @@ export function WhitelistPanel({
         </button>
       </div>
       {lists === null ? (
-        <div style={{ color: "var(--muted)" }}>{L.loadingGeneric}</div>
+        loadError ? <div role="alert">
+          <div style={{ color: "var(--danger-text)", marginBottom: 8 }}>{loadError}</div>
+          <button style={css.btnSm} onClick={() => setRetry(value => value + 1)}>{L.manageReload}</button>
+        </div> : <div style={{ color: "var(--muted)" }}>{L.loadingGeneric}</div>
       ) : rows.length === 0 ? (
         <div style={{ color: "var(--muted)" }}>{L.whitelistEmpty}</div>
       ) : (
