@@ -3,7 +3,9 @@
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS,
+};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER,
@@ -828,15 +830,23 @@ fn read_path_scope_raw(scope: &str) -> Result<(String, bool), String> {
         "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
         _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
     };
-    read_reg_value_raw(key, "Path")
+    read_reg_value_raw_with_missing(key, "Path", true)
 }
 
 /// Raw Path text plus its type (`true` = REG_EXPAND_SZ). Write-back must
 /// preserve these unexpanded bytes for REG_EXPAND_SZ values.
 fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool), String> {
+    read_reg_value_raw_with_missing(key_path, value_name, false)
+}
+
+fn read_reg_value_raw_with_missing(
+    key_path: &str,
+    value_name: &str,
+    missing_is_empty: bool,
+) -> Result<(String, bool), String> {
     #[cfg(not(windows))]
     {
-        let _ = key_path;
+        let _ = (key_path, value_name, missing_is_empty);
         Err("not windows".into())
     }
     #[cfg(windows)]
@@ -848,9 +858,15 @@ fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool)
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
-            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
-                .ok()
-                .map_err(|_| format!("open failed {key_path}"))?;
+            let opened = RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk);
+            if missing_is_empty
+                && (opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND)
+            {
+                return Ok((String::new(), true));
+            }
+            opened.ok().map_err(|_| {
+                crate::error::path_io_err(format!("open failed {key_path}")).to_ipc()
+            })?;
             let vname = to_wide(value_name);
             let mut typ = REG_VALUE_TYPE(0);
             let mut data = vec![0u8; 65_536];
@@ -881,6 +897,9 @@ fn read_reg_value_raw(key_path: &str, value_name: &str) -> Result<(String, bool)
                 }
             }
             let _ = RegCloseKey(hk);
+            if missing_is_empty && (st == ERROR_FILE_NOT_FOUND || st == ERROR_PATH_NOT_FOUND) {
+                return Ok((String::new(), true));
+            }
             if st != ERROR_SUCCESS {
                 return Err(
                     crate::error::path_io_err(format!("read Path {key_path} failed")).to_ipc(),
@@ -1104,46 +1123,65 @@ pub(crate) fn write_path_scope(scope: &str, value: &str, expand: bool) -> Result
             return path_mock::write(scope, value, expand);
         }
     }
-    // A single environment variable is capped at 32,767 chars in the process
-    // environment block — fail with a clear code instead of a spawn failure.
-    if value.chars().count() > 30_000 {
+    if value.encode_utf16().count() > 30_000 {
         return Err(crate::error::path_io_err(
             "PATH value exceeds the environment variable size limit".to_string(),
         )
         .to_ipc());
     }
-    use std::process::Command;
-    // Explicit registry kind: SetEnvironmentVariable would silently rewrite a
-    // REG_EXPAND_SZ Path as REG_SZ (and the content is raw %VAR% text here).
-    let kind = if expand { "ExpandString" } else { "String" };
-    let (root, subkey) = match scope {
-        "User" => ("CurrentUser", r"Environment"),
-        "Machine" => (
-            "LocalMachine",
-            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        ),
+    let key = match scope {
+        "User" => r"HKCU\Environment",
+        "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
         _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
     };
-    let script = format!(
-        "$b=[Microsoft.Win32.RegistryKey]::OpenBaseKey('{root}','Default');\
-         $k=$b.CreateSubKey('{subkey}');\
-         $k.SetValue('Path',$env:REMOVA_PATH_VALUE,[Microsoft.Win32.RegistryValueKind]::{kind});\
-         $k.Close()"
-    );
-    let mut child_cmd = Command::new(powershell_exe());
-    child_cmd.env("REMOVA_PATH_VALUE", value).args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        &script,
-    ]);
-    hide_console(&mut child_cmd);
-    let mut child = child_cmd.spawn().map_err(|e| e.to_string())?;
-    let st = child.wait().map_err(|e| e.to_string())?;
-    if !st.success() {
-        return Err(format!("set Path {scope} failed"));
+    write_path_value(key, value, expand)
+}
+
+fn write_path_value(key: &str, value: &str, expand: bool) -> Result<(), String> {
+    crate::fsutil::validate_native_name(value)?;
+    #[cfg(not(windows))]
+    {
+        let _ = (key, expand);
+        Err("not windows".into())
     }
-    Ok(())
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Registry::{
+            RegCreateKeyExW, RegSetValueExW, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_SZ,
+        };
+        let (hive, sub, view) = parse(key).ok_or_else(|| "bad key".to_string())?;
+        let sub = to_wide_name(&sub)?;
+        let mut hk = HKEY::default();
+        RegCreateKeyExW(
+            hive,
+            PCWSTR(sub.as_ptr()),
+            0,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE | view,
+            None,
+            &mut hk,
+            None,
+        )
+        .ok()
+        .map_err(|e| crate::error::path_io_err(format!("open Path key failed: {e}")).to_ipc())?;
+        let bytes: Vec<u8> = to_wide(value)
+            .iter()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        let name = to_wide("Path");
+        let status = RegSetValueExW(
+            hk,
+            PCWSTR(name.as_ptr()),
+            0,
+            if expand { REG_EXPAND_SZ } else { REG_SZ },
+            Some(&bytes),
+        );
+        let _ = RegCloseKey(hk);
+        status
+            .ok()
+            .map_err(|e| crate::error::path_io_err(format!("write Path failed: {e}")).to_ipc())
+    }
 }
 
 pub fn leaf_name(path: &str) -> String {
@@ -1612,6 +1650,66 @@ mod tests {
     /// Non-ASCII REG_SZ data must survive export byte-exact: reg.exe text
     /// output is OEM-codepage encoded and used to bake mojibake into the
     /// seal-digested value.reg (the only authorized restore source).
+    #[cfg(windows)]
+    #[test]
+    fn native_path_roundtrip_handles_absence_empty_and_type() {
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(super::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+        let key = format!(
+            r"HKCU\Software\RemovaPathTest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let _cleanup = Cleanup(key.clone());
+        assert_eq!(
+            super::read_reg_value_raw_with_missing(&key, "Path", true).unwrap(),
+            (String::new(), true)
+        );
+        for (value, expand) in [
+            ("%LOCALAPPDATA%\\工具", true),
+            ("", true),
+            ("", false),
+            ("C:\\Vendor", false),
+        ] {
+            super::write_path_value(&key, value, expand).unwrap();
+            assert_eq!(
+                super::read_reg_value_raw(&key, "Path").unwrap(),
+                (value.to_string(), expand)
+            );
+        }
+        assert_eq!(
+            super::read_reg_value_raw_with_missing(&key, "Absent", true).unwrap(),
+            (String::new(), true)
+        );
+        assert!(super::write_path_value("invalid", "data", false).is_err());
+        assert!(super::write_path_value(&key, "a\0b", false).is_err());
+        let status = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args([
+                "add",
+                &key,
+                "/v",
+                "Path",
+                "/t",
+                "REG_DWORD",
+                "/d",
+                "1",
+                "/f",
+            ])
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+        assert!(super::read_reg_value_raw(&key, "Path").is_err());
+    }
+
     #[cfg(windows)]
     #[test]
     fn export_reg_value_preserves_non_ascii_bytes() {
