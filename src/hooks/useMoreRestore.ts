@@ -18,18 +18,20 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const operation = useRef(false);
+  const previewSequence = useRef(0);
 
   useEffect(() => {
+    const sequence = ++previewSequence.current;
     let current = true;
     setRestorePreview(null);
     setPreviewError(null);
     setPreviewLoading(!!restorePick && openRestore);
     if (restorePick && openRestore) {
       void api.previewRestore(restorePick).then(preview => {
-        if (current) setRestorePreview(preview);
+        if (current && sequence === previewSequence.current) setRestorePreview(preview);
       }).catch(error => {
-        if (current) setPreviewError(formatError(error));
-      }).finally(() => { if (current) setPreviewLoading(false); });
+        if (current && sequence === previewSequence.current) setPreviewError(formatError(error));
+      }).finally(() => { if (current && sequence === previewSequence.current) setPreviewLoading(false); });
     }
     return () => { current = false; };
   }, [restorePick, openRestore]);
@@ -61,13 +63,13 @@ export function useMoreRestore(onError: (msg: string) => void) {
       setRestoreBusy(true);
       const L = t();
       try {
-      const ok = await requestConfirm({
-        title: L.deleteSession,
-        message: L.deleteSessionConfirm(name),
-        confirmLabel: L.deleteSession,
-        danger: true,
-      });
-      if (!ok) return;
+        const ok = await requestConfirm({
+          title: L.deleteSession,
+          message: L.deleteSessionConfirm(name),
+          confirmLabel: L.deleteSession,
+          danger: true,
+        });
+        if (!ok) return;
         await api.deleteBackupSession(name);
         const list = await api.backupSessions();
         setSessions(list);
@@ -89,19 +91,25 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreBusy(true);
     setRestoreMsgs([]);
     try {
-    // Refresh before confirmation; the backend independently revalidates on restore.
-    const preview = await api.previewRestore(restorePick);
-    setRestorePreview(preview);
-    setPreviewError(null);
-    const ok = await requestConfirm({
-      title: L.restore,
-      message: [L.restoreConfirm(restorePick),
-        preview.existing ? L.restoreConflict(preview.existing) : "",
-        preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
-      confirmLabel: L.restoreRun,
-      danger: true,
-    });
-    if (!ok) return;
+      // Invalidate any older preview still in flight for this same selection.
+      ++previewSequence.current;
+      setPreviewLoading(true);
+      const preview = await api.previewRestore(restorePick).catch(error => {
+        setRestorePreview(null);
+        setPreviewError(formatError(error));
+        throw error;
+      }).finally(() => setPreviewLoading(false));
+      setRestorePreview(preview);
+      setPreviewError(null);
+      const ok = await requestConfirm({
+        title: L.restore,
+        message: [L.restoreConfirm(restorePick),
+          preview.existing ? L.restoreConflict(preview.existing) : "",
+          preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
+        confirmLabel: L.restoreRun,
+        danger: true,
+      });
+      if (!ok) return;
       const msgs = await api.restoreSessionByName(restorePick);
       setRestoreMsgs(msgs.length ? msgs.map((msg) => {
         if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
@@ -123,7 +131,12 @@ export function useMoreRestore(onError: (msg: string) => void) {
     }
   }, [restorePick]);
 
-  const closeRestore = useCallback(() => setOpenRestore(false), []);
+  const selectRestore = useCallback((name: string) => {
+    if (!operation.current) setRestorePick(name);
+  }, []);
+  const closeRestore = useCallback(() => {
+    if (!operation.current) setOpenRestore(false);
+  }, []);
 
   return {
     sessions,
@@ -133,7 +146,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     previewError,
     previewLoading,
     restorePick,
-    setRestorePick,
+    setRestorePick: selectRestore,
     restoreBusy,
     restoreMsgs,
     openRestore,

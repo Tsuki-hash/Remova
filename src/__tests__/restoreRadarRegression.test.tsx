@@ -217,3 +217,37 @@ it("shows restore target conflicts and missing entries while rejecting stale or 
   expect(screen.getByRole("alert").textContent).toContain("failed");
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
 });
+
+it("does not let an older preview erase a fresh validation failure for the same backup", async () => {
+  let finish!: (preview: unknown) => void;
+  native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
+  await act(async () => { await result.current.runRestore(); });
+  await act(async () => { finish({ name: "older-backup", files: 999, entries: [] }); });
+  expect(result.current.restorePreview).toBeNull();
+  expect(result.current.previewError).toBeTruthy();
+  expect(result.current.previewLoading).toBe(false);
+  expect(native.restoreSessionByName).not.toHaveBeenCalled();
+});
+
+it("locks selection and deletion during confirmation and releases the lock on cancellation", async () => {
+  let cancel!: (ok: boolean) => void;
+  vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { cancel = resolve; }));
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  let pending!: Promise<void>;
+  await act(async () => { pending = result.current.runRestore(); });
+  await act(async () => {
+    result.current.setRestorePick("other");
+    await result.current.deleteSession("older-backup");
+  });
+  expect(result.current.restorePick).toBe("older-backup");
+  expect(native.deleteBackupSession).not.toHaveBeenCalled();
+  await act(async () => { cancel(false); await pending; });
+  expect(native.restoreSessionByName).not.toHaveBeenCalled();
+  expect(result.current.restoreBusy).toBe(false);
+  await act(async () => { result.current.setRestorePick("other"); });
+  expect(result.current.restorePick).toBe("other");
+});
