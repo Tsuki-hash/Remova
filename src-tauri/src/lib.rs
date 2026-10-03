@@ -516,7 +516,7 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
 #[tauri::command]
 async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let installed = apps::scan_installed_apps();
+        let installed = apps::scan_installed_inventory();
         orphans::scan_orphans(&installed)
     })
     .await
