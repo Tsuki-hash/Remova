@@ -141,9 +141,13 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
     let mut bytes = 0i64;
     let mut capped = false;
     let Ok(rd) = std::fs::read_dir(root) else {
-        return (0, false);
+        return (0, true);
     };
-    for ent in rd.flatten() {
+    for ent in rd {
+        let Ok(ent) = ent else {
+            capped = true;
+            continue;
+        };
         if *budget == 0 {
             capped = true;
             break;
@@ -154,11 +158,15 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
         if crate::fsutil::is_reparse_point(&p) {
             continue;
         }
-        if p.is_dir() {
+        let Ok(meta) = ent.metadata() else {
+            capped = true;
+            continue;
+        };
+        if meta.is_dir() {
             let (sub, sub_capped) = shallow_size_bytes(&p, max_depth - 1, budget);
             bytes += sub;
             capped |= sub_capped;
-        } else if let Ok(meta) = ent.metadata() {
+        } else if meta.is_file() {
             bytes += meta.len() as i64;
         }
     }
@@ -305,6 +313,13 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_directory_read_marks_radar_size_as_a_lower_bound() {
+        let root = std::env::temp_dir().join(format!("remova-radar-io-{}", std::process::id()));
+        std::fs::write(&root, b"not a directory").unwrap();
+        assert_eq!(super::shallow_size_bytes(&root, 3, &mut 20), (0, true));
+        std::fs::remove_file(root).unwrap();
+    }
     #[test]
     #[cfg(windows)]
     fn radar_skips_root_junctions_and_child_junction_rows() {
