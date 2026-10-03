@@ -1,6 +1,7 @@
 import type { ScanResult } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
+import { CleanupPlanPreview } from "./CleanupPlanPreview";
 
 /** Scan preview toolbar: close / mode / dry-run / cleanup / AI explain. */
 export function ScanActionsBar({
@@ -36,6 +37,8 @@ export function ScanActionsBar({
 }) {
   const L = t();
   return (
+    <>
+    <CleanupPlanPreview items={scan.items} selected={selectedPaths} />
     <div
       style={{
         ...css.toolbar,
@@ -76,7 +79,7 @@ export function ScanActionsBar({
         </label>
       )}
       {scanning && <div className="remova-progress" style={{ marginTop: 8, flexShrink: 0 }} aria-hidden />}
-      <button style={css.btnGhost} disabled={dryRunning || selectedPaths.size === 0} onClick={onDryRun}>
+      <button style={css.btnGhost} disabled={busy || dryRunning || selectedPaths.size === 0} onClick={onDryRun}>
         {L.dryRun}
       </button>
       {/* scope summary before the destructive CTA */}
@@ -105,5 +108,6 @@ export function ScanActionsBar({
         </button>
       )}
     </div>
+    </>
   );
 }
