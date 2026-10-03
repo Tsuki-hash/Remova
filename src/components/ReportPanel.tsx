@@ -222,7 +222,7 @@ export function ReportPanel({
         <div style={{ marginTop: 10 }}>
           <div style={{ fontWeight: 650, fontSize: 12.5, marginBottom: 4 }}>{L.verifyChecklist}</div>
           <div style={{ maxHeight: 120, overflow: "auto", fontSize: 12, color: "var(--muted)" }}>
-            {verifyRows.slice(0, 40).map((v, i) => (
+            {verifyRows.map((v, i) => (
               <div key={`${v.path}-${i}`} className="ell" title={v.path}>
                 <span
                   role="img"
@@ -237,7 +237,6 @@ export function ReportPanel({
                 {v.error ? ` — ${L.verifyUnknown}` : ""}
               </div>
             ))}
-            {verifyRows.length > 40 && <div>… +{verifyRows.length - 40}</div>}
           </div>
         </div>
       )}

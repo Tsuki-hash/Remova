@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { InstalledApp } from "../types";
+import { appKey } from "../lib/appKey";
 import { recommendScore, LARGE_APP_KB } from "../lib/decision";
 import type { CategoryId, SortCol } from "../lib/categories";
 
@@ -32,7 +33,11 @@ export function useAppFilter({
 }) {
   const filtered = useMemo(() => {
     const needle = deferredQ.trim().toLowerCase();
-    let list = copilotList ?? apps;
+    const current = new Map(apps.map(app => [appKey(app), app]));
+    let list = copilotList === null ? apps : copilotList.flatMap(app => {
+      const latest = current.get(appKey(app));
+      return latest ? [latest] : [];
+    });
     list = list.filter(
       (a) =>
         !ignorePub.some((p) => p && a.publisher?.toLowerCase() === p.toLowerCase()) &&

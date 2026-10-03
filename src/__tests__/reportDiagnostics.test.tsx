@@ -11,6 +11,21 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each([41, 80])("keeps tail failures and unknown verification results reachable for %s rows", count => {
+  const report: FullCleanupReport = { app_name: "Vendor", dry_run: false, backup_dir: "",
+    uninstall_ok: true, uninstall_message: "", deleted: count, failed: 0, skipped: 0,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const rows = Array.from({ length: count }, (_, index) => ({ path: `verify-${index}`, kind: "file",
+    still_there: index >= count - 2, error: index === count - 1 ? "denied" : undefined }));
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={rows} onDismiss={() => {}} onRegenerate={() => {}} />);
+  const unknown = screen.getByRole("img", { name: t().verifyUnknown });
+  expect(unknown.parentElement?.textContent).toContain(`verify-${count - 1}`);
+  expect(screen.getByRole("img", { name: t().verifyStillPresent }).parentElement?.textContent)
+    .toContain(`verify-${count - 2}`);
+  expect(unknown.parentElement?.parentElement?.style.maxHeight).toBe("120px");
+  expect(unknown.parentElement?.parentElement?.style.overflow).toBe("auto");
+});
 it.each(["zh", "en"] as const)("offers backup restoration only for a completed backed-up cleanup in %s", lang => {
   setLang(lang);
   const base: FullCleanupReport = { app_name: "Vendor", dry_run: false, backup_dir: "",
