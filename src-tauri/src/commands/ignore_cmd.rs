@@ -4,7 +4,7 @@ use crate::ignore;
 
 #[tauri::command]
 pub fn load_ignore() -> Result<ignore::IgnoreList, String> {
-    Ok(ignore::load())
+    ignore::load_checked()
 }
 
 #[tauri::command]
