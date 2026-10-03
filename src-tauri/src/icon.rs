@@ -77,26 +77,7 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
 }
 
 fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<()> {
-    // pid alone is not enough: two threads rendering the same app icon
-    // concurrently would share one tmp file and tear the PNG — add a nonce.
-    static TMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nonce = TMP_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut tmp_name = cache_file.as_os_str().to_owned();
-    tmp_name.push(format!(".{}_{}.png.tmp", std::process::id(), nonce));
-    let tmp = std::path::PathBuf::from(tmp_name);
-    // tmp + fsync + rename — matches the shared atomic-write discipline.
-    let result = (|| -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(png)?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, cache_file)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    crate::fsutil::write_bytes_atomic(cache_file, png)
 }
 
 /// Drop cache PNGs left behind by older source fingerprints (age > 7 days).
@@ -107,10 +88,9 @@ fn prune_stale_cache(dir: &std::path::Path, keep: &std::path::Path) {
     let keep_name = keep.file_name();
     for ent in rd.flatten() {
         let p = ent.path();
-        let is_tmp = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with(".png.tmp"));
+        let is_tmp = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            n.ends_with(".png.tmp") || (n.contains(".png.") && n.ends_with(".tmp"))
+        });
         if p.extension().and_then(|e| e.to_str()) != Some("png") && !is_tmp {
             continue;
         }
@@ -346,10 +326,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn extract_shell32_icon() {
-        let raw = r"C:\Windows\System32\shell32.dll,0";
-        if let Some(bytes) = super::extract_icon_png(raw) {
-            assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
-        }
+        let dll = crate::regops::sys_tool("shell32.dll");
+        let bytes = super::extract_from_path(&dll, 0).expect("system shell icon must extract");
+        assert!(looks_like_png(&bytes));
     }
 
     #[test]
@@ -400,9 +379,27 @@ mod tests {
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".png.tmp"))
+            .filter(|n| n.ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cache_write_preserves_preexisting_hard_links() {
+        let dir = unique_dir("remova_icon_occupied");
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("app.png");
+        let sentinel = dir.join("sentinel");
+        std::fs::write(&sentinel, b"keep original").unwrap();
+        // Cover every legacy nonce used by the other cache tests as well.
+        for nonce in 0..32 {
+            let tmp = dir.join(format!("app.png.{}_{nonce}.png.tmp", std::process::id()));
+            std::fs::hard_link(&sentinel, tmp).unwrap();
+        }
+        write_cache_png(&cache, b"new icon").unwrap();
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep original");
+        assert_eq!(std::fs::read(&cache).unwrap(), b"new icon");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

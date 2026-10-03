@@ -157,23 +157,7 @@ pub fn load_config() -> AiConfig {
 fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
     static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut tmp_name = p.as_os_str().to_owned();
-    tmp_name.push(format!(".{}.tmp", std::process::id()));
-    let tmp = std::path::PathBuf::from(tmp_name);
-    // tmp + fsync + rename — matches the shared atomic-write discipline; a
-    // crash must not leave a half-written ciphertext.
-    let result = (|| -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(s.as_bytes())?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, p)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result.map_err(|e| e.to_string())
+    crate::fsutil::write_bytes_atomic(p, s.as_bytes()).map_err(|e| e.to_string())
 }
 
 pub fn save_config(c: &AiConfig) -> Result<(), String> {
@@ -1123,7 +1107,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn config_write_failure_removes_existing_tmp() {
+    fn config_write_preserves_preexisting_hard_link() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir = std::env::temp_dir().join(format!("remova-r23-ai-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1131,15 +1115,18 @@ mod tests {
         let mut tmp_name = path.as_os_str().to_owned();
         tmp_name.push(format!(".{}.tmp", std::process::id()));
         let tmp = std::path::PathBuf::from(tmp_name);
-        std::fs::write(&tmp, "old partial").unwrap();
+        let sentinel = dir.join("sentinel");
+        std::fs::write(&sentinel, "old partial").unwrap();
+        std::fs::hard_link(&sentinel, &tmp).unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0x1 | 0x4)
             .open(&tmp)
             .unwrap();
-        assert!(write_config_file(&path, "new data").is_err());
-        assert!(!tmp.exists());
-        assert!(!path.exists());
+        write_config_file(&path, "new data").unwrap();
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "old partial");
+        assert!(tmp.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new data");
         drop(held);
         std::fs::remove_dir_all(dir).unwrap();
     }
