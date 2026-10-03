@@ -111,12 +111,21 @@ fn config_path() -> PathBuf {
     PathBuf::from(base).join("Remova").join("ai-config.json")
 }
 
-pub fn load_config() -> AiConfig {
-    let p = config_path();
-    let Ok(s) = std::fs::read_to_string(p) else {
-        return AiConfig::default();
+static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn load_config() -> Result<AiConfig, String> {
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    load_config_file(&config_path())
+}
+
+fn load_config_file(p: &std::path::Path) -> Result<AiConfig, String> {
+    let s = match std::fs::read_to_string(p) {
+        Ok(s) => zeroize::Zeroizing::new(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AiConfig::default()),
+        Err(e) => return Err(format!("ai:config_read_failed::{e}")),
     };
-    let mut c: AiConfig = serde_json::from_str(&s).unwrap_or_default();
+    let mut c: AiConfig =
+        serde_json::from_str(&s).map_err(|e| format!("ai:config_read_failed::{e}"))?;
     // take ownership of the stored bytes so the pre-image is wiped
     // explicitly instead of being dropped by the field assignment.
     let mut raw_key = std::mem::take(&mut c.api_key);
@@ -128,7 +137,7 @@ pub fn load_config() -> AiConfig {
     if migrate {
         // The wrap must not silently fail: a swallowed error leaves the
         // plaintext key on disk while the UI reports it protected.
-        if let Err(e) = save_config(&c) {
+        if let Err(e) = save_config_file(p, &c) {
             eprintln!("ai config migration failed: {e}");
             // Scrub the plaintext from disk (best effort, atomic) and from the
             // returned config so `has_api_key` no longer claims protection —
@@ -142,26 +151,39 @@ pub fn load_config() -> AiConfig {
                 allow_cloud_paths: c.allow_cloud_paths,
             };
             if let Ok(s) = serde_json::to_string_pretty(&out) {
-                let _ = write_config_file(&config_path(), &s);
+                let _ = write_config_file(p, &s);
             }
             let mut key = std::mem::take(&mut c.api_key);
             key.zeroize();
+            return Err(e);
         }
     }
-    c
+    Ok(c)
 }
 
 /// Atomic config write (tmp + rename): a crash mid-write must not destroy the
-/// DPAPI-wrapped key or a half-migrated file. Serialized in-process so a
-/// concurrent save/migrate cannot interleave on a shared tmp name.
+/// DPAPI-wrapped key or a half-migrated file. The caller holds CONFIG_LOCK
+/// for the complete read/migrate/update transaction.
 fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
-    static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     crate::fsutil::write_bytes_atomic(p, s.as_bytes()).map_err(|e| e.to_string())
 }
 
-pub fn save_config(c: &AiConfig) -> Result<(), String> {
-    let p = config_path();
+pub fn update_config(f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, String> {
+    update_config_file(&config_path(), f)
+}
+
+fn update_config_file(
+    p: &std::path::Path,
+    f: impl FnOnce(&mut AiConfig),
+) -> Result<AiConfigView, String> {
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut c = load_config_file(p)?;
+    f(&mut c);
+    save_config_file(p, &c)?;
+    Ok(AiConfigView::from(&c))
+}
+
+fn save_config_file(p: &std::path::Path, c: &AiConfig) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -177,7 +199,7 @@ pub fn save_config(c: &AiConfig) -> Result<(), String> {
     };
     out.api_key = encrypt_stored_key(&c.api_key)?;
     let s = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-    write_config_file(&p, &s)
+    write_config_file(p, &s)
 }
 
 const KEY_PREFIX: &str = "dpapi:";
@@ -941,6 +963,68 @@ pub fn parse_nl_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_config_transactions_preserve_unreadable_or_corrupt_originals() {
+        let p = std::env::temp_dir().join(format!(
+            "remova-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(load_config_file(&p).unwrap().api_key.is_empty());
+        std::fs::write(&p, b"{ invalid secret config").unwrap();
+        assert!(update_config_file(&p, |_| panic!("must not mutate corrupt config")).is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"{ invalid secret config");
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        assert!(load_config_file(&p).is_err());
+        std::fs::remove_dir(&p).unwrap();
+    }
+
+    #[test]
+    fn migration_and_updates_hold_one_transaction_lock() {
+        let p = std::env::temp_dir().join(format!(
+            "remova-config-race-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut old = AiConfig::default();
+        old.api_key = "fixture-legacy-key".into();
+        std::fs::write(&p, serde_json::to_vec(&old).unwrap()).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let path = &p;
+            scope.spawn(move || {
+                update_config_file(path, |c| {
+                    assert!(CONFIG_LOCK.try_lock().is_err());
+                    ready_tx.send(()).unwrap();
+                    attempt_rx.recv().unwrap();
+                    c.model = "older transaction".into();
+                })
+                .unwrap()
+            });
+            scope.spawn(move || {
+                ready_rx.recv().unwrap();
+                attempt_tx.send(()).unwrap();
+                update_config_file(path, |c| c.model = "new user settings".into()).unwrap();
+            });
+        });
+        let config = load_config_file(&p).unwrap();
+        assert_eq!(config.model, "new user settings");
+        assert_eq!(config.api_key, "fixture-legacy-key");
+        #[cfg(windows)]
+        assert!(!std::fs::read_to_string(&p)
+            .unwrap()
+            .contains("fixture-legacy-key"));
+        std::fs::remove_file(p).unwrap();
+    }
 
     #[test]
     fn report_prompt_respects_path_privacy_without_network_requests() {

@@ -5,7 +5,7 @@ use zeroize::Zeroize;
 
 #[tauri::command]
 pub fn get_ai_config() -> Result<ai::AiConfigView, String> {
-    Ok(ai::AiConfigView::from(&ai::load_config()))
+    Ok(ai::AiConfigView::from(&ai::load_config()?))
 }
 
 /// Save AI settings. Empty `api_key` keeps the stored key unchanged.
@@ -18,29 +18,29 @@ pub fn save_ai_config(
     allow_cloud_paths: bool,
     api_key: Option<String>,
 ) -> Result<ai::AiConfigView, String> {
-    let mut c = ai::load_config();
-    c.enabled = enabled;
-    c.provider = provider;
-    c.base_url = base_url;
-    c.model = model;
-    c.allow_cloud_paths = allow_cloud_paths;
-    if let Some(mut k) = api_key {
-        let trimmed = k.trim().to_string();
-        // The IPC copy (possibly padded) holds the secret too — wipe it.
-        k.zeroize();
-        if !trimmed.is_empty() {
-            // assignment would drop the old decrypted key without wipe.
-            c.api_key.zeroize();
-            c.api_key = trimmed;
+    let api_key = api_key.map(zeroize::Zeroizing::new);
+    ai::update_config(move |c| {
+        c.enabled = enabled;
+        c.provider = provider;
+        c.base_url = base_url;
+        c.model = model;
+        c.allow_cloud_paths = allow_cloud_paths;
+        if let Some(mut k) = api_key {
+            let trimmed = k.trim().to_string();
+            // The IPC copy (possibly padded) holds the secret too — wipe it.
+            k.zeroize();
+            if !trimmed.is_empty() {
+                // assignment would drop the old decrypted key without wipe.
+                c.api_key.zeroize();
+                c.api_key = trimmed;
+            }
         }
-    }
-    ai::save_config(&c)?;
-    Ok(ai::AiConfigView::from(&c))
+    })
 }
 
 #[tauri::command]
 pub async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>, String> {
-    let cfg = ai::load_config();
+    let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(None);
     }
@@ -59,7 +59,7 @@ pub async fn ai_explain_items(
     publisher: String,
     items: Vec<ai::ExplainInput>,
 ) -> Result<Vec<ai::ExplainOutput>, String> {
-    let cfg = ai::load_config();
+    let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(vec![]);
     }
@@ -74,7 +74,7 @@ pub async fn ai_explain_items(
 
 #[tauri::command]
 pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option<String>, String> {
-    let cfg = ai::load_config();
+    let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(None);
     }
@@ -88,7 +88,7 @@ pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option
 
 #[tauri::command]
 pub async fn ai_parse_intent(text: String, app_names: Vec<String>) -> Result<ai::NlIntent, String> {
-    let cfg = ai::load_config();
+    let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Err("ai:parse_intent_failed::ai disabled".into());
     }
