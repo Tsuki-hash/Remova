@@ -323,6 +323,7 @@ export const dict = {
     verifyChecklist: "清理后复核",
     verifyStillPresent: "仍存在",
     verifyRemoved: "已移除",
+    verifyUnknown: "无法核验，读取失败",
     orphanEvNoOwner: "未匹配到已安装软件",
     orphanEvExe: "目录包含可执行文件",
     orphanEvFiles: "目录包含多个文件",

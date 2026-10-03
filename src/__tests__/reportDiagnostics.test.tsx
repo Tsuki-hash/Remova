@@ -39,9 +39,12 @@ it.each(["zh", "en"] as const)("keeps raw diagnostics in technical details while
     aiReportBusy={false} aiReportNote={null} verifyRows={[
       { path: "remaining", kind: "file", still_there: true },
       { path: "removed", kind: "file", still_there: false },
+      { path: "unknown", kind: "registry", still_there: true, error: "access denied" },
     ]} onDismiss={() => {}} onRegenerate={() => {}} />);
   expect(screen.getByRole("img", { name: L.verifyStillPresent })).toBeTruthy();
   expect(screen.getByRole("img", { name: L.verifyRemoved })).toBeTruthy();
+  expect(screen.getByRole("img", { name: L.verifyUnknown })).toBeTruthy();
+  expect(screen.getByRole("img", { name: L.verifyUnknown }).parentElement?.textContent).toContain(L.verifyUnknown);
   expect(screen.getByText(L.restorePointFail).style.color).toBe("var(--warn-ink)");
   expect(screen.getByText(L.backendUninstallExit("1603"))).toBeTruthy();
   expect(container.textContent).toContain(L.backendDetailUnavailable);
