@@ -28,6 +28,13 @@ pub async fn restore_session_by_name(name: String) -> Result<Vec<String>, String
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn preview_restore_session(name: String) -> Result<restore::RestorePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || restore::preview_by_name(&name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     // Command-layer boundary coverage.

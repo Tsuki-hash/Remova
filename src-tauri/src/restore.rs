@@ -5,7 +5,14 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
+struct RestoreInputs {
+    seal: crate::path_seal::PathMapSeal,
+    map: std::collections::BTreeMap<String, String>,
+    path_bytes: Option<Vec<u8>>,
+    imports: Vec<(PathBuf, PathBuf, String, &'static str)>,
+}
+
+fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
     if !session.is_dir() {
         return Err(crate::error::restore_err("session not found").to_ipc());
     }
@@ -70,6 +77,21 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     if selected != recorded {
         return Err("seal:registry_snapshot_missing".into());
     }
+    Ok(RestoreInputs {
+        seal,
+        map,
+        path_bytes,
+        imports,
+    })
+}
+
+pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
+    let RestoreInputs {
+        seal,
+        map,
+        path_bytes,
+        imports,
+    } = validate_session(session)?;
     let mut messages = vec![];
 
     // Files via path_map.json
@@ -532,6 +554,10 @@ pub fn list_session_names() -> Result<Vec<String>, String> {
 }
 
 pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
+    restore_session(&session_path(name)?)
+}
+
+fn session_path(name: &str) -> Result<PathBuf, String> {
     // Same session-name predicate as delete_session_by_name.
     if name.is_empty()
         || name == "."
@@ -544,8 +570,84 @@ pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
     {
         return Err("invalid session name".into());
     }
-    let path = crate::backup::backup_root().join(name);
-    restore_session(&path)
+    Ok(crate::backup::backup_root().join(name))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct RestorePreviewEntry {
+    pub target: String,
+    pub status: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct RestorePreview {
+    pub name: String,
+    pub files: usize,
+    pub registry: usize,
+    pub path_entries: usize,
+    pub existing: usize,
+    pub unavailable: usize,
+    pub entries: Vec<RestorePreviewEntry>,
+}
+
+/// Advisory, bounded preview. Authorization and snapshots are checked using
+/// the same inputs as restore; file contents are not authenticated by the seal.
+/// Never create destination directories or stage/import registry data here.
+pub fn preview_by_name(name: &str) -> Result<RestorePreview, String> {
+    preview_session(name, &session_path(name)?)
+}
+
+fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String> {
+    let inputs = validate_session(session)?;
+    let mut preview = RestorePreview {
+        name: name.into(),
+        files: inputs.map.len(),
+        registry: inputs.imports.len(),
+        path_entries: inputs
+            .path_bytes
+            .as_deref()
+            .map(|bytes| {
+                serde_json::from_slice::<crate::backup::PathSnapshot>(bytes)
+                    .map(|snapshot| snapshot.items.len())
+            })
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or(0),
+        existing: 0,
+        unavailable: 0,
+        entries: vec![],
+    };
+    for (rel, target) in inputs.map {
+        if !is_safe_map_rel(&rel) {
+            return Err("seal:bad_backup_entry".into());
+        }
+        let source = session.join("files").join(&rel);
+        let dest = Path::new(&target);
+        let status =
+            if crate::fsutil::is_reparse_point(&source) || crate::fsutil::is_reparse_point(dest) {
+                "blocked"
+            } else if !source.try_exists().map_err(|e| e.to_string())? {
+                "missing"
+            } else if !crate::safety::is_safe_restore_target(dest)
+                || crate::safety::looks_like_sync_conflict(&target)
+                || !inputs
+                    .seal
+                    .targets
+                    .contains(&crate::path_seal::normalize_target(&target))
+            {
+                "blocked"
+            } else if dest.try_exists().map_err(|e| e.to_string())? {
+                "existing"
+            } else {
+                "available"
+            };
+        preview.existing += usize::from(status == "existing");
+        preview.unavailable += usize::from(status == "blocked" || status == "missing");
+        if preview.entries.len() < 200 {
+            preview.entries.push(RestorePreviewEntry { target, status });
+        }
+    }
+    Ok(preview)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -685,6 +787,12 @@ fn is_session_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preview_rejects_invalid_names_without_loading_a_session() {
+        for name in ["", ".", "..", "123_../../escape", "123_bad:name"] {
+            assert!(super::preview_by_name(name).is_err());
+        }
+    }
     #[test]
     fn registry_import_requires_authenticated_machine_view() {
         let machine =
@@ -840,6 +948,13 @@ mod tests {
         fs::write(files.join(rel), b"hello-backup").unwrap();
         let mut map = std::collections::BTreeMap::new();
         map.insert(rel.to_string(), orig.to_string_lossy().to_string());
+        let missing = tmp.join("not-created").join("missing.txt");
+        for i in 0..205 {
+            map.insert(
+                format!("missing_{i}"),
+                missing.to_string_lossy().to_string(),
+            );
+        }
         fs::write(
             files.join("path_map.json"),
             serde_json::to_string(&map).unwrap(),
@@ -847,9 +962,22 @@ mod tests {
         .unwrap();
         // every write-back needs a seal (same as production backup path).
         crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        let preview = preview_session("sess", &sess).unwrap();
+        assert_eq!(preview.files, 206);
+        assert_eq!(preview.entries.len(), 200);
+        assert_eq!(preview.existing, 1);
+        assert_eq!(preview.unavailable, 205);
+        assert_eq!(fs::read(&orig).unwrap(), b"hello");
+        assert!(!missing.parent().unwrap().exists());
         // restore overwrites orig from backup
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        fs::write(files.join("path_map.json"), b"{}").unwrap();
+        assert_eq!(
+            preview_session("sess", &sess).unwrap_err(),
+            "seal:map_mismatch"
+        );
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
         crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
