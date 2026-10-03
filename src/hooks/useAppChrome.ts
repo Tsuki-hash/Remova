@@ -2,7 +2,9 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 import type { Strings } from "../i18n";
+import { t } from "../i18n";
 import { formatError } from "../lib/format";
+import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { isRecentInstall } from "../lib/decision";
 
@@ -70,6 +72,15 @@ export function useAppChrome({
   const monitorBusyRef = useRef(false);
 
   const elevate = useCallback(async () => {
+    // The badge fires UAC straight from a header chip — require the same
+    // explicit consent the manage pages ask for before relaunching.
+    const L = t();
+    const ok = await requestConfirm({
+      title: L.elevateAskTitle,
+      message: L.elevateAskBody,
+      confirmLabel: L.elevateAskOk,
+    });
+    if (!ok) return;
     try {
       await api.elevateRestart();
     } catch (e) {
