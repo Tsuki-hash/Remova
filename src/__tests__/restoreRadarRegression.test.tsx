@@ -95,7 +95,7 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
   expect(native.listDirChildren).toHaveBeenCalledTimes(1);
-  expect(screen.getByText(/>= 1 KB/)).toBeTruthy();
+  expect(await screen.findByText(/>= 1 KB/)).toBeTruthy();
 });
 
 it("keeps the current parent after a failed drill and disables back while pending", async () => {

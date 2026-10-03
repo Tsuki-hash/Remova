@@ -108,39 +108,39 @@ export function useAppBoot({
           if (closePending) return;
           closePending = true;
           try {
-          if (busyRef.current || hasPendingNativeWrites()) {
-            const ok = await requestConfirm({
-              title: t().closeConfirmBusy,
-              confirmLabel: t().confirmOk,
-              cancelLabel: t().cancel,
-              danger: true,
-            });
-            if (!ok) { consumeQuitIntent(); return; }
-          }
-          if (consumeQuitIntent() || loadCloseMode() === "quit") {
-            try {
-              await win.destroy();
-            } catch {
- // ignore
+            if (busyRef.current || hasPendingNativeWrites()) {
+              const ok = await requestConfirm({
+                title: t().closeConfirmBusy,
+                confirmLabel: t().confirmOk,
+                cancelLabel: t().cancel,
+                danger: true,
+              });
+              if (!ok) { consumeQuitIntent(); return; }
             }
-            return;
-          }
-          const action = await resolveCloseAction();
-          if (action === "quit") {
-            try {
-              await win.destroy();
-            } catch {
- // ignore
+            if (consumeQuitIntent() || loadCloseMode() === "quit") {
+              try {
+                await win.destroy();
+              } catch {
+                // ignore
+              }
+              return;
             }
-            return;
-          }
-          if (action === "tray") {
-            try {
-              await win.hide();
-            } catch {
- // ignore
+            const action = await resolveCloseAction();
+            if (action === "quit") {
+              try {
+                await win.destroy();
+              } catch {
+                // ignore
+              }
+              return;
             }
-          }
+            if (action === "tray") {
+              try {
+                await win.hide();
+              } catch {
+                // ignore
+              }
+            }
           } finally { closePending = false; }
         });
  // the effect may already be gone when the dynamic import resolved.

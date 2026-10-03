@@ -25,8 +25,8 @@ vi.mock("../lib/updateCheck", () => ({
   checkLatestRelease: (...a: unknown[]) => checkLatestRelease(...a),
   openUpdateDownload: (...a: unknown[]) => openUpdateDownload(...a),
 }));
-vi.mock("../lib/closeMode", () => ({
-  consumeQuitIntent: vi.fn().mockReturnValue(false),
+vi.mock("../lib/closeMode", async () => ({
+  ...await vi.importActual<typeof import("../lib/closeMode")>("../lib/closeMode"),
   loadCloseMode: vi.fn().mockReturnValue(null),
   resolveCloseAction: vi.fn().mockResolvedValue("tray"),
 }));
@@ -41,6 +41,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 import { useAppBoot, checkUpdateNow } from "../hooks/useAppBoot";
 import { toast } from "../lib/toast";
 import { formatError } from "../lib/format";
+import { trackNativeCall } from "../lib/nativeActivity";
+import { requestConfirm } from "../lib/confirm";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 function app(): InstalledApp {
   return {
@@ -80,6 +83,62 @@ function mountBoot(spies: ReturnType<typeof bootSpies>) {
     }),
   );
 }
+
+it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray exits during %s", async command => {
+  vi.clearAllMocks();
+  listApps.mockResolvedValue([]);
+  checkLatestRelease.mockResolvedValue({ ok: false });
+  let handleClose!: (event: { preventDefault: () => void }) => Promise<void>;
+  let quit!: () => void;
+  const closeOff = vi.fn(), quitOff = vi.fn(), preventDefault = vi.fn();
+  const win = {
+    onCloseRequested: vi.fn(async (handler: typeof handleClose) => { handleClose = handler; return closeOff; }),
+    listen: vi.fn(async (name: string, handler: () => void) => {
+      expect(name).toBe("remova:request-quit"); quit = handler; return quitOff;
+    }),
+    destroy: vi.fn(async () => {}), hide: vi.fn(async () => {}),
+    close: vi.fn(async () => { await handleClose({ preventDefault }); }),
+  };
+  vi.mocked(getCurrentWindow).mockReturnValue(win as unknown as ReturnType<typeof getCurrentWindow>);
+  const view = mountBoot(bootSpies());
+  let finish!: () => void;
+  const task = trackNativeCall(() => new Promise<void>(resolve => { finish = resolve; }), command);
+  try {
+    await vi.waitFor(() => expect(win.listen).toHaveBeenCalledOnce());
+    let answer!: (ok: boolean) => void;
+    vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+    const closing = handleClose({ preventDefault });
+    await handleClose({ preventDefault });
+    expect(requestConfirm).toHaveBeenCalledOnce();
+    await act(async () => { answer(false); await closing; });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(win.destroy).not.toHaveBeenCalled();
+    expect(win.hide).not.toHaveBeenCalled();
+    vi.mocked(requestConfirm).mockResolvedValueOnce(false);
+    await act(async () => { quit(); });
+    expect(win.close).toHaveBeenCalledOnce();
+    expect(win.destroy).not.toHaveBeenCalled();
+    await act(async () => { finish(); await task; });
+    await act(async () => { await handleClose({ preventDefault }); });
+    expect(win.hide).toHaveBeenCalledOnce();
+    expect(win.destroy).not.toHaveBeenCalled();
+    const before = vi.mocked(requestConfirm).mock.calls.length;
+    await act(async () => { quit(); });
+    expect(win.destroy).toHaveBeenCalledOnce();
+    expect(requestConfirm).toHaveBeenCalledTimes(before);
+    const again = trackNativeCall(() => new Promise<void>(resolve => { finish = resolve; }), command);
+    vi.mocked(requestConfirm).mockResolvedValueOnce(true);
+    await act(async () => { quit(); });
+    expect(win.destroy).toHaveBeenCalledTimes(2);
+    finish(); await again;
+  } finally {
+    finish(); await task;
+    view.unmount();
+    expect(closeOff).toHaveBeenCalledOnce();
+    expect(quitOff).toHaveBeenCalledOnce();
+    vi.mocked(getCurrentWindow).mockImplementation(() => { throw new Error("not in tauri"); });
+  }
+});
 
 describe("useAppBoot", () => {
   beforeEach(() => {
