@@ -89,6 +89,9 @@ export const dict: EnDict = {
     versionCheckHint: "Check for a newer version",
     versionUpToDate: (v: string) => `You're up to date (v${v})`,
     versionCheckFailed: "Update check failed, try again later",
+    versionNoRelease: "No published release yet",
+    versionNetwork: "Cannot reach GitHub. Check your network or proxy and try again.",
+    versionRateLimited: "GitHub API rate limited. Try again later.",
     themeToggle: "Dark/Light",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>

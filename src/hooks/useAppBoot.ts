@@ -171,6 +171,7 @@ export async function checkUpdateNow(
   setUpdateInfo: (v: UpdateInfo | null) => void,
   L: {
     versionCheckFailed: string;
+    versionNoRelease: string;
     versionNew: string;
     versionUpToDate: (v: string) => string;
     versionDownloadOpenFailed: string;
@@ -186,7 +187,9 @@ export async function checkUpdateNow(
     }
     const info = res.info;
     if (!info) {
-      toast.error(L.versionCheckFailed);
+      // A repository without a published release is a normal state, not a
+      // failure — the backend maps the API 404 to this branch.
+      toast.info(L.versionNoRelease);
       return;
     }
     if (compareSemver(info.version, __APP_VERSION__) > 0) {

@@ -82,6 +82,8 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   if (raw === "update:manual_only_type") return L.updateManualOnlyType;
   if (raw === "update:manual_only_env") return L.updateManualOnlyElevated;
   if (raw === "update:version_changed") return L.versionChanged;
+  if (raw === "update:network") return L.versionNetwork;
+  if (raw === "update:rate_limited") return L.versionRateLimited;
   if (raw.startsWith("update:")) return L.versionCheckFailed;
  // Backup errors may embed the seal code in a per-item failure message.
   if (raw.includes("seal:")) {
