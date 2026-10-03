@@ -135,4 +135,11 @@ describe("update token contract", () => {
     expect(formatError("update:http_failed")).not.toContain("http_failed");
     expect(formatError("update:parse_failed")).not.toBe("update:parse_failed");
   });
+
+  it("gives network and rate-limit states their own messages", () => {
+    expect(formatError("update:network")).not.toBe(formatError("update:http_failed"));
+    expect(formatError("update:rate_limited")).not.toBe(formatError("update:http_failed"));
+    expect(formatError("update:network")).not.toContain("network");
+    expect(formatError("update:rate_limited")).not.toContain("rate_limited");
+  });
 });

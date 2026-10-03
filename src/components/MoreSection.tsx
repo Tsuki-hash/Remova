@@ -4,10 +4,12 @@ import { cssStyles as css } from "../styles";
 export function Section({
   title,
   hint,
+  extra,
   children,
 }: {
   title: string;
   hint?: string;
+  extra?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -23,6 +25,7 @@ export function Section({
       >
         <span style={{ fontWeight: 700, fontSize: 13.5, letterSpacing: 0.1 }}>{title}</span>
         {hint && <span style={{ ...css.muted, fontSize: 12 }}>{hint}</span>}
+        {extra && <span style={{ marginLeft: "auto" }}>{extra}</span>}
       </header>
       <div
         style={{
