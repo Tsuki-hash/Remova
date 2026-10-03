@@ -42,7 +42,7 @@ mod pipeline_smoke;
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
 use scanner::{CleanupItem, ScanResult};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
@@ -663,7 +663,14 @@ pub fn run() {
                             let _ = win.set_focus();
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.unminimize();
+                            let _ = win.set_focus();
+                            let _ = app.emit("remova:request-quit", ());
+                        }
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
