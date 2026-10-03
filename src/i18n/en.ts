@@ -135,6 +135,8 @@ export const dict: EnDict = {
     batchDismiss: "Dismiss",
     restoreNoSessions: "No backup sessions",
     restoreSelect: "Select a session to restore",
+    restoreConflict: (n: number) => `${n} targets already exist: directories will merge and matching files may be overwritten.`,
+    restoreUnavailable: (n: number) => `${n} file targets are missing or protected and may not restore; check the execution results.`,
     restoreRun: "Restore",
     restoreClose: "Close",
     restoreResult: "Restore result",
