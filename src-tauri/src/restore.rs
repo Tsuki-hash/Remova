@@ -799,7 +799,10 @@ mod tests {
     #[test]
     fn preview_rejects_invalid_names_without_loading_a_session() {
         for name in ["", ".", "..", "123_../../escape", "123_bad:name"] {
-            assert!(super::preview_by_name(name).is_err());
+            assert_eq!(
+                super::preview_by_name(name).unwrap_err(),
+                "invalid session name"
+            );
         }
     }
     #[test]
@@ -958,7 +961,55 @@ mod tests {
         fs::write(files.join(rel), b"hello-backup").unwrap();
         let mut map = std::collections::BTreeMap::new();
         map.insert(rel.to_string(), orig.to_string_lossy().to_string());
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        // every write-back needs a seal (same as production backup path).
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        // restore overwrites orig from backup
+        let msgs = restore_session(&sess).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        // a tampered map is refused wholesale; the restored file stays intact
+        fs::write(files.join("path_map.json"), b"{}").unwrap();
+        assert_eq!(restore_session(&sess).unwrap_err(), "seal:map_mismatch");
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn preview_reports_counts_and_caps_entries() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_pv_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("sess");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let orig = tmp.join("orig\\file.txt");
+        fs::create_dir_all(orig.parent().unwrap()).unwrap();
+        fs::write(&orig, b"hello").unwrap();
+        // both backup sources exist; aaa's destination is absent (available),
+        // abc's destination exists (existing), the 205 missing_* rows have
+        // no backup source at all.
+        fs::write(files.join("aaa_fresh.txt"), b"fresh").unwrap();
+        fs::write(files.join("abc_file.txt"), b"hello-backup").unwrap();
         let missing = tmp.join("not-created").join("missing.txt");
+        let fresh = tmp.join("not-created").join("fresh.txt");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "aaa_fresh.txt".to_string(),
+            fresh.to_string_lossy().to_string(),
+        );
+        map.insert(
+            "abc_file.txt".to_string(),
+            orig.to_string_lossy().to_string(),
+        );
         for i in 0..205 {
             map.insert(
                 format!("missing_{i}"),
@@ -970,25 +1021,28 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        // every write-back needs a seal (same as production backup path).
         crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         let preview = preview_session("sess", &sess).unwrap();
-        assert_eq!(preview.files, 206);
+        assert_eq!(preview.files, 207);
         assert_eq!(preview.entries.len(), 200);
         assert_eq!(preview.existing, 1);
         assert_eq!(preview.unavailable, 205);
+        // the cap keeps the dictionary-first targets: the available and
+        // existing rows stay reachable ahead of the missing crowd.
+        assert!(preview.entries.iter().any(|e| e.status == "available"));
+        assert!(preview
+            .entries
+            .iter()
+            .any(|e| e.status == "existing" && e.target == orig.to_string_lossy()));
+        // preview is read-only: no destination parents are created.
         assert_eq!(fs::read(&orig).unwrap(), b"hello");
         assert!(!missing.parent().unwrap().exists());
-        // restore overwrites orig from backup
-        let msgs = restore_session(&sess).unwrap();
-        assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
-        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
         fs::write(files.join("path_map.json"), b"{}").unwrap();
         assert_eq!(
             preview_session("sess", &sess).unwrap_err(),
             "seal:map_mismatch"
         );
-        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello");
         crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
