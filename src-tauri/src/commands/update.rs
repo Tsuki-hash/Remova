@@ -106,12 +106,22 @@ pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> 
         let agent = ureq::AgentBuilder::new()
             .timeout(std::time::Duration::from_secs(8))
             .build();
-        let resp = agent
+        let resp = match agent
             .get(crate::constants::GITHUB_LATEST_RELEASE_API)
             .set("Accept", "application/vnd.github+json")
             .set("User-Agent", "Remova")
             .call()
-            .map_err(|_| "update:http_failed".to_string())?;
+        {
+            Ok(resp) => resp,
+            // 404 = the repository has no published release yet — a normal
+            // state, not a failure; the frontend reports it as info.
+            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(ureq::Error::Status(403, _)) => {
+                return Err("update:rate_limited".to_string());
+            }
+            // Timeouts, DNS/TLS resets and other transport errors.
+            Err(_) => return Err("update:network".to_string()),
+        };
         let body = resp
             .into_string()
             .map_err(|_| "update:read_body_failed".to_string())?;
