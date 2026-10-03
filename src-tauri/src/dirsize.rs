@@ -36,18 +36,19 @@ pub fn walk_size_kb(root: &Path) -> i64 {
     walk_size_kb_with(root, &CANCELLED)
 }
 
-/// Like [`walk_size_kb`] but also reports whether the file cap truncated the walk
+/// Like [`walk_size_kb`] but also reports an incomplete walk (budget or IO errors).
 /// Honors the global cancel flag.
 pub fn walk_size_kb_capped(root: &Path) -> (i64, bool) {
     walk_size_kb_with_capped(root, &CANCELLED)
 }
 
 /// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
-/// Second element is `true` when the walk hit the file cap (partial total — do not
-/// present as a complete size; ).
+/// Second element is `true` for budget or IO truncation: size is then a lower bound.
 pub fn walk_size_kb_with_capped(root: &Path, cancelled: &AtomicBool) -> (i64, bool) {
-    if !root.exists() {
-        return (0, false);
+    match root.try_exists() {
+        Ok(false) => return (0, false),
+        Err(_) => return (0, true),
+        Ok(true) => {}
     }
     let (bytes, capped) = walk_size_bytes_with(root, cancelled);
     if bytes == 0 {
@@ -62,7 +63,7 @@ pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
 }
 
 /// Bounded walk for leftover items: depth + entry caps, no global cancel flag.
-/// Returns None when the walk hits a cap (partial size would mislead users).
+/// Returns None when a cap or IO error leaves an incomplete size.
 pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
     if !root.exists() {
         return None;
@@ -76,23 +77,45 @@ pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
 }
 
 fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<u64> {
+    walk_bytes_limited_with(
+        dir,
+        depth,
+        entries_seen,
+        &|p: &Path| std::fs::read_dir(p),
+        &std::fs::DirEntry::metadata,
+    )
+}
+
+fn walk_bytes_limited_with<F, I>(
+    dir: &Path,
+    depth: u32,
+    entries_seen: &mut u64,
+    read: &F,
+    metadata: &impl Fn(&std::fs::DirEntry) -> std::io::Result<std::fs::Metadata>,
+) -> Option<u64>
+where
+    F: Fn(&Path) -> std::io::Result<I>,
+    I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
+{
     if depth > MAX_WALK_DEPTH {
         return None;
     }
     let mut total: u64 = 0;
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
+    let entries = read(dir).ok()?;
+    for entry in entries {
+        let entry = entry.ok()?;
         *entries_seen += 1;
         if *entries_seen >= MAX_WALK_ENTRIES {
             return None;
         }
-        let Ok(meta) = entry.metadata() else { continue };
+        let meta = metadata(&entry).ok()?;
         // `is_symlink()` misses Windows junctions — check reparse attributes.
         if crate::fsutil::is_reparse_point(&entry.path()) {
             continue;
         }
         if meta.is_dir() {
-            let sub = walk_bytes_limited(&entry.path(), depth + 1, entries_seen)?;
+            let sub =
+                walk_bytes_limited_with(&entry.path(), depth + 1, entries_seen, read, metadata)?;
             total = total.saturating_add(sub);
         } else if meta.is_file() {
             total = total.saturating_add(meta.len());
@@ -101,9 +124,26 @@ fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<
     Some(total)
 }
 
-/// Bounded walk returning (bytes, capped). `capped` means the file cap was hit
-/// and `bytes` is a floor, not a total.
+/// Bounded walk returning (bytes, incomplete). Budget or IO errors make bytes a floor.
 fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
+    walk_size_bytes_with_reader(
+        root,
+        cancelled,
+        &|p: &Path| std::fs::read_dir(p),
+        &std::fs::DirEntry::metadata,
+    )
+}
+
+fn walk_size_bytes_with_reader<F, I>(
+    root: &Path,
+    cancelled: &AtomicBool,
+    read: &F,
+    metadata: &impl Fn(&std::fs::DirEntry) -> std::io::Result<std::fs::Metadata>,
+) -> (u64, bool)
+where
+    F: Fn(&Path) -> std::io::Result<I>,
+    I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
+{
     use std::collections::VecDeque;
     let mut total: u64 = 0;
     // depth + entry caps — same budget as `walk_bytes_limited`.
@@ -119,10 +159,15 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
         if cancelled.load(Ordering::SeqCst) {
             return (0, false);
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = read(&dir) else {
+            capped = true;
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                capped = true;
+                continue;
+            };
             if cancelled.load(Ordering::SeqCst) {
                 return (0, false);
             }
@@ -130,7 +175,8 @@ fn walk_size_bytes_with(root: &Path, cancelled: &AtomicBool) -> (u64, bool) {
             if entries_seen >= MAX_WALK_ENTRIES {
                 return (total, true);
             }
-            let Ok(meta) = entry.metadata() else {
+            let Ok(meta) = metadata(&entry) else {
+                capped = true;
                 continue;
             };
             // `is_symlink()` misses Windows junctions — check reparse attributes.
@@ -161,6 +207,57 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::{fs, io::Write};
+
+    #[test]
+    fn directory_read_errors_are_incomplete_instead_of_empty_totals() {
+        let root = std::env::temp_dir().join(format!("remova-size-io-{}", std::process::id()));
+        fs::write(&root, b"file, not a directory").unwrap();
+        let cancel = AtomicBool::new(false);
+        assert_eq!(walk_size_kb_with_capped(&root, &cancel), (0, true));
+        assert_eq!(walk_bytes_limited(&root, 0, &mut 0), None);
+        fs::remove_file(&root).unwrap();
+        assert_eq!(walk_size_kb_with_capped(&root, &cancel), (0, false));
+    }
+
+    #[test]
+    fn read_iterator_and_metadata_errors_never_publish_complete_sizes() {
+        let root = std::env::temp_dir().join(format!("remova-size-errors-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file");
+        let cancel = AtomicBool::new(false);
+        for mode in ["read", "iterator", "metadata"] {
+            let reader = |p: &Path| -> std::io::Result<
+                std::vec::IntoIter<std::io::Result<std::fs::DirEntry>>,
+            > {
+                if mode == "read" {
+                    return Err(std::io::ErrorKind::PermissionDenied.into());
+                }
+                if mode == "iterator" {
+                    return Ok(vec![Err(std::io::ErrorKind::PermissionDenied.into())].into_iter());
+                }
+                let entry = fs::read_dir(p)?.next().unwrap()?;
+                Ok(vec![Ok(entry)].into_iter())
+            };
+            let metadata = |entry: &std::fs::DirEntry| {
+                if mode == "metadata" {
+                    Err(std::io::ErrorKind::PermissionDenied.into())
+                } else {
+                    entry.metadata()
+                }
+            };
+            fs::write(&file, b"payload").unwrap();
+            assert_eq!(
+                walk_size_bytes_with_reader(&root, &cancel, &reader, &metadata),
+                (0, true)
+            );
+            fs::write(&file, b"payload").unwrap();
+            assert_eq!(
+                walk_bytes_limited_with(&root, 0, &mut 0, &reader, &metadata),
+                None
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn walk_sums_files_in_kb() {
