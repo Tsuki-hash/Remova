@@ -492,10 +492,21 @@ fn disk_usage() -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn elevate_restart() -> Result<(), String> {
+async fn elevate_restart(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| sysops::elevate_relaunch(&[]))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    // The elevated copy must find the single-instance lock free, or it exits
+    // itself and the stale non-admin window wins. Hand the old window the
+    // same guarded quit the tray menu uses — a running critical write still
+    // gets the busy warning instead of being killed.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        let _ = app.emit("remova:request-quit", ());
+    }
+    Ok(())
 }
 
 #[tauri::command]
