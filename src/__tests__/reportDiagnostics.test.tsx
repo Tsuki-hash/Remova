@@ -11,6 +11,22 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["zh", "en"] as const)("offers backup restoration only for a completed backed-up cleanup in %s", lang => {
+  setLang(lang);
+  const base: FullCleanupReport = { app_name: "Vendor", dry_run: false, backup_dir: "",
+    uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  for (const report of [base, { ...base, backup_dir: "session" },
+    { ...base, backup_dir: "session", aborted: true },
+    { ...base, failed: 1 }, { ...base, dry_run: true }]) {
+    const view = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
+      aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+    const hasRestoration = !!report.backup_dir && !report.aborted && !report.dry_run && !report.failed;
+    expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration);
+    if (!report.backup_dir && !report.dry_run) expect(screen.getByText(t().noBackupThisRun)).toBeTruthy();
+    view.unmount();
+  }
+});
 it.each(["zh", "en"] as const)("keeps raw diagnostics in technical details while localizing the visible report in %s", lang => {
   setLang(lang);
   const L = t();

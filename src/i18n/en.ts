@@ -389,6 +389,8 @@ export const dict: EnDict = {
     reportNarrative: (deleted: number, failed: number, skipped: number, backup: boolean) =>
       `Deleted ${deleted}, failed ${failed}, skipped ${skipped}${backup ? "; Safety Vault backup written — restore under More" : ""}.`,
     reportNextOk: "Next: uninstall another app, or restore from More → Restore backup if needed.",
+    reportNextNoBackup: "Next: return to the list and check the result. No backup is available for restoring this cleanup.",
+    reportNextCheck: "Next: return to the list and check each item's status before continuing cleanup.",
     reportNextFailed: "Next: failures are often locked files or admin rights. Close apps and retry, or restart as admin.",
     reportNextSkipped: "Next: skipped items are often shared components, protected user data, or failed a safety check. See item details for the reason; decide manually for anything under user data.",
     reportFlowDone: "Deep uninstall finished: official uninstall → leftover scan → you confirmed cleanup.",

@@ -374,6 +374,8 @@ export const dict = {
     reportNarrative: (deleted: number, failed: number, skipped: number, backup: boolean) =>
       `本次删除 ${deleted} 项，失败 ${failed}，跳过 ${skipped}${backup ? "；已写入安全备份，可在「更多 → 还原备份」恢复" : ""}。`,
     reportNextOk: "下一步：可返回列表继续卸载；误删可在「更多 → 还原备份」恢复。",
+    reportNextNoBackup: "下一步：返回列表检查结果；本次没有可用备份，无法通过备份还原。",
+    reportNextCheck: "下一步：返回列表检查结果；继续清理前，请确认各项处理状态。",
     reportNextFailed: "下一步：失败项常因文件占用或权限。关闭相关程序后重试，或以管理员重启 Remova。",
     reportNextSkipped: "下一步：跳过多为共享组件、受保护的用户数据，或未通过安全检查。可在明细中查看原因；用户数据请手动确认后再决定。",
     reportFlowDone: "深度卸载流程已完成：官方卸载 → 残留扫描 → 你确认后清理。",

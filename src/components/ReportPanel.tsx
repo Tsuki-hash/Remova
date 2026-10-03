@@ -106,7 +106,11 @@ export function ReportPanel({
               ? L.reportNextFailed
               : report.skipped > 0
                 ? L.reportNextSkipped
-                : L.reportNextOk}
+                : ("dry_run" in report && report.dry_run) || ("aborted" in report && report.aborted)
+                  ? L.reportNextCheck
+                  : "backup_dir" in report && report.backup_dir
+                    ? L.reportNextOk
+                    : L.reportNextNoBackup}
           </div>
         </div>
       )}
