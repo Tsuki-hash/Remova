@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // money-path orchestration — confirm pipeline + busyRef gate.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import type { FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { CleanupFlowSetters } from "../hooks/useCleanupHandlers";
 
@@ -399,31 +399,37 @@ describe("useCleanupHandlers deep pipeline", () => {
     expect(hook.busyRef.current).toBe(true);
   });
 
-  it("retryFailedBatch re-arms failed keys and hides the summary", async () => {
+  it("retries the preserved app identity after list refresh and skips its completed uninstall", async () => {
     const a1 = mkApp("AppA");
     const a2 = mkApp("AppB");
     runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
       cb.onSetBatching(true);
       cb.onResults([
-        { key: appKey(a1), name: a1.name, status: "failed", detail: "x" },
+        { key: appKey(a1), name: a1.name, status: "failed", detail: "x", officialDone: true },
         { key: appKey(a2), name: a2.name, status: "ok", detail: "" },
       ]);
       cb.onShowSummary(true);
+      cb.onSetBatching(false);
+      cb.busyRef.current = false;
     });
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
-    const { result, flowDeep } = setupDeep({
+    const options = {
       apps: [a1, a2],
       multi: new Set([appKey(a1), appKey(a2)]),
-    });
+    };
+    const { result, rerender } = setupDeep(options);
     await act(async () => {
       await result.current.batchCleanup();
     });
     expect(result.current.showBatchSummary).toBe(true);
+    options.apps = [];
+    rerender();
     act(() => {
       result.current.retryFailedBatch();
     });
-    expect(flowDeep.setMulti).toHaveBeenCalledWith(new Set([appKey(a1)]));
-    expect(result.current.showBatchSummary).toBe(false);
+    await waitFor(() => expect(runBatchCleanupMock).toHaveBeenCalledTimes(2));
+    expect(runBatchCleanupMock.mock.calls[1]?.[0]).toEqual([a1]);
+    expect(runBatchCleanupMock.mock.calls[1]?.[5]).toEqual(new Set([appKey(a1)]));
   });
 
   it("cancelBatch signals the cancel ref and toasts", () => {
