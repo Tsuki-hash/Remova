@@ -8,6 +8,9 @@ import { IdleRadarPanel } from "./IdleRadarPanel";
 import { ScopedScanPanel } from "./ScopedScanPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { api, type IgnoreLists } from "../lib/api";
+import { formatError } from "../lib/format";
+import { toast } from "../lib/toast";
+import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolItem } from "./MoreToolCard";
@@ -276,7 +279,26 @@ export function MorePage({
         ))}
       </Section>
 
-      <Section title={L.moreSectionHelp} hint={L.moreSectionHelpHint}>
+      <Section
+        title={L.moreSectionHelp}
+        hint={L.moreSectionHelpHint}
+        extra={
+          <button
+            style={{ ...css.btnGhost, height: 26, fontSize: 12 }}
+            title={L.openReleases}
+            onClick={() => {
+              void import("../lib/updateCheck")
+                .then(({ RELEASES_URL }) => api.openPath(RELEASES_URL))
+                .catch((e) => {
+                  console.error("[update] open releases failed", e);
+                  toast.error(formatError(e));
+                });
+            }}
+          >
+            {L.openReleases}
+          </button>
+        }
+      >
         {help.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} />
         ))}
