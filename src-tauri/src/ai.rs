@@ -361,7 +361,7 @@ pub fn scrub_cloud_text(s: &str) -> String {
         let start = i;
         let mut j = i;
         while j < sc.len()
-            && !sc[j].is_whitespace()
+            && !matches!(sc[j], '\r' | '\n' | '\t')
             && !matches!(
                 sc[j],
                 ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '（' | '）'
@@ -373,12 +373,10 @@ pub fn scrub_cloud_text(s: &str) -> String {
         while j > start && matches!(sc[j - 1], '.' | ',' | ';' | ':' | ')' | ']' | '}') {
             j -= 1;
         }
-        let token: String = sc[start..j].iter().collect();
-        if token.contains('\\') || token.contains('/') {
-            out.push_str(&sanitize_path(&token, false));
-        } else {
-            out.push_str(&token);
-        }
+        // Free text has no reliable boundary between a spaced directory and
+        // following prose. Redact conservatively through the next delimiter;
+        // structured path fields retain the separate product-token policy.
+        out.push_str("[path]");
         i = j;
     }
     out
@@ -1036,15 +1034,56 @@ mod tests {
         );
         assert!(!s.contains("alice"), "{s}");
         assert!(!s.contains("AppData\\Local\\Acme\\App"), "{s}");
-        assert!(
-            s.contains("AppData") || s.contains("Tool") || s.contains("App"),
-            "{s}"
-        );
+        assert!(s.contains("[path]"), "{s}");
         // Non-path free text is preserved.
         assert_eq!(
             scrub_cloud_text("Shell/Classes leftover: Foo"),
             "Shell/Classes leftover: Foo"
         );
+    }
+
+    #[test]
+    fn explain_payload_redacts_spaced_absolute_paths_without_network() {
+        let cfg = AiConfig::default();
+        let secrets = [
+            r"D:\Company Files\Sensitive\Private\LocalCache",
+            r"\\Company Server\Private Share\Sensitive\LocalCache",
+            r"D:/Company Files/Sensitive/Private/LocalCache",
+        ];
+        let inputs: Vec<ExplainInput> = secrets
+            .iter()
+            .enumerate()
+            .map(|(i, secret)| ExplainInput {
+                path: format!(r"D:\Vendor\PrivacyFixture{i}"),
+                kind: "dir".into(),
+                confidence: "suspected".into(),
+                risk: "medium".into(),
+                reason: format!("Product dir under {secret}; check ownership"),
+                evidence_labels: vec![format!("Found under \"{secret}\", candidate")],
+            })
+            .collect();
+        let mut calls = 0;
+        explain_items_with_completion(
+            &cfg,
+            "privacy-spaced-paths-fixture",
+            "Vendor",
+            &inputs,
+            |user| {
+                calls += 1;
+                for secret in secrets {
+                    assert!(!user.contains(secret));
+                }
+                for private in ["Company", "Sensitive", "Private", "LocalCache"] {
+                    assert!(!user.contains(private), "request leaked {private}");
+                }
+                assert!(user.contains("[path]"));
+                assert!(user.contains("check ownership"));
+                assert!(user.contains("candidate"));
+                Ok("[]".into())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
     }
 
     #[test]
