@@ -51,31 +51,12 @@ fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
     write_ignore_file(&p, list)
 }
 
-/// Deterministic tmp sibling — pid-suffixed so a second Remova process can
-/// never clobber our tmp; in-process writers serialize through FILE_LOCK.
-fn tmp_path(p: &std::path::Path) -> std::path::PathBuf {
-    p.with_extension(format!("json.{}.tmp", std::process::id()))
-}
-
 fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    // tmp + fsync + rename — matches the shared atomic-write discipline.
-    let tmp = tmp_path(p);
-    let result = (|| -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(s.as_bytes())?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, p)
-    })();
-    result.map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    crate::fsutil::write_bytes_atomic(p, s.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Load → mutate → save under one lock (avoids lost updates).
@@ -298,24 +279,27 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn ignore_write_failure_removes_existing_tmp() {
+    fn ignore_write_preserves_preexisting_hard_link() {
         use std::os::windows::fs::OpenOptionsExt;
         let dir =
             std::env::temp_dir().join(format!("remova-r23-ignore-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ignore.json");
-        let tmp = super::tmp_path(&path);
-        std::fs::write(&tmp, "old partial").unwrap();
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let sentinel = dir.join("sentinel");
+        std::fs::write(&sentinel, "old partial").unwrap();
+        std::fs::hard_link(&sentinel, &tmp).unwrap();
         let held = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0x1 | 0x4)
             .open(&tmp)
             .unwrap();
-        assert!(write_ignore_file(&path, &IgnoreList::default()).is_err());
-        assert!(!tmp.exists());
-        assert!(!path.exists());
+        write_ignore_file(&path, &IgnoreList::default()).unwrap();
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "old partial");
+        assert!(tmp.exists());
+        assert!(path.exists());
         drop(held);
-        std::fs::remove_dir(dir).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

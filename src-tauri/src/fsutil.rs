@@ -743,6 +743,10 @@ pub fn atomic_tmp_path(p: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+pub(crate) fn create_atomic_tmp(p: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+    create_atomic_tmp_with(|| atomic_tmp_path(p))
+}
+
 fn create_atomic_tmp_with(
     mut next_path: impl FnMut() -> PathBuf,
 ) -> std::io::Result<(PathBuf, std::fs::File)> {
