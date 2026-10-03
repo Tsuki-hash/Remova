@@ -41,7 +41,7 @@ export function MorePage({
   lastReport: FullCleanupReport | null;
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
-  onIgnorePublisher: () => void;
+  onIgnorePublisher: () => Promise<IgnoreLists | undefined>;
   onToggleMonitor: () => void;
   onMonitorToCleanup: () => void;
   onDismissMonitor: () => void;

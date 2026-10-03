@@ -720,7 +720,7 @@ export default function App() {
               lastReport={lastReport}
               closeMode={closeMode}
               onCloseModeChange={setCloseMode}
-              onIgnorePublisher={() => void doIgnorePublisher()}
+              onIgnorePublisher={() => doIgnorePublisher()}
               onToggleMonitor={() => void toggleMonitor()}
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
               onDismissMonitor={() => residualActions.setMonitorDiff(null)}
