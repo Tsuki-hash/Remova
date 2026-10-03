@@ -704,6 +704,7 @@ pub(crate) mod path_mock {
     /// Stored as (raw value, is REG_EXPAND_SZ).
     static STATE: Mutex<Option<HashMap<String, (String, bool)>>> = Mutex::new(None);
     static FAIL_READ: Mutex<bool> = Mutex::new(false);
+    static FAIL_SCOPE_READ: Mutex<Option<String>> = Mutex::new(None);
     static FAIL_MACHINE_WRITE: Mutex<bool> = Mutex::new(false);
 
     fn put(user: &str, machine: &str, expand: bool) {
@@ -712,6 +713,7 @@ pub(crate) mod path_mock {
         map.insert("Machine".to_string(), (machine.to_string(), expand));
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(map);
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        *FAIL_SCOPE_READ.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn install(user: &str, machine: &str) {
@@ -729,9 +731,14 @@ pub(crate) mod path_mock {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = v;
     }
 
+    pub fn set_fail_scope_read(scope: Option<&str>) {
+        *FAIL_SCOPE_READ.lock().unwrap_or_else(|e| e.into_inner()) = scope.map(str::to_string);
+    }
+
     pub fn clear() {
         *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) = false;
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *FAIL_SCOPE_READ.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
@@ -740,7 +747,13 @@ pub(crate) mod path_mock {
     }
 
     pub fn read_raw(scope: &str) -> Result<(String, bool), String> {
-        if *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) {
+        if *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner())
+            || FAIL_SCOPE_READ
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_deref()
+                == Some(scope)
+        {
             return Err(format!("read Path {scope} failed"));
         }
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());

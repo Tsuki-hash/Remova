@@ -499,26 +499,36 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
     out
 }
 
-pub fn list_sessions() -> Vec<PathBuf> {
-    let root = crate::backup::backup_root();
+pub fn list_sessions() -> Result<Vec<PathBuf>, String> {
+    list_sessions_at(&crate::backup::backup_root())
+}
+
+fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
-    if let Ok(rd) = root.read_dir() {
-        for e in rd.flatten() {
-            if e.path().is_dir() {
-                out.push(e.path());
-            }
+    let rd = match root.read_dir() {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => return Err(crate::error::restore_err(e.to_string()).to_ipc()),
+    };
+    for entry in rd {
+        let entry = entry.map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
+        if kind.is_dir() {
+            out.push(entry.path());
         }
     }
     out.sort();
     out.reverse();
-    out
+    Ok(out)
 }
 
-pub fn list_session_names() -> Vec<String> {
-    list_sessions()
+pub fn list_session_names() -> Result<Vec<String>, String> {
+    Ok(list_sessions()?
         .iter()
         .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
-        .collect()
+        .collect())
 }
 
 pub fn restore_by_name(name: &str) -> Result<Vec<String>, String> {
@@ -552,8 +562,8 @@ fn dir_size_kb(p: &Path) -> u64 {
 }
 
 /// List backup sessions with size (KB). Does NOT prune (read path is pure).
-pub fn list_session_info() -> Vec<SessionInfo> {
-    list_sessions()
+pub fn list_session_info() -> Result<Vec<SessionInfo>, String> {
+    Ok(list_sessions()?
         .iter()
         .filter_map(|p| {
             let name = p.file_name()?.to_string_lossy().to_string();
@@ -563,7 +573,7 @@ pub fn list_session_info() -> Vec<SessionInfo> {
                 created_at: name.split('_').next().unwrap_or("").to_string(),
             })
         })
-        .collect()
+        .collect())
 }
 
 /// Delete backup sessions older than `days` (Safety Vault retention). Returns removed count.
@@ -581,7 +591,10 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
     });
     let cutoff = now.saturating_sub(days.saturating_mul(24 * 3600));
     let mut removed = 0usize;
-    for p in list_sessions() {
+    let Ok(sessions) = list_sessions() else {
+        return 0;
+    };
+    for p in sessions {
         let name = p
             .file_name()
             .map(|s| s.to_string_lossy().to_string())

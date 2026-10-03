@@ -148,8 +148,10 @@ fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
     if entry.is_empty() {
         return Err(crate::error::backup_path_err("empty path entry").to_ipc());
     }
-    let user = crate::regops::read_path_scope_public("User").unwrap_or_default();
-    let machine = crate::regops::read_path_scope_public("Machine").unwrap_or_default();
+    let user = crate::regops::read_path_scope_public("User")
+        .map_err(|e| crate::error::backup_path_err(e).to_ipc())?;
+    let machine = crate::regops::read_path_scope_public("Machine")
+        .map_err(|e| crate::error::backup_path_err(e).to_ipc())?;
     let mut scopes = Vec::new();
     if crate::regops::path_contains_entry(&user, entry) {
         scopes.push("User".to_string());
@@ -453,6 +455,13 @@ mod tests {
         let file_item = item.clone();
         item.kind = ItemKind::Path;
         item.path = r"C:\Vendor\Tool".into();
+        crate::regops::path_mock::set_fail_scope_read(Some("Machine"));
+        let (ok, fail, errors) = backup_items(std::slice::from_ref(&item), &session);
+        assert_eq!((ok, fail), (0, 1), "{errors:?}");
+        assert!(!session.join("path.json").exists());
+        assert!(crate::path_seal::verified_seal(&session).is_err());
+        assert!(crate::regops::path_mock::get("User").contains(r"C:\Vendor\Tool"));
+        crate::regops::path_mock::set_fail_scope_read(None);
         let (ok, fail, errors) = backup_items(&[file_item.clone(), item], &session);
         assert_eq!((ok, fail), (2, 0), "{errors:?}");
         let seal = crate::path_seal::verified_seal(&session).unwrap();
