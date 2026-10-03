@@ -626,7 +626,11 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
         let status =
             if crate::fsutil::is_reparse_point(&source) || crate::fsutil::is_reparse_point(dest) {
                 "blocked"
-            } else if !source.try_exists().map_err(|e| e.to_string())? {
+            } else if !source.try_exists().unwrap_or(false) {
+                // Stat errors (unplugged drive, denying ACL) degrade to
+                // "missing" — same swallow-as-absent semantics as the
+                // restore loop's `src.exists()` skip, so one unreadable
+                // entry never disables the whole preview.
                 "missing"
             } else if !crate::safety::is_safe_restore_target(dest)
                 || crate::safety::looks_like_sync_conflict(&target)
@@ -636,7 +640,9 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
                     .contains(&crate::path_seal::normalize_target(&target))
             {
                 "blocked"
-            } else if dest.try_exists().map_err(|e| e.to_string())? {
+            } else if dest.try_exists().unwrap_or(true) {
+                // An unreadable destination is reported as a conflict, never
+                // as a free target — restore rechecks before writing.
                 "existing"
             } else {
                 "available"
@@ -753,7 +759,10 @@ fn is_safe_map_rel(rel: &str) -> bool {
     if rel.is_empty() || rel == "." || rel == ".." {
         return false;
     }
-    if rel.contains("..") || rel.contains('/') || rel.contains('\\') || rel.contains(':') {
+    // Separators and drive markers are rejected outright, so a lone segment
+    // can never traverse. `..` inside a name (e.g. "a..b.txt") is a legal
+    // NTFS file name and must stay previewable/restorable.
+    if rel.contains('/') || rel.contains('\\') || rel.contains(':') {
         return false;
     }
     if rel.starts_with('~') {
@@ -841,6 +850,7 @@ mod tests {
     #[test]
     fn map_rel_rejects_traversal_and_absolute() {
         assert!(super::is_safe_map_rel("abc123_file.txt"));
+        assert!(super::is_safe_map_rel("abc123_a..b.txt"));
         assert!(!super::is_safe_map_rel(""));
         assert!(!super::is_safe_map_rel(".."));
         assert!(!super::is_safe_map_rel("../evil"));
@@ -979,6 +989,78 @@ mod tests {
             "seal:map_mismatch"
         );
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A legal NTFS name containing `..` must keep its session fully
+    /// previewable and restorable.
+    #[test]
+    fn preview_and_restore_accept_dotdot_inside_names() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_dd_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("1700000000_dd");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let dest = tmp.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        let target = dest.join("a..b.txt");
+        fs::write(&target, b"old").unwrap();
+        let rel = "abc_a..b.txt";
+        fs::write(files.join(rel), b"dd").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(rel.to_string(), target.to_string_lossy().to_string());
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        let preview = preview_session("sess", &sess).unwrap();
+        assert_eq!(preview.files, 1);
+        assert_eq!(preview.entries[0].status, "existing");
+        let msgs = restore_session(&sess).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
+        assert_eq!(fs::read(&target).unwrap(), b"dd");
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A destination whose stat fails (unplugged drive, denying ACL — here a
+    /// deterministic std-level stat error) must degrade to a conflict row,
+    /// never abort the whole preview.
+    #[test]
+    fn preview_treats_unreadable_destinations_as_conflicts() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_ds_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("1700000000_ds");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        // Interior NUL makes every stat return InvalidInput — a std-level
+        // stand-in for stat errors that are not NotFound.
+        let dest = format!("{}\u{0000}child.txt", tmp.join("blocker").to_string_lossy());
+        let rel = "abc_child.txt";
+        fs::write(files.join(rel), b"payload").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(rel.to_string(), dest);
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        let preview = preview_session("sess", &sess).unwrap();
+        assert_eq!(preview.files, 1);
+        assert_eq!(preview.entries[0].status, "existing");
+        assert_eq!(preview.existing, 1);
         crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
