@@ -199,3 +199,21 @@ it("refreshes conflict counts before confirmation and locks duplicate restore re
     message: [t().restoreConfirm("older-backup"), t().restoreConflict(2), t().restoreUnavailable(1)].join("\n") }));
   expect(native.restoreSessionByName).toHaveBeenCalledOnce();
 });
+
+it("shows restore target conflicts and missing entries while rejecting stale or failed previews", () => {
+  const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000" }],
+    pick: "older-backup", setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
+  const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, unavailable: 1,
+    entries: [{ target: "existing-file", status: "existing" as const }, { target: "missing-file", status: "missing" as const }] };
+  const view = render(<RestorePanel {...props} preview={preview} />);
+  expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByText(t().restoreConflict(1))).toBeTruthy();
+  expect(screen.getByText(t().restoreTargetMissing)).toBeTruthy();
+  expect(screen.getByText(t().restorePreviewLimited(2, 201))).toBeTruthy();
+  view.rerender(<RestorePanel {...props} preview={{ ...preview, name: "other" }} />);
+  expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
+  expect(screen.queryByText("existing-file")).toBeNull();
+  view.rerender(<RestorePanel {...props} previewError="failed" />);
+  expect(screen.getByRole("alert").textContent).toContain("failed");
+  expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
+});

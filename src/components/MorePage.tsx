@@ -188,6 +188,9 @@ export function MorePage({
       {openTool === "restore" && (
         <RestorePanel
           sessions={rest.sessions}
+          preview={rest.restorePreview}
+          previewLoading={rest.previewLoading}
+          previewError={rest.previewError}
             loading={rest.restoreLoading}
             loadError={rest.restoreLoadError}
             onReload={() => void rest.loadRestore()}
