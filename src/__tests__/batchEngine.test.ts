@@ -110,6 +110,53 @@ beforeEach(() => {
 });
 
 describe("runBatchCleanup", () => {
+  it.each([false, true])("keeps an empty residual abort distinct from a read failure (readFailed=%s)", async readFailed => {
+    const target = app("EmptyRetry");
+    analyze.mockResolvedValue(scan("EmptyRetry", []));
+    fullCleanup.mockResolvedValue(report({ aborted: true, uninstall_ok: false, deleted: 0,
+      uninstall_message: readFailed ? "ignore read failed" : "no items",
+      errors: readFailed ? ["read failed"] : [] }));
+    const cb = makeCb();
+    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe(readFailed ? "failed" : "skipped");
+    expect(cb.onDoneKeys).toHaveBeenCalledWith(readFailed ? [] : [keyOf(target)]);
+  });
+
+  it.each([
+    { deleted: 1, failed: 1, delayed: 0, aborted: false, status: "failed" },
+    { deleted: 0, failed: 1, delayed: 0, aborted: false, status: "failed" },
+    { deleted: 0, failed: 0, delayed: 1, aborted: false, status: "ok" },
+    { deleted: 0, failed: 0, delayed: 0, aborted: true, status: "failed" },
+  ])("classifies residual retry boundaries without repeating official work: %j", async expected => {
+    const target = app("Boundary");
+    analyze.mockResolvedValue(scan("Boundary", [item("fixture")]));
+    fullCleanup.mockResolvedValue(report({ ...expected, uninstall_ok: false }));
+    const cb = makeCb();
+    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe(expected.status);
+    expect(cb.onDoneKeys).toHaveBeenCalledWith(expected.status === "ok" ? [keyOf(target)] : []);
+    expect(fullCleanup.mock.calls[0]?.[2]).toMatchObject({ skip_official_uninstall: true });
+  });
+
+  it("retains partial failures and retries residue without repeating a successful uninstall", async () => {
+    const target = app("Partial");
+    analyze.mockResolvedValue(scan("Partial", [item("fixture")]));
+    fullCleanup.mockResolvedValueOnce(report({ deleted: 1, failed: 1 }));
+    const cb = makeCb();
+    await runBatchCleanup([target], true, keyOf, cb);
+    expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true });
+    fullCleanup.mockResolvedValueOnce(report({ deleted: 1, failed: 0, uninstall_ok: false }));
+    const retry = makeCb();
+    await runBatchCleanup([target], true, keyOf, retry, false, new Set([keyOf(target)]));
+    expect(fullCleanup.mock.calls.at(-1)?.[2]).toMatchObject({ skip_official_uninstall: true });
+    expect(retry.onDoneKeys).toHaveBeenCalledWith([keyOf(target)]);
+    analyze.mockRejectedValueOnce(new Error("retry analyze failed"));
+    const later = makeCb();
+    await runBatchCleanup([target], true, keyOf, later, false, new Set([keyOf(target)]));
+    expect(later.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true });
+  });
+
   it.each([true, false])("does not clear selection after an empty official failure (aborted=%s)", async (aborted) => {
     analyze.mockResolvedValue(scan("A", []));
     fullCleanup.mockResolvedValue(report({ deleted: 0, failed: 0, aborted, uninstall_ok: false }));

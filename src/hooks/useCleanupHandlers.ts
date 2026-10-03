@@ -87,6 +87,7 @@ export function useCleanupHandlers({
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const batchCancelRef = useRef(false);
+  const batchQueueRef = useRef<InstalledApp[]>([]);
 
   const backupEnabledRef = useRef(false);
   /**invalidates an in-flight verify probe when a newer cleanup starts. */
@@ -372,7 +373,7 @@ export function useCleanupHandlers({
   ]);
 
   const batchCleanup = useCallback(
-    async (queueOverride?: InstalledApp[]) => {
+    async (queueOverride?: InstalledApp[], skipOfficialKeys: ReadonlySet<string> = new Set()) => {
  // one Set for the whole filter, not per row.
       const multiSet = new Set(multi);
       const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
@@ -383,7 +384,7 @@ export function useCleanupHandlers({
       if (busyRef.current || batching) return;
       const { ok, checked } = await requestConfirmEx({
         title: L.batchUninstall,
-        message: L.batchConfirm(queue.length, batchUseOfficial),
+        message: L.batchConfirm(queue.length, queue.some(a => !skipOfficialKeys.has(appKey(a)))),
         confirmLabel: L.batchUninstall,
         danger: true,
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
@@ -392,6 +393,7 @@ export function useCleanupHandlers({
  // confirm is async — another cleanup may have taken busyRef meanwhile.
       if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
+      batchQueueRef.current = queue;
       try {
         busyRef.current = true;
         await runBatchCleanup(
@@ -417,6 +419,7 @@ export function useCleanupHandlers({
             busyRef,
           },
           checked,
+          skipOfficialKeys,
         );
  // List must reflect uninstalled apps immediately.
         await refreshApps();
@@ -435,10 +438,11 @@ export function useCleanupHandlers({
   const retryFailedBatch = useCallback(() => {
     const failed = batchResults.filter((r) => r.status === "failed");
     if (!failed.length) return;
-    setMulti(new Set(failed.map((r) => r.key)));
-    setBatchResults([]);
-    setShowBatchSummary(false);
-  }, [batchResults, setMulti]);
+    const keys = new Set(failed.map(r => r.key));
+    const queue = batchQueueRef.current.filter(a => keys.has(appKey(a)));
+    const officialDone = new Set(failed.filter(r => r.officialDone).map(r => r.key));
+    void batchCleanup(queue, officialDone).catch(e => setError(formatError(e, "cleanup")));
+  }, [batchResults, batchCleanup, setError]);
 
   return {
     forceBusy,

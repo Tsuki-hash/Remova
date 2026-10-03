@@ -7,6 +7,8 @@ export type BatchItemResult = {
   name: string;
   status: BatchStatus;
   detail: string;
+  /** Preserved across residual retries, including later analyze failures. */
+  officialDone?: boolean;
 };
 
 export function BatchProgress({

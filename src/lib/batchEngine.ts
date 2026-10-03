@@ -26,6 +26,7 @@ export async function runBatchCleanup(
   cb: BatchCallbacks,
   /** Opt-in backup from the batch confirm checkbox; default off. */
   backupEnabled = false,
+  skipOfficialKeys: ReadonlySet<string> = new Set(),
 ) {
   const L = t();
   if (!queue.length) {
@@ -47,6 +48,8 @@ export async function runBatchCleanup(
       const app = queue[i];
       if (!app) continue;
       const key = appKey(app);
+      const runOfficial = useOfficial && !skipOfficialKeys.has(key);
+      let officialDone = skipOfficialKeys.has(key);
       cb.onIndex(i + 1);
       cb.onCurrent(app.name);
       toast.info(L.toastBatchProgress(i + 1, queue.length, prettyAppName(app.name, app.source)));
@@ -57,30 +60,34 @@ export async function runBatchCleanup(
  // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
         const report = await api.fullCleanup(app, items, {
           dry_run: false,
-          skip_official_uninstall: !useOfficial,
+          skip_official_uninstall: !runOfficial,
           backup_enabled: backupEnabled,
           cleanup_source: "uninstall",
         });
-        if ((report.aborted && (items.length > 0 || useOfficial)) || (useOfficial && !report.uninstall_ok)) {
+        officialDone ||= runOfficial && report.uninstall_ok;
+        const emptyResidual = report.aborted && !items.length && !runOfficial
+          && report.uninstall_message === "no items" && !report.errors.length;
+        if ((report.aborted && !emptyResidual) || (runOfficial && !report.uninstall_ok)) {
  // backup/session abort must not look like success.
           results.push({
             key,
             name: app.name,
             status: "failed",
             detail: backendText(report.uninstall_message) || L.uninstallFail,
+            officialDone,
           });
           cb.onResults([...results]);
           continue;
         }
-        if (report.aborted && !items.length && !useOfficial) {
+        if (emptyResidual) {
           results.push({ key, name: app.name, status: "skipped", detail: "" });
           okKeys.add(key);
           cb.onResults([...results]);
           continue;
         }
         const detail = L.batchDetail(report.deleted, report.failed);
-        if (report.failed > 0 && report.deleted === 0) {
-          results.push({ key, name: app.name, status: "failed", detail });
+        if (report.failed > 0) {
+          results.push({ key, name: app.name, status: "failed", detail, officialDone });
         } else if (!items.length && report.uninstall_ok) {
           results.push({
             key,
@@ -99,6 +106,7 @@ export async function runBatchCleanup(
           name: app.name,
           status: "failed",
           detail: formatError(e, "cleanup"),
+          officialDone,
         });
       }
       cb.onResults([...results]);
