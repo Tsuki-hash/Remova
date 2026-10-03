@@ -1081,14 +1081,14 @@ mod tests {
     #[test]
     #[ignore]
     fn startup_folder_approved_values_are_full_file_names() {
-        let vals = crate::regscan::list_values(
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
-        );
+        let key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
+        let (_, vals) = crate::regscan::snapshot_names(key).expect("read StartupFolder names");
         assert!(
             !vals.is_empty(),
             "no StartupFolder approved values on this machine — empty loop would be a silent pass"
         );
-        for (name, _) in &vals {
+        for name in &vals {
+            assert!(crate::regscan::read_binary(key, name).is_some());
             assert!(
                 name.contains('.'),
                 "approved value name must be the full file name: {name}"

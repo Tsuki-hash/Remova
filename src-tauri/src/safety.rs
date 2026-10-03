@@ -28,7 +28,7 @@ pub fn critical_service_names() -> &'static [&'static str] {
         "windefend",
         "securityhealthservice",
         "eventsystem",
-        "lsmsm",
+        "lsm",
         "samss",
         "netlogon",
         "msiserver",
@@ -769,6 +769,8 @@ mod tests {
             "DoSvc",
             "sppsvc",
             "WinRM",
+            "LSM",
+            "lsm",
         ] {
             assert!(super::is_protected_service_name(name));
             assert!(super::allow_manage_service_write(name).is_err());
