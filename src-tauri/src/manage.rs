@@ -260,18 +260,30 @@ fn list_auto_services() -> Vec<ManageItem> {
 /// Enumerate StartupApproved PackagedStartup values (UWP/Store apps).
 /// Value name is typically `PackageFamilyName!AppId`; binary flag same layout as Run.
 fn list_packaged_startup() -> Vec<ManageItem> {
+    list_packaged_startup_with(
+        |key| crate::regscan::snapshot_names(key).map(|(_, names)| names),
+        crate::regscan::read_binary,
+        resolve_packaged_display_name,
+    )
+}
+
+fn list_packaged_startup_with(
+    names: impl FnOnce(&str) -> Result<Vec<String>, String>,
+    mut read_binary: impl FnMut(&str, &str) -> Option<Vec<u8>>,
+    mut display_name: impl FnMut(&str) -> Option<String>,
+) -> Vec<ManageItem> {
     let mut out = Vec::new();
     let sa =
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup";
-    for (vname, _) in crate::regscan::list_values(sa) {
+    for vname in names(sa).unwrap_or_default() {
         if vname.is_empty() {
             continue;
         }
-        let enabled = crate::regscan::read_binary(sa, &vname)
+        let enabled = read_binary(sa, &vname)
             .map(|b| !(!b.is_empty() && b[0] == 0x03))
             .unwrap_or(true);
         // Resolve display name from SystemAppData when possible.
-        let display = resolve_packaged_display_name(&vname).unwrap_or_else(|| vname.clone());
+        let display = display_name(&vname).unwrap_or_else(|| vname.clone());
         out.push({
             let mut it = manage_row(
                 display,
@@ -820,6 +832,30 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn packaged_startup_enumerates_binary_enabled_and_disabled_values() {
+        let rows = super::list_packaged_startup_with(
+            |key| {
+                assert!(key.ends_with("PackagedStartup"));
+                Ok(vec!["Vendor!Enabled".into(), "Vendor!Disabled".into()])
+            },
+            |_, name| {
+                Some(vec![
+                    if name.ends_with("Disabled") { 3 } else { 2 },
+                    0,
+                    0,
+                    0,
+                ])
+            },
+            |_| None,
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].enabled);
+        assert!(!rows[1].enabled);
+        assert!(rows
+            .iter()
+            .all(|row| row.location.starts_with("PACKAGED::")));
+    }
     #[test]
     fn csv_split_quotes() {
         let cols = super::split_csv_line(r#""C:\a","say ""hi""","x""#);
