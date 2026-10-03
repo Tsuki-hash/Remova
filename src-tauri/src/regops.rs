@@ -247,7 +247,11 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
 /// Best-effort: schtasks /delete for a task path or leaf name.
 /// Prefer full TaskCache tree remainder (`\Vendor\Foo\Task`) when provided.
 pub fn schtasks_delete(task_name: &str) -> bool {
-    if task_name.is_empty() || task_name.contains('"') {
+    if task_name.trim().is_empty()
+        || task_name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '"' | '*' | '?'))
+    {
         return false;
     }
     // Intrinsic gate: the whole \Microsoft\ tree is system-managed — the same
@@ -1380,6 +1384,21 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn task_delete_rejects_wildcards_before_launching_native_tool() {
+        for name in [
+            "*",
+            r"\*",
+            r"\Vendor\*",
+            "?",
+            "",
+            " ",
+            "bad\0name",
+            "bad\nname",
+        ] {
+            assert!(!super::schtasks_delete(name));
+        }
+    }
     #[test]
     fn path_partial_failure_preserves_successful_user_write() {
         let _lock = super::path_mock::lock_mock();

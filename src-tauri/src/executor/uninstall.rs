@@ -46,12 +46,16 @@ pub fn build_uninstall_command(
         ]);
     }
 
-    // MSI product code: only when the string is clearly MSI (msiexec present, or bare {GUID}).
+    // Identify the executable, not substrings in vendor names, directories or arguments.
+    let parts = split_win_args(&raw);
+    let is_msiexec = parts.first().is_some_and(|exe| {
+        let leaf = exe.rsplit(['\\', '/']).next().unwrap_or(exe);
+        leaf.eq_ignore_ascii_case("msiexec") || leaf.eq_ignore_ascii_case("msiexec.exe")
+    });
     if let Some(guid) = crate::shared::first_guid(&raw) {
-        let lower = raw.to_lowercase();
         let trimmed = raw.trim();
         let bare_guid = trimmed == guid || trimmed.trim_matches('"').eq_ignore_ascii_case(&guid);
-        if lower.contains("msiexec") || bare_guid {
+        if is_msiexec || bare_guid {
             return Some(vec![
                 system_uninstall_tool("msiexec.exe")?,
                 "/x".into(),
@@ -72,7 +76,6 @@ pub fn build_uninstall_command(
         return Some(cmd);
     }
 
-    let parts = split_win_args(&raw);
     if parts.is_empty() {
         return None;
     }
@@ -233,6 +236,25 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msi_substrings_do_not_replace_vendor_commands() {
+        let guid = "{9A1B2C3D-1111-2222-3333-444455556666}";
+        for exe in [
+            "msiexec-helper.exe",
+            r"C:\msiexec\uninstall.exe",
+            "vendor.exe",
+        ] {
+            let raw = format!("\"{exe}\" --msiexec {guid}");
+            let cmd = build_uninstall_command(&raw, "", false).unwrap();
+            assert_eq!(cmd, vec![exe.to_string(), "--msiexec".into(), guid.into()]);
+        }
+        for exe in ["msiexec", "MSIEXEC.EXE", r"C:\System Tools\msiexec.exe"] {
+            let cmd = build_uninstall_command(&format!("\"{exe}\" /x {guid}"), "", false).unwrap();
+            assert_eq!(cmd[0], crate::regops::sys_tool("msiexec.exe"));
+            assert!(cmd[2].eq_ignore_ascii_case(guid));
+        }
+    }
 
     #[test]
     fn msi_only_for_msiexec_or_bare_guid() {
