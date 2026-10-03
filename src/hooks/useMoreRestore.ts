@@ -17,6 +17,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTick, setPreviewTick] = useState(0);
   const operation = useRef(false);
   const previewSequence = useRef(0);
 
@@ -34,7 +35,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       }).finally(() => { if (current && sequence === previewSequence.current) setPreviewLoading(false); });
     }
     return () => { current = false; };
-  }, [restorePick, openRestore]);
+  }, [restorePick, openRestore, previewTick]);
 
   const loadRestore = useCallback(async () => {
     if (operation.current) return;
@@ -94,11 +95,19 @@ export function useMoreRestore(onError: (msg: string) => void) {
       // Invalidate any older preview still in flight for this same selection.
       ++previewSequence.current;
       setPreviewLoading(true);
-      const preview = await api.previewRestore(restorePick).catch(error => {
+      let preview: RestorePreview;
+      try {
+        preview = await api.previewRestore(restorePick);
+      } catch (error) {
+        // A failed pre-confirm preview owns its own surface (alert + retry);
+        // the restore-result block must stay reserved for a confirmed run.
         setRestorePreview(null);
         setPreviewError(formatError(error));
-        throw error;
-      }).finally(() => setPreviewLoading(false));
+        toast.error(formatError(error));
+        return;
+      } finally {
+        setPreviewLoading(false);
+      }
       setRestorePreview(preview);
       setPreviewError(null);
       const ok = await requestConfirm({
@@ -134,6 +143,9 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const selectRestore = useCallback((name: string) => {
     if (!operation.current) setRestorePick(name);
   }, []);
+  const retryPreview = useCallback(() => {
+    if (!operation.current) setPreviewTick((v) => v + 1);
+  }, []);
   const closeRestore = useCallback(() => {
     if (!operation.current) setOpenRestore(false);
   }, []);
@@ -153,6 +165,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     loadRestore,
     deleteSession,
     runRestore,
+    retryPreview,
     closeRestore,
   };
 }

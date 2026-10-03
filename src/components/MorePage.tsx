@@ -191,6 +191,7 @@ export function MorePage({
           preview={rest.restorePreview}
           previewLoading={rest.previewLoading}
           previewError={rest.previewError}
+          onRetryPreview={rest.retryPreview}
             loading={rest.restoreLoading}
             loadError={rest.restoreLoadError}
             onReload={() => void rest.loadRestore()}

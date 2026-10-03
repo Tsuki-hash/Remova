@@ -187,6 +187,24 @@ it("rejects a failed fresh preview before confirmation or any restore write", as
   expect(requestConfirm).not.toHaveBeenCalled();
   expect(native.restoreSessionByName).not.toHaveBeenCalled();
   expect(result.current.restoreBusy).toBe(false);
+  expect(result.current.restoreMsgs).toEqual([]);
+  expect(toast.error).toHaveBeenCalledOnce();
+});
+
+it("retries only the preview after a preview failure", async () => {
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  expect(native.backupSessions).toHaveBeenCalledOnce();
+  native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
+  await act(async () => { result.current.retryPreview(); });
+  expect(result.current.previewError).toBeTruthy();
+  expect(result.current.restorePreview).toBeNull();
+  native.previewRestore.mockResolvedValueOnce({ name: "older-backup", files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] });
+  await act(async () => { result.current.retryPreview(); });
+  expect(result.current.previewError).toBeNull();
+  expect(result.current.restorePreview?.name).toBe("older-backup");
+  expect(native.backupSessions).toHaveBeenCalledOnce();
+  expect(result.current.restorePick).toBe("older-backup");
 });
 
 it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {
@@ -216,6 +234,10 @@ it("shows restore target conflicts and missing entries while rejecting stale or 
   view.rerender(<RestorePanel {...props} previewError="failed" />);
   expect(screen.getByRole("alert").textContent).toContain("failed");
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
+  const onRetryPreview = vi.fn();
+  view.rerender(<RestorePanel {...props} previewError="failed" onRetryPreview={onRetryPreview} />);
+  fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
+  expect(onRetryPreview).toHaveBeenCalledOnce();
 });
 
 it("does not let an older preview erase a fresh validation failure for the same backup", async () => {
