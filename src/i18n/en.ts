@@ -65,7 +65,7 @@ export const dict: EnDict = {
     closeGuide: "Got it",
     guideStep1: "1. Click an app row → Deep Uninstall runs the official uninstaller",
     guideStep2: "2. Leftovers are scanned automatically and sorted safe / confirm / keep",
-    guideStep3: "3. Select items (optional backup) → clean; restore anytime from Restore",
+    guideStep3: "3. Select items → clean; only valid backups can be restored. Unbacked cleanup cannot be undone.",
     versionNew: "New version available",
     versionDownload: "Download",
     versionInstallClose: "Close & install",

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { setLang, t } from "../i18n";
 import { ReportPanel } from "../components/ReportPanel";
+import { SoftwareToolbar } from "../components/SoftwareToolbar";
 import { ScanLeftoversView } from "../components/ScanLeftoversView";
 import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
 import { groupByOrigin } from "../lib/decision";
@@ -11,6 +12,14 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["zh", "en"] as const)("states the backup prerequisite in the actual guide in %s", lang => {
+  setLang(lang);
+  render(<SoftwareToolbar q="" category="all" estimating={false} scanning={false} aiEnabled={false}
+    smartFilterOpen={false} onQuery={() => {}} onCategory={() => {}} onStopEstimate={() => {}}
+    onOpenAi={() => {}} onToggleSmartFilter={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: t().guided }));
+  expect(screen.getByRole("note").textContent).toContain(lang === "zh" ? "未备份无法找回" : "Unbacked cleanup cannot be undone");
+});
 it.each([41, 80])("keeps tail failures and unknown verification results reachable for %s rows", count => {
   const report: FullCleanupReport = { app_name: "Vendor", dry_run: false, backup_dir: "",
     uninstall_ok: true, uninstall_message: "", deleted: count, failed: 0, skipped: 0,
