@@ -14,6 +14,7 @@ export function RestorePanel({
   loading,
   loadError,
   onReload,
+  onRetryPreview,
   preview,
   previewLoading,
   previewError,
@@ -29,6 +30,7 @@ export function RestorePanel({
   loading?: boolean;
   loadError?: string | null;
   onReload?: () => void;
+  onRetryPreview?: () => void;
   preview?: RestorePreview | null;
   previewLoading?: boolean;
   previewError?: string | null;
@@ -131,7 +133,7 @@ export function RestorePanel({
         {previewLoading ? <p role="status" style={css.muted}>{L.loadingGeneric}</p>
           : previewError ? <div role="alert" style={{ marginTop: 8 }}>
             {L.restoreLoadFailed}: {previewError}
-            <button style={css.btnGhost} disabled={busy} onClick={onReload}>{L.manageReload}</button>
+            <button style={css.btnGhost} disabled={busy} onClick={onRetryPreview ?? onReload}>{L.manageReload}</button>
           </div> : selectedPreview && <>
             <p style={{ margin: "8px 0" }}>{L.restorePreviewSummary(selectedPreview.files, selectedPreview.registry, selectedPreview.path_entries)}</p>
             {selectedPreview.existing > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreConflict(selectedPreview.existing)}</p>}
