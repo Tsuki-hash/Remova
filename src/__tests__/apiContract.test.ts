@@ -39,6 +39,7 @@ const COMMAND_KEYS = [
   "deleteHistory",
   "clearHistory",
   "backupSessions",
+  "previewRestore",
   "deleteBackupSession",
   "restoreSessionByName",
   "suggestIgnoreRules",

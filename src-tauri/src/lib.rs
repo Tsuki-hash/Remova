@@ -715,6 +715,7 @@ pub fn run() {
             commands::backup_cmd::list_backup_sessions,
             commands::backup_cmd::delete_backup_session,
             commands::backup_cmd::restore_session_by_name,
+            commands::backup_cmd::preview_restore_session,
             commands::manage_cmd::list_startup_items,
             commands::manage_cmd::list_services,
             commands::manage_cmd::list_scheduled_tasks,
