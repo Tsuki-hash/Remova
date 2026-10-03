@@ -264,26 +264,89 @@ pub struct VerifyRow {
     pub path: String,
     pub kind: String,
     pub still_there: bool,
+    /// When set, presence is unknown; still_there stays true for older clients.
+    pub error: Option<String>,
 }
 
 /// SOP §7: re-check selected paths after cleanup (checklist evidence).
 pub fn verify_cleanup_leftovers(items: &[crate::scanner::CleanupItem]) -> Vec<VerifyRow> {
+    verify_cleanup_leftovers_with(items, crate::regscan::target_exists)
+}
+
+fn verify_cleanup_leftovers_with(
+    items: &[crate::scanner::CleanupItem],
+    mut registry_exists: impl FnMut(&str) -> Result<bool, String>,
+) -> Vec<VerifyRow> {
     let mut out = Vec::new();
     for it in items {
         let still = match it.kind {
-            crate::scanner::ItemKind::Registry => {
-                let path = it.path.split('|').next().unwrap_or(&it.path);
-                crate::regscan::list_subkeys(path).len() + crate::regscan::list_values(path).len()
-                    > 0
-            }
-            crate::scanner::ItemKind::Path => crate::regops::scrub_path_entry_ok(&it.path),
-            _ => std::path::Path::new(&it.path).exists(),
+            crate::scanner::ItemKind::Registry => registry_exists(&it.path),
+            crate::scanner::ItemKind::Path => crate::regops::path_entry_presence(&it.path),
+            _ => std::path::Path::new(&it.path)
+                .try_exists()
+                .map_err(|e| e.to_string()),
         };
         out.push(VerifyRow {
             path: it.path.clone(),
             kind: format!("{:?}", it.kind).to_lowercase(),
-            still_there: still,
+            still_there: still.as_ref().copied().unwrap_or(true),
+            error: still.err(),
         });
     }
     out
+}
+
+#[cfg(test)]
+mod verification_tests {
+    #[test]
+    fn native_registry_value_absence_does_not_inherit_parent_contents() {
+        let name = format!(
+            "HKCU\\Software|RemovaVerifyAbsent_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        assert!(crate::regscan::target_exists(r"HKCU\Software").unwrap());
+        assert!(!crate::regscan::target_exists(&name).unwrap());
+        assert!(crate::regscan::target_exists("INVALID").is_err());
+        assert!(crate::regscan::target_exists("HKCU\\Software|a|b").is_err());
+        assert!(crate::regscan::target_exists("HKCU\\Software|bad\0name").is_err());
+    }
+
+    #[test]
+    fn registry_verification_preserves_exact_target_and_reports_unknown() {
+        let paths = [
+            "HKCU\\Fixture|MissingValue",
+            "HKLM32\\EmptyKey",
+            "HKCU\\Binary|Flag",
+            "HKCU\\Denied|Value",
+        ];
+        let items: Vec<crate::scanner::CleanupItem> = paths
+            .iter()
+            .map(|path| {
+                serde_json::from_value(
+                    serde_json::json!({"path":path, "kind":"registry", "score":90,
+                "confidence":"confirmed", "risk":"low", "reason":"fixture", "evidence":[]}),
+                )
+                .unwrap()
+            })
+            .collect();
+        let mut queried = vec![];
+        let rows = super::verify_cleanup_leftovers_with(&items, |path| {
+            queried.push(path.to_string());
+            match path {
+                p if p == paths[0] => Ok(false),
+                p if p == paths[3] => Err("access denied".into()),
+                _ => Ok(true),
+            }
+        });
+        assert_eq!(queried, paths);
+        assert!(!rows[0].still_there);
+        assert!(rows[1].still_there && rows[2].still_there);
+        assert_eq!(rows[3].error.as_deref(), Some("access denied"));
+        assert!(rows[3].still_there);
+        assert!(rows[..3].iter().all(|row| row.error.is_none()));
+    }
 }

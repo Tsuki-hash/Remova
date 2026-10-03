@@ -283,20 +283,36 @@ fn normalize_path_entry(s: &str) -> String {
 
 /// True if PATH still contains this exact entry (verify checklist).
 pub fn scrub_path_entry_ok(entry: &str) -> bool {
+    path_entry_presence(entry).unwrap_or(false)
+}
+
+pub(crate) fn path_entry_presence(entry: &str) -> Result<bool, String> {
+    path_entry_presence_with(entry, read_path_scope)
+}
+
+fn path_entry_presence_with(
+    entry: &str,
+    mut read: impl FnMut(&str) -> Result<String, String>,
+) -> Result<bool, String> {
     let needle = normalize_path_entry(entry);
     if needle.is_empty() {
-        return false;
+        return Ok(false);
     }
+    let mut error = None;
     for scope in ["User", "Machine"] {
-        if let Ok(current) = read_path_scope(scope) {
-            for p in current.split(';') {
-                if normalize_path_entry(p) == needle {
-                    return true;
+        match read(scope) {
+            Ok(current) => {
+                if current
+                    .split(';')
+                    .any(|p| normalize_path_entry(p) == needle)
+                {
+                    return Ok(true);
                 }
             }
+            Err(e) => error = Some(e),
         }
     }
-    false
+    error.map_or(Ok(false), Err)
 }
 
 /// Whether a PATH string already contains `entry` (normalized exact match).
@@ -1384,6 +1400,19 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn path_presence_requires_complete_reads_only_to_prove_absence() {
+        assert!(super::path_entry_presence_with("fixture", |_| Err("denied".into())).is_err());
+        assert!(super::path_entry_presence_with("fixture", |scope| {
+            if scope == "User" {
+                Err("denied".into())
+            } else {
+                Ok("fixture".into())
+            }
+        })
+        .unwrap());
+        assert!(!super::path_entry_presence_with("missing", |_| Ok("fixture".into())).unwrap());
+    }
     #[test]
     fn task_delete_rejects_wildcards_before_launching_native_tool() {
         for name in [

@@ -80,6 +80,45 @@ fn collect_complete_names(
     Err("registry snapshot entry budget exceeded".into())
 }
 
+/// Query the exact key or value, preserving registry view and read errors.
+pub fn target_exists(target: &str) -> Result<bool, String> {
+    let (key, value) = match target.split_once('|') {
+        Some((key, value)) if !value.contains('|') => (key, Some(value)),
+        Some(_) => return Err("invalid registry target".into()),
+        None => (target, None),
+    };
+    let (hive, sub, access) = parse_alias(key).ok_or("invalid registry alias")?;
+    let sub = crate::fsutil::to_wide_name(&sub)?;
+    let value = value.map(crate::fsutil::to_wide_name).transpose()?;
+    unsafe {
+        let mut root = HKEY::default();
+        let opened = RegOpenKeyExW(hive, PCWSTR(sub.as_ptr()), 0, KEY_READ | access, &mut root);
+        if opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND {
+            return Ok(false);
+        }
+        if opened != ERROR_SUCCESS {
+            return Err(format!("registry verify open: {}", opened.0));
+        }
+        let queried = match value {
+            None => ERROR_SUCCESS,
+            Some(name) => windows::Win32::System::Registry::RegQueryValueExW(
+                root,
+                PCWSTR(name.as_ptr()),
+                None,
+                None,
+                None,
+                None,
+            ),
+        };
+        let _ = RegCloseKey(root);
+        match queried {
+            ERROR_SUCCESS | ERROR_MORE_DATA => Ok(true),
+            ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => Ok(false),
+            status => Err(format!("registry verify value: {}", status.0)),
+        }
+    }
+}
+
 /// Monitor snapshots need explicit completeness and names of every value type.
 pub fn snapshot_names(key: &str) -> Result<(Vec<String>, Vec<String>), String> {
     #[cfg(not(windows))]
