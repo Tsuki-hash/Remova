@@ -62,14 +62,14 @@ describe("LeftoverSummaryBar", () => {
         .getByRole("button", { name: t().conclusionShowConfirm(1) })
         .getAttribute("aria-pressed"),
     ).toBe("true");
-    expect(
-      screen.getByRole("button", { name: t().conclusionShowKeep(1) }).hasAttribute("disabled"),
-    ).toBe(false);
+    expect(screen.queryByRole("button", { name: t().conclusionShowKeep(1) })).toBeNull();
+    expect(screen.getByText(`${t().bucketKeep} (1)`)).toBeTruthy();
     const empty = render(
       <LeftoverSummaryBar
         summary={summarizeLeftovers([item()])}
         riskFilter={null}
         onSelectSafe={vi.fn()}
+        onShowKeep={vi.fn()}
       />,
     );
     expect(
@@ -83,5 +83,13 @@ describe("LeftoverSummaryBar", () => {
   it("shows the localized composition counts in one chip", () => {
     render(<LeftoverSummaryBar {...base} />);
     expect(screen.getByText(t().kindLabel("dir") + " 1 · " + t().kindLabel("file") + " 1 · " + t().kindLabel("registry") + " 1")).toBeTruthy();
+  });
+
+  it("renders statistics rather than dead actions without callbacks", () => {
+    render(<LeftoverSummaryBar summary={base.summary} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText(`${t().bucketSafe} (1)`)).toBeTruthy();
+    expect(screen.getByText(`${t().bucketSuggest} (1)`)).toBeTruthy();
+    expect(screen.getByText(`${t().bucketKeep} (1)`)).toBeTruthy();
   });
 });

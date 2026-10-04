@@ -61,7 +61,7 @@ export function LeftoverSummaryBar({
         fontSize: 12,
       }}
     >
-      {buckets.map((b) => (
+      {buckets.map((b) => b.onClick ? (
         <button
           key={b.id}
           type="button"
@@ -72,7 +72,7 @@ export function LeftoverSummaryBar({
           style={{
             ...css.chip,
             fontFamily: "inherit",
-            cursor: b.onClick ? "pointer" : "default",
+            cursor: "pointer",
             color: b.active
               ? "var(--accent-text)"
               : b.count > 0
@@ -97,6 +97,11 @@ export function LeftoverSummaryBar({
         >
           {b.label}
         </button>
+      ) : (
+        <span key={b.id} title={b.hint} style={{ ...css.chip, color: "var(--muted)" }}>
+          {b.id === "safe" ? L.bucketSafe : b.id === "confirm" ? L.bucketSuggest : L.bucketKeep}
+          {` (${b.count})`}
+        </span>
       ))}
       <span style={{ flex: 1 }} />
       {(() => {

@@ -5,7 +5,8 @@ fn main() {
     // Elevated-relaunch handshake: the admin copy spawned by a non-admin run
     // waits for the old process to exit, so the single-instance lock is free
     // by the time Tauri initializes. Timeout → the old run stayed (the user
-    // cancelled the busy confirm) — leave quietly.
+    // could not finish exiting) — leave quietly. Busy confirmation finishes
+    // before spawning this copy.
     if let Some(pid) = parse_elevated_relaunch_pid(&args) {
         if !remova_lib::sysops::wait_for_process_exit(pid, 15_000) {
             return;
