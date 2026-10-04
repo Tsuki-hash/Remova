@@ -67,13 +67,13 @@ export function WhitelistPanel({
     <div
       style={{
         ...css.card,
-        padding: "12px 14px",
+        padding: "16px 18px",
         marginBottom: 18,
         fontSize: 13,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <strong style={{ fontSize: 13.5 }}>{L.appWhitelist}</strong>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.appWhitelist}</strong>
         <span style={{ ...css.muted, fontSize: 12, flex: 1 }}>{L.appWhitelistHint}</span>
         {onIgnorePublisher && (
           <button

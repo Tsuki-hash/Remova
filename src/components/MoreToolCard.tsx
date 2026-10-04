@@ -34,6 +34,7 @@ export const cardBase: CSSProperties = {
   textAlign: "left",
   border: "1px solid var(--border)",
   background: "var(--surface)",
+  color: "var(--fg)",
   borderRadius: 12,
   padding: "18px 16px",
   cursor: "pointer",
@@ -60,27 +61,6 @@ export function ToolCard({
         borderColor: active ? "var(--accent)" : "var(--border)",
         background: active ? "var(--accent-soft)" : "var(--surface)",
         boxShadow: "none",
-      }}
-          onMouseEnter={(e) => {
-        if (active) return;
-        e.currentTarget.style.borderColor = "var(--border-strong)";
-        e.currentTarget.style.boxShadow = "0 1px 0 rgba(0,0,0,.04)";
-      }}
-      onMouseLeave={(e) => {
-        if (active) return;
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.boxShadow = "none";
-      }}
-      onFocus={(e) => {
- // keyboard focus must be as visible as hover.
-        if (active) return;
-        e.currentTarget.style.borderColor = "var(--border-strong)";
-        e.currentTarget.style.boxShadow = "0 0 0 2px var(--accent-soft)";
-      }}
-      onBlur={(e) => {
-        if (active) return;
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.boxShadow = "none";
       }}
     >
       <span
