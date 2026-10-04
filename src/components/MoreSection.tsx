@@ -13,25 +13,24 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 18 }}>
+    <section className="remova-tool-section" style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
       <header
         style={{
           display: "flex",
           alignItems: "baseline",
           gap: 10,
-          paddingBottom: 6,
-          borderBottom: "1px solid var(--border)",
+          paddingBottom: 4,
         }}
       >
-        <span style={{ fontWeight: 700, fontSize: 13.5, letterSpacing: 0.1 }}>{title}</span>
+        <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: 0.1 }}>{title}</span>
         {hint && <span style={{ ...css.muted, fontSize: 12 }}>{hint}</span>}
         {extra && <span style={{ marginLeft: "auto" }}>{extra}</span>}
       </header>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 10,
+          gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))",
+          gap: 12,
         }}
       >
         {children}

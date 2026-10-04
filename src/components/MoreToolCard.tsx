@@ -34,8 +34,8 @@ export const cardBase: CSSProperties = {
   textAlign: "left",
   border: "1px solid var(--border)",
   background: "var(--surface)",
-  borderRadius: 10,
-  padding: "14px 14px 12px",
+  borderRadius: 12,
+  padding: "18px 16px",
   cursor: "pointer",
   display: "flex",
   gap: 12,
@@ -52,13 +52,14 @@ export function ToolCard({
 }) {
   return (
     <button
+      className="remova-tool-card"
       type="button"
       onClick={item.action}
       style={{
         ...cardBase,
         borderColor: active ? "var(--accent)" : "var(--border)",
         background: active ? "var(--accent-soft)" : "var(--surface)",
-        boxShadow: active ? "0 0 0 1px var(--accent)" : "none",
+        boxShadow: "none",
       }}
           onMouseEnter={(e) => {
         if (active) return;
@@ -84,9 +85,9 @@ export function ToolCard({
     >
       <span
         style={{
-          width: 36,
-          height: 36,
-          borderRadius: 9,
+          width: 34,
+          height: 34,
+          borderRadius: 10,
           background: item.accent ? "var(--accent-soft)" : "var(--surface-2)",
           color: item.accent ? "var(--accent)" : "var(--muted)",
           display: "grid",
@@ -94,8 +95,6 @@ export function ToolCard({
           fontSize: 16,
           fontWeight: 600,
           flexShrink: 0,
-          border:
-            item.accent ? "1px solid transparent" : "1px solid var(--border)",
         }}
         aria-hidden
       >
@@ -103,7 +102,7 @@ export function ToolCard({
       </span>
       <span style={{ minWidth: 0, flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <span style={{ fontWeight: 650, fontSize: 13.5 }}>{item.title}</span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</span>
           {item.badge && (
             <span
               style={{

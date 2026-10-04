@@ -34,6 +34,7 @@ export function Sidebar({
 
   return (
     <nav
+      className="remova-navigation"
       aria-label={t().navRegion}
       style={{
         width: collapsed ? 64 : 200,
@@ -42,8 +43,8 @@ export function Sidebar({
         borderRight: "1px solid var(--border)",
         display: "flex",
         flexDirection: "column",
-        padding: "14px 10px",
-        gap: 4,
+        padding: "18px 12px",
+        gap: 6,
         transition: "width .15s ease",
       }}
     >
@@ -52,7 +53,7 @@ export function Sidebar({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "6px 10px 16px",
+          padding: "6px 8px 24px",
           minWidth: 0,
         }}
       >
@@ -65,7 +66,7 @@ export function Sidebar({
         />
         {!collapsed && (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: -0.2 }}>Remova</div>
+            <div style={{ fontWeight: 650, fontSize: 16, letterSpacing: -0.3 }}>Remova</div>
             <div style={{ fontSize: 11, color: "var(--muted)" }}>{L.subtitle}</div>
           </div>
         )}
@@ -86,10 +87,10 @@ export function Sidebar({
               gap: 10,
               width: "100%",
               border: "none",
-              borderRadius: 8,
-              padding: collapsed ? "10px 0" : "10px 12px",
+              borderRadius: 10,
+              padding: collapsed ? "12px 0" : "12px 14px",
               background: active ? "var(--accent-soft)" : "transparent",
-              color: active ? "var(--accent)" : "var(--fg)",
+              color: active ? "var(--accent-text)" : "var(--muted)",
               fontWeight: active ? 650 : 500,
               fontSize: 13.5,
               cursor: "pointer",
@@ -147,7 +148,7 @@ export function Shell({
             display: "flex",
             alignItems: "center",
             gap: 12,
-            padding: "12px 8px 12px 20px",
+            padding: "16px 8px 16px 22px",
             borderBottom: "1px solid var(--border)",
             background: "var(--surface)",
             flexShrink: 0,
@@ -155,7 +156,7 @@ export function Shell({
           }}
         >
           <div style={{ minWidth: 0, flex: 1 }} data-tauri-drag-region>
-            <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: -0.3 }} data-tauri-drag-region>
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 650, letterSpacing: -0.4 }} data-tauri-drag-region>
               {title}
             </h1>
             <div
@@ -204,7 +205,7 @@ export function Shell({
  // (squashing banners and pushing tool panels off-screen).
             display: "block",
             overflow: "auto",
-            padding: "10px 14px 10px",
+            padding: "16px 20px",
           }}
         >
           {children}
@@ -217,7 +218,7 @@ export function Shell({
               alignItems: "center",
               gap: 14,
               flexWrap: "wrap",
-              padding: "6px 14px",
+              padding: "8px 20px",
               borderTop: "1px solid var(--border)",
               background: "var(--surface)",
               fontSize: 11.5,
