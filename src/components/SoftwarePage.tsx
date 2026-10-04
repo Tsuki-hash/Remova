@@ -29,7 +29,6 @@ import { ScanLeftoversView } from "./ScanLeftoversView";
 import { CopilotPanel } from "./CopilotPanel";
 import { SoftwareListTable } from "./SoftwareListTable";
 import { BatchActionBar } from "./BatchActionBar";
-import { CleanupConclusion } from "./CleanupConclusion";
 
 export type SoftwarePageProps = {
  // list
@@ -86,8 +85,6 @@ export type SoftwarePageProps = {
   setAiRisk: (v: string | null) => void;
   aiNotes: Record<string, string>;
   aiSummaryNote: string | null;
-  aiNudgeDismissed: boolean;
-  onDismissAiNudge: () => void;
   dryRunning: boolean;
   busy: boolean;
   onBack: () => void;
@@ -190,6 +187,8 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onDryRun={p.onDryRun}
           onCleanup={p.onCleanup}
           onAiExplain={p.onAiExplain}
+          onOpenSettings={p.onOpenSettings}
+          aiNote={p.aiSummaryNote}
         />
       )}
 
@@ -245,66 +244,20 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
             filterApp={p.selected}
             onClearKindFilter={() => p.setKindFilter(null)}
             riskFilter={p.riskFilter}
-            onClearRiskFilter={() => p.setRiskFilter(null)}
-            conclusion={
-              p.scan.app_name !== L.orphanScan && !p.scanning ? (
-                <>
-                  <CleanupConclusion
-                    scan={p.scan}
-                    scanning={p.scanning}
-                    aiEnabled={p.aiEnabled}
-                    aiBusy={p.aiBusy}
-                    aiNote={p.aiSummaryNote}
-                    onCleanSafe={() => {
-                      p.setSelectedPaths(
-                        new Set(p.scan!.items.filter(defaultSelectable).map((it) => it.path)),
-                      );
-                      p.setRiskFilter(null);
-                    }}
-                    onShowConfirm={() => {
-                      p.setKindFilter(null);
-                      p.setRiskFilter(p.riskFilter === "confirm" ? null : "confirm");
-                    }}
-                    onShowKeep={() => {
-                      p.setKindFilter(null);
-                      p.setRiskFilter(p.riskFilter === "keep" ? null : "keep");
-                    }}
-                    onExplain={p.onAiExplain}
-                    onOpenSettings={p.onOpenSettings}
-                  />
-                  {!p.aiEnabled && !p.aiNudgeDismissed && p.scan.items.length > 0 && (
-                    <div
-                      style={{
-                        marginBottom: 10,
-                        padding: "8px 12px",
-                        border: "1px solid var(--border)",
-                        borderRadius: 8,
-                        background: "var(--surface-2)",
-                        display: "flex",
-                        gap: 10,
-                        alignItems: "center",
-                        fontSize: 12,
-                        color: "var(--muted)",
-                      }}
-                    >
-                      <span style={{ flex: 1 }}>{L.conclusionEnableAi}</span>
-                      <button
-                        style={{ ...css.btnSm, height: 28 }}
-                        onClick={p.onOpenSettings}
-                      >
-                        {L.aiSettings}
-                      </button>
-                      <button
-                        style={{ ...css.btnGhost, height: 28 }}
-                        onClick={p.onDismissAiNudge}
-                      >
-                        {L.cancel}
-                      </button>
-                    </div>
-                  )}
-                </>
-              ) : null
-            }
+            onSelectSafe={() => {
+              p.setSelectedPaths(
+                new Set(p.scan!.items.filter(defaultSelectable).map((it) => it.path)),
+              );
+              p.setRiskFilter(null);
+            }}
+            onShowConfirm={() => {
+              p.setKindFilter(null);
+              p.setRiskFilter(p.riskFilter === "confirm" ? null : "confirm");
+            }}
+            onShowKeep={() => {
+              p.setKindFilter(null);
+              p.setRiskFilter(p.riskFilter === "keep" ? null : "keep");
+            }}
             onTogglePath={(path) =>
               p.setSelectedPaths((s) => {
                 const n = new Set(s);

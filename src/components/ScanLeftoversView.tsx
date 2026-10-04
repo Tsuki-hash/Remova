@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
@@ -195,10 +195,10 @@ type Props = {
   kindFilter?: LinkedBucketId | null;
   filterApp?: InstalledApp | null;
   onClearKindFilter?: () => void;
-  /** Decision-layer filters from CleanupConclusion. */
   riskFilter?: "confirm" | "keep" | null;
-  onClearRiskFilter?: () => void;
-  conclusion?: ReactNode;
+  onSelectSafe?: () => void;
+  onShowConfirm?: () => void;
+  onShowKeep?: () => void;
 };
 
 /** Leftover list + summary + optional orphan origin groups (virtualized). */
@@ -215,8 +215,9 @@ export function ScanLeftoversView({
   filterApp,
   onClearKindFilter,
   riskFilter,
-  onClearRiskFilter,
-  conclusion,
+  onSelectSafe,
+  onShowConfirm,
+  onShowKeep,
 }: Props) {
   const L = t();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -245,7 +246,6 @@ export function ScanLeftoversView({
           ),
     [riskFilter, bucketItems],
   );
-  const filterCounts = useMemo(() => summarizeLeftovers(bucketItems), [bucketItems]);
   const filterLabel = useMemo(() => {
     if (!kindFilter) return null;
     const key = linkedBucketLabelKey(kindFilter);
@@ -293,17 +293,14 @@ export function ScanLeftoversView({
 
   return (
     <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-        <strong>{scan.app_name}</strong>
-        <span style={{ ...css.muted, marginLeft: 12 }}>
-          {L.leftoversTitle}: {L.scanTotals(
-            scan.items.length,
-            scan.items.filter((i) => i.confidence === "confirmed").length,
-          )}
-        </span>
-      </div>
-      <LeftoverSummaryBar summary={summarizeLeftovers(scan.items)} scanning={scanning} />
-      {conclusion}
+      <LeftoverSummaryBar
+        summary={summarizeLeftovers(scan.items)}
+        scanning={scanning}
+        riskFilter={riskFilter}
+        onSelectSafe={onSelectSafe}
+        onShowConfirm={onShowConfirm}
+        onShowKeep={onShowKeep}
+      />
       {!isOrphan && kindFilter && filterLabel && (
         <div
           style={{
@@ -318,28 +315,6 @@ export function ScanLeftoversView({
         >
           <span style={css.chip}>{L.filterOnly(filterLabel)}</span>
           <button style={{ ...css.btnGhost, height: 26 }} onClick={onClearKindFilter}>
-            {L.showAllLeftovers}
-          </button>
-        </div>
-      )}
-      {!isOrphan && riskFilter && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 14px",
-            borderBottom: "1px solid var(--border)",
-            fontSize: 12,
-            flexShrink: 0,
-          }}
-        >
-          <span style={css.chip}>
-            {riskFilter === "keep"
-              ? L.conclusionShowKeep(filterCounts.keep)
-              : L.conclusionShowConfirm(filterCounts.suggest)}
-          </span>
-          <button style={{ ...css.btnGhost, height: 26 }} onClick={onClearRiskFilter}>
             {L.showAllLeftovers}
           </button>
         </div>

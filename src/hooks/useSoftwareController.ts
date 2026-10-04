@@ -57,7 +57,6 @@ export type SoftwareControllerInput = {
   setAiRisk: (v: string | null) => void;
   aiNotes: Record<string, string>;
   aiSummaryNote: string | null;
-  aiNudgeDismissed: boolean;
   dryRunning: boolean;
   forceBusy: boolean;
   batching: boolean;
@@ -108,7 +107,6 @@ export type SoftwareControllerInput = {
   setCategory: (id: CategoryId) => void;
   stopSizeEstimate: () => Promise<void>;
   goNav: (n: "more" | "orphans") => void;
-  dismissAiNudge: () => void;
   closePreview: () => void;
   dryRun: () => Promise<void>;
   handleCleanupConfirm: () => Promise<void> | void;
@@ -191,8 +189,6 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         setAiRisk: input.setAiRisk,
         aiNotes: input.aiNotes,
         aiSummaryNote: input.aiSummaryNote,
-        aiNudgeDismissed: input.aiNudgeDismissed,
-        onDismissAiNudge: input.dismissAiNudge,
         dryRunning: input.dryRunning,
         busy: input.dryRunning || input.forceBusy || input.batching || input.scanning || input.aiBusy,
         onBack: input.closePreview,
@@ -286,7 +282,6 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.setAiRisk,
       input.aiNotes,
       input.aiSummaryNote,
-      input.aiNudgeDismissed,
       input.dryRunning,
       input.batching,
       input.error,
@@ -320,7 +315,6 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.setCategory,
       input.stopSizeEstimate,
       input.goNav,
-      input.dismissAiNudge,
       input.closePreview,
       input.dryRun,
       input.handleCleanupConfirm,
