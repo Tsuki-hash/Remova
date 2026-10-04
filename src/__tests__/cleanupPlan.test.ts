@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { summarizeCleanupPlan } from "../components/CleanupPlanPreview";
+import { summarizeCleanupPlan } from "../lib/cleanupPlan";
 import type { CleanupItem } from "../types";
 
 const item = (path: string, kind: CleanupItem["kind"], size_kb?: number | null): CleanupItem =>

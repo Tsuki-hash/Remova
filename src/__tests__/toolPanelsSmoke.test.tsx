@@ -139,15 +139,16 @@ describe("ScanActionsBar", () => {
     onAiExplain: vi.fn(),
   };
 
-  it("hides the cleanup plan card while nothing is selected", () => {
+  it("keeps the cleanup CTA disabled and estimate numbers hidden while nothing is selected", () => {
     render(<ScanActionsBar {...baseProps} selectedPaths={new Set()} />);
-    expect(screen.queryByRole("region", { name: t().cleanupPlanTitle })).toBeNull();
     expect(screen.getByRole("button", { name: `${t().cleanup} (0)` }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByText(t().cleanupPlanReview(0))).toBeNull();
   });
 
-  it("shows the cleanup plan card once a row is selected", () => {
+  it("shows the action-row estimate once a row is selected", () => {
     const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
     render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} />);
-    expect(screen.getByRole("region", { name: t().cleanupPlanTitle })).toBeTruthy();
+    expect(screen.getByText(`${t().cleanup} (1)`)).toBeTruthy();
+    expect(screen.getByText(t().cleanupPlanReview(0))).toBeTruthy();
   });
 });
