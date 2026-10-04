@@ -55,10 +55,6 @@ export function ScanActionsBar({
         ← {L.closePreview}
       </button>
       <strong style={{ fontSize: 13, fontWeight: 600 }}>{scan.app_name}</strong>
-      <span style={{ ...css.muted }}>
-        {scan.items.length} · {scan.items.filter((i) => i.confidence === "confirmed").length}{" "}
-        {L.confirmed}
-      </span>
       {scanning && <span style={{ ...css.muted }}>{L.analyzing}</span>}
       {!residualFromUninstall && (
         <label

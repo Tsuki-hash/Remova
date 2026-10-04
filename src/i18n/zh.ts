@@ -37,6 +37,7 @@ export const dict = {
     taskBusy: "已有任务进行中，请稍候",
     goToSoftware: "去选择软件",
     confirmed: "已确认",
+    scanTotals: (total: number, confirmed: number) => `共 ${total} 项 · 已确认 ${confirmed} 项`,
     suspected: "疑似",
     colConfidence: "判定",
     low: "低风险",
