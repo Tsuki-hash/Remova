@@ -18,6 +18,7 @@ vi.mock("../lib/api", () => ({
     loadIgnore: vi.fn().mockResolvedValue({ publishers: [], names: [] }),
     diskUsage: vi.fn().mockResolvedValue({ free_gb: 10, total_gb: 100, drive: "C:" }),
     openPath: (...a: unknown[]) => openPath(...a),
+    elevateRestart: vi.fn(),
   },
 }));
 vi.mock("../lib/updateCheck", () => ({
@@ -44,6 +45,7 @@ import { formatError } from "../lib/format";
 import { trackNativeCall } from "../lib/nativeActivity";
 import { requestConfirm } from "../lib/confirm";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { api } from "../lib/api";
 
 function app(): InstalledApp {
   return {
@@ -94,7 +96,8 @@ it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray
   const win = {
     onCloseRequested: vi.fn(async (handler: typeof handleClose) => { handleClose = handler; return closeOff; }),
     listen: vi.fn(async (name: string, handler: () => void) => {
-      expect(name).toBe("remova:request-quit"); quit = handler; return quitOff;
+      if (name === "remova:request-quit") { quit = handler; return quitOff; }
+      return vi.fn();
     }),
     destroy: vi.fn(async () => {}), hide: vi.fn(async () => {}),
     close: vi.fn(async () => { await handleClose({ preventDefault }); }),
@@ -104,7 +107,7 @@ it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray
   let finish!: () => void;
   const task = trackNativeCall(() => new Promise<void>(resolve => { finish = resolve; }), command);
   try {
-    await vi.waitFor(() => expect(win.listen).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(win.listen).toHaveBeenCalledTimes(2));
     let answer!: (ok: boolean) => void;
     vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
     const closing = handleClose({ preventDefault });
@@ -136,6 +139,51 @@ it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray
     view.unmount();
     expect(closeOff).toHaveBeenCalledOnce();
     expect(quitOff).toHaveBeenCalledOnce();
+    vi.mocked(getCurrentWindow).mockImplementation(() => { throw new Error("not in tauri"); });
+  }
+});
+
+it.each(["accept", "cancel", "uac-failure"])("confirms busy elevation before spawning: %s", async outcome => {
+  vi.clearAllMocks();
+  listApps.mockResolvedValue([]);
+  checkLatestRelease.mockResolvedValue({ ok: false });
+  let elevate!: () => void;
+  let answer!: (ok: boolean) => void;
+  const win = {
+    onCloseRequested: vi.fn(async () => vi.fn()),
+    listen: vi.fn(async (name: string, handler: () => void) => {
+      if (name === "remova:request-elevate") elevate = handler;
+      return vi.fn();
+    }),
+    show: vi.fn(async () => {}), unminimize: vi.fn(async () => {}), setFocus: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {}),
+  };
+  vi.mocked(getCurrentWindow).mockReturnValue(win as unknown as ReturnType<typeof getCurrentWindow>);
+  vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+  vi.mocked(api.elevateRestart).mockImplementation(async () => {
+    if (outcome === "uac-failure") throw new Error("elevate:cancelled:1223");
+  });
+  const spies = bootSpies();
+  const view = renderHook(() => useAppBoot({ ...spies, busyRef: { current: true } }));
+  try {
+    await vi.waitFor(() => expect(elevate).toBeTypeOf("function"));
+    vi.useFakeTimers();
+    await act(async () => { elevate(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(api.elevateRestart).not.toHaveBeenCalled();
+    expect(win.destroy).not.toHaveBeenCalled();
+    await act(async () => { answer(outcome !== "cancel"); });
+    if (outcome === "cancel") {
+      expect(api.elevateRestart).not.toHaveBeenCalled();
+      expect(win.destroy).not.toHaveBeenCalled();
+    } else {
+      expect(api.elevateRestart).toHaveBeenCalledWith(true);
+      expect(win.destroy).toHaveBeenCalledTimes(outcome === "accept" ? 1 : 0);
+      if (outcome === "uac-failure") expect(toast.error).toHaveBeenCalledOnce();
+    }
+  } finally {
+    vi.useRealTimers();
+    view.unmount();
     vi.mocked(getCurrentWindow).mockImplementation(() => { throw new Error("not in tauri"); });
   }
 });

@@ -90,7 +90,7 @@ export const api = {
     invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null }),
   listDirChildren: (path: string) => invoke<DirSizeRow[]>("list_dir_children", { path }),
   isElevated: () => invoke<boolean>("is_elevated"),
-  elevateRestart: () => invoke("elevate_restart"),
+  elevateRestart: (approved = false) => invoke("elevate_restart", { approved }),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),
   checkGithubLatest: () =>
     invoke<{ version: string; url: string; download_url?: string | null } | null>(
