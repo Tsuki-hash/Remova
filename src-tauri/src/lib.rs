@@ -492,26 +492,23 @@ fn disk_usage() -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn elevate_restart(app: tauri::AppHandle) -> Result<(), String> {
+async fn elevate_restart(app: tauri::AppHandle, approved: Option<bool>) -> Result<(), String> {
+    // Ask the old window to finish its busy confirmation before spawning
+    // the elevated copy: user deliberation must not consume the handoff wait.
+    if approved != Some(true) {
+        return app
+            .emit("remova:request-elevate", ())
+            .map_err(|e| e.to_string());
+    }
     tauri::async_runtime::spawn_blocking(|| {
-        // The elevated copy waits for this process to exit before starting
-        // (see main.rs) — the single-instance lock is then free regardless of
-        // how long the guarded quit below takes.
+        // Busy confirmation is complete. The elevated copy waits for the
+        // old window to finish exiting before acquiring the instance lock.
         let handoff = format!("--elevated-relaunch={}", std::process::id());
         sysops::elevate_relaunch(&[handoff])
     })
     .await
     .map_err(|e| e.to_string())??;
-    // The elevated copy must find the single-instance lock free, or it exits
-    // itself and the stale non-admin window wins. Hand the old window the
-    // same guarded quit the tray menu uses — a running critical write still
-    // gets the busy warning instead of being killed.
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-        let _ = app.emit("remova:request-quit", ());
-    }
+    // The requesting window destroys itself only after this succeeds.
     Ok(())
 }
 

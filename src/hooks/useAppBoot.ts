@@ -95,6 +95,7 @@ export function useAppBoot({
  // Custom chrome: close → tray (default) or quit; busy still asks first.
     let unlistenClose: (() => void) | null = null;
     let unlistenQuit: (() => void) | null = null;
+    let unlistenElevate: (() => void) | null = null;
     let closePending = false;
     let chromeDisposed = false;
     void (async () => {
@@ -152,6 +153,31 @@ export function useAppBoot({
         });
         if (chromeDisposed) quitUnlisten();
         else unlistenQuit = quitUnlisten;
+        const elevateUnlisten = await win.listen("remova:request-elevate", () => { void (async () => {
+          if (closePending) return;
+          closePending = true;
+          try {
+            await win.show();
+            await win.unminimize();
+            await win.setFocus();
+            if (busyRef.current || hasPendingNativeWrites()) {
+              const ok = await requestConfirm({
+                title: t().closeConfirmBusy,
+                confirmLabel: t().confirmOk,
+                cancelLabel: t().cancel,
+                danger: true,
+              });
+              if (!ok) return;
+            }
+            // UAC cancellation/failure leaves the original window alive.
+            await api.elevateRestart(true);
+            await win.destroy();
+          } catch (e) {
+            toast.error(formatError(e, "elevate"));
+          } finally { closePending = false; }
+        })(); });
+        if (chromeDisposed) elevateUnlisten();
+        else unlistenElevate = elevateUnlisten;
       } catch {
  // not in tauri
       }
@@ -161,6 +187,7 @@ export function useAppBoot({
       chromeDisposed = true;
       unlistenClose?.();
       unlistenQuit?.();
+      unlistenElevate?.();
     };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
