@@ -2,39 +2,51 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { LeftoverSummary } from "../lib/decision";
 
-/** Risk/kind summary above leftover list — explain, do not scare. */
+/** Filter chips above the leftover list: select-safe action + risk filters + composition. */
 export function LeftoverSummaryBar({
   summary,
   scanning,
+  riskFilter,
+  onSelectSafe,
+  onShowConfirm,
+  onShowKeep,
 }: {
   summary: LeftoverSummary;
   scanning?: boolean;
+  riskFilter?: "confirm" | "keep" | null;
+  onSelectSafe?: () => void;
+  onShowConfirm?: () => void;
+  onShowKeep?: () => void;
 }) {
   const L = t();
-  if (summary.total === 0) return null;
+  if (summary.total === 0 && !scanning) return null;
   const buckets = [
     {
       id: "safe" as const,
-      label: L.bucketSafe,
+      label: L.conclusionCleanSafe(summary.safe),
       count: summary.safe,
-      color: "var(--ok-ink)",
       hint: L.bucketSafeHint,
+      active: false,
+      onClick: onSelectSafe,
     },
     {
-      id: "suggest" as const,
-      label: L.bucketSuggest,
+      id: "confirm" as const,
+      label: L.conclusionShowConfirm(summary.suggest),
       count: summary.suggest,
-      color: "var(--warn-ink)",
       hint: L.bucketSuggestHint,
+      active: riskFilter === "confirm",
+      onClick: onShowConfirm,
     },
     {
       id: "keep" as const,
-      label: L.bucketKeep,
+      label: L.conclusionShowKeep(summary.keep),
       count: summary.keep,
-      color: "var(--danger-text)",
       hint: L.bucketKeepHint,
+      active: riskFilter === "keep",
+      onClick: onShowKeep,
     },
   ];
+  const order = ["dir", "file", "registry", "path"];
   return (
     <div
       style={{
@@ -49,39 +61,56 @@ export function LeftoverSummaryBar({
         fontSize: 12,
       }}
     >
-      <span style={{ fontWeight: 650 }}>{L.leftoverSummaryTitle}</span>
       {buckets.map((b) => (
-        <span
+        <button
           key={b.id}
+          type="button"
           title={b.hint}
+          aria-pressed={b.active}
+          disabled={b.count === 0 && b.id !== "safe"}
+          onClick={b.onClick}
           style={{
             ...css.chip,
             fontFamily: "inherit",
-            color: b.count > 0 ? b.color : "var(--muted)",
-            borderColor: b.count > 0 ? b.color : "var(--border)",
+            cursor: b.onClick ? "pointer" : "default",
+            color: b.active
+              ? "var(--accent-text)"
+              : b.count > 0
+                ? b.id === "safe"
+                  ? "var(--ok-ink)"
+                  : b.id === "confirm"
+                    ? "var(--warn-ink)"
+                    : "var(--muted)"
+                : "var(--muted)",
+            borderColor: b.active
+              ? "var(--accent)"
+              : b.count > 0
+                ? b.id === "safe"
+                  ? "var(--ok-ink)"
+                  : b.id === "confirm"
+                    ? "var(--warn)"
+                    : "var(--border)"
+                : "var(--border)",
+            background: b.active ? "var(--accent-soft)" : "transparent",
+            opacity: b.count === 0 && b.id !== "safe" ? 0.55 : 1,
           }}
         >
-          {b.label} {b.count}
-        </span>
+          {b.label}
+        </button>
       ))}
-      {/* Composition in one muted chip — informational, below the decision chips. */}
+      <span style={{ flex: 1 }} />
       {(() => {
-        const order = ["dir", "file", "registry", "path"];
-        const parts = order
-          .map((k) => ({ k, n: summary.byKind.find((b) => b.kind === k)?.count ?? 0 }))
-          .filter((x) => x.n > 0)
-          .map((x) => `${L.kindLabel(x.k)} ${x.n}`);
-        const extra = summary.byKind
-          .filter((b) => !order.includes(b.kind))
+        const parts2 = summary.byKind
+          .filter((b) => order.includes(b.kind))
+          .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind))
           .map((b) => `${L.kindLabel(b.kind)} ${b.count}`);
-        const all = [...parts, ...extra];
-        if (all.length === 0) return null;
+        if (parts2.length === 0) return null;
         return (
           <span
             title={L.kindSummaryHint}
             style={{ ...css.chip, fontFamily: "inherit", color: "var(--muted)" }}
           >
-            {all.join(" · ")}
+            {parts2.join(" · ")}
           </span>
         );
       })()}

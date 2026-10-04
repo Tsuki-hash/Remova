@@ -203,10 +203,8 @@ export default function App() {
     setRiskFilter,
     aiSummaryNote,
     setAiSummaryNote,
-    aiNudgeDismissed,
     actions: scanUi,
   } = scanUiState;
-  const dismissAiNudge = scanUi.dismissAiNudge;
 
  // langVer forces t() after language switch (module dictionary is not reactive).
   const L = useMemo(() => {
@@ -535,7 +533,6 @@ export default function App() {
       forceClean,
       openPathSafe,
       drillDownBucket,
-      setKindFilter,
     ],
   );
 
@@ -578,7 +575,6 @@ export default function App() {
     setAiRisk,
     aiNotes,
     aiSummaryNote,
-    aiNudgeDismissed,
     dryRunning,
     forceBusy,
     batching,
@@ -613,7 +609,6 @@ export default function App() {
     setCategory,
     stopSizeEstimate,
     goNav,
-    dismissAiNudge,
     closePreview,
     dryRun,
     handleCleanupConfirm,

@@ -22,10 +22,6 @@ export function useScanUiState() {
     dispatch({ type: "riskFilter/toggle", mode });
   }, []);
   const clearScanChrome = useCallback(() => dispatch({ type: "chrome/clear" }), []);
-  const dismissAiNudge = useCallback(() => {
-    localStorage.setItem("remova_ai_nudge", "1");
-    dispatch({ type: "aiNudge/dismiss" });
-  }, []);
 
  // stable object identity — SoftwarePage memo depends on this bag.
   return useMemo(
@@ -36,21 +32,18 @@ export function useScanUiState() {
       setRiskFilter,
       aiSummaryNote: state.aiSummaryNote,
       setAiSummaryNote,
-      aiNudgeDismissed: state.aiNudgeDismissed,
       actions: {
         clearKindFilter,
         clearRiskFilter,
         clearAiSummary,
         toggleRiskFilter,
         clearScanChrome,
-        dismissAiNudge,
       },
     }),
     [
       state.kindFilter,
       state.riskFilter,
       state.aiSummaryNote,
-      state.aiNudgeDismissed,
       setKindFilter,
       setRiskFilter,
       setAiSummaryNote,
@@ -59,7 +52,6 @@ export function useScanUiState() {
       clearAiSummary,
       toggleRiskFilter,
       clearScanChrome,
-      dismissAiNudge,
     ],
   );
 }

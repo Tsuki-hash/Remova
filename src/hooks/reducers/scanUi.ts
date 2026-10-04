@@ -4,7 +4,6 @@ export type ScanUiState = {
   kindFilter: LinkedBucketId | null;
   riskFilter: "confirm" | "keep" | null;
   aiSummaryNote: string | null;
-  aiNudgeDismissed: boolean;
 };
 
 export type ScanUiAction =
@@ -12,7 +11,6 @@ export type ScanUiAction =
   | { type: "riskFilter/set"; value: "confirm" | "keep" | null }
   | { type: "riskFilter/toggle"; mode: "confirm" | "keep" }
   | { type: "aiSummary/set"; value: string | null }
-  | { type: "aiNudge/dismiss" }
   | { type: "chrome/clear" };
 
 export function initialScanUiState(): ScanUiState {
@@ -20,7 +18,6 @@ export function initialScanUiState(): ScanUiState {
     kindFilter: null,
     riskFilter: null,
     aiSummaryNote: null,
-    aiNudgeDismissed: localStorage.getItem("remova_ai_nudge") === "1",
   };
 }
 
@@ -38,8 +35,6 @@ export function scanUiReducer(state: ScanUiState, action: ScanUiAction): ScanUiS
       };
     case "aiSummary/set":
       return { ...state, aiSummaryNote: action.value };
-    case "aiNudge/dismiss":
-      return { ...state, aiNudgeDismissed: true };
     case "chrome/clear":
       return {
         ...state,
