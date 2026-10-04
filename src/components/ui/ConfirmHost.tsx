@@ -150,14 +150,14 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
         background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: 14,
-        boxShadow: "var(--shadow)",
-        padding: "18px 20px 16px",
+        boxShadow: "0 16px 48px rgba(0,0,0,.18)",
+        padding: "24px",
         display: "flex",
         flexDirection: "column",
         gap: 12,
       }}
     >
-      <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: -0.2 }}>{opts.title}</div>
+      <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>{opts.title}</div>
       {opts.message && (
         <div
           style={{
