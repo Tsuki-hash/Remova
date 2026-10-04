@@ -53,7 +53,7 @@ export function Sidebar({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "6px 8px 24px",
+          padding: collapsed ? "6px 0 24px" : "6px 8px 24px",
           minWidth: 0,
         }}
       >

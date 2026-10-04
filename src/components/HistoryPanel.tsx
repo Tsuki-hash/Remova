@@ -64,7 +64,7 @@ export function HistoryPanel({
   }
 
   return (
-    <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+    <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <strong>{L.historyTitle}</strong>
         <span style={css.muted}>{L.historyTimelineHint}</span>
