@@ -79,12 +79,14 @@ def main(argv: list[str]) -> int:
     for name, s in SIZES.items():
         fit_square(canvas, s).save(icons / name, "PNG", optimize=True)
         print("wrote", name, s)
-    canvas.save(
+    fit_square(canvas, 256).save(
         icons / "icon.ico",
         format="ICO",
         sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
     )
     print("wrote icon.ico")
+    fit_square(canvas, 1024).save(icons / "icon.icns", format="ICNS")
+    print("wrote icon.icns")
     pub = icons.parent.parent / "public"
     pub.mkdir(parents=True, exist_ok=True)
     fit_square(canvas, 128).save(pub / "logo.png", "PNG")
