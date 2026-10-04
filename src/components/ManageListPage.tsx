@@ -193,13 +193,13 @@ export function ManageListPage({
           display: "flex",
           gap: 10,
           alignItems: "center",
-          padding: "12px 14px",
+          padding: "16px 18px",
           borderBottom: "1px solid var(--border)",
           flexShrink: 0,
           flexWrap: "wrap",
         }}
       >
-        <strong style={{ fontSize: 14 }}>{title}</strong>
+        <strong style={{ fontSize: 13, fontWeight: 600 }}>{title}</strong>
         <span style={css.chip}>
           {busy && items.length === 0
             ? "…"
@@ -246,7 +246,7 @@ export function ManageListPage({
       </div>
       <div
         style={{
-          padding: "8px 14px",
+          padding: "10px 18px",
           fontSize: 12,
           color: "var(--muted)",
           background: "var(--surface-2)",
@@ -278,6 +278,7 @@ export function ManageListPage({
               return (
                 <div
                   key={it.location + it.name}
+                  className="remova-manage-row"
                   style={{
                     position: "absolute",
                     top: 0,
@@ -295,8 +296,8 @@ export function ManageListPage({
                 >
                   <div
                     style={{
-                      width: 36,
-                      height: 36,
+                      width: 32,
+                      height: 32,
                       borderRadius: 10,
                       background: "var(--surface-2)",
                       color: "var(--muted)",
@@ -312,7 +313,7 @@ export function ManageListPage({
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
-                      style={{ fontWeight: 600, fontSize: 13.5 }}
+                      style={{ fontWeight: 600, fontSize: 13 }}
                       className="ell"
                       title={it.name}
                     >

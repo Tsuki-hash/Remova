@@ -157,10 +157,10 @@ export function OrphanPage({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0, flex: 1 }}>
-      <div style={{ ...css.card, padding: 12, fontSize: 13, flexShrink: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0, flex: 1 }}>
+      <div style={{ ...css.card, padding: "16px 18px", fontSize: 13, flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <strong style={{ fontSize: 14 }}>{L.navOrphans}</strong>
+          <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.navOrphans}</strong>
           <span style={css.muted}>{L.orphanPageHint}</span>
           {busy && (
             <span style={{ ...css.muted, fontWeight: 600, color: "var(--accent)" }}>
@@ -169,7 +169,7 @@ export function OrphanPage({
           )}
           {!busy && lastScanLabel && <span style={css.muted}>{lastScanLabel}</span>}
           <button
-            style={{ ...css.btn, marginLeft: "auto", height: 32 }}
+            style={{ ...css.btn, marginLeft: "auto", height: 36 }}
             disabled={busy}
             onClick={() => void scan()}
           >

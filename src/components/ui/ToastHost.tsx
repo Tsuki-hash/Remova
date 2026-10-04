@@ -10,8 +10,8 @@ const KIND_COLOR: Record<ToastItem["kind"], string> = {
 };
 
 const KIND_BG: Record<ToastItem["kind"], string> = {
-  success: "color-mix(in srgb, var(--ok) 12%, var(--surface))",
-  error: "color-mix(in srgb, var(--danger) 12%, var(--surface))",
+  success: "var(--surface)",
+  error: "var(--surface)",
   info: "var(--surface)",
 };
 
@@ -43,11 +43,11 @@ export function ToastHost() {
             display: "flex",
             gap: 10,
             alignItems: "flex-start",
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: `1px solid ${KIND_COLOR[item.kind]}`,
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid var(--border)",
             background: KIND_BG[item.kind],
-            boxShadow: "var(--shadow)",
+            boxShadow: "0 6px 24px rgba(0,0,0,.12)",
             fontSize: 13,
             lineHeight: 1.45,
           }}
