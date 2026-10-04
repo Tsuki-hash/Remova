@@ -97,7 +97,7 @@ const LeftoverRow = memo(function LeftoverRow({
         )}
       </div>
       <div>
-        <span style={css.sourceBadge}>{it.kind}</span>
+        <span style={css.sourceBadge}>{L.kindLabel(it.kind)}</span>
         {it.shared && (
           <span
             style={{

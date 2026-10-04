@@ -233,7 +233,7 @@ export function ReportPanel({
                 >
                   <Deco ch={v.error ? "ⓘ" : v.still_there ? "×" : "✓"} />
                 </span>{" "}
-                [{v.kind}] {v.path}
+                [{L.kindLabel(v.kind)}] {v.path}
                 {v.error ? ` — ${L.verifyUnknown}` : ""}
               </div>
             ))}

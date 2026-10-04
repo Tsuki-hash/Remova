@@ -33,6 +33,8 @@ export const dict: EnDict = {
     useOfficial: "Run official uninstaller",
     colName: "Name",
     colSource: "Source",
+    kindLabel: (kind: string) => kind,
+    kindSummaryHint: "Leftover counts by kind",
     colLocation: "Install path",
     colSize: "Size",
     colSelected: "Selected",
