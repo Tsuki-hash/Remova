@@ -619,7 +619,7 @@ export const dict: EnDict = {
     linkedOther: "Other",
     deepUninstallRecommend: "Deep uninstall tip",
     foundNLeftovers: (n: number) => `${n} leftovers found — review and clean`,
-    viewDetails: "View details",
+    leftoversListAside: "See the leftover list on the left",
     filterOnly: (label: string) => `Filtered: ${label}`,
     showAllLeftovers: "Show all",
     scanLinkedLeftovers: "Scan related leftovers",
