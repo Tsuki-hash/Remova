@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
@@ -256,6 +256,20 @@ export function ScanLeftoversView({
  // block — tell the virtualizer where item 0 actually sits.
   const listRef = useRef<HTMLDivElement | null>(null);
   const [listMargin, setListMargin] = useState(0);
+  const evidenceRef = useRef<HTMLDivElement | null>(null);
+  // The evidence block sits below the (capped) list at the bottom of a
+  // page-scrolled view — without scrolling it into view a click looks dead.
+  useEffect(() => {
+    if (evidence) evidenceRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [evidence]);
+  // Same row's ⓘ toggles: open, then close on a second click.
+  const showEvidence = (text: string | null) => {
+    if (text === null) {
+      onEvidence(null);
+      return;
+    }
+    onEvidence(evidence === text ? null : text);
+  };
   useLayoutEffect(() => {
     const el = listRef.current;
     const sc = scrollRef.current;
@@ -403,7 +417,7 @@ export function ScanLeftoversView({
                     checked={selectedPaths.has(it.path)}
                     note={aiNotes[it.path]}
                     onTogglePath={onTogglePath}
-                    onEvidence={onEvidence}
+                    onEvidence={showEvidence}
                   />
                 </div>
               );
@@ -413,6 +427,7 @@ export function ScanLeftoversView({
       </div>
       {evidence && (
         <div
+          ref={evidenceRef}
           style={{
             padding: 12,
             borderTop: "1px solid var(--border)",
