@@ -18,6 +18,7 @@ import { backendText } from "../lib/backendText";
 import { evidenceText } from "../lib/evidenceText";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
+import "./SoftwareDetails.css";
 
 type LeftoverRowProps = {
   it: CleanupItem;
@@ -40,12 +41,13 @@ const LeftoverRow = memo(function LeftoverRow({
   const noted = Boolean(note);
   return (
     <div
+      className="software-leftover-row"
       style={{
         display: "grid",
         gridTemplateColumns: "28px minmax(0, 1fr) 120px 90px 40px",
         gap: 8,
         alignItems: "start",
-        padding: "10px 14px",
+        padding: "12px 14px",
         borderBottom: "1px solid var(--border)",
         boxShadow: it.risk === "high"
           ? "inset 3px 0 0 var(--danger)"
@@ -96,7 +98,7 @@ const LeftoverRow = memo(function LeftoverRow({
           </div>
         )}
       </div>
-      <div>
+      <div className="software-leftover-types">
         <span style={css.sourceBadge}>{L.kindLabel(it.kind)}</span>
         {it.shared && (
           <span
@@ -141,17 +143,19 @@ const LeftoverRow = memo(function LeftoverRow({
         )}
       </div>
       <div
+        className="software-leftover-status"
         style={{
           color:
             it.risk === "high"
               ? "var(--danger-text)"
-              : it.confidence === "confirmed"
-                ? "var(--ok-ink)"
-                : "var(--warn-ink)",
-          fontWeight: 600,
-          fontSize: 12,
+              : it.risk === "medium" || it.confidence !== "confirmed"
+                ? "var(--warn-ink)"
+                : "var(--muted)",
+          fontWeight: 500,
+          fontSize: 11.5,
         }}
       >
+        <span className="software-leftover-dot" aria-hidden style={{ background: it.risk === "high" ? "var(--danger-text)" : it.risk === "medium" || it.confidence !== "confirmed" ? "var(--warn-ink)" : "var(--ok-ink)" }} />
         {it.risk === "high"
           ? L.riskHigh
           : it.risk === "medium"
@@ -164,7 +168,7 @@ const LeftoverRow = memo(function LeftoverRow({
       </div>
       <div>
         <button
-          style={{ ...css.btnGhost, height: 28, width: 32, padding: 0 }}
+          style={{ ...css.btnGhost, height: 28, width: 32, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
           aria-label={`${L.orphanEvidenceTitle}: ${it.path}`}
           onClick={() =>
             onEvidence(

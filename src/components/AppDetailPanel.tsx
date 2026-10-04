@@ -11,6 +11,7 @@ import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
 import { scanMatchesApp } from "../lib/appKey";
 import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
+import "./SoftwareDetails.css";
 
 export type UninstallMode = "official" | "deep" | "force";
 
@@ -80,17 +81,17 @@ export function AppDetailPanel({
   ];
 
   return (
-    <aside style={css.panelShell} aria-label={name}>
-      <div style={css.panelHeader}>
+    <aside style={{ ...css.panelShell, borderRadius: 12 }} className="software-detail" aria-label={name}>
+      <div style={{ ...css.panelHeader, padding: "20px 18px", gap: 12 }}>
         <AppIcon displayIcon={app.display_icon} name={app.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.4, overflowWrap: "anywhere" }}>{name}</div>
-          <div className="ell" style={{ ...css.muted, marginTop: 4 }} title={`${app.publisher} · ${app.version}`}>
+          <div style={{ fontWeight: 650, fontSize: 16, lineHeight: 1.4, overflowWrap: "anywhere" }}>{name}</div>
+          <div className="ell" style={{ ...css.muted, marginTop: 5, fontSize: 11.5 }} title={`${app.publisher} · ${app.version}`}>
             {app.publisher || "—"} · {app.version || "—"}
           </div>
         </div>
         <button
-          style={{ ...css.btnGhost, height: 28, width: 28, padding: 0 }}
+          style={{ ...css.btnGhost, height: 28, width: 28, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
           onClick={onClose}
           aria-label={L.panelClose}
         >
@@ -98,18 +99,20 @@ export function AppDetailPanel({
         </button>
       </div>
 
-      <div style={css.panelBody}>
-        <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          <span style={css.muted}>{L.colSize}</span>
-          <strong style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 600 }}>{sizeText}</strong>
-          <span style={{ ...css.sourceBadge, marginLeft: "auto" }} title={`${L.detailSource}: ${sourceLabel(app.source, L)}`}>{sourceLabel(app.source, L)}</span>
+      <div style={{ ...css.panelBody, padding: "18px" }}>
+        <div className="software-detail-capacity">
+          <div>
+            <span className="software-detail-caption">{L.colSize}</span>
+            <strong className="software-detail-size">{sizeText}</strong>
+          </div>
+          <span className="software-detail-source" title={`${L.detailSource}: ${sourceLabel(app.source, L)}`}>{sourceLabel(app.source, L)}</span>
         </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center" }}>
+        <div className="software-detail-actions">
           <button
             style={{
               ...css.btn,
               flex: 1,
-              height: 36,
+              height: 38,
               background: "var(--accent)",
               color: "var(--accent-ink)",
               opacity: !hasCmd || uninstalling ? 0.5 : 1,
@@ -120,7 +123,7 @@ export function AppDetailPanel({
             {uninstalling ? L.uninstalling : L.drawerDeepUninstall}
           </button>
           <button
-            style={{ ...css.btnGhost, height: 36 }}
+            style={{ ...css.btnGhost, height: 38 }}
             disabled={!app.install_location}
             title={app.install_location}
             onClick={() => app.install_location && onOpenPath?.(app.install_location)}
@@ -130,7 +133,7 @@ export function AppDetailPanel({
           <div ref={menuRef} style={{ position: "relative" }}>
             <button
               ref={menuBtnRef}
-              style={{ ...css.btnGhost, height: 36, width: 36, padding: 0 }}
+              style={{ ...css.btnGhost, height: 38, width: 32, padding: 0 }}
               aria-label={L.rowMore}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
@@ -194,9 +197,9 @@ export function AppDetailPanel({
           {hasCmd ? L.deepUninstallExpect : L.detailNoUninstall}
         </div>
 
-        <details style={{ marginBottom: 14 }}>
-        <summary style={{ ...css.sectionTitle, cursor: "pointer" }}>{L.basicInfo}</summary>
-        <div style={{ ...css.card, padding: "4px 10px", marginBottom: 14 }}>
+        <details className="software-detail-info">
+        <summary className="software-detail-section">{L.basicInfo}</summary>
+        <div style={{ padding: "4px 0" }}>
           {infoRows.map((r) => (
             <div key={r.label} style={css.detailRow}>
               <span style={{ ...css.muted, width: 64, flexShrink: 0 }}>{r.label}</span>
@@ -226,13 +229,13 @@ export function AppDetailPanel({
         </div>
         </details>
 
-        <div style={css.sectionTitle}>{L.linkedItems}</div>
+        <div className="software-detail-section">{L.linkedItems}</div>
         {buckets.length === 0 ? (
           <div style={{ ...css.muted, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
             {L.linkedNotScanned || L.drawerAnalyzeHint}
           </div>
         ) : (
-          <div style={{ ...css.card, padding: "4px 10px", marginBottom: 12 }}>
+          <div className="software-detail-linked">
             {buckets.map((b) => {
               const label =
                 b.id === "programFiles"
@@ -251,14 +254,14 @@ export function AppDetailPanel({
                 <button
                   key={b.id}
                   type="button"
+                  className="software-detail-linked-row"
                   style={{
                     display: "flex",
                     alignItems: "center",
                     gap: 10,
                     width: "100%",
-                    padding: "8px 0",
+                    padding: "12px 0",
                     border: "none",
-                    borderBottom: "1px solid var(--border)",
                     fontSize: 12.5,
                     background: "transparent",
                     cursor: onDrillDown ? "pointer" : "default",
@@ -282,21 +285,11 @@ export function AppDetailPanel({
         )}
 
         {linked && linked.total > 0 ? (
-          <div
-            style={{
-              ...css.card,
-              padding: "12px",
-              marginBottom: 8,
-              background: "var(--surface-2)",
-              borderColor: "var(--accent)",
-              borderWidth: 1,
-              borderStyle: "solid",
-            }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+          <div className="software-detail-recommend">
+            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>
               <Deco ch="✓" /> {L.deepUninstallRecommend}
             </div>
-            <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.45 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6, lineHeight: 1.6 }}>
               {L.foundNLeftovers(linked.total)}
             </div>
             {/* The matching scan view is always open beside this drawer —
