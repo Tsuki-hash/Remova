@@ -48,6 +48,7 @@ export const dict: EnDict = {
     taskBusy: "A task is already running — please wait",
     goToSoftware: "Pick software",
     confirmed: "Confirmed",
+    scanTotals: (total: number, confirmed: number) => `${total} items · ${confirmed} confirmed`,
     suspected: "Suspected",
     colConfidence: "Confidence",
     low: "Low risk",

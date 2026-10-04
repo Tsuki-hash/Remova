@@ -282,8 +282,10 @@ export function ScanLeftoversView({
       <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <strong>{scan.app_name}</strong>
         <span style={{ ...css.muted, marginLeft: 12 }}>
-          {L.leftoversTitle}: {scan.items.length} ·{" "}
-          {scan.items.filter((i) => i.confidence === "confirmed").length} {L.confirmed}
+          {L.leftoversTitle}: {L.scanTotals(
+            scan.items.length,
+            scan.items.filter((i) => i.confidence === "confirmed").length,
+          )}
         </span>
       </div>
       <LeftoverSummaryBar summary={summarizeLeftovers(scan.items)} scanning={scanning} />
