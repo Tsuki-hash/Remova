@@ -521,15 +521,6 @@ export default function App() {
             void openPathSafe(p);
           }}
           onDrillDown={drillDownBucket}
-          onViewLeftovers={() => {
-            // 查看详情 must always do something visible: show the full
-            // leftover list (no kind/risk filters) and bring it into view.
-            setKindFilter(null);
-            setRiskFilter(null);
-            document
-              .querySelector("main")
-              ?.scrollTo?.({ top: 0, behavior: "smooth" });
-          }}
         />
       ) : null,
     [

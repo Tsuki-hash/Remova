@@ -26,7 +26,6 @@ type Props = {
   onForceClean?: (app: InstalledApp) => void;
   onOpenPath?: (path: string) => void;
   onDrillDown?: (bucket: LinkedBucketId) => void;
-  onViewLeftovers?: () => void;
 };
 
 /** Fixed right-hand detail column (not a modal drawer). */
@@ -42,7 +41,6 @@ export function AppDetailPanel({
   onForceClean,
   onOpenPath,
   onDrillDown,
-  onViewLeftovers,
 }: Props) {
   const L = t();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -301,12 +299,11 @@ export function AppDetailPanel({
             <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 10, lineHeight: 1.45 }}>
               {L.foundNLeftovers(linked.total)}
             </div>
-            <button
-              style={{ ...css.btn, height: 32, width: "100%" }}
-              onClick={() => onViewLeftovers?.()}
-            >
-              {L.viewDetails}
-            </button>
+            {/* The matching scan view is always open beside this drawer —
+                an action here could never navigate anywhere. Point at it. */}
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {L.leftoversListAside}
+            </div>
           </div>
         ) : (
           <button

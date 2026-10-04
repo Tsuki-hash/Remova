@@ -307,8 +307,6 @@ describe("App orchestration", () => {
     expect(software().kindFilter).toBeNull();
     act(() => detail().onDrillDown?.("registry"));
     expect(software().kindFilter).toBe("registry");
-    act(() => detail().onViewLeftovers?.());
-    expect(software().kindFilter).toBeNull();
     act(() => software().selectApp(other));
     act(() => detail().onDrillDown?.("programFiles"));
     await waitFor(() => expect(native.analyze).toHaveBeenLastCalledWith(other));
