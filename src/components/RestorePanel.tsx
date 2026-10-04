@@ -45,7 +45,7 @@ export function RestorePanel({
   const L = t();
   const selectedPreview = preview?.name === pick ? preview : null;
   return (
-    <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+    <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 8 }}>
         <strong>{L.safetyVaultTitle}</strong>
         <span style={css.muted}>{L.safetyVaultHint}</span>

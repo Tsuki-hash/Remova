@@ -153,13 +153,13 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
           display: "flex",
           alignItems: "center",
           gap: 12,
-          padding: "14px 16px",
+          padding: "16px 18px",
           borderBottom: "1px solid var(--border)",
           background: "var(--surface-2)",
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{L.aiSettings}</div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{L.aiSettings}</div>
           <div style={{ ...css.muted, marginTop: 2 }}>{L.aiSettingsHint}</div>
         </div>
         <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label={t().panelClose}>
@@ -174,7 +174,7 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
         }}>{L.aiConfigRetry}</button>}
       </div>}
       <fieldset disabled={!loaded || busy} style={{ margin: 0, minWidth: 0, border: 0,
-        padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+        padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
         <div
           style={{
             display: "flex",

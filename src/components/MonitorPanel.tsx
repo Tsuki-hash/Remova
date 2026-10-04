@@ -20,8 +20,8 @@ export function MonitorPanel({
   const total = diff.added_files.length + diff.added_reg_values.length;
   const truncated = (diff.files_truncated ?? 0) + (diff.reg_truncated ?? 0);
   return (
-    <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
         <strong>{monitoring ? L.monitorStop : L.monitorInstall}</strong>
         <span style={css.muted}>
           {total === 0
