@@ -657,9 +657,11 @@ export default function App() {
                     ? L.uninstallRunning
                     : undefined
             }
-            selectedCount={nav === "software" ? multi.size : undefined}
+            // Inside a leftover scan the list stats are noise — the scan view
+            // carries its own selection/summary counts.
+            selectedCount={nav === "software" && !scan ? multi.size : undefined}
             totalCount={
-              nav === "software" && !loading ? filtered.length : undefined
+              nav === "software" && !scan && !loading ? filtered.length : undefined
             }
             estimating={nav === "software" ? estimating : undefined}
             estimateLabel={
