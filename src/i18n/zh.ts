@@ -21,6 +21,9 @@ export const dict = {
     useOfficial: "调用官方卸载器",
     colName: "名称",
     colSource: "来源",
+    kindLabel: (kind: string) =>
+      ({ dir: "目录", registry: "注册表", file: "文件", path: "PATH" }[kind] ?? kind),
+    kindSummaryHint: "按类型统计的残留数量",
     colLocation: "安装路径",
     colSize: "占用",
     colSelected: "已选",

@@ -64,11 +64,27 @@ export function LeftoverSummaryBar({
           {b.label} {b.count}
         </span>
       ))}
-      {summary.byKind.slice(0, 5).map((k) => (
-        <span key={k.kind} style={{ ...css.chip, fontFamily: "inherit" }}>
-          {k.kind} {k.count}
-        </span>
-      ))}
+      {/* Composition in one muted chip — informational, below the decision chips. */}
+      {(() => {
+        const order = ["dir", "file", "registry", "path"];
+        const parts = order
+          .map((k) => ({ k, n: summary.byKind.find((b) => b.kind === k)?.count ?? 0 }))
+          .filter((x) => x.n > 0)
+          .map((x) => `${L.kindLabel(x.k)} ${x.n}`);
+        const extra = summary.byKind
+          .filter((b) => !order.includes(b.kind))
+          .map((b) => `${L.kindLabel(b.kind)} ${b.count}`);
+        const all = [...parts, ...extra];
+        if (all.length === 0) return null;
+        return (
+          <span
+            title={L.kindSummaryHint}
+            style={{ ...css.chip, fontFamily: "inherit", color: "var(--muted)" }}
+          >
+            {all.join(" · ")}
+          </span>
+        );
+      })()}
       {scanning && <span style={css.muted}>{L.analyzing}</span>}
     </div>
   );

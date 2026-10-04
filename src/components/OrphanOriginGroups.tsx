@@ -171,7 +171,7 @@ export function OrphanOriginGroups({
                             : it.risk === "high"
                               ? L.orphanRiskHigh
                               : L.orphanRiskMedium}
-                          {it.kind ? ` · ${it.kind}` : ""}
+                          {it.kind ? ` · ${L.kindLabel(it.kind)}` : ""}
                         </div>
                       </div>
                     )}
