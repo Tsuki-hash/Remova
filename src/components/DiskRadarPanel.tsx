@@ -73,7 +73,7 @@ export function DiskRadarPanel({
   const current = drives.find((d) => d.letter === drive);
 
   return (
-    <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
+    <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <strong>{L.diskRadarTitle}</strong>
         <span style={css.muted}>{L.diskRadarHint}</span>
