@@ -602,7 +602,7 @@ export const dict = {
     linkedStartup: "启动项",
     linkedOther: "其它",
     deepUninstallRecommend: "深度卸载推荐",
-    foundNLeftovers: (n: number) => `发现 ${n} 项残留，建议一并清理`,
+    foundNLeftovers: (n: number) => `卸载后预计残留 ${n} 项，建议一并清理`,
     leftoversListAside: "详情见左侧残留列表",
     filterOnly: (label: string) => `仅显示：${label}`,
     showAllLeftovers: "显示全部",

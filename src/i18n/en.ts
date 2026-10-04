@@ -618,7 +618,7 @@ export const dict: EnDict = {
     linkedStartup: "Startup",
     linkedOther: "Other",
     deepUninstallRecommend: "Deep uninstall tip",
-    foundNLeftovers: (n: number) => `${n} leftovers found — review and clean`,
+    foundNLeftovers: (n: number) => `Expect ${n} items to remain after uninstall — consider removing them too`,
     leftoversListAside: "See the leftover list on the left",
     filterOnly: (label: string) => `Filtered: ${label}`,
     showAllLeftovers: "Show all",
