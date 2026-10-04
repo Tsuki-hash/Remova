@@ -2,6 +2,7 @@ import type { ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { summarizeCleanupPlan } from "../lib/cleanupPlan";
+import "./ScanActionsBar.css";
 
 /** Scan action bar: back / title+totals / dry-run / cleanup CTA / scope details / AI. */
 export function ScanActionsBar({
@@ -45,111 +46,110 @@ export function ScanActionsBar({
   const highRisk = scan.items.filter((i) => i.risk === "high").length;
   return (
     <>
-      <div
-        style={{
-          ...css.toolbar,
-          marginBottom: 10,
-          padding: "8px 12px",
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-        }}
-      >
-        <button style={css.btnGhost} onClick={onBack}>
-          ← {L.closePreview}
-        </button>
-        <strong style={{ fontSize: 13, fontWeight: 600 }}>{scan.app_name}</strong>
-        {scanning ? (
-          <span style={{ ...css.muted }}>{L.analyzing}</span>
-        ) : (
-          <span style={{ ...css.muted }}>
-            {L.leftoversTitle}: {L.scanTotals(scan.items.length, confirmed)}
-          </span>
-        )}
-        {!residualFromUninstall && (
-          <label
-            style={{
-              fontSize: 12.5,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              color: "var(--muted)",
-            }}
-            title={L.batchOfficialHint}
-          >
-            <input
-              type="checkbox"
-              checked={useOfficial}
-              onChange={(e) => onUseOfficial(e.target.checked)}
-              style={{ accentColor: "var(--accent)" }}
-            />
-            {L.useOfficial}
-          </label>
-        )}
-        {scanning && <div className="remova-progress" style={{ marginTop: 8, flexShrink: 0 }} aria-hidden />}
-        <button style={css.btnGhost} disabled={busy || dryRunning || plan.count === 0} onClick={onDryRun}>
-          {L.dryRun}
-        </button>
-        <button
-          style={{ ...css.btn, background: "var(--danger-text)", color: "var(--surface)" }}
-          disabled={dryRunning || plan.count === 0 || busy}
-          onClick={onCleanup}
-          title={L.dangerScopeHint}
-        >
-          {L.cleanup} ({plan.count})
-        </button>
-        {!scanning && plan.count > 0 && (
-          <span style={{ ...css.muted, fontSize: 12 }} title={L.cleanupPlanEstimate}>
-            {L.conclusionSpace(formatSize(plan.knownKb))}
-            {plan.unknown > 0 ? ` · ${L.cleanupPlanUnknown(plan.unknown)}` : ""}
-          </span>
-        )}
-        {!scanning && plan.count > 0 && (
-          <span
-            style={{
-              ...css.muted,
-              fontSize: 12,
-              color: plan.review > 0 ? "var(--warn-ink)" : undefined,
-            }}
-            title={L.cleanupPlanReview(plan.review)}
-          >
-            {L.cleanupPlanReview(plan.review)}
-          </span>
-        )}
-        {!scanning && highRisk > 0 && (
-          <span style={{ color: "var(--danger-text)", fontSize: 12 }}>
-            {L.riskHigh} {highRisk}
-          </span>
-        )}
-        <details style={{ fontSize: 12, color: "var(--muted)", marginLeft: "auto" }}>
-          <summary style={{ cursor: "pointer" }}>{L.cleanupPlanDetails}</summary>
-          <div style={{ display: "grid", gap: 4, maxWidth: 420, paddingTop: 6 }}>
-            <span>{L.cleanupPlanOther(plan.registry, plan.path)}</span>
-            <span>{L.cleanupPlanBackup}</span>
-            <span>{L.cleanupPlanEstimate}</span>
-          </div>
-        </details>
-        {aiEnabled ? (
-          <button
-            style={css.btnSm}
-            disabled={aiBusy || scan.items.length === 0}
-            title={L.aiSettingsHint}
-            onClick={onAiExplain}
-          >
-            {aiBusy ? L.aiExplaining : L.conclusionRefreshAi}
+      <section className="scan-actions" aria-label={L.leftoversTitle}>
+        <div className="scan-actions-main">
+          <button style={{ ...css.btnGhost, borderColor: "transparent", color: "var(--muted)" }} className="scan-actions-back" onClick={onBack}>
+            ← {L.closePreview}
           </button>
-        ) : (
-          onOpenSettings && (
-            <button
-              style={css.btnSm}
-              onClick={onOpenSettings}
-              title={L.aiSettingsHint}
-            >
-              {L.conclusionEnableAi}
+          <div className="scan-actions-identity">
+            <strong className="scan-actions-title" title={scan.app_name}>{scan.app_name}</strong>
+            {scanning ? (
+              <span className="scan-actions-caption" role="status">{L.analyzing}</span>
+            ) : (
+              <span className="scan-actions-caption">
+                {L.scanTotals(scan.items.length, confirmed)}
+              </span>
+            )}
+          </div>
+          <div className="scan-actions-primary">
+            {!scanning && plan.count > 0 && (
+              <div className="scan-actions-estimate" title={L.cleanupPlanEstimate}>
+                <span>{L.colSelected} {plan.count}</span>
+                <strong>{L.conclusionSpace(formatSize(plan.knownKb))}</strong>
+              </div>
+            )}
+            <button style={{ ...css.btnGhost, height: 38 }} className="scan-actions-preview" disabled={busy || dryRunning || plan.count === 0} onClick={onDryRun}>
+              {L.dryRun}
             </button>
-          )
-        )}
-      </div>
+            <button
+              style={{ ...css.btn, height: 38, background: "var(--danger-text)", color: "var(--surface)" }}
+              className="scan-actions-cleanup"
+              disabled={dryRunning || plan.count === 0 || busy}
+              onClick={onCleanup}
+              title={L.dangerScopeHint}
+            >
+              {L.cleanup} ({plan.count})
+            </button>
+          </div>
+        </div>
+        {scanning && <div className="remova-progress" aria-hidden />}
+        <div className="scan-actions-secondary">
+          {!residualFromUninstall && (
+            <label
+              className="scan-actions-official"
+              title={L.batchOfficialHint}
+            >
+              <input
+                type="checkbox"
+                checked={useOfficial}
+                onChange={(e) => onUseOfficial(e.target.checked)}
+                style={{ accentColor: "var(--accent)" }}
+              />
+              {L.useOfficial}
+            </label>
+          )}
+          {!scanning && plan.unknown > 0 && (
+            <span className="scan-actions-caption">{L.cleanupPlanUnknown(plan.unknown)}</span>
+          )}
+          {!scanning && plan.review > 0 && (
+            <span
+              style={{
+                ...css.muted,
+                fontSize: 12,
+                color: plan.review > 0 ? "var(--warn-ink)" : undefined,
+              }}
+              title={L.cleanupPlanReview(plan.review)}
+            >
+              {L.cleanupPlanReview(plan.review)}
+            </span>
+          )}
+          {!scanning && highRisk > 0 && (
+            <span style={{ color: "var(--danger-text)", fontSize: 12 }}>
+              {L.riskHigh} {highRisk}
+            </span>
+          )}
+          <details className="scan-actions-details">
+            <summary style={{ cursor: "pointer" }}>{L.cleanupPlanDetails}</summary>
+            <div className="scan-actions-explanation">
+              <span>{L.cleanupPlanOther(plan.registry, plan.path)}</span>
+              <span>{L.cleanupPlanBackup}</span>
+              <span>{L.cleanupPlanEstimate}</span>
+            </div>
+          </details>
+          {aiEnabled ? (
+            <button
+              style={{ ...css.btnSm, borderColor: "transparent", color: "var(--accent-text)" }}
+              className="scan-actions-ai"
+              disabled={aiBusy || scan.items.length === 0}
+              title={L.aiSettingsHint}
+              onClick={onAiExplain}
+            >
+              {aiBusy ? L.aiExplaining : L.conclusionRefreshAi}
+            </button>
+          ) : (
+            onOpenSettings && (
+              <button
+                style={{ ...css.btnSm, borderColor: "transparent", color: "var(--accent-text)" }}
+                className="scan-actions-ai"
+                onClick={onOpenSettings}
+                title={L.aiSettingsHint}
+              >
+                {L.conclusionEnableAi}
+              </button>
+            )
+          )}
+        </div>
+      </section>
       {aiNote && (
         <div
           style={{

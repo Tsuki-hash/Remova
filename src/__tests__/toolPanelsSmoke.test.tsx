@@ -6,7 +6,7 @@ import { MonitorPanel } from "../components/MonitorPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { CheckupPanel } from "../components/CheckupPanel";
 import { ScanActionsBar } from "../components/ScanActionsBar";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import type { CleanupItem } from "../types";
 
 afterEach(cleanup);
@@ -149,6 +149,7 @@ describe("ScanActionsBar", () => {
     const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
     render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} />);
     expect(screen.getByText(`${t().cleanup} (1)`)).toBeTruthy();
-    expect(screen.getByText(t().cleanupPlanReview(0))).toBeTruthy();
+    expect(screen.getByText(t().conclusionSpace(formatSize(10)))).toBeTruthy();
+    expect(screen.queryByText(t().cleanupPlanReview(0))).toBeNull();
   });
 });
