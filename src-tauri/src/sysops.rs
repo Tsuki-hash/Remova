@@ -354,8 +354,8 @@ mod verification_tests {
 /// Elevated-relaunch handshake: the freshly spawned admin instance waits for
 /// the old (non-admin) process to terminate before starting, so the
 /// single-instance lock is free when Tauri initializes. Returns false on
-/// timeout — the old run stayed alive (e.g. the user cancelled the busy
-/// confirm) and the caller should exit quietly.
+/// timeout — the old run could not finish exiting and the caller should
+/// exit quietly. Busy confirmation completes before the new run is spawned.
 pub fn wait_for_process_exit(pid: u32, timeout_ms: u32) -> bool {
     #[cfg(not(windows))]
     {
