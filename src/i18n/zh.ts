@@ -459,7 +459,7 @@ export const dict = {
     detailDate: "安装日期",
     detailSource: "来源",
     detailPath: "路径",
-    detailNoUninstall: "未提供官方卸载命令，可先分析关联残留。",
+    detailNoUninstall: "未提供官方卸载命令，可先分析关联项。",
     batchUninstall: "批量卸载",
     actionCol: "操作",
     rowMore: "更多操作",

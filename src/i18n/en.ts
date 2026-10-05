@@ -105,7 +105,7 @@ export const dict: EnDict = {
     errorDismiss: "Dismiss",
     elevateAskTitle: "Administrator required",
     elevateAskBody:
-      "Changing services, system startup items, or cleaning system folders needs administrator rights. Remova will restart elevated. Continue?",
+      "Changing services, system startup items, or cleaning system folders needs administrator rights. Remova will restart elevated — the window will briefly close and reopen. Continue?",
     elevateAskOk: "Restart as admin",
     adminChipHint: "Non-admin mode. Click to elevate (needed for services)",
     errElevateDenied:
@@ -472,7 +472,7 @@ export const dict: EnDict = {
     detailDate: "Installed",
     detailSource: "Source",
     detailPath: "Path",
-    detailNoUninstall: "No official uninstall command is available. Analyze related leftovers first.",
+    detailNoUninstall: "No official uninstall command is available. Analyze linked items first.",
     batchUninstall: "Batch uninstall",
     actionCol: "Action",
     rowMore: "More actions",

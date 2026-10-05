@@ -248,6 +248,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               p.setSelectedPaths(
                 new Set(p.scan!.items.filter(defaultSelectable).map((it) => it.path)),
               );
+              p.setKindFilter(null);
               p.setRiskFilter(null);
             }}
             onShowConfirm={() => {
