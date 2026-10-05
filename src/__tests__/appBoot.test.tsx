@@ -181,8 +181,8 @@ it.each(["accept", "cancel", "uac-failure"])("confirms busy elevation before spa
       if (outcome === "accept") {
         // The old window may only destroy itself after the elevated copy has
         // been spawned — destroy-before-spawn would strand the handoff.
-        expect(api.elevateRestart.mock.invocationCallOrder[0]).toBeLessThan(
-          win.destroy.mock.invocationCallOrder[0],
+        expect(vi.mocked(api.elevateRestart).mock.invocationCallOrder[0]!).toBeLessThan(
+          win.destroy.mock.invocationCallOrder[0]!,
         );
       }
       expect(win.destroy).toHaveBeenCalledTimes(outcome === "accept" ? 1 : 0);

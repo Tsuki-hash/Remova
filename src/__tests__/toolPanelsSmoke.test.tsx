@@ -147,15 +147,15 @@ describe("ScanActionsBar", () => {
   });
 
   it("shows the analyzing state and hides estimates while scanning", () => {
-    const item: CleanupItem = { path: "C:\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
-    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\Tool"])} scanning={true} />);
+    const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
+    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} scanning={true} />);
     expect(screen.getByText(t().analyzing)).toBeTruthy();
     expect(screen.queryByText(t().cleanupPlanReview(1))).toBeNull();
     expect(screen.queryByText(t().conclusionSpace(formatSize(10)))).toBeNull();
   });
 
   it("renders the AI note with its disclaimer", () => {
-    render(<ScanActionsBar {...baseProps} aiNote="AI note text" />);
+    render(<ScanActionsBar {...baseProps} selectedPaths={new Set()} aiNote="AI note text" />);
     expect(screen.getByText(/AI note text/)).toBeTruthy();
     expect(screen.getByText(new RegExp(t().aiDisclaimer))).toBeTruthy();
   });
