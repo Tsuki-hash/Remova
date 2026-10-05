@@ -25,6 +25,9 @@ npm run check-commands
 # Backend
 cd src-tauri
 cargo test --workspace
+# Refusal path for a missing reboot-delete target: pure temp-dir fixture, no
+# system state touched — runs as part of the default suite.
+cargo test schedule_missing_path_no_panic
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 # Targeted race fixture: requires Developer Mode or symlink privilege.
@@ -41,9 +44,16 @@ cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
 cargo test read_reg_path_value_reads_real_user_environment -- --ignored
 cargo test service_image_string_reads_real_image_paths -- --ignored
 cargo test startup_folder_approved_values_are_full_file_names -- --ignored
-#   real-system side effects; also opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1:
-cargo test schedule_missing_path_no_panic -- --ignored
+#   real-system side effects; opt in with REMOVA_TEST_ALLOW_SYS_MUTATION=1:
 cargo test restore_point_nonfatal -- --ignored
+# Writes temporary entries to the real HKCU Run key and may trigger security
+# software startup prompts. Run explicitly on a disposable Windows test machine.
+$env:REMOVA_TEST_ALLOW_SYS_MUTATION = "1"
+try {
+  cargo test rename_value_refuses_existing_destination_without_changing_either -- --ignored
+} finally {
+  Remove-Item Env:REMOVA_TEST_ALLOW_SYS_MUTATION
+}
 
 # Full app
 npx tauri dev
