@@ -380,3 +380,31 @@ pub fn wait_for_process_exit(pid: u32, timeout_ms: u32) -> bool {
         }
     }
 }
+
+/// Visible signal for the rare case where the approved elevated handoff
+/// cannot complete (the old instance failed to exit within the handshake
+/// window). Runs before any window exists — a plain Win32 message box.
+pub fn notify_elevate_handoff_failed() {
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TOPMOST,
+        };
+        let text = HSTRING::from(
+            "Remova 以管理员身份重启未完成：原窗口未能在等待期内退出。\n\
+             The elevated restart could not complete — please start Remova again.",
+        );
+        let caption = HSTRING::from("Remova");
+        unsafe {
+            MessageBoxW(
+                None,
+                &text,
+                &caption,
+                MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {}
+}

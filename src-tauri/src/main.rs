@@ -9,6 +9,10 @@ fn main() {
     // before spawning this copy.
     if let Some(pid) = parse_elevated_relaunch_pid(&args) {
         if !remova_lib::sysops::wait_for_process_exit(pid, 15_000) {
+            // The approved UAC handoff failed (the old instance could not
+            // finish exiting in time) — leaving silently would look like a
+            // crash right after the user consented. Say so, then quit.
+            remova_lib::sysops::notify_elevate_handoff_failed();
             return;
         }
     }
