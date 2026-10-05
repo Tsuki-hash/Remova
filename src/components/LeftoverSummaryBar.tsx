@@ -66,13 +66,13 @@ export function LeftoverSummaryBar({
           key={b.id}
           type="button"
           title={b.hint}
-          aria-pressed={b.active}
-          disabled={b.count === 0 && b.id !== "safe"}
+          aria-pressed={b.id === "safe" ? undefined : b.active}
+          disabled={b.count === 0}
           onClick={b.onClick}
           style={{
             ...css.chip,
             fontFamily: "inherit",
-            cursor: "pointer",
+            cursor: b.count === 0 ? "not-allowed" : "pointer",
             color: b.active
               ? "var(--accent-text)"
               : b.count > 0
@@ -92,7 +92,7 @@ export function LeftoverSummaryBar({
                     : "var(--border)"
                 : "var(--border)",
             background: b.active ? "var(--accent-soft)" : "transparent",
-            opacity: b.count === 0 && b.id !== "safe" ? 0.55 : 1,
+            opacity: b.count === 0 ? 0.55 : 1,
           }}
         >
           {b.label}
