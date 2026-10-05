@@ -592,7 +592,7 @@ export const dict = {
     leftoversListAside: "详情见左侧残留列表",
     filterOnly: (label: string) => `仅显示：${label}`,
     showAllLeftovers: "显示全部",
-    scanLinkedLeftovers: "扫描关联残留",
+    scanLinkedLeftovers: "分析关联项",
     itemCount: (n: number) => `${n} 项`,
     errSealAdmin: "安全备份和还原需要管理员权限，请提权后重试。",
     errSealLegacy: "旧版备份仅支持查看和手工导出，不能自动还原；请保留原始备份。",
