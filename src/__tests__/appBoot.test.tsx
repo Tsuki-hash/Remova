@@ -178,11 +178,49 @@ it.each(["accept", "cancel", "uac-failure"])("confirms busy elevation before spa
       expect(win.destroy).not.toHaveBeenCalled();
     } else {
       expect(api.elevateRestart).toHaveBeenCalledWith(true);
+      if (outcome === "accept") {
+        // The old window may only destroy itself after the elevated copy has
+        // been spawned — destroy-before-spawn would strand the handoff.
+        expect(api.elevateRestart.mock.invocationCallOrder[0]).toBeLessThan(
+          win.destroy.mock.invocationCallOrder[0],
+        );
+      }
       expect(win.destroy).toHaveBeenCalledTimes(outcome === "accept" ? 1 : 0);
       if (outcome === "uac-failure") expect(toast.error).toHaveBeenCalledOnce();
     }
   } finally {
     vi.useRealTimers();
+    view.unmount();
+    vi.mocked(getCurrentWindow).mockImplementation(() => { throw new Error("not in tauri"); });
+  }
+});
+
+it("skips the busy confirm and spawns directly when nothing is in flight", async () => {
+  vi.clearAllMocks();
+  listApps.mockResolvedValue([]);
+  checkLatestRelease.mockResolvedValue({ ok: false });
+  let elevate!: () => void;
+  const win = {
+    onCloseRequested: vi.fn(async () => vi.fn()),
+    listen: vi.fn(async (name: string, handler: () => void) => {
+      if (name === "remova:request-elevate") elevate = handler;
+      return vi.fn();
+    }),
+    show: vi.fn(async () => {}), unminimize: vi.fn(async () => {}), setFocus: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {}),
+  };
+  vi.mocked(getCurrentWindow).mockReturnValue(win as unknown as ReturnType<typeof getCurrentWindow>);
+  // Own implementation: earlier tests leave a throwing elevateRestart behind.
+  vi.mocked(api.elevateRestart).mockImplementation(async () => {});
+  const spies = bootSpies();
+  const view = renderHook(() => useAppBoot({ ...spies, busyRef: { current: false } }));
+  try {
+    await vi.waitFor(() => expect(elevate).toBeTypeOf("function"));
+    await act(async () => { elevate(); });
+    expect(requestConfirm).not.toHaveBeenCalled();
+    expect(api.elevateRestart).toHaveBeenCalledWith(true);
+    await vi.waitFor(() => expect(win.destroy).toHaveBeenCalledOnce());
+  } finally {
     view.unmount();
     vi.mocked(getCurrentWindow).mockImplementation(() => { throw new Error("not in tauri"); });
   }

@@ -80,6 +80,14 @@ describe("LeftoverSummaryBar", () => {
     empty.unmount();
   });
 
+  it("fires the keep filter and shows the analyzing note while scanning", () => {
+    const onShowKeep = vi.fn();
+    render(<LeftoverSummaryBar {...base} onShowKeep={onShowKeep} scanning={true} />);
+    fireEvent.click(screen.getByRole("button", { name: t().conclusionShowKeep(1) }));
+    expect(onShowKeep).toHaveBeenCalledOnce();
+    expect(screen.getByText(t().analyzing)).toBeTruthy();
+  });
+
   it("shows the localized composition counts in one chip", () => {
     render(<LeftoverSummaryBar {...base} />);
     expect(screen.getByText(t().kindLabel("dir") + " 1 · " + t().kindLabel("file") + " 1 · " + t().kindLabel("registry") + " 1")).toBeTruthy();

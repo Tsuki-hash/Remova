@@ -98,6 +98,9 @@ export function ScanActionsBar({
               {L.useOfficial}
             </label>
           )}
+          {!scanning && plan.count === 0 && (
+            <span className="scan-actions-caption">{L.footerSelected(0)}</span>
+          )}
           {!scanning && plan.unknown > 0 && (
             <span className="scan-actions-caption">{L.cleanupPlanUnknown(plan.unknown)}</span>
           )}
