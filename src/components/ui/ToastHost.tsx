@@ -46,6 +46,7 @@ export function ToastHost() {
             padding: "12px 14px",
             borderRadius: 12,
             border: "1px solid var(--border)",
+            borderLeft: `3px solid ${KIND_COLOR[item.kind]}`,
             background: KIND_BG[item.kind],
             boxShadow: "0 6px 24px rgba(0,0,0,.12)",
             fontSize: 13,
