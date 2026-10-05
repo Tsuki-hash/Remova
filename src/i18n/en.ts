@@ -607,7 +607,7 @@ export const dict: EnDict = {
     leftoversListAside: "See the leftover list on the left",
     filterOnly: (label: string) => `Filtered: ${label}`,
     showAllLeftovers: "Show all",
-    scanLinkedLeftovers: "Scan related leftovers",
+    scanLinkedLeftovers: "Analyze linked items",
     itemCount: (n: number) => `${n} item${n === 1 ? "" : "s"}`,
     errSealAdmin: "Secure backup and restore require administrator access. Elevate and retry.",
     errSealLegacy: "Legacy backups can be inspected and exported manually, but cannot be restored automatically. Keep the original backup.",
