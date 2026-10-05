@@ -1508,7 +1508,13 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "writes real startup entries; requires REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
     fn rename_value_refuses_existing_destination_without_changing_either() {
+        assert_eq!(
+            std::env::var("REMOVA_TEST_ALLOW_SYS_MUTATION").as_deref(),
+            Ok("1"),
+            "REMOVA_TEST_ALLOW_SYS_MUTATION=1 is required before writing real startup entries"
+        );
         const KEY: &str = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         struct Cleanup(Vec<String>);
         impl Drop for Cleanup {
