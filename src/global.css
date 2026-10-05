@@ -14,12 +14,13 @@
   input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   button { transition: background .12s, border-color .12s, box-shadow .12s, filter .12s, transform .05s; }
   textarea { color: var(--fg); }
-  .remova-navigation button:hover { background: var(--row-hover); }
+  .remova-navigation button:hover:not([aria-current='page']) { background: var(--row-hover); }
   .remova-navigation button[aria-current="page"]::before {
     content: ""; position: absolute; left: 0; top: 12px; bottom: 12px;
     width: 3px; border-radius: 3px; background: var(--accent);
   }
   .remova-tool-card { min-height: 102px; }
+  .remova-tool-card:hover:not([aria-current='page']) { border-color: var(--border-strong); }
   .remova-manage-row:hover { background: var(--row-hover); }
   .remova-tool-section > header { flex-wrap: wrap; }
   [role="dialog"][aria-modal="true"] { font-family: inherit; }

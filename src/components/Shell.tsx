@@ -89,7 +89,6 @@ export function Sidebar({
               border: "none",
               borderRadius: 10,
               padding: collapsed ? "12px 0" : "12px 14px",
-              background: active ? "var(--accent-soft)" : "transparent",
               color: active ? "var(--accent-text)" : "var(--muted)",
               fontWeight: active ? 650 : 500,
               fontSize: 13.5,
