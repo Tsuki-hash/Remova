@@ -233,6 +233,9 @@ fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
 
 pub fn begin() -> Result<(), String> {
     let _guard = monitor_lock();
+    if !crate::scan_task::checkpoint("preparing", 0) {
+        return Err("scan:cancelled".into());
+    }
     crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &Default::default());
     let reg = reg_value_names();
     let reg_degraded = reg.is_err();
@@ -242,24 +245,40 @@ pub fn begin() -> Result<(), String> {
         reg_degraded,
     };
     let p = monitor_state_path();
-    if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
     let s = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
-    std::fs::write(&p, s).map_err(|e| e.to_string())
+    crate::scan_task::checkpoint("finalizing", snap.fs.files.len() + snap.reg.len());
+    crate::scan_task::commit(|_| {
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&p, s).map_err(|e| e.to_string())
+    })
 }
 
 pub fn end() -> Result<MonitorEndResult, String> {
     let _guard = monitor_lock();
+    if !crate::scan_task::checkpoint("preparing", 0) {
+        return Err("scan:cancelled".into());
+    }
     let p = monitor_state_path();
     let raw =
         std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
     let before: FullSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&p);
-    Ok(diff_and_arm(before, take_fs_snapshot(), reg_value_names()))
+    let result = build_diff(before, take_fs_snapshot(), reg_value_names());
+    let scanned = trusted_monitor_paths(&result);
+    crate::scan_task::checkpoint(
+        "finalizing",
+        result.diff.added_files.len() + result.diff.added_reg_values.len(),
+    );
+    crate::scan_task::commit(|permit| {
+        crate::scan_allow::commit_monitor_items(permit, &scanned, || {
+            std::fs::remove_file(&p).map_err(|e| e.to_string())
+        })?;
+        Ok(result)
+    })
 }
 
-fn diff_and_arm(
+fn build_diff(
     before: FullSnapshot,
     after: FsSnapshot,
     after_reg: Result<BTreeSet<String>, String>,
@@ -285,16 +304,28 @@ fn diff_and_arm(
     // the walk would resurface as ghost "added" paths and arm deletions the
     // user never actually saw in the diff.
     let items = diff_to_cleanup_items(&diff);
-    let mut scanned = std::collections::HashSet::new();
-    for it in &items {
-        scanned.insert(it.path.clone());
-    }
-    let degraded = diff.walk_degraded;
-    if degraded {
-        scanned.clear();
-    }
-    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
     MonitorEndResult { diff, items }
+}
+
+fn trusted_monitor_paths(result: &MonitorEndResult) -> std::collections::HashSet<String> {
+    if result.diff.walk_degraded {
+        return Default::default();
+    }
+    result.items.iter().map(|item| item.path.clone()).collect()
+}
+
+#[cfg(test)]
+fn diff_and_arm(
+    before: FullSnapshot,
+    after: FsSnapshot,
+    after_reg: Result<BTreeSet<String>, String>,
+) -> MonitorEndResult {
+    let result = build_diff(before, after, after_reg);
+    crate::scan_allow::remember(
+        crate::scan_allow::AllowScope::Monitor,
+        &trusted_monitor_paths(&result),
+    );
+    result
 }
 
 /// Convert a monitor diff into CleanupItems for the existing cleanup pipeline.
@@ -384,6 +415,34 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_session_capture_preserves_the_existing_baseline() {
+        let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
+        let _allow = crate::scan_allow::test_lock();
+        let state =
+            std::env::temp_dir().join(format!("remova-monitor-cancel-{}.json", std::process::id()));
+        let raw = serde_json::to_string(&super::FullSnapshot {
+            fs: Default::default(),
+            reg: vec![],
+            reg_degraded: false,
+        })
+        .unwrap();
+        std::fs::write(&state, &raw).unwrap();
+        set_test_state_path(Some(state.clone()));
+        for capture in [super::begin as fn() -> Result<(), String>, || {
+            super::end().map(|_| ())
+        }] {
+            let id = crate::scan_task::begin().unwrap();
+            let result = crate::scan_task::run(id, || {
+                crate::scan_task::cancel(id).unwrap();
+                assert_eq!(capture(), Err("scan:cancelled".into()));
+            });
+            assert_eq!(result, Err("scan:cancelled".into()));
+            assert_eq!(std::fs::read_to_string(&state).unwrap(), raw);
+        }
+        set_test_state_path(None);
+        std::fs::remove_file(state).unwrap();
+    }
     #[test]
     fn cancelled_snapshot_walk_never_reads_or_consumes_budget() {
         let id = crate::scan_task::begin().unwrap();

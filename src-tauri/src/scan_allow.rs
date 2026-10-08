@@ -52,6 +52,20 @@ pub fn remember(scope: AllowScope, paths: &HashSet<String>) {
 }
 
 /// True when `path` was returned by the latest scan for `scope`.
+pub(crate) fn commit_monitor_items(
+    _permit: &crate::scan_task::CommitPermit,
+    paths: &HashSet<String>,
+    consume_snapshot: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let mut g = maps().lock().map_err(|_| "scan:state")?;
+    consume_snapshot()?;
+    g.retain(|key| !key.starts_with("monitor\0"));
+    for path in paths {
+        g.insert(scoped_key(AllowScope::Monitor, path));
+    }
+    Ok(())
+}
+
 pub fn was_recent(scope: AllowScope, path: &str) -> bool {
     maps()
         .lock()
@@ -68,6 +82,25 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_snapshot_consumption_cannot_publish_monitor_authorization() {
+        let _g = test_lock();
+        remember(
+            AllowScope::Monitor,
+            &HashSet::from(["previous-monitor-path".into()]),
+        );
+        let result = crate::scan_task::commit(|permit| {
+            commit_monitor_items(
+                permit,
+                &HashSet::from(["unpublished-monitor-path".into()]),
+                || Err("fixture consume failed".into()),
+            )
+        });
+        assert_eq!(result, Err("fixture consume failed".into()));
+        assert!(was_recent(AllowScope::Monitor, "previous-monitor-path"));
+        assert!(!was_recent(AllowScope::Monitor, "unpublished-monitor-path"));
+    }
 
     #[test]
     fn cancelled_specialty_scans_preserve_previous_authorization() {
