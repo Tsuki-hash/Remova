@@ -296,14 +296,14 @@ export function useCleanupHandlers({
  // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
     busyRef.current = true;
     try {
-    const n = selectedPaths.size;
+    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
+    const n = picked.length;
     if (n === 0) {
  // FE-N3 / never confirm an empty cleanup set — say "select rows", not "cleanup".
       toast.info(L.selectRowHint);
       busyRef.current = false;
       return;
     }
-    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
     let message = `${L.riskTierPrefix(riskTierLabel(maxRiskOf(picked), L))}\n${L.cleanupConfirmOptionalBackup(
       n,
       residualFromUninstall || useOfficial,
