@@ -2,7 +2,7 @@
 import { act, renderHook, render, screen, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstalledApp, ScanResult } from "../types";
-const native = vi.hoisted(() => ({ beginAssociationScan: vi.fn(), cancelAssociationScan: vi.fn(async () => {}),
+const native = vi.hoisted(() => ({ beginAssociationScan: vi.fn(), cancelAssociationScan: vi.fn(async () => true),
   associationScanProgress: vi.fn(async (): Promise<{ stage: string; found: number } | null> => null), analyze: vi.fn() }));
 vi.mock("../lib/api", () => ({ api: native }));
 import { useAssociationScan } from "../hooks/useAssociationScan";
@@ -12,6 +12,21 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const app = { name: "sample" } as InstalledApp;
 const complete: ScanResult = { app_name: "sample", items: [] };
 describe("association scan cancellation", () => {
+  it("waits for cancellation acknowledgement and preserves an already committed result", async () => {
+    native.beginAssociationScan.mockResolvedValueOnce(61);
+    let acknowledge!: (accepted: boolean) => void;
+    native.cancelAssociationScan.mockImplementationOnce(() => new Promise(resolve => { acknowledge = resolve; }));
+    let finish!: (scan: ScanResult) => void;
+    native.analyze.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const view = renderHook(useAssociationScan);
+    let pending!: Promise<ScanResult>;
+    let cancelling!: Promise<void>;
+    await act(async () => { pending = view.result.current.run(app); });
+    await act(async () => { cancelling = view.result.current.cancel(); finish(complete); });
+    expect(view.result.current.progress?.status).toBe("stopping");
+    await act(async () => { acknowledge(false); await cancelling; expect(await pending).toEqual(complete); });
+    expect(view.result.current.progress?.status).toBe("complete");
+  });
   it("counts specialty results and rejects late failures after unmount as cancellation", async () => {
     native.beginAssociationScan.mockResolvedValueOnce(51).mockResolvedValueOnce(52);
     const view = renderHook(useAssociationScan);

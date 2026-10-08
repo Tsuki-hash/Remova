@@ -341,7 +341,7 @@ fn begin_association_scan() -> Result<u32, String> {
 }
 
 #[tauri::command]
-fn cancel_association_scan(scan_id: u32) -> Result<(), String> {
+fn cancel_association_scan(scan_id: u32) -> Result<bool, String> {
     scan_task::cancel(scan_id)
 }
 
