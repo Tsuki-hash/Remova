@@ -72,7 +72,7 @@ export const api = {
   listApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   analyze: (app: InstalledApp, scanId?: number) => invoke<ScanResult>("analyze_associations", { app, scanId }),
   beginAssociationScan: () => invoke<number>("begin_association_scan"),
-  cancelAssociationScan: (scanId: number) => invoke<void>("cancel_association_scan", { scanId }),
+  cancelAssociationScan: (scanId: number) => invoke<boolean>("cancel_association_scan", { scanId }),
   associationScanProgress: (scanId: number) => invoke<AssociationScanProgress | null>("association_scan_progress", { scanId }),
   dryRun: (
     app: InstalledApp,

@@ -15,6 +15,7 @@ struct Task {
     id: u32,
     scope: Option<&'static str>,
     cancelled: AtomicBool,
+    committed: AtomicBool,
     started: bool,
     progress: Mutex<Progress>,
 }
@@ -46,6 +47,7 @@ pub fn begin() -> Result<u32, String> {
             id,
             scope: None,
             cancelled: AtomicBool::new(false),
+            committed: AtomicBool::new(false),
             started: false,
             progress: Mutex::new(Progress {
                 stage: "preparing".into(),
@@ -56,15 +58,19 @@ pub fn begin() -> Result<u32, String> {
     Ok(id)
 }
 
-pub fn cancel(id: u32) -> Result<(), String> {
+pub fn cancel(id: u32) -> Result<bool, String> {
     let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
     if let Some(task) = tasks.get(&id) {
+        if task.committed.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
         task.cancelled.store(true, Ordering::SeqCst);
         if !task.started {
             tasks.remove(&id);
         }
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 pub fn progress(id: u32) -> Option<Progress> {
@@ -85,7 +91,9 @@ pub fn run_scoped<T>(id: u32, scope: &'static str, work: impl FnOnce() -> T) -> 
         Arc::get_mut(task).ok_or("scan:busy")?.scope = Some(scope);
         tasks.retain(|other, task| {
             if *other < id && task.scope == Some(scope) {
-                task.cancelled.store(true, Ordering::SeqCst);
+                if !task.committed.load(Ordering::SeqCst) {
+                    task.cancelled.store(true, Ordering::SeqCst);
+                }
                 task.started
             } else {
                 true
@@ -126,6 +134,30 @@ pub fn publish(work: impl FnOnce()) {
 }
 
 /// A task can be claimed once. Pending cancellation also rejects a late worker.
+pub struct CommitPermit(());
+
+/// Final session metadata commit is serialized with cancellation. Never used by deletion.
+pub fn commit<T>(work: impl FnOnce(&CommitPermit) -> Result<T, String>) -> Result<T, String> {
+    let task = CURRENT.with(|current| current.borrow().clone());
+    let Some(task) = task else {
+        return work(&CommitPermit(()));
+    };
+    let _tasks = tasks().lock().map_err(|_| "scan:state")?;
+    let latest = latest().lock().map_err(|_| "scan:state")?;
+    if task.cancelled.load(Ordering::SeqCst)
+        || task
+            .scope
+            .is_some_and(|scope| latest.get(scope) != Some(&task.id))
+    {
+        return Err("scan:cancelled".into());
+    }
+    let result = work(&CommitPermit(()));
+    if result.is_ok() {
+        task.committed.store(true, Ordering::SeqCst);
+    }
+    result
+}
+
 pub fn run<T>(id: u32, work: impl FnOnce() -> T) -> Result<T, String> {
     let task = {
         let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
@@ -184,6 +216,30 @@ pub fn checkpoint(stage: &str, found: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_commit_and_cancel_have_a_single_winner() {
+        let id = begin().unwrap();
+        assert_eq!(
+            run(id, || {
+                commit(|_| Ok(())).unwrap();
+                assert!(!cancel(id).unwrap());
+                "committed"
+            }),
+            Ok("committed")
+        );
+        let id = begin().unwrap();
+        assert_eq!(
+            run(id, || {
+                assert!(cancel(id).unwrap());
+                assert_eq!(
+                    commit::<()>(|_| panic!("committed after cancellation")),
+                    Err("scan:cancelled".into())
+                );
+            }),
+            Err("scan:cancelled".into())
+        );
+    }
 
     #[test]
     fn cancelled_scan_cannot_publish_authorization() {
