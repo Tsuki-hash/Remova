@@ -24,6 +24,7 @@ import { useMoreTools } from "../hooks/useMoreTools";
 export function MorePage({
   selected,
   monitoring,
+  monitorSnapshotBusy,
   monitorDiff,
   lastReport,
   closeMode,
@@ -42,6 +43,7 @@ export function MorePage({
 }: {
   selected: InstalledApp | null;
   monitoring: boolean;
+  monitorSnapshotBusy?: boolean;
   monitorDiff: { added_files: string[]; added_reg_values: string[] } | null;
   lastReport: FullCleanupReport | null;
   closeMode: CloseMode | null;
@@ -148,6 +150,7 @@ export function MorePage({
     },
     {
       id: "monitor",
+      disabled: monitorSnapshotBusy,
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
       icon: "monitor" as const,

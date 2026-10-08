@@ -729,6 +729,7 @@ export default function App() {
             <MorePage
               selected={selected}
               monitoring={monitoring}
+              monitorSnapshotBusy={monitorSnapshotBusy}
               monitorDiff={monitorDiff}
               lastReport={lastReport}
               closeMode={closeMode}
