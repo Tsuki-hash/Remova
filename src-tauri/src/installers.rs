@@ -135,11 +135,17 @@ fn push_dir_item(
 }
 
 fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+    if !crate::scan_task::checkpoint("files", out.len()) {
+        return;
+    }
     let Some(dir) = user_downloads() else { return };
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return;
     };
     for ent in rd.flatten().take(400) {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return;
+        }
         let p = ent.path();
         if !p.is_file() {
             continue;
@@ -162,6 +168,9 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
 }
 
 fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+    if !crate::scan_task::checkpoint("other", out.len()) {
+        return;
+    }
     let Some(local) = user_local_appdata() else {
         return;
     };
@@ -169,6 +178,9 @@ fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) 
         return;
     };
     for vendor in rd.flatten().take(200) {
+        if !crate::scan_task::checkpoint("other", out.len()) {
+            return;
+        }
         let vpath = vendor.path();
         if !vpath.is_dir() {
             continue;
@@ -180,6 +192,9 @@ fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) 
             "installcache",
             "squirreltemp",
         ] {
+            if crate::scan_task::cancelled() {
+                return;
+            }
             let cand = vpath.join(leaf);
             if cand.is_dir() {
                 push_dir_item(out, scanned, &cand, "updater_cache");
@@ -197,7 +212,13 @@ pub fn scan_installer_caches() -> Vec<CleanupItem> {
     let mut scanned = HashSet::new();
     scan_downloads(&mut out, &mut scanned);
     scan_updater_dirs(&mut out, &mut scanned);
+    if !crate::scan_task::checkpoint("sizes", out.len()) {
+        return out;
+    }
     fill_item_sizes(&mut out);
+    if !crate::scan_task::checkpoint("finalizing", out.len()) {
+        return out;
+    }
     fill_item_buckets(&mut out, "");
     scan_allow::remember(AllowScope::Installer, &scanned);
     out

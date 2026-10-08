@@ -9,6 +9,9 @@ fn slug_tokens(name: &str) -> Vec<String> {
 
 /// Heuristic stats for orphan candidate dirs (feeds judgment evidence).
 fn dir_shape(p: &std::path::Path) -> (usize, bool, bool) {
+    if crate::scan_task::cancelled() {
+        return (0, false, false);
+    }
     let Ok(rd) = std::fs::read_dir(p) else {
         return (0, false, false);
     };
@@ -16,6 +19,9 @@ fn dir_shape(p: &std::path::Path) -> (usize, bool, bool) {
     let mut has_exe = false;
     let mut has_config = false;
     for e in rd.flatten().take(40) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let n = e.file_name().to_string_lossy().to_lowercase();
         if n.ends_with(".exe") || n.ends_with(".msi") {
             has_exe = true;
@@ -90,6 +96,9 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
         .map(|s| s.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     for app in installed {
+        if crate::scan_task::cancelled() {
+            return true;
+        }
         let loc = app.install_location.replace('/', "\\").to_lowercase();
         let loc_trim = loc.trim_end_matches('\\');
         // a broken InstallLocation of a drive root (`C:` / `C:\`)
@@ -115,6 +124,9 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
 }
 
 pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
+    if crate::scan_task::cancelled() {
+        return Vec::new();
+    }
     // load ignore rules once (was per candidate in the loop).
     let ignore = crate::ignore::load();
     let mut roots: Vec<std::path::PathBuf> = vec![];
@@ -139,10 +151,16 @@ fn scan_orphans_in_roots(
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
     for root in roots {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
         };
         for e in rd.flatten() {
+            if !crate::scan_task::checkpoint("files", out.len()) {
+                return out;
+            }
             let p = e.path();
             if !p.is_dir() {
                 continue;
@@ -254,14 +272,26 @@ fn scan_orphans_in_roots(
                 bucket: None,
             });
             if out.len() >= crate::constants::ORPHAN_RESULT_CAP {
+                if !crate::scan_task::checkpoint("sizes", out.len()) {
+                    return out;
+                }
                 crate::scanner::fill_item_sizes(&mut out);
+                if !crate::scan_task::checkpoint("finalizing", out.len()) {
+                    return out;
+                }
                 crate::scanner::fill_item_buckets(&mut out, "");
                 remember_orphan_paths(&scanned);
                 return out;
             }
         }
     }
+    if !crate::scan_task::checkpoint("sizes", out.len()) {
+        return out;
+    }
     crate::scanner::fill_item_sizes(&mut out);
+    if !crate::scan_task::checkpoint("finalizing", out.len()) {
+        return out;
+    }
     crate::scanner::fill_item_buckets(&mut out, "");
     remember_orphan_paths(&scanned);
     out

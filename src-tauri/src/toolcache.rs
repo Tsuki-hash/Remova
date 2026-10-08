@@ -170,7 +170,13 @@ fn push_item(
 pub fn scan_tool_caches() -> Vec<CleanupItem> {
     let mut out = Vec::new();
     let mut scanned = HashSet::new();
+    if !crate::scan_task::checkpoint("files", 0) {
+        return out;
+    }
     for (domain, path, label) in tool_roots() {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
         if label.contains("skip") || label.contains("profile") {
             // Surface as keep-only high-risk if we ever list it; currently skip entirely.
             continue;
@@ -180,7 +186,13 @@ pub fn scan_tool_caches() -> Vec<CleanupItem> {
             break;
         }
     }
+    if !crate::scan_task::checkpoint("sizes", out.len()) {
+        return out;
+    }
     fill_item_sizes(&mut out);
+    if !crate::scan_task::checkpoint("finalizing", out.len()) {
+        return out;
+    }
     fill_item_buckets(&mut out, "");
     scan_allow::remember(AllowScope::ToolCache, &scanned);
     out
