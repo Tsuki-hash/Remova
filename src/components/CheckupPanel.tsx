@@ -63,6 +63,9 @@ export function CheckupPanel({
         style={{
           outline: "none",
           width: "min(480px, 96vw)",
+          maxHeight: "calc(100dvh - 32px)",
+          overflow: "auto",
+          overflowWrap: "anywhere",
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: 14,
@@ -128,7 +131,7 @@ export function CheckupPanel({
             {L.checkupOrphanFound(orphanCount)}
           </div>
         )}
-        <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
           <button style={css.btnGhost} disabled={orphanScanning} onClick={onOrphanScan}>
             {orphanScanning ? L.orphanScanning : L.checkupRunOrphan}
           </button>

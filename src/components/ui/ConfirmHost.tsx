@@ -147,6 +147,9 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
       style={{
         outline: "none",
         width: "min(440px, calc(100vw - 32px))",
+        maxHeight: "calc(100dvh - 32px)",
+        overflow: "auto",
+        overflowWrap: "anywhere",
         background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: 14,
@@ -198,6 +201,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
         style={{
           display: "flex",
           justifyContent: "flex-end",
+          flexWrap: "wrap",
           gap: 8,
           marginTop: 4,
         }}
@@ -253,6 +257,7 @@ export function ConfirmHost() {
         background: "rgba(15,23,42,.42)",
         display: "grid",
         placeItems: "center",
+        padding: 16,
         backdropFilter: "blur(2px)",
       }}
       onMouseDown={(e) => {

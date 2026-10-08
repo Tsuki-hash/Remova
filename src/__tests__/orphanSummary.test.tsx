@@ -2,7 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { OrphanPage } from "../components/OrphanPage";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { StrictMode } from "react";
@@ -14,7 +14,7 @@ vi.mock("../lib/api", () => ({ api: {
   reason: "fixture", evidence: [], shared: false, user_data: false, size_kb: 0,
 }]) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); setLang("zh"); });
 
 it("restarts the automatic scan after StrictMode effect cleanup and keeps its current job busy", async () => {
   let finish!: (list: Awaited<ReturnType<typeof api.orphanScan>>) => void;
@@ -38,6 +38,18 @@ it("keeps orphan statistics read-only and its existing selection action working"
   if (!selectSafe) throw new Error("missing orphan select-safe action");
   fireEvent.click(selectSafe);
   expect(screen.getByRole("button", { name: `${t().cleanup} (1)` }).hasAttribute("disabled")).toBe(false);
+});
+
+it("translates the completed scan label on a language switch without rerunning the scan", async () => {
+  setLang("zh");
+  const view = render(<OrphanPage onLastReport={vi.fn()} />);
+  await screen.findByText(`${t().orphanJustScanned} · 1`);
+  const oldLabel = t().orphanJustScanned;
+  setLang("en");
+  view.rerender(<OrphanPage onLastReport={vi.fn()} />);
+  expect(screen.getByText(`${t().orphanJustScanned} · 1`)).toBeTruthy();
+  expect(screen.queryByText(`${oldLabel} · 1`)).toBeNull();
+  expect(api.orphanScan).toHaveBeenCalledOnce();
 });
 
 it("clears old orphan targets and rejects a cancelled late success without claiming zero leftovers", async () => {
