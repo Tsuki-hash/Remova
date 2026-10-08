@@ -699,7 +699,7 @@ export default function App() {
         {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
           <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
         <ScanProgressBar progress={monitorScanProgress} onCancel={cancelMonitorScan} title={L.monitorInstall}
-          cancelledLabel={L.monitorScanCancelled(monitoring)} failedLabel={L.monitorScanFailed} />
+          cancelledLabel={L.monitorScanCancelled(monitoring)} failedLabel={L.monitorScanFailed(monitoring)} />
         <Suspense
           fallback={
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>

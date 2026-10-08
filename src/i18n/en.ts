@@ -283,7 +283,9 @@ export const dict: EnDict = {
     monitorScanCancelled: (active: boolean) => active
       ? "Snapshot scan cancelled; results are incomplete. Tracking continues. Retry finishing when ready."
       : "Snapshot scan cancelled; results are incomplete. Tracking has not started. Start again.",
-    monitorScanFailed: "Snapshot scan incomplete. Check the error and start tracking again.",
+    monitorScanFailed: (active: boolean) => active
+      ? "Final snapshot incomplete; no cleanup list was created. Check the error and retry finishing tracking."
+      : "Snapshot scan incomplete. Check the error and start tracking again.",
     monitorDiff: "Install changes",
     monitorNoSnap: "Start install tracking first",
     monitorEmpty: "No install changes yet",

@@ -486,6 +486,25 @@ describe("App orchestration", () => {
     }
   });
 
+  it.each(["denied", "no monitor snapshot; start first"])("handles a failed final snapshot without stale cleanup: %s", async message => {
+    await mount();
+    await nav("more");
+    act(() => more().onToggleMonitor());
+    await waitFor(() => expect(more().monitoring).toBe(true));
+    native.endInstallMonitor.mockRejectedValueOnce(new Error(message));
+    act(() => more().onToggleMonitor());
+    const active = message === "denied";
+    expect(await within(screen.getByRole("main")).findByRole("status"))
+      .toHaveProperty("textContent", i18n.t().monitorScanFailed(active));
+    expect(more().monitoring).toBe(active);
+    expect(more().monitorDiff).toBeNull();
+    expect(more().monitorSnapshotBusy).toBe(false);
+    expect(native.fullCleanup).not.toHaveBeenCalled();
+    act(() => more().onToggleMonitor());
+    if (active) await waitFor(() => expect(more().monitorDiff).toBeTruthy());
+    else await waitFor(() => expect(more().monitoring).toBe(true));
+  });
+
   it("hands pending analyze and native drag-drop into the App scan flow", async () => {
     native.listApps.mockResolvedValue([demo]);
     native.takePendingAnalyze.mockResolvedValueOnce("C:\\Apps\\Demo\\app.exe");

@@ -167,7 +167,8 @@ export function useAppChrome({
       }
       flow.setError(formatError(e));
       toast.error(formatError(e), { channel: MON_CH });
-      residual.setMonitoring(false);
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      residual.setMonitoring(monitoring && raw !== "no monitor snapshot; start first");
     } finally {
       monitorBusyRef.current = false;
     }
