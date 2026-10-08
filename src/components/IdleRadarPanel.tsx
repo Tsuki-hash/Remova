@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { VirtualList } from "./ui/VirtualList";
 import { api } from "../lib/api";
@@ -7,6 +7,8 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendText } from "../lib/backendText";
 import type { IdleApp } from "../types";
+import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { ScanProgressBar } from "./ScanProgressBar";
 
 /** Idle software radar — read-only ranking; jump back to the software list to uninstall. */
 export function IdleRadarPanel({
@@ -21,20 +23,25 @@ export function IdleRadarPanel({
   const L = t();
   const [rows, setRows] = useState<IdleApp[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const { runItems, cancel, progress } = useAssociationScan();
+  const scanRound = useRef(0);
 
   const load = async () => {
+    const round = ++scanRound.current;
     setBusy(true);
+    setRows(null);
     try {
-      setRows(await api.rankIdleApps());
+      setRows(await runItems(api.rankIdleApps));
     } catch (e) {
-      onError(formatError(e));
+      if (round === scanRound.current && !scanCancelled(e)) onError(formatError(e));
     } finally {
-      setBusy(false);
+      if (round === scanRound.current) setBusy(false);
     }
   };
 
   useEffect(() => {
     void load();
+    return () => { scanRound.current++; };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -53,6 +60,7 @@ export function IdleRadarPanel({
         </div>
       </div>
       {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.idleScanning}</div>}
+      <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={rows ?? []}
         height={320}

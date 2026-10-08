@@ -4,11 +4,14 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { useMoreRestore } from "../hooks/useMoreRestore";
 import { RestorePanel } from "../components/RestorePanel";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
+import { IdleRadarPanel } from "../components/IdleRadarPanel";
 import { t } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 
-const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn() }));
+const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn(), rankIdleApps: vi.fn(),
+  beginAssociationScan: vi.fn(async () => 201), cancelAssociationScan: vi.fn(async () => {}),
+  associationScanProgress: vi.fn(async () => null) }));
 vi.mock("../lib/api", () => ({ api: native }));
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
@@ -20,6 +23,22 @@ beforeEach(() => {
   native.listLocalDrives.mockResolvedValue([{ letter: "C", is_system: true, total_gb: 1, free_gb: 1 }]);
   native.listTopDirSizes.mockResolvedValue([{ path: "root", name: "root", size_kb: 1, capped: true }]);
   native.openPath.mockResolvedValue(undefined);
+});
+
+it.each(["disk", "idle"] as const)("rejects a late successful %s result after cancellation", async mode => {
+  const scan = mode === "disk" ? native.listTopDirSizes : native.rankIdleApps;
+  let finish!: (rows: []) => void;
+  scan.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const onError = vi.fn();
+  render(mode === "disk" ? <DiskRadarPanel onClose={vi.fn()} onError={onError} />
+    : <IdleRadarPanel onClose={vi.fn()} onError={onError} onGoSoftware={vi.fn()} />);
+  await waitFor(() => expect(scan).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
+  await act(async () => { finish([]); });
+  expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
+  expect(onError).not.toHaveBeenCalled();
+  expect(native.cancelAssociationScan).toHaveBeenCalledWith(201);
+  expect(screen.queryByText(mode === "disk" ? t().radarEmpty : t().idleEmpty)).toBeNull();
 });
 
 it("keeps restore failures beyond the twentieth row in a bounded scroll area", () => {
@@ -87,8 +106,8 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   const drill = screen.getAllByRole("button", { name: t().detailShow });
   fireEvent.click(drill[0]!);
   fireEvent.click(drill[1]!);
-  expect(native.listDirChildren).toHaveBeenCalledTimes(1);
-  expect(native.listDirChildren).toHaveBeenCalledWith("A");
+  await waitFor(() => expect(native.listDirChildren).toHaveBeenCalledTimes(1));
+  expect(native.listDirChildren).toHaveBeenCalledWith("A", 201);
   expect((drill[1] as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: t().navBack })).toBeNull();
   await act(async () => { resolveChild([{ path: "A/child", name: "A child", size_kb: 10, capped: false }]); });
@@ -113,6 +132,7 @@ it("keeps the current parent after a failed drill and disables back while pendin
   expect((back as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(back);
   expect(native.listTopDirSizes).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(native.listDirChildren).toHaveBeenCalledTimes(2));
   await act(async () => reject(new Error("read failed")));
   expect(error).toHaveBeenCalledTimes(1);
   expect(screen.getByText("A child")).toBeTruthy();
