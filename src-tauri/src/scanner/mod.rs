@@ -245,6 +245,9 @@ pub fn classify_bucket(kind: &ItemKind, path: &str, install_location: &str) -> L
 /// Fill display buckets (idempotent).
 pub fn fill_item_buckets(items: &mut [CleanupItem], install_location: &str) {
     for it in items.iter_mut() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         if it.bucket.is_none() {
             it.bucket = Some(
                 classify_bucket(&it.kind, &it.path, install_location)
@@ -268,6 +271,9 @@ pub fn path_size_kb(kind: &ItemKind, path: &str) -> Option<u64> {
 /// Fill missing size_kb on file/dir items (idempotent; skips registry/path).
 pub fn fill_item_sizes(items: &mut [CleanupItem]) {
     for it in items.iter_mut() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         if it.size_kb.is_none() {
             it.size_kb = path_size_kb(&it.kind, &it.path);
         }
@@ -354,6 +360,9 @@ pub fn extract_exe_stems(install: &Path, name_slugs: &[String]) -> Vec<String> {
     let mut stems: Vec<String> = vec![];
     if let Ok(rd) = install.read_dir() {
         for e in rd.flatten() {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let p = e.path();
             if p.extension()
                 .map(|x| x.eq_ignore_ascii_case("exe"))
@@ -500,8 +509,21 @@ pub fn analyze_associations(
         .unwrap_or_default();
 
     let mut items = Vec::new();
+    // A cancelled task's partial result is rejected by scan_task::run.
+    macro_rules! phase {
+        ($stage:literal) => {
+            if !crate::scan_task::checkpoint($stage, items.len()) {
+                return ScanResult {
+                    app_name: name.to_string(),
+                    app_key: format!("{source}\0{registry_key}\0{name}"),
+                    items,
+                };
+            }
+        };
+    }
 
     // 1. Install location
+    phase!("files");
     if let Some(root) = install.as_ref() {
         if root.exists() && is_safe_fs(root) {
             let is_dir = root.is_dir();
@@ -551,6 +573,9 @@ pub fn analyze_associations(
 
     let mut seen = std::collections::HashSet::new();
     for base in bases {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         if !base.exists() || !is_safe_fs(&base) {
             continue;
         }
@@ -558,6 +583,9 @@ pub fn analyze_associations(
             continue;
         };
         for e in rd.flatten() {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let child = e.path();
             if !child.is_dir() {
                 continue;
@@ -623,6 +651,7 @@ pub fn analyze_associations(
     }
 
     // 3. Uninstall key
+    phase!("registry");
     if !registry_key.trim().is_empty() && is_safe_to_delete_registry(registry_key).is_ok() {
         items.push(CleanupItem {
             path: registry_key.to_string(),
@@ -650,7 +679,13 @@ pub fn analyze_associations(
         let install_str = install.to_string_lossy().to_lowercase();
         if !install_str.is_empty() {
             for stem in exe_stems.iter().take(3) {
+                if crate::scan_task::cancelled() {
+                    break;
+                }
                 for key in crate::regscan::find_app_paths(&format!("{stem}.exe")) {
+                    if crate::scan_task::cancelled() {
+                        break;
+                    }
                     let Some(target) = crate::regscan::read_string_default(&key) else {
                         continue;
                     };
@@ -700,7 +735,13 @@ pub fn analyze_associations(
     // install monitor use (HKLM32 / RunOnce / Policies\Explorer\Run included);
     // a scanner-only list missed 32-bit and one-shot autostarts.
     for key in crate::manage::run_key_paths() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         for (vname, vdata) in crate::regscan::list_values(&key) {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let hit_install = cmdline_refs_install(&vdata, &install_low);
             // the name hit needs raw-text boundaries too — the
             // normalized contains form hit `SteamTools` data for `Steam`.
@@ -737,19 +778,24 @@ pub fn analyze_associations(
     }
 
     // 6. Windows services (suspected / high — display only)
+    phase!("services");
     reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
 
     // 7. Scheduled tasks (suspected / high — display only)
+    phase!("tasks");
     reg_scans::scan_scheduled_tasks(&name_slugs, &mut items);
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
+    phase!("registry");
     reg_scans::scan_software_keys(&name_slugs, &mut items);
 
     // 9. Shortcuts + TEMP
+    phase!("shortcuts");
     fs_scans::scan_shortcuts(&name_slugs, &exe_stems, &install_low, &mut items);
     fs_scans::scan_temp(&name_slugs, &mut items);
 
     // 10. SOP: PATH entries, shell extensions, drivers, cross-drive roots, WebView2 masks
+    phase!("other");
     reg_scans::scan_path_env(&name_slugs, &install_low, &mut items);
     reg_scans::scan_shell_extensions(&name_slugs, &install_low, &mut items);
     reg_scans::scan_drivers(&name_slugs, &install_low, &mut items);
@@ -757,6 +803,9 @@ pub fn analyze_associations(
     fs_scans::scan_webview_masks(&name_slugs, &mut items);
 
     for it in &mut items {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         it.shared = crate::shared::is_shared_item(name, &it.path, &it.reason);
         if crate::safety::is_user_data_path(&it.path)
             || crate::safety::looks_like_sync_conflict(&it.path)
@@ -770,10 +819,12 @@ pub fn analyze_associations(
         }
     }
 
+    phase!("sizes");
     fill_item_sizes(&mut items);
     fill_item_buckets(&mut items, install_location);
 
     // drop leftovers under user-ignored path prefixes (no silent re-appearance).
+    phase!("finalizing");
     let ignore = crate::ignore::load();
     items.retain(|it| !crate::ignore::should_skip_leftover_path(&ignore, &it.path));
 

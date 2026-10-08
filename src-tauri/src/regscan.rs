@@ -238,6 +238,9 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
             );
             let mut out = vec![];
             for i in 0..count {
+                if crate::scan_task::cancelled() {
+                    break;
+                }
                 let mut buf = vec![0u16; max_sub as usize + 2];
                 let mut len = buf.len() as u32;
                 if RegEnumKeyExW(
@@ -288,6 +291,9 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
             let mut out = vec![];
             let mut n = 0u32;
             loop {
+                if crate::scan_task::cancelled() {
+                    break;
+                }
                 let mut vname = vec![0u16; 256];
                 let mut vname_len = vname.len() as u32;
                 let mut vtype = 0u32;
