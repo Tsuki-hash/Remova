@@ -44,6 +44,9 @@ export function RestorePanel({
 }) {
   const L = t();
   const selectedPreview = preview?.name === pick ? preview : null;
+  const statusOrder = { missing: 0, blocked: 0, existing: 1, available: 2 };
+  const previewEntries = [...(selectedPreview?.entries ?? [])]
+    .sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 8 }}>
@@ -139,13 +142,14 @@ export function RestorePanel({
             {selectedPreview.existing > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreConflict(selectedPreview.existing)}</p>}
             {selectedPreview.unavailable > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreUnavailable(selectedPreview.unavailable)}</p>}
             <p style={{ ...css.muted, fontSize: 12, lineHeight: 1.5, margin: "6px 0" }}>{L.restorePreviewHint}</p>
-            <details style={{ marginTop: 8 }}>
+            <details open={selectedPreview.existing > 0 || selectedPreview.unavailable > 0} style={{ marginTop: 8 }}>
               <summary style={{ cursor: "pointer" }}>{L.restoreTargets}</summary>
               {selectedPreview.entries.length < selectedPreview.files && <p style={css.muted}>{L.restorePreviewLimited(selectedPreview.entries.length, selectedPreview.files)}</p>}
               <ul style={{ listStyle: "none", margin: "6px 0", padding: 0, maxHeight: 220, overflow: "auto" }}>
-                {selectedPreview.entries.map((entry, index) => <li key={`${entry.target}-${index}`} style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                {previewEntries.map((entry, index) => <li key={`${entry.target}-${index}`} style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "6px 8px", borderBottom: "1px solid var(--border)",
+                  borderLeft: entry.status === "available" ? undefined : "3px solid var(--warn-ink)", background: entry.status === "available" ? undefined : "var(--surface-2)" }}>
                   <span style={{ flex: "1 1 240px", overflowWrap: "anywhere", fontFamily: "var(--mono)", fontSize: 12 }}>{entry.target}</span>
-                  <span style={{ color: entry.status === "available" ? "var(--muted)" : "var(--warn-ink)" }}>
+                  <span style={{ color: entry.status === "available" ? "var(--muted)" : "var(--warn-ink)", fontWeight: entry.status === "available" ? 400 : 650 }}>
                     {entry.status === "existing" ? L.restoreTargetExisting : entry.status === "missing" ? L.restoreTargetMissing : entry.status === "blocked" ? L.restoreTargetBlocked : L.restoreTargetAvailable}
                   </span>
                 </li>)}
