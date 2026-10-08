@@ -37,7 +37,7 @@ export function OrphanPage({
   const [items, setItems] = useState<CleanupItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
+  const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const { runItems, cancel, progress } = useAssociationScan();
   const scanRound = useRef(0);
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
@@ -56,7 +56,7 @@ export function OrphanPage({
     setBusy(true);
     setItems(null);
     setSelected(new Set());
-    setLastScanLabel(null);
+    setLastScanCount(null);
  // One channel for the whole run — no sticky pile-up.
     if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
@@ -64,9 +64,7 @@ export function OrphanPage({
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       const s = summarizeLeftovers(list);
-      setLastScanLabel(
-        list.length === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${s.total}`,
-      );
+      setLastScanCount(list.length);
       if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
       else if (!quiet)
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
@@ -176,7 +174,9 @@ export function OrphanPage({
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.navOrphans}</strong>
           <span style={css.muted}>{L.orphanPageHint}</span>
-          {!busy && lastScanLabel && <span style={css.muted}>{lastScanLabel}</span>}
+          {!busy && lastScanCount !== null && <span style={css.muted}>
+            {lastScanCount === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${lastScanCount}`}
+          </span>}
           <button
             style={{ ...css.btn, marginLeft: "auto", height: 36 }}
             disabled={busy}
