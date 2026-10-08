@@ -65,6 +65,9 @@ pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
 /// Bounded walk for leftover items: depth + entry caps, no global cancel flag.
 /// Returns None when a cap or IO error leaves an incomplete size.
 pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
+    if crate::scan_task::cancelled() {
+        return None;
+    }
     if !root.exists() {
         return None;
     }
@@ -103,6 +106,9 @@ where
     let mut total: u64 = 0;
     let entries = read(dir).ok()?;
     for entry in entries {
+        if crate::scan_task::cancelled() {
+            return None;
+        }
         let entry = entry.ok()?;
         *entries_seen += 1;
         if *entries_seen >= MAX_WALK_ENTRIES {

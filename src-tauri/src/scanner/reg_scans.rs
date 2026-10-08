@@ -9,6 +9,9 @@ pub(super) fn scan_path_env(
 ) {
     let mut seen = std::collections::HashSet::new();
     for scope in ["User", "Machine"] {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         // Read the real per-scope PATH (not the merged process env).
         // on read failure skip this scope — never fall back to process PATH
         // (that would mis-tag Machine/User scope).
@@ -16,6 +19,9 @@ pub(super) fn scan_path_env(
             continue;
         };
         for entry in raw.split(';') {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let e = entry.trim();
             if e.is_empty() {
                 continue;
@@ -70,8 +76,14 @@ pub(super) fn scan_shell_extensions(
 ) {
     let name_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for alias in ["HKLM64", "HKLM32", "HKCU"] {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let classes = format!(r"{alias}\SOFTWARE\Classes");
         for leaf in crate::regscan::list_subkeys(&classes) {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let n = normalize_for_match(&leaf);
             if n.len() < 4 {
                 continue;
@@ -121,7 +133,13 @@ pub(super) fn scan_shell_extensions(
             continue;
         }
         for root in clsid_roots(alias) {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             for leaf in crate::regscan::list_subkeys(&root) {
+                if crate::scan_task::cancelled() {
+                    break;
+                }
                 let def = crate::regscan::read_string_default(&format!(r"{root}\{leaf}"))
                     .unwrap_or_default();
                 let name_hit = name_slugs
@@ -174,6 +192,9 @@ fn clsid_roots(alias: &str) -> Vec<String> {
 pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     for svc in crate::regscan::list_subkeys(root) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let svc_path = format!(r"{root}\{svc}");
         let Some(svc_type) = crate::regscan::read_dword(&svc_path, "Type") else {
             continue;
@@ -231,8 +252,14 @@ fn scan_software_keys_with(
         ("HKCU", r"SOFTWARE"),
     ];
     for (alias, sub) in pubs {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let root = format!("{alias}\\{sub}");
         for slug in name_slugs.iter().take(3) {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let key = format!("{root}\\{slug}");
             if is_safe_to_delete_registry(&key).is_err() {
                 continue;
@@ -273,6 +300,9 @@ pub(super) fn scan_services(
 ) {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     for svc in crate::regscan::list_subkeys(root) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let svc_path = format!("{root}\\{svc}");
         if is_safe_to_delete_registry(&svc_path).is_err() {
             continue;
@@ -317,6 +347,9 @@ pub(super) fn scan_services(
 pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
     for top in crate::regscan::list_subkeys(root) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         if top.eq_ignore_ascii_case("microsoft") {
             continue;
         }
@@ -369,6 +402,20 @@ fn service_image_string(svc_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_software_scan_skips_subsequent_registry_reads() {
+        let id = crate::scan_task::begin().unwrap();
+        let result = crate::scan_task::run(id, || {
+            crate::scan_task::cancel(id).unwrap();
+            let mut items = Vec::new();
+            super::scan_software_keys_with(&["sample".into()], &mut items, |_| {
+                panic!("read after cancellation")
+            });
+            assert!(items.is_empty());
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
+    }
+
     #[test]
     fn software_scan_uses_checked_existence_without_content_requirements() {
         let slugs = vec!["OwnedProductFixture".to_string()];

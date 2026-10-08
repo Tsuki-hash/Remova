@@ -25,6 +25,9 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
 
 pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     for letter in b'C'..=b'Z' {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         // skip remote/CDROM — `exists()` on a dead network mapping can stall 30s+.
         if !crate::diskradar::is_local_fixed_drive(letter as char) {
             continue;
@@ -38,6 +41,9 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
             continue;
         };
         for e in rd.flatten().take(80) {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let p = e.path();
             if !p.is_dir() {
                 continue;
@@ -110,10 +116,16 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
         roots.push(PathBuf::from(r));
     }
     for base in roots {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let Ok(rd) = base.read_dir() else {
             continue;
         };
         for e in rd.flatten() {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let p = e.path();
             if !p.is_dir() {
                 continue;
@@ -180,6 +192,9 @@ pub(super) fn scan_shortcuts(
     roots.push(program_data.join(r"Microsoft\Windows\Start Menu"));
 
     for root in roots {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         if !root.exists() {
             continue;
         }
@@ -202,6 +217,9 @@ fn walk_shortcuts(
         return;
     };
     for e in rd.flatten() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let p = e.path();
         if p.is_dir() {
             walk_shortcuts(&p, depth + 1, name_slugs, exe_stems, install_low, items);
@@ -295,6 +313,9 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
         return;
     };
     for e in rd.flatten() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let p = e.path();
         // Match the entry NAME only — a slug appearing in a directory
         // component (user name, `Local`, `Temp`, product root) must not
