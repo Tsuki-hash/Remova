@@ -185,13 +185,14 @@ export function SoftwareToolbar({
               color: "var(--fg)",
             }}
           >
-            <div style={{ marginBottom: 8 }}>{L.guided}</div>
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>{L.guided}</div>
             {/* real onboarding steps instead of an empty popover. */}
             <ol style={{ margin: "0 0 10px", paddingLeft: 18, display: "grid", gap: 6 }}>
               <li>{L.guideStep1}</li>
               <li>{L.guideStep2}</li>
               <li>{L.guideStep3}</li>
             </ol>
+            <p style={{ margin: "0 0 10px", color: "var(--muted)" }}>{L.guideTools}</p>
             <button
               type="button"
               style={{ ...css.btnSm, height: 26, width: "100%" }}
