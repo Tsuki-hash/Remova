@@ -70,6 +70,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cancelled_specialty_scans_preserve_previous_authorization() {
+        let _g = test_lock();
+        for (scope, scan) in [
+            (
+                AllowScope::Installer,
+                crate::installers::scan_installer_caches
+                    as fn() -> Vec<crate::scanner::CleanupItem>,
+            ),
+            (AllowScope::ToolCache, crate::toolcache::scan_tool_caches),
+        ] {
+            let path = "cancelled-scan-previous-path";
+            remember(scope, &HashSet::from([path.into()]));
+            let id = crate::scan_task::begin().unwrap();
+            assert_eq!(
+                crate::scan_task::run(id, || {
+                    crate::scan_task::cancel(id).unwrap();
+                    assert!(scan().is_empty());
+                }),
+                Err("scan:cancelled".into())
+            );
+            assert!(was_recent(scope, path));
+        }
+    }
+
+    #[test]
     fn scoped_allow_lists_are_isolated() {
         let _g = test_lock();
         let mut a = HashSet::new();
