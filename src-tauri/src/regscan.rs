@@ -197,6 +197,9 @@ pub fn snapshot_names(key: &str) -> Result<(Vec<String>, Vec<String>), String> {
 }
 
 pub fn list_subkeys(key: &str) -> Vec<String> {
+    if crate::scan_task::cancelled() {
+        return vec![];
+    }
     #[cfg(not(windows))]
     {
         let _ = key;
@@ -265,6 +268,9 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
 }
 
 pub fn list_values(key: &str) -> Vec<(String, String)> {
+    if crate::scan_task::cancelled() {
+        return vec![];
+    }
     #[cfg(not(windows))]
     {
         let _ = key;

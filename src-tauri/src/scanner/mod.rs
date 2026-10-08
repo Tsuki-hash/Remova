@@ -792,14 +792,19 @@ pub fn analyze_associations(
     // 9. Shortcuts + TEMP
     phase!("shortcuts");
     fs_scans::scan_shortcuts(&name_slugs, &exe_stems, &install_low, &mut items);
+    phase!("shortcuts");
     fs_scans::scan_temp(&name_slugs, &mut items);
 
     // 10. SOP: PATH entries, shell extensions, drivers, cross-drive roots, WebView2 masks
     phase!("other");
     reg_scans::scan_path_env(&name_slugs, &install_low, &mut items);
+    phase!("other");
     reg_scans::scan_shell_extensions(&name_slugs, &install_low, &mut items);
+    phase!("other");
     reg_scans::scan_drivers(&name_slugs, &install_low, &mut items);
+    phase!("other");
     fs_scans::scan_other_drive_roots(&name_slugs, &mut items);
+    phase!("other");
     fs_scans::scan_webview_masks(&name_slugs, &mut items);
 
     for it in &mut items {
