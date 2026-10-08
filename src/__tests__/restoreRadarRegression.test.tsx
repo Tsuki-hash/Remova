@@ -168,6 +168,21 @@ it("reports rejected restore IPC and releases busy state so it can be retried", 
   expect(toast.success).toHaveBeenCalledOnce();
 });
 
+it("selects the requested backup by identity and never falls back to the newest session", async () => {
+  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2" },
+    { name: "requested", size_kb: 1, created_at: "1" }]);
+  const onError = vi.fn();
+  const { result } = renderHook(() => useMoreRestore(onError));
+  await act(async () => { await result.current.loadRestore("requested"); });
+  expect(result.current.restorePick).toBe("requested");
+  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2" }]);
+  await act(async () => { await result.current.loadRestore("missing"); });
+  expect(result.current.restorePick).toBe("");
+  expect(result.current.restoreLoadError).toBe(t().restoreSessionMissing);
+  expect(result.current.openRestore).toBe(true);
+  expect(onError).toHaveBeenCalledWith(t().restoreSessionMissing);
+});
+
 it("discards an old backup preview after selection changes", async () => {
   let finish!: (preview: unknown) => void;
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

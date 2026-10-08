@@ -133,6 +133,7 @@ export const dict: EnDict = {
     reportLocateUnavailable: "Explorer cannot locate this target. Review the full target above.",
     reportItemDetails: "View original diagnostic",
     reportOtherResults: "Other results",
+    restoreSessionMissing: "This backup session is missing or unavailable. No other backup was selected.",
     reportShowMore: (n: number) => `Show more (${n} remaining)`,
     reportNextDelayed: "Some items await deletion on reboot. Scan again after restarting to verify.",
     batchCancel: "Cancel batch",
