@@ -51,15 +51,14 @@ export function IdleRadarPanel({
         <strong>{L.idleTitle}</strong>
         <span style={css.muted}>{L.idleHint}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void load()}>
-            {busy ? L.idleScanning : L.manageReload}
+          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} title={busy ? L.idleScanning : undefined} onClick={() => void load()}>
+            {L.manageReload}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>
       </div>
-      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.idleScanning}</div>}
       <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={rows ?? []}
