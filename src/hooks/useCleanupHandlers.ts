@@ -119,7 +119,7 @@ export function useCleanupHandlers({
           message: `${prettyAppName(target.name, target.source)}\n${L.confirmForceRiskPrefix(riskTierLabel(maxRiskOf(items), L))}${forceRiskNote}\n${L.forceCleanHint}`,
           confirmLabel: L.forceClean,
           danger: true,
-          checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
+          checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
         });
         if (!ok) return;
         const report = await api.fullCleanup(target, items, {
@@ -347,7 +347,7 @@ export function useCleanupHandlers({
       message,
       confirmLabel: L.cleanup,
       danger: true,
-      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
+      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });
     if (!ok) {
       busyRef.current = false;
@@ -387,7 +387,7 @@ export function useCleanupHandlers({
         message: L.batchConfirm(queue.length, queue.some(a => !skipOfficialKeys.has(appKey(a)))),
         confirmLabel: L.batchUninstall,
         danger: true,
-        checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
+        checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
       });
       if (!ok) return;
  // confirm is async — another cleanup may have taken busyRef meanwhile.

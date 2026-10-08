@@ -527,6 +527,9 @@ export const dict: EnDict = {
     safetyVaultBanner: "Safety backup created — restore from More → Restore if needed",
     confirmBackupBeforeCleanup:
       "Create a safety backup before cleanup (restore from More → Restore)",
+    cleanupBackupStatus: (checked: boolean) => checked
+      ? "A safety backup will be created first. Cleanup stops if backup fails. Restore requires a valid session and preview."
+      : "No safety backup will be created. This cleanup cannot be restored through the Safety Vault.",
     cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
       `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. No backup by default; check “Create a safety backup before cleanup” below if needed. Continue?`,
     noBackupThisRun: "No safety backup was created for this cleanup (backup is optional)",
