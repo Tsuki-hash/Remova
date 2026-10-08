@@ -12,6 +12,31 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["zh", "en"] as const)("separates pending reboot counts and never claims partial cleanup is complete in %s", lang => {
+  setLang(lang);
+  const base: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",
+    uninstall_ok: true, uninstall_message: "", deleted: 2, failed: 1, skipped: 3, delayed: 4,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const view = render(<ReportPanel report={base} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  for (const [label, count] of [[t().reportDeleted, 2], [t().reportFailed, 1], [t().reportSkipped, 3],
+    [t().reportPendingReboot, 4]] as const) {
+    expect(screen.getByText(label).parentElement?.firstElementChild?.textContent).toBe(String(count));
+  }
+  expect(screen.getByText(t().reportProgressLabel(2, 10, 20))).toBeTruthy();
+  expect(screen.queryByText(t().reportFlowDone)).toBeNull();
+  expect(screen.queryByText(t().reportProgressComplete)).toBeNull();
+  view.unmount();
+  for (const extra of [{ delayed: 1 }, { skipped: 1 }, { aborted: true }, { dry_run: true }]) {
+    const report = { ...base, failed: 0, skipped: 0, delayed: 0, ...extra };
+    const v = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+      verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+    expect(screen.queryByText(t().reportProgressComplete)).toBeNull();
+    expect(screen.queryByText(t().reportFlowDone)).toBeNull();
+    if (report.delayed) expect(screen.getByText(t().reportNextDelayed)).toBeTruthy();
+    v.unmount();
+  }
+});
 it.each(["zh", "en"] as const)("states the backup prerequisite in the actual guide in %s", lang => {
   setLang(lang);
   render(<SoftwareToolbar q="" category="all" estimating={false} scanning={false} aiEnabled={false}

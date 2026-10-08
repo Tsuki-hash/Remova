@@ -96,7 +96,8 @@ export function ReportPanel({
           <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 650 }}>
             · {aiReportNote ? L.conclusionSourceAi : L.conclusionSourceRule}
           </span>
-          {"uninstall_ok" in report && !report.aborted && report.uninstall_ok && (
+          {"uninstall_ok" in report && !report.dry_run && !report.aborted && report.uninstall_ok &&
+            report.deleted > 0 && !report.failed && !report.skipped && !report.delayed && (
             <div style={{ marginTop: 4, fontWeight: 600, color: "var(--fg)" }}>
               {L.reportFlowDone}
             </div>
@@ -108,6 +109,8 @@ export function ReportPanel({
                 ? L.reportNextSkipped
                 : ("dry_run" in report && report.dry_run) || ("aborted" in report && report.aborted)
                   ? L.reportNextCheck
+                  : report.delayed
+                    ? L.reportNextDelayed
                   : "backup_dir" in report && report.backup_dir
                     ? L.reportNextOk
                     : L.reportNextNoBackup}
@@ -116,11 +119,11 @@ export function ReportPanel({
       )}
       {"deleted" in report &&
         (() => {
-          const p = cleanupProgress(report.deleted, report.failed, report.skipped);
+          const p = cleanupProgress(report.deleted, report.failed + report.skipped + (report.delayed ?? 0), 0);
           return (
             <div style={{ marginTop: 8, fontSize: 12.5 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                {p.complete
+                {p.complete && !report.dry_run && !report.aborted
                   ? L.reportProgressComplete
                   : L.reportProgressLabel(p.handled, p.total, p.pct)}
               </div>
@@ -138,7 +141,7 @@ export function ReportPanel({
                   style={{
                     width: `${p.pct}%`,
                     height: "100%",
-                    background: p.complete ? "var(--ok)" : "var(--accent)",
+                    background: p.complete && !report.dry_run && !report.aborted ? "var(--ok)" : "var(--accent)",
                   }}
                 />
               </div>
@@ -155,6 +158,7 @@ export function ReportPanel({
               { label: L.reportDeleted, value: report.deleted, tone: "var(--ok)" },
               { label: L.reportFailed, value: report.failed, tone: "var(--danger)" },
               { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
+              { label: L.reportPendingReboot, value: report.delayed ?? 0, tone: "var(--warn-ink)" },
             ]
         ).map((s) => (
           <div
