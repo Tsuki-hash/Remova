@@ -10,6 +10,8 @@ export const dict = {
     dryRun: "检查清理计划",
     dryRunHint: "检查已选项的安全规则及部分目标是否存在，不卸载、不删除；检查通过不保证实际清理成功。",
     cleanup: "清理选中项",
+    uninstallAndCleanup: "卸载并清理",
+    cleanupSelectedHint: "仅清理勾选的关联项，不运行官方卸载器。",
     closePreview: "返回列表",
     cleanupPlanUnknown: (n: number) => `${n} 个文件目标占用未知`,
     cleanupPlanReview: (n: number) => `${n} 项需留意`,
@@ -19,7 +21,7 @@ export const dict = {
     cleanupPlanEstimate: "占用按已知顶层文件目标估算，忽略重叠子项；不代表实际释放空间。执行前仍需安全核验。",
     skipOfficial: "跳过官方卸载，直接清理",
     cleanupAdvanced: "高级选项",
-    officialFirstHint: "先运行官方卸载器，再清理已选项。",
+    officialFirstHint: "先卸载该软件，再清理勾选的关联项；未勾选项不会由 Remova 清理。",
     colName: "名称",
     colSource: "来源",
     kindLabel: (kind: string) =>
