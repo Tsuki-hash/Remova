@@ -5,6 +5,8 @@
 export type ConfirmCheckbox = {
   label: string;
   defaultChecked?: boolean;
+  /** Visible consequence of the current checkbox choice. */
+  status?: (checked: boolean) => string;
 };
 
 export type ConfirmOptions = {
