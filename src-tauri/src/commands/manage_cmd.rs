@@ -3,24 +3,33 @@
 use crate::manage;
 
 #[tauri::command]
-pub async fn list_startup_items() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_startup_items)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn list_startup_items(scan_id: Option<u32>) -> Result<Vec<manage::ManageItem>, String> {
+    let id = scan_id.map_or_else(crate::scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scan_task::run_scoped(id, "manage-startup", manage::list_startup_items)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn list_services() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_services)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn list_services(scan_id: Option<u32>) -> Result<Vec<manage::ManageItem>, String> {
+    let id = scan_id.map_or_else(crate::scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scan_task::run_scoped(id, "manage-services", manage::list_services)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn list_scheduled_tasks() -> Result<Vec<manage::ManageItem>, String> {
-    tauri::async_runtime::spawn_blocking(manage::list_scheduled_tasks)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn list_scheduled_tasks(scan_id: Option<u32>) -> Result<Vec<manage::ManageItem>, String> {
+    let id = scan_id.map_or_else(crate::scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scan_task::run_scoped(id, "manage-tasks", manage::list_scheduled_tasks)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

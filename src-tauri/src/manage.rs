@@ -52,6 +52,9 @@ fn start_type_label(start: u32) -> &'static str {
 fn query_running_service_names() -> std::collections::HashSet<String> {
     use std::process::Command;
     let mut set = std::collections::HashSet::new();
+    if crate::scan_task::cancelled() {
+        return set;
+    }
     let mut cmd = Command::new(crate::regops::sys_tool("sc.exe"));
     cmd.args(["query", "type=", "service", "state=", "active"]);
     crate::regops::hide_console(&mut cmd);
@@ -60,6 +63,9 @@ fn query_running_service_names() -> std::collections::HashSet<String> {
     };
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
+        if crate::scan_task::cancelled() {
+            return set;
+        }
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("SERVICE_NAME:") {
             let name = rest.trim();
@@ -130,9 +136,18 @@ pub fn run_key_paths() -> Vec<String> {
 
 pub fn list_startup_items() -> Vec<ManageItem> {
     let mut out = Vec::new();
+    if !crate::scan_task::checkpoint("registry", 0) {
+        return out;
+    }
     for (alias, sub, _view) in RUN_KEYS {
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         let key = format!(r"{}\{}", alias, sub);
         for (vname, vdata) in crate::regscan::list_values(&key) {
+            if !crate::scan_task::checkpoint("registry", out.len()) {
+                return out;
+            }
             let display = vname.trim_end_matches(".remova-disabled").to_string();
             // Prefer StartupApproved flag; fall back to legacy rename suffix.
             let enabled = startup_approved_enabled(&key, &display)
@@ -152,10 +167,16 @@ pub fn list_startup_items() -> Vec<ManageItem> {
     }
     // Startup folders (user + common) — .lnk / .exe / .bat etc.
     for folder in startup_folder_paths() {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
         let Ok(rd) = std::fs::read_dir(&folder) else {
             continue;
         };
         for ent in rd.flatten() {
+            if !crate::scan_task::checkpoint("files", out.len()) {
+                return out;
+            }
             let path = ent.path();
             if !path.is_file() {
                 continue;
@@ -191,11 +212,23 @@ pub fn list_startup_items() -> Vec<ManageItem> {
         }
     }
     // UWP / Store packaged startup tasks (Task Manager “Startup apps”).
+    if !crate::scan_task::checkpoint("tasks", out.len()) {
+        return out;
+    }
     for it in list_packaged_startup() {
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         out.push(it);
     }
     // Auto-start (Start=2) user-mode services — consumer tools list these as 开机自启.
+    if !crate::scan_task::checkpoint("services", out.len()) {
+        return out;
+    }
     for svc in list_auto_services() {
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         out.push(svc);
     }
     out.sort_by_key(|a| a.name.to_lowercase());
@@ -205,6 +238,9 @@ pub fn list_startup_items() -> Vec<ManageItem> {
 
 /// User-mode services with Start=2 (auto), including Microsoft ones (consumers expect them).
 fn list_auto_services() -> Vec<ManageItem> {
+    if crate::scan_task::cancelled() {
+        return Vec::new();
+    }
     // Real running state — a hardcoded `true` showed stopped auto-start
     // services as running with a Stop button.
     let running_services = query_running_service_names();
@@ -215,8 +251,14 @@ fn list_auto_services() -> Vec<ManageItem> {
     ];
     let mut seen = std::collections::HashSet::new();
     for (alias, sub) in keys {
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         let root = format!(r"{alias}\{sub}");
         for svc in crate::regscan::list_subkeys(&root) {
+            if !crate::scan_task::checkpoint("services", out.len()) {
+                return out;
+            }
             if svc.contains('\\') {
                 continue;
             }
@@ -273,9 +315,15 @@ fn list_packaged_startup_with(
     mut display_name: impl FnMut(&str) -> Option<String>,
 ) -> Vec<ManageItem> {
     let mut out = Vec::new();
+    if crate::scan_task::cancelled() {
+        return out;
+    }
     let sa =
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\PackagedStartup";
     for vname in names(sa).unwrap_or_default() {
+        if !crate::scan_task::checkpoint("tasks", out.len()) {
+            return out;
+        }
         if vname.is_empty() {
             continue;
         }
@@ -373,6 +421,9 @@ fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
 
 pub fn list_services() -> Vec<ManageItem> {
     let mut out = Vec::new();
+    if !crate::scan_task::checkpoint("services", 0) {
+        return out;
+    }
     let running_names = query_running_service_names();
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
@@ -380,8 +431,14 @@ pub fn list_services() -> Vec<ManageItem> {
     ];
     let mut seen = std::collections::HashSet::new();
     for (alias, sub) in keys {
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         let root = format!(r"{alias}\{sub}");
         for svc in crate::regscan::list_subkeys(&root) {
+            if !crate::scan_task::checkpoint("services", out.len()) {
+                return out;
+            }
             if svc.contains('\\') {
                 continue;
             }
@@ -461,6 +518,9 @@ fn task_status_enabled(status: &str) -> bool {
 /// Verbose CSV column order is stable across locales:
 /// 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment.
 pub fn list_scheduled_tasks() -> Vec<ManageItem> {
+    if !crate::scan_task::checkpoint("tasks", 0) {
+        return Vec::new();
+    }
     #[cfg(not(windows))]
     {
         Vec::new()
@@ -474,6 +534,9 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         let Ok(out) = cmd.output() else {
             return Vec::new();
         };
+        if crate::scan_task::cancelled() {
+            return Vec::new();
+        }
         // schtasks on zh-CN often emits OEM code page, not UTF-8.
         let text = decode_console_bytes(&out.stdout);
         let mut items = Vec::new();
@@ -486,6 +549,9 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         const IDX_RUN: usize = 8;
         const IDX_COMMENT: usize = 10;
         for line in lines {
+            if !crate::scan_task::checkpoint("tasks", items.len()) {
+                return items;
+            }
             let cols = split_csv_line(line);
             let Some(name) = cols.get(IDX_TASK).cloned() else {
                 continue;
@@ -783,9 +849,11 @@ fn normalize_task_key(name: &str) -> String {
 }
 
 fn remember_scheduled_task_names(names: impl Iterator<Item = String>) {
-    if let Ok(mut g) = task_trust().lock() {
-        *g = names.map(|n| normalize_task_key(&n)).collect();
-    }
+    crate::scan_task::publish(|| {
+        if let Ok(mut g) = task_trust().lock() {
+            *g = names.map(|n| normalize_task_key(&n)).collect();
+        }
+    });
 }
 
 fn is_trusted_task(name: &str) -> bool {
@@ -832,6 +900,23 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_management_scan_skips_all_sources() {
+        let id = crate::scan_task::begin().unwrap();
+        let result = crate::scan_task::run(id, || {
+            crate::scan_task::cancel(id).unwrap();
+            assert!(super::list_startup_items().is_empty());
+            assert!(super::list_services().is_empty());
+            assert!(super::list_scheduled_tasks().is_empty());
+            assert!(super::list_packaged_startup_with(
+                |_| panic!("read names after cancellation"),
+                |_, _| panic!("read value after cancellation"),
+                |_| panic!("read display name after cancellation"),
+            )
+            .is_empty());
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
+    }
     #[test]
     fn packaged_startup_enumerates_binary_enabled_and_disabled_values() {
         let rows = super::list_packaged_startup_with(

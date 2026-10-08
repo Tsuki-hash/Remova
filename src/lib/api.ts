@@ -151,9 +151,9 @@ export const api = {
     invoke("set_service_running", { name, run }),
   setTaskEnabled: (name: string, enabled: boolean) =>
     invoke("set_task_enabled", { name, enabled }),
-  listStartupItems: () => invoke<ManageItem[]>("list_startup_items"),
-  listServices: () => invoke<ManageItem[]>("list_services"),
-  listScheduledTasks: () => invoke<ManageItem[]>("list_scheduled_tasks"),
+  listStartupItems: (scanId?: number) => invoke<ManageItem[]>("list_startup_items", { scanId }),
+  listServices: (scanId?: number) => invoke<ManageItem[]>("list_services", { scanId }),
+  listScheduledTasks: (scanId?: number) => invoke<ManageItem[]>("list_scheduled_tasks", { scanId }),
   appIconData: (displayIcon: string | null | undefined) =>
     invoke<string | null>("app_icon_data", { displayIcon: displayIcon ?? null }),
 };
