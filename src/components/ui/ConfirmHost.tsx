@@ -191,6 +191,9 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
           <span style={{ lineHeight: 1.45 }}>{opts.checkbox.label}</span>
         </label>
       )}
+      {opts.checkbox?.status && <div role="status" style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+        {opts.checkbox.status(checked)}
+      </div>}
       <div
         style={{
           display: "flex",
