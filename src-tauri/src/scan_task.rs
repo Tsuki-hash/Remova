@@ -1,0 +1,168 @@
+//! Task-local cancellation for read-only association scans; never used by deletion.
+use serde::Serialize;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[derive(Clone, Serialize)]
+pub struct Progress {
+    pub stage: String,
+    pub found: usize,
+}
+
+struct Task {
+    cancelled: AtomicBool,
+    started: bool,
+    progress: Mutex<Progress>,
+}
+
+static NEXT: AtomicU32 = AtomicU32::new(1);
+fn tasks() -> &'static Mutex<BTreeMap<u32, Arc<Task>>> {
+    static TASKS: OnceLock<Mutex<BTreeMap<u32, Arc<Task>>>> = OnceLock::new();
+    TASKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+thread_local! {
+    static CURRENT: RefCell<Option<Arc<Task>>> = const { RefCell::new(None) };
+}
+
+pub fn begin() -> Result<u32, String> {
+    let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
+    if tasks.len() >= 8 {
+        return Err("scan:busy".into());
+    }
+    let id = NEXT
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+        .map_err(|_| "scan:state")?;
+    tasks.insert(
+        id,
+        Arc::new(Task {
+            cancelled: AtomicBool::new(false),
+            started: false,
+            progress: Mutex::new(Progress {
+                stage: "preparing".into(),
+                found: 0,
+            }),
+        }),
+    );
+    Ok(id)
+}
+
+pub fn cancel(id: u32) -> Result<(), String> {
+    let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
+    if let Some(task) = tasks.get(&id) {
+        task.cancelled.store(true, Ordering::SeqCst);
+        if !task.started {
+            tasks.remove(&id);
+        }
+    }
+    Ok(())
+}
+
+pub fn progress(id: u32) -> Option<Progress> {
+    let tasks = tasks().lock().ok()?;
+    tasks.get(&id)?.progress.lock().ok().map(|p| p.clone())
+}
+
+/// A task can be claimed once. Pending cancellation also rejects a late worker.
+pub fn run<T>(id: u32, work: impl FnOnce() -> T) -> Result<T, String> {
+    let task = {
+        let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
+        let task = tasks.get_mut(&id).ok_or("scan:cancelled")?;
+        let task_mut = Arc::get_mut(task).ok_or("scan:busy")?;
+        if task_mut.started {
+            return Err("scan:busy".into());
+        }
+        task_mut.started = true;
+        task.clone()
+    };
+    CURRENT.with(|c| *c.borrow_mut() = Some(task.clone()));
+    struct Guard(u32);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            CURRENT.with(|c| *c.borrow_mut() = None);
+            if let Ok(mut tasks) = tasks().lock() {
+                tasks.remove(&self.0);
+            }
+        }
+    }
+    let _guard = Guard(id);
+    let result = work();
+    if task.cancelled.load(Ordering::SeqCst) {
+        Err("scan:cancelled".into())
+    } else {
+        Ok(result)
+    }
+}
+
+pub fn cancelled() -> bool {
+    CURRENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .is_some_and(|t| t.cancelled.load(Ordering::SeqCst))
+    })
+}
+
+pub fn checkpoint(stage: &str, found: usize) -> bool {
+    CURRENT.with(|c| {
+        if let Some(task) = c.borrow().as_ref() {
+            if let Ok(mut p) = task.progress.lock() {
+                *p = Progress {
+                    stage: stage.into(),
+                    found,
+                };
+            }
+        }
+    });
+    !cancelled()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_cancel_rejects_late_worker_without_running_it() {
+        let id = begin().unwrap();
+        cancel(id).unwrap();
+        assert_eq!(
+            run(id, || panic!("cancelled worker ran")),
+            Err::<(), _>("scan:cancelled".into())
+        );
+        assert!(progress(id).is_none());
+    }
+
+    #[test]
+    fn cancellation_is_local_and_partial_result_is_rejected() {
+        let a = begin().unwrap();
+        let b = begin().unwrap();
+        assert_eq!(
+            run(a, || {
+                assert!(checkpoint("files", 3));
+                assert_eq!(progress(a).unwrap().found, 3);
+                cancel(a).unwrap();
+                assert!(!checkpoint("registry", 3));
+                "partial"
+            }),
+            Err("scan:cancelled".into())
+        );
+        assert!(!cancelled());
+        assert_eq!(
+            run(b, || {
+                assert!(!cancelled());
+                "complete"
+            }),
+            Ok("complete")
+        );
+        assert!(progress(a).is_none());
+        assert!(progress(b).is_none());
+    }
+
+    #[test]
+    fn panic_releases_task_and_thread_context() {
+        let id = begin().unwrap();
+        assert!(std::panic::catch_unwind(|| run(id, || panic!("worker"))).is_err());
+        assert!(!cancelled());
+        assert!(progress(id).is_none());
+    }
+}
