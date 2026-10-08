@@ -130,6 +130,17 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"]), resid
 }
 
 describe("useCleanupHandlers confirm / force pipeline", () => {
+  it("counts only current scan targets in confirmation and never passes stale selection paths", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    fullCleanup.mockResolvedValue(report());
+    const { result } = setup(new Set([scan().items[0]!.path, "stale-selection"]));
+    await act(async () => { await result.current.handleCleanupConfirm(); });
+    expect(requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining(t().cleanupConfirmOptionalBackup(1, false)),
+    }));
+    expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items, expect.anything());
+  });
+
   it("cleans bound residuals after the app disappears and rejects a mismatched target", async () => {
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     fullCleanup.mockResolvedValue(report({ uninstall_ok: false }));

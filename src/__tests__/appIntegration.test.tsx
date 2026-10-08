@@ -319,10 +319,12 @@ describe("App orchestration", () => {
     expect(screen.queryByTestId("detail")).toBeNull();
   });
 
-  it("closes the preview, clears transient state and reports a failed list refresh", async () => {
+  it("keeps search and sorting across preview return and refresh while clearing scan authorization", async () => {
     await mount();
     await analyzeDemo();
     act(() => {
+      software().onQuery("Demo");
+      software().sortBy("name");
       software().setUseOfficial(true);
       software().setEvidence("shared");
       software().setAiRisk("high");
@@ -337,8 +339,14 @@ describe("App orchestration", () => {
     await waitFor(() => expect(software().error).toContain("refresh:broken"));
  // Returning to the list keeps the drawer selection, but resets the preview.
     expect(software()).toMatchObject({ selected: demo, scan: null, report: null,
+      q: "Demo", sortCol: "name", sortDesc: false,
       useOfficial: false, residualFromUninstall: false, evidence: null, aiRisk: null,
       aiReportNote: null, kindFilter: null, riskFilter: null, showBatchSummary: false });
+    expect(software().selectedPaths.size).toBe(0);
+    await analyzeDemo();
+    act(() => software().onBack());
+    await waitFor(() => expect(native.listApps).toHaveBeenCalledTimes(3));
+    expect(software()).toMatchObject({ q: "Demo", sortCol: "name", sortDesc: false, scan: null });
     expect(software().selectedPaths.size).toBe(0);
   });
 
