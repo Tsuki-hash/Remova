@@ -9,6 +9,8 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
+import { ScanProgressBar } from "./ScanProgressBar";
+import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import {
   groupByOrigin,
   summarizeLeftovers,
@@ -36,6 +38,7 @@ export function OrphanPage({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
+  const { runItems, cancel, progress } = useAssociationScan();
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
@@ -49,10 +52,13 @@ export function OrphanPage({
   const scan = async (quiet = false) => {
     if (busy) return;
     setBusy(true);
+    setItems(null);
+    setSelected(new Set());
+    setLastScanLabel(null);
  // One channel for the whole run — no sticky pile-up.
     if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
-      const list = await api.orphanScan();
+      const list = await runItems(api.orphanScan);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       const s = summarizeLeftovers(list);
@@ -66,6 +72,10 @@ export function OrphanPage({
           ttl: 3000,
         });
     } catch (e) {
+      if (scanCancelled(e)) {
+        if (!quiet) toast.info(L.scanCancelledIncomplete, { channel: ORPHAN_CHANNEL });
+        return;
+      }
       const msg = formatError(e, "analyze");
       onError?.(msg);
       toast.error(msg, { channel: quiet ? `${ORPHAN_CHANNEL}-refresh` : ORPHAN_CHANNEL });
@@ -162,27 +172,16 @@ export function OrphanPage({
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.navOrphans}</strong>
           <span style={css.muted}>{L.orphanPageHint}</span>
-          {busy && (
-            <span style={{ ...css.muted, fontWeight: 600, color: "var(--accent)" }}>
-              {L.orphanScanProgress}
-            </span>
-          )}
           {!busy && lastScanLabel && <span style={css.muted}>{lastScanLabel}</span>}
           <button
             style={{ ...css.btn, marginLeft: "auto", height: 36 }}
             disabled={busy}
             onClick={() => void scan()}
           >
-            {busy ? L.orphanScanning : L.orphanScan}
+            {L.orphanScan}
           </button>
         </div>
-        {busy && (
-          <div
-            className="remova-progress"
-            style={{ marginTop: 10, height: 6, borderRadius: 999 }}
-            aria-hidden
-          />
-        )}
+        <ScanProgressBar progress={progress} onCancel={cancel} />
       </div>
       {items && (
         <div

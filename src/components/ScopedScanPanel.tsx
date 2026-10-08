@@ -10,6 +10,8 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
 import { VirtualList } from "./ui/VirtualList";
+import { ScanProgressBar } from "./ScanProgressBar";
+import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import {
   buildCleanupRiskBits,
   defaultSelectable,
@@ -35,7 +37,7 @@ export function ScopedScanPanel({
 }: {
   title: string;
   hint: string;
-  scan: () => Promise<CleanupItem[]>;
+  scan: (scanId?: number) => Promise<CleanupItem[]>;
   cleanupSource: Extract<CleanupSourceId, "installer" | "toolcache">;
   appName: string;
   onClose: () => void;
@@ -47,13 +49,16 @@ export function ScopedScanPanel({
   const [items, setItems] = useState<CleanupItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { runItems, cancel, progress } = useAssociationScan();
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
   const runScan = useCallback(async (quiet = false) => {
     setBusy(true);
+    setItems(null);
+    setSelected(new Set());
     if (!quiet) toast.info(L.orphanScanProgress, { channel });
     try {
-      const list = await scan();
+      const list = await runItems(scan);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel });
@@ -62,13 +67,17 @@ export function ScopedScanPanel({
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel, ttl: 2500 });
       }
     } catch (e) {
+      if (scanCancelled(e)) {
+        if (!quiet) toast.info(L.scanCancelledIncomplete, { channel });
+        return;
+      }
       const msg = formatError(e, "analyze");
       onError(msg);
       toast.error(msg, { channel: quiet ? `${channel}-refresh` : channel });
     } finally {
       setBusy(false);
     }
-  }, [scan, L, onError, channel]);
+  }, [scan, runItems, L, onError, channel]);
 
   useEffect(() => {
     void runScan();
@@ -149,39 +158,7 @@ export function ScopedScanPanel({
           {summary.total} · {L.orphanSelectedMeta(selected.size, "")}
         </div>
       )}
-      {busy && items === null && (
-        <div
-          style={{
-            ...css.muted,
-            marginTop: 12,
-            padding: "18px 8px",
-            textAlign: "center" as const,
-            fontSize: 12.5,
-          }}
-          role="status"
-        >
-          {L.loadingApps}
-          <div
-            style={{
-              marginTop: 10,
-              height: 3,
-              borderRadius: 2,
-              background: "var(--surface-2)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: "40%",
-                height: "100%",
-                background: "var(--accent)",
-                borderRadius: 2,
-                animation: "remova-indeterminate 1.1s ease-in-out infinite",
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={items ?? []}
         height={320}
