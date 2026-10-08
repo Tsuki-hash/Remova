@@ -338,13 +338,6 @@ export function ScanLeftoversView({
         style={{
           ...css.scroll,
           position: "relative",
-          // The page (Shell main) is the outer scroller; without a bound this
-          // container grows with its content and, with `contain`, becomes a
-          // wheel dead zone. Cap it so long lists scroll here (and the
-          // virtualizer engages), and let wheel chaining reach the page when
-          // the inner list is at its end.
-          maxHeight: "60vh",
-          overscrollBehavior: "auto",
         }}
       >
         {isOrphan && displayItems.length > 0 && (
