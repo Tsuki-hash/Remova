@@ -210,7 +210,7 @@ fn walk_shortcuts(
     install_low: &str,
     items: &mut Vec<CleanupItem>,
 ) {
-    if depth > 3 {
+    if depth > 3 || crate::scan_task::cancelled() {
         return;
     }
     let Ok(rd) = dir.read_dir() else {

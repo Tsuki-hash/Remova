@@ -100,7 +100,7 @@ where
     F: Fn(&Path) -> std::io::Result<I>,
     I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
 {
-    if depth > MAX_WALK_DEPTH {
+    if depth > MAX_WALK_DEPTH || crate::scan_task::cancelled() {
         return None;
     }
     let mut total: u64 = 0;
