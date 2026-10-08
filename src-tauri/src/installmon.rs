@@ -92,6 +92,10 @@ fn walk_names(
     depth: usize,
     truncated: &mut bool,
 ) {
+    if crate::scan_task::cancelled() {
+        *truncated = true;
+        return;
+    }
     if *budget == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
         *truncated = true;
         return;
@@ -106,6 +110,10 @@ fn walk_names(
         }
     };
     for e in rd {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            *truncated = true;
+            return;
+        }
         let e = match e {
             Ok(e) => e,
             Err(_) => {
@@ -139,6 +147,10 @@ fn take_fs_snapshot() -> FsSnapshot {
     let mut truncated = false;
     let mut budget = walk_budget();
     for r in roots() {
+        if crate::scan_task::cancelled() {
+            truncated = true;
+            break;
+        }
         walk_names(&r, &mut files, &mut budget, 0, &mut truncated);
     }
     FsSnapshot { files, truncated }
@@ -173,11 +185,20 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
     ];
     keys.extend(crate::manage::run_key_paths());
     for k in keys {
+        if !crate::scan_task::checkpoint("registry", set.len()) {
+            return Err("scan:cancelled".into());
+        }
         let (subkeys, values) = crate::regscan::snapshot_names(&k)?;
         for sub in subkeys {
+            if crate::scan_task::cancelled() {
+                return Err("scan:cancelled".into());
+            }
             set.insert(format!("{k}\\{sub}").to_lowercase());
         }
         for v in values {
+            if crate::scan_task::cancelled() {
+                return Err("scan:cancelled".into());
+            }
             // Value paths must use the pipeline-wide `key|value` shape — the
             // cleanup pipeline, backup and restore all split on `|`, so a
             // monitored Run value written as `key::value` can never be deleted.
@@ -363,6 +384,27 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_snapshot_walk_never_reads_or_consumes_budget() {
+        let id = crate::scan_task::begin().unwrap();
+        let mut budget = 20;
+        let mut names = std::collections::BTreeSet::new();
+        let mut truncated = false;
+        let result = crate::scan_task::run(id, || {
+            crate::scan_task::cancel(id).unwrap();
+            super::walk_names(
+                std::path::Path::new("cancelled-monitor-unread"),
+                &mut names,
+                &mut budget,
+                0,
+                &mut truncated,
+            );
+            assert!(super::reg_value_names().is_err());
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
+        assert_eq!(budget, 20);
+        assert!(names.is_empty() && truncated);
+    }
     #[test]
     fn incomplete_registry_snapshots_never_arm_existing_items() {
         let _allow = crate::scan_allow::test_lock();
