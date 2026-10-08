@@ -34,6 +34,9 @@ export function HistoryPanel({
   onDelete,
   onClearAll,
   onClose,
+  loading,
+  loadError,
+  onReload,
 }: {
   history: HistoryRow[];
   histQ: string;
@@ -41,6 +44,9 @@ export function HistoryPanel({
   onDelete: (id: string) => void;
   onClearAll: () => void;
   onClose: () => void;
+  loading?: boolean;
+  loadError?: string | null;
+  onReload?: () => void;
 }) {
   const L = t();
   const q = histQ.trim().toLowerCase();
@@ -77,7 +83,7 @@ export function HistoryPanel({
         />
         <button
           style={{ ...css.btnGhost, height: 30, color: "var(--danger)" }}
-          disabled={history.length === 0}
+          disabled={loading || !!loadError || history.length === 0}
           onClick={onClearAll}
         >
           {L.clearHistory}
@@ -86,7 +92,11 @@ export function HistoryPanel({
           <CloseGlyph />
         </button>
       </div>
-      <VirtualList
+      {loading ? <p role="status" style={css.muted}>{L.loadingGeneric}</p>
+        : loadError ? <div role="alert" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
+          <span>{loadError}</span>
+          <button style={css.btnGhost} onClick={onReload}>{L.manageReload}</button>
+        </div> : <VirtualList
         items={units}
         height={280}
         estimateSize={72}
@@ -143,7 +153,7 @@ export function HistoryPanel({
             </div>
           )
         }
-      />
+      />}
     </div>
   );
 }

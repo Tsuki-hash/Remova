@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, cleanup } from "@testing-library/react";
+import { renderHook, act, cleanup, render, screen } from "@testing-library/react";
 import { useMoreHistory } from "../hooks/useMoreHistory";
+import { HistoryPanel } from "../components/HistoryPanel";
+import { setLang, t } from "../i18n";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -24,6 +26,41 @@ const { toast } = await import("../lib/toast");
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("useMoreHistory", () => {
+  it("ignores a closed or replaced history read", async () => {
+    let finish!: (rows: Awaited<ReturnType<typeof api.history>>) => void;
+    vi.mocked(api.history).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const error = vi.fn();
+    const { result } = renderHook(() => useMoreHistory(error));
+    let old!: Promise<void>;
+    act(() => { old = result.current.loadHistory(); });
+    expect(result.current.historyLoading).toBe(true);
+    act(() => result.current.closeHistory());
+    vi.mocked(api.history).mockRejectedValueOnce(new Error("current denied"));
+    await act(async () => { await result.current.loadHistory(); });
+    const currentError = result.current.historyLoadError;
+    await act(async () => { finish([]); await old; });
+    expect(result.current.historyLoadError).toBe(currentError);
+    expect(result.current.openHistory).toBe(false);
+    expect(result.current.historyLoading).toBe(false);
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it.each(["zh", "en"] as const)("separates loading, failed and empty history in %s", lang => {
+    setLang(lang);
+    const L = t();
+    const reload = vi.fn();
+    const props = { history: [], histQ: "", setHistQ: vi.fn(), onDelete: vi.fn(), onClearAll: vi.fn(), onClose: vi.fn(), onReload: reload };
+    const view = render(<HistoryPanel {...props} loading />);
+    expect(screen.getByRole("status").textContent).toBe(L.loadingGeneric);
+    expect(screen.queryByText(L.noHistory)).toBeNull();
+    view.rerender(<HistoryPanel {...props} loadError="read denied" />);
+    expect(screen.getByRole("alert").textContent).toContain("read denied");
+    expect(screen.queryByText(L.noHistory)).toBeNull();
+    act(() => screen.getByRole("button", { name: L.manageReload }).click());
+    expect(reload).toHaveBeenCalledOnce();
+    view.rerender(<HistoryPanel {...props} />);
+    expect(screen.getByText(L.noHistory)).toBeTruthy();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     (requestConfirm as ReturnType<typeof vi.fn>).mockResolvedValue(true);
