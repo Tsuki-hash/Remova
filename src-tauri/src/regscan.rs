@@ -72,6 +72,9 @@ fn collect_complete_names(
 ) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
     for index in 0..10_000 {
+        if crate::scan_task::cancelled() {
+            return Err("scan:cancelled".into());
+        }
         match read(index)? {
             Some(name) => names.push(name),
             None => return Ok(names),
@@ -121,6 +124,9 @@ pub fn target_exists(target: &str) -> Result<bool, String> {
 
 /// Monitor snapshots need explicit completeness and names of every value type.
 pub fn snapshot_names(key: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    if crate::scan_task::cancelled() {
+        return Err("scan:cancelled".into());
+    }
     #[cfg(not(windows))]
     {
         let _ = key;
@@ -583,6 +589,20 @@ pub fn read_string_default(key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod completeness_tests {
+    #[test]
+    fn cancellation_stops_before_the_next_registry_snapshot_read() {
+        let id = crate::scan_task::begin().unwrap();
+        let mut reads = 0;
+        let result = crate::scan_task::run(id, || {
+            super::collect_complete_names(|_| {
+                reads += 1;
+                crate::scan_task::cancel(id).unwrap();
+                Ok(Some("first".into()))
+            })
+        });
+        assert_eq!(reads, 1);
+        assert_eq!(result, Err("scan:cancelled".into()));
+    }
     #[test]
     fn late_enumeration_errors_and_caps_never_publish_partial_names() {
         assert!(super::collect_complete_names(|index| {
