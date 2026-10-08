@@ -11,6 +11,7 @@ import { useManageList, type ManageTabId } from "../lib/useManageList";
 import { looksMicrosoft } from "../lib/manageFilter";
 import type { ManageItem } from "../types";
 import { ScanProgressBar } from "./ScanProgressBar";
+import { useListViewportHeight } from "../hooks/useListViewportHeight";
 
 export type ManagePageTab = ManageTabId;
 
@@ -85,6 +86,7 @@ export function ManageListPage({
   const [onlyOn, setOnlyOn] = useState(true);
   const [hideMicrosoft, setHideMicrosoft] = useState(tab === "services");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  useListViewportHeight(scrollRef);
 
   const { items, busy, reload, cancel, progress } = useManageList(tab, onError);
 

@@ -11,6 +11,7 @@ import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
 import { ScanProgressBar } from "./ScanProgressBar";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { useListViewportHeight } from "../hooks/useListViewportHeight";
 import {
   groupByOrigin,
   summarizeLeftovers,
@@ -40,6 +41,8 @@ export function OrphanPage({
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const { runItems, cancel, progress } = useAssociationScan();
   const scanRound = useRef(0);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useListViewportHeight(scrollRef);
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
@@ -238,7 +241,7 @@ export function OrphanPage({
               </button>
             </div>
           )}
-          <div style={{ ...css.scroll, padding: 12 }}>
+          <div ref={scrollRef} style={{ ...css.scroll, padding: 12 }}>
             {items.length === 0 ? (
               <div style={css.muted}>{L.orphanScanEmpty}</div>
             ) : (
