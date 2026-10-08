@@ -108,6 +108,7 @@ export type SoftwarePageProps = {
   setCheckupOpen: (v: boolean) => void;
   checkupOrphanCount: number | null;
   checkupOrphanBusy: boolean;
+  checkupScanStatus?: ReactNode;
   checkupOrphanScan: () => void;
   onGoOrphans: () => void;
   batching: boolean;
@@ -212,6 +213,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         <CheckupPanel
           stats={p.checkup}
           orphanScanning={p.checkupOrphanBusy}
+          scanStatus={p.checkupScanStatus}
           orphanCount={p.checkupOrphanCount}
           onClose={() => p.setCheckupOpen(false)}
           onOrphanScan={p.checkupOrphanScan}

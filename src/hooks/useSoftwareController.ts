@@ -71,6 +71,7 @@ export type SoftwareControllerInput = {
   checkupOpen: boolean;
   checkupOrphanCount: number | null;
   checkupOrphanBusy: boolean;
+  checkupScanStatus?: ReactNode;
   batchIndex: number;
   batchTotal: number;
   batchCurrent: string;
@@ -210,6 +211,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         setCheckupOpen: shell.setCheckupOpen,
         checkupOrphanCount: input.checkupOrphanCount,
         checkupOrphanBusy: input.checkupOrphanBusy,
+        checkupScanStatus: input.checkupScanStatus,
         checkupOrphanScan: input.checkupOrphanScan,
         onGoOrphans: () => {
           shellActions.closeCheckup();
@@ -295,6 +297,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.checkupOpen,
       input.checkupOrphanCount,
       input.checkupOrphanBusy,
+      input.checkupScanStatus,
       input.batchIndex,
       input.batchTotal,
       input.batchCurrent,

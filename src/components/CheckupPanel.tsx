@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { useDialogFocus } from "../lib/useDialogFocus";
@@ -14,6 +14,7 @@ export type CheckupStats = {
 export function CheckupPanel({
   stats,
   orphanScanning,
+  scanStatus,
   orphanCount,
   onClose,
   onOrphanScan,
@@ -22,6 +23,7 @@ export function CheckupPanel({
   stats: CheckupStats;
   /** -08: orphan scan spinner is independent of the analyze spinner. */
   orphanScanning: boolean;
+  scanStatus?: ReactNode;
   orphanCount: number | null;
   onClose: () => void;
   onOrphanScan: () => void;
@@ -112,6 +114,7 @@ export function CheckupPanel({
             </div>
           ))}
         </div>
+        {scanStatus}
         {orphanCount !== null && orphanCount > 0 && (
           <div
             style={{

@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { MonitorPanel } from "../components/MonitorPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { CheckupPanel } from "../components/CheckupPanel";
+import { ScanProgressBar } from "../components/ScanProgressBar";
 import { ScanActionsBar } from "../components/ScanActionsBar";
 import { t, formatSize } from "../i18n";
 import type { CleanupItem } from "../types";
@@ -103,6 +104,20 @@ describe("HistoryPanel", () => {
 });
 
 describe("CheckupPanel", () => {
+  it("keeps cancellation inside the modal focus scope and distinguishes incomplete results", () => {
+    const cancel = vi.fn(async () => {});
+    const props = { stats: { total: 3, large: 1, recent: 0 }, orphanScanning: true,
+      orphanCount: null, onClose: vi.fn(), onOrphanScan: vi.fn(), onOpenOrphans: vi.fn() };
+    const view = render(<CheckupPanel {...props} scanStatus={<ScanProgressBar
+      progress={{ status: "running", stage: "files", found: 4 }} onCancel={cancel} />} />);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t().cancelScan }));
+    expect(cancel).toHaveBeenCalledOnce();
+    view.rerender(<CheckupPanel {...props} orphanScanning={false} scanStatus={<ScanProgressBar
+      progress={{ status: "cancelled", stage: "files", found: 4 }} onCancel={cancel} />} />);
+    expect(within(dialog).getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
+    expect(within(dialog).getByRole("button", { name: t().navOrphans }).hasAttribute("disabled")).toBe(true);
+  });
   it("shows stats and Escape closes", () => {
     const onClose = vi.fn();
     render(
