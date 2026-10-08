@@ -325,7 +325,7 @@ describe("App orchestration", () => {
     act(() => {
       software().onQuery("Demo");
       software().sortBy("name");
-      software().setUseOfficial(true);
+      software().setUseOfficial(false);
       software().setEvidence("shared");
       software().setAiRisk("high");
       software().setAiReportNote("old");
@@ -340,7 +340,7 @@ describe("App orchestration", () => {
  // Returning to the list keeps the drawer selection, but resets the preview.
     expect(software()).toMatchObject({ selected: demo, scan: null, report: null,
       q: "Demo", sortCol: "name", sortDesc: false,
-      useOfficial: false, residualFromUninstall: false, evidence: null, aiRisk: null,
+      useOfficial: true, residualFromUninstall: false, evidence: null, aiRisk: null,
       aiReportNote: null, kindFilter: null, riskFilter: null, showBatchSummary: false });
     expect(software().selectedPaths.size).toBe(0);
     await analyzeDemo();
@@ -371,14 +371,31 @@ describe("App orchestration", () => {
     expect(remove).toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
 
+  it("only skips official uninstall explicitly and resets the choice on a new scan", async () => {
+    saveRescanAfterUninstall(false);
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    await mount();
+    await analyzeDemo();
+    act(() => software().setUseOfficial(false));
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.fullCleanup).toHaveBeenCalled());
+    expect(native.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+      expect.objectContaining({ skip_official_uninstall: true }));
+    await waitFor(() => expect(software().dryRunning).toBe(false));
+    await analyzeDemo();
+    expect(software().useOfficial).toBe(true);
+  });
+
   it.each([true, false])("post-cleanup reanalysis follows preference %s", async (enabled) => {
     saveRescanAfterUninstall(enabled);
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     await mount();
     await analyzeDemo();
-    act(() => software().setUseOfficial(true));
+    expect(software().useOfficial).toBe(true);
     act(() => software().onCleanup());
     await waitFor(() => expect(native.fullCleanup).toHaveBeenCalled());
+    expect(native.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+      expect.objectContaining({ skip_official_uninstall: false }));
     await waitFor(() => expect(software().dryRunning).toBe(false));
     expect(native.analyze).toHaveBeenCalledTimes(enabled ? 2 : 1);
     expect(software().residualFromUninstall).toBe(false);

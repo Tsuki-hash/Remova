@@ -178,6 +178,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           scanning={p.scanning}
           dryRunning={p.dryRunning}
           residualFromUninstall={p.residualFromUninstall}
+          canRunOfficial={p.selected?.source !== "Monitor" && p.selected?.source !== "Orphan"}
           useOfficial={p.useOfficial}
           aiEnabled={p.aiEnabled}
           aiBusy={p.aiBusy}

@@ -10,6 +10,7 @@ export function ScanActionsBar({
   scanning,
   dryRunning,
   residualFromUninstall,
+  canRunOfficial = true,
   useOfficial,
   aiEnabled,
   aiBusy,
@@ -27,6 +28,7 @@ export function ScanActionsBar({
   scanning: boolean;
   dryRunning: boolean;
   residualFromUninstall: boolean;
+  canRunOfficial?: boolean;
   useOfficial: boolean;
   aiEnabled: boolean;
   aiBusy: boolean;
@@ -81,19 +83,10 @@ export function ScanActionsBar({
         </div>
         {scanning && <div className="remova-progress" aria-hidden />}
         <div className="scan-actions-secondary">
-          {!residualFromUninstall && (
-            <label
-              className="scan-actions-official"
-              title={L.batchOfficialHint}
-            >
-              <input
-                type="checkbox"
-                checked={useOfficial}
-                onChange={(e) => onUseOfficial(e.target.checked)}
-                style={{ accentColor: "var(--accent)" }}
-              />
-              {L.useOfficial}
-            </label>
+          {!residualFromUninstall && canRunOfficial && (
+            <span className="scan-actions-caption" style={{ color: useOfficial ? undefined : "var(--warn-ink)" }}>
+              {useOfficial ? L.officialFirstHint : L.skipOfficialHint}
+            </span>
           )}
           {!scanning && plan.count === 0 && (
             <span className="scan-actions-caption">{L.footerSelected(0)}</span>
@@ -124,6 +117,22 @@ export function ScanActionsBar({
               <span>{L.cleanupPlanOther(plan.registry, plan.path)}</span>
               <span>{L.cleanupPlanBackup}</span>
               <span>{L.cleanupPlanEstimate}</span>
+              {!residualFromUninstall && canRunOfficial && (
+                <details>
+                  <summary style={{ cursor: "pointer" }}>{L.cleanupAdvanced}</summary>
+                  <label className="scan-actions-official" title={L.skipOfficialHint}>
+                    <input
+                      type="checkbox"
+                      checked={!useOfficial}
+                      disabled={busy || dryRunning || scanning}
+                      onChange={(e) => onUseOfficial(!e.target.checked)}
+                      style={{ accentColor: "var(--accent)" }}
+                    />
+                    {L.skipOfficial}
+                  </label>
+                  <div>{L.skipOfficialHint}</div>
+                </details>
+              )}
               <span id="cleanup-plan-check-hint">{L.dryRunHint}</span>
               <button
                 style={{ ...css.btnGhost, justifySelf: "start" }}

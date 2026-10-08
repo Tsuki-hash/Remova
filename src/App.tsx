@@ -451,7 +451,6 @@ export default function App() {
   const closePreview = useCallback(() => {
     currentReport.current = null;
     coreClosePreview();
-    coreActions.setUseOfficial(false);
     residualActions.setResidualFromUninstall(false);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
@@ -467,7 +466,6 @@ export default function App() {
     aiActions,
     scanUi,
     coreClosePreview,
-    coreActions,
     setEvidence,
     setShowBatchSummary,
   ]);

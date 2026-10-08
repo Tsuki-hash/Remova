@@ -61,7 +61,7 @@ export function initialAppCoreState(): AppCoreState {
     scanning: false,
     report: null,
     lastReport: null,
-    useOfficial: false,
+    useOfficial: true,
     admin: null,
     disk: "",
     uninstallingKey: null,
@@ -112,6 +112,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
       return {
         ...state,
         scan: action.value,
+        useOfficial: true,
         scanTarget: action.value && target ? { ...target } : null,
       };
     }
@@ -142,6 +143,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
     case "preview/close":
       return {
         ...state,
+        useOfficial: true,
         scan: null,
         scanTarget: null,
         report: null,
