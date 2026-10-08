@@ -140,8 +140,8 @@ export const api = {
   estimateDirSizeKb: (path: string) =>
     invoke<{ kb: number; capped: boolean }>("estimate_dir_size_kb", { path }),
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
-  beginInstallMonitor: () => invoke("begin_install_monitor"),
-  endInstallMonitor: () => invoke<MonitorEndResult>("end_install_monitor"),
+  beginInstallMonitor: (scanId?: number) => invoke<void>("begin_install_monitor", { scanId }),
+  endInstallMonitor: (scanId?: number) => invoke<MonitorEndResult>("end_install_monitor", { scanId }),
   setStartupEnabled: (location: string, enabled: boolean) =>
     invoke("set_startup_enabled", { location, enabled }),
   setServiceStartDisabled: (name: string, disable: boolean) =>

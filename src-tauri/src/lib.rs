@@ -659,17 +659,23 @@ async fn verify_cleanup_leftovers(
 }
 
 #[tauri::command]
-async fn begin_install_monitor() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(installmon::begin)
-        .await
-        .map_err(|e| e.to_string())?
+async fn begin_install_monitor(scan_id: Option<u32>) -> Result<(), String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "monitor", installmon::begin).and_then(|result| result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn end_install_monitor() -> Result<installmon::MonitorEndResult, String> {
-    tauri::async_runtime::spawn_blocking(installmon::end)
-        .await
-        .map_err(|e| e.to_string())?
+async fn end_install_monitor(scan_id: Option<u32>) -> Result<installmon::MonitorEndResult, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "monitor", installmon::end).and_then(|result| result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
