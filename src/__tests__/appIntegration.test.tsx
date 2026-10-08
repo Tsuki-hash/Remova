@@ -30,6 +30,9 @@ const pages = vi.hoisted(() => ({
 
 vi.mock("../lib/api", () => ({ api: {
   ...native,
+  beginAssociationScan: vi.fn(async () => 1),
+  cancelAssociationScan: vi.fn(async () => {}),
+  associationScanProgress: vi.fn(async () => null),
   isElevated: vi.fn().mockResolvedValue(false),
   getAiConfig: vi.fn().mockResolvedValue({ enabled: false }),
   loadIgnore: vi.fn().mockResolvedValue({ publishers: [], names: [] }),
@@ -202,7 +205,7 @@ describe("App orchestration", () => {
     act(() => native.drag!({ payload: { type: "drop", paths: ["C:\\Apps"] } }));
     expect(native.analyze).not.toHaveBeenCalled();
     act(() => native.drag!({ payload: { type: "drop", paths: [`${adjacent.install_location}/app.exe`] } }));
-    await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent));
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, 1));
   });
 
   it("applies saved AI state and removed ignore rules immediately across pages", async () => {
@@ -302,14 +305,14 @@ describe("App orchestration", () => {
     act(() => detail().onDrillDown?.("registry"));
     expect(software().scanning).toBe(true);
     act(() => { software().listAnalyze(other); detail().onDrillDown?.("registry"); });
-    expect(native.analyze).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(1));
     await act(async () => { finish(scan); });
     expect(software().kindFilter).toBeNull();
     act(() => detail().onDrillDown?.("registry"));
     expect(software().kindFilter).toBe("registry");
     act(() => software().selectApp(other));
     act(() => detail().onDrillDown?.("programFiles"));
-    await waitFor(() => expect(native.analyze).toHaveBeenLastCalledWith(other));
+    await waitFor(() => expect(native.analyze).toHaveBeenLastCalledWith(other, 1));
     act(() => detail().onClose());
     expect(software().selected).toBeNull();
     expect(screen.queryByTestId("detail")).toBeNull();
@@ -443,7 +446,7 @@ describe("App orchestration", () => {
     native.takePendingAnalyze.mockResolvedValueOnce("C:\\Apps\\Demo\\app.exe");
     await mount();
     await waitFor(() => expect(software().scan).toEqual(scan));
-    expect(native.analyze).toHaveBeenCalledWith(demo);
+    expect(native.analyze).toHaveBeenCalledWith(demo, 1);
     await waitFor(() => expect(native.drag).toBeTruthy());
     act(() => native.drag!({ payload: { type: "drop", paths: ["C:\\Apps\\Demo"] } }));
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));

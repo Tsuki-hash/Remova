@@ -11,6 +11,7 @@ import { appKey } from "../lib/appKey";
 import { loadRescanAfterUninstall, saveRescanAfterUninstall } from "../lib/rescanPref";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
+import { useAssociationScan, scanCancelled } from "./useAssociationScan";
 
 /** Grouped setters for the analyze/uninstall flow (A-4: fewer flat parameters). */
 export type AnalyzeFlowSetters = {
@@ -57,6 +58,7 @@ export function useAnalyzeFlow({
     setEvidence,
   } = flow;
   const analyzeSeqRef = useRef(0);
+  const { run: runScan, cancel: cancelScan, progress: scanProgress } = useAssociationScan();
   const analyzingRef = useRef(false);
   /** -11: stage idle timers must be cleared on unmount / replacement. */
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,6 +69,7 @@ export function useAnalyzeFlow({
     }
   }, []);
   useEffect(() => clearStageTimer, [clearStageTimer]);
+  useEffect(() => () => { analyzeSeqRef.current++; }, []);
   const analyze = useCallback(
     async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
  // single in-flight ref (was dual scanningRef/analyzingRef).
@@ -78,6 +81,8 @@ export function useAnalyzeFlow({
       setSelected(app);
       setScanning(true);
       setScan(null);
+      setSelectedPaths(new Set());
+      setError(null);
       setReport(null);
       setAiNotes({});
       setAiRisk(null);
@@ -86,7 +91,7 @@ export function useAnalyzeFlow({
       setEvidence(null);
       const t0 = performance.now();
       try {
-        const r = await api.analyze(app);
+        const r = await runScan(app);
         if (seq !== analyzeSeqRef.current) return;
         setScan(r, app);
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
@@ -107,6 +112,12 @@ export function useAnalyzeFlow({
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return;
         setResidualFromUninstall(false);
+        if (scanCancelled(e)) {
+          setSelectedPaths(new Set());
+          setError(null);
+          toast.info(t().scanCancelledIncomplete, { channel: "analyze-flow" });
+          return;
+        }
         setError(formatError(e, "analyze"));
         toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
       } finally {
@@ -129,6 +140,7 @@ export function useAnalyzeFlow({
       setEvidence,
       setError,
       setResidualFromUninstall,
+      runScan,
     ],
   );
 
@@ -304,6 +316,8 @@ const openOfficialOnly = useCallback(
 
   return {
     analyze,
+    cancelScan,
+    scanProgress,
     startUninstall,
     openDeepFromDrawer,
     openOfficialOnly,

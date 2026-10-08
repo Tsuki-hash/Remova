@@ -9,7 +9,9 @@ const { analyzeMock, suggestMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/api", () => ({
-  api: { analyze: analyzeMock, suggestIgnoreRules: suggestMock },
+  api: { analyze: analyzeMock, suggestIgnoreRules: suggestMock,
+    beginAssociationScan: vi.fn(async () => 1), cancelAssociationScan: vi.fn(async () => {}),
+    associationScanProgress: vi.fn(async () => null) },
 }));
 
 import { useAnalyzeFlow } from "../hooks/useAnalyzeFlow";
@@ -107,10 +109,10 @@ describe("useAnalyzeFlow request sequencing", () => {
     const scanA = scan("AppA");
     const scanB = scan("AppB");
 
-    act(() => {
+    await act(async () => {
       void result.current.analyze(app("AppA"));
     });
-    act(() => {
+    await act(async () => {
       void result.current.analyze(app("AppB"));
     });
     expect(captured.scanning).toBe(true);
@@ -172,5 +174,20 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(captured.scan?.app_name).toBe("AppB");
     expect(captured.selectedPaths).toEqual(new Set([scan("AppB").items[0]?.path]));
     expect(captured.scanning).toBe(false);
+  });
+  it("clears old selection and never publishes a cancelled scan", async () => {
+    let finish!: (scan: ScanResult) => void;
+    analyzeMock.mockImplementationOnce(() => new Promise<ScanResult>(r => { finish = r; }));
+    captured.selectedPaths.add("old-authorized-path");
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    let work!: Promise<void>;
+    await act(async () => { work = result.current.analyze(app("AppA")); });
+    expect(captured.selectedPaths.size).toBe(0);
+    await act(async () => { await result.current.cancelScan(); finish(scan("AppA")); await work; });
+    expect(captured.scan).toBeNull();
+    expect(captured.selectedPaths.size).toBe(0);
+    expect(captured.scanning).toBe(false);
+    expect(result.current.scanProgress?.status).toBe("cancelled");
   });
 });
