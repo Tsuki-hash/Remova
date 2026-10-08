@@ -17,6 +17,7 @@ import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
 import { useCleanupHandlers } from "./hooks/useCleanupHandlers";
 import { useAnalyzeFlow } from "./hooks/useAnalyzeFlow";
+import { ScanProgressBar } from "./components/ScanProgressBar";
 import { useAppBoot, checkUpdateNow } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useShellState } from "./hooks/useShellState";
@@ -294,6 +295,8 @@ export default function App() {
 
   const {
     analyze,
+    cancelScan,
+    scanProgress,
     startUninstall,
     openDeepFromDrawer,
     openOfficialOnly,
@@ -734,9 +737,10 @@ export default function App() {
             />
           )}
           {nav === "software" && (
-            <SoftwarePage
-              {...softwareProps}
-            />
+            <>
+              <ScanProgressBar progress={scanProgress} onCancel={cancelScan} />
+              <SoftwarePage {...softwareProps} />
+            </>
           )}
         </Suspense>
       </Shell>
