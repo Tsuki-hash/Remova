@@ -37,8 +37,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
     return () => { current = false; };
   }, [restorePick, openRestore, previewTick]);
 
-  const loadRestore = useCallback(async () => {
+  const loadRestore = useCallback(async (requestedName?: string) => {
     if (operation.current) return;
+    operation.current = true;
+    ++previewSequence.current;
     setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
@@ -47,12 +49,18 @@ export function useMoreRestore(onError: (msg: string) => void) {
     try {
       const list = await api.backupSessions();
       setSessions(list);
-      if (list[0]) setRestorePick(list[0].name);
       setOpenRestore(true);
+      if (requestedName && !list.some(session => session.name === requestedName)) {
+        setRestoreLoadError(t().restoreSessionMissing);
+        onError(t().restoreSessionMissing);
+        return;
+      }
+      setRestorePick(requestedName ?? list[0]?.name ?? "");
     } catch (e) {
       setRestoreLoadError(formatError(e));
       onError(formatError(e));
     } finally {
+      operation.current = false;
       setRestoreLoading(false);
     }
   }, [onError]);

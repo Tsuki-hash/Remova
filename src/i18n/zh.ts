@@ -131,6 +131,7 @@ export const dict = {
     reportLocateUnavailable: "此项无法在资源管理器定位，请查看完整目标。",
     reportItemDetails: "查看原始诊断",
     reportOtherResults: "其他结果",
+    restoreSessionMissing: "本次备份会话已不存在或不可用；未切换到其他备份。",
     reportShowMore: (n: number) => `继续查看（剩余 ${n} 项）`,
     reportNextDelayed: "部分项目等待重启后删除；请在重启后重新扫描核对。",
     batchCancel: "取消批量",
