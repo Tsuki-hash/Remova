@@ -5,7 +5,8 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
-import { cleanupProgress, gateReasonText } from "../lib/decision";
+import { cleanupProgress } from "../lib/decision";
+import { CleanupResultDetails } from "./CleanupResultDetails";
 import { backendText } from "../lib/backendText";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
@@ -244,17 +245,7 @@ export function ReportPanel({
           </div>
         </div>
       )}
-      {report.item_details.length > 0 && (
-        <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8, color: "var(--muted)" }}>
-          {report.item_details.slice(0, 50).map((d, i) => (
-            <div key={i} className="ell" title={d.path}>
-              [{d.status}] {d.path}
-              {d.message ? ` — ${gateReasonText(d.message, L)}` : ""}
-            </div>
-          ))}
-          {report.item_details.length > 50 && <div>… +{report.item_details.length - 50}</div>}
-        </div>
-      )}
+      {!!report.item_details.length && <CleanupResultDetails key={JSON.stringify(report.item_details)} items={report.item_details} />}
       {"uninstall_message" in report && report.uninstall_message && (
         <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
       )}
