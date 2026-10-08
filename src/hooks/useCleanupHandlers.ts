@@ -67,6 +67,8 @@ export function useCleanupHandlers({
   busyRef: { current: boolean };
 }) {
   const selected = scan && scanTarget && scanMatchesApp(scan, scanTarget) ? scanTarget : null;
+  const runOfficial = !!selected && useOfficial && !residualFromUninstall &&
+    selected.source !== "Monitor" && selected.source !== "Orphan";
   const {
     setMulti,
     setResidualFromUninstall,
@@ -215,12 +217,8 @@ export function useCleanupHandlers({
       const r = await api.fullCleanup(selected, items, {
         dry_run: false,
  // Residual cleanup after official uninstall never re-runs official uninstaller.
- // Deep-analyze path may still opt in via the checkbox.
-        skip_official_uninstall:
-          residualFromUninstall ||
-          !useOfficial ||
-          selected.source === "Monitor" ||
-          selected.source === "Orphan",
+ // Normal analysis runs official uninstall unless advanced direct cleanup is selected.
+        skip_official_uninstall: !runOfficial,
         backup_enabled: backupEnabledRef.current,
         cleanup_source:
           selected.source === "Monitor"
@@ -273,8 +271,7 @@ export function useCleanupHandlers({
     selected,
     selectedPaths,
     refreshApps,
-    residualFromUninstall,
-    useOfficial,
+    runOfficial,
     L,
     onAfterCleanup,
     setReport,
@@ -306,7 +303,7 @@ export function useCleanupHandlers({
     }
     let message = `${L.riskTierPrefix(riskTierLabel(maxRiskOf(picked), L))}\n${L.cleanupConfirmOptionalBackup(
       n,
-      residualFromUninstall || useOfficial,
+      runOfficial,
     )}`;
  // Never truncate: high-risk must stay visible.
     message = `${message}${formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle)}`;
@@ -363,7 +360,7 @@ export function useCleanupHandlers({
     selected,
     selectedPaths,
     residualFromUninstall,
-    useOfficial,
+    runOfficial,
     aiEnabled,
     aiRisk,
     L,

@@ -137,6 +137,37 @@ describe("CheckupPanel", () => {
 });
 
 describe("ScanActionsBar", () => {
+  it.each(["zh", "en"] as const)("puts direct cleanup behind advanced options with an explicit warning (%s)", (lang) => {
+    setLang(lang);
+    try {
+      const onUseOfficial = vi.fn();
+      const props = { ...baseProps, useOfficial: true, selectedPaths: new Set<string>(), onUseOfficial };
+      const view = render(<ScanActionsBar {...props} />);
+      expect(screen.getByText(t().officialFirstHint)).toBeTruthy();
+      const skip = screen.getByLabelText<HTMLInputElement>(t().skipOfficial);
+      expect(skip.checked).toBe(false);
+      expect(skip.closest("details")!.open).toBe(false);
+      expect(skip.closest("details")!.textContent).toContain(t().skipOfficialHint);
+      fireEvent.click(skip);
+      expect(onUseOfficial).toHaveBeenLastCalledWith(false);
+      view.rerender(<ScanActionsBar {...props} useOfficial={false} />);
+      expect(skip.checked).toBe(true);
+      expect(view.container.querySelector(".scan-actions-secondary")!.textContent).toContain(t().skipOfficialHint);
+      fireEvent.click(skip);
+      expect(onUseOfficial).toHaveBeenLastCalledWith(true);
+      for (const state of [{ busy: true }, { dryRunning: true }, { scanning: true }]) {
+        view.rerender(<ScanActionsBar {...props} {...state} />);
+        expect(skip.disabled).toBe(true);
+      }
+      for (const state of [{ residualFromUninstall: true }, { canRunOfficial: false }]) {
+        view.rerender(<ScanActionsBar {...props} {...state} />);
+        expect(screen.queryByLabelText(t().skipOfficial)).toBeNull();
+        expect(screen.queryByText(t().officialFirstHint)).toBeNull();
+      }
+    } finally {
+      setLang("zh");
+    }
+  });
   it.each(["zh", "en"] as const)("keeps plan checks in the disclosure and preserves busy guards (%s)", (lang) => {
     setLang(lang);
     try {
