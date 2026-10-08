@@ -7,6 +7,7 @@ import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { cleanupProgress } from "../lib/decision";
 import { CleanupResultDetails } from "./CleanupResultDetails";
+import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
@@ -30,6 +31,8 @@ export function ReportPanel({
   onRegenerate,
 }: Props) {
   const L = t();
+  const backupSession = "backup_dir" in report && !report.dry_run && !report.aborted && report.backup_dir
+    ? report.backup_dir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   return (
     <div
       style={{
@@ -49,7 +52,7 @@ export function ReportPanel({
         </button>
       </div>
       {"backup_dir" in report &&
-        (report.backup_dir ? (
+        (backupSession ? (
           <div
             style={{
               marginTop: 8,
@@ -69,7 +72,7 @@ export function ReportPanel({
           >
             <Deco ch="✓" /> {L.safetyVaultBanner}
           </div>
-        ) : !report.dry_run ? (
+        ) : !report.dry_run && !report.backup_dir ? (
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
             {L.noBackupThisRun}
           </div>
@@ -196,6 +199,10 @@ export function ReportPanel({
             {L.openBackupDir}
           </button>
         )}
+        {backupSession && <button style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
+          aria-label={`${L.restorePreviewTitle}: ${backupSession}`} onClick={() => requestBackupSession(backupSession)}>
+          {L.restorePreviewTitle}
+        </button>}
         {aiEnabled && "deleted" in report && (
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}

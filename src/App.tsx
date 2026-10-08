@@ -1,4 +1,5 @@
 import { api } from "./lib/api";
+import { useBackupSessionRequest } from "./lib/backupSessionNavigation";
 import type { CleanupReport, FullCleanupReport, InstalledApp } from "./types";
 import { loadLang, t } from "./i18n";
 import { cssStyles as css } from "./styles";
@@ -58,6 +59,7 @@ const OrphanPage = lazy(() =>
 declare const __APP_VERSION__: string;
 
 export default function App() {
+  const requestedBackup = useBackupSessionRequest();
   const core = useAppCoreState();
   const {
     apps,
@@ -118,6 +120,9 @@ export default function App() {
     [shellActions],
   );
   const goNav = shellActions.goNav;
+  useEffect(() => {
+    if (requestedBackup) goNav("more");
+  }, [requestedBackup, goNav]);
 
  // stable action bags for the software controller — the whole `core`/`shell` objects
  // change identity on every unrelated state update and would defeat SoftwarePage's memo.
