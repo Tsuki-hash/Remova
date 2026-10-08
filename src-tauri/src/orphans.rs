@@ -285,9 +285,11 @@ fn normalize_orphan_key(path: &str) -> String {
 }
 
 fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
-    if let Ok(mut g) = orphan_paths().lock() {
-        *g = paths.iter().map(|p| normalize_orphan_key(p)).collect();
-    }
+    crate::scan_task::publish(|| {
+        if let Ok(mut g) = orphan_paths().lock() {
+            *g = paths.iter().map(|p| normalize_orphan_key(p)).collect();
+        }
+    });
 }
 
 /// True when `path` came from the most recent orphan scan in this process.

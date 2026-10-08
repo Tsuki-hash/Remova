@@ -12,12 +12,18 @@ pub struct Progress {
 }
 
 struct Task {
+    id: u32,
+    scope: Option<&'static str>,
     cancelled: AtomicBool,
     started: bool,
     progress: Mutex<Progress>,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
+fn latest() -> &'static Mutex<BTreeMap<&'static str, u32>> {
+    static LATEST: OnceLock<Mutex<BTreeMap<&'static str, u32>>> = OnceLock::new();
+    LATEST.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
 fn tasks() -> &'static Mutex<BTreeMap<u32, Arc<Task>>> {
     static TASKS: OnceLock<Mutex<BTreeMap<u32, Arc<Task>>>> = OnceLock::new();
     TASKS.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -37,6 +43,8 @@ pub fn begin() -> Result<u32, String> {
     tasks.insert(
         id,
         Arc::new(Task {
+            id,
+            scope: None,
             cancelled: AtomicBool::new(false),
             started: false,
             progress: Mutex::new(Progress {
@@ -64,6 +72,59 @@ pub fn progress(id: u32) -> Option<Progress> {
     tasks.get(&id)?.progress.lock().ok().map(|p| p.clone())
 }
 
+/// New scans supersede only their own source. IDs also reject out-of-order workers.
+pub fn run_scoped<T>(id: u32, scope: &'static str, work: impl FnOnce() -> T) -> Result<T, String> {
+    {
+        let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
+        let mut latest = latest().lock().map_err(|_| "scan:state")?;
+        if latest.get(scope).is_some_and(|previous| *previous > id) {
+            tasks.remove(&id);
+            return Err("scan:cancelled".into());
+        }
+        let task = tasks.get_mut(&id).ok_or("scan:cancelled")?;
+        Arc::get_mut(task).ok_or("scan:busy")?.scope = Some(scope);
+        tasks.retain(|other, task| {
+            if *other < id && task.scope == Some(scope) {
+                task.cancelled.store(true, Ordering::SeqCst);
+                task.started
+            } else {
+                true
+            }
+        });
+        latest.insert(scope, id);
+    }
+    run(id, work)
+}
+
+/// Publish a scan allow-list atomically with cancellation/supersession checks.
+/// Unmanaged callers retain their existing behavior; no new paths are authorized.
+pub fn publish(work: impl FnOnce()) {
+    CURRENT.with(|current| {
+        let current = current.borrow();
+        let Some(task) = current.as_ref() else {
+            work();
+            return;
+        };
+        let Ok(_tasks) = tasks().lock() else {
+            task.cancelled.store(true, Ordering::SeqCst);
+            return;
+        };
+        let Ok(latest) = latest().lock() else {
+            task.cancelled.store(true, Ordering::SeqCst);
+            return;
+        };
+        if task.cancelled.load(Ordering::SeqCst)
+            || task
+                .scope
+                .is_some_and(|scope| latest.get(scope) != Some(&task.id))
+        {
+            task.cancelled.store(true, Ordering::SeqCst);
+            return;
+        }
+        work();
+    });
+}
+
 /// A task can be claimed once. Pending cancellation also rejects a late worker.
 pub fn run<T>(id: u32, work: impl FnOnce() -> T) -> Result<T, String> {
     let task = {
@@ -87,6 +148,9 @@ pub fn run<T>(id: u32, work: impl FnOnce() -> T) -> Result<T, String> {
         }
     }
     let _guard = Guard(id);
+    if task.cancelled.load(Ordering::SeqCst) {
+        return Err("scan:cancelled".into());
+    }
     let result = work();
     if task.cancelled.load(Ordering::SeqCst) {
         Err("scan:cancelled".into())
@@ -120,6 +184,43 @@ pub fn checkpoint(stage: &str, found: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_scan_cannot_publish_authorization() {
+        let id = begin().unwrap();
+        let result = run(id, || {
+            cancel(id).unwrap();
+            publish(|| panic!("published partial scan"));
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
+    }
+
+    #[test]
+    fn newer_scope_scan_blocks_older_publication_but_other_scopes_stay_valid() {
+        let old = begin().unwrap();
+        let result = run_scoped(old, "test-scoped-publication", || {
+            std::thread::spawn(|| {
+                let new = begin().unwrap();
+                run_scoped(new, "test-scoped-publication", || {
+                    let mut published = false;
+                    publish(|| published = true);
+                    assert!(published);
+                })
+                .unwrap();
+            })
+            .join()
+            .unwrap();
+            publish(|| panic!("late old scan overwrote authorization"));
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
+        let other = begin().unwrap();
+        run_scoped(other, "test-independent-scope", || {
+            let mut published = false;
+            publish(|| published = true);
+            assert!(published);
+        })
+        .unwrap();
+    }
 
     #[test]
     fn pending_cancel_rejects_late_worker_without_running_it() {
