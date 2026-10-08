@@ -2,7 +2,7 @@
 // render the real App and domain hooks, substituting page surfaces
 // and native IO. Assert observable state and API calls across the App boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import type { ComponentProps } from "react";
 import type { SoftwarePage } from "../components/SoftwarePage";
@@ -448,6 +448,27 @@ describe("App orchestration", () => {
     await act(async () => { await more().onIgnorePublisher(); });
  // Synthetic monitor app has no publisher, so ignore is a no-op.
     expect(native.ignorePublisher).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps monitor session state truthful after cancelled capture, active=%s", async active => {
+    await mount();
+    await nav("more");
+    if (active) {
+      act(() => more().onToggleMonitor());
+      await waitFor(() => expect(more().monitoring).toBe(true));
+    }
+    const capture = active ? native.endInstallMonitor : native.beginInstallMonitor;
+    let finish!: (result: unknown) => void;
+    capture.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    act(() => more().onToggleMonitor());
+    await waitFor(() => expect(capture).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().cancelScan }));
+    await act(async () => { finish(active ? { diff: { added_files: ["late-path"], added_reg_values: [] }, items: scan.items } : undefined); });
+    expect(await within(screen.getByRole("main")).findByRole("status"))
+      .toHaveProperty("textContent", i18n.t().monitorScanCancelled(active));
+    expect(more().monitoring).toBe(active);
+    expect(more().monitorDiff).toBeNull();
+    expect(native.fullCleanup).not.toHaveBeenCalled();
   });
 
   it("routes a backup preview request to More without starting a cleanup", async () => {

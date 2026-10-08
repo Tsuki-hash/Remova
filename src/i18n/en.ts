@@ -280,6 +280,10 @@ export const dict: EnDict = {
     uninstallRunning: "Official uninstall in progress",
     monitorStarting: "Creating pre-install snapshot…",
     monitorFinishing: "Building the install change set…",
+    monitorScanCancelled: (active: boolean) => active
+      ? "Snapshot scan cancelled; results are incomplete. Tracking continues. Retry finishing when ready."
+      : "Snapshot scan cancelled; results are incomplete. Tracking has not started. Start again.",
+    monitorScanFailed: "Snapshot scan incomplete. Check the error and start tracking again.",
     monitorDiff: "Install changes",
     monitorNoSnap: "Start install tracking first",
     monitorEmpty: "No install changes yet",

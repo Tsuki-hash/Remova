@@ -339,6 +339,8 @@ export default function App() {
     checkupOrphanBusy,
     checkupScanProgress,
     cancelCheckupScan,
+    monitorScanProgress,
+    cancelMonitorScan,
     elevate,
     openPathSafe,
     doIgnorePublisher,
@@ -367,6 +369,7 @@ export default function App() {
     },
     setCheckupOrphanCount: shell.setCheckupOrphanCount,
   });
+  const monitorSnapshotBusy = monitorScanProgress?.status === "running" || monitorScanProgress?.status === "stopping";
 
   const { runAiExplain, runAiReport } = useAiScanNarrative({
     scan,
@@ -652,11 +655,11 @@ export default function App() {
           <ShellFooter
             updateInfo={updateInfo}
             busyRef={busyRef}
-            updateBlocked={monitoring || scanning || !!uninstallingKey}
+            updateBlocked={monitoring || monitorSnapshotBusy || scanning || !!uninstallingKey}
             updateBlockedReason={
               monitoring
                 ? L.monitorRunning
-                : scanning
+                : monitorSnapshotBusy || scanning
                   ? L.scanInProgress
                   : uninstallingKey
                     ? L.uninstallRunning
@@ -695,6 +698,8 @@ export default function App() {
         )}
         {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
           <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
+        <ScanProgressBar progress={monitorScanProgress} onCancel={cancelMonitorScan} title={L.monitorInstall}
+          cancelledLabel={L.monitorScanCancelled(monitoring)} failedLabel={L.monitorScanFailed} />
         <Suspense
           fallback={
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>
