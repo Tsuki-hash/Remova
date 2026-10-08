@@ -4,7 +4,7 @@ import { cssStyles as css } from "../styles";
 import { summarizeCleanupPlan } from "../lib/cleanupPlan";
 import "./ScanActionsBar.css";
 
-/** Scan action bar: back / title+totals / dry-run / cleanup CTA / scope details / AI. */
+/** Scan action bar: back / title+totals / cleanup CTA / scope details / AI. */
 export function ScanActionsBar({
   scan,
   scanning,
@@ -68,9 +68,6 @@ export function ScanActionsBar({
                 <strong>{L.conclusionSpace(formatSize(plan.knownKb))}</strong>
               </div>
             )}
-            <button style={{ ...css.btnGhost, height: 38 }} className="scan-actions-preview" disabled={busy || dryRunning || plan.count === 0} onClick={onDryRun}>
-              {L.dryRun}
-            </button>
             <button
               style={{ ...css.btn, height: 38, background: "var(--danger-text)", color: "var(--surface)" }}
               className="scan-actions-cleanup"
@@ -127,6 +124,15 @@ export function ScanActionsBar({
               <span>{L.cleanupPlanOther(plan.registry, plan.path)}</span>
               <span>{L.cleanupPlanBackup}</span>
               <span>{L.cleanupPlanEstimate}</span>
+              <span id="cleanup-plan-check-hint">{L.dryRunHint}</span>
+              <button
+                style={{ ...css.btnGhost, justifySelf: "start" }}
+                disabled={busy || dryRunning || plan.count === 0}
+                onClick={onDryRun}
+                aria-describedby="cleanup-plan-check-hint"
+              >
+                {L.dryRun}
+              </button>
             </div>
           </details>
           {aiEnabled ? (
