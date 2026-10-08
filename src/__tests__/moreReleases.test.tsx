@@ -6,9 +6,13 @@ import { MorePage } from "../components/MorePage";
 import { api } from "../lib/api";
 import { RELEASES_URL } from "../lib/updateCheck";
 import { t } from "../i18n";
+import { requestBackupSession } from "../lib/backupSessionNavigation";
 
 vi.mock("../lib/api", () => ({
-  api: { openPath: vi.fn().mockResolvedValue(undefined) },
+  api: { openPath: vi.fn().mockResolvedValue(undefined),
+    backupSessions: vi.fn().mockResolvedValue([{ name: "newest", size_kb: 1, created_at: "2" }, { name: "requested", size_kb: 1, created_at: "1" }]),
+    previewRestore: vi.fn(async (name: string) => ({ name, files: 0, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] })),
+    restoreSessionByName: vi.fn() },
 }));
 
 afterEach(cleanup);
@@ -34,4 +38,8 @@ it("opens the Releases page from the help section header", async () => {
   );
   fireEvent.click(await screen.findByRole("button", { name: t().openReleases }));
   await waitFor(() => expect(api.openPath).toHaveBeenCalledWith(RELEASES_URL));
+  requestBackupSession("requested");
+  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledWith("requested"));
+  expect(api.previewRestore).not.toHaveBeenCalledWith("newest");
+  expect(api.restoreSessionByName).not.toHaveBeenCalled();
 });

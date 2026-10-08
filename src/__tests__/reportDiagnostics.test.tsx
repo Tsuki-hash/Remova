@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { setLang, t } from "../i18n";
 import { ReportPanel } from "../components/ReportPanel";
 import { SoftwareToolbar } from "../components/SoftwareToolbar";
@@ -10,6 +10,7 @@ import { groupByOrigin } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport } from "../types";
 import { CleanupResultDetails } from "../components/CleanupResultDetails";
 import { api } from "../lib/api";
+import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
@@ -73,10 +74,25 @@ it.each(["zh", "en"] as const)("offers backup restoration only for a completed b
     const view = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
       aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
     const hasRestoration = !!report.backup_dir && !report.aborted && !report.dry_run && !report.failed;
+    expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` }) !== null)
+      .toBe(!!report.backup_dir && !report.aborted && !report.dry_run);
     expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration);
     if (!report.backup_dir && !report.dry_run) expect(screen.getByText(t().noBackupThisRun)).toBeTruthy();
     view.unmount();
   }
+});
+
+it("publishes the exact cleanup backup identity without executing restore", () => {
+  const store = renderHook(useBackupSessionRequest);
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "C:\\Backups\\123_sample",
+    uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: `${t().restorePreviewTitle}: 123_sample` }));
+  expect(store.result.current?.name).toBe("123_sample");
+  act(() => clearBackupSessionRequest(store.result.current!.id));
+  expect(store.result.current).toBeNull();
 });
 it.each(["zh", "en"] as const)("keeps raw diagnostics in technical details while localizing the visible report in %s", lang => {
   setLang(lang);

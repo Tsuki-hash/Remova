@@ -1,4 +1,6 @@
 import { t } from "../i18n";
+import { useEffect, useRef } from "react";
+import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
 import { MonitorPanel } from "./MonitorPanel";
@@ -60,6 +62,16 @@ export function MorePage({
   const tools = useMoreTools({ selected, onGoSoftware });
   const hist = useMoreHistory(onError);
   const rest = useMoreRestore(onError);
+  const requestedBackup = useBackupSessionRequest();
+  const handledBackup = useRef(0);
+  const { loadRestore } = rest;
+  const { setOpenTool } = tools;
+  useEffect(() => {
+    if (!requestedBackup || handledBackup.current === requestedBackup.id) return;
+    handledBackup.current = requestedBackup.id;
+    setOpenTool("restore");
+    void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
+  }, [requestedBackup, loadRestore, setOpenTool]);
   const openTool = tools.openTool;
 
   const common: ToolItem[] = [
