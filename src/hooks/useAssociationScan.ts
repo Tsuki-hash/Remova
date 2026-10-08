@@ -32,7 +32,7 @@ export function useAssociationScan() {
     await stop(job);
   }, [stop]);
 
-  const run = useCallback(async (app: InstalledApp) => {
+  const runReadOnly = useCallback(async <T,>(work: (id: number) => Promise<T>, count: (result: T) => number) => {
     if (active.current) void stop(active.current).catch(() => {});
     const job: Job = { cancelled: false };
     active.current = job;
@@ -48,16 +48,16 @@ export function useAssociationScan() {
         if (active.current === job && !job.cancelled) job.timer = setTimeout(() => void poll(), 250);
       };
       void poll();
-      const result = await api.analyze(app, job.id);
+      const result = await work(job.id);
       if (job.cancelled || active.current !== job) throw new Error("scan:cancelled");
-      setProgress({ status: "complete", stage: "finalizing", found: result.items.length });
+      setProgress({ status: "complete", stage: "finalizing", found: count(result) });
       return result;
     } catch (error) {
+      const cancelled = job.cancelled || active.current !== job || scanCancelled(error);
       if (active.current === job) {
-        const cancelled = job.cancelled || scanCancelled(error);
         setProgress(p => p && { ...p, status: cancelled ? "cancelled" : "failed" });
-        if (cancelled) throw new Error("scan:cancelled", { cause: error });
       }
+      if (cancelled) throw new Error("scan:cancelled", { cause: error });
       throw error;
     } finally {
       clearTimeout(job.timer);
@@ -66,5 +66,9 @@ export function useAssociationScan() {
       if (job.id !== undefined) void api.cancelAssociationScan(job.id).catch(() => {});
     }
   }, [stop]);
-  return { run, cancel, progress };
+  const run = useCallback((app: InstalledApp) =>
+    runReadOnly(id => api.analyze(app, id), result => result.items.length), [runReadOnly]);
+  const runItems = useCallback(<T,>(work: (id: number) => Promise<T[]>) =>
+    runReadOnly(work, result => result.length), [runReadOnly]);
+  return { run, runItems, cancel, progress };
 }
