@@ -126,6 +126,7 @@ export function DiskRadarPanel({
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy}
             onClick={() => void load(undefined, drive)}
+            title={busy ? L.radarScanning : undefined}
           >
             {L.manageReload}
           </button>
@@ -134,7 +135,6 @@ export function DiskRadarPanel({
           </button>
         </div>
       </div>
-      {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.radarScanning}</div>}
       <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={rows ?? []}
