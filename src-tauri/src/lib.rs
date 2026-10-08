@@ -568,13 +568,21 @@ async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<Vec<scanner::Clea
 
 /// Idle software radar (read-only ranking).
 #[tauri::command]
-async fn rank_idle_apps() -> Result<Vec<idle::IdleApp>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let installed = apps::scan_installed_apps();
-        idle::rank_idle_apps(&installed)
+async fn rank_idle_apps(scan_id: Option<u32>) -> Result<Vec<idle::IdleApp>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "idle", || {
+            scan_task::checkpoint("registry", 0);
+            let mut installed = apps::scan_installed_inventory();
+            if scan_task::cancelled() {
+                return Vec::new();
+            }
+            apps::filter_visible_apps(&mut installed, &ignore::load());
+            idle::rank_idle_apps(&installed)
+        })
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 /// Installer packages + updater caches (scoped delete allow-list).
@@ -609,24 +617,35 @@ async fn list_local_drives() -> Result<Vec<diskradar::DriveInfo>, String> {
 
 /// Disk radar: top directories for one drive (system drive → well-known roots).
 #[tauri::command]
-async fn list_top_dir_sizes(drive: Option<String>) -> Result<Vec<diskradar::DirSizeRow>, String> {
+async fn list_top_dir_sizes(
+    drive: Option<String>,
+    scan_id: Option<u32>,
+) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         let letter = drive
             .as_deref()
             .and_then(|s| s.trim().chars().next())
             .filter(|c| c.is_ascii_alphabetic());
-        diskradar::top_dir_sizes_for_drive(letter)
+        scan_task::run_scoped(id, "disk", || diskradar::top_dir_sizes_for_drive(letter))
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 /// Disk radar drill-down: immediate children of a directory (read-only).
 #[tauri::command]
-async fn list_dir_children(path: String) -> Result<Vec<diskradar::DirSizeRow>, String> {
-    tauri::async_runtime::spawn_blocking(move || diskradar::list_dir_children(&path))
-        .await
-        .map_err(|e| e.to_string())?
+async fn list_dir_children(
+    path: String,
+    scan_id: Option<u32>,
+) -> Result<Vec<diskradar::DirSizeRow>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "disk", || diskradar::list_dir_children(&path))
+            .and_then(|result| result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// SOP §7: re-check selected paths after cleanup (checklist evidence).

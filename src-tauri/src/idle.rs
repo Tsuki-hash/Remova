@@ -115,6 +115,9 @@ fn size_kb_of(app: &InstalledApp) -> (i64, bool) {
 pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
     let mut out: Vec<IdleApp> = Vec::new();
     for app in installed {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
         if app.name.trim().is_empty() {
             continue;
         }
@@ -148,6 +151,9 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
             continue;
         }
         let (size_kb, capped) = size_kb_of(app);
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         if capped {
             evidence.push(IdleEvidence {
                 code: "idle_size_partial".into(),
