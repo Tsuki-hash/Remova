@@ -28,10 +28,13 @@ describe("update slot vs read-only commands", () => {
     for (const command of ["preview_restore_session", "list_installed_apps", "list_local_drives", "list_top_dir_sizes", "list_dir_children", "rank_idle_apps", "app_icon_data", "estimate_dir_size_kb", "list_startup_items", "list_services", "list_scheduled_tasks", "verify_cleanup_leftovers"]) {
       await expect(trackNativeCall(async () => "apps", command)).resolves.toBe("apps");
     }
-    for (const command of ["scan_orphan_leftovers", "take_pending_analyze"]) {
+    for (const command of ["scan_orphan_leftovers", "take_pending_analyze", "analyze_associations", "begin_association_scan"]) {
       await expect(trackNativeCall(async () => 1, command)).rejects.toThrow(UPDATE_BUSY);
     }
     await expect(trackNativeCall(async () => 1, "delete_cleanup_history")).rejects.toThrow(UPDATE_BUSY);
+    for (const command of ["cancel_association_scan", "association_scan_progress"]) {
+      await expect(trackNativeCall(async () => 1, command)).resolves.toBe(1);
+    }
     await expect(trackNativeCall(async () => 1)).rejects.toThrow(UPDATE_BUSY);
     release?.();
     await expect(trackNativeCall(async () => 1, "delete_cleanup_history")).resolves.toBe(1);

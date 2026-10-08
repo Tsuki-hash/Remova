@@ -336,18 +336,42 @@ mod open_path_url_tests {
 }
 
 #[tauri::command]
-async fn analyze_associations(app: InstalledApp) -> Result<ScanResult, String> {
+fn begin_association_scan() -> Result<u32, String> {
+    scan_task::begin()
+}
+
+#[tauri::command]
+fn cancel_association_scan(scan_id: u32) -> Result<(), String> {
+    scan_task::cancel(scan_id)
+}
+
+#[tauri::command]
+fn association_scan_progress(scan_id: u32) -> Option<scan_task::Progress> {
+    scan_task::progress(scan_id)
+}
+
+#[tauri::command]
+async fn analyze_associations(
+    app: InstalledApp,
+    scan_id: Option<u32>,
+) -> Result<ScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        scanner::analyze_associations(
-            &app.name,
-            &app.install_location,
-            &app.publisher,
-            &app.registry_key,
-            &app.source,
-        )
+        let work = || {
+            scanner::analyze_associations(
+                &app.name,
+                &app.install_location,
+                &app.publisher,
+                &app.registry_key,
+                &app.source,
+            )
+        };
+        match scan_id {
+            Some(id) => scan_task::run(id, work),
+            None => Ok(work()),
+        }
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -716,6 +740,9 @@ pub fn run() {
             commands::update::check_github_latest,
             commands::update::online_update_supported,
             analyze_associations,
+            begin_association_scan,
+            cancel_association_scan,
+            association_scan_progress,
             run_cleanup_dry_run,
             run_full_cleanup,
             run_official_uninstall,
