@@ -236,13 +236,18 @@ it("refreshes conflict counts before confirmation and locks duplicate restore re
 it("shows restore target conflicts and missing entries while rejecting stale or failed previews", () => {
   const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000" }],
     pick: "older-backup", setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
-  const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, unavailable: 1,
-    entries: [{ target: "existing-file", status: "existing" as const }, { target: "missing-file", status: "missing" as const }] };
+  const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, unavailable: 2,
+    entries: [{ target: "available-file", status: "available" as const }, { target: "existing-file", status: "existing" as const },
+      { target: "missing-file", status: "missing" as const }, { target: "blocked-file", status: "blocked" as const }] };
   const view = render(<RestorePanel {...props} preview={preview} />);
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(false);
   expect(screen.getByText(t().restoreConflict(1))).toBeTruthy();
   expect(screen.getByText(t().restoreTargetMissing)).toBeTruthy();
-  expect(screen.getByText(t().restorePreviewLimited(2, 201))).toBeTruthy();
+  expect(screen.getByText(t().restorePreviewLimited(4, 201))).toBeTruthy();
+  expect(screen.getByText(t().restoreUnavailable(2))).toBeTruthy();
+  expect(screen.getByText(t().restoreTargets).closest("details")?.open).toBe(true);
+  expect(screen.getAllByRole("listitem").map(row => row.firstElementChild?.textContent))
+    .toEqual(["missing-file", "blocked-file", "existing-file", "available-file"]);
   view.rerender(<RestorePanel {...props} preview={{ ...preview, name: "other" }} />);
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText("existing-file")).toBeNull();

@@ -2,7 +2,8 @@
 // render the real App and domain hooks, substituting page surfaces
 // and native IO. Assert observable state and API calls across the App boundary.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import type { ComponentProps } from "react";
 import type { SoftwarePage } from "../components/SoftwarePage";
 import type { MorePage } from "../components/MorePage";
@@ -439,6 +440,19 @@ describe("App orchestration", () => {
     await act(async () => { await more().onIgnorePublisher(); });
  // Synthetic monitor app has no publisher, so ignore is a no-op.
     expect(native.ignorePublisher).not.toHaveBeenCalled();
+  });
+
+  it("routes a backup preview request to More without starting a cleanup", async () => {
+    const store = renderHook(useBackupSessionRequest);
+    await mount();
+    act(() => requestBackupSession("123_sample"));
+    try {
+      await waitFor(() => expect(screen.getByTestId("more")).toBeTruthy());
+      expect(store.result.current?.name).toBe("123_sample");
+      expect(native.fullCleanup).not.toHaveBeenCalled();
+    } finally {
+      act(() => clearBackupSessionRequest(store.result.current!.id));
+    }
   });
 
   it("hands pending analyze and native drag-drop into the App scan flow", async () => {
