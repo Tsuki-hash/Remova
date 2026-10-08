@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
@@ -10,14 +10,28 @@ export function useMoreHistory(onError: (msg: string) => void) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [histQ, setHistQ] = useState("");
   const [openHistory, setOpenHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
+  useEffect(() => () => { ++loadSequence.current; }, []);
 
   const loadHistory = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    setHistory([]);
+    setHistoryLoading(true);
+    setHistoryLoadError(null);
     try {
       const h = await api.history();
+      if (sequence !== loadSequence.current) return;
       setHistory(h);
       setOpenHistory(true);
     } catch (e) {
-      onError(formatError(e));
+      if (sequence !== loadSequence.current) return;
+      const message = formatError(e);
+      setHistoryLoadError(message);
+      onError(message);
+    } finally {
+      if (sequence === loadSequence.current) setHistoryLoading(false);
     }
   }, [onError]);
 
@@ -82,10 +96,16 @@ export function useMoreHistory(onError: (msg: string) => void) {
     }
   }, [onError]);
 
-  const closeHistory = useCallback(() => setOpenHistory(false), []);
+  const closeHistory = useCallback(() => {
+    ++loadSequence.current;
+    setOpenHistory(false);
+    setHistoryLoading(false);
+  }, []);
 
   return {
     history,
+    historyLoading,
+    historyLoadError,
     histQ,
     setHistQ,
     openHistory,

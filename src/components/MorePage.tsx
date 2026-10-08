@@ -201,6 +201,9 @@ export function MorePage({
       {openTool === "history" && (
         <HistoryPanel
           history={hist.history}
+          loading={hist.historyLoading}
+          loadError={hist.historyLoadError}
+          onReload={() => void hist.loadHistory()}
           histQ={hist.histQ}
           setHistQ={hist.setHistQ}
           onDelete={(id) => void hist.deleteHistory(id)}
