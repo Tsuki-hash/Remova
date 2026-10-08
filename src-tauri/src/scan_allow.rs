@@ -41,12 +41,14 @@ fn scoped_key(scope: AllowScope, path: &str) -> String {
 
 /// Replace the allow-list for `scope` with the latest scan results.
 pub fn remember(scope: AllowScope, paths: &HashSet<String>) {
-    if let Ok(mut g) = maps().lock() {
-        g.retain(|k| !k.starts_with(&format!("{}\0", scope.key())));
-        for p in paths {
-            g.insert(scoped_key(scope, p));
+    crate::scan_task::publish(|| {
+        if let Ok(mut g) = maps().lock() {
+            g.retain(|k| !k.starts_with(&format!("{}\0", scope.key())));
+            for p in paths {
+                g.insert(scoped_key(scope, p));
+            }
         }
-    }
+    });
 }
 
 /// True when `path` was returned by the latest scan for `scope`.
