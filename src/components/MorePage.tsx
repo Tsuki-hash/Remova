@@ -75,6 +75,13 @@ export function MorePage({
     void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
   }, [requestedBackup, loadRestore, setOpenTool]);
   const openTool = tools.openTool;
+  const panelRef = useRef<HTMLDivElement>(null);
+  const hasMonitorDiff = Boolean(monitorDiff);
+  useEffect(() => {
+    if (!openTool && !hasMonitorDiff) return;
+    panelRef.current?.scrollIntoView?.({ block: "start" });
+    panelRef.current?.focus({ preventScroll: true });
+  }, [openTool, hasMonitorDiff]);
 
   const common: ToolItem[] = [
     {
@@ -190,6 +197,7 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
+      <div ref={panelRef} tabIndex={-1} style={{ outline: "none" }}>
       {openTool === "history" && (
         <HistoryPanel
           history={hist.history}
@@ -282,6 +290,7 @@ export function MorePage({
  // diff exists), where clearing openTool alone could not dismiss it.
         />
       )}
+      </div>
       <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
         {common.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} />
