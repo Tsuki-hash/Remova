@@ -8,6 +8,8 @@ import { ScanLeftoversView } from "../components/ScanLeftoversView";
 import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
 import { groupByOrigin } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport } from "../types";
+import { CleanupResultDetails } from "../components/CleanupResultDetails";
+import { api } from "../lib/api";
 vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
@@ -97,11 +99,37 @@ it.each(["zh", "en"] as const)("keeps raw diagnostics in technical details while
   expect(screen.getByText(L.restorePointFail).style.color).toBe("var(--warn-ink)");
   expect(screen.getByText(L.backendUninstallExit("1603"))).toBeTruthy();
   expect(container.textContent).toContain(L.backendDetailUnavailable);
-  const details = container.querySelector("details")!;
+  const details = screen.getByText(L.backendTechnicalDetails).closest("details")!;
   expect(details.open).toBe(false);
   expect(details.textContent).toContain(report.uninstall_message);
   expect(details.textContent).toContain("native <error>");
   expect(container.querySelector("error")).toBeNull();
+});
+
+it.each(["zh", "en"] as const)("groups results, exposes tail failures and reports location errors safely in %s", async lang => {
+  setLang(lang);
+  const open = vi.spyOn(api, "openPath").mockRejectedValue("open_path:not_found");
+  const path = "C:\\Fixture\\long-name.txt";
+  const items = Array.from({ length: 51 }, (_, n) => ({ path: n === 50 ? path : `C:\\Fixture\\${n}.txt`,
+    kind: "file", status: "failed", message: n === 50 ? "Access is denied. (os error 5)" : "os error 32" }));
+  items.push({ path: "HKCU\\Software\\Fixture", kind: "registry", status: "failed", message: "protected path" });
+  items.push({ path: "https://example.test/unsafe", kind: "file", status: "failed", message: "os error 5" });
+  items.push({ path: "C:\\Fixture\\pending", kind: "file", status: "delayed", message: "reboot delete" });
+  render(<CleanupResultDetails items={items} />);
+  expect(screen.getByText(`${t().reportFailed} · 53`).closest("details")?.open).toBe(true);
+  expect(screen.getByText(`${t().reportPendingReboot} · 1`).closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: t().reportShowMore(3) }));
+  expect(screen.getByText(path)).toBeTruthy();
+  const missing = screen.getByRole("button", { name: `${t().openLocation}: ${path}` });
+  fireEvent.click(missing);
+  expect((await screen.findByRole("alert")).textContent).toContain(t().errOpenPathMissing);
+  expect(open).toHaveBeenCalledWith(path);
+  for (const target of ["HKCU\\Software\\Fixture", "https://example.test/unsafe"]) {
+    expect(screen.getByRole("button", { name: `${t().openLocation}: ${target}` }).hasAttribute("disabled")).toBe(true);
+  }
+  expect(screen.getAllByText(t().reportFileBusy).length).toBe(50);
+  expect(screen.getAllByText(t().reportPermissionDenied).length).toBe(2);
+  open.mockRestore();
 });
 
 it.each(["zh", "en"] as const)("names evidence buttons by action and path in %s", lang => {
