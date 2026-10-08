@@ -10,6 +10,7 @@ import { toast } from "../lib/toast";
 import { useManageList, type ManageTabId } from "../lib/useManageList";
 import { looksMicrosoft } from "../lib/manageFilter";
 import type { ManageItem } from "../types";
+import { ScanProgressBar } from "./ScanProgressBar";
 
 export type ManagePageTab = ManageTabId;
 
@@ -85,7 +86,7 @@ export function ManageListPage({
   const [hideMicrosoft, setHideMicrosoft] = useState(tab === "services");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const { items, busy, reload } = useManageList(tab, onError);
+  const { items, busy, reload, cancel, progress } = useManageList(tab, onError);
 
   useEffect(() => {
     setHideMicrosoft(tab === "services");
@@ -257,14 +258,14 @@ export function ManageListPage({
       >
         {tab === "startup" ? L.startupHint : tab === "services" ? L.servicesHint : L.tasksHint}
       </div>
+      <div title={busy ? L.loadingManage : undefined}>
+        <ScanProgressBar progress={progress} onCancel={cancel} />
+      </div>
       <div
         ref={scrollRef}
         style={{ ...css.scroll, padding: "4px 8px", position: "relative" }}
       >
-        {busy && items.length === 0 && (
-          <div style={{ ...css.muted, padding: 16 }}>{L.loadingManage}</div>
-        )}
-        {!busy && rows.length === 0 && (
+        {!busy && rows.length === 0 && (!progress || progress.status === "complete") && (
           <div style={{ ...css.muted, padding: 28, textAlign: "center" as const }}>
             {q.trim() || onlyOn || hideMicrosoft ? L.emptySearch : L.emptyList}
           </div>
