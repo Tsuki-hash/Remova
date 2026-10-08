@@ -71,6 +71,7 @@ export function useAppChrome({
   /** -08: orphan checkup scan has its own spinner (never the analyze spinner). */
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const checkupScan = useAssociationScan();
+  const monitorScan = useAssociationScan();
   const checkupBusyRef = useRef(false);
   const monitorBusyRef = useRef(false);
 
@@ -135,17 +136,19 @@ export function useAppChrome({
  // then dump a pile of toasts — one run at a time, one toast channel.
     if (monitorBusyRef.current) return;
     monitorBusyRef.current = true;
+    residual.setMonitorDiff(null);
+    if (selected?.source === "Monitor") { flow.setScan(null); residual.clearSelection(); }
     const MON_CH = "install-monitor";
     try {
       if (!monitoring) {
         toast.info(L.monitorStarting, { channel: MON_CH });
-        await api.beginInstallMonitor();
+        await monitorScan.runReadOnly(api.beginInstallMonitor, () => 0);
         residual.setMonitoring(true);
         residual.setMonitorDiff(null);
         toast.success(L.monitorRunning, { channel: MON_CH, ttl: 3000 });
       } else {
         toast.info(L.monitorFinishing, { channel: MON_CH });
-        const result = await api.endInstallMonitor();
+        const result = await monitorScan.runReadOnly(api.endInstallMonitor, result => result.diff.added_files.length + result.diff.added_reg_values.length);
         residual.setMonitoring(false);
         residual.setMonitorDiff({ ...result.diff, items: result.items });
         toast.success(
@@ -157,13 +160,18 @@ export function useAppChrome({
         );
       }
     } catch (e) {
+      if (scanCancelled(e)) {
+        residual.setMonitoring(monitoring);
+        toast.info(L.monitorScanCancelled(monitoring), { channel: MON_CH });
+        return;
+      }
       flow.setError(formatError(e));
       toast.error(formatError(e), { channel: MON_CH });
       residual.setMonitoring(false);
     } finally {
       monitorBusyRef.current = false;
     }
-  }, [monitoring, L, residual, flow]);
+  }, [monitoring, L, residual, flow, selected, monitorScan.runReadOnly]);
 
   const monitorDiffToCleanup = useCallback(
     (_diff: { added_files: string[]; added_reg_values: string[] }) => {
@@ -224,6 +232,8 @@ export function useAppChrome({
     checkupOrphanBusy,
     checkupScanProgress: checkupScan.progress,
     cancelCheckupScan: checkupScan.cancel,
+    monitorScanProgress: monitorScan.progress,
+    cancelMonitorScan: monitorScan.cancel,
     elevate,
     openPathSafe,
     doIgnorePublisher,

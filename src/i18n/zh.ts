@@ -267,6 +267,10 @@ export const dict = {
     uninstallRunning: "官方卸载进行中",
     monitorStarting: "正在建立安装前快照…",
     monitorFinishing: "正在生成安装变更对比…",
+    monitorScanCancelled: (active: boolean) => active
+      ? "快照扫描已取消，结果不完整。追踪仍在继续，可重新结束追踪。"
+      : "快照扫描已取消，结果不完整，尚未开始追踪。请重新开始。",
+    monitorScanFailed: "快照扫描未完成，请检查错误并重新开始追踪。",
     monitorDiff: "安装变更",
     monitorNoSnap: "请先开始安装追踪",
     monitorEmpty: "暂无安装变更",
