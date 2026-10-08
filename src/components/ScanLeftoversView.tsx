@@ -225,6 +225,7 @@ export function ScanLeftoversView({
 }: Props) {
   const L = t();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [onlySelected, setOnlySelected] = useState(false);
   const isOrphan = scan.app_name === orphanLabel;
   const originGroups = useMemo(
     () => (isOrphan ? groupByOrigin(scan.items) : []),
@@ -241,7 +242,7 @@ export function ScanLeftoversView({
         : baseItems,
     [isOrphan, kindFilter, filterApp, baseItems],
   );
-  const displayItems = useMemo(
+  const riskItems = useMemo(
     () =>
       !riskFilter
         ? bucketItems
@@ -250,6 +251,10 @@ export function ScanLeftoversView({
           ),
     [riskFilter, bucketItems],
   );
+  const displayItems = useMemo(() => onlySelected ? riskItems.filter(item => selectedPaths.has(item.path)) : riskItems,
+    [onlySelected, riskItems, selectedPaths]);
+  const selectedCount = scan.items.filter(item => selectedPaths.has(item.path)).length;
+  const hiddenSelected = selectedCount - displayItems.filter(item => selectedPaths.has(item.path)).length;
   const filterLabel = useMemo(() => {
     if (!kindFilter) return null;
     const key = linkedBucketLabelKey(kindFilter);
@@ -305,6 +310,11 @@ export function ScanLeftoversView({
         onShowConfirm={onShowConfirm}
         onShowKeep={onShowKeep}
       />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "8px 14px", fontSize: 12 }}>
+        <span style={{ ...css.muted, flex: "1 1 240px" }}>{L.scanSelectionScope(displayItems.length, selectedCount, hiddenSelected)}</span>
+        <button style={{ ...css.btnGhost, height: 28 }} disabled={scanning} aria-pressed={onlySelected}
+          title={L.onlySelectedHint} onClick={() => setOnlySelected(value => !value)}>{L.onlySelected}</button>
+      </div>
       {!isOrphan && kindFilter && filterLabel && (
         <div
           style={{
@@ -337,10 +347,10 @@ export function ScanLeftoversView({
           overscrollBehavior: "auto",
         }}
       >
-        {isOrphan && originGroups.length > 0 && (
+        {isOrphan && displayItems.length > 0 && (
           <div style={{ padding: "10px 14px 0" }}>
             <OrphanOriginGroups
-              groups={originGroups}
+              groups={groupByOrigin(displayItems)}
               selectedPaths={selectedPaths}
               onToggle={onTogglePath}
             />
@@ -367,7 +377,9 @@ export function ScanLeftoversView({
           <Deco ch="ⓘ" />
         </div>
         {displayItems.length === 0 ? (
-          <div style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>{L.leftoversNone}</div>
+          <div role="status" style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>
+            {onlySelected ? L.selectedFilterEmpty : baseItems.length ? L.leftoverFilterEmpty : L.leftoversNone}
+          </div>
         ) : (
           <div
             ref={listRef}
