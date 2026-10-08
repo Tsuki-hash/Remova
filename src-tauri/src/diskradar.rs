@@ -132,6 +132,9 @@ fn shallow_size_kb(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> 
 }
 
 fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
+    if crate::scan_task::cancelled() {
+        return (0, true);
+    }
     if crate::fsutil::is_reparse_point(root) {
         return (0, false);
     }
@@ -144,6 +147,9 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
         return (0, true);
     };
     for ent in rd {
+        if crate::scan_task::cancelled() {
+            return (bytes, true);
+        }
         let Ok(ent) = ent else {
             capped = true;
             continue;
@@ -175,6 +181,9 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
 
 fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
     let mut rows = Vec::new();
+    if !crate::scan_task::checkpoint("sizes", 0) {
+        return rows;
+    }
     if crate::fsutil::is_reparse_point(parent) {
         return rows;
     }
@@ -182,6 +191,9 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
         return rows;
     };
     for ent in rd.flatten() {
+        if !crate::scan_task::checkpoint("sizes", rows.len()) {
+            return rows;
+        }
         let p = ent.path();
         if !p.is_dir() || crate::fsutil::is_reparse_point(&p) {
             continue;
@@ -207,6 +219,9 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
 
 /// Top directories: system drive well-known roots, or one local drive's `X:\` children.
 pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
+    if crate::scan_task::cancelled() {
+        return Vec::new();
+    }
     let sys = system_drive_letter()
         .chars()
         .next()
@@ -216,6 +231,9 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
     let mut out = Vec::new();
     if letter == sys {
         for root in system_drive_roots() {
+            if crate::scan_task::cancelled() {
+                return out;
+            }
             if root.exists() {
                 let mut rows = child_rows(&root);
                 out.append(&mut rows);
@@ -313,6 +331,21 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cancelled_radar_walk_keeps_budget_and_rejects_partial_results() {
+        let id = crate::scan_task::begin().unwrap();
+        let mut budget = 20;
+        let result = crate::scan_task::run(id, || {
+            crate::scan_task::cancel(id).unwrap();
+            super::shallow_size_bytes(
+                std::path::Path::new("cancelled-radar-unread"),
+                3,
+                &mut budget,
+            )
+        });
+        assert_eq!(budget, 20);
+        assert_eq!(result, Err("scan:cancelled".into()));
+    }
     #[test]
     fn failed_directory_read_marks_radar_size_as_a_lower_bound() {
         let root = std::env::temp_dir().join(format!("remova-radar-io-{}", std::process::id()));

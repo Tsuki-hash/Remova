@@ -86,13 +86,13 @@ export const api = {
   verifyLeftovers: (items: CleanupItem[]) =>
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
   orphanScan: (scanId?: number) => invoke<CleanupItem[]>("scan_orphan_leftovers", { scanId }),
-  rankIdleApps: () => invoke<IdleApp[]>("rank_idle_apps"),
+  rankIdleApps: (scanId?: number) => invoke<IdleApp[]>("rank_idle_apps", { scanId }),
   scanInstallerCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_installer_caches", { scanId }),
   scanToolCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_tool_caches", { scanId }),
   listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
-  listTopDirSizes: (drive?: string) =>
-    invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null }),
-  listDirChildren: (path: string) => invoke<DirSizeRow[]>("list_dir_children", { path }),
+  listTopDirSizes: (drive?: string, scanId?: number) =>
+    invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null, scanId }),
+  listDirChildren: (path: string, scanId?: number) => invoke<DirSizeRow[]>("list_dir_children", { path, scanId }),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: (approved = false) => invoke("elevate_restart", { approved }),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),
