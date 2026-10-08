@@ -85,10 +85,10 @@ export const api = {
     invoke<OfficialUninstallResult>("run_official_uninstall", { app }),
   verifyLeftovers: (items: CleanupItem[]) =>
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
-  orphanScan: () => invoke<CleanupItem[]>("scan_orphan_leftovers"),
+  orphanScan: (scanId?: number) => invoke<CleanupItem[]>("scan_orphan_leftovers", { scanId }),
   rankIdleApps: () => invoke<IdleApp[]>("rank_idle_apps"),
-  scanInstallerCaches: () => invoke<CleanupItem[]>("scan_installer_caches"),
-  scanToolCaches: () => invoke<CleanupItem[]>("scan_tool_caches"),
+  scanInstallerCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_installer_caches", { scanId }),
+  scanToolCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_tool_caches", { scanId }),
   listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
   listTopDirSizes: (drive?: string) =>
     invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null }),
