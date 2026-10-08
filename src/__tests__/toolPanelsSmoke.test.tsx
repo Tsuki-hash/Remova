@@ -7,7 +7,7 @@ import { HistoryPanel } from "../components/HistoryPanel";
 import { CheckupPanel } from "../components/CheckupPanel";
 import { ScanProgressBar } from "../components/ScanProgressBar";
 import { ScanActionsBar } from "../components/ScanActionsBar";
-import { t, formatSize } from "../i18n";
+import { t, formatSize, setLang } from "../i18n";
 import type { CleanupItem } from "../types";
 
 afterEach(cleanup);
@@ -137,6 +137,32 @@ describe("CheckupPanel", () => {
 });
 
 describe("ScanActionsBar", () => {
+  it.each(["zh", "en"] as const)("keeps plan checks in the disclosure and preserves busy guards (%s)", (lang) => {
+    setLang(lang);
+    try {
+      const item: CleanupItem = { path: "fixture", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
+      const onDryRun = vi.fn();
+      const props = { ...baseProps, scan: { ...baseScan, items: [item] }, selectedPaths: new Set([item.path]), onDryRun };
+      const view = render(<ScanActionsBar {...props} />);
+      const disclosure = screen.getByText(t().cleanupPlanDetails).closest("details")!;
+      expect(disclosure.open).toBe(false);
+      fireEvent.click(screen.getByText(t().cleanupPlanDetails));
+      const check = screen.getByRole("button", { name: t().dryRun });
+      expect(disclosure.contains(check)).toBe(true);
+      expect(view.container.querySelector(".scan-actions-primary")!.contains(check)).toBe(false);
+      expect(screen.getByText(t().dryRunHint).id).toBe(check.getAttribute("aria-describedby"));
+      fireEvent.click(check);
+      expect(onDryRun).toHaveBeenCalledOnce();
+      for (const state of [{ busy: true }, { dryRunning: true }, { selectedPaths: new Set<string>() }]) {
+        view.rerender(<ScanActionsBar {...props} {...state} />);
+        expect((check as HTMLButtonElement).disabled).toBe(true);
+        fireEvent.click(check);
+      }
+      expect(onDryRun).toHaveBeenCalledOnce();
+    } finally {
+      setLang("zh");
+    }
+  });
   const baseScan = { app_name: "App", items: [] };
   const baseProps = {
     scan: baseScan,
