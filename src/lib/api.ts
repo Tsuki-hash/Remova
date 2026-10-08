@@ -56,6 +56,7 @@ export type MonitorDiff = {
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
 export type BackupSession = { name: string; size_kb: number; created_at: string };
+export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
   existing: number; unavailable: number;
@@ -69,7 +70,10 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
 export const api = {
   onlineUpdateSupported: () => invoke<boolean>("online_update_supported"),
   listApps: () => invoke<InstalledApp[]>("list_installed_apps"),
-  analyze: (app: InstalledApp) => invoke<ScanResult>("analyze_associations", { app }),
+  analyze: (app: InstalledApp, scanId?: number) => invoke<ScanResult>("analyze_associations", { app, scanId }),
+  beginAssociationScan: () => invoke<number>("begin_association_scan"),
+  cancelAssociationScan: (scanId: number) => invoke<void>("cancel_association_scan", { scanId }),
+  associationScanProgress: (scanId: number) => invoke<AssociationScanProgress | null>("association_scan_progress", { scanId }),
   dryRun: (
     app: InstalledApp,
     items: CleanupItem[],

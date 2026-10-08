@@ -10,6 +10,8 @@ export const UPDATE_BUSY = "update:busy";
  * every mutating operation is blocked by the update slot. */
 const READ_ONLY_COMMANDS = new Set([
   "list_installed_apps",
+  "cancel_association_scan",
+  "association_scan_progress",
   "is_elevated",
   "disk_usage",
   "get_ai_config",

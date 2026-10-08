@@ -12,6 +12,9 @@ import { api } from "../lib/api";
 const COMMAND_KEYS = [
   "listApps",
   "analyze",
+  "beginAssociationScan",
+  "cancelAssociationScan",
+  "associationScanProgress",
   "dryRun",
   "fullCleanup",
   "officialUninstall",
