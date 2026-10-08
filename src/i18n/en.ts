@@ -127,6 +127,8 @@ export const dict: EnDict = {
     reportDeleted: "Deleted",
     reportFailed: "Failed",
     reportSkipped: "Skipped",
+    reportPendingReboot: "Pending reboot",
+    reportNextDelayed: "Some items await deletion on reboot. Scan again after restarting to verify.",
     batchCancel: "Cancel batch",
     batchCancelHint: "Stops after the current app finishes",
     batchDone: "Batch finished",
@@ -510,7 +512,7 @@ export const dict: EnDict = {
     checkupOrphanFound: (n: number) =>
       `${n} suspected orphan item(s) — open Orphans to review and clean`,
     reportProgressLabel: (handled: number, total: number, pct: number) =>
-      `Handled ${handled}/${total} (${pct}%)`,
+      `Deleted ${handled}/${total} (${pct}%)`,
     reportProgressComplete: "All confirmable leftovers handled",
     drawerDeepUninstall: "Deep uninstall",
     drawerOfficial: "Official only",

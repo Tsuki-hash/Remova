@@ -125,6 +125,8 @@ export const dict = {
     reportDeleted: "已删除",
     reportFailed: "失败",
     reportSkipped: "跳过",
+    reportPendingReboot: "等待重启",
+    reportNextDelayed: "部分项目等待重启后删除；请在重启后重新扫描核对。",
     batchCancel: "取消批量",
     batchCancelHint: "将在当前应用完成后停止",
     batchDone: "批量完成",
@@ -496,7 +498,7 @@ export const dict = {
     checkupRunOrphan: "扫描孤儿",
     checkupOrphanFound: (n: number) => `发现 ${n} 项疑似孤儿残留，可到「孤儿残留」页确认后清理`,
     reportProgressLabel: (handled: number, total: number, pct: number) =>
-      `已处理 ${handled}/${total}（${pct}%）`,
+      `已删除 ${handled}/${total}（${pct}%）`,
     reportProgressComplete: "已处理全部可确认残留",
     drawerDeepUninstall: "开始深度卸载",
     drawerOfficial: "仅官方卸载",
