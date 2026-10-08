@@ -88,6 +88,9 @@ pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::i
 /// This read-only scan must not expand or replace uninstall authorization.
 pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
     let mut out: Vec<InstalledApp> = Vec::new();
+    if crate::scan_task::cancelled() {
+        return out;
+    }
     #[cfg(windows)]
     {
         let sources: [(&str, HKEY, &str, REG_SAM_FLAGS); 3] = [
@@ -111,9 +114,15 @@ pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
             ),
         ];
         for (alias, hive, sub, access) in sources {
+            if crate::scan_task::cancelled() {
+                return out;
+            }
             collect_uninstall(hive, sub, access, alias, &mut out);
         }
         // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
+        if crate::scan_task::cancelled() {
+            return out;
+        }
         out.extend(crate::storeapps::scan_store_apps());
     }
     dedup_same_products(&mut out);
@@ -259,6 +268,9 @@ fn collect_uninstall(
         );
 
         for i in 0..count {
+            if crate::scan_task::cancelled() {
+                break;
+            }
             let mut name_buf = vec![0u16; (max_sub as usize) + 2];
             let mut name_len = name_buf.len() as u32;
             let st = RegEnumKeyExW(

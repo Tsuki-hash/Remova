@@ -553,13 +553,17 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn scan_orphan_leftovers() -> Result<Vec<scanner::CleanupItem>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let installed = apps::scan_installed_inventory();
-        orphans::scan_orphans(&installed)
+async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "orphan", || {
+            scan_task::checkpoint("registry", 0);
+            let installed = apps::scan_installed_inventory();
+            orphans::scan_orphans(&installed)
+        })
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 /// Idle software radar (read-only ranking).
@@ -575,18 +579,24 @@ async fn rank_idle_apps() -> Result<Vec<idle::IdleApp>, String> {
 
 /// Installer packages + updater caches (scoped delete allow-list).
 #[tauri::command]
-async fn scan_installer_caches() -> Result<Vec<scanner::CleanupItem>, String> {
-    tauri::async_runtime::spawn_blocking(installers::scan_installer_caches)
-        .await
-        .map_err(|e| e.to_string())
+async fn scan_installer_caches(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "installer", installers::scan_installer_caches)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Dev / game / browser tool caches (scoped delete allow-list).
 #[tauri::command]
-async fn scan_tool_caches() -> Result<Vec<scanner::CleanupItem>, String> {
-    tauri::async_runtime::spawn_blocking(toolcache::scan_tool_caches)
-        .await
-        .map_err(|e| e.to_string())
+async fn scan_tool_caches(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "toolcache", toolcache::scan_tool_caches)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Disk radar: local fixed drives with free/total space (read-only).

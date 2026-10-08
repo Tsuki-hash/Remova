@@ -43,6 +43,9 @@ fn is_system_install_path(path: &str) -> bool {
 #[cfg(windows)]
 pub fn scan_store_apps() -> Vec<InstalledApp> {
     use windows::Management::Deployment::PackageManager;
+    if crate::scan_task::cancelled() {
+        return Vec::new();
+    }
 
     // Console / test processes may lack WinRT init; Tauri already has it.
     unsafe {
@@ -61,6 +64,9 @@ pub fn scan_store_apps() -> Vec<InstalledApp> {
     };
 
     for pkg in packages {
+        if crate::scan_task::cancelled() {
+            break;
+        }
         let Ok(id) = pkg.Id() else { continue };
         let Ok(name_h) = id.Name() else { continue };
         let name = name_h.to_string();
