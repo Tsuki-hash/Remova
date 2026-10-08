@@ -12,6 +12,24 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const app = { name: "sample" } as InstalledApp;
 const complete: ScanResult = { app_name: "sample", items: [] };
 describe("association scan cancellation", () => {
+  it("counts specialty results and rejects late failures after unmount as cancellation", async () => {
+    native.beginAssociationScan.mockResolvedValueOnce(51).mockResolvedValueOnce(52);
+    const view = renderHook(useAssociationScan);
+    const scan = vi.fn(async () => ["a", "b"]);
+    await act(async () => { expect(await view.result.current.runItems(scan)).toEqual(["a", "b"]); });
+    expect(scan).toHaveBeenCalledWith(51);
+    expect(view.result.current.progress?.found).toBe(2);
+    let fail!: (error: Error) => void;
+    let pending!: Promise<string[]>;
+    await act(async () => {
+      pending = view.result.current.runItems(() => new Promise<string[]>((_resolve, reject) => { fail = reject; }));
+    });
+    const rejection = expect(pending).rejects.toThrow("scan:cancelled");
+    view.unmount();
+    fail(new Error("late native error"));
+    await rejection;
+    expect(native.cancelAssociationScan).toHaveBeenCalledWith(52);
+  });
   it("cancels a pending reservation and never starts its late worker", async () => {
     let reserve!: (id: number) => void;
     native.beginAssociationScan.mockImplementationOnce(() => new Promise<number>(r => { reserve = r; }));
