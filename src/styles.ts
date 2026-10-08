@@ -125,7 +125,7 @@ export const cssStyles = {
   scroll: {
     flex: 1,
     minHeight: 0,
-    maxHeight: "60vh",
+    maxHeight: "var(--remova-list-height, 60vh)",
     overflow: "auto" as const,
     overscrollBehavior: "auto" as const,
     position: "relative" as const,

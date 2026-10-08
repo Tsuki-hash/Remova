@@ -629,4 +629,32 @@ export const dict = {
     errSealAdmin: "安全备份和还原需要管理员权限，请提权后重试。",
     errSealLegacy: "旧版备份仅支持查看和手工导出，不能自动还原；请保留原始备份。",
     errSealInvalid: "备份校验或密钥状态异常，已停止操作。请保留备份，勿删除或重建密钥。",
+    scanEvidenceLabel: (code: string, label: string) => {
+      if (code === "run_startup" && label === "Startup points at install dir") return "启动项指向安装目录";
+      if (code === "install_monitor" && label === "Added during install (likely cache/temp)") return "安装期间新增（可能是缓存或临时文件）";
+      const labels: Record<string, string> = {
+        install_location: "匹配官方安装路径",
+        install_loc: "匹配官方安装路径",
+        uninstall_key: "该软件的卸载注册项",
+        app_paths: "App Paths 指向安装目录",
+        run_startup: "启动项名称匹配软件",
+        cross_drive: "其他盘符的目录匹配软件",
+        webview_mask: "AppData 下的应用缓存目录",
+        shortcut_target: "快捷方式匹配软件",
+        recent_temp_match: "临时文件或目录名称匹配软件",
+        path_env: "环境变量 PATH 关联项",
+        shell_class: "Classes 注册项名称匹配软件",
+        shell_clsid: "CLSID 描述匹配软件",
+        driver: "系统驱动匹配软件",
+        software_key_exact: "HKLM/HKCU 下的软件注册项",
+        windows_service: "服务匹配软件（高风险，默认不选）",
+        scheduled_task: "任务名称匹配软件（高风险，默认不选）",
+        installer_package: "安装包文件",
+        installer_setup_name: "名称具有安装程序特征",
+        updater_cache: "更新程序缓存",
+        tool_cache: "工具链缓存",
+        install_monitor: "安装追踪期间新增",
+      };
+      return Object.hasOwn(labels, code) ? labels[code]! : "";
+    },
 } as const;

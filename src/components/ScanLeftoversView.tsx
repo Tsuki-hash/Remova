@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { t } from "../i18n";
+import { currentLang, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
@@ -19,8 +19,10 @@ import { evidenceText } from "../lib/evidenceText";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
 import "./SoftwareDetails.css";
+import { useListViewportHeight } from "../hooks/useListViewportHeight";
 
 type LeftoverRowProps = {
+  language: ReturnType<typeof currentLang>;
   it: CleanupItem;
   checked: boolean;
   note: string | undefined;
@@ -166,9 +168,9 @@ const LeftoverRow = memo(function LeftoverRow({
                 ? L.suspected
                 : L.low}
       </div>
-      <div>
+      <div style={{ display: "flex", justifyContent: "center" }}>
         <button
-          style={{ ...css.btnGhost, height: 28, width: 32, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
+          style={{ ...css.btnGhost, display: "inline-flex", alignItems: "center", justifyContent: "center", height: 20, width: 32, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
           aria-label={`${L.orphanEvidenceTitle}: ${it.path}`}
           onClick={() =>
             onEvidence(
@@ -225,6 +227,7 @@ export function ScanLeftoversView({
 }: Props) {
   const L = t();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  useListViewportHeight(scrollRef);
   const [onlySelected, setOnlySelected] = useState(false);
   const isOrphan = scan.app_name === orphanLabel;
   const originGroups = useMemo(
@@ -367,7 +370,7 @@ export function ScanLeftoversView({
           <span>{L.colLocation}</span>
           <span>{L.colSource}</span>
           <span>{L.colConfidence}</span>
-          <Deco ch="ⓘ" />
+          <span style={{ display: "flex", justifyContent: "center" }}><Deco ch="ⓘ" /></span>
         </div>
         {displayItems.length === 0 ? (
           <div role="status" style={{ padding: 16, color: "var(--muted)", fontSize: 12 }}>
@@ -397,6 +400,7 @@ export function ScanLeftoversView({
                   }}
                 >
                   <LeftoverRow
+                    language={currentLang()}
                     it={it}
                     checked={selectedPaths.has(it.path)}
                     note={aiNotes[it.path]}

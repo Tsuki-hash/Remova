@@ -15,6 +15,24 @@ const item = (path: string, kind: "file" | "registry", bucket: string): CleanupI
 const items = [item("C:\\App\\one", "file", "programFiles"), item("HKCU\\Software\\sample", "registry", "registry")];
 const app = { name: "sample", install_location: "C:\\App" } as InstalledApp;
 
+it("renders evidence in the active language after switching a memoized row", () => {
+  const sample = { ...items[1]!, evidence: [{ code: "shell_class", label: "Classes key name matches product", weight: 35, detail: "xiaomi-mimo" }] };
+  function Harness() {
+    const [evidence, setEvidence] = useState<string | null>(null);
+    return <ScanLeftoversView scan={{ app_name: "sample", items: [sample] }} scanning={false}
+      selectedPaths={new Set()} evidence={evidence} aiNotes={{}} orphanLabel="orphans"
+      onTogglePath={() => {}} onEvidence={setEvidence} />;
+  }
+  setLang("zh");
+  const view = render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: ${sample.path}` }));
+  expect(screen.getByText("Classes 注册项名称匹配软件 (35) — xiaomi-mimo")).toBeTruthy();
+  setLang("en");
+  view.rerender(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: ${sample.path}` }));
+  expect(screen.getByText("Classes key name matches product (35) — xiaomi-mimo")).toBeTruthy();
+});
+
 it.each(["zh", "en"] as const)("keeps hidden selection and combines Selected only with the type filter in %s", lang => {
   setLang(lang);
   const toggle = vi.fn();

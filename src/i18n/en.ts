@@ -644,4 +644,32 @@ export const dict: EnDict = {
     errSealAdmin: "Secure backup and restore require administrator access. Elevate and retry.",
     errSealLegacy: "Legacy backups can be inspected and exported manually, but cannot be restored automatically. Keep the original backup.",
     errSealInvalid: "Backup verification or key state is invalid. The operation was stopped. Keep the backup; do not delete or regenerate the key.",
+    scanEvidenceLabel: (code: string, label: string) => {
+      if (code === "run_startup" && label === "Startup points at install dir") return "Startup points at install dir";
+      if (code === "install_monitor" && label === "Added during install (likely cache/temp)") return "Added during install (likely cache/temp)";
+      const labels: Record<string, string> = {
+        install_location: "Matches official install path",
+        install_loc: "Matches official install path",
+        uninstall_key: "This product's uninstall key",
+        app_paths: "App Paths points into install dir",
+        run_startup: "Startup name matches product",
+        cross_drive: "Folder on non-default drive matches product",
+        webview_mask: "Looks like app cache under AppData",
+        shortcut_target: "Shortcut matches product",
+        recent_temp_match: "TEMP folder/file name match",
+        path_env: "Environment PATH leftover",
+        shell_class: "Classes key name matches product",
+        shell_clsid: "CLSID description matches product",
+        driver: "System driver matches product",
+        software_key_exact: "HKLM/HKCU Software product key",
+        windows_service: "Service matches product (high risk, unselected)",
+        scheduled_task: "Task name matches product (high risk, unselected)",
+        installer_package: "Installer package",
+        installer_setup_name: "Setup-like filename",
+        updater_cache: "Updater cache",
+        tool_cache: "Tool cache",
+        install_monitor: "Added during monitored install",
+      };
+      return Object.hasOwn(labels, code) ? labels[code]! : "";
+    },
 } as const;

@@ -5,6 +5,7 @@ import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { AppRow } from "./AppRow";
+import { useListViewportHeight } from "../hooks/useListViewportHeight";
 import type { SortCol, CategoryId } from "../lib/categories";
 
 export function SoftwareListTable({
@@ -54,6 +55,7 @@ export function SoftwareListTable({
 }) {
   const L = t();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  useListViewportHeight(listScrollRef);
  // -10: read `selected` via ref so `ensureSelected` stays referentially stable
  // and does not punch a hole through AppRow's memo when selection changes.
   const selectedRef = useRef(selected);
