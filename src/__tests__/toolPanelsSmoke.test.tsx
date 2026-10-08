@@ -144,6 +144,7 @@ describe("ScanActionsBar", () => {
       const props = { ...baseProps, useOfficial: true, selectedPaths: new Set<string>(), onUseOfficial };
       const view = render(<ScanActionsBar {...props} />);
       expect(screen.getByText(t().officialFirstHint)).toBeTruthy();
+      expect(screen.getByRole("button", { name: t().uninstallAndCleanup }).title).toBe(t().officialFirstHint);
       const skip = screen.getByLabelText<HTMLInputElement>(t().skipOfficial);
       expect(skip.checked).toBe(false);
       expect(skip.closest("details")!.open).toBe(false);
@@ -152,6 +153,8 @@ describe("ScanActionsBar", () => {
       expect(onUseOfficial).toHaveBeenLastCalledWith(false);
       view.rerender(<ScanActionsBar {...props} useOfficial={false} />);
       expect(skip.checked).toBe(true);
+      expect(screen.queryByRole("button", { name: t().uninstallAndCleanup })).toBeNull();
+      expect(screen.getByRole("button", { name: `${t().cleanup} (0)` }).title).toBe(t().cleanupSelectedHint);
       expect(view.container.querySelector(".scan-actions-secondary")!.textContent).toContain(t().skipOfficialHint);
       fireEvent.click(skip);
       expect(onUseOfficial).toHaveBeenLastCalledWith(true);
@@ -163,6 +166,8 @@ describe("ScanActionsBar", () => {
         view.rerender(<ScanActionsBar {...props} {...state} />);
         expect(screen.queryByLabelText(t().skipOfficial)).toBeNull();
         expect(screen.queryByText(t().officialFirstHint)).toBeNull();
+        expect(screen.queryByRole("button", { name: t().uninstallAndCleanup })).toBeNull();
+        expect(screen.getByRole("button", { name: `${t().cleanup} (0)` }).title).toBe(t().cleanupSelectedHint);
       }
     } finally {
       setLang("zh");

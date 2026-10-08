@@ -44,6 +44,7 @@ export function ScanActionsBar({
 }) {
   const L = t();
   const plan = summarizeCleanupPlan(scan.items, selectedPaths);
+  const runsOfficial = useOfficial && !residualFromUninstall && canRunOfficial;
   const confirmed = scan.items.filter((i) => i.confidence === "confirmed").length;
   const highRisk = scan.items.filter((i) => i.risk === "high").length;
   return (
@@ -75,9 +76,9 @@ export function ScanActionsBar({
               className="scan-actions-cleanup"
               disabled={dryRunning || plan.count === 0 || busy}
               onClick={onCleanup}
-              title={L.dangerScopeHint}
+              title={runsOfficial ? L.officialFirstHint : L.cleanupSelectedHint}
             >
-              {L.cleanup} ({plan.count})
+              {runsOfficial ? L.uninstallAndCleanup : `${L.cleanup} (${plan.count})`}
             </button>
           </div>
         </div>
