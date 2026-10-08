@@ -4,6 +4,12 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - Unreleased
+
+### 开发中
+
+- 开始 1.3.1 开发，统一应用版本；尚未发布。
+
 ## [1.3.0] - 2026-10-05
 
 安全与正确性修复、安全仓还原预览与深度卸载流程打磨、界面精简与主题统一。
