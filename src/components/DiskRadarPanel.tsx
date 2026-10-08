@@ -6,6 +6,8 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import type { DirSizeRow } from "../types";
+import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { ScanProgressBar } from "./ScanProgressBar";
 
 /** Disk usage radar — read-only. Open path / drill down; never deletes. */
 export function DiskRadarPanel({
@@ -23,6 +25,7 @@ export function DiskRadarPanel({
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
   const requestSeq = useRef(0);
   const busyRef = useRef(false);
+  const { runItems, cancel, progress } = useAssociationScan();
 
   const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = []) => {
     if (busyRef.current) return;
@@ -30,16 +33,19 @@ export function DiskRadarPanel({
     const seq = ++requestSeq.current;
     setBusy(true);
     try {
-      const list = parent
-        ? await api.listDirChildren(parent)
-        : await api.listTopDirSizes(letter);
+      const list = await runItems(id => parent
+        ? api.listDirChildren(parent, id)
+        : api.listTopDirSizes(letter, id));
       if (seq === requestSeq.current) {
         setRows(list);
         setCrumbs(nextCrumbs);
         if (letter !== undefined) setDrive(letter);
       }
     } catch (e) {
-      if (seq === requestSeq.current) onError(formatError(e));
+      if (seq === requestSeq.current) {
+        if (scanCancelled(e)) setRows(null);
+        else onError(formatError(e));
+      }
     } finally {
       if (seq === requestSeq.current) {
         busyRef.current = false;
@@ -129,6 +135,7 @@ export function DiskRadarPanel({
         </div>
       </div>
       {busy && !rows && <div style={{ ...css.muted, marginTop: 10 }}>{L.radarScanning}</div>}
+      <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={rows ?? []}
         height={320}
