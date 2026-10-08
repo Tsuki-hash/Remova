@@ -58,15 +58,14 @@ export function ScopedScanPanel({
     setBusy(true);
     setItems(null);
     setSelected(new Set());
-    if (!quiet) toast.info(L.orphanScanProgress, { channel });
+    if (!quiet) toast.info(L.scanInProgress, { channel });
     try {
       const list = await runItems(scan);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
-      if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel });
+      if (!quiet && list.length === 0) toast.info(L.scanComplete(0), { channel });
       else if (!quiet) {
-        const s = summarizeLeftovers(list);
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel, ttl: 2500 });
+        toast.success(L.scanComplete(list.length), { channel, ttl: 2500 });
       }
     } catch (e) {
       if (round !== scanRound.current) return;
@@ -150,7 +149,7 @@ export function ScopedScanPanel({
             {L.cleanup}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
-            {L.orphanScan}
+            {L.scanStart}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
@@ -225,7 +224,7 @@ export function ScopedScanPanel({
           </div>
         )}
         empty={
-          items === null ? undefined : <div style={css.muted}>{L.orphanScanEmpty}</div>
+          items === null ? undefined : <div style={css.muted}>{L.scanComplete(0)}</div>
         }
       />
     </div>

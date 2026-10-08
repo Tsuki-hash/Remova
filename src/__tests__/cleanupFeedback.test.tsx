@@ -63,14 +63,14 @@ it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targ
   render(<ScopedScanPanel title="Tool" hint="" appName="Tool" scan={scan} cleanupSource={cleanupSource}
     onClose={vi.fn()} onError={onError} onLastReport={vi.fn()} />);
   await screen.findByText("old-target");
-  fireEvent.click(screen.getByRole("button", { name: t().orphanScan }));
+  fireEvent.click(screen.getByRole("button", { name: t().scanStart }));
   await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("old-target")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
   await act(async () => { finish([item]); });
   expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
   expect(screen.getByRole("button", { name: t().cleanup }).hasAttribute("disabled")).toBe(true);
-  expect(screen.queryByText(t().orphanScanEmpty)).toBeNull();
+  expect(screen.queryByText(t().scanComplete(0))).toBeNull();
   expect(toast.success).toHaveBeenCalledTimes(1);
   expect(onError).not.toHaveBeenCalled();
 });

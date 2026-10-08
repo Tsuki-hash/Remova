@@ -168,7 +168,7 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
 }
 
 fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
-    if !crate::scan_task::checkpoint("other", out.len()) {
+    if !crate::scan_task::checkpoint("caches", out.len()) {
         return;
     }
     let Some(local) = user_local_appdata() else {
@@ -178,7 +178,7 @@ fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) 
         return;
     };
     for vendor in rd.flatten().take(200) {
-        if !crate::scan_task::checkpoint("other", out.len()) {
+        if !crate::scan_task::checkpoint("caches", out.len()) {
             return;
         }
         let vpath = vendor.path();
