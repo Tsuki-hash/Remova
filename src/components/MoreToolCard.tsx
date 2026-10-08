@@ -27,6 +27,7 @@ export type ToolItem = {
   action: () => void;
   accent?: boolean;
   badge?: string;
+  disabled?: boolean;
 };
 
 export const cardBase: CSSProperties = {
@@ -53,11 +54,13 @@ export function ToolCard({
 }) {
   return (
     <button
+      disabled={item.disabled}
       className="remova-tool-card"
       type="button"
       onClick={item.action}
       style={{
         ...cardBase,
+        cursor: item.disabled ? "not-allowed" : "pointer",
         borderColor: active ? "var(--accent)" : "var(--border)",
         background: active ? "var(--accent-soft)" : "var(--surface)",
         boxShadow: "none",

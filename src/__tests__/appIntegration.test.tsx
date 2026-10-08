@@ -462,12 +462,14 @@ describe("App orchestration", () => {
     capture.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     act(() => more().onToggleMonitor());
     await waitFor(() => expect(capture).toHaveBeenCalledOnce());
+    expect(more().monitorSnapshotBusy).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: i18n.t().cancelScan }));
     await act(async () => { finish(active ? { diff: { added_files: ["late-path"], added_reg_values: [] }, items: scan.items } : undefined); });
     expect(await within(screen.getByRole("main")).findByRole("status"))
       .toHaveProperty("textContent", i18n.t().monitorScanCancelled(active));
     expect(more().monitoring).toBe(active);
     expect(more().monitorDiff).toBeNull();
+    expect(more().monitorSnapshotBusy).toBe(false);
     expect(native.fullCleanup).not.toHaveBeenCalled();
   });
 
