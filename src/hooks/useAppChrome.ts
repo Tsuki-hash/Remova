@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 import type { Strings } from "../i18n";
 import { t } from "../i18n";
+import { useAssociationScan, scanCancelled } from "./useAssociationScan";
 import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
@@ -69,6 +70,8 @@ export function useAppChrome({
 }) {
   /** -08: orphan checkup scan has its own spinner (never the analyze spinner). */
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
+  const checkupScan = useAssociationScan();
+  const checkupBusyRef = useRef(false);
   const monitorBusyRef = useRef(false);
 
   const elevate = useCallback(async () => {
@@ -198,23 +201,29 @@ export function useAppChrome({
   );
 
   const checkupOrphanScan = useCallback(() => {
+    if (checkupBusyRef.current) return;
+    checkupBusyRef.current = true;
+    setCheckupOrphanCount(null);
  // -08: independent spinner — never touch the analyze `scanning` flag.
     void (async () => {
       setCheckupOrphanBusy(true);
       try {
-        const items = await api.orphanScan();
+        const items = await checkupScan.runItems(api.orphanScan);
         setCheckupOrphanCount(items.length);
       } catch (e) {
         setCheckupOrphanCount(null);
-        toast.error(formatError(e, "analyze"));
+        if (!scanCancelled(e)) toast.error(formatError(e, "analyze"));
       } finally {
         setCheckupOrphanBusy(false);
+        checkupBusyRef.current = false;
       }
     })();
-  }, [setCheckupOrphanCount]);
+  }, [setCheckupOrphanCount, checkupScan.runItems]);
 
   return {
     checkupOrphanBusy,
+    checkupScanProgress: checkupScan.progress,
+    cancelCheckupScan: checkupScan.cancel,
     elevate,
     openPathSafe,
     doIgnorePublisher,

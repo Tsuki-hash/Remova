@@ -337,6 +337,8 @@ export default function App() {
  // -03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
   const {
     checkupOrphanBusy,
+    checkupScanProgress,
+    cancelCheckupScan,
     elevate,
     openPathSafe,
     doIgnorePublisher,
@@ -597,6 +599,7 @@ export default function App() {
     checkupOpen,
     checkupOrphanCount,
     checkupOrphanBusy,
+    checkupScanStatus: <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />,
     batchIndex,
     batchTotal,
     batchCurrent,
@@ -690,6 +693,8 @@ export default function App() {
             <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
           </div>
         )}
+        {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
+          <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
         <Suspense
           fallback={
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>
