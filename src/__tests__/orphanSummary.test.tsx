@@ -5,6 +5,7 @@ import { OrphanPage } from "../components/OrphanPage";
 import { t } from "../i18n";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
+import { StrictMode } from "react";
 
 vi.mock("../lib/api", () => ({ api: {
   beginAssociationScan: vi.fn(async () => 100), cancelAssociationScan: vi.fn(async () => {}),
@@ -14,6 +15,18 @@ vi.mock("../lib/api", () => ({ api: {
 }]) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+it("restarts the automatic scan after StrictMode effect cleanup and keeps its current job busy", async () => {
+  let finish!: (list: Awaited<ReturnType<typeof api.orphanScan>>) => void;
+  vi.mocked(api.orphanScan).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<StrictMode><OrphanPage onLastReport={vi.fn()} /></StrictMode>);
+  await waitFor(() => expect(api.orphanScan).toHaveBeenCalledOnce());
+  expect(screen.getByRole("button", { name: t().orphanScan }).hasAttribute("disabled")).toBe(true);
+  expect(toast.info).not.toHaveBeenCalledWith(t().scanCancelledIncomplete, expect.anything());
+  await act(async () => { finish([]); });
+  expect(await screen.findAllByText(t().orphanScanEmpty)).not.toHaveLength(0);
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
 
 it("keeps orphan statistics read-only and its existing selection action working", async () => {
   render(<OrphanPage onLastReport={vi.fn()} />);
