@@ -270,7 +270,9 @@ export const dict = {
     monitorScanCancelled: (active: boolean) => active
       ? "快照扫描已取消，结果不完整。追踪仍在继续，可重新结束追踪。"
       : "快照扫描已取消，结果不完整，尚未开始追踪。请重新开始。",
-    monitorScanFailed: "快照扫描未完成，请检查错误并重新开始追踪。",
+    monitorScanFailed: (active: boolean) => active
+      ? "结束快照未完成，未生成清理清单。请检查错误并重试结束追踪。"
+      : "快照扫描未完成，请检查错误并重新开始追踪。",
     monitorDiff: "安装变更",
     monitorNoSnap: "请先开始安装追踪",
     monitorEmpty: "暂无安装变更",
