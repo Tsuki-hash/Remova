@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScopedScanPanel } from "../components/ScopedScanPanel";
 import { cleanupFeedback } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import type { CleanupItem, FullCleanupReport } from "../types";
-vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn() } }));
+vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn(),
+  beginAssociationScan: vi.fn(async () => 101), cancelAssociationScan: vi.fn(async () => {}),
+  associationScanProgress: vi.fn(async () => null) } }));
 vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: true })) }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 afterEach(cleanup);
@@ -49,4 +51,26 @@ it("reports an open-path rejection without an unhandled promise", async () => {
     onClose={vi.fn()} onError={onError} onLastReport={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: t().openLocation }));
   await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+});
+
+it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targets and keeps cleanup disabled", async cleanupSource => {
+  const item = { path: "old-target", kind: "file", score: 90, confidence: "confirmed",
+    risk: "low", reason: "fixture", evidence: [] } as CleanupItem;
+  let finish!: (items: CleanupItem[]) => void;
+  const scan = vi.fn().mockResolvedValueOnce([item])
+    .mockImplementationOnce(() => new Promise<CleanupItem[]>(resolve => { finish = resolve; }));
+  const onError = vi.fn();
+  render(<ScopedScanPanel title="Tool" hint="" appName="Tool" scan={scan} cleanupSource={cleanupSource}
+    onClose={vi.fn()} onError={onError} onLastReport={vi.fn()} />);
+  await screen.findByText("old-target");
+  fireEvent.click(screen.getByRole("button", { name: t().orphanScan }));
+  await waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("old-target")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
+  await act(async () => { finish([item]); });
+  expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
+  expect(screen.getByRole("button", { name: t().cleanup }).hasAttribute("disabled")).toBe(true);
+  expect(screen.queryByText(t().orphanScanEmpty)).toBeNull();
+  expect(toast.success).toHaveBeenCalledTimes(1);
+  expect(onError).not.toHaveBeenCalled();
 });

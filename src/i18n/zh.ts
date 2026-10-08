@@ -328,7 +328,6 @@ export const dict = {
     emptyList: "没有匹配的软件",
     emptySearch: "没有匹配结果，试试其它关键词或清空筛选",
     whitelistEmpty: "白名单为空",
-    loadingApps: "正在加载已安装软件…",
     aiSettings: "模型设置",
     aiSettingsHint: "配置智能解释：用更易懂的话说明残留与风险；只建议，不执行删除",
     aiEnable: "启用智能解释",
