@@ -84,7 +84,7 @@ export function ScopedScanPanel({
       message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,
-      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false },
+      checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });
     if (!ok) return;
     setBusy(true);
