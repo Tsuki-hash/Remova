@@ -39,6 +39,7 @@ export function OrphanPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastScanLabel, setLastScanLabel] = useState<string | null>(null);
   const { runItems, cancel, progress } = useAssociationScan();
+  const scanRound = useRef(0);
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
@@ -51,6 +52,7 @@ export function OrphanPage({
 
   const scan = async (quiet = false) => {
     if (busy) return;
+    const round = ++scanRound.current;
     setBusy(true);
     setItems(null);
     setSelected(new Set());
@@ -72,6 +74,7 @@ export function OrphanPage({
           ttl: 3000,
         });
     } catch (e) {
+      if (round !== scanRound.current) return;
       if (scanCancelled(e)) {
         if (!quiet) toast.info(L.scanCancelledIncomplete, { channel: ORPHAN_CHANNEL });
         return;
@@ -80,7 +83,7 @@ export function OrphanPage({
       onError?.(msg);
       toast.error(msg, { channel: quiet ? `${ORPHAN_CHANNEL}-refresh` : ORPHAN_CHANNEL });
     } finally {
-      setBusy(false);
+      if (round === scanRound.current) setBusy(false);
     }
   };
 
@@ -90,6 +93,7 @@ export function OrphanPage({
     if (startedRef.current) return;
     startedRef.current = true;
     void scan();
+    return () => { startedRef.current = false; scanRound.current++; };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

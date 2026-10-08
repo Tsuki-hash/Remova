@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { api, type CleanupSourceId } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -50,9 +50,11 @@ export function ScopedScanPanel({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const { runItems, cancel, progress } = useAssociationScan();
+  const scanRound = useRef(0);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
 
   const runScan = useCallback(async (quiet = false) => {
+    const round = ++scanRound.current;
     setBusy(true);
     setItems(null);
     setSelected(new Set());
@@ -67,6 +69,7 @@ export function ScopedScanPanel({
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), { channel, ttl: 2500 });
       }
     } catch (e) {
+      if (round !== scanRound.current) return;
       if (scanCancelled(e)) {
         if (!quiet) toast.info(L.scanCancelledIncomplete, { channel });
         return;
@@ -75,12 +78,13 @@ export function ScopedScanPanel({
       onError(msg);
       toast.error(msg, { channel: quiet ? `${channel}-refresh` : channel });
     } finally {
-      setBusy(false);
+      if (round === scanRound.current) setBusy(false);
     }
   }, [scan, runItems, L, onError, channel]);
 
   useEffect(() => {
     void runScan();
+    return () => { scanRound.current++; };
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
