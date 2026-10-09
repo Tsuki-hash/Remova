@@ -13,7 +13,7 @@ import type { AppDetailPanel } from "../components/AppDetailPanel";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 
 const native = vi.hoisted(() => ({
-  listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(),
+  listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(), officialUninstall: vi.fn(),
   openPath: vi.fn(), elevateRestart: vi.fn(), takePendingAnalyze: vi.fn(),
   ignorePublisher: vi.fn(), ignoreAppName: vi.fn(),
   beginInstallMonitor: vi.fn(), endInstallMonitor: vi.fn(),
@@ -148,6 +148,7 @@ beforeEach(() => {
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
   native.fullCleanup.mockResolvedValue(report);
+  native.officialUninstall.mockResolvedValue({ ok: true, had_command: true, message: "finished" });
   native.openPath.mockResolvedValue(undefined);
   native.elevateRestart.mockResolvedValue(undefined);
   native.takePendingAnalyze.mockResolvedValue(null);
@@ -177,6 +178,7 @@ describe("App orchestration", () => {
     native.aiSummarizeReport.mockResolvedValueOnce("Previous summary");
     act(() => software().onCleanup());
     await waitFor(() => expect(software().aiReportNote).toBe("Previous summary"));
+    await analyzeDemo();
     let resolveVerify!: (rows: { path: string; kind: string; still_there: boolean }[]) => void;
     native.verifyLeftovers.mockReturnValueOnce(new Promise(resolve => { resolveVerify = resolve; }));
     act(() => software().onCleanup());
@@ -398,7 +400,52 @@ describe("App orchestration", () => {
       expect.objectContaining({ skip_official_uninstall: false }));
     await waitFor(() => expect(software().dryRunning).toBe(false));
     expect(native.analyze).toHaveBeenCalledTimes(enabled ? 2 : 1);
-    expect(software().residualFromUninstall).toBe(false);
+    expect(software().residualFromUninstall).toBe(true);
+    expect(software().report).toEqual(report);
+    expect(software().selectedPaths.size).toBe(0);
+  });
+
+  it.each(["empty", "remaining", "failed", "cancelled"] as const)("preserves cleanup results through a slow %s rescan without selecting stale targets", async (state) => {
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    await mount();
+    await analyzeDemo();
+    let finish!: (value: ScanResult) => void;
+    let fail!: (reason: string) => void;
+    native.analyze.mockReturnValueOnce(new Promise<ScanResult>((resolve, reject) => { finish = resolve; fail = reject; }));
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
+    expect(software()).toMatchObject({ report, scan: null, scanning: true });
+    expect(software().selectedPaths.size).toBe(0);
+    if (state === "cancelled") fireEvent.click(screen.getByRole("button", { name: i18n.t().cancelScan }));
+    await act(async () => {
+      if (state === "failed") fail("rescan denied");
+      else finish({ ...scan, items: state === "empty" ? [] : scan.items });
+    });
+    await waitFor(() => expect(software().scanning).toBe(false));
+    expect(software().report).toEqual(report);
+    expect(software().selectedPaths.size).toBe(0);
+    if (state === "failed" || state === "cancelled") expect(software().scan).toBeNull();
+    else expect(software().scan?.items.length).toBe(state === "empty" ? 0 : scan.items.length);
+    if (state === "remaining") {
+      act(() => software().setSelectedPaths(new Set([scan.items[0]!.path])));
+      act(() => software().onCleanup());
+      await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledTimes(2));
+      expect(native.fullCleanup).toHaveBeenLastCalledWith(expect.anything(), expect.anything(),
+        expect.objectContaining({ skip_official_uninstall: true }));
+    }
+  });
+
+  it.each([true, false])("keeps official-only completion distinct from pending residual cleanup (scan=%s)", async checked => {
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked });
+    await mount();
+    act(() => software().listStartUninstall(demo));
+    await waitFor(() => expect(native.officialUninstall).toHaveBeenCalledWith(demo));
+    await waitFor(() => expect(software().residualFromUninstall).toBe(true));
+    if (checked) await waitFor(() => expect(software().scan).toEqual(scan));
+    else expect(software().scan).toBeNull();
+    expect(software().residualFromUninstall).toBe(true);
+    expect(software().report).toBeNull();
+    expect(native.fullCleanup).not.toHaveBeenCalled();
   });
 
   it("protects unload during a batch and releases it when the batch completes", async () => {

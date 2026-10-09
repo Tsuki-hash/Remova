@@ -489,6 +489,10 @@ export const dict: EnDict = {
     uninstallConfirm: (name: string) =>
       `Uninstall "${name}" with its official uninstaller? You can scan leftovers afterwards.`,
     uninstallOk: "Official uninstall finished",
+    uninstallAwaitCleanup: (n: number) => `The scan found ${n} associated item(s). Residual cleanup has not run; review your selections and confirm cleanup to delete them.`,
+    cleanupRescanRunning: "Rescanning remaining associated items. The cleanup result is preserved below.",
+    cleanupRescanUnknown: "Remaining items have not been verified. This does not mean no leftovers remain; rescan to check.",
+    cleanupRescanResult: (n: number) => n === 0 ? "This rescan found no associated leftovers." : `This rescan found ${n} associated item(s), with none selected automatically. Review the evidence before further cleanup.`,
     uninstallCancelled: "Official uninstall cancelled",
     restoreDone: "Restore complete",
     restoreNoDetail: "No confirmed restore details",
