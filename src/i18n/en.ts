@@ -330,8 +330,8 @@ export const dict: EnDict = {
     orphanRiskMedium: "Medium",
     orphanRiskHigh: "High",
     orphanNoEvidence: "No further evidence — confirm using path and risk",
-    orphanSelectSafe: "Select all safe items",
-    orphanSelectSuggest: "Select all review items",
+    orphanSelectAll: "Select all",
+    orphanSelectAllHint: "Select safe items and items needing review. Keep items are not selected automatically; cleanup still requires confirmation.",
     orphanSelectedMeta: (n: number, sizeText: string) =>
       sizeText ? `${n} selected · ~${sizeText} to free` : `${n} selected`,
     orphanJustScanned: "Last scan: just now",

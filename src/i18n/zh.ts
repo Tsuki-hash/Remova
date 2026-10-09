@@ -317,8 +317,8 @@ export const dict = {
     orphanRiskMedium: "中",
     orphanRiskHigh: "高",
     orphanNoEvidence: "暂无更多判断依据，请结合路径与风险自行确认",
-    orphanSelectSafe: "全选可安全清理",
-    orphanSelectSuggest: "全选建议确认",
+    orphanSelectAll: "全选",
+    orphanSelectAllHint: "选中可清理与需确认项；保留项不自动勾选，清理前仍需确认。",
     orphanSelectedMeta: (n: number, sizeText: string) =>
       sizeText ? `已选 ${n} 项 · 预计释放 ${sizeText}` : `已选 ${n} 项`,
     orphanJustScanned: "上次扫描：刚刚",

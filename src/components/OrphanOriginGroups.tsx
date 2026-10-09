@@ -35,15 +35,14 @@ export function OrphanOriginGroups({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
       {groups.map((g) => {
-        const safePaths = g.items.filter((it) => bucketItem(it) === "safe").map((it) => it.path);
-        const suggestPaths = g.items
-          .filter((it) => bucketItem(it) === "suggest")
+        const selectablePaths = g.items
+          .filter((it) => bucketItem(it) !== "keep")
           .map((it) => it.path);
         const isOpen = expanded.has(g.origin);
         const shown = isOpen ? g.items : g.items.slice(0, 8);
         return (
           <div key={g.origin} style={{ ...css.card, padding: "10px 12px", fontSize: 12.5 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
               <strong style={{ fontSize: 13 }}>{g.origin}</strong>
               <span style={css.muted}>
                 {L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
@@ -54,32 +53,24 @@ export function OrphanOriginGroups({
                 </span>
               )}
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                {safePaths.length > 0 && onToggleMany && (
+                {selectablePaths.length > 0 && onToggleMany && (
                   <button
                     type="button"
-                    style={{ ...css.btnGhost, height: 26, fontSize: 11 }}
-                    onClick={() => onToggleMany(safePaths, true)}
+                    style={{ ...css.btnGhost, height: 28, fontSize: 12 }}
+                    title={L.orphanSelectAllHint}
+                    onClick={() => onToggleMany(selectablePaths, true)}
                   >
-                    {L.orphanSelectSafe}
-                  </button>
-                )}
-                {suggestPaths.length > 0 && onToggleMany && (
-                  <button
-                    type="button"
-                    style={{ ...css.btnGhost, height: 26, fontSize: 11 }}
-                    onClick={() => onToggleMany(suggestPaths, true)}
-                  >
-                    {L.orphanSelectSuggest}
+                    {L.orphanSelectAll}
                   </button>
                 )}
               </div>
             </div>
-            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
               {shown.map((it) => {
                 const chip = riskChip(it, L);
                 const open = openPath === it.path;
                 return (
-                  <div key={it.path} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 4 }}>
+                  <div key={it.path} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <label
                       style={{
@@ -125,7 +116,7 @@ export function OrphanOriginGroups({
                     </label>
                     <button
                       type="button"
-                      style={{ ...css.btnGhost, height: 24, fontSize: 11, flexShrink: 0, alignSelf: "flex-start" }}
+                      style={{ ...css.btnGhost, height: 26, fontSize: 11.5, flexShrink: 0, alignSelf: "flex-start", borderColor: "transparent", color: "var(--accent-text)" }}
                       onClick={() => setOpenPath(open ? null : it.path)}
                     >
                       {open ? L.orphanCollapseEvidence : L.orphanExpandEvidence}

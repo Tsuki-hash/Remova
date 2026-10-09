@@ -6,6 +6,9 @@ import { setLang, t } from "../i18n";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { StrictMode } from "react";
+import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
+import { groupByOrigin } from "../lib/decision";
+import type { CleanupItem } from "../types";
 
 vi.mock("../lib/api", () => ({ api: {
   beginAssociationScan: vi.fn(async () => 100), cancelAssociationScan: vi.fn(async () => {}),
@@ -15,6 +18,21 @@ vi.mock("../lib/api", () => ({ api: {
 }]) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); setLang("zh"); });
+
+it.each(["zh", "en"] as const)("uses one group select-all action for safe and review items while leaving keep items alone (%s)", lang => {
+  setLang(lang);
+  const base: CleanupItem = { path: "C:/sample/safe", kind: "dir", risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
+  const items: CleanupItem[] = [base, { ...base, path: "C:/sample/review", confidence: "suspected", risk: "medium", score: 35 },
+    { ...base, path: "C:/sample/keep", shared: true }];
+  const onToggleMany = vi.fn();
+  const groups = [{ ...groupByOrigin([base])[0]!, items, count: 3, safe: 1, suggest: 1, keep: 1 }];
+  render(<OrphanOriginGroups groups={groups} selectedPaths={new Set()} onToggle={() => {}} onToggleMany={onToggleMany} />);
+  const select = screen.getByRole("button", { name: t().orphanSelectAll });
+  fireEvent.click(select);
+  expect(onToggleMany).toHaveBeenCalledWith([items[0]!.path, items[1]!.path], true);
+  fireEvent.click(screen.getAllByRole("button", { name: t().orphanExpandEvidence })[0]!);
+  expect(onToggleMany).toHaveBeenCalledOnce();
+});
 
 it("restarts the automatic scan after StrictMode effect cleanup and keeps its current job busy", async () => {
   let finish!: (list: Awaited<ReturnType<typeof api.orphanScan>>) => void;
@@ -34,7 +52,7 @@ it("keeps orphan statistics read-only and its existing selection action working"
   expect(screen.queryByRole("button", { name: t().conclusionCleanSafe(1) })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: t().clearSelection }));
   expect(screen.getByRole("button", { name: t().cleanup }).hasAttribute("disabled")).toBe(true);
-  const selectSafe = screen.getAllByRole("button", { name: t().orphanSelectSafe })[0];
+  const selectSafe = screen.getAllByRole("button", { name: t().orphanSelectAll })[0];
   if (!selectSafe) throw new Error("missing orphan select-safe action");
   fireEvent.click(selectSafe);
   expect(screen.getByRole("button", { name: `${t().cleanup} (1)` }).hasAttribute("disabled")).toBe(false);
