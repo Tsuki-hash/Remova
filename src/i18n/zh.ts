@@ -285,6 +285,7 @@ export const dict = {
     panelClose: "关闭",
     navRegion: "导航",
     clearSelection: "清空选择",
+    cleanupReportDetails: "处理明细与技术信息",
     selectVisible: "全选当前结果",
     deselectVisible: "取消当前结果选择",
     selectVisibleHint: "仅作用于当前筛选结果，包含需确认项；其他已选项保持不变，清理前仍需风险确认。",

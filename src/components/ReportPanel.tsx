@@ -68,6 +68,11 @@ export function ReportPanel({
           </div>}
         </div>
       )}
+      <details open={"aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+          {L.cleanupReportDetails}{"deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}
+        </summary>
+        <div style={{ maxHeight: 360, overflow: "auto" }}>
       {"backup_dir" in report &&
         (backupSession ? (
           <div
@@ -300,6 +305,8 @@ export function ReportPanel({
           {[report.uninstall_message, "restore_point_msg" in report ? report.restore_point_msg : "",
             ...report.item_details.map(d => `${d.path}: ${d.message}`), ...report.errors].filter(Boolean).join("\n")}
         </pre>
+      </details>
+        </div>
       </details>
     </div>
   );

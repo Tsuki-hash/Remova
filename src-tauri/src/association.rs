@@ -33,6 +33,40 @@ fn ar10_in_install_root(low: &str) -> bool {
         || low.contains("\\program files (x86)")
 }
 
+/// Match the complete product name in one segment, never a generic component
+/// such as `Code`. Only known app/shortcut suffixes may follow that name.
+fn complete_product_segment(app: &crate::apps::InstalledApp, low: &str) -> bool {
+    let name = app.name.to_lowercase();
+    let stem = if app.version.is_empty() {
+        name.as_str()
+    } else {
+        name.strip_suffix(&app.version.to_lowercase())
+            .unwrap_or(&name)
+    };
+    let words: Vec<&str> = stem
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if words.len() < 2
+        || words.concat().len() < 8
+        || !words.iter().any(|s| {
+            s.len() >= 4 && !AR10_NAME_STOPWORDS.contains(s) && s.chars().any(char::is_alphabetic)
+        })
+    {
+        return false;
+    }
+    low.split(['\\', '/', ':']).any(|segment| {
+        let parts: Vec<&str> = segment
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .collect();
+        parts.starts_with(&words)
+            && parts[words.len()..]
+                .iter()
+                .all(|s| matches!(*s, "app" | "updater" | "cache" | "lnk" | "exe" | "url"))
+    })
+}
+
 /// First path segment under a Common Files root (vendor folder name).
 pub fn common_files_vendor_segment(path: &str) -> Option<String> {
     let p = path.replace('/', "\\").to_lowercase();
@@ -162,6 +196,22 @@ fn non_fs_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupIte
     {
         return true;
     }
+    let own_key = app.registry_key.replace('/', "\\").to_lowercase();
+    if matches!(item.kind, ItemKind::Registry)
+        && low == own_key
+        && ["hkcu", "hklm", "hklm32", "hklm64"].iter().any(|hive| {
+            let prefix =
+                format!("{hive}\\software\\microsoft\\windows\\currentversion\\uninstall\\");
+            own_key.strip_prefix(&prefix).is_some_and(|leaf| {
+                leaf.len() == 36 && crate::shared::first_guid(&format!("{{{leaf}}}")).is_some()
+            })
+        })
+    {
+        return true;
+    }
+    if complete_product_segment(app, &low) {
+        return true;
+    }
     if let Some(guid) = crate::shared::first_guid(&app.registry_key) {
         if low.contains(&guid) {
             return true;
@@ -246,12 +296,13 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 }
             }
             let slugs = crate::scanner::slugify(&app.name);
-            let name_hit = slugs.iter().any(|s| {
-                ar10_name_slug_ok(s)
-                    && low
-                        .split(['\\', '/', ' ', '_', '-', '.'])
-                        .any(|seg| seg == s.to_lowercase())
-            });
+            let name_hit = complete_product_segment(app, &low)
+                || slugs.iter().any(|s| {
+                    ar10_name_slug_ok(s)
+                        && low
+                            .split(['\\', '/', ' ', '_', '-', '.'])
+                            .any(|seg| seg == s.to_lowercase())
+                });
             if name_hit {
                 // With a known install location a name hit is a useful secondary signal.
                 // Without one, only trust name hits under common install roots (fail-closed).
@@ -285,6 +336,52 @@ mod tests {
     use super::*;
     use crate::apps::InstalledApp;
     use crate::scanner::{Confidence, RiskLevel};
+
+    #[test]
+    fn complete_product_identity_matches_compounds_not_generic_siblings() {
+        let mut app = demo_app();
+        app.name = "Kimi Code 1.0.4".into();
+        app.version = "1.0.4".into();
+        app.registry_key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\8e1a5331-d39b-57b9-8da5-3dc7219b2990".into();
+        for path in [
+            r"C:\Users\a\AppData\Local\kimi-code-app-updater",
+            r"C:\Users\a\AppData\Roaming\kimi-code-app",
+            r"C:\Users\a\Desktop\Kimi Code.lnk",
+        ] {
+            assert!(
+                path_associated_with_app(&app, &probe(path, ItemKind::File)),
+                "{path}"
+            );
+        }
+        assert!(path_associated_with_app(
+            &app,
+            &probe(&app.registry_key, ItemKind::Registry)
+        ));
+        assert!(path_associated_with_app(
+            &app,
+            &probe(r"HKCU\Software\Classes\kimi-code", ItemKind::Registry)
+        ));
+        for path in [
+            r"C:\Users\a\AppData\Roaming\Code",
+            r"C:\Users\a\AppData\Roaming\other-kimi-code",
+            r"C:\Users\a\AppData\Roaming\kimi-code-other",
+            r"C:\Users\a\AppData\Roaming\kimi-other-code",
+        ] {
+            assert!(
+                !path_associated_with_app(&app, &probe(path, ItemKind::Dir)),
+                "{path}"
+            );
+        }
+        assert!(!path_associated_with_app(
+            &app,
+            &probe(&format!("{}-other", app.registry_key), ItemKind::Registry)
+        ));
+        app.name = "Code App".into();
+        assert!(!path_associated_with_app(
+            &app,
+            &probe(r"C:\Users\a\AppData\Roaming\code-app", ItemKind::Dir)
+        ));
+    }
 
     fn demo_app() -> InstalledApp {
         InstalledApp {
