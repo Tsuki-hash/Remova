@@ -150,9 +150,9 @@ export function OrphanPage({
     }
   };
 
-  const selectBucket = (bucket: "safe" | "suggest") => {
-    if (!items) return;
-    const paths = items.filter((it) => bucketItem(it) === bucket).map((it) => it.path);
+  const selectAll = () => {
+    if (!items || busy) return;
+    const paths = items.filter((it) => bucketItem(it) !== "keep").map((it) => it.path);
     setSelected((prev) => {
       const n = new Set(prev);
       for (const p of paths) n.add(p);
@@ -209,14 +209,9 @@ export function OrphanPage({
                 flexShrink: 0,
               }}
             >
-              <button style={{ ...css.btnGhost, height: 28 }} onClick={() => selectBucket("safe")}>
-                {L.orphanSelectSafe}
-              </button>
-              <button
-                style={{ ...css.btnGhost, height: 28 }}
-                onClick={() => selectBucket("suggest")}
-              >
-                {L.orphanSelectSuggest}
+              <button style={{ ...css.btnGhost, height: 28 }} onClick={selectAll}
+                title={L.orphanSelectAllHint} disabled={busy || !items.some(it => bucketItem(it) !== "keep")}>
+                {L.orphanSelectAll}
               </button>
               <span style={{ ...css.muted, fontWeight: 600 }}>{selectedMeta}</span>
               <button
