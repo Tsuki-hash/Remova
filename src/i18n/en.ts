@@ -298,6 +298,7 @@ export const dict: EnDict = {
     panelClose: "Close",
     navRegion: "Navigation",
     clearSelection: "Clear selection",
+    cleanupReportDetails: "Results and technical details",
     selectVisible: "Select current results",
     deselectVisible: "Deselect current results",
     selectVisibleHint: "Applies to the current filtered results, including items needing review. Other selections are preserved; risk confirmation still applies before cleanup.",
