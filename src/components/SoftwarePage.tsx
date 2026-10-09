@@ -278,6 +278,11 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               })
             }
             onEvidence={p.setEvidence}
+            onSelectVisible={(paths, selected) => p.setSelectedPaths(previous => {
+              const next = new Set(previous);
+              for (const path of paths) { if (selected) next.add(path); else next.delete(path); }
+              return next;
+            })}
           />
           {p.selected && p.scan && scanMatchesApp(p.scan, p.selected) && p.detailPanel}
         </div>
