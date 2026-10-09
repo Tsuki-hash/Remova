@@ -25,6 +25,7 @@ type LeftoverRowProps = {
   language: ReturnType<typeof currentLang>;
   it: CleanupItem;
   checked: boolean;
+  disabled: boolean;
   note: string | undefined;
   onTogglePath: (path: string) => void;
   onEvidence: (text: string | null) => void;
@@ -34,6 +35,7 @@ type LeftoverRowProps = {
 const LeftoverRow = memo(function LeftoverRow({
   it,
   checked,
+  disabled,
   note,
   onTogglePath,
   onEvidence,
@@ -44,6 +46,11 @@ const LeftoverRow = memo(function LeftoverRow({
   return (
     <div
       className="software-leftover-row"
+      onClick={(event) => {
+        const selection = window.getSelection();
+        if (disabled || (event.target as Element).closest("input,button,a,label") || (selection && !selection.isCollapsed)) return;
+        onTogglePath(it.path);
+      }}
       style={{
         display: "grid",
         gridTemplateColumns: "28px minmax(0, 1fr) 120px 90px 40px",
@@ -57,6 +64,7 @@ const LeftoverRow = memo(function LeftoverRow({
             ? "inset 3px 0 0 var(--accent)"
             : undefined,
         background: noted ? "var(--accent-soft)" : undefined,
+        cursor: disabled ? undefined : "pointer",
       }}
     >
       <div>
@@ -64,7 +72,8 @@ const LeftoverRow = memo(function LeftoverRow({
           type="checkbox"
           aria-label={it.path}
           checked={checked}
-          onChange={() => onTogglePath(it.path)}
+          disabled={disabled}
+          onChange={() => { if (!disabled) onTogglePath(it.path); }}
         />
       </div>
       <div style={{ minWidth: 0, overflow: "hidden" }}>
@@ -196,6 +205,7 @@ type Props = {
   aiNotes: Record<string, string>;
   orphanLabel: string;
   onTogglePath: (path: string) => void;
+  onSelectVisible?: (paths: string[], selected: boolean) => void;
   onEvidence: (text: string | null) => void;
   /** Filter leftovers by linked bucket (detail-panel drill-down). */
   kindFilter?: LinkedBucketId | null;
@@ -216,6 +226,7 @@ export function ScanLeftoversView({
   aiNotes,
   orphanLabel,
   onTogglePath,
+  onSelectVisible,
   onEvidence,
   kindFilter,
   filterApp,
@@ -258,6 +269,15 @@ export function ScanLeftoversView({
     [onlySelected, riskItems, selectedPaths]);
   const selectedCount = scan.items.filter(item => selectedPaths.has(item.path)).length;
   const hiddenSelected = selectedCount - displayItems.filter(item => selectedPaths.has(item.path)).length;
+  const visibleSelected = displayItems.filter(item => selectedPaths.has(item.path)).length;
+  const allVisibleSelected = displayItems.length > 0 && visibleSelected === displayItems.length;
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = visibleSelected > 0 && !allVisibleSelected;
+  }, [visibleSelected, allVisibleSelected]);
+  const selectVisible = () => {
+    if (!scanning && displayItems.length) onSelectVisible?.(displayItems.map(item => item.path), !allVisibleSelected);
+  };
   const filterLabel = useMemo(() => {
     if (!kindFilter) return null;
     const key = linkedBucketLabelKey(kindFilter);
@@ -315,6 +335,8 @@ export function ScanLeftoversView({
       />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "8px 14px", fontSize: 12 }}>
         <span style={{ ...css.muted, flex: "1 1 240px" }}>{L.scanSelectionScope(displayItems.length, selectedCount, hiddenSelected)}</span>
+        {onSelectVisible && <button style={{ ...css.btnGhost, height: 28 }} disabled={scanning || displayItems.length === 0}
+          title={L.selectVisibleHint} onClick={selectVisible}>{allVisibleSelected ? L.deselectVisible : L.selectVisible}</button>}
         <button style={{ ...css.btnGhost, height: 28 }} disabled={scanning} aria-pressed={onlySelected}
           title={L.onlySelectedHint} onClick={() => setOnlySelected(value => !value)}>{L.onlySelected}</button>
       </div>
@@ -366,7 +388,10 @@ export function ScanLeftoversView({
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <Deco ch="✓" />
+          {onSelectVisible ? <label style={{ display: "flex", padding: "4px 0", cursor: "pointer" }} title={L.selectVisibleHint}>
+            <input ref={selectAllRef} type="checkbox" aria-label={L.selectVisible} checked={allVisibleSelected}
+              disabled={scanning || displayItems.length === 0} onChange={selectVisible} />
+          </label> : <Deco ch="✓" />}
           <span>{L.colLocation}</span>
           <span>{L.colSource}</span>
           <span>{L.colConfidence}</span>
@@ -403,6 +428,7 @@ export function ScanLeftoversView({
                     language={currentLang()}
                     it={it}
                     checked={selectedPaths.has(it.path)}
+                    disabled={scanning}
                     note={aiNotes[it.path]}
                     onTogglePath={onTogglePath}
                     onEvidence={showEvidence}
