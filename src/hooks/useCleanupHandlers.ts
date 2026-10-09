@@ -20,6 +20,8 @@ import type { BatchItemResult } from "../components/BatchPanels";
 
 /** Grouped cleanup setters (A-4). */
 export type CleanupFlowSetters = {
+  setSelectedPaths?: (paths: Set<string>) => void;
+  setScan?: (scan: ScanResult | null) => void;
   setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
   setResidualFromUninstall: (v: boolean) => void;
   setAiRisk: (v: string | null) => void;
@@ -71,6 +73,8 @@ export function useCleanupHandlers({
     selected.source !== "Monitor" && selected.source !== "Orphan";
   const {
     setMulti,
+    setSelectedPaths,
+    setScan,
     setResidualFromUninstall,
     setAiRisk,
     setReport,
@@ -240,6 +244,8 @@ export function useCleanupHandlers({
       }
       setAiReportNote(null);
       setVerifyRows(null);
+      setSelectedPaths?.(new Set());
+      setScan?.(null);
       if (r.failed > 0) {
         toast.error(L.batchDetail(r.deleted, r.failed));
       } else {
@@ -253,10 +259,10 @@ export function useCleanupHandlers({
           if (vseq === verifySeqRef.current && (!currentReport || currentReport.current === r)) setVerifyRows(rows);
         })
         .catch(() => {});
+      setResidualFromUninstall(r.uninstall_ok || residualFromUninstall);
       if (r.uninstall_ok && selected) {
         onAfterCleanup?.(selected, r);
       }
-      setResidualFromUninstall(false);
       void refreshApps();
     } catch (e) {
       setError(formatError(e, "cleanup"));
@@ -272,6 +278,9 @@ export function useCleanupHandlers({
     selectedPaths,
     refreshApps,
     runOfficial,
+    setSelectedPaths,
+    setScan,
+    residualFromUninstall,
     L,
     onAfterCleanup,
     setReport,

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
@@ -17,6 +18,7 @@ type Props = {
   aiReportBusy: boolean;
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
+  residualScan?: { scanning: boolean; count?: number };
   onDismiss: () => void;
   onRegenerate: () => void;
 };
@@ -27,14 +29,20 @@ export function ReportPanel({
   aiReportBusy,
   aiReportNote,
   verifyRows,
+  residualScan,
   onDismiss,
   onRegenerate,
 }: Props) {
   const L = t();
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!report.dry_run) panel.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [report]);
   const backupSession = "backup_dir" in report && !report.dry_run && !report.aborted && report.backup_dir
     ? report.backup_dir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   return (
     <div
+      ref={panel}
       style={{
         ...css.card,
         marginBottom: 10,
@@ -51,6 +59,15 @@ export function ReportPanel({
           <CloseGlyph />
         </button>
       </div>
+      {"uninstall_ok" in report && !report.dry_run && !report.aborted && report.uninstall_ok && (
+        <div role="status" style={{ marginTop: 8, lineHeight: 1.6 }}>
+          <strong>{L.uninstallOk}</strong>
+          {residualScan && <div style={{ color: "var(--muted)" }}>
+            {residualScan.scanning ? L.cleanupRescanRunning : residualScan.count === undefined
+              ? L.cleanupRescanUnknown : L.cleanupRescanResult(residualScan.count)}
+          </div>}
+        </div>
+      )}
       {"backup_dir" in report &&
         (backupSession ? (
           <div

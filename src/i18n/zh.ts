@@ -476,6 +476,10 @@ export const dict = {
     uninstallConfirm: (name: string) =>
       `将使用官方卸载程序卸载「${name}」。卸载完成后可再扫描残留文件。继续？`,
     uninstallOk: "官方卸载已完成",
+    uninstallAwaitCleanup: (n: number) => `扫描发现 ${n} 项关联目标，残留尚未删除；请核对勾选项，确认清理后才会删除。`,
+    cleanupRescanRunning: "正在重新扫描剩余关联项；本次清理结果保留在下方。",
+    cleanupRescanUnknown: "剩余关联项尚未核对，不能据此判断已无残留；可重新扫描确认。",
+    cleanupRescanResult: (n: number) => n === 0 ? "本次复扫未发现关联残留。" : `本次复扫仍发现 ${n} 项关联目标，未自动勾选；请核对依据后决定是否继续清理。`,
     uninstallCancelled: "已取消官方卸载",
     restoreDone: "还原完成",
     restoreNoDetail: "没有可确认的还原明细",

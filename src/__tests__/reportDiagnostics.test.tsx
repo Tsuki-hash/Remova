@@ -15,6 +15,24 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["zh", "en"] as const)("separates official success from remaining scan status in %s", lang => {
+  setLang(lang);
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: true,
+    uninstall_message: "", deleted: 0, failed: 1, skipped: 0, delayed: 0, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const props = { report, aiEnabled: false, aiReportBusy: false, aiReportNote: null,
+    verifyRows: null, onDismiss: () => {}, onRegenerate: () => {} };
+  const view = render(<ReportPanel {...props} residualScan={{ scanning: true }} />);
+  expect(screen.getByRole("status").textContent).toContain(t().uninstallOk);
+  expect(screen.getByRole("status").textContent).toContain(t().cleanupRescanRunning);
+  for (const count of [0, 2, undefined]) {
+    view.rerender(<ReportPanel {...props} residualScan={{ scanning: false, count }} />);
+    expect(screen.getByRole("status").textContent).toContain(count === undefined ? t().cleanupRescanUnknown : t().cleanupRescanResult(count));
+    expect(screen.queryByText(t().reportFlowDone)).toBeNull();
+  }
+  view.rerender(<ReportPanel {...props} report={{ ...report, aborted: true }} />);
+  expect(screen.queryByRole("status")).toBeNull();
+});
 it.each(["zh", "en"] as const)("separates pending reboot counts and never claims partial cleanup is complete in %s", lang => {
   setLang(lang);
   const base: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",

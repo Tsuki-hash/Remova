@@ -199,7 +199,7 @@ export default function App() {
   );
   const busyRef = useRef(false);
   const analyzeRef = useRef<
-    (app: InstalledApp, opts?: { fromUninstall?: boolean }) => Promise<void>
+    (app: InstalledApp, opts?: { fromUninstall?: boolean; afterCleanup?: boolean }) => Promise<void>
   >(async () => {});
   const scanUiState = useScanUiState();
   const {
@@ -250,7 +250,7 @@ export default function App() {
     (app: InstalledApp) => {
  // re-analyze after cleanup when user preference is on.
       if (!loadRescanAfterUninstall()) return;
-      void analyzeRef.current(app, { fromUninstall: true });
+      void analyzeRef.current(app, { fromUninstall: true, afterCleanup: true });
     },
     [],
   );
@@ -286,6 +286,8 @@ export default function App() {
     multi,
     flow: {
       setMulti: core.setMulti,
+      setSelectedPaths,
+      setScan: core.setScan,
       setResidualFromUninstall: residualActions.setResidualFromUninstall,
       setAiRisk,
       setReport: coreSetReport,

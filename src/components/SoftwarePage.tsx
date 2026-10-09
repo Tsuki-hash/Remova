@@ -153,6 +153,12 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         onToggleSmartFilter={() => setSmartFilterOpen((v) => !v)}
       />
       {p.uninstallStage !== "idle" && <UninstallStageBar stage={p.uninstallStage} />}
+      {p.residualFromUninstall && !p.report && <div role="status" style={{ ...css.card, padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
+        <strong>{L.uninstallOk}</strong>
+        <div style={{ color: "var(--muted)" }}>{p.scanning ? L.analyzing : p.scan
+          ? p.scan.items.length === 0 ? L.cleanupRescanResult(0) : L.uninstallAwaitCleanup(p.scan.items.length)
+          : L.cleanupRescanUnknown}</div>
+      </div>}
 
       {p.selected && !p.scan && (
         <SelectedAppCard
@@ -205,6 +211,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           aiReportBusy={p.aiReportBusy}
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
+          residualScan={{ scanning: p.scanning, count: p.residualFromUninstall ? p.scan?.items.length : undefined }}
           onDismiss={() => p.setReport(null)}
           onRegenerate={p.onRegenerateAiReport}
         />

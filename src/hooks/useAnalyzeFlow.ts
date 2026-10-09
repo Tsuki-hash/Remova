@@ -71,19 +71,20 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   useEffect(() => () => { analyzeSeqRef.current++; }, []);
   const analyze = useCallback(
-    async (app: InstalledApp, opts?: { fromUninstall?: boolean }) => {
+    async (app: InstalledApp, opts?: { fromUninstall?: boolean; afterCleanup?: boolean }) => {
  // single in-flight ref (was dual scanningRef/analyzingRef).
  // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
+      if (opts?.afterCleanup) setResidualFromUninstall(true);
       setSelected(app);
       setScanning(true);
       setScan(null);
       setSelectedPaths(new Set());
       setError(null);
-      setReport(null);
+      if (!opts?.afterCleanup) setReport(null);
       setAiNotes({});
       setAiRisk(null);
       setIgnoreSuggestions([]);
@@ -103,7 +104,7 @@ export function useAnalyzeFlow({
             })
             .catch(() => {});
         }
-        setSelectedPaths(new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
+        setSelectedPaths(opts?.afterCleanup ? new Set() : new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
         setError(null);
         toast.success(
           t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),
@@ -189,6 +190,12 @@ export function useAnalyzeFlow({
         } else {
           uninstallFailToast(r.message, strings);
         }
+        if (r.had_command && r.ok) {
+          setReport(null);
+          setScan(null);
+          setSelectedPaths(new Set());
+          setResidualFromUninstall(true);
+        }
         if (r.had_command && r.ok && checked) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
@@ -224,6 +231,9 @@ export function useAnalyzeFlow({
       setResidualFromUninstall,
       setUninstallingKey,
       setUninstallStage,
+      setReport,
+      setScan,
+      setSelectedPaths,
       setError,
       busyRef,
       clearStageTimer,
@@ -273,6 +283,12 @@ const openOfficialOnly = useCallback(
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
         else if (r.ok) toast.success(strings.uninstallOk);
         else uninstallFailToast(r.message, strings);
+        if (r.had_command && r.ok) {
+          setReport(null);
+          setScan(null);
+          setSelectedPaths(new Set());
+          setResidualFromUninstall(true);
+        }
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
@@ -296,7 +312,7 @@ const openOfficialOnly = useCallback(
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setResidualFromUninstall, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer],
+    [refreshApps, setSelected, setResidualFromUninstall, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer, setReport, setScan, setSelectedPaths],
   );
 
   const openAnalyzeFromDrawer = useCallback(
