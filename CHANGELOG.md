@@ -4,9 +4,9 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.3.1] - Unreleased
+## [1.3.1] - 2026-10-10
 
-本版本尚未发布；实际升级、提权、备份还原、签名更新及 Windows 高 DPI 验收仍待完成。
+本版本提供 Windows x64 安装包与便携版，采用手动下载更新；发布产物未签名。实际升级、提权、备份还原、签名更新及 Windows 高 DPI 环境验收仍待完成。
 
 ### 改进
 
