@@ -38,9 +38,24 @@ pub fn begin() -> Result<u32, String> {
     if tasks.len() >= 8 {
         return Err("scan:busy".into());
     }
-    let id = NEXT
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
-        .map_err(|_| "scan:state")?;
+    // `fetch_update` is deprecated (renamed `try_update`), and the rename is not
+    // available on every toolchain this crate still builds with — so use the
+    // compare_exchange primitive directly. Semantics are unchanged: the previous
+    // value is handed out and overflow is an error rather than a wrapped id.
+    let id = loop {
+        let current = NEXT.load(Ordering::SeqCst);
+        match current.checked_add(1) {
+            Some(next) => {
+                if NEXT
+                    .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    break current;
+                }
+            }
+            None => return Err("scan:state".into()),
+        }
+    };
     tasks.insert(
         id,
         Arc::new(Task {
