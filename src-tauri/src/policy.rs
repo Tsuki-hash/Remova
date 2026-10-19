@@ -772,17 +772,44 @@ mod tests {
 
         let mut ins = std::collections::HashSet::new();
         ins.insert(r"C:\Users\a\Downloads\app.msi".to_string());
+        ins.insert(r"C:\Users\a\AppData\Local\perfectworldarena-updater".to_string());
         crate::scan_allow::remember(crate::scan_allow::AllowScope::Installer, &ins);
         let listed = item(r"C:\Users\a\Downloads\app.msi", ItemKind::File);
+        let updater = item(
+            r"C:\Users\a\AppData\Local\perfectworldarena-updater",
+            ItemKind::Dir,
+        );
         let forged = item(r"C:\Users\a\Documents\save.dat", ItemKind::File);
+        let sibling = item(r"C:\Users\a\AppData\Local\unscanned-updater", ItemKind::Dir);
         assert!(
             gate_cleanup_item(Some(&orphanish), &listed, CleanupSource::Installer, &ignore)
                 .is_allow()
         );
+        assert!(gate_cleanup_item(
+            Some(&orphanish),
+            &updater,
+            CleanupSource::Installer,
+            &ignore
+        )
+        .is_allow());
         assert!(
             !gate_cleanup_item(Some(&orphanish), &forged, CleanupSource::Installer, &ignore)
                 .is_allow()
         );
+        assert!(!gate_cleanup_item(
+            Some(&orphanish),
+            &sibling,
+            CleanupSource::Installer,
+            &ignore
+        )
+        .is_allow());
+        assert!(!gate_cleanup_item(
+            Some(&orphanish),
+            &updater,
+            CleanupSource::ToolCache,
+            &ignore
+        )
+        .is_allow());
 
         let mut tc = std::collections::HashSet::new();
         tc.insert(r"C:\Users\a\AppData\Local\npm-cache\x".to_string());

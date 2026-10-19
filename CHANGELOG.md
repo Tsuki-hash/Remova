@@ -4,6 +4,15 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.2] - 2026-10-19
+
+安装包与更新缓存扫描补上常见的更新器目录形态。
+
+### 修复
+
+- 安装包与更新缓存扫描现在会识别 `%LOCALAPPDATA%` 下直接以 `<产品名>-updater` 结尾的一级更新器目录（如 `obsidian-updater`、`token-monitor-updater`）；此前只会在这些目录内部查找固定名称的缓存子目录，因此整类目录不会出现在扫描结果中。名称匹配仍按中风险候选处理，不会默认勾选，清理目标依旧必须来自本次扫描的服务端授权清单。
+- 修正更新缓存在界面上被显示为通用「配置文件」的问题。
+
 ## [1.3.1] - 2026-10-10
 
 本版本提供 Windows x64 安装包与便携版，采用手动下载更新；发布产物未签名。实际升级、提权、备份还原、签名更新及 Windows 高 DPI 环境验收仍待完成。

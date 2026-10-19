@@ -20,6 +20,7 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("future scanner reason", "scan")).toBe(L.backendDetailUnavailable);
   expect(backendText("AppData folder matching product name", "scan")).toBe(L.linkedConfigFiles);
   expect(backendText("WebView2 / Electron cache folder", "scan")).toBe(L.linkedConfigFiles);
+  expect(backendText("updater cache", "scan")).toBe(L.installerTitle);
   expect(backendText("Run startup: Vendor", "scan")).toBe(L.linkedStartup);
   expect(backendText("")).toBe("");
   for (const code of ["constructor", "toString", "__proto__"]) {

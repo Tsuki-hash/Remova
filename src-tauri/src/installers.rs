@@ -167,14 +167,24 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
     }
 }
 
+fn is_updater_dir_name(name: &str) -> bool {
+    name.to_ascii_lowercase()
+        .strip_suffix("-updater")
+        .is_some_and(|prefix| !prefix.is_empty())
+}
+
 fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
-    if !crate::scan_task::checkpoint("caches", out.len()) {
-        return;
-    }
     let Some(local) = user_local_appdata() else {
         return;
     };
-    let Ok(rd) = std::fs::read_dir(&local) else {
+    scan_updater_dirs_from(&local, out, scanned);
+}
+
+fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+    if !crate::scan_task::checkpoint("caches", out.len()) {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(local) else {
         return;
     };
     for vendor in rd.flatten().take(200) {
@@ -185,6 +195,14 @@ fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) 
         if !vpath.is_dir() {
             continue;
         }
+
+        if vendor.file_name().to_str().is_some_and(is_updater_dir_name) {
+            push_dir_item(out, scanned, &vpath, "updater_cache");
+            if out.len() >= SPECIALTY_RESULT_CAP {
+                return;
+            }
+        }
+
         for leaf in [
             "updater",
             "updates",
@@ -238,6 +256,99 @@ mod tests {
         assert!(!ext_is_pkg("game.exe"));
         assert!(ext_is_pkg("vcredist_x64.exe"));
         assert!(ext_is_pkg("App-Setup.exe"));
+    }
+
+    #[test]
+    fn updater_dir_name_matches_known_suffix_only() {
+        for name in [
+            "perfectworldarena-updater",
+            "@deepseek-aidsh-desktop-updater",
+            "obsidian-UPDATER",
+            "token-monitor-UpDaTeR",
+        ] {
+            assert!(is_updater_dir_name(name), "{name}");
+        }
+        for name in [
+            "updater",
+            "-updater",
+            "ordinary-directory",
+            "updater-backup",
+            "product-updater-extra",
+        ] {
+            assert!(!is_updater_dir_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn updater_scan_finds_suffix_roots_and_existing_cache_leaves() {
+        let _allow = crate::scan_allow::test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "remova-installer-scan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        for name in [
+            "perfectworldarena-updater",
+            "@deepseek-aidsh-desktop-updater",
+            "obsidian-UPDATER",
+            "token-monitor-UpDaTeR",
+        ] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(dir.join("payload")).expect("create updater fixture");
+            std::fs::write(dir.join("payload").join("package.nupkg"), b"fixture")
+                .expect("write updater fixture");
+        }
+        let vendor = root.join("Application Data");
+        for leaf in [
+            "updater",
+            "updates",
+            "packages",
+            "installcache",
+            "squirreltemp",
+        ] {
+            std::fs::create_dir_all(vendor.join(leaf)).expect("create cache leaf");
+        }
+        std::fs::create_dir(root.join("ordinary-directory")).expect("create ordinary fixture");
+        std::fs::write(root.join("token-monitor-updater.txt"), b"not a directory")
+            .expect("create non-directory fixture");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+
+        let paths = out
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(out.len(), 9);
+        assert_eq!(paths.len(), out.len());
+        for name in [
+            "perfectworldarena-updater",
+            "@deepseek-aidsh-desktop-updater",
+            "obsidian-UPDATER",
+            "token-monitor-UpDaTeR",
+        ] {
+            let path = crate::fsutil::path_utf8(&root.join(name)).expect("utf8 fixture path");
+            let item = out
+                .iter()
+                .find(|item| item.path == path)
+                .expect("suffix root");
+            assert_eq!(item.kind, ItemKind::Dir);
+            assert_eq!(item.bucket.as_deref(), Some("updater_cache"));
+            assert_eq!(item.confidence, Confidence::Suspected);
+            assert_eq!(item.risk, RiskLevel::Medium);
+            assert_eq!(item.evidence[0].code, "updater_cache");
+        }
+        assert!(out.iter().all(|item| !item.path.ends_with("package.nupkg")));
+        assert!(out
+            .iter()
+            .all(|item| !item.path.ends_with("ordinary-directory")));
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     #[test]
