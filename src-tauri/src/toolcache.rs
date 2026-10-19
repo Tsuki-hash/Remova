@@ -74,6 +74,9 @@ impl ToolCacheEnv {
                 })
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
+                // A relocated root becomes a delete target, so a value that
+                // points somewhere implausible is dropped rather than trusted.
+                .filter(|p| is_plausible_cache_root(p))
         };
         Self {
             cargo_home: first_path("CARGO_HOME"),
@@ -87,6 +90,49 @@ impl ToolCacheEnv {
             xdg_cache_home: first_path("XDG_CACHE_HOME"),
         }
     }
+}
+
+/// Whether a user-supplied relocation variable names something that could be a
+/// cache root.
+///
+/// These values become whole-directory delete targets (or, for
+/// `XDG_CACHE_HOME`, an enumeration root), so `XDG_CACHE_HOME=D:\` must not
+/// offer every top-level directory on the drive, and `GRADLE_USER_HOME=D:\Work`
+/// must not turn a work tree into a preselected deletion. The check is
+/// deliberately structural rather than a name list: an absolute drive path with
+/// at least three components, so it can be neither a drive root nor a bare
+/// library folder, and not a reparse point that resolves elsewhere.
+fn is_plausible_cache_root(p: &Path) -> bool {
+    if p.as_os_str().is_empty() || p.is_relative() {
+        return false;
+    }
+    let comps: Vec<_> = p.components().collect();
+    if comps.len() < 3 {
+        return false;
+    }
+    // Reject a bare library root such as `C:\Users\x\Documents`.
+    let last = comps
+        .last()
+        .and_then(|c| c.as_os_str().to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    const LIBRARY_NAMES: &[&str] = &[
+        "documents",
+        "downloads",
+        "desktop",
+        "pictures",
+        "videos",
+        "music",
+        "favorites",
+        "contacts",
+        "links",
+        "saved games",
+        "searches",
+    ];
+    if LIBRARY_NAMES.contains(&last.as_str()) {
+        return false;
+    }
+    !crate::fsutil::is_reparse_point(p)
 }
 
 /// Build the fixed single-owner cache list from explicit bases.
@@ -230,6 +276,11 @@ fn vscode_family_caches(roaming: &Path) -> Vec<(ToolDomain, PathBuf, &'static st
         if !dir.is_dir() {
             continue;
         }
+        // A junction here would resolve the caches somewhere other than where
+        // the reported path says they are.
+        if crate::fsutil::is_reparse_point(&dir) {
+            continue;
+        }
         let cache = dir.join("Cache");
         let cached_data = dir.join("CachedData");
         if !(cache.is_dir() && cached_data.is_dir()) {
@@ -285,6 +336,9 @@ fn chromium_profile_caches(local: &Path) -> Vec<(ToolDomain, PathBuf, &'static s
             if !profile.is_dir() {
                 continue;
             }
+            if crate::fsutil::is_reparse_point(&profile) {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             let numbered = name
                 .strip_prefix("Profile ")
@@ -336,13 +390,15 @@ const JETBRAINS_SAFE_SUBDIRS: &[&str] = &["caches", "compile-server", "log", "tm
 
 /// One level below a shared cache root.
 ///
-/// A JetBrains IDE home is recognised by having at least one safe subdirectory;
-/// those subdirectories are reported as `Confirmed` because the allow-list above
-/// names them. A JetBrains entry that is not an IDE home (a downloaded dist) and
-/// every `~/.cache` child are reported as `Suspected` / `Medium`, since nothing
-/// here proves the whole child is disposable — the user decides.
+/// `jetbrains_home` is the only root whose children may be promoted to
+/// `Confirmed` / `Low`, because it is the only one where a fixed allow-list of
+/// subdirectory names is meaningful. Every other shared root — `~/.cache` above
+/// all — holds unrelated tools' data, so its children stay `Suspected` /
+/// `Medium`: a child that merely happens to contain a `caches` or `tmp`
+/// subdirectory must not become a preselected delete target.
 fn scan_shared_cache_children(
     root: &Path,
+    jetbrains_home: bool,
     out: &mut Vec<CleanupItem>,
     scanned: &mut HashSet<String>,
 ) {
@@ -378,11 +434,19 @@ fn scan_shared_cache_children(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let safe: Vec<PathBuf> = JETBRAINS_SAFE_SUBDIRS
-            .iter()
-            .map(|sub| path.join(sub))
-            .filter(|sub| sub.is_dir())
-            .collect();
+        // Only a JetBrains IDE home gets the subdirectory allow-list. On any
+        // other shared root the child is reported whole and unconfirmed, so a
+        // directory that merely contains a `caches`/`tmp` subdirectory can never
+        // become a preselected delete target.
+        let safe: Vec<PathBuf> = if jetbrains_home {
+            JETBRAINS_SAFE_SUBDIRS
+                .iter()
+                .map(|sub| path.join(sub))
+                .filter(|sub| sub.is_dir())
+                .collect()
+        } else {
+            Vec::new()
+        };
         if safe.is_empty() {
             push_item(out, scanned, path, ToolDomain::Dev, &name, false);
         } else {
@@ -486,7 +550,24 @@ pub fn scan_tool_caches() -> Vec<CleanupItem> {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return out;
         }
-        scan_shared_cache_children(&root, &mut out, &mut scanned);
+        // The JetBrains root is the only one whose children may be promoted by a
+        // fixed subdirectory allow-list; see `scan_shared_cache_children`.
+        let jetbrains_home = root
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case("JetBrains"));
+        scan_shared_cache_children(&root, jetbrains_home, &mut out, &mut scanned);
+    }
+    // Bound the whole scan, not just the fixed-root phase, and keep the
+    // allow-list in step with what is actually reported. Before this the
+    // shared-root phase could push the total past `SPECIALTY_RESULT_CAP`, so
+    // the cap documented on the constant was not what the code guaranteed.
+    if out.len() > SPECIALTY_RESULT_CAP {
+        let reported: HashSet<String> = out[..SPECIALTY_RESULT_CAP]
+            .iter()
+            .map(|it| it.path.clone())
+            .collect();
+        out.truncate(SPECIALTY_RESULT_CAP);
+        scanned.retain(|p| reported.contains(p));
     }
     if !crate::scan_task::checkpoint("sizes", out.len()) {
         return out;
@@ -671,7 +752,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_shared_cache_children(&cache, &mut out, &mut scanned);
+        scan_shared_cache_children(&cache, false, &mut out, &mut scanned);
 
         assert_eq!(out.len(), 3, "one item per child directory");
         let root_utf8 = crate::fsutil::path_utf8(&cache).expect("utf8 root");
@@ -710,7 +791,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_shared_cache_children(&jb, &mut out, &mut scanned);
+        scan_shared_cache_children(&jb, true, &mut out, &mut scanned);
 
         assert_eq!(out.len(), JETBRAINS_SAFE_SUBDIRS.len() + 1);
         for it in &out {
@@ -747,7 +828,7 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_shared_cache_children(&root, &mut out, &mut scanned);
+        scan_shared_cache_children(&root, false, &mut out, &mut scanned);
 
         assert_eq!(out.len(), TOOL_CACHE_CHILD_CAP);
         assert_eq!(scanned.len(), TOOL_CACHE_CHILD_CAP);
@@ -844,6 +925,94 @@ mod tests {
         }
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// The JetBrains subdirectory allow-list is what makes a child preselected,
+    /// so it must not leak to any other shared root. `~/.cache/<tool>` holding a
+    /// `caches` or `tmp` subdirectory is a real shape and must stay unselected.
+    #[test]
+    fn jetbrains_allow_list_does_not_leak_to_other_shared_roots() {
+        let root = unique_temp("leak");
+        let shared = root.join(".cache");
+        let tool = shared.join("some-tool");
+        std::fs::create_dir_all(tool.join("caches")).expect("create caches");
+        std::fs::create_dir_all(tool.join("tmp")).expect("create tmp");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        // jetbrains_home = false: this is the XDG-style shared root.
+        scan_shared_cache_children(&shared, false, &mut out, &mut scanned);
+
+        assert_eq!(out.len(), 1, "the tool dir is reported whole, not expanded");
+        let it = &out[0];
+        assert!(it.path.ends_with("some-tool"), "{}", it.path);
+        assert_eq!(it.confidence, Confidence::Suspected);
+        assert_eq!(it.risk, RiskLevel::Medium);
+
+        // The same layout under the JetBrains root still promotes, proving the
+        // flag is what gates it and not the directory shape.
+        let jb = root.join("JetBrains");
+        let ide = jb.join("IdeaIC2025.2");
+        std::fs::create_dir_all(ide.join("caches")).expect("create jb caches");
+        let mut jb_out = Vec::new();
+        let mut jb_scanned = HashSet::new();
+        scan_shared_cache_children(&jb, true, &mut jb_out, &mut jb_scanned);
+        assert_eq!(jb_out.len(), 1);
+        assert_eq!(jb_out[0].confidence, Confidence::Confirmed);
+        assert_eq!(jb_out[0].risk, RiskLevel::Low);
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// A relocated root becomes a delete target, so an implausible value must be
+    /// dropped rather than trusted: `XDG_CACHE_HOME=D:\` would otherwise offer
+    /// every top-level directory on the drive.
+    #[test]
+    fn implausible_relocation_roots_are_rejected() {
+        for bad in [
+            "D:",
+            "D:/",
+            "C:",
+            "relative/cache",
+            "",
+            "C:/Users/x/Documents",
+        ] {
+            assert!(
+                !is_plausible_cache_root(Path::new(bad)),
+                "{bad} must not be accepted as a cache root"
+            );
+        }
+        for good in [
+            "D:/cache-home",
+            "C:/Users/x/AppData/Local/uv/cache",
+            "D:/tools/cargo",
+            "C:/Users/x/.gradle",
+        ] {
+            assert!(
+                is_plausible_cache_root(Path::new(good)),
+                "{good} must be accepted as a cache root"
+            );
+        }
+    }
+
+    /// The whole scan is bounded, not just the fixed-root phase, and the
+    /// allow-list only ever names paths that were actually reported.
+    #[test]
+    fn scan_never_exceeds_the_documented_result_cap() {
+        let _allow = crate::scan_allow::test_lock();
+        let items = scan_tool_caches();
+        assert!(
+            items.len() <= SPECIALTY_RESULT_CAP,
+            "reported {} items, cap is {}",
+            items.len(),
+            SPECIALTY_RESULT_CAP
+        );
+        for it in &items {
+            assert!(crate::scan_allow::was_recent(
+                AllowScope::ToolCache,
+                &it.path
+            ));
+        }
     }
 
     #[test]

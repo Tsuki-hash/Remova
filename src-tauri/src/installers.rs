@@ -247,6 +247,11 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
             return;
         }
         let p = ent.path();
+        // Junctions/mounts resolve elsewhere; listing them would offer a path
+        // whose string location and real location disagree.
+        if crate::fsutil::is_reparse_point(&p) {
+            continue;
+        }
         if !p.is_file() {
             continue;
         }
@@ -296,6 +301,13 @@ fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mu
         }
         let vpath = vendor.path();
         if !vpath.is_dir() {
+            continue;
+        }
+        // `%LOCALAPPDATA%\Application Data` is a junction back to
+        // `%LOCALAPPDATA%`, so probing it for a `packages` leaf resolves to the
+        // real `%LOCALAPPDATA%\Packages` — the LocalState root of every Store
+        // app. `is_dir()` follows links, so the reparse check has to come first.
+        if crate::fsutil::is_reparse_point(&vpath) {
             continue;
         }
         if vendor.file_name().to_str().is_some_and(is_updater_dir_name) {
@@ -583,6 +595,47 @@ mod tests {
         sorted.sort_by_key(|p| p.to_lowercase());
         assert_eq!(paths, sorted);
         assert!(out.len() <= INSTALLER_PHASE_CAP);
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// `%LOCALAPPDATA%\Application Data` is a junction back to
+    /// `%LOCALAPPDATA%`, so probing it for a `packages` leaf used to resolve to
+    /// the real `%LOCALAPPDATA%\Packages` — the LocalState root of every Store
+    /// app — and offer it for deletion. Creating a junction needs a privilege
+    /// the test suite must not require, so the guard is asserted directly and
+    /// the real-machine layout is covered by the read-only scan check below.
+    #[test]
+    fn reparse_entries_are_never_enumeration_candidates() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-reparse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        // The shape that matters: a leaf directory that is reachable both
+        // directly and through an alias.
+        std::fs::create_dir_all(root.join("Vendor").join("packages")).expect("create leaf");
+        std::fs::create_dir_all(root.join("plain-updater")).expect("create updater");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+
+        // Ordinary directories are still found — the guard must not over-block.
+        assert!(out.iter().any(|it| it.path.ends_with("plain-updater")));
+        assert!(out.iter().any(|it| it.path.ends_with("packages")));
+        // Every reported path must be a real path, not an alias of one.
+        for it in &out {
+            assert!(
+                !crate::fsutil::is_reparse_point(std::path::Path::new(&it.path)),
+                "reported path is a reparse point: {}",
+                it.path
+            );
+        }
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
