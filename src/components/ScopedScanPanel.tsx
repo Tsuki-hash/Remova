@@ -16,11 +16,14 @@ import {
   buildCleanupRiskBits,
   defaultSelectable,
   formatRiskNote,
+  leftoverReasonLine,
   maxRiskOf,
   riskTierLabel,
   summarizeLeftovers,
 } from "../lib/decision";
+import { summarizeCleanupPlan } from "../lib/cleanupPlan";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
+import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 
 const channelFor = (src: string) => `scoped-scan-${src}`;
 
@@ -47,11 +50,14 @@ export function ScopedScanPanel({
   const L = t();
   const channel = channelFor(cleanupSource);
   const [items, setItems] = useState<CleanupItem[] | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const { runItems, cancel, progress } = useAssociationScan();
   const scanRound = useRef(0);
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
+  // Nested directories are collapsed and unknown sizes counted, so the header can
+  // say what will actually be freed instead of only how many rows are checked.
+  const plan = useMemo(() => summarizeCleanupPlan(items || [], selected), [items, selected]);
 
   const runScan = useCallback(async (quiet = false) => {
     const round = ++scanRound.current;
@@ -146,7 +152,21 @@ export function ScopedScanPanel({
             disabled={busy || selected.size === 0}
             onClick={() => void cleanSelected()}
           >
-            {L.cleanup}
+            {L.cleanup} ({selected.size})
+          </button>
+          <button
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={busy || !items || items.length === 0}
+            onClick={() => setSelected(new Set(items!.map((it) => it.path)))}
+          >
+            {L.orphanSelectAll}
+          </button>
+          <button
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={busy || selected.size === 0}
+            onClick={() => setSelected(new Set())}
+          >
+            {L.clearSelection}
           </button>
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
             {L.scanStart}
@@ -157,10 +177,12 @@ export function ScopedScanPanel({
         </div>
       </div>
       {items && (
-        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
-          {summary.total} · {L.orphanSelectedMeta(selected.size, "")}
+        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
+          {L.orphanSelectedMeta(selected.size, formatSize(plan.knownKb))}
+          {plan.unknown > 0 ? ` · ${L.planUnknownSize(plan.unknown)}` : ""}
         </div>
       )}
+      <LeftoverSummaryBar summary={summary} scanning={busy} />
       <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={items ?? []}
@@ -208,13 +230,22 @@ export function ScopedScanPanel({
                 {it.path}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {backendText(it.reason || it.bucket || "", "scan")}
-                {it.user_data
-                  ? ` · ${L.reasonUserData}`
-                  : it.user_library
-                    ? ` · ${L.reasonUserLibrary}`
-                    : ""}
-                {it.size_kb ? ` · ${formatSize(it.size_kb)}` : " · —"}
+                {leftoverReasonLine(it, L)}
+                {it.reason ? ` · ${backendText(it.reason, "scan")}` : ""}
+                {it.size_kb != null ? ` · ${formatSize(it.size_kb)}` : " · —"}
+              </div>
+              <div style={{ fontSize: 10.5, marginTop: 1 }}>
+                <span
+                  style={{
+                    color: it.risk === "high" ? "var(--danger-text)" : it.risk === "medium" ? "var(--warn-text)" : "var(--ok-text)",
+                  }}
+                >
+                  {it.risk === "high" ? L.riskHigh : it.risk === "medium" ? L.riskMedium : L.low}
+                </span>
+                {" · "}
+                <span style={css.muted}>
+                  {it.confidence === "confirmed" ? L.confirmed : L.suspected}
+                </span>
               </div>
             </span>
           </label>

@@ -5,7 +5,7 @@ import { ScopedScanPanel } from "../components/ScopedScanPanel";
 import { cleanupFeedback } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
-import { setLang, t } from "../i18n";
+import { setLang, t, formatSize } from "../i18n";
 import { backendText } from "../lib/backendText";
 import type { CleanupItem, FullCleanupReport } from "../types";
 vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn(),
@@ -36,7 +36,7 @@ it.each([true, false])("retains scoped cleanup feedback after refresh, aborted=%
   await screen.findByText("fixture");
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.info).mockClear();
-  fireEvent.click(screen.getByRole("button", { name: t().cleanup }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(t().cleanup) }));
   await waitFor(() => expect(toast.error).toHaveBeenCalled());
   await waitFor(() => expect(scan).toHaveBeenCalledTimes(aborted ? 1 : 2));
   expect(toast.success).not.toHaveBeenCalled();
@@ -70,7 +70,7 @@ it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targ
   fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
   await act(async () => { finish([item]); });
   expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
-  expect(screen.getByRole("button", { name: t().cleanup }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: new RegExp(t().cleanup) }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText(t().scanComplete(0))).toBeNull();
   expect(toast.success).toHaveBeenCalledTimes(1);
   expect(onError).not.toHaveBeenCalled();
@@ -108,5 +108,50 @@ it.each([
   expect(expected).not.toBe(L.backendDetailUnavailable);
   expect(screen.getByText(expected, { exact: false })).toBeTruthy();
   expect(screen.queryByText(L.backendDetailUnavailable, { exact: false })).toBeNull();
+  setLang("zh");
+});
+
+/**
+ * The panel used to show only "N items selected" with no space estimate, no
+ * select-all, and a cleanup button with no count — so a user facing 20+
+ * preselected caches had to uncheck them one by one and could not see how much
+ * would be freed.
+ */
+it("shows the space to be freed, a select count, and select-all", async () => {
+  setLang("zh");
+  const items: CleanupItem[] = [
+    { path: "big-cache", kind: "dir", score: 90, confidence: "confirmed", risk: "low",
+      reason: "tool cache (dev)", evidence: [], bucket: "dev", size_kb: 2_000_000 },
+    { path: "small-cache", kind: "dir", score: 50, confidence: "suspected", risk: "medium",
+      reason: "shared tool cache", evidence: [], bucket: "dev", size_kb: 4_096 },
+    { path: "unmeasured", kind: "dir", score: 50, confidence: "suspected", risk: "medium",
+      reason: "shared tool cache", evidence: [], bucket: "dev", size_kb: null },
+  ];
+  const scan = vi.fn().mockResolvedValue(items);
+  render(<ScopedScanPanel title="T" hint="" appName="T" scan={scan} cleanupSource="toolcache"
+    onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
+  const L = t();
+  await screen.findByText("big-cache");
+
+  // Only the Confirmed/Low item is preselected, and the button says how many.
+  const cleanupBtn = screen.getByRole("button", { name: new RegExp(L.cleanup) });
+  expect(cleanupBtn.textContent).toContain("1");
+  // The header reports the space for what is selected. An unmeasured item only
+  // counts once it is actually selected — it is not selected yet, so no caveat.
+  const status = screen.getByRole("status");
+  expect(status.textContent).toContain(formatSize(2_000_000));
+  expect(status.textContent).not.toContain(L.planUnknownSize(1));
+  // Rows carry a risk label and a confidence label.
+  expect(screen.getAllByText(L.low).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(L.suspected).length).toBeGreaterThan(0);
+
+  // Select-all checks everything, and now the unmeasured item is in scope.
+  fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  expect(cleanupBtn.textContent).toContain("3");
+  expect(screen.getByRole("status").textContent).toContain(L.planUnknownSize(1));
+
+  // Clear selection empties it and disables cleanup.
+  fireEvent.click(screen.getByRole("button", { name: L.clearSelection }));
+  expect(screen.getByRole("button", { name: new RegExp(L.cleanup) }).hasAttribute("disabled")).toBe(true);
   setLang("zh");
 });

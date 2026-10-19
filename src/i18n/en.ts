@@ -432,6 +432,7 @@ export const dict: EnDict = {
     conclusionSourceRule: "Local rules",
     conclusionSourceAi: "Smart reading",
     conclusionSpace: (kb: string) => `About ${kb} can be freed`,
+    planUnknownSize: (n: number) => `${n} more item(s) could not be measured`,
     conclusionCleanSafe: (n: number) => `Select suggested (${n})`,
     conclusionShowConfirm: (n: number) => `Review (${n})`,
     conclusionShowKeep: (n: number) => `Why keep (${n})`,

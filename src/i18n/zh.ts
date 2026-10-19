@@ -417,6 +417,7 @@ export const dict = {
     conclusionSourceRule: "本地规则",
     conclusionSourceAi: "智能解读",
     conclusionSpace: (kb: string) => `预计可释放约 ${kb}`,
+    planUnknownSize: (n: number) => `另有 ${n} 项体积未能测算`,
     conclusionCleanSafe: (n: number) => `选中建议项（${n}）`,
     conclusionShowConfirm: (n: number) => `需确认（${n}）`,
     conclusionShowKeep: (n: number) => `为何保留（${n}）`,
