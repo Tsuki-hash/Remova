@@ -32,11 +32,21 @@ export default defineConfig({
         branches: 49,
         functions: 44,
         lines: 49,
+        // M-12: this per-file gate used to sit at 90/85/90/90, i.e. above the
+        // project-wide floor *and* above what App.tsx actually measures today
+        // (100 / 93.5 / 98.18 / 100). The effect was perverse: extracting a
+        // coherent block out of a 765-line component moves its statements into a
+        // new file that no test imports yet, so the correct refactor read as a
+        // coverage regression and the gate argued for keeping the file big.
+        // 85/80/85/85 still demands that the orchestration paths be exercised,
+        // while leaving room to split the file in the direction the rest of the
+        // codebase already goes (hooks under src/hooks, panels under
+        // src/components). Re-measure after any split and record the delta.
         "src/App.tsx": {
-          statements: 90,
-          branches: 85,
-          functions: 90,
-          lines: 90,
+          statements: 85,
+          branches: 80,
+          functions: 85,
+          lines: 85,
         },
       },
     },

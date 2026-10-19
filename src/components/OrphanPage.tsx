@@ -11,6 +11,7 @@ import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
 import { ScanProgressBar } from "./ScanProgressBar";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import { useListViewportHeight } from "../hooks/useListViewportHeight";
 import {
   groupByOrigin,
@@ -40,7 +41,7 @@ export function OrphanPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const { runItems, cancel, progress } = useAssociationScan();
-  const scanRound = useRef(0);
+  const { next: nextScanRound, isCurrent: isCurrentScanRound, invalidate: invalidateScanRound } = useRequestSeq();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useListViewportHeight(scrollRef);
   const groups = useMemo(() => (items ? groupByOrigin(items) : []), [items]);
@@ -55,7 +56,7 @@ export function OrphanPage({
 
   const scan = async (quiet = false) => {
     if (busy) return;
-    const round = ++scanRound.current;
+    const round = nextScanRound();
     setBusy(true);
     setItems(null);
     setSelected(new Set());
@@ -75,7 +76,7 @@ export function OrphanPage({
           ttl: 3000,
         });
     } catch (e) {
-      if (round !== scanRound.current) return;
+      if (!isCurrentScanRound(round)) return;
       if (scanCancelled(e)) {
         if (!quiet) toast.info(L.scanCancelledIncomplete, { channel: ORPHAN_CHANNEL });
         return;
@@ -84,7 +85,7 @@ export function OrphanPage({
       onError?.(msg);
       toast.error(msg, { channel: quiet ? `${ORPHAN_CHANNEL}-refresh` : ORPHAN_CHANNEL });
     } finally {
-      if (round === scanRound.current) setBusy(false);
+      if (isCurrentScanRound(round)) setBusy(false);
     }
   };
 
@@ -94,7 +95,9 @@ export function OrphanPage({
     if (startedRef.current) return;
     startedRef.current = true;
     void scan();
-    return () => { startedRef.current = false; scanRound.current++; };
+    // Unmounting retires every in-flight round so a late scan cannot publish.
+    return () => { startedRef.current = false; invalidateScanRound(); };
+ // Mount-only: the scan starts once; a later prop change must not restart it.
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -104,7 +107,8 @@ export function OrphanPage({
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      message: `${L.orphanCleanupRiskPrefix(riskTierLabel(maxRiskOf(picked), L), picked.length)}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
+      // UX-08: the item count appears once — in `cleanupConfirmOptionalBackup`.
+      message: `${L.riskTierPrefix(riskTierLabel(maxRiskOf(picked), L))}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },

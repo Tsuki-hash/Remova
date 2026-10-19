@@ -16,7 +16,10 @@ import type {
   ManageItem,
   NlIntent,
   OfficialUninstallResult,
+  ReportBriefRequest,
+  RiskBriefRequest,
   ScanResult,
+  ScopedScanResult,
 } from "../types";
 
 export type CleanupSourceId =
@@ -87,8 +90,8 @@ export const api = {
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
   orphanScan: (scanId?: number) => invoke<CleanupItem[]>("scan_orphan_leftovers", { scanId }),
   rankIdleApps: (scanId?: number) => invoke<IdleApp[]>("rank_idle_apps", { scanId }),
-  scanInstallerCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_installer_caches", { scanId }),
-  scanToolCaches: (scanId?: number) => invoke<CleanupItem[]>("scan_tool_caches", { scanId }),
+  scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),
+  scanToolCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_tool_caches", { scanId }),
   listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
   listTopDirSizes: (drive?: string, scanId?: number) =>
     invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null, scanId }),
@@ -109,11 +112,11 @@ export const api = {
     allowCloudPaths: boolean;
     apiKey: string | null;
   }) => invoke<AiConfigView>("save_ai_config", args),
-  aiRiskBrief: (request: Record<string, unknown>) =>
+  aiRiskBrief: (request: RiskBriefRequest) =>
     invoke<string | null>("ai_risk_brief", { request }),
   aiExplain: (appName: string, publisher: string, items: AiExplainInput[]) =>
     invoke<AiExplainOutput[]>("ai_explain_items", { appName, publisher, items }),
-  aiSummarizeReport: (request: Record<string, unknown>) =>
+  aiSummarizeReport: (request: ReportBriefRequest) =>
     invoke<string | null>("ai_summarize_report", { request }),
   aiParseIntent: (text: string, appNames: string[]) =>
     invoke<NlIntent>("ai_parse_intent", { text, appNames }),

@@ -141,3 +141,58 @@ function parseBackendOnlyFromPs1(): string[] {
     .map((s) => s.trim().replace(/^'|'$/g, ""))
     .filter(Boolean);
 }
+
+/**
+ * CQ-04: `ai_risk_brief` / `ai_summarize_report` used to take
+ * `Record<string, unknown>` — the only IPC payload in the project that bypassed
+ * the type system, so a Rust-side field rename surfaced only at runtime as a
+ * silently missing JSON key. These two checks parse both sides and fail on drift.
+ */
+
+/** snake_case → camelCase, matching `#[serde(rename_all = "camelCase")]`. */
+function camel(snake: string): string {
+  return snake.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+/** Field names of a struct in `src-tauri/src/ai.rs`, as serde serializes them. */
+function rustAiStructFields(structName: string): string[] {
+  const src = readFileSync(new URL("../../src-tauri/src/ai.rs", import.meta.url), "utf8");
+  const start = src.indexOf(`pub struct ${structName} {`);
+  expect(start, `ai.rs: struct ${structName} not found`).toBeGreaterThan(-1);
+  const end = src.indexOf("\n}", start);
+  const body = src.slice(start, end);
+  const fields = [...body.matchAll(/\bpub ([a-z0-9_]+)\s*:/g)].map((m) => camel(m[1]!));
+  expect(fields.length, `ai.rs: ${structName} has no fields`).toBeGreaterThan(0);
+  return fields.sort();
+}
+
+/** Field names of an exported type in `src/types.ts`. */
+function tsTypeFields(typeName: string): string[] {
+  const src = readFileSync(new URL("../types.ts", import.meta.url), "utf8");
+  const start = src.indexOf(`export type ${typeName} = {`);
+  expect(start, `types.ts: type ${typeName} not found`).toBeGreaterThan(-1);
+  const end = src.indexOf("\n};", start);
+  const body = src.slice(start, end);
+  const fields = [...body.matchAll(/^\s{2}([A-Za-z_][A-Za-z0-9_]*)\??:/gm)].map((m) => m[1]!);
+  expect(fields.length, `types.ts: ${typeName} has no fields`).toBeGreaterThan(0);
+  return fields.sort();
+}
+
+describe("AI request payload contract (CQ-04)", () => {
+  it.each([
+    ["RiskBriefRequest", "RiskBriefInput"],
+    ["ReportBriefRequest", "ReportBriefInput"],
+  ] as const)("%s field names match ai.rs::%s", (tsName, rustName) => {
+    expect(tsTypeFields(tsName)).toEqual(rustAiStructFields(rustName));
+  });
+
+  it("no longer accepts an untyped IPC body for the AI commands", () => {
+    const src = readFileSync(new URL("../lib/api.ts", import.meta.url), "utf8");
+    const brief = src.slice(src.indexOf("aiRiskBrief:"), src.indexOf("aiExplain:"));
+    const summarize = src.slice(src.indexOf("aiSummarizeReport:"), src.indexOf("aiParseIntent:"));
+    for (const body of [brief, summarize]) {
+      expect(body).not.toContain("Record<string, unknown>");
+      expect(body).toMatch(/request: (RiskBriefRequest|ReportBriefRequest)/);
+    }
+  });
+});

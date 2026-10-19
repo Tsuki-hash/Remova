@@ -5,6 +5,8 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
+import { parseInstallDate } from "../lib/decision";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import type { InstalledApp, NlIntent } from "../types";
 
 function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): InstalledApp[] {
@@ -22,7 +24,17 @@ function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): Installe
   }
   const after = (filter.installed_after || "").trim();
   if (after) {
-    list = list.filter((a) => (a.install_date || "") >= after);
+    // CQ-13: a string compare silently dropped every non-ISO registry date
+    // (`2024/01/15`, `20240115`). `parseInstallDate` handles every shape.
+    const cutoff = parseInstallDate(after);
+    // An unparseable cutoff cannot be satisfied by any row — fail closed rather
+    // than silently matching everything.
+    list = cutoff
+      ? list.filter((a) => {
+          const parsed = parseInstallDate(a.install_date);
+          return !!parsed && parsed >= cutoff;
+        })
+      : [];
   }
   return list;
 }
@@ -76,10 +88,14 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
     cutoff.setDate(cutoff.getDate() - 30);
     const after = dateKey(cutoff);
     installedAfter = after;
+    // CQ-13: hand-rolled slicing only understood `YYYY-MM-DD`, so `2024/01/15`
+    // produced `"/0"` → NaN and the filter silently matched nothing. `parseInstallDate`
+    // already handles every shape the registry emits.
     list = list.filter(a => {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(a.install_date)) return false;
-      const parsed = new Date(Number(a.install_date.slice(0, 4)), Number(a.install_date.slice(5, 7)) - 1, Number(a.install_date.slice(8, 10)));
-      return dateKey(parsed) === a.install_date && a.install_date >= after && a.install_date <= today;
+      const parsed = parseInstallDate(a.install_date);
+      if (!parsed) return false;
+      const key = dateKey(parsed);
+      return key >= after && key <= today;
     });
   }
   if (/启动项|startup|可能.*残留|possible.*leftover/i.test(raw) ||
@@ -123,10 +139,10 @@ export function CopilotPanel({
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<NlIntent | null>(null);
   const [matches, setMatches] = useState<InstalledApp[]>([]);
-  const requestSeq = useRef(0);
+  const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const busyRef = useRef(false);
   const changeQuery = (value: string) => {
-    requestSeq.current += 1;
+    invalidateRequest();
     busyRef.current = false;
     setBusy(false);
     setIntent(null);
@@ -134,19 +150,19 @@ export function CopilotPanel({
     setQ(value);
   };
   useEffect(() => {
-    requestSeq.current += 1;
+    invalidateRequest();
     busyRef.current = false;
     setBusy(false);
     setIntent(null);
     setMatches([]);
-    return () => { requestSeq.current += 1; };
-  }, [apps, aiEnabled]);
+    return invalidateRequest;
+  }, [apps, aiEnabled, invalidateRequest]);
 
   const parse = async () => {
     const text = q.trim();
     if (!text || busyRef.current) return;
     busyRef.current = true;
-    const seq = ++requestSeq.current;
+    const seq = nextRequest();
     setBusy(true);
     setIntent(null);
     setMatches([]);
@@ -160,15 +176,15 @@ export function CopilotPanel({
         return;
       }
       const parsed = await api.aiParseIntent(text, apps.map((a) => a.name).slice(0, 40));
-      if (seq !== requestSeq.current) return;
+      if (!isCurrentRequest(seq)) return;
       const hit = applyFilter(apps, parsed.filter || {});
       setIntent(parsed);
       setMatches(hit);
       if (hit.length === 0) toast.info(L.copilotNoMatch);
     } catch (e) {
-      if (seq === requestSeq.current) toast.error(formatError(e));
+      if (isCurrentRequest(seq)) toast.error(formatError(e));
     } finally {
-      if (seq === requestSeq.current) { busyRef.current = false; setBusy(false); }
+      if (isCurrentRequest(seq)) { busyRef.current = false; setBusy(false); }
     }
   };
 

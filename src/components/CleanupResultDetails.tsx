@@ -16,14 +16,40 @@ function reason(message: string) {
   return known;
 }
 
-function ResultGroup({ label, items, expanded }: { label: string; items: ItemDetail[]; expanded: boolean }) {
+function ResultGroup({
+  label,
+  items,
+  expanded,
+  onRetry,
+  retryBusy,
+}: {
+  label: string;
+  items: ItemDetail[];
+  expanded: boolean;
+  onRetry?: (paths: string[]) => void | Promise<void>;
+  retryBusy?: boolean;
+}) {
   const L = t();
   const [limit, setLimit] = useState(50);
   const [openError, setOpenError] = useState<string | null>(null);
+  const failed = items.filter((item) => item.status === "failed");
   return <details open={expanded} style={{ marginTop: 8 }}>
     <summary>{label} · {items.length}</summary>
     {openError && <p role="alert">{openError}</p>}
-    <div style={{ maxHeight: 180, overflow: "auto" }}>
+    {onRetry && failed.length > 0 && (
+      <button
+        type="button"
+        style={{ ...css.btnGhost, height: 26, fontSize: 12, marginTop: 4 }}
+        disabled={retryBusy}
+        onClick={() => { void onRetry(failed.map((item) => item.path)); }}
+      >
+        {L.retryFailedItems} ({failed.length})
+      </button>
+    )}
+    {/* UX-12: the scroll box is reachable by keyboard so a long failure list can
+        be paged with the arrow keys instead of only by mouse wheel. */}
+    <div tabIndex={0} role="group" aria-label={`${label} · ${items.length}`}
+      style={{ maxHeight: 180, overflow: "auto" }}>
       {items.slice(0, limit).map((item, index) => {
         const canLocate = ["file", "dir", "path"].includes(item.kind) && /^[a-z]:[\\/]/i.test(item.path)
           && !item.path.includes('"') && ![...item.path].some(char => char.charCodeAt(0) < 32);
@@ -43,16 +69,36 @@ function ResultGroup({ label, items, expanded }: { label: string; items: ItemDet
   </details>;
 }
 
-export function CleanupResultDetails({ items }: { items: ItemDetail[] }) {
+/**
+ * Grouped per-item cleanup outcome. Rendered inline by the software report panel
+ * and, since UX-04, by the scoped specialty panels — the toast is gone after a
+ * few seconds but a user who cleared 20 caches with 3 failures still needs to
+ * know *which* 3, why, and what to do about them.
+ */
+export function CleanupResultDetails({
+  items,
+  title,
+  onRetry,
+  retryBusy,
+}: {
+  items: ItemDetail[];
+  /** Rendered as a heading; omit inside a container that already labels the block. */
+  title?: string;
+  /** Retry the given failed paths; omit to hide the retry affordance. */
+  onRetry?: (paths: string[]) => void | Promise<void>;
+  retryBusy?: boolean;
+}) {
   const L = t();
   const groups = [["failed", L.reportFailed], ["delayed", L.reportPendingReboot], ["skipped", L.reportSkipped],
     ["deleted", L.reportDeleted], ["planned", L.dryRunPlanned]] as const;
   const known = new Set<string>(groups.map(([status]) => status));
   const other = items.filter(item => !known.has(item.status));
   return <div style={{ color: "var(--muted)", fontSize: 12 }}>
+    {title && <h4 style={{ margin: "8px 0 0", fontSize: 12.5, fontWeight: 650, color: "var(--fg)" }}>{title}</h4>}
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
-      return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"} /> : null;
+      return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"}
+        onRetry={status === "failed" ? onRetry : undefined} retryBusy={retryBusy} /> : null;
     })}
     {!!other.length && <ResultGroup label={L.reportOtherResults} items={other} expanded={false} />}
   </div>;

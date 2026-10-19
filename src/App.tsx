@@ -255,6 +255,97 @@ export default function App() {
     [],
   );
 
+ // PERF-6: the grouped setter bags handed to the flow hooks were object
+ // literals, so they had a new identity on every render. That propagated
+ // through useCleanupHandlers / useAnalyzeFlow / useAppChrome into `doIgnoreApp`
+ // → `listIgnoreApp`, so `SoftwarePage` (memo) could never bail out and every
+ // visible `AppRow` re-rendered — about 6,900 avoidable row renders during the
+ // startup size scan, and four full-list re-renders a second during the
+ // checkup/monitor scans. Every value below is an individually stable
+ // `useCallback`, so memoizing the bag is enough.
+  const cleanupFlow = useMemo(
+    () => ({
+      setMulti: coreSetMulti,
+      setSelectedPaths,
+      setScan: core.setScan,
+      setResidualFromUninstall: residualActions.setResidualFromUninstall,
+      setAiRisk,
+      setReport: coreSetReport,
+      setVerifyRows,
+      setAiReportNote,
+      setError: core.setError,
+    }),
+    [
+      coreSetMulti,
+      setSelectedPaths,
+      core.setScan,
+      residualActions.setResidualFromUninstall,
+      setAiRisk,
+      coreSetReport,
+      setVerifyRows,
+      setAiReportNote,
+      core.setError,
+    ],
+  );
+  const analyzeFlow = useMemo(
+    () => ({
+      setSelected: core.setSelected,
+      setScanning: core.setScanning,
+      setScan: core.setScan,
+      setReport: coreSetReport,
+      setAiNotes,
+      setAiRisk,
+      setIgnoreSuggestions: residualActions.setIgnoreSuggestions,
+      setSelectedPaths,
+      setError: core.setError,
+      setResidualFromUninstall: residualActions.setResidualFromUninstall,
+      setUninstallingKey: core.setUninstallingKey,
+      setUninstallStage,
+      setEvidence,
+    }),
+    [
+      core.setSelected,
+      core.setScanning,
+      core.setScan,
+      coreSetReport,
+      setAiNotes,
+      setAiRisk,
+      residualActions.setIgnoreSuggestions,
+      setSelectedPaths,
+      core.setError,
+      residualActions.setResidualFromUninstall,
+      core.setUninstallingKey,
+      setUninstallStage,
+      setEvidence,
+    ],
+  );
+  const chromeFlow = useMemo(
+    () => ({
+      setIgnorePub: core.setIgnorePub,
+      setIgnoreName: core.setIgnoreName,
+      setError: core.setError,
+      setScan: core.setScan,
+      setSelected: core.setSelected,
+    }),
+    [core.setIgnorePub, core.setIgnoreName, core.setError, core.setScan, core.setSelected],
+  );
+  const chromeResidual = useMemo(
+    () => ({
+      clearSelection: residualActions.clearSelection,
+      setMonitoring: residualActions.setMonitoring,
+      setMonitorDiff: residualActions.setMonitorDiff,
+      monitorDiff,
+      selectDefaultItems: residualActions.selectDefaultItems,
+    }),
+    [
+      residualActions.clearSelection,
+      residualActions.setMonitoring,
+      residualActions.setMonitorDiff,
+      residualActions.selectDefaultItems,
+      monitorDiff,
+    ],
+  );
+
   const {
     forceBusy,
     dryRunning,
@@ -284,17 +375,7 @@ export default function App() {
     aiRisk,
     apps,
     multi,
-    flow: {
-      setMulti: core.setMulti,
-      setSelectedPaths,
-      setScan: core.setScan,
-      setResidualFromUninstall: residualActions.setResidualFromUninstall,
-      setAiRisk,
-      setReport: coreSetReport,
-      setVerifyRows,
-      setAiReportNote,
-      setError: core.setError,
-    },
+    flow: cleanupFlow,
     refreshApps,
     onAfterCleanup,
     busyRef,
@@ -311,21 +392,7 @@ export default function App() {
     selectApp,
   } = useAnalyzeFlow({
     goNav,
-    flow: {
-      setSelected: core.setSelected,
-      setScanning: core.setScanning,
-      setScan: core.setScan,
-      setReport: coreSetReport,
-      setAiNotes,
-      setAiRisk,
-      setIgnoreSuggestions: residualActions.setIgnoreSuggestions,
-      setSelectedPaths,
-      setError: core.setError,
-      setResidualFromUninstall: residualActions.setResidualFromUninstall,
-      setUninstallingKey: core.setUninstallingKey,
-      setUninstallStage,
-      setEvidence,
-    },
+    flow: analyzeFlow,
     refreshApps,
     busyRef,
   });
@@ -355,23 +422,18 @@ export default function App() {
     selected,
     monitoring,
     goNav,
-    flow: {
-      setIgnorePub: core.setIgnorePub,
-      setIgnoreName: core.setIgnoreName,
-      setError: core.setError,
-      setScan: core.setScan,
-      setSelected: core.setSelected,
-    },
-    residual: {
-      clearSelection: residualActions.clearSelection,
-      setMonitoring: residualActions.setMonitoring,
-      setMonitorDiff: residualActions.setMonitorDiff,
-      monitorDiff,
-      selectDefaultItems: residualActions.selectDefaultItems,
-    },
+    flow: chromeFlow,
+    residual: chromeResidual,
     setCheckupOrphanCount: shell.setCheckupOrphanCount,
   });
   const monitorSnapshotBusy = monitorScanProgress?.status === "running" || monitorScanProgress?.status === "stopping";
+  // Same defect as the bags above, one level down: an inline JSX element is an
+  // object literal too, and `checkupScanStatus` is a `useSoftwareController`
+  // dependency — so a fresh element each render re-rendered the whole page.
+  const checkupScanStatus = useMemo(
+    () => <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />,
+    [checkupScanProgress, cancelCheckupScan],
+  );
 
   const { runAiExplain, runAiReport } = useAiScanNarrative({
     scan,
@@ -602,7 +664,7 @@ export default function App() {
     checkupOpen,
     checkupOrphanCount,
     checkupOrphanBusy,
-    checkupScanStatus: <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />,
+    checkupScanStatus,
     batchIndex,
     batchTotal,
     batchCurrent,

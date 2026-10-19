@@ -36,13 +36,28 @@ describe("ruleParseFilter", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-10T12:00:00"));
     try {
-      const invalid = ["", "2026-02-01", "2025-12-32", "2025-13-01", "20260101", "invalid"]
+      const invalid = ["", "2026-02-01", "2025-12-32", "2025-13-01", "invalid"]
         .map((install_date, i) => ({ ...apps[1]!, name: `Invalid ${i}`, install_date }));
       const result = ruleParseFilter([...apps, ...invalid], "最近安装的软件");
       expect(result.list.map(a => a.name)).toEqual(["TinyTool"]);
       expect(result.intent.filter.installed_after).toBe("2025-12-11");
       for (const query of ["可能是残留的软件", "apps with startup items", "unrecognized condition"])
         expect(() => ruleParseFilter(apps, query)).toThrow();
+    } finally { vi.useRealTimers(); }
+  });
+  // CQ-13: the offline filter used to slice `install_date` positionally, so only
+  // `YYYY-MM-DD` parsed. `2024/01/15` produced "/0" → NaN → the whole filter
+  // silently matched nothing, and the registry's own `YYYYMMDD` was rejected.
+  it("accepts every install-date shape the registry emits", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-10T12:00:00"));
+    try {
+      const shapes = ["2026-01-05", "2026/01/05", "20260105", "2026.01.05", "1/5/2026"]
+        .map((install_date, i) => ({ ...apps[1]!, name: `In range ${i}`, install_date }));
+      const stale = ["2024/01/15", "20240115", "2024-01-15"]
+        .map((install_date, i) => ({ ...apps[1]!, name: `Too old ${i}`, install_date }));
+      const { list } = ruleParseFilter([...shapes, ...stale], "最近安装的软件");
+      expect(list.map(a => a.name)).toEqual(shapes.map((_, i) => `In range ${i}`));
     } finally { vi.useRealTimers(); }
   });
   it("filters by brand name", () => {

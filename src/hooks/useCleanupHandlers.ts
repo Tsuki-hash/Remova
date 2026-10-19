@@ -344,8 +344,12 @@ export function useCleanupHandlers({
           setAiRisk(brief);
           message = `${message}\n\n${L.aiRiskTitle}: ${brief.slice(0, 160)}`;
         }
-      } catch {
- // non-blocking
+      } catch (e) {
+ // CQ-10: the AI brief used to fail silently, so a missing model line read as
+ // "AI already assessed this". Drop any stale brief and say the brief is absent.
+        setAiRisk(null);
+        message = `${message}\n\n${L.aiRiskBriefFailed}`;
+        toast.error(formatError(e, "analyze"));
       }
     }
     const { ok, checked } = await requestConfirmEx({

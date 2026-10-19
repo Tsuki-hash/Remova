@@ -579,4 +579,35 @@ describe("App orchestration", () => {
     act(() => native.drag!({ payload: { type: "drop", paths: ["C:\\Apps\\Demo"] } }));
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
   });
+
+  // PERF-6: the grouped setter bags handed to useCleanupHandlers /
+  // useAnalyzeFlow / useAppChrome were object literals, so `doIgnoreApp` got a new
+  // identity on every App render → `listIgnoreApp` → `softwareProps` → `memo`
+  // never held and every visible AppRow re-rendered. Assert the callback
+  // identities directly: the page's props object is rebuilt on every App render
+  // (it is a spread), so only the individual identities prove the bail-out.
+  it("keeps the software page's action identities stable across unrelated chrome state", async () => {
+    native.listApps.mockResolvedValue([demo, other]);
+    await mount();
+    // Let the boot chain settle; its promises can land after `mount()` returns.
+    let quiet = 0;
+    for (let i = 0; i < 60 && quiet < 4; i++) {
+      const settled = software().listIgnoreApp;
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+      quiet = software().listIgnoreApp === settled ? quiet + 1 : 0;
+    }
+    const before = software();
+    const keys = ["listIgnoreApp", "listIgnorePublisher", "listAnalyze", "listForceClean",
+      "listStartUninstall", "onCleanup", "onDryRun", "toggleMulti"] as const;
+    const beforeIds = Object.fromEntries(keys.map(k => [k, before[k]]));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().themeToggle }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    for (const k of keys) {
+      expect(software()[k], `theme toggle changed software().${k}`).toBe(beforeIds[k]);
+    }
+    // Control: the language switch rebuilds every copy object, so the page *must*
+    // get new identities. Without this the assertions above could pass vacuously.
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
+    await waitFor(() => expect(software().listIgnoreApp).not.toBe(beforeIds.listIgnoreApp));
+  });
 });

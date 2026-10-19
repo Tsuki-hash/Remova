@@ -77,6 +77,14 @@ export function MorePage({
   const openTool = tools.openTool;
   const panelRef = useRef<HTMLDivElement>(null);
   const hasMonitorDiff = Boolean(monitorDiff);
+  // UX-14: `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
+  // retained, so "new" stopped meaning anything. Show it once per session, on the
+  // first report that arrives.
+  const seenReport = useRef(false);
+  const reportIsNew = !!lastReport && !seenReport.current;
+  useEffect(() => {
+    if (lastReport) seenReport.current = true;
+  }, [lastReport]);
   useEffect(() => {
     if (!openTool && !hasMonitorDiff) return;
     panelRef.current?.scrollIntoView?.({ block: "start" });
@@ -113,7 +121,7 @@ export function MorePage({
             desc: L.exportReportHint,
             icon: "report" as const,
             action: onExportReport,
-            badge: L.badgeNew,
+            badge: reportIsNew ? L.badgeNew : undefined,
           },
         ]
       : []),

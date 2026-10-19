@@ -131,6 +131,14 @@ export function useAppChrome({
     [selected, L, flow],
   );
 
+  /**
+   * CQ-16: `toggleMonitor` and `checkupOrphanScan` are the two flows here that
+   * issue cancellable async work, and neither carries a local request counter.
+   * That is deliberate — both run through `useAssociationScan`, which already
+   * owns a job token per run and refuses to let a superseded run publish
+   * (`active.current !== job` → `scan:cancelled`). Adding a second counter here
+   * would be the duplication CQ-16 is about, not a fix for it.
+   */
   const toggleMonitor = useCallback(async () => {
  // Repeated clicks during the filesystem snapshot used to queue work and
  // then dump a pile of toasts — one run at a time, one toast channel.
@@ -209,6 +217,8 @@ export function useAppChrome({
     [L, goNav, residual, flow],
   );
 
+  // Second of the two CQ-16 cases: guarded by `useAssociationScan`'s job token
+  // (see the note on `toggleMonitor`), so no local request counter here either.
   const checkupOrphanScan = useCallback(() => {
     if (checkupBusyRef.current) return;
     checkupBusyRef.current = true;

@@ -3,6 +3,7 @@ import { api } from "./api";
 import { formatError } from "./format";
 import type { ManageItem } from "../types";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 
 export type ManageTabId = "startup" | "services" | "tasks";
 
@@ -15,33 +16,34 @@ const LIST_FN: Record<ManageTabId, (scanId?: number) => Promise<ManageItem[]>> =
 export function useManageList(tab: ManageTabId, onError?: (msg: string) => void) {
   const [items, setItems] = useState<ManageItem[]>([]);
   const [busy, setBusy] = useState(false);
-  const requestSeq = useRef(0);
   const busyRef = useRef(false);
+  const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const { runItems, cancel, progress } = useAssociationScan();
 
   const reload = useCallback(async () => {
     if (busyRef.current) return;
     busyRef.current = true;
-    const seq = ++requestSeq.current;
+    const seq = nextRequest();
     setBusy(true);
     setItems([]);
     try {
       const list = await runItems(LIST_FN[tab]);
-      if (seq === requestSeq.current) setItems(list);
+      if (isCurrentRequest(seq)) setItems(list);
     } catch (e) {
-      if (seq === requestSeq.current && !scanCancelled(e)) onError?.(formatError(e));
+      if (isCurrentRequest(seq) && !scanCancelled(e)) onError?.(formatError(e));
     } finally {
-      if (seq === requestSeq.current) {
+      if (isCurrentRequest(seq)) {
         busyRef.current = false;
         setBusy(false);
       }
     }
-  }, [tab, onError, runItems]);
+  }, [tab, onError, runItems, nextRequest, isCurrentRequest]);
 
   useEffect(() => {
     void reload();
-    return () => { requestSeq.current++; busyRef.current = false; void cancel().catch(() => {}); };
-  }, [reload, cancel]);
+    // Unmounting retires every in-flight request so a late list cannot publish.
+    return () => { invalidateRequest(); busyRef.current = false; void cancel().catch(() => {}); };
+  }, [reload, cancel, invalidateRequest]);
 
   return { items, busy, reload, cancel, progress };
 }

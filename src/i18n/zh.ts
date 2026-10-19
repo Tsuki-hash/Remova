@@ -50,6 +50,10 @@ export const dict = {
     confirmOk: "确认",
     confirmHoldStart: "按住确认",
     confirmHoldHint: "继续按住…",
+    // UX-12: a keyboard tap of Enter/Space on a hold-to-confirm button used to be
+    // silently inert. Say out loud what the keyboard path is and when it aborts.
+    confirmHoldKeyboard: "键盘操作：按住 Enter 或空格键不要松开即可确认。",
+    confirmHoldKeyboardAborted: "已取消：需要持续按住直到进度条走完。",
     toastAnalyzeDone: (secs: string, count: number) => `分析完成：${count} 项 · ${secs}s`,
     toastForceCleanEmpty: "未找到可安全清理的残留项",
     toastBatchProgress: (i: number, n: number, name: string) => `[${i}/${n}] ${name}`,
@@ -226,7 +230,7 @@ export const dict = {
     diskSizeApprox: (s: string) => `约 ${s}`,
     installerTitle: "安装包与更新缓存",
     installerMaybeTitle: "可能是安装包",
-    installerHint: "清理下载的安装包与 updater 缓存（不是应用残留目录）",
+    installerHint: "清理下载的安装包与更新程序缓存（不是应用残留目录）",
     diskRadarTitle: "磁盘占用雷达",
     diskRadarHint: "查看磁盘占用来源（可切换磁盘；只读，可打开位置）",
     toolcacheTitle: "专项缓存清理",
@@ -270,7 +274,16 @@ export const dict = {
     scanStopping: "正在停止扫描，等待当前读取返回…",
     scanCancelledIncomplete: "扫描已取消，结果不完整。请重新分析后再清理。",
     scanFailedIncomplete: "扫描未完成，请检查错误并重新分析。",
-    scanFound: (n: number) => `已发现 ${n} 项（阶段统计）`,
+    scanFound: (n: number) => `已发现 ${n} 项`,
+    // UX-05: the shared-root phase cap drops rows; the panel must say so instead
+    // of implying the list is exhaustive.
+    scanOmitted: (n: number) => `还有 ${n} 项未显示（受单次扫描上限限制）`,
+    // UX-09: the size-estimation phase is the longest one for a large cache and
+    // reports no per-item progress, so show a placeholder rather than a frozen list.
+    scanEstimatingItems: "正在分析各项占用…",
+    // UX-07: "genuinely nothing" and "could not read the roots" are different facts.
+    scanEmptyNone: "未发现可清理的项目",
+    scanDegradedHint: "以下位置无法读取，本次结果可能不完整：",
     scanStage: (stage: string) => ({ preparing: "准备扫描", files: "扫描文件", registry: "扫描注册表",
       services: "扫描服务", tasks: "扫描计划任务", shortcuts: "扫描快捷方式与临时文件",
       other: "扫描 PATH 与其他关联项", caches: "扫描更新缓存", sizes: "估算占用", finalizing: "核对扫描结果" } as Record<string, string>)[stage] ?? "准备扫描",
@@ -301,7 +314,7 @@ export const dict = {
     restoreHint: "从备份会话还原文件与注册表",
     monitorInstallHint: "记录安装过程中的文件系统变更，结束后可查看改动清单",
     monitorStopHint: "结束本次安装追踪并生成变更清单",
-    exportReportHint: "将当前分析报告导出为 HTML",
+    exportReportHint: "将最近一次清理结果导出为 HTML",
     stopEstimateHint: "停止正在运行的占用估算",
     dryRunSummary: "仅预览结果",
     dryRunPlanned: "计划删除",
@@ -333,6 +346,14 @@ export const dict = {
     orphanShowAll: (n: number) => `显示全部 ${n} 项`,
     orphanShowLess: "收起列表",
     batchDetail: (deleted: number, failed: number) => `成功 ${deleted} · 失败 ${failed}`,
+    // UX-04: a 7-second toast that only names deleted/failed hides the skipped and
+    // reboot-delayed counts, so the headline must state all four outcomes.
+    cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
+      `成功 ${deleted} · 失败 ${failed} · 跳过 ${skipped} · 待重启 ${delayed}`,
+    retryFailedItems: "重试失败项",
+    cleanupResultTitle: "本次清理结果",
+    cleanupRetriedDone: (n: number) => `已重试 ${n} 项`,
+    cleanupRetryNothing: "没有可重试的失败项",
     histRow: (deleted: number, failed: number) => `${deleted} 成功 / ${failed} 失败`,
     deleteSession: "删除",
     deleteSessionConfirm: (name: string) => `将永久删除备份会话「${name}」。继续？`,
@@ -376,6 +397,10 @@ export const dict = {
     aiExplaining: "解释中…",
     aiDisclaimer: "模型建议，以证据为准",
     aiRiskTitle: "风险说明",
+    // CQ-10: the AI brief used to fail into `catch { // non-blocking }`, so the
+    // confirm dialog showed no AI line and the user could not tell whether the
+    // model had assessed anything. Name the failure instead of implying success.
+    aiRiskBriefFailed: "智能风险说明获取失败，本次确认框不含模型结论；请以本地规则与风险标记为准。",
     aiFailed: "智能解释暂时不可用",
     aiErrHttp: "AI 服务连接失败，请检查网络与端点地址",
     aiErrKeyEmpty: "未配置 AI API Key，请到 AI 设置中填写",
@@ -426,6 +451,10 @@ export const dict = {
     riskBitUserData: "用户数据：默认不删，请确认是缓存后再清",
     riskBitUserLibrary: "用户库数据：可能含存档/个人文件",
     riskBitShared: "共享运行库：其它软件可能仍在用",
+    // UX-08: the specialty panels list-but-do-not-preselect exactly this category
+    // (suspected confidence, or a child of a shared cache root), so the confirm
+    // must name it instead of staying silent about the largest unselected group.
+    riskBitSuspected: "疑似或共享根子项：默认未勾选，请逐项确认后再清",
     conclusionRefreshAi: "重新生成智能解读",
     conclusionEnableAi: "配置智能解释",
     badgeNew: "新",
@@ -446,7 +475,6 @@ export const dict = {
     riskTierHigh: "高风险",
     riskTierPrefix: (tier: string) => `风险层级：${tier}`,
     confirmForceRiskPrefix: (tier: string) => `强制清理风险：${tier}`,
-    orphanCleanupRiskPrefix: (tier: string, n: number) => `将清理 ${n} 项 · ${tier}`,
     versionDownloadHint: "下载最新安装包",
     ignoreSuggestTitle: "忽略建议",
     ignoreSuggestApply: "应用忽略",
@@ -672,6 +700,12 @@ export const dict = {
         installer_setup_name: "名称具有安装程序特征",
         updater_cache: "更新程序缓存",
         tool_cache: "工具链缓存",
+        // Specialty-scan evidence codes (toolcache.rs push_item). A missing entry
+        // here leaks the raw English code into the row once evidence is shown.
+        tool_cache_shared: "共享缓存根下的子目录（默认不选）",
+        dev: dict.toolcacheDomainDev,
+        game: dict.toolcacheDomainGame,
+        browser: dict.toolcacheDomainBrowser,
         install_monitor: "安装追踪期间新增",
       };
       return Object.hasOwn(labels, code) ? labels[code]! : "";

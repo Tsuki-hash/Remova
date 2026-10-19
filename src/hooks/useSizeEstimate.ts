@@ -86,6 +86,10 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     let disposed = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    // PERF-5: `setSizeProgress` ran once per estimated path, so a 300-app list
+    // triggered 300 App re-renders during the one phase the user is watching.
+    // The counter is still exact; only the publish is coalesced.
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
     const run = { remaining: new Set(pending), cancelled: false };
     activeRun.current = run;
     setEstimating(true);
@@ -112,6 +116,20 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
         pendingFlush[path] = entry;
         if (!flushTimer) flushTimer = setTimeout(flush, 80);
       };
+      const publishProgress = () => {
+        if (progressTimer || disposed) return;
+        progressTimer = setTimeout(() => {
+          progressTimer = null;
+          if (!disposed) setSizeProgress({ done, total });
+        }, 120);
+      };
+      const settleProgress = () => {
+        if (progressTimer) {
+          clearTimeout(progressTimer);
+          progressTimer = null;
+        }
+        if (!disposed) setSizeProgress({ done, total });
+      };
       const workers = Array.from({ length: 2 }, async () => {
         while (pending.length > 0 && !disposed && !run.cancelled) {
           const path = pending.shift();
@@ -137,7 +155,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
           }
           run.remaining.delete(path);
           done += 1;
-          if (!disposed) setSizeProgress({ done, total });
+          publishProgress();
         }
       });
       await Promise.all(workers);
@@ -146,6 +164,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
         flushTimer = null;
         if (!disposed) flush();
       }
+      settleProgress();
       if (!disposed) {
         if (activeRun.current === run) activeRun.current = null;
         setEstimating(false);
@@ -159,6 +178,10 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
       if (flushTimer) {
         clearTimeout(flushTimer);
         flushTimer = null;
+      }
+      if (progressTimer) {
+        clearTimeout(progressTimer);
+        progressTimer = null;
       }
       setEstimating(false);
     };

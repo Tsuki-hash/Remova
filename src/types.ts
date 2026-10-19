@@ -53,6 +53,19 @@ export type ItemDetail = {
   message: string;
 };
 
+/**
+ * Result of a scoped specialty scan (`scan_installer_caches` / `scan_tool_caches`).
+ *
+ * `omitted` is the number of rows the backend phase cap dropped — without it the
+ * panel implies the list is exhaustive. `degraded` names the roots the scanner
+ * could not read, which is what separates "nothing found" from "could not look".
+ */
+export type ScopedScanResult = {
+  items: CleanupItem[];
+  omitted: number;
+  degraded: string[];
+};
+
 export type CleanupReport = {
   app_name: string;
   dry_run: boolean;
@@ -193,4 +206,37 @@ export type AiExplainInput = {
   risk: string;
   reason: string;
   evidence_labels: string[];
+};
+
+/**
+ * Request body for `ai_risk_brief` — mirrors `ai.rs::RiskBriefInput`
+ * (`#[serde(rename_all = "camelCase")]`).
+ *
+ * CQ-04: this payload used to be `Record<string, unknown>`, the only IPC body in
+ * the project that bypassed the type system, so a Rust-side field rename only
+ * surfaced at runtime (the field silently vanished from the JSON and the model
+ * got a prompt with a hole in it). `apiContract.test.ts` now parses both sides
+ * and fails on drift.
+ */
+export type RiskBriefRequest = {
+  appName: string;
+  publisher: string;
+  action: string;
+  itemCount: number;
+  kindCounts: Record<string, number>;
+  hasService: boolean;
+  hasRunKey: boolean;
+  hasSharedHint: boolean;
+};
+
+/** Request body for `ai_summarize_report` — mirrors `ai.rs::ReportBriefInput`. */
+export type ReportBriefRequest = {
+  appName: string;
+  deleted: number;
+  failed: number;
+  skipped: number;
+  aborted: boolean;
+  backupDir: string;
+  restorePointOk: boolean;
+  topFailed: string[];
 };

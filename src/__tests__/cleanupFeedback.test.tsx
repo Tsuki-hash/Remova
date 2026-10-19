@@ -103,10 +103,12 @@ it.each([
     onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
   const L = t();
   await screen.findByText(item.path);
-  // The row's own reason text must be present, and the fallback must not.
+  // The row's own reason text must be present, and the fallback must not. A
+  // bucket group header can legitimately carry the same label (updater_cache
+  // rows sit under an "installer" header), so accept more than one match.
   const expected = backendText(item.reason, "scan");
   expect(expected).not.toBe(L.backendDetailUnavailable);
-  expect(screen.getByText(expected, { exact: false })).toBeTruthy();
+  expect(screen.getAllByText(expected, { exact: false }).length).toBeGreaterThan(0);
   expect(screen.queryByText(L.backendDetailUnavailable, { exact: false })).toBeNull();
   setLang("zh");
 });

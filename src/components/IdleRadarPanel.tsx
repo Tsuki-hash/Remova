@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { VirtualList } from "./ui/VirtualList";
 import { api } from "../lib/api";
@@ -8,6 +8,7 @@ import { formatError } from "../lib/format";
 import { backendText } from "../lib/backendText";
 import type { IdleApp } from "../types";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import { ScanProgressBar } from "./ScanProgressBar";
 
 /** Idle software radar — read-only ranking; jump back to the software list to uninstall. */
@@ -24,24 +25,26 @@ export function IdleRadarPanel({
   const [rows, setRows] = useState<IdleApp[] | null>(null);
   const [busy, setBusy] = useState(false);
   const { runItems, cancel, progress } = useAssociationScan();
-  const scanRound = useRef(0);
+  const { next: nextRound, isCurrent: isCurrentRound, invalidate: invalidateRound } = useRequestSeq();
 
   const load = async () => {
-    const round = ++scanRound.current;
+    const round = nextRound();
     setBusy(true);
     setRows(null);
     try {
       setRows(await runItems(api.rankIdleApps));
     } catch (e) {
-      if (round === scanRound.current && !scanCancelled(e)) onError(formatError(e));
+      if (isCurrentRound(round) && !scanCancelled(e)) onError(formatError(e));
     } finally {
-      if (round === scanRound.current) setBusy(false);
+      if (isCurrentRound(round)) setBusy(false);
     }
   };
 
   useEffect(() => {
     void load();
-    return () => { scanRound.current++; };
+    // Unmounting retires the in-flight round so a late ranking cannot publish.
+    return invalidateRound;
+ // Mount-only: the ranking starts once; a later prop change must not restart it.
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -65,6 +68,7 @@ export function IdleRadarPanel({
         height={320}
         estimateSize={72}
         listRole
+        ariaLabel={L.idleTitle}
         empty={rows === null ? undefined : <div style={css.muted}>{L.idleEmpty}</div>}
         keyOf={(r) => r.app.registry_key || r.app.name}
         renderItem={(r) => (

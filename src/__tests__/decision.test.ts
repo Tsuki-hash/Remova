@@ -33,6 +33,7 @@ const riskL = {
   riskBitUserData: "用户数据：默认不删，请确认是缓存后再清",
   riskBitUserLibrary: "用户库数据：可能含存档/个人文件",
   riskBitShared: "共享运行库：其它软件可能仍在用",
+  riskBitSuspected: "疑似或共享根子项：默认未勾选，请逐项确认后再清",
 };
 
 const L = {
@@ -326,9 +327,24 @@ describe("buildCleanupRiskBits / formatRiskNote", () => {
       riskL.riskBitUserData,
       riskL.riskBitUserLibrary,
       riskL.riskBitShared,
+      riskL.riskBitSuspected,
     ]);
     expect(buildCleanupRiskBits([item({})], riskL)).toEqual([]);
     expect(formatRiskNote([], "注意")).toBe("");
     expect(formatRiskNote(["a", "b"], "注意")).toBe("\n\n注意\na\nb");
+  });
+
+  // UX-08: the specialty panels list-but-do-not-preselect exactly this category,
+  // so the confirm must name it or the user cannot tell it was never vetted.
+  it("adds the suspected / shared-root bit the specialty panels rely on", () => {
+    expect(buildCleanupRiskBits([item({ confidence: "suspected" })], riskL)).toEqual([riskL.riskBitSuspected]);
+    // A shared-root child carries both the shared bit and the suspected bit.
+    expect(buildCleanupRiskBits([item({ shared: true })], riskL))
+      .toEqual([riskL.riskBitShared, riskL.riskBitSuspected]);
+    // Confirmed, unshared, non-high rows stay silent.
+    expect(buildCleanupRiskBits([item({})], riskL)).toEqual([]);
+    // Emitted once even when several rows share the property.
+    expect(buildCleanupRiskBits([item({ confidence: "suspected" }), item({ confidence: "suspected" })], riskL))
+      .toEqual([riskL.riskBitSuspected]);
   });
 });

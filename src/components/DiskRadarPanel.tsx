@@ -7,6 +7,7 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import type { DirSizeRow } from "../types";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import { ScanProgressBar } from "./ScanProgressBar";
 
 /** Disk usage radar — read-only. Open path / drill down; never deletes. */
@@ -23,31 +24,31 @@ export function DiskRadarPanel({
   const [drive, setDrive] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
-  const requestSeq = useRef(0);
+  const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const busyRef = useRef(false);
   const { runItems, cancel, progress } = useAssociationScan();
 
   const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = []) => {
     if (busyRef.current) return;
     busyRef.current = true;
-    const seq = ++requestSeq.current;
+    const seq = nextRequest();
     setBusy(true);
     try {
       const list = await runItems(id => parent
         ? api.listDirChildren(parent, id)
         : api.listTopDirSizes(letter, id));
-      if (seq === requestSeq.current) {
+      if (isCurrentRequest(seq)) {
         setRows(list);
         setCrumbs(nextCrumbs);
         if (letter !== undefined) setDrive(letter);
       }
     } catch (e) {
-      if (seq === requestSeq.current) {
+      if (isCurrentRequest(seq)) {
         if (scanCancelled(e)) setRows(null);
         else onError(formatError(e));
       }
     } finally {
-      if (seq === requestSeq.current) {
+      if (isCurrentRequest(seq)) {
         busyRef.current = false;
         setBusy(false);
       }
@@ -68,7 +69,8 @@ export function DiskRadarPanel({
         if (alive) onError(formatError(e));
       }
     })();
-    return () => { alive = false; requestSeq.current += 1; busyRef.current = false; };
+    return () => { alive = false; invalidateRequest(); busyRef.current = false; };
+ // Mount-only: the first listing starts once; a later prop change must not restart it.
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -141,6 +143,7 @@ export function DiskRadarPanel({
         height={320}
         estimateSize={72}
         listRole
+        ariaLabel={L.diskRadarTitle}
         empty={rows === null ? undefined : <div style={css.muted}>{L.radarEmpty}</div>}
         keyOf={(r) => r.path}
         renderItem={(r) => (

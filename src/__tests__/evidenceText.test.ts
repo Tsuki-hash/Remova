@@ -15,6 +15,21 @@ it.each(["zh", "en"] as const)("localizes association evidence while retaining t
     .toBe(lang === "zh" ? "安装期间新增（可能是缓存或临时文件）" : "Added during install (likely cache/temp)");
   expect(evidenceText({ ...raw, code: "future_native_code" })).toEqual({ ...raw, code: "future_native_code" });
 });
+// CQ-14 / UX-11: the specialty scanners emit `tool_cache_shared` and a domain
+// label; a missing map entry leaked the raw English code into the row.
+it.each(["zh", "en"] as const)("localizes specialty-scan evidence codes in %s", lang => {
+  setLang(lang);
+  const raw = { code: "tool_cache_shared", label: "dev", weight: 30, detail: "npm-cache\\_cacache" };
+  expect(evidenceText(raw).label).toBe(t().scanEvidenceLabel("tool_cache_shared", "dev"));
+  expect(evidenceText(raw).label).not.toBe("");
+  expect(evidenceText(raw).label).not.toBe("tool_cache_shared");
+  for (const code of ["tool_cache", "tool_cache_shared", "updater_cache", "installer_package"]) {
+    expect(t().scanEvidenceLabel(code, "")).not.toBe("");
+  }
+  for (const domain of ["dev", "game", "browser"]) {
+    expect(t().scanEvidenceLabel(domain, "")).not.toBe("");
+  }
+});
 it.each(["zh", "en"] as const)("localizes native orphan evidence without guessing paths in %s", lang => {
   setLang(lang);
   const sample = { code: "orphan_no_owner", label: "No matching uninstall entry", weight: 30,

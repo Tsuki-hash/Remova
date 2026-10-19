@@ -152,3 +152,20 @@ it("generic estimate failures are not cached — next refresh retries", async ()
   expect(native.estimateDirSizeKb).toHaveBeenLastCalledWith("C:\\B");
   await waitFor(() => expect(result.current.sizeOf(apps[1]!)).toBe(10));
 });
+
+// PERF-5: `setSizeProgress` used to run once per estimated path, so a 300-app
+// list caused ~300 App re-renders during the one phase the user is watching.
+// The counter stays exact; only the publish is coalesced.
+it("coalesces progress publishes instead of one per path", async () => {
+  native.estimateDirSizeKb.mockResolvedValue({ kb: 10, capped: false });
+  const list = Array.from({ length: 60 }, (_, i) =>
+    ({ ...apps[0]!, name: `N${i}`, install_location: `C:\\N${i}` }));
+  let renders = 0;
+  const view = renderHook(() => { renders += 1; return useSizeEstimate(list, false); });
+  await waitFor(() => expect(view.result.current.estimating).toBe(false));
+  // One render per path would be >= 60; the coalesced path is a handful.
+  expect(renders).toBeLessThan(20);
+  // The counter itself is still exact — only the publishing was throttled.
+  expect(view.result.current.sizeProgress).toEqual({ done: 0, total: 0 });
+  expect(view.result.current.sizeOf(list[0]!)).toBe(10);
+});

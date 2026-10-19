@@ -61,6 +61,10 @@ export const dict: EnDict = {
     confirmOk: "Confirm",
     confirmHoldStart: "Hold to confirm",
     confirmHoldHint: "Keep holding…",
+    // UX-12: a keyboard tap of Enter/Space on a hold-to-confirm button used to be
+    // silently inert. Say out loud what the keyboard path is and when it aborts.
+    confirmHoldKeyboard: "Keyboard: press and hold Enter or Space to confirm.",
+    confirmHoldKeyboardAborted: "Cancelled: keep holding until the bar fills.",
     toastAnalyzeDone: (secs: string, count: number) =>
       `Analyze done: ${count} items · ${secs}s`,
     toastForceCleanEmpty: "No safe leftovers found to clean",
@@ -283,7 +287,16 @@ export const dict: EnDict = {
     scanStopping: "Stopping scan; waiting for the current read…",
     scanCancelledIncomplete: "Scan cancelled. Results are incomplete. Analyze again before cleanup.",
     scanFailedIncomplete: "Scan incomplete. Check the error and analyze again.",
-    scanFound: (n: number) => `${n} items found (stage count)`,
+    scanFound: (n: number) => `${n} items found`,
+    // UX-05: the shared-root phase cap drops rows; the panel must say so instead
+    // of implying the list is exhaustive.
+    scanOmitted: (n: number) => `${n} more item(s) not shown (per-scan limit)`,
+    // UX-09: the size-estimation phase is the longest one for a large cache and
+    // reports no per-item progress, so show a placeholder rather than a frozen list.
+    scanEstimatingItems: "Measuring item sizes…",
+    // UX-07: "genuinely nothing" and "could not read the roots" are different facts.
+    scanEmptyNone: "No cleanable items found",
+    scanDegradedHint: "These locations could not be read, so this result may be incomplete:",
     scanStage: (stage: string) => ({ preparing: "Preparing scan", files: "Scanning files", registry: "Scanning registry",
       services: "Scanning services", tasks: "Scanning scheduled tasks", shortcuts: "Scanning shortcuts and temporary files",
       other: "Scanning PATH and other linked items", caches: "Scanning update caches", sizes: "Estimating size", finalizing: "Checking scan results" } as Record<string, string>)[stage] ?? "Preparing scan",
@@ -314,7 +327,7 @@ export const dict: EnDict = {
     restoreHint: "Restore files and registry from a backup session",
     monitorInstallHint: "Record filesystem changes during install and review the change list when done",
     monitorStopHint: "Stop this install session and produce the change list",
-    exportReportHint: "Export the current analysis report as HTML",
+    exportReportHint: "Export the most recent cleanup result as HTML",
     stopEstimateHint: "Stop the running size estimate",
     dryRunSummary: "Dry-run result",
     dryRunPlanned: "Planned",
@@ -346,6 +359,14 @@ export const dict: EnDict = {
     orphanShowAll: (n: number) => `Show all ${n} items`,
     orphanShowLess: "Show less",
     batchDetail: (deleted: number, failed: number) => `ok ${deleted} · failed ${failed}`,
+    // UX-04: a 7-second toast that only names deleted/failed hides the skipped and
+    // reboot-delayed counts, so the headline must state all four outcomes.
+    cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
+      `ok ${deleted} · failed ${failed} · skipped ${skipped} · pending reboot ${delayed}`,
+    retryFailedItems: "Retry failed items",
+    cleanupResultTitle: "This cleanup result",
+    cleanupRetriedDone: (n: number) => `Retried ${n} item(s)`,
+    cleanupRetryNothing: "No failed items to retry",
     histRow: (deleted: number, failed: number) => `${deleted} ok / ${failed} failed`,
     deleteSession: "Delete",
     deleteSessionConfirm: (name: string) => `Permanently delete backup session "${name}"?`,
@@ -389,6 +410,10 @@ export const dict: EnDict = {
     aiExplaining: "Explaining…",
     aiDisclaimer: "Model suggestion — trust the evidence",
     aiRiskTitle: "Risk summary",
+    // CQ-10: the AI brief used to fail into `catch { // non-blocking }`, so the
+    // confirm dialog showed no AI line and the user could not tell whether the
+    // model had assessed anything. Name the failure instead of implying success.
+    aiRiskBriefFailed: "Could not fetch the AI risk summary, so this confirmation carries no model conclusion — rely on the local rules and risk labels.",
     aiFailed: "Smart explanation unavailable",
     aiErrHttp: "AI endpoint unreachable — check your network and base URL",
     aiErrKeyEmpty: "AI API key is not configured — set it in AI settings",
@@ -441,6 +466,10 @@ export const dict: EnDict = {
     riskBitUserData: "User data: kept by default; confirm it is cache first",
     riskBitUserLibrary: "User library data: may contain saves or personal files",
     riskBitShared: "Shared runtime: other apps may still need it",
+    // UX-08: the specialty panels list-but-do-not-preselect exactly this category
+    // (suspected confidence, or a child of a shared cache root), so the confirm
+    // must name it instead of staying silent about the largest unselected group.
+    riskBitSuspected: "Suspected or shared-root child: unselected by default — review each item before cleaning",
     conclusionRefreshAi: "Regenerate smart reading",
     conclusionEnableAi: "Configure smart explanations",
     reportNarrative: (deleted: number, failed: number, skipped: number, backup: boolean) =>
@@ -459,7 +488,6 @@ export const dict: EnDict = {
     riskTierHigh: "High risk",
     riskTierPrefix: (tier: string) => `Risk level: ${tier}`,
     confirmForceRiskPrefix: (tier: string) => `Force-clean risk: ${tier}`,
-    orphanCleanupRiskPrefix: (tier: string, n: number) => `Cleaning ${n} item(s) · ${tier}`,
     versionDownloadHint: "Download the latest installer",
     ignoreSuggestTitle: "Ignore suggestions",
     ignoreSuggestApply: "Apply ignores",
@@ -687,6 +715,12 @@ export const dict: EnDict = {
         installer_setup_name: "Setup-like filename",
         updater_cache: "Updater cache",
         tool_cache: "Tool cache",
+        // Specialty-scan evidence codes (toolcache.rs push_item). A missing entry
+        // here leaks the raw English code into the row once evidence is shown.
+        tool_cache_shared: "Child of a shared cache root (unselected by default)",
+        dev: dict.toolcacheDomainDev,
+        game: dict.toolcacheDomainGame,
+        browser: dict.toolcacheDomainBrowser,
         install_monitor: "Added during monitored install",
       };
       return Object.hasOwn(labels, code) ? labels[code]! : "";

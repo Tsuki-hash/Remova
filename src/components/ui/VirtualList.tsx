@@ -15,6 +15,7 @@ export function VirtualList<T>({
   estimateSize = 64,
   rowGap = 6,
   listRole = false,
+  ariaLabel,
 }: {
   items: T[];
   keyOf: (item: T, index: number) => string;
@@ -25,6 +26,8 @@ export function VirtualList<T>({
   rowGap?: number;
   /** expose list/listitem semantics for screen readers. */
   listRole?: boolean;
+  /** Accessible name for the scrollable list region. */
+  ariaLabel?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -45,6 +48,10 @@ export function VirtualList<T>({
     <div
       ref={scrollRef}
       role={listRole ? "list" : undefined}
+      // UX-12: without a tab stop the only way through a few hundred rows was a
+      // mouse wheel; a focusable scroll box takes Up/Down/PageUp/PageDown.
+      tabIndex={0}
+      aria-label={listRole ? ariaLabel : undefined}
       style={{ maxHeight: height, overflow: "auto", marginTop: 10 }}
     >
       <div style={{ height: fallbackAll ? undefined : virtualizer.getTotalSize(), position: "relative" }}>

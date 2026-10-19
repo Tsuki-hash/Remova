@@ -1,8 +1,9 @@
 /** Shared AI report narrative helpers (App auto path + ReportPanel manual path). */
 import { api } from "./api";
-import type { CleanupReport, FullCleanupReport } from "../types";
+import type { CleanupReport, FullCleanupReport, ReportBriefRequest } from "../types";
 
-export function buildReportAiRequest(report: FullCleanupReport | CleanupReport) {
+/** Typed against `ai.rs::ReportBriefInput` (see CQ-04). */
+export function buildReportAiRequest(report: FullCleanupReport | CleanupReport): ReportBriefRequest {
   const details = "item_details" in report ? report.item_details || [] : [];
   const topFailed = details
     .filter((d) => d.status && d.status.toLowerCase().includes("fail"))

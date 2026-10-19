@@ -11,20 +11,25 @@ export type DecisionChip = {
   title?: string;
 };
 
+/**
+ * Build a local date, rejecting components that `Date` would silently roll over
+ * (`2025-13-01` is not a date — treating it as 2026-01-01 invents data).
+ */
+function localDate(year: number, month: number, day: number): Date | null {
+  const d = new Date(year, month - 1, day);
+  if (Number.isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return d;
+}
+
 /** Parse install_date strings like 20240115 / 2024/01/15 / 1/15/2024. */
 export function parseInstallDate(raw: string | undefined | null): Date | null {
   const s = (raw || "").trim();
   if (!s) return null;
   const ymd = s.match(/^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})$/);
-  if (ymd) {
-    const d = new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
+  if (ymd) return localDate(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]));
   const mdy = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (mdy) {
-    const d = new Date(Number(mdy[3]), Number(mdy[1]) - 1, Number(mdy[2]));
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
+  if (mdy) return localDate(Number(mdy[3]), Number(mdy[1]), Number(mdy[2]));
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -208,7 +213,7 @@ export function riskTierLabel(
   return L.riskTierLow;
 }
 
-/** Shared cleanup-confirm risk callouts (high / user data / library / shared). */
+/** Shared cleanup-confirm risk callouts (high / user data / library / shared / suspected). */
 export function buildCleanupRiskBits(
   items: CleanupItem[],
   L: {
@@ -216,6 +221,7 @@ export function buildCleanupRiskBits(
     riskBitUserData: string;
     riskBitUserLibrary: string;
     riskBitShared: string;
+    riskBitSuspected: string;
   },
 ): string[] {
   const bits: string[] = [];
@@ -223,6 +229,10 @@ export function buildCleanupRiskBits(
   if (items.some((it) => it.user_data)) bits.push(L.riskBitUserData);
   if (items.some((it) => it.user_library)) bits.push(L.riskBitUserLibrary);
   if (items.some((it) => it.shared)) bits.push(L.riskBitShared);
+  // The specialty panels list-but-do-not-preselect this category: anything that
+  // is only suspected, or that lives under a shared cache root. Without a bit the
+  // confirm reads as if every row had been vetted.
+  if (items.some((it) => it.confidence !== "confirmed" || it.shared)) bits.push(L.riskBitSuspected);
   return bits;
 }
 

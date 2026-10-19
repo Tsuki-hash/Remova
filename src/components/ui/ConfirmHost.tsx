@@ -24,6 +24,10 @@ function HoldButton({
 }) {
   const [progress, setProgress] = useState(0);
   const [holding, setHolding] = useState(false);
+  /** Set when a keyboard hold was released before the bar filled. */
+  const [keyAborted, setKeyAborted] = useState(false);
+  /** True while a keyboard-initiated hold is still outstanding. */
+  const keyHeld = useRef(false);
 
   useEffect(() => {
     if (!holding) return;
@@ -43,6 +47,7 @@ function HoldButton({
       const p = Math.min(1, (now - start) / holdMs);
       setProgress(p);
       if (p >= 1) {
+        keyHeld.current = false;
         setHolding(false);
         setProgress(0);
         onDone();
@@ -78,23 +83,40 @@ function HoldButton({
   };
 
   return (
-    <button
+    <>
+      {/* UX-12: a keyboard tap of Enter/Space used to be silently inert on a
+          hold-to-confirm button. Announce the keyboard path up front and say so
+          when an early release aborts the hold. */}
+      {holdMs > 0 && (
+        <span role="status" style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, flexBasis: "100%", textAlign: "right" }}>
+          {keyAborted ? t().confirmHoldKeyboardAborted : t().confirmHoldKeyboard}
+        </span>
+      )}
+      <button
       type="button"
       style={base}
       disabled={disabled}
+      aria-keyshortcuts="Enter Space"
       onPointerDown={() => {
-        if (holdMs > 0 && !disabled) setHolding(true);
+        if (holdMs > 0 && !disabled) { keyHeld.current = false; setHolding(true); }
       }}
       onPointerUp={() => setHolding(false)}
       onPointerLeave={() => setHolding(false)}
       onKeyDown={(e) => {
         if (holdMs > 0 && !disabled && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
+          keyHeld.current = true;
+          setKeyAborted(false);
           if (!holding) setHolding(true);
         }
       }}
       onKeyUp={(e) => {
-        if (e.key === "Enter" || e.key === " ") setHolding(false);
+        if (e.key !== "Enter" && e.key !== " ") return;
+        // Releasing before the bar fills is a real, reportable outcome — never a
+        // silent no-op the user has to guess at.
+        if (keyHeld.current) setKeyAborted(true);
+        keyHeld.current = false;
+        setHolding(false);
       }}
       onClick={() => {
         if (holdMs <= 0 && !disabled) onDone();
@@ -121,6 +143,7 @@ function HoldButton({
             : label}
       </span>
     </button>
+    </>
   );
 }
 
