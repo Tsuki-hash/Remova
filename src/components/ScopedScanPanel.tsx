@@ -208,9 +208,13 @@ export function ScopedScanPanel({
                 {it.path}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {backendText(it.bucket || it.reason, "scan")}
-                {it.user_data || it.user_library ? ` · ${L.reasonUserLibrary}` : ""}
-                {it.size_kb ? ` · ${formatSize(it.size_kb)}` : ""}
+                {backendText(it.reason || it.bucket || "", "scan")}
+                {it.user_data
+                  ? ` · ${L.reasonUserData}`
+                  : it.user_library
+                    ? ` · ${L.reasonUserLibrary}`
+                    : ""}
+                {it.size_kb ? ` · ${formatSize(it.size_kb)}` : " · —"}
               </div>
             </span>
           </label>

@@ -11,7 +11,12 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   }
   const buckets: Record<string, string> = { programFiles: L.linkedProgramFiles,
     configFiles: L.linkedConfigFiles, registry: L.linkedRegistry, shortcuts: L.linkedShortcuts,
-    startup: L.linkedStartup, other: L.linkedOther };
+    startup: L.linkedStartup, other: L.linkedOther,
+    // Specialty-scan buckets. These are the values `push_*_item` writes, and a
+    // missing entry here means the row silently renders as "no localized
+    // description" — which is exactly what happened before.
+    updater_cache: L.installerTitle, download_pkg: L.installerTitle,
+    dev: L.toolcacheDomainDev, game: L.toolcacheDomainGame, browser: L.toolcacheDomainBrowser };
   if (context === "scan") {
     if (Object.hasOwn(buckets, raw)) return buckets[raw]!;
     const rules: Array<[string, string]> = [["Install location", L.linkedProgramFiles],

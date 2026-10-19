@@ -32,3 +32,29 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
     }
   }
 });
+
+/**
+ * Every `bucket` / `reason` literal the Rust scanners write must resolve to a
+ * localized string. A missing entry used to make 100% of the rows in the
+ * installer and tool-cache panels render as "no localized description yet",
+ * because the panel preferred `bucket` over `reason`.
+ */
+it.each(["zh", "en"] as const)("every specialty-scan bucket and reason localizes in %s", lang => {
+  setLang(lang);
+  const L = t();
+  const buckets = ["updater_cache", "download_pkg", "dev", "game", "browser"];
+  for (const b of buckets) {
+    expect(backendText(b, "scan"), b).not.toBe(L.backendDetailUnavailable);
+  }
+  const reasons = [
+    "installer package",
+    "possible installer package",
+    "updater cache",
+    "tool cache (dev)",
+    "tool cache (browser)",
+    "shared tool cache",
+  ];
+  for (const r of reasons) {
+    expect(backendText(r, "scan"), r).not.toBe(L.backendDetailUnavailable);
+  }
+});

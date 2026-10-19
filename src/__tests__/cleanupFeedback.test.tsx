@@ -5,7 +5,8 @@ import { ScopedScanPanel } from "../components/ScopedScanPanel";
 import { cleanupFeedback } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
+import { backendText } from "../lib/backendText";
 import type { CleanupItem, FullCleanupReport } from "../types";
 vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn(),
   beginAssociationScan: vi.fn(async () => 101), cancelAssociationScan: vi.fn(async () => {}),
@@ -73,4 +74,39 @@ it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targ
   expect(screen.queryByText(t().scanComplete(0))).toBeNull();
   expect(toast.success).toHaveBeenCalledTimes(1);
   expect(onError).not.toHaveBeenCalled();
+});
+
+/**
+ * Renders the panel with the exact payload shapes the Rust scanners emit and
+ * asserts the reason line localizes. The panel used to prefer `bucket`, and
+ * none of the scanner buckets were in `backendText`, so every row rendered as
+ * "no localized description yet" — invisible in unit tests that only passed
+ * `reason`.
+ */
+it.each([
+  { name: "toolcache whole dir", item: { path: "uv-cache-fixture", kind: "dir",
+    score: 90, confidence: "confirmed", risk: "low", reason: "tool cache (dev)",
+    evidence: [], bucket: "dev", size_kb: 446000 } },
+  { name: "toolcache shared child", item: { path: "shared-child-fixture", kind: "dir",
+    score: 50, confidence: "suspected", risk: "medium", reason: "shared tool cache",
+    evidence: [], bucket: "dev" } },
+  { name: "installer updater dir", item: { path: "updater-dir-fixture", kind: "dir",
+    score: 50, confidence: "suspected", risk: "medium", reason: "updater cache",
+    evidence: [], bucket: "updater_cache" } },
+  { name: "installer package file", item: { path: "package-file-fixture", kind: "file",
+    score: 50, confidence: "suspected", risk: "medium", reason: "possible installer package",
+    evidence: [], bucket: "download_pkg" } },
+] as const)("localizes the reason line for %s", async ({ item }) => {
+  setLang("zh");
+  const scan = vi.fn().mockResolvedValue([item]);
+  render(<ScopedScanPanel title="T" hint="" appName="T" scan={scan} cleanupSource="installer"
+    onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
+  const L = t();
+  await screen.findByText(item.path);
+  // The row's own reason text must be present, and the fallback must not.
+  const expected = backendText(item.reason, "scan");
+  expect(expected).not.toBe(L.backendDetailUnavailable);
+  expect(screen.getByText(expected, { exact: false })).toBeTruthy();
+  expect(screen.queryByText(L.backendDetailUnavailable, { exact: false })).toBeNull();
+  setLang("zh");
 });
