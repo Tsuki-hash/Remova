@@ -229,6 +229,7 @@ export const dict = {
     diskRadarTitle: "磁盘占用雷达",
     diskRadarHint: "查看磁盘占用来源（可切换磁盘；只读，可打开位置）",
     toolcacheTitle: "专项缓存清理",
+    toolcacheSharedTitle: "共享缓存目录",
     toolcacheHint: "开发 / 游戏 / 浏览器工具链缓存；不清理存档与浏览器配置",
     detailHide: "收起详情",
     detailShow: "详情",

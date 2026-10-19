@@ -22,6 +22,11 @@ pub const ORPHAN_RESULT_CAP: usize = 80;
 /// Installer / tool-cache scan result cap.
 pub const SPECIALTY_RESULT_CAP: usize = 80;
 
+/// Children enumerated per shared cache root (`~/.cache`, JetBrains).
+/// A shared root holds many tools' caches, so the cap bounds one level of
+/// enumeration instead of the root ever becoming a single cleanup target.
+pub const TOOL_CACHE_CHILD_CAP: usize = 60;
+
 /// Idle-radar result cap.
 pub const IDLE_RESULT_CAP: usize = 50;
 

@@ -24,6 +24,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
       ["TEMP name match", L.backendTempMatch], ["AppData folder matching product name", L.linkedConfigFiles],
       ["WebView2 / Electron cache folder", L.linkedConfigFiles], ["Run startup: ", L.linkedStartup],
       ["installer package", L.installerTitle], ["updater cache", L.installerTitle],
+      ["shared tool cache", L.toolcacheSharedTitle],
       ["tool cache (", L.toolcacheTitle], ["Orphan app-like folder", L.orphanScan],
       ["Install monitor: new registry entry", L.linkedRegistry],
       ["Install monitor: cache/log-like path", L.linkedConfigFiles], ["Install monitor: new path", L.monitorDiff]];

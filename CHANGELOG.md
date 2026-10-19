@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - 安装包与更新缓存扫描现在会识别 `%LOCALAPPDATA%` 下直接以 `<产品名>-updater` 结尾的一级更新器目录（如 `obsidian-updater`、`token-monitor-updater`）；此前只会在这些目录内部查找固定名称的缓存子目录，因此整类目录不会出现在扫描结果中。名称匹配仍按中风险候选处理，不会默认勾选，清理目标依旧必须来自本次扫描的服务端授权清单。
 - 修正更新缓存在界面上被显示为通用「配置文件」的问题。
+- 修正专项缓存清理中 pnpm 的路径规则：原规则查找的 `%LOCALAPPDATA%\pnpm\cache` 不是任何 pnpm 版本实际使用的目录，该规则从未生效；改为覆盖 `pnpm-cache` 与 `pnpm\store` 等已知布局。
+
+### 新增
+
+- 专项缓存清理补充 uv、Bun、Go module、Maven、NuGet packages 与 VS Code 的 `Cache` / `CachedData` 缓存目录。
+- 对多个工具共用的缓存根目录改为**逐项列出**：`~/.cache` 与 `%LOCALAPPDATA%\JetBrains` 下的每个子目录单独成为一项，共享根目录本身不会作为清理目标。`~/.cache` 子项与 JetBrains 下非 IDE 目录（如下载的发行包）按中风险处理，默认不勾选。
+- JetBrains IDE 目录只列出 `caches`、`compile-server`、`log`、`tmp` 这几个确认可弃的子目录；设置、插件与扩展目录一律不列入。
 
 ## [1.3.1] - 2026-10-10
 

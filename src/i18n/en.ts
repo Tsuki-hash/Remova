@@ -231,6 +231,7 @@ export const dict: EnDict = {
     diskRadarTitle: "Disk usage radar",
     diskRadarHint: "See what is using disk space (switch drives; read-only; open paths)",
     toolcacheTitle: "Tool cache cleanup",
+    toolcacheSharedTitle: "Shared cache folder",
     toolcacheHint: "Dev / game / browser tool caches; does not clean saves or browser profiles",
     detailHide: "Hide details",
     detailShow: "Details",
