@@ -26,6 +26,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # R-R6-07: v1.3.0 and v1.3.1 were published with no Release run at all, because
+      # both workflows were disabled remotely and nothing in the pipeline could see it.
+      # A tag push is the last moment anyone is looking, so the release refuses to
+      # spend a runner until CI has actually passed on this exact commit. A missing
+      # run (CI disabled, or the tag points at a commit that never reached main) fails
+      # here too — "no evidence" is not "green".
+      - name: require a green CI run on this commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WAIT_MINUTES: "45"
+        run: |
+          $sha = $env:GITHUB_SHA
+          $waitMin = [int]$env:CI_WAIT_MINUTES
+          $deadline = (Get-Date).AddMinutes($waitMin)
+          function Get-CiState {
+            & gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20" `
+              --jq 'if (.workflow_runs | length) == 0 then "NONE" else ([.workflow_runs[]] | max_by(.run_number) | "\(.run_number)|\(.status)|\(.conclusion)") end'
+          }
+          $state = (Get-CiState).Trim()
+          if ($state -eq 'NONE' -or -not $state) {
+            throw "No CI run exists for commit $sha. Push the commit to main, let CI finish, then tag."
+          }
+          $parts = $state.Split('|')
+          Write-Host "CI run #$($parts[0]) status=$($parts[1]) conclusion=$($parts[2])"
+          while ($parts[1] -ne 'completed') {
+            if ((Get-Date) -gt $deadline) {
+              throw "CI run #$($parts[0]) is still '$($parts[1])' after $waitMin minutes; refusing to release an unverified tree."
+            }
+            Start-Sleep -Seconds 30
+            $state = (Get-CiState).Trim()
+            if ($state -eq 'NONE' -or -not $state) { throw "CI run for $sha disappeared." }
+            $parts = $state.Split('|')
+            Write-Host "CI run #$($parts[0]) status=$($parts[1]) conclusion=$($parts[2])"
+          }
+          if ($parts[2] -ne 'success') {
+            throw "CI run #$($parts[0]) concluded '$($parts[2])' for $sha. Fix CI before tagging a release."
+          }
+          Write-Host "CI is green for $sha."
+
       - name: require updater signing and validate optional SignPath configuration
         id: signing-config
         shell: pwsh

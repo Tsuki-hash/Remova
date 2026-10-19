@@ -36,10 +36,15 @@ desktop.ini
 # Local demo pages (never track)
 flow-compare.html
 
-# Public tree: core app + unit tests (REV-QA-01). Issue templates / internal smoke stay local.
+# Public tree: core app + unit tests (REV-QA-01). Issue templates stay local.
+#
+# src-tauri/src/path_value_smoke.rs and pipeline_smoke.rs used to be ignored here too,
+# but lib.rs declares both under `#[cfg(test)] mod`. A fresh clone therefore could not
+# compile the test tree at all: cargo fmt --check, clippy --all-targets and
+# cargo test --workspace each died on the missing module before running a single test.
+# CI was disabled at the time, so nothing surfaced it. Keep the public tree
+# self-consistent — if a source file is in the module tree, it is in the repo.
 .github/ISSUE_TEMPLATE/
-src-tauri/src/path_value_smoke.rs
-src-tauri/src/pipeline_smoke.rs
 
 # ZCode tool-local ignore rules (not part of the app).
 .zcodeignore

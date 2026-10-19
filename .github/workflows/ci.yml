@@ -11,9 +11,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# this job only reads the repo and runs tests.
+# this job only reads the repo and runs tests. `actions: read` lets it see the
+# workflow state check below, which is what catches "Release got switched off".
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test:
@@ -21,6 +23,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # R-R6-07: a gate that is configured but switched off is invisible to every
+      # other gate. CI and Release both sat at `disabled_manually` for weeks while
+      # the README badge read "no status" and two releases shipped with no run.
+      # This half of the loop is the only one that can fire: it verifies Release is
+      # live. The other half (release.yml requiring a green CI run on the tag's
+      # commit) catches a disabled CI.
+      - name: release workflow must be enabled
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: pwsh -NoProfile -File scripts/check-workflows-enabled.ps1
 
       - uses: actions/setup-node@v4
         with:
