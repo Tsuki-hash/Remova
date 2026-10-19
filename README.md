@@ -151,14 +151,28 @@ UI     React 19 + Vite + TypeScript
 ```text
 Remova/
 ├── src/                 # React 前端
+├── public/              # 构建时原样复制的静态资源（logo.png）
 ├── src-tauri/           # Rust 后端与打包配置
 ├── scripts/             # 构建 / 辅助脚本
-├── .github/workflows/   # CI / Release
+├── .github/
+│   ├── workflows/       # CI / Release
+│   ├── ISSUE_TEMPLATE/  # Issue 表单
+│   ├── signpath/        # SignPath 签名工件配置
+│   └── RELEASE_SIGNING.md
+├── index.html           # Vite 入口 HTML
+├── package.json         # 前端依赖与脚本（版本号唯一源）
+├── package-lock.json    # 锁定依赖树
+├── tsconfig.json        # TypeScript 配置
+├── vite.config.ts       # Vite / Vitest 配置
+├── eslint.config.mjs    # ESLint 配置
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
+├── LICENSE
 ├── README.md            # 本文件（中文）
 └── README.en.md         # English
 ```
+
+> 版本号以 `package.json` 的 `version` 为准；`Cargo.toml` / `tauri.conf.json` / `package-lock.json` 由 `npm run check-versions` 对齐。
 
 ---
 

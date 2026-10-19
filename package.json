@@ -14,6 +14,7 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
     "check-commands": "pwsh -NoProfile -File scripts/check-commands.ps1",
+    "check:reviews-index": "node scripts/check-reviews-index.mjs",
     "package:portable": "pwsh -NoProfile -File scripts/package-portable.ps1",
     "smoke:dist": "pwsh -NoProfile -File scripts/smoke-dist.ps1",
     "smoke:portable": "pwsh -NoProfile -File scripts/smoke-portable.ps1",
