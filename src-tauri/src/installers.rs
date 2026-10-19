@@ -5,7 +5,7 @@ use crate::constants::{INSTALLER_PHASE_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES, UPDATER
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
     fill_item_buckets, fill_item_sizes, CleanupItem, Confidence, Evidence, ItemKind, RiskLevel,
-    SCORE_CONFIRMED, SCORE_SUSPECTED_MIN,
+    ScanGaps, ScopedScanResult, SCORE_CONFIRMED, SCORE_SUSPECTED_MIN,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -54,12 +54,20 @@ fn known_folder_downloads() -> Option<PathBuf> {
 }
 
 fn looks_like_setup_name(name: &str) -> bool {
-    let n = name.to_lowercase();
+    looks_like_setup_name_lower(&name.to_lowercase())
+}
+
+/// The same predicate on a string the caller has already lowercased.
+///
+/// The guess in `guess_download` lowercases every Downloads entry anyway, so
+/// lowercasing again here allocated a second copy of every filename in the
+/// folder — 50k entries is a lot of garbage for a predicate that only reads.
+fn looks_like_setup_name_lower(lower: &str) -> bool {
     // "uninstall.exe" contains "install" but is not a package.
-    if n.contains("uninstall") {
+    if lower.contains("uninstall") {
         return false;
     }
-    SETUP_NAME_MARKERS.iter().any(|m| n.contains(m))
+    SETUP_NAME_MARKERS.iter().any(|m| lower.contains(m))
 }
 
 fn user_local_appdata() -> Option<PathBuf> {
@@ -133,7 +141,7 @@ fn guess_download(name: &str, len: u64) -> DownloadGuess {
     if PKG_EXTS.iter().any(|ext| lower.ends_with(ext)) {
         return DownloadGuess::Definite(DownloadEvidence::Package);
     }
-    let marker = looks_like_setup_name(&lower);
+    let marker = looks_like_setup_name_lower(&lower);
     if lower.ends_with(".exe") {
         if marker {
             return DownloadGuess::Definite(DownloadEvidence::Package);
@@ -146,7 +154,7 @@ fn guess_download(name: &str, len: u64) -> DownloadGuess {
         return DownloadGuess::Rejected;
     }
     if ARCHIVE_EXTS.iter().any(|ext| lower.ends_with(ext))
-        && marker
+        && looks_like_setup_name_lower(&lower)
         && len >= MIN_AMBIGUOUS_PACKAGE_BYTES
     {
         return DownloadGuess::Definite(DownloadEvidence::MaybePackage);
@@ -176,14 +184,21 @@ fn push_file_item(
     } else {
         RiskLevel::Low
     };
-    let mut evidence = vec![Evidence {
+    let mut evidence_list = vec![Evidence {
         code: "installer_package".into(),
         label: "installer".into(),
         weight: 40,
         detail: bucket.into(),
     }];
-    if looks_like_setup_name(&p) {
-        evidence.push(Evidence {
+    // The file NAME carries the setup marker. Running this over the whole path
+    // let a parent directory named `...uninstall...` silently drop the evidence
+    // (and a parent named `...setup...` add it to a file that says nothing).
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(looks_like_setup_name)
+    {
+        evidence_list.push(Evidence {
             code: "installer_setup_name".into(),
             label: "setup-like".into(),
             weight: 10,
@@ -209,11 +224,15 @@ fn push_file_item(
         } else {
             "possible installer package".into()
         },
-        evidence,
+        evidence: evidence_list,
         shared: false,
         user_data: crate::safety::is_user_data_path(&p),
-        user_library: crate::safety::is_user_library_path(&p)
-            && !crate::safety::is_user_data_path(&p),
+        // Never `user_library`: an installer package is the object of this scan,
+        // not personal data that happens to live under a library folder. The
+        // flag is also `\users\`-shaped, so a relocated Downloads folder behaved
+        // differently from a default one — the same package was preselected on
+        // one drive and never preselected on another.
+        user_library: false,
         size_kb: None,
         bucket: Some(bucket.into()),
     });
@@ -252,16 +271,34 @@ fn push_dir_item(
     scanned.insert(p);
 }
 
-fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
-    let Some(dir) = user_downloads() else { return };
-    scan_downloads_from(&dir, out, scanned);
+fn scan_downloads(
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    report: &mut ScanGaps,
+) {
+    let Some(dir) = user_downloads() else {
+        report
+            .degraded
+            .push("the Downloads folder could not be located".into());
+        return;
+    };
+    scan_downloads_from(&dir, out, scanned, report);
 }
 
-fn scan_downloads_from(dir: &Path, out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+fn scan_downloads_from(
+    dir: &Path,
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    report: &mut ScanGaps,
+) {
     if !crate::scan_task::checkpoint("files", out.len()) {
         return;
     }
     let Ok(rd) = std::fs::read_dir(dir) else {
+        report.degraded.push(format!(
+            "could not read {}",
+            dir.to_string_lossy().chars().take(120).collect::<String>()
+        ));
         return;
     };
     // Collect everything first: truncating during enumeration would make the
@@ -272,42 +309,53 @@ fn scan_downloads_from(dir: &Path, out: &mut Vec<CleanupItem>, scanned: &mut Has
         if !crate::scan_task::checkpoint("files", definite.len() + ambiguous.len()) {
             return;
         }
-        let p = ent.path();
-        // Junctions/mounts resolve elsewhere; listing them would offer a path
-        // whose string location and real location disagree.
-        if crate::fsutil::is_reparse_point(&p) {
+        // `file_type()` comes out of the `FindNextFileW` buffer, so the
+        // directory test costs no extra syscall; `Path::is_file()` did a second
+        // stat on top of the reparse check and the metadata read below.
+        if !ent.file_type().is_ok_and(|t| t.is_file()) {
             continue;
         }
-        if !p.is_file() {
+        // Junctions/mounts resolve elsewhere; listing them would offer a path
+        // whose string location and real location disagree. The attribute is in
+        // the metadata we already need for the size.
+        let Ok(meta) = ent.metadata() else {
+            continue;
+        };
+        if crate::dirsize::is_reparse_metadata(&meta) {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
-        let len = ent.metadata().map(|m| m.len()).unwrap_or(0);
+        let len = meta.len();
         match guess_download(&name, len) {
-            DownloadGuess::Definite(evidence) => definite.push((p, evidence)),
-            DownloadGuess::NeedsPeCheck => ambiguous.push(p),
+            DownloadGuess::Definite(evidence) => definite.push((ent.path(), evidence)),
+            DownloadGuess::NeedsPeCheck => ambiguous.push(ent.path()),
             DownloadGuess::Rejected => {}
         }
     }
     definite.sort_by_cached_key(|(p, _)| p.to_string_lossy().to_lowercase());
+    let definite_total = definite.len();
     definite.truncate(INSTALLER_PHASE_CAP);
+    report.omitted += definite_total.saturating_sub(INSTALLER_PHASE_CAP) as u32;
     // The expensive PE check runs only for what the definite group left room
     // for, and in sorted order, so the number of file opens is bounded by the
     // result cap rather than by the size of the Downloads folder.
+    let mut examined = 0;
     if definite.len() < INSTALLER_PHASE_CAP {
         ambiguous.sort_by_cached_key(|p| p.to_string_lossy().to_lowercase());
-        let mut idx = 0;
-        while definite.len() < INSTALLER_PHASE_CAP && idx < ambiguous.len() {
+        while definite.len() < INSTALLER_PHASE_CAP && examined < ambiguous.len() {
             if crate::scan_task::cancelled() {
                 return;
             }
-            let p = &ambiguous[idx];
-            idx += 1;
+            let p = &ambiguous[examined];
+            examined += 1;
             if is_pe_executable(p) {
                 definite.push((p.clone(), DownloadEvidence::MaybePackage));
             }
         }
     }
+    // Every ambiguous executable the budget never reached is a candidate that
+    // was found and not reported.
+    report.omitted += ambiguous.len().saturating_sub(examined) as u32;
     for (path, evidence) in definite {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return;
@@ -322,23 +370,64 @@ fn is_updater_dir_name(name: &str) -> bool {
         .is_some_and(|prefix| !prefix.is_empty())
 }
 
-fn scan_updater_dirs(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
-    let Some(local) = user_local_appdata() else {
-        return;
-    };
-    scan_updater_dirs_from(&local, out, scanned);
+/// Drop candidates that sit under one already kept.
+///
+/// `*-updater` and the cache leaves inside it (`*-updater\updates`, …) are both
+/// candidates, so the same bytes were reported twice. With both rows selected the
+/// parent deletes first and the child then reports `skipped: path missing` — a
+/// row the user cannot act on. `order_candidates` sorts an ancestor ahead of its
+/// descendants, so one forward pass is enough.
+fn drop_nested(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut kept: Vec<PathBuf> = Vec::with_capacity(candidates.len());
+    for cand in candidates {
+        let nested = kept
+            .iter()
+            .any(|ancestor| cand != *ancestor && cand.starts_with(ancestor));
+        if !nested {
+            kept.push(cand);
+        }
+    }
+    kept
 }
 
-fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+fn scan_updater_dirs(
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    report: &mut ScanGaps,
+) {
+    let Some(local) = user_local_appdata() else {
+        report
+            .degraded
+            .push("LOCALAPPDATA is not set; updater caches under it were not scanned".into());
+        return;
+    };
+    scan_updater_dirs_from(&local, out, scanned, report);
+}
+
+fn scan_updater_dirs_from(
+    local: &Path,
+    out: &mut Vec<CleanupItem>,
+    scanned: &mut HashSet<String>,
+    report: &mut ScanGaps,
+) {
     if !crate::scan_task::checkpoint("caches", out.len()) {
         return;
     }
     let Ok(rd) = std::fs::read_dir(local) else {
+        report.degraded.push(format!(
+            "could not read {}",
+            local
+                .to_string_lossy()
+                .chars()
+                .take(120)
+                .collect::<String>()
+        ));
         return;
     };
-    // Every first-level entry is examined, then the whole set is ordered and
-    // truncated. The old `take(200)` dropped whatever sorted past 200, which on a
-    // machine with 214 entries here missed a real updater directory.
+    // Every first-level entry is examined, then the whole set is ordered,
+    // de-nested and truncated. The old `take(200)` dropped whatever sorted past
+    // 200, which on a machine with 214 entries here missed a real updater
+    // directory.
     let mut candidates: Vec<PathBuf> = Vec::new();
     for vendor in rd.flatten() {
         if !crate::scan_task::checkpoint("caches", candidates.len()) {
@@ -368,10 +457,12 @@ fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mu
             }
         }
     }
-    for cand in crate::fsutil::order_candidates(candidates)
-        .into_iter()
-        .take(INSTALLER_PHASE_CAP)
-    {
+    // Order first, then drop the nested leaves, then truncate: a child dropped as
+    // nested must not consume a slot the cap could have given a real candidate.
+    let candidates = crate::fsutil::order_candidates(candidates);
+    let candidates = drop_nested(candidates);
+    report.omitted += candidates.len().saturating_sub(INSTALLER_PHASE_CAP) as u32;
+    for cand in candidates.into_iter().take(INSTALLER_PHASE_CAP) {
         if !crate::scan_task::checkpoint("caches", out.len()) {
             return;
         }
@@ -380,21 +471,38 @@ fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mu
 }
 
 /// Scan installer packages + updater caches. Results feed the installer allow-list.
-pub fn scan_installer_caches() -> Vec<CleanupItem> {
+///
+/// Returns `Result` so the caller can tell a scan that ran from one that never
+/// started; rows a phase cap dropped are reported as `omitted`, and roots that
+/// could not be read as `degraded`.
+pub fn scan_installer_caches() -> Result<ScopedScanResult, String> {
     let mut out = Vec::new();
-    let mut scanned = HashSet::new();
-    scan_downloads(&mut out, &mut scanned);
-    scan_updater_dirs(&mut out, &mut scanned);
+    // Each phase owns its allow-list set: Downloads packages and updater
+    // directories are independent result sets with independent caps, and sharing
+    // one accumulator across them coupled the two phases for no benefit.
+    let mut downloads_scanned = HashSet::new();
+    let mut updater_scanned = HashSet::new();
+    let mut report = ScanGaps::default();
+    scan_downloads(&mut out, &mut downloads_scanned, &mut report);
+    scan_updater_dirs(&mut out, &mut updater_scanned, &mut report);
     if !crate::scan_task::checkpoint("sizes", out.len()) {
-        return out;
+        return Ok(ScopedScanResult::empty());
     }
     fill_item_sizes(&mut out);
     if !crate::scan_task::checkpoint("finalizing", out.len()) {
-        return out;
+        return Ok(ScopedScanResult::empty());
     }
     fill_item_buckets(&mut out, "");
+    let mut scanned = downloads_scanned;
+    scanned.extend(updater_scanned);
+    // Armed from exactly what is reported: a truncated or cancelled candidate is
+    // never authorized.
     scan_allow::remember(AllowScope::Installer, &scanned);
-    out
+    Ok(ScopedScanResult {
+        items: out,
+        omitted: report.omitted,
+        degraded: report.degraded,
+    })
 }
 
 #[cfg(test)]
@@ -643,7 +751,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_downloads_from(&root, &mut out, &mut scanned);
+        let mut gaps = ScanGaps::default();
+        scan_downloads_from(&root, &mut out, &mut scanned, &mut gaps);
 
         assert_eq!(out.len(), INSTALLER_PHASE_CAP);
         // Every reported row is a definite package; the executables never got a
@@ -651,6 +760,9 @@ mod tests {
         assert!(out.iter().all(|it| it.reason == "installer package"));
         assert!(out.iter().all(|it| it.path.contains("setup-")));
         assert!(scanned.len() == out.len());
+        // The executables the budget never reached are counted as omitted rather
+        // than silently dropped.
+        assert_eq!(gaps.omitted as usize, ambiguous_count);
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
@@ -677,7 +789,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+        let mut gaps = ScanGaps::default();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned, &mut gaps);
 
         let paths: Vec<&str> = out.iter().map(|it| it.path.as_str()).collect();
         assert!(
@@ -689,6 +802,10 @@ mod tests {
         sorted.sort_by_key(|p| p.to_lowercase());
         assert_eq!(paths, sorted);
         assert!(out.len() <= INSTALLER_PHASE_CAP);
+        assert_eq!(
+            gaps.omitted, 0,
+            "214 fillers plus one target fits under the cap"
+        );
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
@@ -717,7 +834,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+        let mut gaps = ScanGaps::default();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned, &mut gaps);
 
         // Ordinary directories are still found — the guard must not over-block.
         assert!(out.iter().any(|it| it.path.ends_with("plain-updater")));
@@ -794,7 +912,8 @@ mod tests {
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
-        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+        let mut gaps = ScanGaps::default();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned, &mut gaps);
 
         let paths = out
             .iter()
@@ -827,11 +946,223 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
+    /// Downloads packages and updater directories are independent result sets
+    /// with independent caps, so a large Downloads folder cannot crowd updater
+    /// directories out (or the reverse). The scan also reports up to twice the
+    /// phase cap in total, never more.
     #[test]
-    fn scan_runs_without_panic() {
+    fn scan_stays_within_phase_caps() {
         let _allow = crate::scan_allow::test_lock();
-        let items = scan_installer_caches();
-        // Two independent phases, each bounded on its own.
-        assert!(items.len() <= INSTALLER_PHASE_CAP * 2);
+        let result = scan_installer_caches().expect("installer scan");
+        let items = &result.items;
+        assert!(
+            items.len() <= INSTALLER_PHASE_CAP * 2,
+            "reported {} items, cap is {} per phase",
+            items.len(),
+            INSTALLER_PHASE_CAP
+        );
+        for bucket in ["download_pkg", "updater_cache"] {
+            let reported = items
+                .iter()
+                .filter(|it| it.bucket.as_deref() == Some(bucket))
+                .count();
+            assert!(
+                reported <= INSTALLER_PHASE_CAP,
+                "{bucket} reported {reported} items, cap is {INSTALLER_PHASE_CAP}"
+            );
+        }
+        // Every reported row is authorized; a truncated or cancelled candidate
+        // never is.
+        for it in items {
+            assert!(crate::scan_allow::was_recent(
+                AllowScope::Installer,
+                &it.path
+            ));
+        }
+    }
+
+    /// A `*-updater` directory and the cache leaves inside it are both
+    /// candidates, so the same bytes used to be reported twice. With both rows
+    /// selected the parent deletes first and the child then reports
+    /// `skipped: path missing` — a row the user can do nothing about. The nested
+    /// leaf must be dropped, and dropped candidates must not be authorized.
+    #[test]
+    fn nested_updater_leaves_are_not_reported_twice() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-nested-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        // The exact shape from the report: an updater directory that also holds
+        // two of the recognized cache leaves.
+        let updater = root.join("someapp-updater");
+        for leaf in UPDATER_CACHE_LEAVES {
+            std::fs::create_dir_all(updater.join(leaf)).expect("create cache leaf");
+        }
+        // A vendor directory that is not an updater dir keeps its leaves: there
+        // is no parent row to fold them into.
+        let vendor = root.join("Application Data");
+        for leaf in UPDATER_CACHE_LEAVES {
+            std::fs::create_dir_all(vendor.join(leaf)).expect("create cache leaf");
+        }
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned, &mut gaps);
+
+        let updater_path = crate::fsutil::path_utf8(&updater).expect("utf8 fixture path");
+        assert!(
+            out.iter().any(|it| it.path == updater_path),
+            "the updater directory itself must be reported"
+        );
+        for leaf in UPDATER_CACHE_LEAVES {
+            let nested = crate::fsutil::path_utf8(&updater.join(leaf)).expect("utf8 fixture path");
+            assert!(
+                !out.iter().any(|it| it.path == nested),
+                "nested leaf {leaf} must not be reported alongside its parent"
+            );
+            assert!(
+                !scanned.contains(&nested),
+                "nested leaf {leaf} must not be authorized for deletion"
+            );
+            // The same leaf under a non-updater parent is still its own row.
+            let standalone =
+                crate::fsutil::path_utf8(&vendor.join(leaf)).expect("utf8 fixture path");
+            assert!(
+                out.iter().any(|it| it.path == standalone),
+                "{leaf} under a plain vendor directory must still be reported"
+            );
+        }
+        assert_eq!(gaps.omitted, 0, "nothing here was dropped by a cap");
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// An installer package is what this panel offers, so it must be `Confirmed`
+    /// and preselected wherever the user's Downloads folder actually lives.
+    /// `is_user_library_path` keys on the literal `\users\` segment, so a
+    /// relocated Downloads folder used to behave differently from a default one:
+    /// the same `.msi` was never preselected on `C:\Users\...` and preselected on
+    /// `D:\...`. The flag must not depend on the drive at all.
+    #[test]
+    fn installer_packages_are_preselected_whatever_drive_downloads_lives_on() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-library-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        // Both shapes are synthetic: a default-profile Downloads and a
+        // relocated one on another drive.
+        let default_profile = root.join("users").join("someone").join("Downloads");
+        let relocated = root.join("d-drive").join("Downloads");
+        for dir in [&default_profile, &relocated] {
+            std::fs::create_dir_all(dir).expect("create downloads fixture");
+            std::fs::write(dir.join("App-Setup.msi"), b"msi").expect("write msi fixture");
+            std::fs::write(dir.join("ChromeSetup.exe"), b"exe").expect("write exe fixture");
+        }
+
+        for dir in [&default_profile, &relocated] {
+            let mut out = Vec::new();
+            let mut scanned = HashSet::new();
+            let mut gaps = ScanGaps::default();
+            scan_downloads_from(dir, &mut out, &mut scanned, &mut gaps);
+
+            assert_eq!(out.len(), 2, "both packages in {}", dir.display());
+            for it in &out {
+                assert!(
+                    !it.user_library,
+                    "{} must not be flagged as a user library",
+                    it.path
+                );
+                assert!(!it.user_data, "{} is not a library root", it.path);
+                assert_eq!(
+                    it.confidence,
+                    Confidence::Confirmed,
+                    "{} must stay preselected",
+                    it.path
+                );
+                assert_eq!(it.reason, "installer package");
+            }
+            assert_eq!(gaps.degraded.len(), 0);
+        }
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// The setup-name evidence is read off the file name. Running it over the
+    /// whole path let a parent directory named `...uninstall...` silently drop
+    /// the evidence weight for a perfectly good package.
+    #[test]
+    fn setup_name_evidence_uses_the_file_name_not_the_parent_path() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-parent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        // A parent directory that contains "uninstall" and "setup".
+        let downloads = root.join("uninstall").join("setup-tools");
+        std::fs::create_dir_all(&downloads).expect("create downloads fixture");
+        std::fs::write(downloads.join("App-Setup.msi"), b"msi").expect("write msi fixture");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_downloads_from(&downloads, &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0]
+                .evidence
+                .iter()
+                .any(|e| e.code == "installer_setup_name"),
+            "the file name says setup, so the evidence must be there: {:?}",
+            out[0].evidence
+        );
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// A root that exists but cannot be read must say so. An empty list with no
+    /// `degraded` entry reads as "there is nothing here", which is how a
+    /// permission-restricted user concludes the machine is clean.
+    #[test]
+    fn unreadable_scan_roots_are_reported_as_degraded() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-degraded-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        let blocked = root.join("blocked");
+        std::fs::write(&blocked, b"not a directory").expect("create blocked root");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_downloads_from(&blocked, &mut out, &mut scanned, &mut gaps);
+        assert!(out.is_empty());
+        assert_eq!(gaps.degraded.len(), 1, "{:?}", gaps.degraded);
+        assert!(gaps.degraded[0].starts_with("could not read"));
+
+        scan_updater_dirs_from(&blocked, &mut out, &mut scanned, &mut gaps);
+        assert!(out.is_empty());
+        assert_eq!(gaps.degraded.len(), 2, "{:?}", gaps.degraded);
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 }

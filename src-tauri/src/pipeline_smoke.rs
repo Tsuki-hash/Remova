@@ -70,7 +70,9 @@ fn pipeline_dry_run_backup_delete_restore() {
     let _seal_store = crate::path_seal::TestStore::new(root.join("seals"));
     let bak = root.join("Backup");
     fs::create_dir_all(&bak).unwrap();
-    std::env::set_var("REMOVA_BACKUP_DIR", &bak);
+    // Self-restoring, so a later test that installs its own override is not
+    // silently repointed at this one.
+    let _backup_env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &bak);
     let app_dir = root.join("FakeApp");
     fs::create_dir_all(app_dir.join("bin")).unwrap();
     // Avoid a `.exe` name in %TEMP% —Defender can quarantine mid-test and flake backup.

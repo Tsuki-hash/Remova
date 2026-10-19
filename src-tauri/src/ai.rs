@@ -732,7 +732,7 @@ fn explain_items_with_completion(
         let text = complete(&user)?;
         let cleaned = strip_code_fence(&text);
         let parsed: Vec<ExplainOutput> =
-            serde_json::from_str(&cleaned).map_err(|_| "ai json parse failed".to_string())?;
+            serde_json::from_str(&cleaned).map_err(|e| format!("ai json parse failed::{e}"))?;
 
         // Match back by the exact strings SENT to the model ( + ):
         // the prompt asks the model to echo the sanitized path, and `sanitize_path`
@@ -952,7 +952,7 @@ pub fn parse_nl_intent(
     let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
     let cleaned = strip_code_fence(&text);
     let mut intent: NlIntent =
-        serde_json::from_str(&cleaned).map_err(|_| "ai intent parse failed".to_string())?;
+        serde_json::from_str(&cleaned).map_err(|e| format!("ai intent parse failed::{e}"))?;
     // Clamp dangerous defaults — never auto-run.
     match intent.action.as_str() {
         "list" | "analyze" | "batch_uninstall" | "force_clean" => {}

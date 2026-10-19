@@ -19,7 +19,15 @@ pub const INSTALLMON_MAX_WALK_DEPTH: usize = 64;
 /// Orphan scan result cap.
 pub const ORPHAN_RESULT_CAP: usize = 80;
 
-/// Installer / tool-cache scan result cap.
+/// Specialty tool-cache scan result cap.
+///
+/// This is the **reported** total for `scan_tool_caches`. Inside that scan it
+/// doubles as a single-phase limit: the fixed-root phase stops as soon as it
+/// reaches this value, and the shared-root phase then runs on top of it, so the
+/// running total can be several times this before the final
+/// `truncate(SPECIALTY_RESULT_CAP)` (which trims the allow-list in step). The
+/// installer scan has its own per-phase cap, [`INSTALLER_PHASE_CAP`], whose
+/// reported total really is up to twice that value.
 pub const SPECIALTY_RESULT_CAP: usize = 80;
 
 /// Children enumerated per shared cache root (`~/.cache`, JetBrains).
@@ -27,12 +35,13 @@ pub const SPECIALTY_RESULT_CAP: usize = 80;
 /// enumeration instead of the root ever becoming a single cleanup target.
 pub const TOOL_CACHE_CHILD_CAP: usize = 60;
 
-/// Per-phase result cap for the installer scan.
+/// Single-phase result cap for the installer scan.
 ///
 /// Downloads packages and updater directories are independent result sets that
 /// used to share one budget, so a large Downloads folder could crowd updater
 /// directories out entirely. Each phase is now ordered and truncated on its
-/// own, and the scan reports up to twice this.
+/// own, so the scan reports up to **twice** this value — it is a per-phase cap,
+/// not a total.
 pub const INSTALLER_PHASE_CAP: usize = 60;
 
 /// Leaf directory names that mark an updater cache inside a product directory.

@@ -392,11 +392,11 @@ pub fn reg_export_allowed(session: &Path, rel: &str, bytes: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    fn temp_session(name: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("remova_seal_{name}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(p.join("files")).unwrap();
-        p
+    /// A fixture session directory that removes itself on drop, including on panic.
+    fn temp_session(name: &str) -> crate::test_support::TempDir {
+        let dir = crate::test_support::TempDir::new(&format!("seal_{name}"));
+        dir.subdir("files");
+        dir
     }
 
     fn with_seals_dir<F: FnOnce()>(f: F) {

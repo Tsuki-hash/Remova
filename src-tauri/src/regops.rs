@@ -34,7 +34,10 @@ use crate::fsutil::{to_wide, to_wide_name};
 /// Parent needs DELETE + enumerate/query/set rights (MSDN RegDeleteTreeW).
 /// intrinsic secondary gate — protected registry trees are refused here even if
 /// the caller skipped `is_safe_to_delete_registry`.
-pub fn delete_key(key_path: &str) -> Result<(), String> {
+///
+/// `Ok(false)` means the key was already gone — the vendor uninstaller may have
+/// removed it — which is not a failure and must not be reported as one.
+pub fn delete_key(key_path: &str) -> Result<bool, String> {
     if let Err(e) = crate::safety::is_safe_to_delete_registry(key_path) {
         return Err(format!("registry delete blocked: {e}"));
     }
@@ -77,23 +80,33 @@ pub fn delete_key(key_path: &str) -> Result<(), String> {
             } else {
                 RegOpenKeyExW(hive, PCWSTR(parent_w.as_ptr()), 0, rights, &mut parent_hk)
             };
+            // A parent that is already gone means the leaf is gone with it.
+            if open == ERROR_FILE_NOT_FOUND || open == ERROR_PATH_NOT_FOUND {
+                return Ok(false);
+            }
             if open.is_err() {
                 return Err(format!("open parent failed for {key_path}"));
             }
             let st = RegDeleteTreeW(parent_hk, PCWSTR(leaf_w.as_ptr()));
             let _ = RegCloseKey(parent_hk);
+            if st == ERROR_FILE_NOT_FOUND || st == ERROR_PATH_NOT_FOUND {
+                return Ok(false);
+            }
             if st != ERROR_SUCCESS {
                 return Err(format!("RegDeleteTreeW failed for {key_path}"));
             }
         }
-        Ok(())
+        Ok(true)
     }
 }
 
 /// Delete a value under `key` (Run|Name).
 /// intrinsic secondary gate — protected registry trees/values are refused here
 /// even if the caller skipped `is_safe_to_delete_registry`.
-pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
+///
+/// `Ok(false)` means the key or the value was already gone, which is not a
+/// failure and must not be reported as one.
+pub fn delete_value(key_path: &str, value_name: &str) -> Result<bool, String> {
     let combined = if value_name.trim().is_empty() {
         key_path.to_string()
     } else {
@@ -114,16 +127,23 @@ pub fn delete_value(key_path: &str, value_name: &str) -> Result<(), String> {
         unsafe {
             let w = to_wide(&sub);
             let mut hk = HKEY::default();
-            RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk)
-                .ok()
-                .map_err(|_| format!("open failed {key_path}"))?;
+            let opened =
+                RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_SET_VALUE | access, &mut hk);
+            // A key that is already gone takes its values with it.
+            if opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND {
+                return Ok(false);
+            }
+            opened.ok().map_err(|_| format!("open failed {key_path}"))?;
             let st = RegDeleteValueW(hk, PCWSTR(vw.as_ptr()));
             let _ = RegCloseKey(hk);
+            if st == ERROR_FILE_NOT_FOUND || st == ERROR_PATH_NOT_FOUND {
+                return Ok(false);
+            }
             if st != ERROR_SUCCESS {
                 return Err(format!("delete value failed {key_path}!{value_name}"));
             }
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -274,13 +294,16 @@ pub fn schtasks_delete(task_name: &str) -> bool {
     matches!(out, Ok(o) if o.status.success())
 }
 
-/// Normalize a PATH segment for exact comparison (quotes + slashes + trailing `\`).
-fn normalize_path_entry(s: &str) -> String {
-    s.trim()
-        .trim_matches('"')
-        .replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase()
+/// Normalize a PATH segment for exact comparison.
+///
+/// Delegates to `fsutil::path_key`, the single definition of path identity, so a
+/// PATH entry compares the same way the red-line checks and the allow-lists
+/// compare. This used to be a fourth private copy — identical to the two
+/// allow-list normalizers, and like them missing Win32's per-segment trailing
+/// dots and spaces, so `C:\Vendor\Tool.` in PATH did not match the entry the
+/// scanner reported. `None` for an entry that cannot be named.
+fn normalize_path_entry(s: &str) -> Option<String> {
+    crate::fsutil::path_key(std::path::Path::new(s))
 }
 
 /// True if PATH still contains this exact entry (verify checklist).
@@ -296,17 +319,17 @@ fn path_entry_presence_with(
     entry: &str,
     mut read: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<bool, String> {
-    let needle = normalize_path_entry(entry);
-    if needle.is_empty() {
+    let Some(needle) = normalize_path_entry(entry) else {
         return Ok(false);
-    }
+    };
     let mut error = None;
     for scope in ["User", "Machine"] {
         match read(scope) {
             Ok(current) => {
                 if current
                     .split(';')
-                    .any(|p| normalize_path_entry(p) == needle)
+                    .filter_map(normalize_path_entry)
+                    .any(|p| p == needle)
                 {
                     return Ok(true);
                 }
@@ -319,13 +342,13 @@ fn path_entry_presence_with(
 
 /// Whether a PATH string already contains `entry` (normalized exact match).
 pub fn path_contains_entry(path_value: &str, entry: &str) -> bool {
-    let needle = normalize_path_entry(entry);
-    if needle.is_empty() {
+    let Some(needle) = normalize_path_entry(entry) else {
         return false;
-    }
+    };
     path_value
         .split(';')
-        .any(|p| normalize_path_entry(p) == needle)
+        .filter_map(normalize_path_entry)
+        .any(|p| p == needle)
 }
 
 /// Append `entry` to a PATH value if missing. Returns the new value, or None if already present.
@@ -622,10 +645,9 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
         return Err("protected PATH entry".into());
     }
     let _guard = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let needle = normalize_path_entry(entry);
-    if needle.is_empty() {
+    let Some(needle) = normalize_path_entry(entry) else {
         return Err("empty path entry".into());
-    }
+    };
     let mut changed = false;
     let mut errors: Vec<String> = vec![];
     for scope in ["User", "Machine"] {
@@ -643,7 +665,8 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
                 } else {
                     seg.to_string()
                 };
-                if normalize_path_entry(&expanded) == needle || normalize_path_entry(seg) == needle
+                if normalize_path_entry(&expanded) == Some(needle.clone())
+                    || normalize_path_entry(seg) == Some(needle.clone())
                 {
                     hit = true;
                     continue;
@@ -968,9 +991,15 @@ fn read_reg_value_bytes(
     unsafe {
         let w = to_wide(&sub);
         let mut hk = HKEY::default();
-        RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk)
-            .ok()
-            .map_err(|_| format!("open failed {key_path}"))?;
+        let opened = RegOpenKeyExW(hive, PCWSTR(w.as_ptr()), 0, KEY_READ | access, &mut hk);
+        // A key that is not there has no value to read. Anything else — access
+        // denied above all — is a failure the caller must see: reporting it as
+        // "the value does not exist" is what let a `.reg` export silently drop a
+        // value and leave the Safety Vault with nothing to restore from.
+        if opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND {
+            return Ok(None);
+        }
+        opened.ok().map_err(|_| format!("open failed {key_path}"))?;
         let vname = to_wide(value_name);
         let mut typ = REG_VALUE_TYPE(0);
         let mut data = vec![0u8; 16 * 1024];
@@ -999,8 +1028,11 @@ fn read_reg_value_bytes(
             }
         }
         let _ = RegCloseKey(hk);
-        if st != ERROR_SUCCESS {
+        if st == ERROR_FILE_NOT_FOUND || st == ERROR_PATH_NOT_FOUND {
             return Ok(None);
+        }
+        if st != ERROR_SUCCESS {
+            return Err(format!("read value {key_path}!{value_name} failed"));
         }
         data.truncate(data_len as usize);
         Ok(Some((data, typ.0)))
@@ -1609,10 +1641,31 @@ mod tests {
     #[test]
     fn normalize_path_entry_strips_quotes_and_slash() {
         assert_eq!(
-            super::normalize_path_entry(r#""C:\Python3\\"#),
-            "c:\\python3"
+            super::normalize_path_entry(r#""C:\Python3\\"#).as_deref(),
+            Some("c:\\python3")
         );
-        assert_eq!(super::normalize_path_entry("C:/Python3/"), "c:\\python3");
+        assert_eq!(
+            super::normalize_path_entry("C:/Python3/").as_deref(),
+            Some("c:\\python3")
+        );
+    }
+
+    /// The PATH comparison now shares `fsutil::path_key` with the allow-lists and
+    /// the red-line checks, so it must agree with Win32 on the extra shapes the
+    /// four hand-rolled normalizers used to miss.
+    #[test]
+    fn normalize_path_entry_matches_win32_segment_trimming() {
+        // Trailing dots and spaces are stripped per segment, not just at the end.
+        assert_eq!(
+            super::normalize_path_entry(r"C:\Python3.").as_deref(),
+            Some("c:\\python3")
+        );
+        assert_eq!(
+            super::normalize_path_entry(r"C:\Python3\Scripts ").as_deref(),
+            Some("c:\\python3\\scripts")
+        );
+        // An entry that cannot be named never matches.
+        assert_eq!(super::normalize_path_entry("   "), None);
     }
 
     #[test]
@@ -1624,6 +1677,31 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_eq!(a, super::normalize_path_entry(r"C:\Python3\"));
+    }
+
+    /// CQ-03: `path_contains_entry` now shares `fsutil::path_key` with the
+    /// allow-lists and the red lines. A PATH value carrying Win32's trailing
+    /// dot/space decoration must still be recognized as the entry the scanner
+    /// reported, or the verify step reports a scrub that actually succeeded.
+    #[test]
+    fn path_contains_entry_matches_win32_decorated_segments() {
+        assert!(super::path_contains_entry(
+            r"C:\Vendor\Tool.;C:\Windows",
+            r"C:\Vendor\Tool"
+        ));
+        assert!(super::path_contains_entry(
+            r"C:\Vendor\Tool ;C:\Windows",
+            r"c:/vendor/tool"
+        ));
+        assert!(super::path_contains_entry(
+            r#"C:\Vendor\Tool;C:\Windows"#,
+            r#"  "C:\Vendor\Tool"  "#
+        ));
+        assert!(!super::path_contains_entry(
+            r"C:\Vendor\Tool2",
+            r"C:\Vendor\Tool"
+        ));
+        assert!(!super::path_contains_entry(r"C:\Windows", "   "));
     }
 
     #[test]
@@ -1924,9 +2002,15 @@ mod tests {
         use super::*;
         let name = "Vendor\0Tail";
         assert!(parse(&format!(r"HKCU\Software\{name}")).is_none());
+        // `delete_key` / `delete_value` report `Ok(false)` for "already gone", so
+        // they still surface a refusal as an `Err`.
         for result in [
             delete_key(&format!(r"HKCU\Software\{name}")),
             delete_value("invalid", name),
+        ] {
+            assert!(result.unwrap_err().contains("native name contains NUL"));
+        }
+        for result in [
             rename_reg_value("invalid", name, name),
             create_reg_sz("invalid", name, "data"),
             write_service_start(name, 4),
@@ -1962,6 +2046,107 @@ mod tests {
             super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "bad\r\nname", &dest).is_err()
         );
         assert!(super::export_reg_value(r"HKCU\SOFTWARE\RemovaTest", "", &dest).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Only "not found" means the value is absent. Every other read failure must
+    /// surface as an error: reporting it as "the value does not exist" is what
+    /// let the Safety Vault's `.reg` export silently drop a value and leave
+    /// nothing to restore from, while the UI reported a successful backup.
+    #[cfg(windows)]
+    #[test]
+    fn only_not_found_counts_as_a_missing_registry_value() {
+        struct KeyCleanup(String);
+        impl Drop for KeyCleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(super::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let key = format!(
+            r"HKCU\Software\RemovaReadFail_{}_{}",
+            std::process::id(),
+            nonce
+        );
+        let _cleanup = KeyCleanup(key.clone());
+        let tmp =
+            std::env::temp_dir().join(format!("remova_read_fail_{}_{}", std::process::id(), nonce));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let dest = tmp.join("value.reg");
+        // Create the fixture key, then write straight through the Win32 API: the
+        // product-level registry-write allowlist does not apply to a fixture key,
+        // and `reg.exe` cannot carry a megabyte of hex on a command line.
+        let created = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args([
+                "add",
+                &key,
+                "/v",
+                "Small",
+                "/t",
+                "REG_BINARY",
+                "/d",
+                "010203",
+                "/f",
+            ])
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "fixture key write failed");
+        let write_binary = |name: &str, data: &[u8]| {
+            use windows::Win32::System::Registry::{RegSetValueExW, REG_BINARY};
+            let (hive, sub, view) = super::parse(&key).unwrap();
+            let sub_w = super::to_wide(&sub);
+            let name_w = super::to_wide(name);
+            let mut hk = super::HKEY::default();
+            unsafe {
+                super::RegOpenKeyExW(
+                    hive,
+                    super::PCWSTR(sub_w.as_ptr()),
+                    0,
+                    super::KEY_SET_VALUE | view,
+                    &mut hk,
+                )
+                .ok()
+                .unwrap();
+                RegSetValueExW(
+                    hk,
+                    super::PCWSTR(name_w.as_ptr()),
+                    0,
+                    REG_BINARY,
+                    Some(data),
+                )
+                .ok()
+                .unwrap();
+                let _ = super::RegCloseKey(hk);
+            }
+        };
+
+        // A value that was never written — the missing case.
+        assert!(super::export_reg_value(&key, "Small", &dest).unwrap());
+        assert!(!super::export_reg_value(&key, "NeverWritten", &dest).unwrap());
+        // A key that does not exist is the same missing case, not a failure.
+        assert!(!super::export_reg_value(&format!(r"{key}\NoSuchChild"), "Any", &dest).unwrap());
+
+        // A value the reader cannot fetch in one buffer is a FAILURE, not an
+        // absence: it used to come back as `Ok(false)`, indistinguishable from a
+        // value that was never there.
+        write_binary("Huge", &vec![7u8; (1 << 20) + 4096]);
+        let huge_dest = tmp.join("huge.reg");
+        let result = super::export_reg_value(&key, "Huge", &huge_dest);
+        assert!(
+            result.is_err(),
+            "a value the reader cannot fetch must be an error, not a silently dropped one: {result:?}"
+        );
+        assert!(
+            !huge_dest.exists(),
+            "no partial .reg may be left behind for a value that failed to read"
+        );
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

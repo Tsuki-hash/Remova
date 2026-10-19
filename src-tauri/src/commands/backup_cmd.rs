@@ -39,45 +39,44 @@ pub async fn preview_restore_session(name: String) -> Result<restore::RestorePre
 mod tests {
     // Command-layer boundary coverage.
 
+    /// Redirects the backup root into a fixture directory for the guard's lifetime.
+    ///
+    /// This was the crate's only correctly-written fixture — RAII on both the
+    /// environment and the directory, with the lock held for the whole scope — and
+    /// is now built from `test_support`, which is where the other five copies were
+    /// migrated to.
+    ///
+    /// **Field order is load-bearing.** Members drop in declaration order, so the
+    /// lock must be declared LAST: it has to outlive the `EnvVar` whose `Drop`
+    /// writes the environment. With the lock first, it was released before the
+    /// override was restored, and a test that grabbed the lock in that window had
+    /// its override deleted out from under it — `session_list_distinguishes_...`
+    /// then read `REMOVA_BACKUP_DIR` as unset and fell through to the real
+    /// `%ProgramData%\Remova\Backup`, which on a developer machine has real
+    /// sessions in it. That is a flake that only appears on a machine that has
+    /// actually used the product, which is the worst kind.
     struct IsolatedBackupRoot {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        dir: std::path::PathBuf,
-        previous: Option<std::ffi::OsString>,
+        _env: crate::test_support::EnvVar,
+        _dir: crate::test_support::TempDir,
+        _lock: crate::test_support::EnvLock,
     }
 
     impl IsolatedBackupRoot {
         fn new() -> Self {
-            let lock = crate::backup::lock_backup_env();
-            let dir = std::env::temp_dir().join(format!(
-                "remova-backup-boundary-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+            let lock = crate::test_support::EnvLock::new();
+            let dir = crate::test_support::TempDir::new("backup-boundary");
             assert!(dir.is_absolute());
-            std::fs::create_dir(&dir).unwrap();
-            let previous = std::env::var_os("REMOVA_BACKUP_DIR");
-            std::env::set_var("REMOVA_BACKUP_DIR", &dir);
+            let env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &*dir);
             Self {
+                _env: env,
+                _dir: dir,
                 _lock: lock,
-                dir,
-                previous,
             }
         }
-    }
 
-    impl Drop for IsolatedBackupRoot {
-        fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                std::env::set_var("REMOVA_BACKUP_DIR", previous);
-            } else {
-                std::env::remove_var("REMOVA_BACKUP_DIR");
-            }
-            if self.dir.parent() == Some(std::env::temp_dir().as_path()) {
-                let _ = std::fs::remove_dir_all(&self.dir);
-            }
+        /// The fixture directory the backup root currently points at.
+        fn path(&self) -> &std::path::Path {
+            &self._dir
         }
     }
 
@@ -85,14 +84,14 @@ mod tests {
     fn session_list_distinguishes_missing_empty_and_read_failure() {
         let isolated = IsolatedBackupRoot::new();
         assert!(super::list_restore_sessions().unwrap().is_empty());
-        std::fs::remove_dir(&isolated.dir).unwrap();
+        std::fs::remove_dir(isolated.path()).unwrap();
         assert!(super::list_restore_sessions().unwrap().is_empty());
-        std::fs::write(&isolated.dir, b"not a directory").unwrap();
+        std::fs::write(isolated.path(), b"not a directory").unwrap();
         assert!(super::list_restore_sessions().is_err());
         assert!(crate::restore::list_session_info().is_err());
-        std::fs::remove_file(&isolated.dir).unwrap();
-        std::fs::create_dir(&isolated.dir).unwrap();
-        std::fs::create_dir(isolated.dir.join("20261003-120000_test")).unwrap();
+        std::fs::remove_file(isolated.path()).unwrap();
+        std::fs::create_dir(isolated.path()).unwrap();
+        std::fs::create_dir(isolated.path().join("20261003-120000_test")).unwrap();
         assert_eq!(
             super::list_restore_sessions().unwrap(),
             ["20261003-120000_test"]
@@ -120,7 +119,7 @@ mod tests {
         assert!(crate::restore::delete_session_by_name("backup").is_err());
         assert!(crate::restore::delete_session_by_name("20260922-abc").is_err());
         // Well-shaped missing sessions report not-found (name accepted, dir absent).
-        assert!(!isolated.dir.join("20260922-120000_no_such").exists());
+        assert!(!isolated.path().join("20260922-120000_no_such").exists());
         match crate::restore::delete_session_by_name("20260922-120000_no_such") {
             Err(e) => assert!(e.contains("not found"), "got {e}"),
             Ok(()) => panic!("must not delete a missing session"),

@@ -879,7 +879,11 @@ mod tests {
             std::env::temp_dir().join(format!("remova_prune_{}_{}", std::process::id(), nanos));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        std::env::set_var("REMOVA_BACKUP_DIR", &tmp);
+        // Self-restoring. The comment that used to sit here ("do not remove_var
+        // here ... no other test needs the default root") was wrong: another test
+        // had already installed its own override, and leaving ours set — or
+        // removing it outright — silently repointed that test at ProgramData.
+        let _set = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &tmp);
         let root = crate::backup::backup_root();
         assert_eq!(root, tmp);
         let now = 1_700_000_000u64;
@@ -902,17 +906,7 @@ mod tests {
     #[cfg(windows)]
     fn session_delete_and_retention_refuse_junction_ancestors() {
         let _lock = crate::backup::lock_backup_env();
-        struct SavedEnv(Option<std::ffi::OsString>);
-        impl Drop for SavedEnv {
-            fn drop(&mut self) {
-                if let Some(value) = &self.0 {
-                    std::env::set_var("REMOVA_BACKUP_DIR", value);
-                } else {
-                    std::env::remove_var("REMOVA_BACKUP_DIR");
-                }
-            }
-        }
-        let saved = SavedEnv(std::env::var_os("REMOVA_BACKUP_DIR"));
+        let saved = crate::test_support::EnvVar::remove("REMOVA_BACKUP_DIR");
         let root = std::env::temp_dir().join(format!(
             "remova-session-parent-{}-{}",
             std::process::id(),
@@ -934,10 +928,14 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        std::env::set_var("REMOVA_BACKUP_DIR", alias.join("Backup"));
+        // Self-restoring, and dropped only when this scope ends: the alias is a
+        // junction, so the override must not outlive the directory it points at.
+        let _alias_env =
+            crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", alias.join("Backup"));
         assert!(delete_session_by_name("1700000000_fixture").is_err());
         assert_eq!(prune_old_sessions_at(0, Some(1_800_000_000)), 0);
         assert_eq!(fs::read(session.join("sentinel")).unwrap(), b"preserved");
+        drop(_alias_env);
         drop(saved);
         fs::remove_dir(alias).unwrap();
         crate::fsutil::remove_tree_no_reparse(&root).unwrap();

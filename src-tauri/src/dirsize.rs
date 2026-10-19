@@ -1,7 +1,8 @@
 //! Directory size walk for apps missing registry EstimatedSize.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 /// Monotonic estimate-batch id: begin/cancel bump it so in-flight walks from older batches become stale.
@@ -28,7 +29,7 @@ pub fn batch_stale(gen: u64) -> bool {
 }
 
 /// Limits for scan-time leftover size attachment (never block analyze).
-const MAX_WALK_ENTRIES: u64 = 5_000;
+pub(crate) const MAX_WALK_ENTRIES: u64 = 5_000;
 const MAX_WALK_DEPTH: u32 = 8;
 
 /// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
@@ -37,14 +38,16 @@ pub fn walk_size_kb(root: &Path) -> i64 {
 }
 
 /// Like [`walk_size_kb`] but also reports an incomplete walk (budget or IO errors).
-/// Honors the global cancel flag.
+/// Honors the global cancel flag and the calling scan's cancellation.
 pub fn walk_size_kb_capped(root: &Path) -> (i64, bool) {
+    let _slot = acquire_walk_slot();
     walk_size_kb_with_capped(root, &CANCELLED)
 }
 
 /// Sum file sizes under `root` in KB (ceil). Returns 0 if missing, cancelled, or empty.
 /// Second element is `true` for budget or IO truncation: size is then a lower bound.
 pub fn walk_size_kb_with_capped(root: &Path, cancelled: &AtomicBool) -> (i64, bool) {
+    let _slot = acquire_walk_slot();
     match root.try_exists() {
         Ok(false) => return (0, false),
         Err(_) => return (0, true),
@@ -75,10 +78,18 @@ pub const SIZE_WALK_ENTRY_BUDGET: u64 = 20_000;
 // Thread-local so concurrent blocking scans each get their own budget.
 thread_local! {
     static WALK_BUDGET: std::cell::Cell<u64> = const { std::cell::Cell::new(SIZE_WALK_ENTRY_BUDGET) };
+    /// A pass-wide budget shared by every worker of one parallel size pass.
+    /// `None` in the ordinary serial case, where each thread has its own.
+    static SHARED_BUDGET: std::cell::RefCell<Option<SharedWalkBudget>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-/// Charge `n` entries against this thread's budget. `false` once exhausted.
+/// Charge `n` entries against the budget in force on this thread. `false` once
+/// exhausted.
 pub fn charge_walk_budget(n: u64) -> bool {
+    if let Some(pool) = SHARED_BUDGET.with(|s| s.borrow().clone()) {
+        return pool.charge(n);
+    }
     WALK_BUDGET.with(|b| {
         let left = b.get();
         if left < n {
@@ -96,7 +107,153 @@ pub fn reset_walk_budget() {
     WALK_BUDGET.with(|b| b.set(SIZE_WALK_ENTRY_BUDGET));
 }
 
+/// This thread's remaining walk budget.
+///
+/// A parallel size pass seeds its shared pool with what the calling thread had
+/// left, so N workers cannot turn one bounded pass into N of them.
+pub fn remaining_walk_budget() -> u64 {
+    if let Some(pool) = SHARED_BUDGET.with(|s| s.borrow().clone()) {
+        return pool.remaining();
+    }
+    WALK_BUDGET.with(|b| b.get())
+}
+
+/// One entry budget shared by every worker of a parallel size pass.
+///
+/// Workers draw from the same pool rather than each getting a slice, so the bound
+/// stays one bound however many workers there are — and a worker that finishes
+/// early leaves its unused quota for the others instead of wasting it. The
+/// thread-local budget is untouched for the serial case, so concurrent scans
+/// keep their own.
+#[derive(Clone)]
+pub struct SharedWalkBudget(Arc<AtomicU64>);
+
+impl SharedWalkBudget {
+    pub fn seeded(entries: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(entries)))
+    }
+
+    /// Charge `n` entries. `false` once the pool is exhausted.
+    pub fn charge(&self, n: u64) -> bool {
+        let mut left = self.0.load(Ordering::SeqCst);
+        loop {
+            if left < n {
+                return false;
+            }
+            match self
+                .0
+                .compare_exchange_weak(left, left - n, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return true,
+                Err(actual) => left = actual,
+            }
+        }
+    }
+
+    pub fn remaining(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Make this pool the budget in force on the calling thread. The returned
+    /// guard restores the previous one when the worker is done.
+    pub fn install(&self) -> SharedWalkBudgetGuard {
+        let previous = SHARED_BUDGET.with(|s| s.borrow_mut().replace(self.clone()));
+        SharedWalkBudgetGuard(previous)
+    }
+}
+
+/// Restores the budget that was in force before a worker installed a pool.
+pub struct SharedWalkBudgetGuard(Option<SharedWalkBudget>);
+
+impl Drop for SharedWalkBudgetGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        SHARED_BUDGET.with(|s| *s.borrow_mut() = previous);
+    }
+}
+
+/// Global cap on threads inside one size walk.
+///
+/// Concurrent scans shared no bound at all, so a machine with idle cores did
+/// that many directory walks at once and the interactive size estimate queued
+/// behind every one of them.
+const MAX_CONCURRENT_WALKERS: usize = 3;
+
+/// Slots held back for a foreground walk — one started by a direct user request
+/// rather than from inside a batch scan — so it always finds a free slot instead
+/// of waiting for the scans to finish.
+const FOREGROUND_RESERVED_SLOTS: usize = 1;
+
+static WALKERS: AtomicUsize = AtomicUsize::new(0);
+static FOREGROUND_WAITERS: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// True while this thread already holds a walk slot, so a worker walking item
+    /// after item takes exactly one slot for the whole batch.
+    static HOLDS_WALK_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// RAII size-walk concurrency slot. Dropping it frees the slot.
+pub struct WalkSlot {
+    foreground: bool,
+}
+
+impl Drop for WalkSlot {
+    fn drop(&mut self) {
+        WALKERS.fetch_sub(1, Ordering::SeqCst);
+        HOLDS_WALK_SLOT.with(|h| h.set(false));
+        if self.foreground {
+            FOREGROUND_WAITERS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Take one of the global size-walk slots, yielding until one is free.
+///
+/// `None` means this thread already holds a slot — a nested walk — so there is
+/// nothing to release. Background walks stop taking the last slot while a
+/// foreground walk is waiting, which is what makes a direct size request never
+/// queue behind concurrent scans without starving them: the restriction lifts
+/// the moment no foreground walk is waiting.
+pub fn acquire_walk_slot() -> Option<WalkSlot> {
+    if HOLDS_WALK_SLOT.with(|h| h.get()) {
+        return None;
+    }
+    let foreground = !crate::scan_task::has_task();
+    if foreground {
+        FOREGROUND_WAITERS.fetch_add(1, Ordering::SeqCst);
+    }
+    loop {
+        let limit = walk_limit(foreground, FOREGROUND_WAITERS.load(Ordering::SeqCst));
+        let running = WALKERS.load(Ordering::SeqCst);
+        if running < limit
+            && WALKERS
+                .compare_exchange(running, running + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            HOLDS_WALK_SLOT.with(|h| h.set(true));
+            return Some(WalkSlot { foreground });
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// How many walks may run right now.
+///
+/// A background walk never takes the last slot while a foreground walk is
+/// waiting, so there is always one free for it. The reservation is smaller than
+/// the cap, which is what keeps that from starving background walks: the moment
+/// no foreground walk is waiting, they get every slot back.
+fn walk_limit(foreground: bool, foreground_waiters: usize) -> usize {
+    if foreground || foreground_waiters == 0 {
+        MAX_CONCURRENT_WALKERS
+    } else {
+        MAX_CONCURRENT_WALKERS - FOREGROUND_RESERVED_SLOTS
+    }
+}
+
 pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
+    let _slot = acquire_walk_slot();
     if crate::scan_task::cancelled() {
         return None;
     }
@@ -125,8 +282,9 @@ fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<
 ///
 /// Reads the attribute from metadata already in hand instead of issuing a second
 /// `symlink_metadata` on the path — that second stat doubled the cost of every
-/// size-estimating walk.
-fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
+/// size-estimating walk. Shared with the installer scan, which reads the same
+/// attribute out of the directory-entry metadata it already has.
+pub(crate) fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -220,7 +378,9 @@ where
         if depth > MAX_WALK_DEPTH {
             continue;
         }
-        if cancelled.load(Ordering::SeqCst) {
+        // The caller's own flag (an estimate batch must not zero idle sizes) plus
+        // the scan task: a cancelled scan must not keep walking either.
+        if cancelled.load(Ordering::SeqCst) || crate::scan_task::cancelled() {
             return (0, false);
         }
         let Ok(entries) = read(&dir) else {
@@ -232,7 +392,7 @@ where
                 capped = true;
                 continue;
             };
-            if cancelled.load(Ordering::SeqCst) {
+            if cancelled.load(Ordering::SeqCst) || crate::scan_task::cancelled() {
                 return (0, false);
             }
             entries_seen += 1;
@@ -441,5 +601,87 @@ mod tests {
         let flag = AtomicBool::new(true);
         assert_eq!(walk_size_kb_with(&tmp, &flag), 0);
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A parallel size pass shares ONE entry budget. Eight workers charging a
+    /// pool of ten must produce exactly ten charges and ten refusals — the pool
+    /// is never over-charged, and a worker that finishes early leaves its unused
+    /// quota for the others instead of each worker getting a full budget.
+    #[test]
+    fn shared_walk_budget_is_one_pool_for_every_worker() {
+        let pool = SharedWalkBudget::seeded(10);
+        let charged = std::sync::Arc::new(AtomicUsize::new(0));
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let pool = pool.clone();
+                let charged = charged.clone();
+                scope.spawn(move || {
+                    let _guard = pool.install();
+                    for _ in 0..4 {
+                        if charge_walk_budget(1) {
+                            charged.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(charged.load(Ordering::SeqCst), 10, "the pool is one bound");
+        assert_eq!(pool.remaining(), 0);
+        // The guard restored the thread-local budget, so the serial path is
+        // untouched by a parallel pass.
+        assert_eq!(remaining_walk_budget(), SIZE_WALK_ENTRY_BUDGET);
+        reset_walk_budget();
+    }
+
+    /// A background walk stops one slot short while a foreground walk is waiting,
+    /// so there is always one free for it — and the restriction lifts entirely
+    /// once nothing foreground is waiting, which is what keeps background walks
+    /// from starving.
+    #[test]
+    fn background_walks_yield_a_slot_to_a_waiting_foreground_walk() {
+        // Nothing foreground is waiting: background walks get every slot.
+        assert_eq!(walk_limit(false, 0), MAX_CONCURRENT_WALKERS);
+        // A foreground walk is waiting: background stops one short.
+        assert_eq!(
+            walk_limit(false, 1),
+            MAX_CONCURRENT_WALKERS - FOREGROUND_RESERVED_SLOTS
+        );
+        // A foreground walk itself is never held back by other waiters.
+        assert_eq!(walk_limit(true, 3), MAX_CONCURRENT_WALKERS);
+        // The reservation must be smaller than the cap, or a waiting foreground
+        // walk could never be satisfied. Pinned as a const assertion so the
+        // relationship cannot be edited away silently.
+        const _: () = assert!(FOREGROUND_RESERVED_SLOTS < MAX_CONCURRENT_WALKERS);
+        assert!(walk_limit(false, 1) < MAX_CONCURRENT_WALKERS);
+    }
+
+    /// The cap is global, so however many walks are in flight the observed
+    /// concurrency never exceeds it.
+    #[test]
+    fn walk_slots_are_capped() {
+        let running = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+        std::thread::scope(|scope| {
+            for _ in 0..(MAX_CONCURRENT_WALKERS * 3) {
+                let running = running.clone();
+                let peak = peak.clone();
+                scope.spawn(move || {
+                    let _slot = acquire_walk_slot().expect("walk slot");
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    std::thread::yield_now();
+                    running.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        assert!(
+            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_WALKERS,
+            "observed {} concurrent walks, cap is {}",
+            peak.load(Ordering::SeqCst),
+            MAX_CONCURRENT_WALKERS
+        );
+        // The global counters are deliberately not asserted here: other tests
+        // walk concurrently in the same process, so only the cap — which is
+        // enforced globally — is a stable invariant.
     }
 }

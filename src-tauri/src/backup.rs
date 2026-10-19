@@ -42,10 +42,17 @@ pub fn backup_root() -> PathBuf {
 
 /// Serializes tests that mutate process-wide `REMOVA_BACKUP_DIR` so parallel
 /// suites cannot steal each other's backup root.
+///
+/// This used to be its own `static Mutex`, separate from the one `test_support`
+/// hands out — the exact defect M-03 describes: a guard protects a variable only
+/// if every writer takes the *same* lock. `backup.rs`, `restore.rs`,
+/// `pipeline_smoke.rs` and `commands/backup_cmd.rs` all write `REMOVA_BACKUP_DIR`,
+/// so once one took the shared lock while the others took this one the suites
+/// raced (`session_list_distinguishes_missing_empty_and_read_failure` passed alone
+/// and failed in the full run). One lock, one variable.
 #[cfg(test)]
-pub(crate) fn lock_backup_env() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+pub(crate) fn lock_backup_env() -> crate::test_support::EnvLock {
+    crate::test_support::EnvLock::new()
 }
 
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
@@ -532,7 +539,10 @@ mod tests {
     #[test]
     fn session_dir_shape() {
         let _guard = lock_backup_env();
-        std::env::remove_var("REMOVA_BACKUP_DIR");
+        // Self-restoring: a bare remove_var used to delete whatever override
+        // another test had installed and never put it back, so the next test saw
+        // the real ProgramData root.
+        let _clear = crate::test_support::EnvVar::remove("REMOVA_BACKUP_DIR");
         let root = backup_root();
         assert!(!root.as_os_str().is_empty());
         assert!(
@@ -548,7 +558,7 @@ mod tests {
         let _guard = lock_backup_env();
         let root = std::env::temp_dir().join(format!("remova_partial_pub_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        std::env::set_var("REMOVA_BACKUP_DIR", &root);
+        let _set = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &root);
         let _store = crate::path_seal::TestStore::new(root.join("seals"));
         let source = root.join("src.txt");
         fs::write(&source, b"ok").unwrap();
@@ -589,7 +599,8 @@ mod tests {
             "map must not publish on partial failure"
         );
         assert!(crate::path_seal::verified_seal(&session).is_err());
-        std::env::remove_var("REMOVA_BACKUP_DIR");
+        // The override restores itself on drop; a bare remove_var here destroyed
+        // whatever another test had installed.
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -599,7 +610,7 @@ mod tests {
         let _guard = lock_backup_env();
         let root = std::env::temp_dir().join(format!("remova_sess_claim_{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        std::env::set_var("REMOVA_BACKUP_DIR", &root);
+        let _set = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &root);
         // Occupy timestamp names with foreign non-empty directories (span a
         // few seconds so the test does not flake across a clock tick).
         let base_ts = std::time::SystemTime::now()
@@ -623,7 +634,6 @@ mod tests {
             err.kind() == std::io::ErrorKind::AlreadyExists || err.to_string().contains("exist"),
             "{err}"
         );
-        std::env::remove_var("REMOVA_BACKUP_DIR");
         let _ = fs::remove_dir_all(&root);
     }
 

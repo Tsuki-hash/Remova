@@ -20,15 +20,51 @@ enum BackupOutcome {
     Abort(Box<FullCleanupReport>),
 }
 
-fn try_backup_phase(
+/// The gate decision for every selected item, taken once.
+///
+/// The backup phase and the delete phase used to run `gate_cleanup_item`
+/// separately, with up to 300s of vendor uninstaller in between and mutable
+/// global state on both sides (the ignore list is re-read from disk, and a
+/// concurrent scan can replace an allow-list). An item refused at backup time
+/// could therefore be allowed at delete time and be deleted with no backup.
+/// One decision, shared by both phases, closes that window; the delete path
+/// takes the allowed set as given rather than deciding again.
+struct CleanupPlan {
+    /// Items that passed the gate — exactly what is backed up and deleted.
+    allowed: Vec<CleanupItem>,
+    /// Items the gate refused, with the reason, reported as `skipped`.
+    refused: Vec<ItemDetail>,
+}
+
+fn plan_cleanup_items(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
+    ignore: &crate::ignore::IgnoreList,
+) -> CleanupPlan {
+    let mut allowed = Vec::new();
+    let mut refused = Vec::new();
+    for it in items {
+        let decision = crate::policy::gate_cleanup_item(Some(app), it, source, ignore);
+        if decision.is_allow() {
+            allowed.push(it.clone());
+        } else {
+            refused.push(ItemDetail {
+                path: it.path.clone(),
+                kind: format!("{:?}", it.kind).to_lowercase(),
+                status: "skipped".into(),
+                message: decision.message().to_string(),
+            });
+        }
+    }
+    CleanupPlan { allowed, refused }
+}
+
+fn try_backup_phase(
+    app: &crate::apps::InstalledApp,
+    plan: &CleanupPlan,
     opts: &FullCleanupOptions,
 ) -> BackupOutcome {
-    let ignore = match crate::ignore::load_checked() {
-        Ok(ignore) => ignore,
-        Err(e) => return BackupOutcome::Abort(Box::new(ignore_read_abort(app, false, e))),
-    };
     let mut restore_point_ok = false;
     let mut restore_point_msg = String::new();
     if opts.restore_point {
@@ -50,16 +86,9 @@ fn try_backup_phase(
     match crate::backup::create_session(&app.name) {
         Ok(session) => {
             let backup_dir = session.to_string_lossy().to_string();
-            // Only backup items that pass the cleanup gate.
-            let source = cleanup_source_from_opts(opts);
-            let allow: Vec<CleanupItem> = items
-                .iter()
-                .filter(|it| {
-                    crate::policy::gate_cleanup_item(Some(app), it, source, &ignore).is_allow()
-                })
-                .cloned()
-                .collect();
-            let (_ok, fail, errors) = crate::backup::backup_items(&allow, &session);
+            // Only items that pass the cleanup gate — the same set the delete
+            // phase will act on, decided once and above.
+            let (_ok, fail, errors) = crate::backup::backup_items(&plan.allowed, &session);
             if fail > 0 {
                 return BackupOutcome::Abort(Box::new(FullCleanupReport {
                     app_name: app.name.clone(),
@@ -201,34 +230,26 @@ struct DeleteOutcome {
 /// Shared with backup/restore copy paths via `fsutil`.
 use crate::fsutil::is_reparse_point;
 
-fn delete_cleanup_items_source(
-    app: &crate::apps::InstalledApp,
+/// Delete exactly the items the gate allowed.
+///
+/// Takes the pre-computed allowed set rather than gating again: the gate's answer
+/// depends on mutable global state (the ignore list on disk, the scan
+/// allow-lists), so a second decision after the uninstaller could let an item
+/// through that was refused — and therefore never backed up — moments earlier.
+fn delete_planned_items_with_native(
     items: &[CleanupItem],
-    source: crate::policy::CleanupSource,
-) -> DeleteOutcome {
-    delete_cleanup_items_with_native(app, items, source, &mut native_delete_note)
-}
-
-fn delete_cleanup_items_with_native(
-    app: &crate::apps::InstalledApp,
-    items: &[CleanupItem],
-    source: crate::policy::CleanupSource,
     native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
 ) -> DeleteOutcome {
-    delete_cleanup_items_with_io(
-        app,
+    delete_planned_items_with_io(
         items,
-        source,
         native_delete,
         &mut crate::fsutil::remove_tree_no_reparse,
         &mut crate::sysops::schedule_delete_on_reboot,
     )
 }
 
-fn delete_cleanup_items_with_io(
-    app: &crate::apps::InstalledApp,
+fn delete_planned_items_with_io(
     items: &[CleanupItem],
-    source: crate::policy::CleanupSource,
     native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
     delete_fs: &mut impl FnMut(&Path) -> std::io::Result<()>,
     schedule: &mut impl FnMut(&str) -> bool,
@@ -239,40 +260,8 @@ fn delete_cleanup_items_with_io(
     let mut delayed = 0u32;
     let mut errors = vec![];
     let mut details = vec![];
-    let ignore = match crate::ignore::load_checked() {
-        Ok(ignore) => ignore,
-        Err(e) => {
-            return DeleteOutcome {
-                deleted: 0,
-                failed: items.len() as u32,
-                skipped: 0,
-                delayed: 0,
-                errors: vec![e.clone()],
-                details: items
-                    .iter()
-                    .map(|it| ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "failed".into(),
-                        message: e.clone(),
-                    })
-                    .collect(),
-            }
-        }
-    };
 
     for it in items {
-        let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
-        if !decision.is_allow() {
-            skipped += 1;
-            details.push(ItemDetail {
-                path: it.path.clone(),
-                kind: format!("{:?}", it.kind).to_lowercase(),
-                status: "skipped".into(),
-                message: decision.message().to_string(),
-            });
-            continue;
-        }
         match it.kind {
             ItemKind::Path => match crate::regops::scrub_path_entry(&it.path) {
                 Ok(true) => {
@@ -314,8 +303,8 @@ fn delete_cleanup_items_with_io(
                 let native_done = matches!(&native, Some((true, _)));
                 // `key|Value` must resolve to a non-empty value name; a trailing `|`
                 // must never fall through to deleting the whole key (Run root!).
-                let res: Result<(), String> = if native_done {
-                    Ok(())
+                let res: Result<bool, String> = if native_done {
+                    Ok(true)
                 } else if it.path.contains('|') {
                     match crate::regops::split_value_path(&it.path) {
                         Some((k, v)) => crate::regops::delete_value(k, v),
@@ -325,13 +314,26 @@ fn delete_cleanup_items_with_io(
                     crate::regops::delete_key(&it.path)
                 };
                 match res {
-                    Ok(()) => {
+                    Ok(true) => {
                         deleted += 1;
                         details.push(ItemDetail {
                             path: it.path.clone(),
                             kind: "registry".into(),
                             status: "deleted".into(),
                             message: native_note,
+                        });
+                    }
+                    // The uninstaller already removed it. Same family as the
+                    // File/Dir "path missing" rule, and the same outcome the
+                    // dry-run records — a row that is already gone is not a
+                    // failure the user has to act on.
+                    Ok(false) => {
+                        skipped += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: "registry".into(),
+                            status: "skipped".into(),
+                            message: "registry entry missing".into(),
                         });
                     }
                     Err(_) => {
@@ -453,9 +455,12 @@ pub fn run_full_cleanup(
     opts: &FullCleanupOptions,
 ) -> FullCleanupReport {
     let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Err(e) = crate::ignore::load_checked() {
-        return ignore_read_abort(app, opts.dry_run, e);
-    }
+    // One ignore-list read for the whole run: the backup and delete phases must
+    // not re-read mutable global state between them.
+    let ignore = match crate::ignore::load_checked() {
+        Ok(ignore) => ignore,
+        Err(e) => return ignore_read_abort(app, opts.dry_run, e),
+    };
     if opts.dry_run {
         let dry = run_cleanup_dry_for_app_source(app, items, cleanup_source_from_opts(opts));
         return FullCleanupReport {
@@ -502,9 +507,16 @@ pub fn run_full_cleanup(
     }
 
     let owned_selected: Vec<CleanupItem> = selected.iter().map(|it| (*it).clone()).collect();
+    // The single gate decision, shared by the backup phase and the delete phase.
+    let plan = plan_cleanup_items(
+        app,
+        &owned_selected,
+        cleanup_source_from_opts(opts),
+        &ignore,
+    );
 
     let (mut backup_dir, mut restore_point_ok, mut restore_point_msg) =
-        match try_backup_phase(app, &owned_selected, opts) {
+        match try_backup_phase(app, &plan, opts) {
             BackupOutcome::Ready {
                 backup_dir,
                 restore_point_ok,
@@ -548,8 +560,11 @@ pub fn run_full_cleanup(
 
     // Only items with a real path enter backup/delete — the emptiness check
     // above already declares empty-path items invalid, and feeding them to
-    // the deleter only manufactured spurious failures.
-    let del = delete_cleanup_items_source(app, &owned_selected, cleanup_source_from_opts(opts));
+    // the deleter only manufactured spurious failures. The set deleted is the
+    // set that was backed up, by construction.
+    let mut del = delete_planned_items_with_native(&plan.allowed, &mut native_delete_note);
+    del.skipped += plan.refused.len() as u32;
+    del.details.extend(plan.refused);
 
     FullCleanupReport {
         app_name: app.name.clone(),
@@ -720,15 +735,10 @@ mod tests {
         );
         native_items[0].kind = ItemKind::Registry;
         let mut calls = 0;
-        let native = delete_cleanup_items_with_native(
-            &native_app,
-            &native_items,
-            crate::policy::CleanupSource::Uninstall,
-            &mut |_| {
-                calls += 1;
-                Some((true, "native service deleted".into()))
-            },
-        );
+        let native = delete_planned_items_with_native(&native_items, &mut |_| {
+            calls += 1;
+            Some((true, "native service deleted".into()))
+        });
         assert_eq!(calls, 1);
         assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
         assert_eq!(native.details[0].status, "deleted");
@@ -740,10 +750,8 @@ mod tests {
         failed_app.install_location = fixture.to_string_lossy().into_owned();
         let mut failed_items = items.clone();
         failed_items[0].path = locked.to_string_lossy().into_owned();
-        let outcome = delete_cleanup_items_with_io(
-            &failed_app,
+        let outcome = delete_planned_items_with_io(
             &failed_items,
-            crate::policy::CleanupSource::Uninstall,
             &mut |_| None,
             &mut |_| {
                 Err(std::io::Error::new(
@@ -776,5 +784,212 @@ mod tests {
             .item_details
             .iter()
             .any(|d| d.status == "skipped" && d.message.contains("path missing")));
+    }
+
+    /// The gate decision is taken once and shared by the backup and delete
+    /// phases. The delete phase used to decide again, after up to 300s of vendor
+    /// uninstaller and with mutable global state on both sides, so an item
+    /// refused at backup time could be allowed at delete time — deleted with no
+    /// backup. An item the gate refuses must therefore never be deleted, and must
+    /// still be reported as skipped with the gate's reason.
+    #[test]
+    fn one_gate_decision_is_shared_by_backup_and_delete() {
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DemoApp}"
+                .into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        // One item the gate refuses outright (a library root is a red line) and
+        // one it allows.
+        let refused = CleanupItem {
+            path: r"C:\Users\a\Documents".into(),
+            kind: ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: true,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "remova-plan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let leftover = root.join("Leftover");
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("keep.bin"), b"payload").unwrap();
+        let allowed = CleanupItem {
+            path: leftover.to_string_lossy().into_owned(),
+            kind: ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        };
+        let mut app_with_loc = app.clone();
+        app_with_loc.install_location = root.to_string_lossy().into_owned();
+
+        let ignore = crate::ignore::IgnoreList::default();
+        let source = crate::policy::CleanupSource::Uninstall;
+        let plan = plan_cleanup_items(
+            &app_with_loc,
+            &[refused.clone(), allowed.clone()],
+            source,
+            &ignore,
+        );
+        assert_eq!(
+            plan.allowed.len(),
+            1,
+            "only the allowed item may be deleted"
+        );
+        assert_eq!(plan.allowed[0].path, allowed.path);
+        assert_eq!(plan.refused.len(), 1);
+        assert_eq!(plan.refused[0].path, refused.path);
+        assert_eq!(plan.refused[0].status, "skipped");
+        assert_eq!(plan.refused[0].message, "user_data red line");
+
+        let report = crate::executor::run_full_cleanup(
+            &app_with_loc,
+            &[refused, allowed],
+            &crate::executor::FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: false,
+                restore_point: false,
+                cleanup_source: None,
+            },
+        );
+        assert_eq!(report.deleted, 1, "{:?}", report.item_details);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.skipped, 1, "the refused item is still reported");
+        assert!(!leftover.exists(), "the allowed item is deleted");
+        assert!(report
+            .item_details
+            .iter()
+            .any(|d| { d.status == "skipped" && d.message == "user_data red line" }));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A registry key the vendor uninstaller already removed is recorded as
+    /// `skipped`, exactly like the File/Dir "path missing" rule and the dry-run
+    /// path — a row that is already gone is not a failure the user must act on.
+    #[test]
+    fn missing_registry_entry_is_skipped_not_failed() {
+        // A GUID-shaped Uninstall key: the association proof the gate requires
+        // for a registry item, so the test exercises the delete outcome and not
+        // the association gate. HKCU, so the fixture needs no elevation.
+        let uninstall_key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\12345678-1234-1234-1234-123456789012";
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKCU".into(),
+            registry_key: uninstall_key.into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let items = vec![CleanupItem {
+            path: uninstall_key.into(),
+            kind: ItemKind::Registry,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        }];
+        // The uninstall key itself exists but the GUID subkey does not, which is
+        // the "the uninstaller already took it" shape.
+        let outcome = delete_planned_items_with_native(&items, &mut |_| None);
+        assert_eq!(
+            (outcome.deleted, outcome.failed, outcome.skipped),
+            (0, 0, 1)
+        );
+        assert_eq!(outcome.details[0].kind, "registry");
+        assert_eq!(outcome.details[0].status, "skipped");
+        assert!(
+            outcome.details[0].message.contains("missing"),
+            "{}",
+            outcome.details[0].message
+        );
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+
+        // A missing VALUE under a key that does not exist is the same family.
+        let value_items = vec![CleanupItem {
+            path: r"HKCU\SOFTWARE\RemovaNoSuchVendor|NoSuchValue".into(),
+            kind: ItemKind::Registry,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        }];
+        let value_outcome = delete_planned_items_with_native(&value_items, &mut |_| None);
+        assert_eq!(
+            (
+                value_outcome.deleted,
+                value_outcome.failed,
+                value_outcome.skipped
+            ),
+            (0, 0, 1)
+        );
+        assert_eq!(value_outcome.details[0].status, "skipped");
+
+        // The full run reports the same thing end to end.
+        let report = crate::executor::run_full_cleanup(
+            &app,
+            &items,
+            &crate::executor::FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: false,
+                restore_point: false,
+                cleanup_source: None,
+            },
+        );
+        assert_eq!(report.deleted, 0);
+        assert_eq!(report.failed, 0, "{:?}", report.errors);
+        assert_eq!(report.skipped, 1, "{:?}", report.item_details);
+        assert!(report
+            .item_details
+            .iter()
+            .any(|d| d.status == "skipped" && d.message.contains("missing")));
     }
 }

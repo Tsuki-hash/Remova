@@ -16,6 +16,14 @@ fn is_user_library(p: &std::path::Path) -> bool {
 /// Shortcut peek budget : LNK target strings sit near the header.
 const SHORTCUT_PEEK_BYTES: usize = 8 * 1024;
 
+/// Top-level entries examined per non-default drive.
+///
+/// `read_dir` order is filesystem-dependent, so a `take(n)` applied during
+/// enumeration silently drops a different subset on different machines. The
+/// entries are collected, ordered through `order_candidates`, and only then
+/// truncated.
+const OTHER_DRIVE_ROOT_CAP: usize = 80;
+
 fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || hay.len() < needle.len() {
         return false;
@@ -40,13 +48,25 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
         let Ok(rd) = root.read_dir() else {
             continue;
         };
-        for e in rd.flatten().take(80) {
+        // Collect everything first: a `take(n)` during enumeration would make the
+        // result depend on filesystem order.
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for e in rd.flatten() {
             if crate::scan_task::cancelled() {
                 break;
             }
             let p = e.path();
             if !p.is_dir() {
                 continue;
+            }
+            dirs.push(p);
+        }
+        for p in crate::fsutil::order_candidates(dirs)
+            .into_iter()
+            .take(OTHER_DRIVE_ROOT_CAP)
+        {
+            if crate::scan_task::cancelled() {
+                break;
             }
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;

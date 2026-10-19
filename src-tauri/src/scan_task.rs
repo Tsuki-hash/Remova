@@ -2,7 +2,7 @@
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Serialize)]
@@ -14,10 +14,19 @@ pub struct Progress {
 struct Task {
     id: u32,
     scope: Option<&'static str>,
-    cancelled: AtomicBool,
+    /// `Arc` so a worker thread can hold a live view of the flag: the
+    /// thread-local `CURRENT` is not visible to a thread spawned inside a scan.
+    cancelled: Arc<AtomicBool>,
     committed: AtomicBool,
     started: bool,
     progress: Mutex<Progress>,
+    /// Last (stage pointer, stage length, found) published to `progress`.
+    /// `checkpoint` is called per root and per item and almost always repeats
+    /// the previous call; short-circuiting here avoids a `String` allocation and
+    /// a mutex write on the hot path.
+    last_stage_ptr: AtomicUsize,
+    last_stage_len: AtomicUsize,
+    last_found: AtomicUsize,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
@@ -61,13 +70,16 @@ pub fn begin() -> Result<u32, String> {
         Arc::new(Task {
             id,
             scope: None,
-            cancelled: AtomicBool::new(false),
+            cancelled: Arc::new(AtomicBool::new(false)),
             committed: AtomicBool::new(false),
             started: false,
             progress: Mutex::new(Progress {
                 stage: "preparing".into(),
                 found: 0,
             }),
+            last_stage_ptr: AtomicUsize::new(0),
+            last_stage_len: AtomicUsize::new(0),
+            last_found: AtomicUsize::new(usize::MAX),
         }),
     );
     Ok(id)
@@ -214,14 +226,61 @@ pub fn cancelled() -> bool {
     })
 }
 
+/// True when this thread is running inside a scan task.
+///
+/// Size walks use it to tell a batch scan (background) from a direct user request
+/// (foreground) when they contend for the global walk slots.
+pub fn has_task() -> bool {
+    CURRENT.with(|c| c.borrow().is_some())
+}
+
+/// A live view of the current task's cancellation flag.
+///
+/// A thread spawned inside a scan has no thread-local `CURRENT`, so without one
+/// of these it can neither observe cancellation nor be counted as part of the
+/// scan that spawned it.
+#[derive(Clone)]
+pub struct CancelWatch(Arc<AtomicBool>);
+
+impl CancelWatch {
+    pub fn cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// The current task's cancellation flag, or a watch that is never cancelled when
+/// this thread runs outside a scan.
+pub fn cancel_watch() -> CancelWatch {
+    CURRENT.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|t| CancelWatch(Arc::clone(&t.cancelled)))
+            .unwrap_or(CancelWatch(Arc::new(AtomicBool::new(false))))
+    })
+}
+
 pub fn checkpoint(stage: &str, found: usize) -> bool {
     CURRENT.with(|c| {
         if let Some(task) = c.borrow().as_ref() {
-            if let Ok(mut p) = task.progress.lock() {
-                *p = Progress {
-                    stage: stage.into(),
-                    found,
-                };
+            // Stage names are `&'static str` literals at every call site, so the
+            // pointer identifies the stage. A dynamically built equal string
+            // merely misses the short-circuit — it is never mistaken for a
+            // different stage.
+            let ptr = stage.as_ptr() as usize;
+            let len = stage.len();
+            let unchanged = task.last_stage_ptr.load(Ordering::Relaxed) == ptr
+                && task.last_stage_len.load(Ordering::Relaxed) == len
+                && task.last_found.load(Ordering::Relaxed) == found;
+            if !unchanged {
+                if let Ok(mut p) = task.progress.lock() {
+                    *p = Progress {
+                        stage: stage.into(),
+                        found,
+                    };
+                }
+                task.last_stage_ptr.store(ptr, Ordering::Relaxed);
+                task.last_stage_len.store(len, Ordering::Relaxed);
+                task.last_found.store(found, Ordering::Relaxed);
             }
         }
     });
@@ -336,5 +395,57 @@ mod tests {
         assert!(std::panic::catch_unwind(|| run(id, || panic!("worker"))).is_err());
         assert!(!cancelled());
         assert!(progress(id).is_none());
+    }
+
+    /// `checkpoint` is called per root and per item. Repeating the previous
+    /// (stage, found) must not lose the published progress, and a change must
+    /// still land — the short-circuit is a cache, not a filter.
+    #[test]
+    fn repeated_checkpoint_keeps_progress_and_still_reports_changes() {
+        let id = begin().unwrap();
+        run(id, || {
+            assert!(checkpoint("files", 3));
+            assert_eq!(progress(id).unwrap().found, 3);
+            // Same stage and count: still observable, still truthy.
+            for _ in 0..5 {
+                assert!(checkpoint("files", 3));
+            }
+            assert_eq!(progress(id).unwrap().found, 3);
+            assert_eq!(progress(id).unwrap().stage, "files");
+            // A new count publishes; a new stage publishes.
+            assert!(checkpoint("files", 4));
+            assert_eq!(progress(id).unwrap().found, 4);
+            assert!(checkpoint("registry", 4));
+            assert_eq!(progress(id).unwrap().stage, "registry");
+            assert_eq!(progress(id).unwrap().found, 4);
+            // Going back to a lower count is a change too.
+            assert!(checkpoint("registry", 1));
+            assert_eq!(progress(id).unwrap().found, 1);
+        })
+        .unwrap();
+    }
+
+    /// A worker spawned inside a scan has no thread-local task context. It must
+    /// still see the scan's cancellation through the watch, or a cancelled scan
+    /// keeps a size walk running on a thread the scan no longer controls.
+    #[test]
+    fn cancel_watch_lets_a_worker_thread_observe_scan_cancellation() {
+        let id = begin().unwrap();
+        let result = run(id, || {
+            let watch = cancel_watch();
+            assert!(!watch.cancelled());
+            let worker = std::thread::spawn(move || {
+                // No thread-local task here — only the watch.
+                assert!(!has_task());
+                assert!(!cancelled());
+                watch.cancelled()
+            });
+            assert!(!worker.join().unwrap());
+            cancel(id).unwrap();
+            let watch = cancel_watch();
+            let worker = std::thread::spawn(move || watch.cancelled());
+            assert!(worker.join().unwrap(), "worker must see the cancellation");
+        });
+        assert_eq!(result, Err("scan:cancelled".into()));
     }
 }

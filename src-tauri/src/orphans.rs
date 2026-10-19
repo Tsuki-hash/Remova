@@ -150,15 +150,20 @@ fn scan_orphans_in_roots(
 ) -> Vec<CleanupItem> {
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Collect candidates across every root first, then order and truncate. The
+    // old `if out.len() >= ORPHAN_RESULT_CAP { return }` inside the enumeration
+    // made the reported subset depend on `read_dir` order, and stopped the scan
+    // early on a machine whose first root happened to be full of leftovers.
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     for root in roots {
-        if !crate::scan_task::checkpoint("files", out.len()) {
+        if !crate::scan_task::checkpoint("files", candidates.len()) {
             return out;
         }
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
         };
         for e in rd.flatten() {
-            if !crate::scan_task::checkpoint("files", out.len()) {
+            if !crate::scan_task::checkpoint("files", candidates.len()) {
                 return out;
             }
             let p = e.path();
@@ -204,86 +209,88 @@ fn scan_orphans_in_roots(
             if crate::ignore::should_skip_leftover_path(ignore, &p.to_string_lossy()) {
                 continue;
             }
-            if !looks_like_app_dir(&p) {
-                continue;
-            }
-            let score = SCORE_SUSPECTED_MIN + 10;
-            let (files, has_exe, has_config) = dir_shape(&p);
-            let mut evidence = vec![Evidence {
-                code: "orphan_no_owner".into(),
-                label: "No matching uninstall entry".into(),
-                weight: score,
-                detail: format!("folder `{name}` not matched to installed software"),
-            }];
-            if has_exe {
-                evidence.push(Evidence {
-                    code: "orphan_has_exe".into(),
-                    label: "Contains executable".into(),
-                    weight: 10,
-                    detail: "found .exe/.msi under folder".into(),
-                });
-            } else if files >= 3 {
-                evidence.push(Evidence {
-                    code: "orphan_many_files".into(),
-                    label: "Multi-file app-like folder".into(),
-                    weight: 5,
-                    detail: format!("{files} files in top level"),
-                });
-            }
-            if has_config {
-                evidence.push(Evidence {
-                    code: "orphan_has_config".into(),
-                    label: "Contains config/data files".into(),
-                    weight: 4,
-                    detail: "dll/dat/db/json/ini/xml present".into(),
-                });
-            }
-            if let Some(root) = scan_root_label(&p.to_string_lossy()) {
-                evidence.push(Evidence {
-                    code: "orphan_root".into(),
-                    label: "Install-root location".into(),
-                    weight: 2,
-                    detail: root.into(),
-                });
-            }
-            if let Some(days) = last_write_age_days(&p) {
-                evidence.push(Evidence {
-                    code: "orphan_mtime".into(),
-                    label: "Last write age".into(),
-                    weight: 0,
-                    detail: format!("{days} day(s) ago"),
-                });
-            }
-            // Orphans stay Suspected/Medium —never auto-select; user must confirm.
-            let path_str = p.to_string_lossy().to_string();
-            scanned.insert(path_str.clone());
-            out.push(CleanupItem {
-                path: path_str,
-                kind: ItemKind::Dir,
-                score,
-                confidence: Confidence::Suspected,
-                risk: RiskLevel::Medium,
-                reason: "Orphan app-like folder (no matching uninstall entry)".into(),
-                evidence,
-                shared: false,
-                user_data: false,
-                user_library: false,
-                size_kb: None,
-                bucket: None,
-            });
-            if out.len() >= crate::constants::ORPHAN_RESULT_CAP {
-                if !crate::scan_task::checkpoint("sizes", out.len()) {
-                    return out;
-                }
-                crate::scanner::fill_item_sizes(&mut out);
-                if !crate::scan_task::checkpoint("finalizing", out.len()) {
-                    return out;
-                }
-                crate::scanner::fill_item_buckets(&mut out, "");
-                remember_orphan_paths(&scanned);
-                return out;
-            }
+            candidates.push(p);
         }
+    }
+    for p in crate::fsutil::order_candidates(candidates)
+        .into_iter()
+        .take(crate::constants::ORPHAN_RESULT_CAP)
+    {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
+        // The expensive shape probe runs only for what the cap keeps.
+        if !looks_like_app_dir(&p) {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let score = SCORE_SUSPECTED_MIN + 10;
+        let (files, has_exe, has_config) = dir_shape(&p);
+        let mut evidence = vec![Evidence {
+            code: "orphan_no_owner".into(),
+            label: "No matching uninstall entry".into(),
+            weight: score,
+            detail: format!("folder `{name}` not matched to installed software"),
+        }];
+        if has_exe {
+            evidence.push(Evidence {
+                code: "orphan_has_exe".into(),
+                label: "Contains executable".into(),
+                weight: 10,
+                detail: "found .exe/.msi under folder".into(),
+            });
+        } else if files >= 3 {
+            evidence.push(Evidence {
+                code: "orphan_many_files".into(),
+                label: "Multi-file app-like folder".into(),
+                weight: 5,
+                detail: format!("{files} files in top level"),
+            });
+        }
+        if has_config {
+            evidence.push(Evidence {
+                code: "orphan_has_config".into(),
+                label: "Contains config/data files".into(),
+                weight: 4,
+                detail: "dll/dat/db/json/ini/xml present".into(),
+            });
+        }
+        if let Some(root) = scan_root_label(&p.to_string_lossy()) {
+            evidence.push(Evidence {
+                code: "orphan_root".into(),
+                label: "Install-root location".into(),
+                weight: 2,
+                detail: root.into(),
+            });
+        }
+        if let Some(days) = last_write_age_days(&p) {
+            evidence.push(Evidence {
+                code: "orphan_mtime".into(),
+                label: "Last write age".into(),
+                weight: 0,
+                detail: format!("{days} day(s) ago"),
+            });
+        }
+        // Orphans stay Suspected/Medium —never auto-select; user must confirm.
+        let path_str = p.to_string_lossy().to_string();
+        scanned.insert(path_str.clone());
+        out.push(CleanupItem {
+            path: path_str,
+            kind: ItemKind::Dir,
+            score,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "Orphan app-like folder (no matching uninstall entry)".into(),
+            evidence,
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        });
     }
     if !crate::scan_task::checkpoint("sizes", out.len()) {
         return out;
@@ -305,26 +312,34 @@ fn orphan_paths() -> &'static std::sync::Mutex<std::collections::HashSet<String>
     ORPHAN_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
-/// -02: normalize allow-list keys so case / trailing `\` / slash style cannot bypass.
-fn normalize_orphan_key(path: &str) -> String {
-    path.replace('/', "\\")
-        .trim()
-        .trim_matches('"')
-        .trim_end_matches('\\')
-        .to_lowercase()
+/// Normalize an allow-list key so case, trailing `\`, slash style and Win32's
+/// per-segment trailing dots/spaces cannot bypass it.
+///
+/// Delegates to `fsutil::path_key`. This used to be a private copy that was
+/// byte-identical to `scan_allow::normalize` and, unlike `safety::path_utf8_lower`,
+/// did not strip per-segment trailing dots and spaces — so the orphan allow-list
+/// and the red-line checks disagreed about what a path was.
+fn normalize_orphan_key(path: &str) -> Option<String> {
+    crate::fsutil::path_key(std::path::Path::new(path))
 }
 
 fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
     crate::scan_task::publish(|| {
         if let Ok(mut g) = orphan_paths().lock() {
-            *g = paths.iter().map(|p| normalize_orphan_key(p)).collect();
+            // A path that cannot be named is never authorized.
+            *g = paths
+                .iter()
+                .filter_map(|p| normalize_orphan_key(p))
+                .collect();
         }
     });
 }
 
 /// True when `path` came from the most recent orphan scan in this process.
 pub fn was_recent_orphan_path(path: &str) -> bool {
-    let key = normalize_orphan_key(path);
+    let Some(key) = normalize_orphan_key(path) else {
+        return false;
+    };
     orphan_paths()
         .lock()
         .map(|g| g.contains(&key))
@@ -404,6 +419,26 @@ mod tests {
         assert!(!was_recent_orphan_path(r"C:\Program Files\SomeVendor"));
     }
 
+    /// CQ-03: the orphan allow-list now shares `fsutil::path_key` with the
+    /// red-line checks. This used to be a private copy missing Win32's
+    /// per-segment trailing dots and spaces, so a reported `…\App.` stored
+    /// `…\app.` and the delete request for `…\App` was refused.
+    #[test]
+    fn orphan_allow_list_matches_win32_on_trailing_dots_and_spaces() {
+        let _guard = crate::scan_allow::test_lock();
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(r"C:\Program Files\SomeVendor\App.".to_string());
+        remember_orphan_paths(&set);
+        assert!(was_recent_orphan_path(r"C:\Program Files\SomeVendor\App"));
+        assert!(was_recent_orphan_path(r"c:/program files/somevendor/app "));
+        // An unnameable path never authorizes.
+        let mut blank = HashSet::new();
+        blank.insert("  ".to_string());
+        remember_orphan_paths(&blank);
+        assert!(!was_recent_orphan_path("  "));
+    }
+
     #[cfg(windows)]
     #[test]
     fn scan_orphans_runs() {
@@ -422,6 +457,59 @@ mod tests {
                 .iter()
                 .any(|e| e.code == "orphan_no_owner" || e.code == "orphan_dir"));
         }
+    }
+
+    /// The orphan cap used to be applied while pushing, so which folders were
+    /// reported depended on `read_dir` order. Collecting every candidate first
+    /// and ordering through `order_candidates` makes the reported subset — and
+    /// the allow-list armed from it — reproducible.
+    #[test]
+    fn orphan_cap_selects_a_deterministic_subset() {
+        let _guard = crate::scan_allow::test_lock();
+        let root = std::env::temp_dir().join(format!(
+            "remova-orphan-cap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        // More orphan-like folders than the cap, created in an order no
+        // filesystem is obliged to preserve.
+        for i in 0..(crate::constants::ORPHAN_RESULT_CAP + 12) {
+            let dir = root.join(format!("Leftover{i:03}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("app.exe"), b"mz").unwrap();
+        }
+
+        let rows = scan_orphans_in_roots(
+            &[],
+            &crate::ignore::IgnoreList::default(),
+            vec![root.clone()],
+        );
+
+        assert_eq!(rows.len(), crate::constants::ORPHAN_RESULT_CAP);
+        let paths: Vec<&str> = rows.iter().map(|it| it.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort_by_key(|p| p.to_lowercase());
+        assert_eq!(
+            paths, sorted,
+            "the reported subset must be in a stable order"
+        );
+        // The cap keeps the alphabetically-first folders, not an arbitrary
+        // filesystem-order subset.
+        assert!(paths.iter().any(|p| p.ends_with("Leftover000")));
+        assert!(!paths.iter().any(|p| p.ends_with("Leftover091")));
+        // Every reported row is authorized; a dropped candidate is not.
+        for it in &rows {
+            assert!(was_recent_orphan_path(&it.path), "{}", it.path);
+        }
+        assert!(!was_recent_orphan_path(
+            &root.join("Leftover091").to_string_lossy()
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

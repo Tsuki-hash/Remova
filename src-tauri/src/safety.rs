@@ -412,23 +412,17 @@ pub fn is_safe_fs(p: &std::path::Path) -> bool {
         .any(|pref| s == *pref || s.starts_with(&format!("{pref}\\")))
 }
 
-/// Lowercased backslash form of a path, or `None` when not valid UTF-8 (fail-closed).
+/// Lowercased, per-segment Win32-normalized form of a path string, or `None` when
+/// the path cannot be named (fail-closed).
+///
+/// Delegates to `fsutil::path_key`, which is the same function the allow-lists and
+/// the PATH-entry comparison now use. This module was the only one of the four
+/// normalizers that already stripped per-segment trailing dots and spaces, so the
+/// red lines here and the allow-list keys elsewhere could disagree about what a
+/// path was; one implementation removes that possibility. `.` / `..` segments are
+/// preserved so traversal rejection still works.
 fn path_utf8_lower(p: &std::path::Path) -> Option<String> {
-    // Win32 strips trailing dots/spaces per segment — normalize before compare.
-    // Keep `.` / `..` intact so traversal rejection still works.
-    let s = p.to_str()?.replace('/', "\\").to_lowercase();
-    Some(
-        s.split('\\')
-            .map(|seg| {
-                if seg == "." || seg == ".." {
-                    seg
-                } else {
-                    seg.trim_end_matches(['.', ' '])
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\\"),
-    )
+    crate::fsutil::path_key(p)
 }
 
 fn env_dir_lower(name: &str) -> Option<String> {

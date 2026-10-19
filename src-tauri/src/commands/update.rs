@@ -191,17 +191,9 @@ mod tests {
         assert_eq!(pick_setup_asset(&assets, ""), None);
     }
 
-    fn temp_nsis_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "remova_upd_{tag}_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// A fixture directory that removes itself on drop, including on panic.
+    fn temp_nsis_dir(tag: &str) -> crate::test_support::TempDir {
+        crate::test_support::TempDir::new(&format!("upd_{tag}"))
     }
 
     #[test]
@@ -225,7 +217,6 @@ mod tests {
         )
         .unwrap();
         assert!(is_nsis_install(&dir));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -244,6 +235,5 @@ mod tests {
         assert!(!update_support_decision(Some("key"), false, None));
         // All conditions met.
         assert!(update_support_decision(Some("key"), false, Some(&dir)));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

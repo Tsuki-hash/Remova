@@ -39,6 +39,9 @@ pub mod toolcache;
 mod path_value_smoke;
 #[cfg(test)]
 mod pipeline_smoke;
+// Shared fixtures. Test-only, so it must never reach the shipped binary.
+#[cfg(test)]
+mod test_support;
 
 use apps::InstalledApp;
 use executor::{CleanupReport, FullCleanupOptions, FullCleanupReport};
@@ -587,10 +590,11 @@ async fn rank_idle_apps(scan_id: Option<u32>) -> Result<Vec<idle::IdleApp>, Stri
 
 /// Installer packages + updater caches (scoped delete allow-list).
 #[tauri::command]
-async fn scan_installer_caches(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+async fn scan_installer_caches(scan_id: Option<u32>) -> Result<scanner::ScopedScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "installer", installers::scan_installer_caches)
+            .and_then(|result| result)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -598,10 +602,11 @@ async fn scan_installer_caches(scan_id: Option<u32>) -> Result<Vec<scanner::Clea
 
 /// Dev / game / browser tool caches (scoped delete allow-list).
 #[tauri::command]
-async fn scan_tool_caches(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+async fn scan_tool_caches(scan_id: Option<u32>) -> Result<scanner::ScopedScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "toolcache", toolcache::scan_tool_caches)
+            .and_then(|result| result)
     })
     .await
     .map_err(|e| e.to_string())?

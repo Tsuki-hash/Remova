@@ -61,15 +61,42 @@ fn monitor_state_path() -> PathBuf {
     base.join("Remova").join("monitor_snapshot.json")
 }
 
+/// Roots the install monitor snapshots.
+///
+/// `%APPDATA%` and `%ProgramData%` belong here: an installer that writes only
+/// there used to produce an empty diff while the UI reported a completed scan.
+/// The rest of the product already walks both (`fs_scans`), which is what proves
+/// this list was incomplete rather than deliberately narrow.
+fn roots_from(get: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    const VARS: &[&str] = &[
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "ProgramData",
+    ];
+    VARS.iter()
+        .filter_map(|key| get(key))
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 fn roots() -> Vec<PathBuf> {
-    // Tighter than full Program Files: common install roots only.
-    let mut v = vec![];
-    for e in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
-        if let Ok(p) = std::env::var(e) {
-            v.push(PathBuf::from(p));
-        }
-    }
-    v
+    roots_from(|key| std::env::var(key).ok())
+}
+
+/// Remova's own state under `%ProgramData%` (this snapshot, the Safety Vault).
+///
+/// Once `%ProgramData%` is a snapshot root, its own baseline file shows up in the
+/// end-of-session diff as a path "added during the monitored install" — and the
+/// allow-list is armed from that diff, so the monitor would offer to delete its
+/// own snapshot. Remova's state is never an install artifact.
+fn remova_state_root() -> Option<PathBuf> {
+    let base = std::env::var("PROGRAMDATA")
+        .ok()
+        .filter(|v| !v.trim().is_empty())?;
+    Some(PathBuf::from(base).join("Remova"))
 }
 
 fn is_noise_path(p: &str) -> bool {
@@ -91,6 +118,7 @@ fn walk_names(
     budget: &mut usize,
     depth: usize,
     truncated: &mut bool,
+    exclude: Option<&Path>,
 ) {
     if crate::scan_task::cancelled() {
         *truncated = true;
@@ -126,6 +154,11 @@ fn walk_names(
             return;
         }
         let p = e.path();
+        // Remova's own state is not an install artifact: reporting it would put
+        // the monitor's own baseline into the diff it arms deletions from.
+        if exclude.is_some_and(|ex| p.starts_with(ex)) {
+            continue;
+        }
         // Keep original casing for display/delete; NTFS compare is case-insensitive.
         // Non-UTF-8 never enters snapshots/allow-lists (fail-closed).
         let Some(rel) = crate::fsutil::path_utf8(&p) else {
@@ -137,7 +170,7 @@ fn walk_names(
         // `is_symlink()` classifies junctions version-dependently and misses
         // non-symlink reparse dirs (cloud placeholders) — check the attribute.
         if p.is_dir() && !crate::fsutil::is_reparse_point(&p) {
-            walk_names(&p, out, budget, depth + 1, truncated);
+            walk_names(&p, out, budget, depth + 1, truncated, exclude);
         }
     }
 }
@@ -146,12 +179,20 @@ fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
     let mut truncated = false;
     let mut budget = walk_budget();
+    let exclude = remova_state_root();
     for r in roots() {
         if crate::scan_task::cancelled() {
             truncated = true;
             break;
         }
-        walk_names(&r, &mut files, &mut budget, 0, &mut truncated);
+        walk_names(
+            &r,
+            &mut files,
+            &mut budget,
+            0,
+            &mut truncated,
+            exclude.as_deref(),
+        );
     }
     FsSnapshot { files, truncated }
 }
@@ -457,6 +498,7 @@ mod tests {
                 &mut budget,
                 0,
                 &mut truncated,
+                None,
             );
             assert!(super::reg_value_names().is_err());
         });
@@ -512,9 +554,93 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("remova_mon_file_{}", std::process::id()));
         std::fs::write(&tmp, b"not a directory").unwrap();
         let mut degraded = false;
-        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded);
+        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded, None);
         assert!(degraded);
         std::fs::remove_file(tmp).unwrap();
+    }
+
+    /// `%APPDATA%` and `%ProgramData%` are install roots: an installer that
+    /// writes only there used to yield an empty diff while the UI said the scan
+    /// completed. The rest of the product already walks both.
+    #[test]
+    fn snapshot_roots_cover_appdata_and_programdata() {
+        let env = [
+            ("ProgramFiles", "C:/Program Files"),
+            ("ProgramFiles(x86)", "C:/Program Files (x86)"),
+            ("LOCALAPPDATA", "C:/Users/x/AppData/Local"),
+            ("APPDATA", "C:/Users/x/AppData/Roaming"),
+            ("ProgramData", "C:/ProgramData"),
+        ];
+        let roots = super::roots_from(|key| {
+            env.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        });
+        for want in ["AppData/Roaming", "ProgramData"] {
+            assert!(
+                roots
+                    .iter()
+                    .any(|r| r.to_string_lossy().replace('\\', "/").ends_with(want)),
+                "{want} must be a snapshot root, got {roots:?}"
+            );
+        }
+        // A relocated root is read from the environment, never rebuilt.
+        let relocated = super::roots_from(|key| match key {
+            "APPDATA" => Some("D:/Profiles/x/AppData/Roaming".to_string()),
+            "ProgramData" => Some("D:/Profiles/ProgramData".to_string()),
+            _ => None,
+        });
+        assert_eq!(relocated.len(), 2, "{relocated:?}");
+        assert!(relocated.iter().any(|r| r.ends_with("Roaming")));
+        assert!(relocated.iter().any(|r| r.ends_with("ProgramData")));
+    }
+
+    /// Remova's own state lives under `%ProgramData%\Remova`, which is now a
+    /// snapshot root. Its baseline file would otherwise appear in the end diff
+    /// as a path "added during the monitored install" and be armed for deletion
+    /// — the monitor deleting its own snapshot.
+    #[test]
+    fn removas_own_state_is_never_a_snapshot_candidate() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-mon-own-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let state = root.join("Remova");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("monitor_snapshot.json"), b"{}").unwrap();
+        // A real install target next to it must still be snapshotted.
+        let vendor = root.join("Vendor");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join("app.bin"), b"payload").unwrap();
+
+        let mut names = BTreeSet::new();
+        let mut budget = 100;
+        let mut truncated = false;
+        walk_names(
+            &root,
+            &mut names,
+            &mut budget,
+            0,
+            &mut truncated,
+            Some(&state),
+        );
+
+        assert!(
+            names.iter().any(|n| n.ends_with("app.bin")),
+            "a real install target must still be snapshotted: {names:?}"
+        );
+        for n in &names {
+            assert!(
+                !n.replace('/', "\\").to_lowercase().contains("\\remova\\"),
+                "Remova's own state must never enter the snapshot: {n}"
+            );
+        }
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -725,7 +851,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 100usize;
         let mut truncated = false;
-        walk_names(&a, &mut files, &mut budget, 0, &mut truncated);
+        walk_names(&a, &mut files, &mut budget, 0, &mut truncated, None);
         assert!(
             files.contains(&a.join("own.txt").to_string_lossy().to_string()),
             "own file must be walked"
@@ -762,7 +888,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 10_000usize;
         let mut truncated = false;
-        walk_names(&base, &mut files, &mut budget, 0, &mut truncated);
+        walk_names(&base, &mut files, &mut budget, 0, &mut truncated, None);
         assert!(truncated, "hitting the depth cap must flag the snapshot");
         let cap = crate::constants::INSTALLMON_MAX_WALK_DEPTH;
         assert!(

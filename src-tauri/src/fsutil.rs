@@ -706,6 +706,50 @@ pub fn path_utf8(p: &Path) -> Option<String> {
     Some(p.to_str()?.replace('/', "\\"))
 }
 
+/// The single definition of "these two paths name the same thing".
+///
+/// Four call sites used to carry their own copy of this logic
+/// (`scan_allow::normalize`, `orphans::normalize_orphan_key`,
+/// `regops::normalize_path_entry`, `safety::path_utf8_lower`). Three of them were
+/// byte-for-byte identical, and none of those three stripped Win32's per-segment
+/// trailing dots and spaces — the one property that decides whether
+/// `C:\Windows.`, `C:\Windows ` and `c:\windows` collide.
+///
+/// The consequence was fail-closed by luck rather than by design: a scan that
+/// reported `C:\Foo\Bar.` authorized the key `c:\foo\bar.`, so the delete request
+/// for `C:\Foo\Bar` was refused — the user is told an item exists and then cannot
+/// remove it. The reverse direction is worse to reason about, because the red-line
+/// checks in `safety` *do* strip those characters while the allow-list did not, so
+/// the two halves of the gate disagreed about what a path even was. Unifying them
+/// makes that agreement intentional.
+///
+/// `None` on non-UTF-8 input: a path we cannot name is a path we must not match.
+pub fn path_key(p: &Path) -> Option<String> {
+    let raw = p.to_str()?;
+    let slashed = raw.replace('/', "\\");
+    let unquoted = slashed.trim().trim_matches('"');
+    let lowered = unquoted.to_lowercase();
+    let body = lowered.trim_end_matches('\\');
+    // `.` and `..` are kept verbatim so traversal checks still see them; every
+    // other segment is trimmed the way Win32 trims it when resolving.
+    let key = body
+        .split('\\')
+        .map(|seg| {
+            if seg == "." || seg == ".." {
+                seg
+            } else {
+                seg.trim_end_matches(['.', ' '])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\\");
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
 /// Shared `to_wide` for Windows APIs.
 #[cfg(windows)]
 pub fn to_wide(s: &str) -> Vec<u16> {
@@ -893,19 +937,86 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn unique_tmp(tag: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let p = std::env::temp_dir().join(format!(
-            "remova_fsutil_{tag}_{}_{}",
-            std::process::id(),
-            nanos
-        ));
-        let _ = fs::remove_dir_all(&p);
-        fs::create_dir_all(&p).unwrap();
-        p
+    /// A fixture directory that removes itself on drop, including on panic.
+    fn unique_tmp(tag: &str) -> crate::test_support::TempDir {
+        crate::test_support::TempDir::new(&format!("fsutil_{tag}"))
+    }
+
+    /// `path_key` is the one definition of path identity shared by the allow-list,
+    /// the PATH-entry comparison and the red-line checks. Each case below is a pair
+    /// that Win32 resolves to the same object but that the four hand-rolled
+    /// normalizers used to treat as different keys.
+    #[test]
+    fn path_key_agrees_with_win32_on_the_same_object() {
+        let key = |s: &str| path_key(std::path::Path::new(s));
+        // Case and slash style.
+        assert_eq!(key("C:/Foo/Bar").as_deref(), key("c:\\foo\\bar").as_deref());
+        // A trailing separator names the same directory.
+        assert_eq!(
+            key("C:\\Foo\\Bar\\").as_deref(),
+            key("C:\\Foo\\Bar").as_deref()
+        );
+        // Win32 strips trailing dots and spaces per segment, not just at the end.
+        assert_eq!(
+            key("C:\\Foo\\Bar.").as_deref(),
+            key("C:\\Foo\\Bar").as_deref()
+        );
+        assert_eq!(
+            key("C:\\Foo\\Bar ").as_deref(),
+            key("C:\\Foo\\Bar").as_deref()
+        );
+        assert_eq!(
+            key("C:\\Foo. \\Bar. ").as_deref(),
+            key("C:\\Foo\\Bar").as_deref()
+        );
+        // Surrounding whitespace and the quotes a registry PATH value arrives with.
+        assert_eq!(
+            key("  \"C:\\Foo\\Bar\"  ").as_deref(),
+            key("C:\\Foo\\Bar").as_deref()
+        );
+        // A drive root keeps its colon; it is not collapsed to the empty key.
+        assert_eq!(key("C:\\").as_deref(), Some("c:"));
+    }
+
+    /// The dot-segment exemption exists so traversal rejection still works — a key
+    /// that quietly turned `..` into an empty segment would make `C:\A\..\..\B`
+    /// look like `C:\A\B`.
+    #[test]
+    fn path_key_keeps_dot_segments_for_traversal_checks() {
+        let key = |s: &str| path_key(std::path::Path::new(s));
+        assert_eq!(key("C:\\A\\..\\..\\B").as_deref(), Some("c:\\a\\..\\..\\b"));
+        assert_ne!(
+            key("C:\\A\\..\\..\\B").as_deref(),
+            key("C:\\A\\B").as_deref()
+        );
+    }
+
+    /// Distinct paths must stay distinct: the exemptions above must not over-merge.
+    #[test]
+    fn path_key_does_not_merge_distinct_paths() {
+        let key = |s: &str| path_key(std::path::Path::new(s));
+        assert_ne!(
+            key("C:\\Foo\\Bar").as_deref(),
+            key("C:\\Foo\\Bar2").as_deref()
+        );
+        assert_ne!(
+            key("C:\\Foo\\Bar").as_deref(),
+            key("C:\\Foo\\Baz").as_deref()
+        );
+        assert_ne!(key("C:\\Foo").as_deref(), key("C:\\Foo\\Bar").as_deref());
+    }
+
+    /// A path that cannot be named cannot be matched, so the caller fails closed
+    /// rather than comparing on a lossy replacement.
+    #[test]
+    fn path_key_is_none_for_unnameable_and_empty_input() {
+        use std::os::windows::ffi::OsStringExt;
+        let lone_surrogate: std::ffi::OsString =
+            std::ffi::OsString::from_wide(&[0xD800, b'x' as u16]);
+        assert!(path_key(std::path::Path::new(&lone_surrogate)).is_none());
+        assert!(path_key(std::path::Path::new("")).is_none());
+        assert!(path_key(std::path::Path::new("   ")).is_none());
+        assert!(path_key(std::path::Path::new("\"\"")).is_none());
     }
 
     #[test]

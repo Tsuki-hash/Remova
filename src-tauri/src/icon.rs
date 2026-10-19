@@ -252,18 +252,16 @@ fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn unique_dir(label: &str) -> std::path::PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("{label}_{}_{nonce}", std::process::id()))
+    /// A fixture directory that removes itself on drop, including on panic — the
+    /// hand-rolled `remove_dir_all` at the end of each test body used to be skipped
+    /// by every failing assertion.
+    fn unique_dir(label: &str) -> crate::test_support::TempDir {
+        crate::test_support::TempDir::new(label)
     }
 
     #[test]
     fn failed_publish_removes_tmp_and_prune_includes_stale_tmp() {
         let dir = unique_dir("remova_icon_publish");
-        std::fs::create_dir_all(&dir).unwrap();
         let blocked = dir.join("blocked.png");
         std::fs::create_dir_all(&blocked).unwrap();
         assert!(write_cache_png(&blocked, b"png").is_err());
@@ -334,7 +332,6 @@ mod tests {
     #[test]
     fn cache_key_changes_with_source_fingerprint() {
         let dir = unique_dir("remova_icon_fingerprint");
-        let _ = std::fs::create_dir_all(&dir);
         let exe = dir.join("app.exe");
         std::fs::write(&exe, b"v1").unwrap();
         let raw = format!("{},0", exe.display());
@@ -345,7 +342,6 @@ mod tests {
             k1, k2,
             "cache key must change when the icon source file changes"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -360,7 +356,6 @@ mod tests {
     #[test]
     fn concurrent_writes_stay_whole_and_leave_no_tmp() {
         let dir = unique_dir("remova_icon_concurrent");
-        std::fs::create_dir_all(&dir).unwrap();
         let cache = dir.join("app.png");
         let whole_a = vec![0xAu8; 8192];
         let whole_b = vec![0xBu8; 8192];
@@ -382,13 +377,11 @@ mod tests {
             .filter(|n| n.ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn cache_write_preserves_preexisting_hard_links() {
         let dir = unique_dir("remova_icon_occupied");
-        std::fs::create_dir_all(&dir).unwrap();
         let cache = dir.join("app.png");
         let sentinel = dir.join("sentinel");
         std::fs::write(&sentinel, b"keep original").unwrap();
@@ -400,6 +393,5 @@ mod tests {
         write_cache_png(&cache, b"new icon").unwrap();
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep original");
         assert_eq!(std::fs::read(&cache).unwrap(), b"new icon");
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

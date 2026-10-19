@@ -273,15 +273,85 @@ pub fn path_size_kb(kind: &ItemKind, path: &str) -> Option<u64> {
 /// Bounded by an overall entry budget, so the cost of the pass does not grow
 /// with the number of items. A walk that hits its budget leaves `size_kb` as
 /// `None` — no size is reported rather than a partial one shown as exact.
+///
+/// The walks run on a few threads because they are IO-bound and were fully
+/// serial. Every worker draws from ONE entry pool seeded with what the calling
+/// thread had left, so the pass stays inside one budget however many workers
+/// there are, and a walk that runs out reports `None` exactly as the serial one
+/// did.
 pub fn fill_item_sizes(items: &mut [CleanupItem]) {
     crate::dirsize::reset_walk_budget();
-    for it in items.iter_mut() {
-        if crate::scan_task::cancelled() {
-            break;
+    let pending: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| it.size_kb.is_none() && matches!(it.kind, ItemKind::File | ItemKind::Dir))
+        .map(|(i, _)| i)
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let workers = cores.clamp(1, MAX_SIZE_WALK_WORKERS).min(pending.len());
+    // Progress during this phase used to be invisible: `checkpoint` was never
+    // called here, so the UI sat at "estimating" for the whole pass — which is the
+    // longest phase when a 5 GB cache is in scope. Publish every N items rather
+    // than per item, because each publish takes the progress mutex and re-renders
+    // the panel; the count is the number measured so far, not the number of rows.
+    const ESTIMATE_PROGRESS_STRIDE: usize = 8;
+    if workers <= 1 {
+        for (done, &i) in pending.iter().enumerate() {
+            if crate::scan_task::cancelled() {
+                return;
+            }
+            items[i].size_kb = path_size_kb(&items[i].kind, &items[i].path);
+            if (done + 1) % ESTIMATE_PROGRESS_STRIDE == 0 || done + 1 == pending.len() {
+                crate::scan_task::checkpoint("sizing", done + 1);
+            }
         }
-        if it.size_kb.is_none() {
-            it.size_kb = path_size_kb(&it.kind, &it.path);
+        return;
+    }
+    // One pool for the whole pass, seeded with the caller's remaining budget.
+    let pool = crate::dirsize::SharedWalkBudget::seeded(crate::dirsize::remaining_walk_budget());
+    let watch = crate::scan_task::cancel_watch();
+    let chunk = pending.len().div_ceil(workers);
+    let shared: &[CleanupItem] = items;
+    let mut measured: Vec<(usize, Option<u64>)> = Vec::with_capacity(pending.len());
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for slice in pending.chunks(chunk) {
+            let watch = watch.clone();
+            let pool = pool.clone();
+            handles.push(scope.spawn(move || {
+                // One walk slot and the shared budget for the whole slice.
+                let _slot = crate::dirsize::acquire_walk_slot();
+                let _budget = pool.install();
+                slice
+                    .iter()
+                    .filter_map(|&i| {
+                        if watch.cancelled() {
+                            return None;
+                        }
+                        Some((
+                            i,
+                            crate::dirsize::walk_size_kb_limited(std::path::Path::new(
+                                &shared[i].path,
+                            )),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            }));
         }
+        for handle in handles {
+            measured.extend(handle.join().unwrap_or_default());
+        }
+    });
+    // The parallel path reports once, at the end: the workers hold no shared
+    // counter and publishing from four threads would need its own mutex for a
+    // number that only the UI reads. `walk_size_kb_limited` is bounded per item, so
+    // the serial path above is the one that can visibly stall.
+    crate::scan_task::checkpoint("sizing", pending.len());
+    for (i, size) in measured {
+        items[i].size_kb = size;
     }
 }
 
@@ -294,6 +364,53 @@ pub struct ScanResult {
     pub app_key: String,
     pub items: Vec<CleanupItem>,
 }
+
+/// Result of a scoped scan (installer packages / tool caches).
+///
+/// A scoped scan is bounded by a per-root child cap and by a total result cap,
+/// and a root it cannot read at all is skipped. Both used to be silent: the UI
+/// said "scan complete, N items" for a machine where most of a shared root's
+/// children were dropped, or where nothing could be read in the first place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopedScanResult {
+    pub items: Vec<CleanupItem>,
+    /// Candidates found but not reported because a per-root or total cap was hit.
+    pub omitted: u32,
+    /// Human-readable reasons a scan root could not be read at all.
+    pub degraded: Vec<String>,
+}
+
+impl ScopedScanResult {
+    /// An empty result with nothing omitted and nothing degraded.
+    pub fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            omitted: 0,
+            degraded: Vec::new(),
+        }
+    }
+}
+
+/// Accumulator for the parts of a scoped scan that are not items: rows a cap
+/// dropped, and roots that could not be read at all.
+///
+/// Separate from [`ScopedScanResult`] because the item list and the allow-list
+/// are owned by the scan's own phases, not by this. Folded in when the scan
+/// finishes.
+#[derive(Debug, Default)]
+pub struct ScanGaps {
+    pub omitted: u32,
+    pub degraded: Vec<String>,
+}
+
+/// Upper bound on threads `fill_item_sizes` uses for size walks.
+///
+/// Size walks are IO-bound and were fully serial, so a 200-item scan paid for
+/// 200 sequential directory walks while every other core idled. The cap keeps
+/// the parallelism small: the walks contend for disk and for the one entry
+/// budget (see `dirsize`), so past a handful of workers each one buys less
+/// accuracy per worker rather than more throughput.
+const MAX_SIZE_WALK_WORKERS: usize = 4;
 
 pub fn normalize_for_match(s: &str) -> String {
     // Unicode alphanumeric (not just ASCII) — CJK product/folder names must
@@ -1004,6 +1121,153 @@ mod tests {
         fill_item_sizes(&mut items);
         assert_eq!(items[0].size_kb, Some(2));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Size estimation is the longest phase when a multi-GB cache is in scope, and
+    /// `checkpoint` was never called inside it — so the panel sat on "estimating"
+    /// for the whole pass with no way to tell a slow walk from a hung one. Assert
+    /// the stage advances and the count reaches the number of measured items.
+    #[test]
+    fn fill_item_sizes_publishes_progress_while_estimating() {
+        let fixture = crate::test_support::TempDir::new("scan-sizing-progress");
+        let mut items = Vec::new();
+        for n in 0..20 {
+            let f = fixture.subdir(&format!("d{n}")).join("app.bin");
+            std::fs::write(&f, vec![0u8; 1024]).unwrap();
+            items.push(CleanupItem {
+                path: f.to_string_lossy().to_string(),
+                kind: ItemKind::File,
+                score: 90,
+                confidence: Confidence::Confirmed,
+                risk: RiskLevel::Low,
+                reason: "test".into(),
+                evidence: vec![],
+                shared: false,
+                user_data: false,
+                user_library: false,
+                size_kb: None,
+                bucket: None,
+            });
+        }
+        // The stage starts somewhere else, so reaching "sizing" is a real change.
+        // `progress` has to be read inside `run`: `run` removes the task from the
+        // registry on the way out, so a later lookup finds nothing.
+        let id = crate::scan_task::begin().unwrap();
+        let progress = crate::scan_task::run(id, || {
+            fill_item_sizes(&mut items);
+            crate::scan_task::progress(id).expect("the task is live inside run")
+        })
+        .unwrap();
+        assert_eq!(progress.stage, "sizing");
+        assert_eq!(
+            progress.found,
+            items.len(),
+            "every measured item must be reported, not just the last stride"
+        );
+        assert!(items.iter().all(|it| it.size_kb == Some(1)));
+    }
+
+    fn dir_item(path: &std::path::Path) -> CleanupItem {
+        CleanupItem {
+            path: path.to_string_lossy().to_string(),
+            kind: ItemKind::Dir,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "test".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            bucket: None,
+        }
+    }
+
+    /// The parallel size pass must report the same exact numbers the serial pass
+    /// did: a walk that finishes reports the true total, and a walk that hits a
+    /// cap reports `None` rather than a plausible-looking partial sum.
+    #[test]
+    fn parallel_size_walks_report_exact_sizes() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-par-size-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut items = Vec::new();
+        for i in 0..12 {
+            let dir = root.join(format!("tree{i:02}"));
+            std::fs::create_dir_all(dir.join("nested")).unwrap();
+            std::fs::write(dir.join("a.bin"), vec![0u8; 1024]).unwrap();
+            std::fs::write(dir.join("nested").join("b.bin"), vec![0u8; 2048]).unwrap();
+            items.push(dir_item(&dir));
+        }
+        // A tree past the per-directory entry cap must stay unknown.
+        let capped = root.join("capped");
+        std::fs::create_dir_all(&capped).unwrap();
+        for i in 0..(crate::dirsize::MAX_WALK_ENTRIES + 8) {
+            std::fs::write(capped.join(format!("f{i}.bin")), b"").unwrap();
+        }
+        items.push(dir_item(&capped));
+
+        fill_item_sizes(&mut items);
+
+        for (i, it) in items.iter().take(12).enumerate() {
+            assert_eq!(it.size_kb, Some(3), "tree{i:02} must be measured exactly");
+        }
+        assert_eq!(
+            items[12].size_kb, None,
+            "a walk that hit its cap must not publish a partial sum"
+        );
+
+        let _ = crate::fsutil::remove_tree_no_reparse(&root);
+    }
+
+    /// Parallel workers draw from ONE entry budget, so however they interleave
+    /// the pass can never examine more entries than the serial pass would have.
+    /// Five trees of 4,100 entries demand 20,500 against a 20,000 budget, so at
+    /// most four can be complete — a fifth complete walk would prove the bound
+    /// had been multiplied by the number of workers.
+    #[test]
+    fn parallel_size_walks_share_one_entry_budget() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-par-budget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let per_tree = 4_100usize;
+        let mut items = Vec::new();
+        for t in 0..5 {
+            let dir = root.join(format!("tree{t}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            for i in 0..per_tree {
+                std::fs::write(dir.join(format!("f{i:05}.bin")), b"").unwrap();
+            }
+            items.push(dir_item(&dir));
+        }
+
+        fill_item_sizes(&mut items);
+
+        let complete = items.iter().filter(|it| it.size_kb.is_some()).count();
+        let budget = crate::dirsize::SIZE_WALK_ENTRY_BUDGET as usize;
+        assert!(
+            complete <= budget / per_tree,
+            "{complete} complete walks of {per_tree} entries each exceed the {budget}-entry budget"
+        );
+        assert!(
+            complete >= budget / per_tree - 1,
+            "only {complete} walks completed — the pass lost more than one tree to interleaving"
+        );
+
+        let _ = crate::fsutil::remove_tree_no_reparse(&root);
     }
 
     #[test]
