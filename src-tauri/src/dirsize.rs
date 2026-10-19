@@ -64,6 +64,38 @@ pub fn walk_size_kb_with(root: &Path, cancelled: &AtomicBool) -> i64 {
 
 /// Bounded walk for leftover items: depth + entry caps, no global cancel flag.
 /// Returns None when a cap or IO error leaves an incomplete size.
+/// Entries a single size-estimation pass may examine across all items.
+///
+/// The per-directory budget is 5,000 entries, so with no overall budget the cost
+/// of `fill_item_sizes` grew linearly with the number of items — up to 200 items
+/// on the tool-cache scan, and unbounded on `analyze_associations`. This makes
+/// the worst case a constant instead.
+pub const SIZE_WALK_ENTRY_BUDGET: u64 = 20_000;
+
+// Thread-local so concurrent blocking scans each get their own budget.
+thread_local! {
+    static WALK_BUDGET: std::cell::Cell<u64> = const { std::cell::Cell::new(SIZE_WALK_ENTRY_BUDGET) };
+}
+
+/// Charge `n` entries against this thread's budget. `false` once exhausted.
+pub fn charge_walk_budget(n: u64) -> bool {
+    WALK_BUDGET.with(|b| {
+        let left = b.get();
+        if left < n {
+            b.set(0);
+            false
+        } else {
+            b.set(left - n);
+            true
+        }
+    })
+}
+
+/// Reset this thread's budget for a fresh scan pass.
+pub fn reset_walk_budget() {
+    WALK_BUDGET.with(|b| b.set(SIZE_WALK_ENTRY_BUDGET));
+}
+
 pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
     if crate::scan_task::cancelled() {
         return None;
@@ -87,6 +119,24 @@ fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<
         &|p: &Path| std::fs::read_dir(p),
         &std::fs::DirEntry::metadata,
     )
+}
+
+/// Whether metadata describes a reparse point (junction / mount / symlink).
+///
+/// Reads the attribute from metadata already in hand instead of issuing a second
+/// `symlink_metadata` on the path — that second stat doubled the cost of every
+/// size-estimating walk.
+fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+        meta.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
 }
 
 fn walk_bytes_limited_with<F, I>(
@@ -114,9 +164,17 @@ where
         if *entries_seen >= MAX_WALK_ENTRIES {
             return None;
         }
+        // The overall budget is shared across every item in one pass, so a scan
+        // with many items cannot multiply the per-directory cost.
+        if !charge_walk_budget(1) {
+            return None;
+        }
         let meta = metadata(&entry).ok()?;
-        // `is_symlink()` misses Windows junctions — check reparse attributes.
-        if crate::fsutil::is_reparse_point(&entry.path()) {
+        // `is_symlink()` misses Windows junctions, and reparse points must never
+        // be followed. The attribute is already in the metadata we just read, so
+        // this used to cost a second stat per entry — which doubled the cost of
+        // every scan that estimates sizes.
+        if is_reparse_metadata(&meta) {
             continue;
         }
         if meta.is_dir() {

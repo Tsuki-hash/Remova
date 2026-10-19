@@ -269,7 +269,12 @@ pub fn path_size_kb(kind: &ItemKind, path: &str) -> Option<u64> {
 }
 
 /// Fill missing size_kb on file/dir items (idempotent; skips registry/path).
+///
+/// Bounded by an overall entry budget, so the cost of the pass does not grow
+/// with the number of items. A walk that hits its budget leaves `size_kb` as
+/// `None` — no size is reported rather than a partial one shown as exact.
 pub fn fill_item_sizes(items: &mut [CleanupItem]) {
+    crate::dirsize::reset_walk_budget();
     for it in items.iter_mut() {
         if crate::scan_task::cancelled() {
             break;

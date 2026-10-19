@@ -106,31 +106,52 @@ enum DownloadEvidence {
     MaybePackage,
 }
 
-/// Classify one Downloads entry. `None` means "not an installer candidate".
-fn classify_download(name: &str, path: &Path, len: u64) -> Option<DownloadEvidence> {
+/// Cheap pre-classification: what the name and size alone can decide.
+///
+/// Deliberately does not open the file. The PE check costs a `File::open` plus
+/// reads — with Defender's real-time scanning hooked on `CreateFileW` that is
+/// milliseconds per file — and it used to run for every candidate before the
+/// result was truncated, so a Downloads folder with a thousand executables paid
+/// for ~940 checks it then threw away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadGuess {
+    /// Settled by extension or name. No file access needed.
+    Definite(DownloadEvidence),
+    /// An `.exe` with no installer name: needs the PE header to decide.
+    NeedsPeCheck,
+    /// Not an installer candidate.
+    Rejected,
+}
+
+fn guess_download(name: &str, len: u64) -> DownloadGuess {
     let lower = name.to_lowercase();
+    // An uninstaller is the opposite of what this panel offers, and the name
+    // says so — no need to open the file to find out.
+    if lower.contains("uninstall") {
+        return DownloadGuess::Rejected;
+    }
     if PKG_EXTS.iter().any(|ext| lower.ends_with(ext)) {
-        return Some(DownloadEvidence::Package);
+        return DownloadGuess::Definite(DownloadEvidence::Package);
     }
     let marker = looks_like_setup_name(&lower);
     if lower.ends_with(".exe") {
         if marker {
-            return Some(DownloadEvidence::Package);
+            return DownloadGuess::Definite(DownloadEvidence::Package);
         }
         // Portable tools and unattended installers are named after the app
         // (`python-3.12.1-amd64.exe`), so the PE header carries the evidence.
-        if len >= MIN_AMBIGUOUS_PACKAGE_BYTES && is_pe_executable(path) {
-            return Some(DownloadEvidence::MaybePackage);
+        if len >= MIN_AMBIGUOUS_PACKAGE_BYTES {
+            return DownloadGuess::NeedsPeCheck;
         }
-        return None;
+        return DownloadGuess::Rejected;
     }
     if ARCHIVE_EXTS.iter().any(|ext| lower.ends_with(ext))
         && marker
         && len >= MIN_AMBIGUOUS_PACKAGE_BYTES
     {
-        return Some(DownloadEvidence::MaybePackage);
+        return DownloadGuess::Definite(DownloadEvidence::MaybePackage);
     }
-    None
+    DownloadGuess::Rejected
 }
 
 fn push_file_item(
@@ -232,18 +253,23 @@ fn push_dir_item(
 }
 
 fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
+    let Some(dir) = user_downloads() else { return };
+    scan_downloads_from(&dir, out, scanned);
+}
+
+fn scan_downloads_from(dir: &Path, out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
     if !crate::scan_task::checkpoint("files", out.len()) {
         return;
     }
-    let Some(dir) = user_downloads() else { return };
-    let Ok(rd) = std::fs::read_dir(&dir) else {
+    let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
     // Collect everything first: truncating during enumeration would make the
     // result depend on filesystem order.
-    let mut candidates: Vec<(PathBuf, DownloadEvidence)> = Vec::new();
+    let mut definite: Vec<(PathBuf, DownloadEvidence)> = Vec::new();
+    let mut ambiguous: Vec<PathBuf> = Vec::new();
     for ent in rd.flatten() {
-        if !crate::scan_task::checkpoint("files", candidates.len()) {
+        if !crate::scan_task::checkpoint("files", definite.len() + ambiguous.len()) {
             return;
         }
         let p = ent.path();
@@ -257,13 +283,32 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
         }
         let name = ent.file_name().to_string_lossy().to_string();
         let len = ent.metadata().map(|m| m.len()).unwrap_or(0);
-        if let Some(evidence) = classify_download(&name, &p, len) {
-            candidates.push((p, evidence));
+        match guess_download(&name, len) {
+            DownloadGuess::Definite(evidence) => definite.push((p, evidence)),
+            DownloadGuess::NeedsPeCheck => ambiguous.push(p),
+            DownloadGuess::Rejected => {}
         }
     }
-    candidates.sort_by_cached_key(|(p, _)| p.to_string_lossy().to_lowercase());
-    candidates.truncate(INSTALLER_PHASE_CAP);
-    for (path, evidence) in candidates {
+    definite.sort_by_cached_key(|(p, _)| p.to_string_lossy().to_lowercase());
+    definite.truncate(INSTALLER_PHASE_CAP);
+    // The expensive PE check runs only for what the definite group left room
+    // for, and in sorted order, so the number of file opens is bounded by the
+    // result cap rather than by the size of the Downloads folder.
+    if definite.len() < INSTALLER_PHASE_CAP {
+        ambiguous.sort_by_cached_key(|p| p.to_string_lossy().to_lowercase());
+        let mut idx = 0;
+        while definite.len() < INSTALLER_PHASE_CAP && idx < ambiguous.len() {
+            if crate::scan_task::cancelled() {
+                return;
+            }
+            let p = &ambiguous[idx];
+            idx += 1;
+            if is_pe_executable(p) {
+                definite.push((p.clone(), DownloadEvidence::MaybePackage));
+            }
+        }
+    }
+    for (path, evidence) in definite {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return;
         }
@@ -381,10 +426,12 @@ mod tests {
     }
 
     /// Downloads classification is what the whole panel rests on, and the
+    /// Downloads classification is what the whole panel rests on, and the
     /// interesting cases are all filename- or size-driven rather than
-    /// machine-specific.
+    /// machine-specific. The cheap guess decides everything except the PE check,
+    /// which is asserted separately against a real header.
     #[test]
-    fn classify_download_separates_packages_from_maybe_packages() {
+    fn guess_download_separates_packages_from_maybe_packages() {
         let root = std::env::temp_dir().join(format!(
             "remova-downloads-{}-{}",
             std::process::id(),
@@ -415,33 +462,29 @@ mod tests {
 
         // Package extensions need neither a marker nor a size floor — a small
         // `.msi` is still an installer.
-        assert_eq!(
-            classify_download("7z.msi", &root.join("7z.msi"), 0),
-            Some(DownloadEvidence::Package)
-        );
-        assert_eq!(
-            classify_download("App.Setup.MSI", &root.join("App.Setup.MSI"), 0),
-            Some(DownloadEvidence::Package)
-        );
-        assert_eq!(
-            classify_download("node-v20.msi", &root.join("node-v20.msi"), 0),
-            Some(DownloadEvidence::Package)
-        );
+        for name in ["7z.msi", "App.Setup.MSI", "node-v20.msi"] {
+            assert_eq!(
+                guess_download(name, 0),
+                DownloadGuess::Definite(DownloadEvidence::Package),
+                "{name}"
+            );
+        }
         // `.exe` with an installer name is a package even when small.
         assert_eq!(
-            classify_download("App-Setup.exe", &root.join("App-Setup.exe"), 1024),
-            Some(DownloadEvidence::Package)
-        );
-        // A real executable with no installer name: shown, never preselected.
-        assert_eq!(
-            classify_download("python-3.12.1-amd64.exe", &pe, len(&pe)),
-            Some(DownloadEvidence::MaybePackage)
+            guess_download("App-Setup.exe", 1024),
+            DownloadGuess::Definite(DownloadEvidence::Package)
         );
         // An installer-named archive is a candidate, not a certainty.
         assert_eq!(
-            classify_download("微信安装包.zip", &root.join("微信安装包.zip"), 4 << 20),
-            Some(DownloadEvidence::MaybePackage)
+            guess_download("微信安装包.zip", 4 << 20),
+            DownloadGuess::Definite(DownloadEvidence::MaybePackage)
         );
+        // A real executable with no installer name needs the PE header.
+        assert_eq!(
+            guess_download("python-3.12.1-amd64.exe", len(&pe)),
+            DownloadGuess::NeedsPeCheck
+        );
+        assert!(is_pe_executable(&pe));
         // Personal files stay out entirely.
         for name in [
             "holiday-photos.zip",
@@ -451,19 +494,22 @@ mod tests {
             "stub.exe",
             "invoice.exe",
         ] {
-            let p = if name == "stub.exe" {
-                tiny_pe.clone()
-            } else if name == "invoice.exe" {
-                fake.clone()
-            } else {
-                root.join(name)
-            };
             assert_eq!(
-                classify_download(name, &p, len(&p)),
-                None,
+                guess_download(name, len(&root.join(name))),
+                DownloadGuess::Rejected,
                 "{name} must not be an installer candidate"
             );
         }
+        // A renamed document is not an executable at all.
+        assert!(!is_pe_executable(&fake));
+        // The undersized stub *does* carry a valid PE header; what rejects it is
+        // the size floor in the guess, not the header check.
+        assert!(is_pe_executable(&tiny_pe));
+        assert_eq!(
+            guess_download("stub.exe", len(&tiny_pe)),
+            DownloadGuess::Rejected,
+            "an undersized executable must not reach the PE tier"
+        );
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
@@ -502,11 +548,14 @@ mod tests {
             "android-studio-2023.1.1.26-windows.exe",
         ];
         for name in app_named {
+            // Cheap guess defers these to the PE check, which the fixture header
+            // satisfies.
             assert_eq!(
-                classify_download(name, &pe, std::fs::metadata(&pe).unwrap().len()),
-                Some(DownloadEvidence::MaybePackage),
+                guess_download(name, std::fs::metadata(&pe).unwrap().len()),
+                DownloadGuess::NeedsPeCheck,
                 "{name}"
             );
+            assert!(is_pe_executable(&pe), "{name}");
         }
         // Marker-named or dedicated package formats, across languages.
         let packages = [
@@ -528,8 +577,8 @@ mod tests {
             // These files are not written to disk; a plausible installer size is
             // what the archive tier needs on top of its name marker.
             assert_eq!(
-                classify_download(name, &root.join(name), 4 << 20),
-                Some(DownloadEvidence::Package),
+                guess_download(name, 4 << 20),
+                DownloadGuess::Definite(DownloadEvidence::Package),
                 "{name}"
             );
         }
@@ -538,8 +587,8 @@ mod tests {
         // disposable rather than the app itself.
         for name in ["WPS安裝程式.zip", "微信安装包.7z"] {
             assert_eq!(
-                classify_download(name, &root.join(name), 4 << 20),
-                Some(DownloadEvidence::MaybePackage),
+                guess_download(name, 4 << 20),
+                DownloadGuess::Definite(DownloadEvidence::MaybePackage),
                 "{name}"
             );
         }
@@ -552,11 +601,56 @@ mod tests {
             "uninstall.exe",
         ] {
             assert_eq!(
-                classify_download(name, &root.join(name), 4 << 20),
-                None,
+                guess_download(name, 4 << 20),
+                DownloadGuess::Rejected,
                 "{name}"
             );
         }
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// The PE check costs a file open per candidate. It must run only for what
+    /// the definite group left room for, so a Downloads folder holding hundreds
+    /// of app-named executables does not open all of them to report 60 rows.
+    #[test]
+    fn pe_check_runs_only_for_what_the_budget_allows() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-pe-budget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        // A valid PE header, reused for every app-named executable.
+        let mut pe_bytes = b"MZ".to_vec();
+        pe_bytes.extend_from_slice(&[0u8; 0x3A]);
+        pe_bytes.extend_from_slice(&0x40u32.to_le_bytes());
+        pe_bytes.extend_from_slice(b"PE\0\0");
+        pe_bytes.extend(std::iter::repeat(0u8).take(2 << 20));
+        // Far more app-named executables than the phase cap allows.
+        let ambiguous_count = INSTALLER_PHASE_CAP * 3;
+        for i in 0..ambiguous_count {
+            std::fs::write(root.join(format!("app-{i:04}-1.0.0.exe")), &pe_bytes)
+                .expect("write PE fixture");
+        }
+        // And enough definite packages to fill the budget on their own.
+        for i in 0..INSTALLER_PHASE_CAP {
+            std::fs::write(root.join(format!("setup-{i:04}.msi")), b"msi").expect("write msi");
+        }
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        scan_downloads_from(&root, &mut out, &mut scanned);
+
+        assert_eq!(out.len(), INSTALLER_PHASE_CAP);
+        // Every reported row is a definite package; the executables never got a
+        // PE check because the budget was already full.
+        assert!(out.iter().all(|it| it.reason == "installer package"));
+        assert!(out.iter().all(|it| it.path.contains("setup-")));
+        assert!(scanned.len() == out.len());
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
