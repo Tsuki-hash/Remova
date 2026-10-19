@@ -98,7 +98,6 @@ impl ToolCacheEnv {
 fn tool_roots_from(
     up: &Path,
     local: &Path,
-    roaming: &Path,
     program_files: Option<&Path>,
     env: &ToolCacheEnv,
 ) -> Vec<(ToolDomain, PathBuf, &'static str)> {
@@ -172,37 +171,6 @@ fn tool_roots_from(
     );
     out.push((
         ToolDomain::Browser,
-        local
-            .join("Google")
-            .join("Chrome")
-            .join("User Data")
-            .join("Default")
-            .join("Cache"),
-        "chrome-cache",
-    ));
-    out.push((
-        ToolDomain::Browser,
-        local
-            .join("Microsoft")
-            .join("Edge")
-            .join("User Data")
-            .join("Default")
-            .join("Cache"),
-        "edge-cache",
-    ));
-    // VS Code keeps its caches under Roaming, not Local.
-    out.push((
-        ToolDomain::Browser,
-        roaming.join("Code").join("Cache"),
-        "vscode-cache",
-    ));
-    out.push((
-        ToolDomain::Browser,
-        roaming.join("Code").join("CachedData"),
-        "vscode-cached-data",
-    ));
-    out.push((
-        ToolDomain::Browser,
         local.join("Mozilla").join("Firefox").join("Profiles"),
         "firefox-profiles-skip",
     ));
@@ -235,12 +203,104 @@ fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
     let mut out = tool_roots_from(
         &up,
         &local,
-        &roaming,
         program_files.as_deref(),
         &ToolCacheEnv::from_process(),
     );
+    out.extend(vscode_family_caches(&roaming));
+    out.extend(chromium_profile_caches(&local));
     // Firefox profiles are user data — listed for completeness but never auto-picked.
     out.retain(|(_, p, _)| p.exists());
+    out
+}
+
+/// VS Code and its forks keep two cache directories side by side under
+/// `%APPDATA%`. That pairing is the signature used here, rather than a list of
+/// product names: forks (VSCodium, Cursor, Windsurf, Positron, …) are then
+/// covered without being named, and a list would have to be maintained.
+fn vscode_family_caches(roaming: &Path) -> Vec<(ToolDomain, PathBuf, &'static str)> {
+    let Ok(rd) = std::fs::read_dir(roaming) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return out;
+        }
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let cache = dir.join("Cache");
+        let cached_data = dir.join("CachedData");
+        if !(cache.is_dir() && cached_data.is_dir()) {
+            continue;
+        }
+        out.push((ToolDomain::Browser, cache, "editor-cache"));
+        out.push((ToolDomain::Browser, cached_data, "editor-cached-data"));
+    }
+    out.sort_by_cached_key(|(_, p, _)| p.to_string_lossy().to_lowercase());
+    out
+}
+
+/// Chromium-based browsers and their User Data roots, as path segments under
+/// `%LOCALAPPDATA%`. Chrome and Edge were the only two covered before; the rest
+/// of the mainstream family uses the same layout.
+///
+/// This one is a list rather than a structural scan: recognising a browser by
+/// walking `%LOCALAPPDATA%\*\User Data\*` would mean enumerating hundreds of
+/// unrelated directories, and `User Data` alone is not browser-specific. A new
+/// mainstream Chromium browser is rare, so it is added here.
+const CHROMIUM_USER_DATA_ROOTS: &[&[&str]] = &[
+    &["Google", "Chrome", "User Data"],
+    &["Microsoft", "Edge", "User Data"],
+    &["BraveSoftware", "Brave-Browser", "User Data"],
+    &["Vivaldi", "User Data"],
+    &["Chromium", "User Data"],
+    &["Opera Software", "Opera Stable"],
+    &["Opera Software", "Opera GX Stable"],
+];
+
+/// Disposable cache directories inside a Chromium profile.
+const CHROMIUM_PROFILE_CACHES: &[&str] = &["Cache", "Code Cache", "GPUCache"];
+
+/// Cache directories for every profile of every known Chromium browser.
+///
+/// Only `Default` and numbered `Profile N` are enumerated — the other entries in
+/// User Data are settings, extensions and local state.
+fn chromium_profile_caches(local: &Path) -> Vec<(ToolDomain, PathBuf, &'static str)> {
+    let mut out = Vec::new();
+    for segments in CHROMIUM_USER_DATA_ROOTS {
+        let mut root = local.to_path_buf();
+        for segment in *segments {
+            root = root.join(segment);
+        }
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            if !crate::scan_task::checkpoint("files", out.len()) {
+                return out;
+            }
+            let profile = entry.path();
+            if !profile.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let numbered = name
+                .strip_prefix("Profile ")
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()));
+            if name != "Default" && !numbered {
+                continue;
+            }
+            for cache in CHROMIUM_PROFILE_CACHES {
+                let cand = profile.join(cache);
+                if cand.is_dir() {
+                    out.push((ToolDomain::Browser, cand, "browser-cache"));
+                }
+            }
+        }
+    }
+    out.sort_by_cached_key(|(_, p, _)| p.to_string_lossy().to_lowercase());
     out
 }
 
@@ -485,14 +545,12 @@ mod tests {
             ("nuget-packages", ".nuget/packages"),
             ("cargo-cache", ".cargo/registry/cache"),
             ("gradle-cache", ".gradle/caches"),
-            ("vscode-cache", "AppData/Roaming/Code/Cache"),
-            ("vscode-cached-data", "AppData/Roaming/Code/CachedData"),
         ];
         for (_, rel) in expected {
             std::fs::create_dir_all(up.join(rel)).expect("create fixture cache");
         }
 
-        let roots = tool_roots_from(&up, &local, &roaming, None, &ToolCacheEnv::default());
+        let roots = tool_roots_from(&up, &local, None, &ToolCacheEnv::default());
         for (label, rel) in expected {
             let want = up.join(rel);
             assert!(want.is_dir(), "fixture missing {rel}");
@@ -556,7 +614,7 @@ mod tests {
             npm_cache: Some(drive_d.join("npm-cache")),
             xdg_cache_home: Some(drive_d.join("xdg-cache")),
         };
-        let roots = tool_roots_from(&up, &local, &roaming, None, &env);
+        let roots = tool_roots_from(&up, &local, None, &env);
         let find = |label: &str| {
             roots
                 .iter()
@@ -707,6 +765,83 @@ mod tests {
         );
         assert!(paths.iter().any(|p| p.ends_with("tool-000-cache")));
         assert!(!paths.iter().any(|p| p.ends_with("tool-071-cache")));
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// Forks are recognised by the cache layout, not by name, so an editor this
+    /// project has never heard of is still covered.
+    #[test]
+    fn vscode_family_caches_are_found_by_layout_not_name() {
+        let root = unique_temp("editors");
+        let roaming = root.join("AppData").join("Roaming");
+        for editor in ["Code", "Code - Insiders", "VSCodium", "Cursor", "Positron"] {
+            let home = roaming.join(editor);
+            std::fs::create_dir_all(home.join("Cache")).expect("create Cache");
+            std::fs::create_dir_all(home.join("CachedData")).expect("create CachedData");
+            // Settings and extensions must not be offered.
+            std::fs::create_dir_all(home.join("User").join("settings")).expect("create settings");
+        }
+        // An app with only one of the two is not an editor.
+        let partial = roaming.join("SomeApp");
+        std::fs::create_dir_all(partial.join("Cache")).expect("create partial");
+
+        let roots = vscode_family_caches(&roaming);
+        assert_eq!(roots.len(), 10, "two cache dirs per editor");
+        for editor in ["Code", "Code - Insiders", "VSCodium", "Cursor", "Positron"] {
+            for cache in ["Cache", "CachedData"] {
+                let want = roaming.join(editor).join(cache);
+                assert!(
+                    roots.iter().any(|(_, p, _)| *p == want),
+                    "missing {editor}\\{cache}"
+                );
+            }
+        }
+        assert!(roots.iter().all(|(_, p, _)| !p.ends_with("settings")));
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// Every profile of every known Chromium browser, and nothing else that
+    /// lives in User Data.
+    #[test]
+    fn chromium_caches_cover_products_and_profiles_only() {
+        let root = unique_temp("chromium");
+        let local = root.join("AppData").join("Local");
+        let user_data = local.join("Google").join("Chrome").join("User Data");
+        for profile in ["Default", "Profile 1", "Profile 12"] {
+            for cache in CHROMIUM_PROFILE_CACHES {
+                std::fs::create_dir_all(user_data.join(profile).join(cache))
+                    .expect("create profile cache");
+            }
+        }
+        // Not a profile: settings, extensions and local state.
+        for other in ["Local State", "Extensions", "Graphite Perceptual Hash"] {
+            std::fs::create_dir_all(user_data.join(other).join("Cache"))
+                .expect("create non-profile");
+        }
+        // A browser from the list, absent on this fixture.
+        std::fs::create_dir_all(local.join("Vivaldi").join("User Data")).expect("create vivaldi");
+
+        let roots = chromium_profile_caches(&local);
+        assert_eq!(roots.len(), 9, "three caches per profile");
+        for profile in ["Default", "Profile 1", "Profile 12"] {
+            for cache in CHROMIUM_PROFILE_CACHES {
+                let want = user_data.join(profile).join(cache);
+                assert!(
+                    roots.iter().any(|(_, p, _)| *p == want),
+                    "missing {profile}\\{cache}"
+                );
+            }
+        }
+        for other in ["Local State", "Extensions"] {
+            assert!(
+                !roots
+                    .iter()
+                    .any(|(_, p, _)| p.ends_with(Path::new(other).join("Cache"))),
+                "{other} is not a profile"
+            );
+        }
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
