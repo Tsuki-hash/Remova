@@ -225,6 +225,7 @@ export const dict = {
     idleEvDirMtime: "目录最近改动",
     diskSizeApprox: (s: string) => `约 ${s}`,
     installerTitle: "安装包与更新缓存",
+    installerMaybeTitle: "可能是安装包",
     installerHint: "清理下载的安装包与 updater 缓存（不是应用残留目录）",
     diskRadarTitle: "磁盘占用雷达",
     diskRadarHint: "查看磁盘占用来源（可切换磁盘；只读，可打开位置）",

@@ -27,6 +27,15 @@ pub const SPECIALTY_RESULT_CAP: usize = 80;
 /// enumeration instead of the root ever becoming a single cleanup target.
 pub const TOOL_CACHE_CHILD_CAP: usize = 60;
 
+/// Downloads entries examined per installer scan. Generous because enumeration
+/// is cheap and the result cap bounds the output; a low cap would silently skip
+/// files depending on directory order.
+pub const DOWNLOAD_ENTRY_SCAN_CAP: usize = 4000;
+
+/// Floor for the ambiguous download tiers (a PE executable with no installer
+/// name, or an archive). Installers smaller than this are usually stubs.
+pub const MIN_AMBIGUOUS_PACKAGE_BYTES: u64 = 1024 * 1024;
+
 /// Idle-radar result cap.
 pub const IDLE_RESULT_CAP: usize = 50;
 

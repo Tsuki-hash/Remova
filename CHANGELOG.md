@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 专项缓存清理补充 uv、Bun、Go module、Maven、NuGet packages 与 VS Code 的 `Cache` / `CachedData` 缓存目录。
 - 对多个工具共用的缓存根目录改为**逐项列出**：`~/.cache` 与 `%LOCALAPPDATA%\JetBrains` 下的每个子目录单独成为一项，共享根目录本身不会作为清理目标。`~/.cache` 子项与 JetBrains 下非 IDE 目录（如下载的发行包）按中风险处理，默认不勾选。
 - JetBrains IDE 目录只列出 `caches`、`compile-server`、`log`、`tmp` 这几个确认可弃的子目录；设置、插件与扩展目录一律不列入。
+- 下载目录中的安装包识别改为不依赖文件名：除安装包扩展名与中英文安装名称外，还会校验 `.exe` 的 PE 头，因此以产品名命名、不含任何安装关键词的安装器（如 `python-3.12.1-amd64.exe`、`Git-2.43.0-64-bit.exe`）也能被发现。这类"确认是可执行文件但无法确认是安装器"的条目标为「可能是安装包」，默认不勾选。
+- 安装名称关键词补充中文（`安装` / `安裝`），并排除 `uninstall.exe` 这类含 install 却不是安装包的文件。
+- 下载目录位置改用系统「下载」Known Folder，用户把下载文件夹移动到其他盘符时不再漏扫。
+- 归档类（`.zip` / `.7z` / `.rar` / `.tar.gz`）在名称含安装特征时也会列出，但标为「可能是安装包」、默认不勾选——可便携版软件常以压缩包分发，名称本身不能证明整个文件可弃。
+- 小于 8 MB 的 `.msi` 等安装包此前会被体积门槛跳过，现已改为仅对上述"可能是安装包"两类应用体积下限，专用安装包扩展名不受体积限制。
 
 ## [1.3.1] - 2026-10-10
 

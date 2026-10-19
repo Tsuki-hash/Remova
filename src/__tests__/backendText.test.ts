@@ -21,6 +21,7 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("AppData folder matching product name", "scan")).toBe(L.linkedConfigFiles);
   expect(backendText("WebView2 / Electron cache folder", "scan")).toBe(L.linkedConfigFiles);
   expect(backendText("updater cache", "scan")).toBe(L.installerTitle);
+  expect(backendText("possible installer package", "scan")).toBe(L.installerMaybeTitle);
   expect(backendText("shared tool cache", "scan")).toBe(L.toolcacheSharedTitle);
   expect(backendText("tool cache (dev)", "scan")).toBe(L.toolcacheTitle);
   expect(backendText("Run startup: Vendor", "scan")).toBe(L.linkedStartup);

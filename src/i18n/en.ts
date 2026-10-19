@@ -227,6 +227,7 @@ export const dict: EnDict = {
     idleEvDirMtime: "dir mtime",
     diskSizeApprox: (s: string) => `~${s}`,
     installerTitle: "Installers & update caches",
+    installerMaybeTitle: "Possible installer package",
     installerHint: "Clean downloaded packages and updater caches (not app leftover dirs)",
     diskRadarTitle: "Disk usage radar",
     diskRadarHint: "See what is using disk space (switch drives; read-only; open paths)",
