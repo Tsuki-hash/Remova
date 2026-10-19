@@ -68,6 +68,34 @@ pub(super) fn scan_path_env(
     }
 }
 
+/// Direct subkeys of `SOFTWARE\Classes` that belong to Windows itself.
+///
+/// Deleting any of these breaks COM, shell integration or file associations
+/// machine-wide. The registry gate has no rule for `SOFTWARE\Classes`, so the
+/// scan has to refuse them before they are ever offered.
+const SYSTEM_CLASSES_ROOTS: &[&str] = &[
+    "CLSID",
+    "Interface",
+    "TypeLib",
+    "AppID",
+    "Component Categories",
+    "Record",
+    "Directory",
+    "Folder",
+    "Drive",
+    "AllFilesystemObjects",
+    "*",
+    "Applications",
+    "Local Settings",
+    "MIME",
+    "MEDIA",
+    "Network",
+    "SystemFileAssociations",
+    "InternetShortcut",
+    "Unknown",
+    "Console",
+];
+
 /// Shell extension / CLSID / ProgID leftovers (per uninstall SOP).
 pub(super) fn scan_shell_extensions(
     name_slugs: &[String],
@@ -88,9 +116,23 @@ pub(super) fn scan_shell_extensions(
             if n.len() < 4 {
                 continue;
             }
+            // System Classes roots are never leftovers. An unbounded substring
+            // match let a product slug that happened to be a substring of
+            // `CLSID`, `Interface`, `TypeLib`, `Directory`, … offer the key for
+            // deletion, and the registry gate has no rule for `SOFTWARE\Classes`.
+            // Windows registry names are case-insensitive, so is the comparison.
+            if SYSTEM_CLASSES_ROOTS
+                .iter()
+                .any(|root| root.eq_ignore_ascii_case(&leaf))
+            {
+                continue;
+            }
+            // Word-boundary match, like the CLSID branch below: `network` must
+            // not claim `NetworkSettings`, and a four-letter product token must
+            // not claim an extension key.
             if !name_norms
                 .iter()
-                .any(|s| s.len() >= 4 && n.contains(s.as_str()))
+                .any(|s| s.len() >= 4 && super::name_boundary_hit(&leaf, s))
             {
                 continue;
             }
@@ -425,6 +467,57 @@ mod tests {
             assert_eq!(items.len(), if state == Ok(true) { 3 } else { 0 });
         }
     }
+    /// The scan used to match `SOFTWARE\Classes` subkeys with an unbounded
+    /// substring, and the registry gate has no rule for that root — so a product
+    /// slug that was a substring of a system key offered it for deletion.
+    /// Deleting `HKLM\SOFTWARE\Classes\CLSID` or `\Interface` breaks COM and file
+    /// associations machine-wide.
+    #[test]
+    fn system_classes_roots_are_never_leftovers() {
+        // Every entry must actually be on the deny-list, matched the way the
+        // scan matches it — case-insensitively, since registry names are.
+        for root in [
+            "CLSID",
+            "Interface",
+            "TypeLib",
+            "Directory",
+            "Folder",
+            "Drive",
+            "AllFilesystemObjects",
+            "Applications",
+            "MIME",
+            "MEDIA",
+            "Media",
+            "media",
+            "Network",
+            "Record",
+            "Unknown",
+            "Local Settings",
+            "SystemFileAssociations",
+            "Component Categories",
+            "InternetShortcut",
+            "AppID",
+            "Console",
+            "*",
+        ] {
+            assert!(
+                super::SYSTEM_CLASSES_ROOTS
+                    .iter()
+                    .any(|r| r.eq_ignore_ascii_case(root)),
+                "{root} must be denied as a system Classes root"
+            );
+        }
+        // A genuine vendor ProgID is not on the list, so it can still be found.
+        for vendor in ["DemoApp.File", "DemoApp", "AcmeEditor.1"] {
+            assert!(
+                !super::SYSTEM_CLASSES_ROOTS
+                    .iter()
+                    .any(|r| r.eq_ignore_ascii_case(vendor)),
+                "{vendor} must remain discoverable"
+            );
+        }
+    }
+
     #[test]
     fn clsid_roots_do_not_duplicate_machine_views() {
         assert_eq!(

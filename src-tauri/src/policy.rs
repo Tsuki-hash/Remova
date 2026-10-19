@@ -217,7 +217,13 @@ pub fn gate_cleanup_item(
         return GateDecision::Skip("path not associated with app");
     }
     // hard shared: client flag, name tokens, CF roots, Microsoft Shared, non-CF markers.
-    if item.shared || crate::shared::is_hard_shared_item(&item.reason, &item.path, &item.reason) {
+    // `is_hard_shared_item` matches name + path only, so the app name goes in the
+    // name slot. Passing `item.reason` here fed the scan's free-text reason into
+    // the token matcher, which permanently skipped every item whose reason
+    // mentioned a shared runtime — inverting the WebView2/Electron cache
+    // feature, since those items carry `"WebView2 / Electron cache folder"`.
+    let app_name = app.map(|a| a.name.as_str()).unwrap_or("");
+    if item.shared || crate::shared::is_hard_shared_item(app_name, &item.path, &item.reason) {
         return GateDecision::Skip("shared runtime");
     }
     if crate::ignore::should_skip_leftover_path(ignore, &item.path) {
@@ -760,6 +766,33 @@ mod tests {
         assert!(
             !gate_cleanup_item(Some(&real), &un, CleanupSource::Orphan, &ignore).is_allow(),
             "orphan source must not disable association for real apps"
+        );
+    }
+
+    /// The scan's free-text reason must not decide "shared runtime".
+    /// `is_hard_shared_item` matches name + path only, so a WebView2/Electron
+    /// cache item — whose reason literally names the runtime — used to be
+    /// permanently skipped, inverting the feature: the folders holding hundreds
+    /// of MB of cache could never be cleaned while the empty-looking ones could.
+    #[test]
+    fn reason_text_cannot_force_shared() {
+        let _g = crate::scan_allow::test_lock();
+        let ignore = crate::ignore::IgnoreList::default();
+        let a = app("DemoApp", r"C:\Program Files\DemoApp");
+        let mut webview = item(r"C:\Users\a\AppData\Local\DemoApp\EBWebView", ItemKind::Dir);
+        webview.reason = "WebView2 / Electron cache folder".into();
+        assert!(
+            gate_cleanup_item(Some(&a), &webview, CleanupSource::Uninstall, &ignore).is_allow(),
+            "a reason naming a shared runtime must not skip an associated app cache"
+        );
+
+        // The app's own name still counts, which is the intended channel.
+        let mut named = item(r"C:\Program Files\Python\python.exe", ItemKind::File);
+        named.reason = "Install location".into();
+        let py = app("Python", r"C:\Program Files\Python");
+        assert!(
+            !gate_cleanup_item(Some(&py), &named, CleanupSource::Uninstall, &ignore).is_allow(),
+            "an app actually named after a shared runtime must still skip"
         );
     }
 

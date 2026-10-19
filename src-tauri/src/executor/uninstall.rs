@@ -164,10 +164,14 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
         };
     }
     if !crate::apps::is_trusted_uninstall_app(app) {
+        // A command exists but we refuse to run it. Reporting `had_command:
+        // false` here told the caller there was nothing to run, so cleanup
+        // proceeded to delete leftovers of an app that is still installed —
+        // leaving it un-uninstallable from Programs & Features.
         return OfficialUninstallResult {
             ok: false,
             message: "uninstall command not from latest app scan".into(),
-            had_command: false,
+            had_command: true,
         };
     }
     let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
@@ -389,5 +393,35 @@ mod tests {
         assert!(!r.had_command);
         assert!(!r.ok);
         assert_eq!(r.message, "no uninstall string");
+    }
+
+    /// A command that exists but is refused must not be reported as "there was
+    /// no command". The pipeline aborts on `had_command && !ok`; reporting
+    /// `false` here made it proceed and delete the leftovers of an app that is
+    /// still installed, leaving it un-uninstallable from Programs & Features.
+    #[test]
+    fn refused_uninstaller_still_counts_as_having_a_command() {
+        // An uninstall string the trust set has never seen, so the command is
+        // present but refused.
+        let app = crate::apps::InstalledApp {
+            name: "Stale".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: r"C:\Vendor\unins000.exe".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let r = run_official_uninstall(&app);
+        assert!(!r.ok);
+        assert_eq!(r.message, "uninstall command not from latest app scan");
+        assert!(
+            r.had_command,
+            "a refused command must still be reported so cleanup aborts"
+        );
     }
 }
