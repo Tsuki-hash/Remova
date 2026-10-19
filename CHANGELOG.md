@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 安装包与更新缓存扫描现在会识别 `%LOCALAPPDATA%` 下直接以 `<产品名>-updater` 结尾的一级更新器目录（如 `obsidian-updater`、`token-monitor-updater`）；此前只会在这些目录内部查找固定名称的缓存子目录，因此整类目录不会出现在扫描结果中。名称匹配仍按中风险候选处理，不会默认勾选，清理目标依旧必须来自本次扫描的服务端授权清单。
 - 修正更新缓存在界面上被显示为通用「配置文件」的问题。
 - 修正专项缓存清理中 pnpm 的路径规则：原规则查找的 `%LOCALAPPDATA%\pnpm\cache` 不是任何 pnpm 版本实际使用的目录，该规则从未生效；改为覆盖 `pnpm-cache` 与 `pnpm\store` 等已知布局。
+- 修正扫描结果的顺序依赖：更新器目录、下载安装包与共享缓存子目录此前都在枚举过程中设上限，命中哪一批取决于文件系统顺序，因此不同机器、同一机器不同时间的结果会不同。现已改为完整枚举后统一排序再截断。
+- 修正 Gradle 缓存路径：其用户主目录是 `~/.gradle`，不是 `%LOCALAPPDATA%\gradle`。
 
 ### 新增
 
@@ -24,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 下载目录位置改用系统「下载」Known Folder，用户把下载文件夹移动到其他盘符时不再漏扫。
 - 归档类（`.zip` / `.7z` / `.rar` / `.tar.gz`）在名称含安装特征时也会列出，但标为「可能是安装包」、默认不勾选——可便携版软件常以压缩包分发，名称本身不能证明整个文件可弃。
 - 小于 8 MB 的 `.msi` 等安装包此前会被体积门槛跳过，现已改为仅对上述"可能是安装包"两类应用体积下限，专用安装包扩展名不受体积限制。
+- 专项缓存清理尊重各工具自带的缓存重定位变量：`CARGO_HOME`、`GOPATH`、`PIP_CACHE_DIR`、`NUGET_PACKAGES`、`GRADLE_USER_HOME`、`UV_CACHE_DIR`、`PNPM_HOME`、npm 缓存配置与 `XDG_CACHE_HOME`。把缓存改到其他盘符的用户此前会得到空结果。
+- 编辑器缓存改按目录结构识别：`%APPDATA%` 下同时存在 `Cache` 与 `CachedData` 的目录即视为该系列编辑器，因此 VS Code、Insiders、VSCodium、Cursor、Windsurf 等分支都覆盖，无需逐一列名。补充 Yarn 2+ 的 `~/.yarn/berry/cache`。
+- 浏览器缓存覆盖全部配置文件（`Default` 与 `Profile N`）与三个可弃缓存目录（`Cache` / `Code Cache` / `GPUCache`），产品覆盖 Chrome、Edge、Brave、Vivaldi、Chromium 与 Opera / Opera GX。此前只查 Chrome 与 Edge 的 `Default` 配置的单个 `Cache` 目录。
 
 ## [1.3.1] - 2026-10-10
 
