@@ -41,73 +41,135 @@ fn userprofile() -> Option<PathBuf> {
     local("USERPROFILE")
 }
 
+/// Cache locations each tool can be told to use.
+///
+/// Every one of these tools has an official relocation mechanism, usually so the
+/// cache can live on another drive. Ignoring it means the scan silently finds
+/// nothing for anyone who moved their cache — the same class of miss as a wrong
+/// hardcoded path, just triggered by configuration instead.
+#[derive(Debug, Default)]
+struct ToolCacheEnv {
+    cargo_home: Option<PathBuf>,
+    /// May be a `;`-separated list on Windows; the first entry wins.
+    gopath: Option<PathBuf>,
+    pip_cache_dir: Option<PathBuf>,
+    nuget_packages: Option<PathBuf>,
+    gradle_user_home: Option<PathBuf>,
+    uv_cache_dir: Option<PathBuf>,
+    pnpm_home: Option<PathBuf>,
+    npm_cache: Option<PathBuf>,
+    xdg_cache_home: Option<PathBuf>,
+}
+
+impl ToolCacheEnv {
+    fn from_process() -> Self {
+        let first_path = |key: &str| {
+            local(key)
+                .map(|p| {
+                    p.to_string_lossy()
+                        .split(';')
+                        .find(|s| !s.trim().is_empty())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        };
+        Self {
+            cargo_home: first_path("CARGO_HOME"),
+            gopath: first_path("GOPATH"),
+            pip_cache_dir: first_path("PIP_CACHE_DIR"),
+            nuget_packages: first_path("NUGET_PACKAGES"),
+            gradle_user_home: first_path("GRADLE_USER_HOME"),
+            uv_cache_dir: first_path("UV_CACHE_DIR"),
+            pnpm_home: first_path("PNPM_HOME"),
+            npm_cache: first_path("npm_config_cache"),
+            xdg_cache_home: first_path("XDG_CACHE_HOME"),
+        }
+    }
+}
+
 /// Build the fixed single-owner cache list from explicit bases.
 ///
-/// Kept separate from `tool_roots` so tests can supply a synthetic home: a path
-/// that is simply wrong vanishes from `tool_roots` via the `exists()` filter and
-/// is invisible otherwise, which is how the old `pnpm\cache` rule went unnoticed.
+/// Kept separate from `tool_roots` so tests can supply a synthetic home and
+/// environment: a path that is simply wrong vanishes from `tool_roots` via the
+/// `exists()` filter and is invisible otherwise, which is how the old
+/// `pnpm\cache` rule went unnoticed.
 fn tool_roots_from(
     up: &Path,
     local: &Path,
     roaming: &Path,
     program_files: Option<&Path>,
+    env: &ToolCacheEnv,
 ) -> Vec<(ToolDomain, PathBuf, &'static str)> {
-    let mut out = vec![(ToolDomain::Dev, local.join("npm-cache"), "npm-cache")];
-    out.push((
-        ToolDomain::Dev,
-        local.join("pip").join("cache"),
-        "pip-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        local.join("NuGet").join("v3-cache"),
-        "nuget-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        local.join("Yarn").join("Cache"),
-        "yarn-cache",
-    ));
-    // pnpm's store moved between versions — cover the known layouts. The
-    // previous `pnpm\cache` rule never matched any real pnpm install.
-    out.push((ToolDomain::Dev, local.join("pnpm-cache"), "pnpm-cache"));
-    out.push((
-        ToolDomain::Dev,
-        local.join("pnpm").join("store"),
-        "pnpm-store",
-    ));
-    out.push((ToolDomain::Dev, local.join("pnpm-store"), "pnpm-store"));
-    out.push((ToolDomain::Dev, local.join("uv").join("cache"), "uv-cache"));
-    out.push((
-        ToolDomain::Dev,
-        up.join(".bun").join("install").join("cache"),
-        "bun-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        up.join("go").join("pkg").join("mod"),
-        "go-mod-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        up.join(".m2").join("repository"),
-        "maven-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        up.join(".nuget").join("packages"),
-        "nuget-packages",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        up.join(".cargo").join("registry").join("cache"),
-        "cargo-cache",
-    ));
-    out.push((
-        ToolDomain::Dev,
-        local.join("gradle").join("caches"),
-        "gradle-cache",
-    ));
+    // Each entry prefers the tool's own relocation variable over its default.
+    let npm_cache = env
+        .npm_cache
+        .clone()
+        .unwrap_or_else(|| local.join("npm-cache"));
+    let pip_cache = env
+        .pip_cache_dir
+        .clone()
+        .unwrap_or_else(|| local.join("pip").join("cache"));
+    let nuget_v3 = local.join("NuGet").join("v3-cache");
+    let nuget_packages = env
+        .nuget_packages
+        .clone()
+        .unwrap_or_else(|| up.join(".nuget").join("packages"));
+    let yarn_cache = local.join("Yarn").join("Cache");
+    let yarn_berry = up.join(".yarn").join("berry").join("cache");
+    let pnpm_stores: Vec<PathBuf> = env
+        .pnpm_home
+        .clone()
+        .map(|home| vec![home.join("store")])
+        .unwrap_or_else(|| {
+            vec![
+                local.join("pnpm-cache"),
+                local.join("pnpm").join("store"),
+                local.join("pnpm-store"),
+            ]
+        });
+    let uv_cache = env
+        .uv_cache_dir
+        .clone()
+        .unwrap_or_else(|| local.join("uv").join("cache"));
+    let bun_cache = up.join(".bun").join("install").join("cache");
+    let go_mod = env
+        .gopath
+        .clone()
+        .map(|p| p.join("pkg").join("mod"))
+        .unwrap_or_else(|| up.join("go").join("pkg").join("mod"));
+    let maven_repo = up.join(".m2").join("repository");
+    let cargo_cache = env
+        .cargo_home
+        .clone()
+        .map(|h| h.join("registry").join("cache"))
+        .unwrap_or_else(|| up.join(".cargo").join("registry").join("cache"));
+    // Gradle's user home is `~/.gradle`, not `%LOCALAPPDATA%\gradle`.
+    let gradle_caches = env
+        .gradle_user_home
+        .clone()
+        .map(|h| h.join("caches"))
+        .unwrap_or_else(|| up.join(".gradle").join("caches"));
+    let mut out = vec![
+        (ToolDomain::Dev, npm_cache, "npm-cache"),
+        (ToolDomain::Dev, pip_cache, "pip-cache"),
+        (ToolDomain::Dev, nuget_v3, "nuget-cache"),
+        (ToolDomain::Dev, yarn_cache, "yarn-cache"),
+        (ToolDomain::Dev, yarn_berry, "yarn-berry-cache"),
+        (ToolDomain::Dev, uv_cache, "uv-cache"),
+        (ToolDomain::Dev, bun_cache, "bun-cache"),
+        (ToolDomain::Dev, go_mod, "go-mod-cache"),
+        (ToolDomain::Dev, maven_repo, "maven-cache"),
+        (ToolDomain::Dev, nuget_packages, "nuget-packages"),
+        (ToolDomain::Dev, cargo_cache, "cargo-cache"),
+        (ToolDomain::Dev, gradle_caches, "gradle-cache"),
+    ];
+    out.extend(
+        pnpm_stores
+            .into_iter()
+            .map(|p| (ToolDomain::Dev, p, "pnpm-store")),
+    );
     out.push((
         ToolDomain::Browser,
         local
@@ -170,22 +232,39 @@ fn tool_roots() -> Vec<(ToolDomain, PathBuf, &'static str)> {
     let program_files = std::env::var_os("ProgramFiles(x86)")
         .or_else(|| std::env::var_os("ProgramFiles"))
         .map(PathBuf::from);
-    let mut out = tool_roots_from(&up, &local, &roaming, program_files.as_deref());
+    let mut out = tool_roots_from(
+        &up,
+        &local,
+        &roaming,
+        program_files.as_deref(),
+        &ToolCacheEnv::from_process(),
+    );
     // Firefox profiles are user data — listed for completeness but never auto-picked.
     out.retain(|(_, p, _)| p.exists());
+    out
+}
+
+/// Candidate shared cache roots for a given environment.
+fn shared_cache_roots_from(env: &ToolCacheEnv) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(up) = userprofile() {
+        // `~/.cache` is the XDG default; tools honour XDG_CACHE_HOME when set.
+        out.push(
+            env.xdg_cache_home
+                .clone()
+                .unwrap_or_else(|| up.join(".cache")),
+        );
+    }
+    if let Some(local) = local("LOCALAPPDATA") {
+        out.push(local.join("JetBrains"));
+    }
     out
 }
 
 /// Roots several tools write into. Each is enumerated one level down and every
 /// child is reported on its own, so a shared root is never itself a target.
 fn shared_cache_roots() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(up) = userprofile() {
-        out.push(up.join(".cache"));
-    }
-    if let Some(local) = local("LOCALAPPDATA") {
-        out.push(local.join("JetBrains"));
-    }
+    let mut out = shared_cache_roots_from(&ToolCacheEnv::from_process());
     out.retain(|p| p.is_dir());
     out
 }
@@ -400,14 +479,12 @@ mod tests {
             ("npm-cache", "AppData/Local/npm-cache"),
             ("pip-cache", "AppData/Local/pip/cache"),
             ("uv-cache", "AppData/Local/uv/cache"),
-            ("pnpm-cache", "AppData/Local/pnpm-cache"),
-            ("pnpm-store", "AppData/Local/pnpm/store"),
             ("bun-cache", ".bun/install/cache"),
             ("go-mod-cache", "go/pkg/mod"),
             ("maven-cache", ".m2/repository"),
             ("nuget-packages", ".nuget/packages"),
             ("cargo-cache", ".cargo/registry/cache"),
-            ("gradle-cache", "AppData/Local/gradle/caches"),
+            ("gradle-cache", ".gradle/caches"),
             ("vscode-cache", "AppData/Roaming/Code/Cache"),
             ("vscode-cached-data", "AppData/Roaming/Code/CachedData"),
         ];
@@ -415,7 +492,7 @@ mod tests {
             std::fs::create_dir_all(up.join(rel)).expect("create fixture cache");
         }
 
-        let roots = tool_roots_from(&up, &local, &roaming, None);
+        let roots = tool_roots_from(&up, &local, &roaming, None, &ToolCacheEnv::default());
         for (label, rel) in expected {
             let want = up.join(rel);
             assert!(want.is_dir(), "fixture missing {rel}");
@@ -428,8 +505,100 @@ mod tests {
         // creates — it must not come back.
         let stale = Path::new("pnpm").join("cache");
         assert!(!roots.iter().any(|(_, p, _)| p.ends_with(&stale)));
+        // Gradle's user home is `~/.gradle`, not under LocalAppData.
+        let wrong_gradle = Path::new("gradle").join("caches");
+        assert!(!roots
+            .iter()
+            .any(|(_, p, _)| p.starts_with(&local) && p.ends_with(&wrong_gradle)));
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// Each tool's own relocation variable must win over its default, or the
+    /// scan finds nothing for anyone who moved a cache to another drive.
+    #[test]
+    fn relocation_variables_override_default_locations() {
+        let root = unique_temp("relocated");
+        let up = root.join("home");
+        let local = up.join("AppData").join("Local");
+        let roaming = up.join("AppData").join("Roaming");
+        std::fs::create_dir_all(&local).expect("create local");
+        std::fs::create_dir_all(&roaming).expect("create roaming");
+
+        // A relocated toolchain on another drive, with the default left absent.
+        let drive_d = root.join("d-drive");
+        let cargo_home = drive_d.join("cargo");
+        let gopath = drive_d.join("go-workspace");
+        let gradle_home = drive_d.join("gradle-home");
+        let uv_cache = drive_d.join("uv-cache");
+        let pnpm_home = drive_d.join("pnpm-home");
+        for p in [
+            &cargo_home,
+            &gopath,
+            &gradle_home,
+            &uv_cache,
+            &pnpm_home,
+            &drive_d.join("pip-cache"),
+            &drive_d.join("nuget-packages"),
+            &drive_d.join("npm-cache"),
+        ] {
+            std::fs::create_dir_all(p).expect("create relocated cache");
+        }
+
+        let env = ToolCacheEnv {
+            cargo_home: Some(cargo_home.clone()),
+            gopath: Some(gopath.clone()),
+            pip_cache_dir: Some(drive_d.join("pip-cache")),
+            nuget_packages: Some(drive_d.join("nuget-packages")),
+            gradle_user_home: Some(gradle_home.clone()),
+            uv_cache_dir: Some(uv_cache.clone()),
+            pnpm_home: Some(pnpm_home.clone()),
+            npm_cache: Some(drive_d.join("npm-cache")),
+            xdg_cache_home: Some(drive_d.join("xdg-cache")),
+        };
+        let roots = tool_roots_from(&up, &local, &roaming, None, &env);
+        let find = |label: &str| {
+            roots
+                .iter()
+                .find(|(_, _, l)| *l == label)
+                .map(|(_, p, _)| p.clone())
+        };
+        assert_eq!(
+            find("cargo-cache"),
+            Some(cargo_home.join("registry").join("cache"))
+        );
+        assert_eq!(find("go-mod-cache"), Some(gopath.join("pkg").join("mod")));
+        assert_eq!(find("gradle-cache"), Some(gradle_home.join("caches")));
+        assert_eq!(find("uv-cache"), Some(uv_cache));
+        assert_eq!(find("pip-cache"), Some(drive_d.join("pip-cache")));
+        assert_eq!(find("nuget-packages"), Some(drive_d.join("nuget-packages")));
+        assert_eq!(find("npm-cache"), Some(drive_d.join("npm-cache")));
+        // PNPM_HOME replaces the whole variant list with a single store.
+        assert_eq!(find("pnpm-store"), Some(pnpm_home.join("store")));
+        assert_eq!(
+            roots.iter().filter(|(_, _, l)| *l == "pnpm-store").count(),
+            1,
+            "PNPM_HOME must replace the default variants, not add to them"
+        );
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    /// A shared cache root follows XDG_CACHE_HOME when the tools that honour it
+    /// have been pointed elsewhere.
+    #[test]
+    fn shared_cache_root_follows_xdg_cache_home() {
+        // Only the resolver is exercised here; a real `~/.cache` on the test
+        // machine would make an end-to-end assertion machine-dependent.
+        let env = ToolCacheEnv {
+            xdg_cache_home: Some(PathBuf::from(r"D:\cache-home")),
+            ..ToolCacheEnv::default()
+        };
+        let root = shared_cache_roots_from(&env);
+        assert!(
+            root.iter().any(|p| p == Path::new(r"D:\cache-home")),
+            "XDG_CACHE_HOME must replace ~/.cache, got {root:?}"
+        );
     }
 
     /// A shared root must be broken into children, never offered whole.
