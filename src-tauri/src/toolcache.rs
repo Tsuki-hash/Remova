@@ -210,8 +210,11 @@ fn scan_shared_cache_children(
     let Ok(rd) = std::fs::read_dir(root) else {
         return;
     };
-    for entry in rd.flatten().take(TOOL_CACHE_CHILD_CAP) {
-        if !crate::scan_task::checkpoint("files", out.len()) {
+    // Collect first, then order and truncate: a `take(n)` during enumeration
+    // would drop a different subset depending on filesystem order.
+    let mut children: Vec<PathBuf> = Vec::new();
+    for entry in rd.flatten() {
+        if !crate::scan_task::checkpoint("files", children.len()) {
             return;
         }
         let path = entry.path();
@@ -223,7 +226,19 @@ fn scan_shared_cache_children(
         if crate::fsutil::is_reparse_point(&path) {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
+        children.push(path);
+    }
+    for path in crate::fsutil::order_candidates(children)
+        .into_iter()
+        .take(TOOL_CACHE_CHILD_CAP)
+    {
+        if !crate::scan_task::checkpoint("files", out.len()) {
+            return;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         let safe: Vec<PathBuf> = JETBRAINS_SAFE_SUBDIRS
             .iter()
             .map(|sub| path.join(sub))
@@ -250,9 +265,6 @@ fn scan_shared_cache_children(
                 );
             }
         }
-        if out.len() >= SPECIALTY_RESULT_CAP {
-            return;
-        }
     }
 }
 
@@ -266,9 +278,6 @@ fn push_item(
     // is a child of a shared cache root: reported, but never preselected.
     confirmed: bool,
 ) {
-    if out.len() >= SPECIALTY_RESULT_CAP {
-        return;
-    }
     // Non-UTF-8 never becomes a delete candidate (fail-closed).
     let Some(p) = crate::fsutil::path_utf8(&path) else {
         return;
@@ -333,14 +342,12 @@ pub fn scan_tool_caches() -> Vec<CleanupItem> {
             break;
         }
     }
+    // Each shared root bounds itself, so neither crowds the other out.
     for root in shared_cache_roots() {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return out;
         }
         scan_shared_cache_children(&root, &mut out, &mut scanned);
-        if out.len() >= SPECIALTY_RESULT_CAP {
-            break;
-        }
     }
     if !crate::scan_task::checkpoint("sizes", out.len()) {
         return out;
@@ -497,6 +504,40 @@ mod tests {
                 );
             }
         }
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
+    #[test]
+    fn shared_cache_children_are_ordered_and_bounded() {
+        let root = unique_temp("ordered");
+        // Created in an order that no filesystem is obliged to preserve, and
+        // past the child cap so truncation has to pick deterministically.
+        for i in 0..(TOOL_CACHE_CHILD_CAP + 12) {
+            std::fs::create_dir(root.join(format!("tool-{i:03}-cache"))).expect("create child");
+        }
+        std::fs::create_dir(root.join("aaa-first")).expect("create first");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        scan_shared_cache_children(&root, &mut out, &mut scanned);
+
+        assert_eq!(out.len(), TOOL_CACHE_CHILD_CAP);
+        assert_eq!(scanned.len(), TOOL_CACHE_CHILD_CAP);
+        // Sorted case-insensitively, so the same subset is chosen every run.
+        let paths: Vec<&str> = out.iter().map(|it| it.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort_by_key(|p| p.to_lowercase());
+        assert_eq!(paths, sorted, "children must be reported in a stable order");
+        // The cap keeps the alphabetically-first children and drops the last
+        // ones — not an arbitrary filesystem-order subset.
+        assert!(
+            paths[0].ends_with("aaa-first"),
+            "first child is {}",
+            paths[0]
+        );
+        assert!(paths.iter().any(|p| p.ends_with("tool-000-cache")));
+        assert!(!paths.iter().any(|p| p.ends_with("tool-071-cache")));
 
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }

@@ -27,10 +27,22 @@ pub const SPECIALTY_RESULT_CAP: usize = 80;
 /// enumeration instead of the root ever becoming a single cleanup target.
 pub const TOOL_CACHE_CHILD_CAP: usize = 60;
 
-/// Downloads entries examined per installer scan. Generous because enumeration
-/// is cheap and the result cap bounds the output; a low cap would silently skip
-/// files depending on directory order.
-pub const DOWNLOAD_ENTRY_SCAN_CAP: usize = 4000;
+/// Per-phase result cap for the installer scan.
+///
+/// Downloads packages and updater directories are independent result sets that
+/// used to share one budget, so a large Downloads folder could crowd updater
+/// directories out entirely. Each phase is now ordered and truncated on its
+/// own, and the scan reports up to twice this.
+pub const INSTALLER_PHASE_CAP: usize = 60;
+
+/// Leaf directory names that mark an updater cache inside a product directory.
+pub const UPDATER_CACHE_LEAVES: &[&str] = &[
+    "updater",
+    "updates",
+    "packages",
+    "installcache",
+    "squirreltemp",
+];
 
 /// Floor for the ambiguous download tiers (a PE executable with no installer
 /// name, or an archive). Installers smaller than this are usually stubs.

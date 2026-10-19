@@ -20,6 +20,18 @@ pub fn is_reparse_point(p: &Path) -> bool {
     }
 }
 
+/// Deterministic candidate order for directory scans.
+///
+/// `read_dir` order is filesystem-dependent, so any `take(n)` applied during
+/// enumeration — or any result cap applied while pushing — silently drops a
+/// different subset on different machines, and on the same machine across runs.
+/// Callers collect everything first, order it here, then truncate.
+pub fn order_candidates(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths.sort_by_cached_key(|p| p.to_string_lossy().to_lowercase());
+    paths.dedup();
+    paths
+}
+
 /// Recursively copy a directory tree (files + dirs). Symlinks and other reparse points are skipped.
 pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
     copy_dir_before_file(src, dest, &mut |_| Ok(()))

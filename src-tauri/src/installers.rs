@@ -1,9 +1,7 @@
 //! Installer / updater-cache scan (进阶) — packages and update blobs, not app leftover dirs.
 //! Distinct from orphan leftovers: objects are installers and updater caches.
 
-use crate::constants::{
-    DOWNLOAD_ENTRY_SCAN_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES, SPECIALTY_RESULT_CAP,
-};
+use crate::constants::{INSTALLER_PHASE_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES, UPDATER_CACHE_LEAVES};
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
     fill_item_buckets, fill_item_sizes, CleanupItem, Confidence, Evidence, ItemKind, RiskLevel,
@@ -142,9 +140,6 @@ fn push_file_item(
     bucket: &str,
     evidence: DownloadEvidence,
 ) {
-    if out.len() >= SPECIALTY_RESULT_CAP {
-        return;
-    }
     // Non-UTF-8 never becomes a delete candidate (fail-closed).
     let Some(p) = crate::fsutil::path_utf8(path) else {
         return;
@@ -210,9 +205,6 @@ fn push_dir_item(
     path: &Path,
     bucket: &str,
 ) {
-    if out.len() >= SPECIALTY_RESULT_CAP {
-        return;
-    }
     let Some(p) = crate::fsutil::path_utf8(path) else {
         return;
     };
@@ -247,8 +239,11 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return;
     };
-    for ent in rd.flatten().take(DOWNLOAD_ENTRY_SCAN_CAP) {
-        if !crate::scan_task::checkpoint("files", out.len()) {
+    // Collect everything first: truncating during enumeration would make the
+    // result depend on filesystem order.
+    let mut candidates: Vec<(PathBuf, DownloadEvidence)> = Vec::new();
+    for ent in rd.flatten() {
+        if !crate::scan_task::checkpoint("files", candidates.len()) {
             return;
         }
         let p = ent.path();
@@ -257,13 +252,17 @@ fn scan_downloads(out: &mut Vec<CleanupItem>, scanned: &mut HashSet<String>) {
         }
         let name = ent.file_name().to_string_lossy().to_string();
         let len = ent.metadata().map(|m| m.len()).unwrap_or(0);
-        let Some(evidence) = classify_download(&name, &p, len) else {
-            continue;
-        };
-        push_file_item(out, scanned, &p, "download_pkg", evidence);
-        if out.len() >= SPECIALTY_RESULT_CAP {
+        if let Some(evidence) = classify_download(&name, &p, len) {
+            candidates.push((p, evidence));
+        }
+    }
+    candidates.sort_by_cached_key(|(p, _)| p.to_string_lossy().to_lowercase());
+    candidates.truncate(INSTALLER_PHASE_CAP);
+    for (path, evidence) in candidates {
+        if !crate::scan_task::checkpoint("files", out.len()) {
             return;
         }
+        push_file_item(out, scanned, &path, "download_pkg", evidence);
     }
 }
 
@@ -287,40 +286,39 @@ fn scan_updater_dirs_from(local: &Path, out: &mut Vec<CleanupItem>, scanned: &mu
     let Ok(rd) = std::fs::read_dir(local) else {
         return;
     };
-    for vendor in rd.flatten().take(200) {
-        if !crate::scan_task::checkpoint("caches", out.len()) {
+    // Every first-level entry is examined, then the whole set is ordered and
+    // truncated. The old `take(200)` dropped whatever sorted past 200, which on a
+    // machine with 214 entries here missed a real updater directory.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for vendor in rd.flatten() {
+        if !crate::scan_task::checkpoint("caches", candidates.len()) {
             return;
         }
         let vpath = vendor.path();
         if !vpath.is_dir() {
             continue;
         }
-
         if vendor.file_name().to_str().is_some_and(is_updater_dir_name) {
-            push_dir_item(out, scanned, &vpath, "updater_cache");
-            if out.len() >= SPECIALTY_RESULT_CAP {
-                return;
-            }
+            candidates.push(vpath.clone());
         }
-
-        for leaf in [
-            "updater",
-            "updates",
-            "packages",
-            "installcache",
-            "squirreltemp",
-        ] {
+        for leaf in UPDATER_CACHE_LEAVES {
             if crate::scan_task::cancelled() {
                 return;
             }
             let cand = vpath.join(leaf);
             if cand.is_dir() {
-                push_dir_item(out, scanned, &cand, "updater_cache");
-                if out.len() >= SPECIALTY_RESULT_CAP {
-                    return;
-                }
+                candidates.push(cand);
             }
         }
+    }
+    for cand in crate::fsutil::order_candidates(candidates)
+        .into_iter()
+        .take(INSTALLER_PHASE_CAP)
+    {
+        if !crate::scan_task::checkpoint("caches", out.len()) {
+            return;
+        }
+        push_dir_item(out, scanned, &cand, "updater_cache");
     }
 }
 
@@ -551,6 +549,44 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
+    /// The proven regression: a machine with more first-level entries than the
+    /// old `take(200)` silently lost updater directories that sorted past it.
+    #[test]
+    fn updater_scan_examines_every_first_level_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "remova-updater-order-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create fixture root");
+        // 214 filler directories, then the target — so the target sits far past
+        // where a 200-entry cap would have stopped looking.
+        for i in 0..214 {
+            std::fs::create_dir(root.join(format!("filler-{i:03}"))).expect("create filler");
+        }
+        std::fs::create_dir(root.join("vxe-drive-updater")).expect("create target");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned);
+
+        let paths: Vec<&str> = out.iter().map(|it| it.path.as_str()).collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("vxe-drive-updater")),
+            "an updater directory past a 200-entry cap must still be found"
+        );
+        // Ordered, so the subset chosen under the phase cap is reproducible.
+        let mut sorted = paths.clone();
+        sorted.sort_by_key(|p| p.to_lowercase());
+        assert_eq!(paths, sorted);
+        assert!(out.len() <= INSTALLER_PHASE_CAP);
+
+        std::fs::remove_dir_all(root).expect("remove fixture root");
+    }
+
     #[test]
     fn updater_dir_name_matches_known_suffix_only() {
         for name in [
@@ -648,7 +684,7 @@ mod tests {
     fn scan_runs_without_panic() {
         let _allow = crate::scan_allow::test_lock();
         let items = scan_installer_caches();
-        // May be empty on CI; must not panic and must stay under cap.
-        assert!(items.len() <= SPECIALTY_RESULT_CAP);
+        // Two independent phases, each bounded on its own.
+        assert!(items.len() <= INSTALLER_PHASE_CAP * 2);
     }
 }
