@@ -52,38 +52,62 @@ if ($missingHandler.Count -gt 0 -or $unknownHandler.Count -gt 0) {
   Write-Error "command inventory mismatch (missing_handler=$($missingHandler.Count) unknown_handler=$($unknownHandler.Count))."
 }
 
-# Optional cross-check against ARCHITECTURE §3 when the local docs tree is present.
-if (-not (Test-Path $arch)) {
-  Write-Host "NOTE: docs/ARCHITECTURE.md is not present (docs tree is local-only) — skipped doc table cross-check only. api.ts inventory check already passed."
+# Cross-check against the command table. The table used to live only in
+# docs/ARCHITECTURE.md, which .gitignore excludes — so on a fresh CI checkout this
+# half of the gate always skipped and the documented inventory was never actually
+# verified. The table now lives in a machine-readable block committed alongside
+# lib.rs, and the docs file is checked only when it happens to be present.
+# rustfmt re-indents the block to the surrounding statement, so the end marker may
+# be preceded by whitespace — tolerate it rather than pinning the block to column 0.
+$block = $null
+if ($libText -match '(?s)//\s*@commands:start\s*\n([\s\S]*?)\n\s*//\s*@commands:end') {
+  $block = $Matches[1]
 } else {
+  Write-Error "command table block (@commands:start .. @commands:end) not found in lib.rs"
+}
+$docCmds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($m in [regex]::Matches($block, '`([a-z][a-z0-9_]+)`')) {
+  $null = $docCmds.Add($m.Groups[1].Value)
+}
+
+$missingInDocs = @($codeCmds | Where-Object { -not $docCmds.Contains($_) } | Sort-Object)
+$ghostInDocs = @($docCmds | Where-Object { -not $codeCmds.Contains($_) } | Sort-Object)
+Write-Host "command table commands: $($docCmds.Count)"
+if ($ghostInDocs.Count -gt 0) {
+  Write-Host "Ghost commands in the table (not in generate_handler!):"
+  $ghostInDocs | ForEach-Object { Write-Host "  - $_" }
+}
+if ($missingInDocs.Count -gt 0) {
+  Write-Host "Commands registered but missing from the table:"
+  $missingInDocs | ForEach-Object { Write-Host "  - $_" }
+}
+if ($ghostInDocs.Count -gt 0 -or $missingInDocs.Count -gt 0) {
+  Write-Error "command table mismatch (missing=$($missingInDocs.Count) ghost=$($ghostInDocs.Count))."
+}
+Write-Host "OK: command table matches generate_handler! ($($codeCmds.Count) commands)."
+
+# Optional second cross-check against the human-readable ARCHITECTURE §3, which
+# is not committed. A mismatch here is a docs problem, not a code problem, so it
+# is reported but does not fail the gate.
+if (Test-Path $arch) {
   $archText = Get-Content $arch -Raw
-  if ($archText -notmatch '(?s)## 3\.[\s\S]*?(## 4\.|## CleanupItem)') {
-    Write-Error "ARCHITECTURE.md §3 command tables not found"
-  }
-  $sec3 = $Matches[0]
-  $docCmds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-  foreach ($row in ($sec3 -split "`n")) {
-    if ($row -notmatch '^\|\s*`') { continue }
-    $first = ($row -split '\|')[1]
-    foreach ($m in [regex]::Matches($first, '`([a-z][a-z0-9_]+)`')) {
-      $null = $docCmds.Add($m.Groups[1].Value)
+  if ($archText -match '(?s)## 3\.[\s\S]*?(## 4\.|## CleanupItem)') {
+    $sec3 = $Matches[0]
+    $archCmds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in ($sec3 -split "`n")) {
+      if ($row -notmatch '^\|\s*`') { continue }
+      $first = ($row -split '\|')[1]
+      foreach ($m in [regex]::Matches($first, '`([a-z][a-z0-9_]+)`')) {
+        $null = $archCmds.Add($m.Groups[1].Value)
+      }
+    }
+    $archMissing = @($codeCmds | Where-Object { -not $archCmds.Contains($_) } | Sort-Object)
+    Write-Host "ARCHITECTURE §3 table commands: $($archCmds.Count)"
+    if ($archMissing.Count -gt 0) {
+      Write-Host "NOTE: ARCHITECTURE §3 is behind (local docs only, not gating):"
+      $archMissing | ForEach-Object { Write-Host "  - $_" }
     }
   }
-  $missingInDocs = @($codeCmds | Where-Object { -not $docCmds.Contains($_) } | Sort-Object)
-  $ghostInDocs = @($docCmds | Where-Object { -not $codeCmds.Contains($_) } | Sort-Object)
-  Write-Host "ARCHITECTURE §3 table commands: $($docCmds.Count)"
-  if ($ghostInDocs.Count -gt 0) {
-    Write-Host "Ghost commands in ARCHITECTURE §3 (not in generate_handler!):"
-    $ghostInDocs | ForEach-Object { Write-Host "  - $_" }
-  }
-  if ($missingInDocs.Count -gt 0) {
-    Write-Host "Commands registered but not documented in ARCHITECTURE §3:"
-    $missingInDocs | ForEach-Object { Write-Host "  - $_" }
-  }
-  if ($ghostInDocs.Count -gt 0 -or $missingInDocs.Count -gt 0) {
-    Write-Error "ARCHITECTURE command table mismatch (missing=$($missingInDocs.Count) ghost=$($ghostInDocs.Count))."
-  }
-  Write-Host "OK: ARCHITECTURE §3 matches generate_handler! ($($codeCmds.Count) commands)."
 }
 
 Write-Host "OK: command inventory matches generate_handler! ($($codeCmds.Count) commands)."

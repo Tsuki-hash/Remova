@@ -765,6 +765,70 @@ pub fn run() {
                 .build(app)?;
             Ok(())
         })
+        // @commands:start
+        // Machine-readable command inventory. scripts/check-commands.ps1 verifies this block
+        // against generate_handler! below, so the cross-check runs in CI, where docs/ is
+        // absent and the human-readable table is unavailable. Add one entry per command
+        // when registering a new handler.
+        // `list_installed_apps`
+        // `app_icon_data`
+        // `estimate_dir_size_kb`
+        // `cancel_size_estimate`
+        // `begin_size_estimate`
+        // `open_path_in_explorer`
+        // `check_github_latest`
+        // `online_update_supported`
+        // `analyze_associations`
+        // `begin_association_scan`
+        // `cancel_association_scan`
+        // `association_scan_progress`
+        // `run_cleanup_dry_run`
+        // `run_full_cleanup`
+        // `run_official_uninstall`
+        // `list_cleanup_history`
+        // `export_history_csv`
+        // `delete_cleanup_history`
+        // `clear_cleanup_history`
+        // `is_elevated`
+        // `disk_usage`
+        // `elevate_restart`
+        // `list_restore_sessions`
+        // `list_backup_sessions`
+        // `delete_backup_session`
+        // `restore_session_by_name`
+        // `preview_restore_session`
+        // `list_startup_items`
+        // `list_services`
+        // `list_scheduled_tasks`
+        // `set_startup_enabled`
+        // `set_service_start_disabled`
+        // `set_service_running`
+        // `set_task_enabled`
+        // `load_ignore`
+        // `ignore_publisher`
+        // `ignore_app_name`
+        // `unignore_publisher`
+        // `unignore_app_name`
+        // `suggest_ignore_rules`
+        // `apply_ignore_suggestions`
+        // `scan_orphan_leftovers`
+        // `rank_idle_apps`
+        // `scan_installer_caches`
+        // `scan_tool_caches`
+        // `list_local_drives`
+        // `list_top_dir_sizes`
+        // `list_dir_children`
+        // `verify_cleanup_leftovers`
+        // `begin_install_monitor`
+        // `end_install_monitor`
+        // `take_pending_analyze`
+        // `get_ai_config`
+        // `save_ai_config`
+        // `ai_risk_brief`
+        // `ai_explain_items`
+        // `ai_summarize_report`
+        // `ai_parse_intent`
+        // @commands:end
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
             app_icon_data,
