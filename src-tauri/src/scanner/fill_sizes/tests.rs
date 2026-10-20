@@ -95,6 +95,36 @@ fn parallel_size_walks_share_one_entry_budget() {
     );
 }
 
+/** R38-2: a cancelled scan must not keep measuring. Workers have no
+ * thread-local task context, so the pass must consult the cancel watch —
+ * both in its loop condition and inside every spawned worker. */
+#[test]
+fn cancelled_scan_publishes_no_sizes() {
+    let root = crate::test_support::TempDir::new("par-cancel");
+    let mut items = Vec::new();
+    for t in 0..4 {
+        let dir = root.join(format!("tree{t}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..16 {
+            std::fs::write(dir.join(format!("f{i:03}.bin")), vec![0u8; 1024]).unwrap();
+        }
+        items.push(dir_item(&dir));
+    }
+
+    let id = crate::scan_task::begin().unwrap();
+    let outcome = crate::scan_task::run(id, || {
+        crate::scan_task::cancel(id).unwrap();
+        fill_item_sizes(&mut items);
+    });
+    assert!(outcome.is_err(), "the task was cancelled before the pass");
+    for (t, it) in items.iter().enumerate() {
+        assert!(
+            it.size_kb.is_none(),
+            "tree{t}: a cancelled pass must not publish a size"
+        );
+    }
+}
+
 /** The PERF-A fix: with twelve 49-entry trees (1 KB each) against a 500-entry
  * budget, every row must publish *something* (an exact number or a marked
  * floor) — the pre-fix pass left ~58% of rows at `None`. */

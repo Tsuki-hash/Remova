@@ -44,7 +44,7 @@ const MAX_SIZE_WALK_WORKERS: usize = crate::dirsize::MAX_CONCURRENT_WALKERS;
 /// and reallocation rounds hand the pool's leftovers to the rows whose walk
 /// stopped only on their own sub-quota. A walk that stops on a bound publishes
 /// a *verified lower bound* with `size_capped = true` — the UI shows `>= N`, so
-/// a partial sum is never dressed up as exact (round 36's rule).
+/// a partial sum is never dressed up as exact (the size_capped contract).
 ///
 /// The walks run on a few threads because they are IO-bound and were fully
 /// serial. Every worker draws from ONE entry pool seeded with what the calling
@@ -87,7 +87,11 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
     let mut measured: Vec<RowSize> = vec![ROW_SIZE_UNMEASURED; items.len()];
     let mut sized = 0usize;
     let _serial_pool = pool.install();
-    while !remaining.is_empty() && !crate::scan_task::cancelled() {
+    // R38-2: spawned workers have no thread-local task context, so they can
+    // only observe cancellation through this watch (as the pre-extraction
+    // walker in scanner/mod.rs did).
+    let cancel = crate::scan_task::cancel_watch();
+    while !remaining.is_empty() && !cancel.cancelled() {
         let pool_left = crate::dirsize::remaining_walk_budget();
         if pool_left == 0 {
             // The pass budget is spent: rows that never finished keep whatever
@@ -107,9 +111,10 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
                 round_quota,
                 sized,
                 ESTIMATE_PROGRESS_STRIDE,
+                &cancel,
             )
         } else {
-            walk_rows_parallel(&remaining, items, round_quota, &pool)
+            walk_rows_parallel(&remaining, items, round_quota, &pool, &cancel)
         };
         sized += before;
         let mut next_round = Vec::with_capacity(before);
@@ -123,6 +128,15 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
                     next_round.push(i);
                 }
             }
+        }
+        // R38-6: a re-queued row that would get the same (or smaller) share
+        // next round can only repeat its walk — and an entry-cap stop is never
+        // improved by a bigger quota anyway. Drop those before they charge the
+        // pool a second time.
+        if !next_round.is_empty() {
+            let left = crate::dirsize::remaining_walk_budget();
+            let next_quota = (left / next_round.len() as u64).max(1);
+            next_round.retain(|&i| measured[i].quota < next_quota);
         }
         // Round progress: the serial path already published its stride while
         // walking; the parallel path reports once, at the round's end.
@@ -155,10 +169,11 @@ fn walk_rows_serial(
     quota: u64,
     sized: usize,
     progress_stride: usize,
+    cancel: &crate::scan_task::CancelWatch,
 ) -> Vec<(usize, RowSize)> {
     let mut out = Vec::with_capacity(rows.len());
     for (done, &i) in rows.iter().enumerate() {
-        if crate::scan_task::cancelled() {
+        if cancel.cancelled() {
             break;
         }
         out.push((i, walk_row(&items[i].path, quota)));
@@ -170,12 +185,14 @@ fn walk_rows_serial(
 }
 
 /// One parallel round: the rows are chunked across walkers, each holding one
-/// walk slot and the pass pool for its slice.
+/// walk slot and the pass pool for its slice. Workers have no thread-local
+/// task context, so cancellation travels through the watch (R38-2).
 fn walk_rows_parallel(
     rows: &[usize],
     items: &[CleanupItem],
     quota: u64,
     pool: &crate::dirsize::SharedWalkBudget,
+    cancel: &crate::scan_task::CancelWatch,
 ) -> Vec<(usize, RowSize)> {
     let workers = workers_for(rows.len());
     let chunk = rows.len().div_ceil(workers);
@@ -185,6 +202,7 @@ fn walk_rows_parallel(
         let mut handles = Vec::with_capacity(workers);
         for slice in rows.chunks(chunk) {
             let pool = pool.clone();
+            let cancel = cancel.clone();
             handles.push(scope.spawn(move || {
                 // One walk slot (declared background — PERF-B) and the shared
                 // pool for the whole slice.
@@ -193,7 +211,7 @@ fn walk_rows_parallel(
                 slice
                     .iter()
                     .filter_map(|&i| {
-                        if crate::scan_task::cancelled() {
+                        if cancel.cancelled() {
                             return None;
                         }
                         Some((i, walk_row(&shared[i].path, quota)))
