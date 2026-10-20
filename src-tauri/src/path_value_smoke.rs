@@ -18,16 +18,16 @@ fn path_item(entry: &str) -> CleanupItem {
         user_data: false,
         user_library: false,
         size_kb: None,
+        size_capped: false,
         bucket: None,
     }
 }
 
-fn tmp_session(tag: &str) -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!("remova_s08_{}_{}", tag, std::process::id()));
-    let _ = fs::remove_dir_all(&p);
-    fs::create_dir_all(p.join("files")).unwrap();
-    fs::create_dir_all(p.join("registry")).unwrap();
-    p
+fn tmp_session(tag: &str) -> crate::test_support::TempDir {
+    let dir = crate::test_support::TempDir::new(&format!("s08_{tag}"));
+    dir.subdir("files");
+    dir.subdir("registry");
+    dir
 }
 
 #[test]
@@ -85,10 +85,8 @@ fn path_backup_scrub_restore_merge_chain() {
         "restore must keep existing unrelated segments: {user2}"
     );
 
-    let _ = fs::remove_dir_all(&session);
     path_mock::clear();
 }
-
 #[test]
 fn path_read_failure_is_error_not_process_fallback() {
     let _lock = path_mock::lock_mock();
@@ -121,6 +119,7 @@ fn value_reg_missing_export_fails_backup_with_structured_code() {
         user_data: false,
         user_library: false,
         size_kb: None,
+        size_capped: false,
         bucket: None,
     };
     let err = crate::backup::backup_item(&item, &session).unwrap_err();
@@ -128,7 +127,6 @@ fn value_reg_missing_export_fails_backup_with_structured_code() {
         err.contains("backup:registry") || err.contains("backup:value_reg"),
         "expected structured backup error, got {err}"
     );
-    let _ = fs::remove_dir_all(&session);
 }
 
 #[test]
@@ -161,5 +159,4 @@ fn restore_prefers_value_reg_path_when_present() {
         crate::restore::pick_import_target(&dir),
         Some(dir.join("value.reg"))
     );
-    let _ = fs::remove_dir_all(&session);
 }

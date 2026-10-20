@@ -83,6 +83,15 @@ fn try_backup_phase(
             restore_point_msg,
         };
     }
+    // F-18: a run with nothing to back up (e.g. uninstall-only) must not leave
+    // an empty sealed session in the Safety Vault.
+    if plan.allowed.is_empty() {
+        return BackupOutcome::Ready {
+            backup_dir: String::new(),
+            restore_point_ok,
+            restore_point_msg,
+        };
+    }
     match crate::backup::create_session(&app.name) {
         Ok(session) => {
             let backup_dir = session.to_string_lossy().to_string();
@@ -134,16 +143,27 @@ fn try_backup_phase(
 
 /// Full scheduled-task name from a TaskCache\Tree registry path.
 pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
-    let low = reg_path.replace('/', "\\");
+    let slashed = reg_path.replace('/', "\\");
     let marker = r"\TaskCache\Tree\";
-    if let Some(pos) = low.to_lowercase().find(&marker.to_lowercase()) {
-        let rest = &low[pos + marker.len()..];
+    // F-11: matching against a lowercased copy and reusing that byte offset on
+    // the original string is wrong — `to_lowercase` can change byte lengths.
+    if let Some(pos) = find_ascii_case_insensitive(&slashed, marker) {
+        let rest = &slashed[pos + marker.len()..];
         let rest = rest.trim_matches('\\');
         if !rest.is_empty() {
             return format!(r"\{rest}");
         }
     }
     crate::regops::leaf_name(reg_path)
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return Some(0);
+    }
+    h.windows(n.len()).position(|w| w.eq_ignore_ascii_case(n))
 }
 
 /// Extract the SERVICE name from a `...\Services\<name>[\<subkey>]` registry
@@ -355,16 +375,32 @@ fn delete_planned_items_with_io(
             }
             _ => {
                 let p = Path::new(&it.path);
-                // A path that is already gone is not a successful delete.
-                if !p.exists() {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: format!("{:?}", it.kind).to_lowercase(),
-                        status: "skipped".into(),
-                        message: "path missing".into(),
-                    });
-                    continue;
+                // F-10: `exists()` maps every metadata error to false, so an
+                // ACL-denied or offline path was reported as "already gone".
+                match p.try_exists() {
+                    Ok(false) => {
+                        skipped += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "skipped".into(),
+                            message: "path missing".into(),
+                        });
+                        continue;
+                    }
+                    Ok(true) => {}
+                    Err(e) => {
+                        failed += 1;
+                        let msg = format!("cannot stat path: {e}");
+                        errors.push(format!("{}: {msg}", it.path));
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "failed".into(),
+                            message: msg,
+                        });
+                        continue;
+                    }
                 }
                 // S-TOCTOU: refuse junction/symlink swaps — never follow reparse points on delete.
                 if is_reparse_point(p) {
@@ -515,18 +551,15 @@ pub fn run_full_cleanup(
         &ignore,
     );
 
-    let (mut backup_dir, mut restore_point_ok, mut restore_point_msg) =
-        match try_backup_phase(app, &plan, opts) {
-            BackupOutcome::Ready {
-                backup_dir,
-                restore_point_ok,
-                restore_point_msg,
-            } => (backup_dir, restore_point_ok, restore_point_msg),
-            BackupOutcome::Abort(report) => return *report,
-        };
-    let _ = &mut backup_dir;
-    let _ = &mut restore_point_ok;
-    let _ = &mut restore_point_msg;
+    let (backup_dir, restore_point_ok, restore_point_msg) = match try_backup_phase(app, &plan, opts)
+    {
+        BackupOutcome::Ready {
+            backup_dir,
+            restore_point_ok,
+            restore_point_msg,
+        } => (backup_dir, restore_point_ok, restore_point_msg),
+        BackupOutcome::Abort(report) => return *report,
+    };
 
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
@@ -599,6 +632,12 @@ mod tests {
         assert_eq!(
             task_full_name_from_reg_path(r"HKLM\...\TaskCache\Tree\Simple"),
             r"\Simple"
+        );
+        // F-11: `İ` grows under to_lowercase, so an offset measured in the
+        // lowercased copy used to slice the original string at the wrong byte.
+        assert_eq!(
+            task_full_name_from_reg_path("HKLM64\\İ\\TaskCache\\Tree\\Vendor\\Foo\\MyTask"),
+            r"\Vendor\Foo\MyTask"
         );
     }
 
@@ -718,6 +757,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }];
         let mut native_items = items.clone();
@@ -822,16 +862,10 @@ mod tests {
             user_data: true,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
-        let root = std::env::temp_dir().join(format!(
-            "remova-plan-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_support::TempDir::new("plan");
         let leftover = root.join("Leftover");
         std::fs::create_dir_all(&leftover).unwrap();
         std::fs::write(leftover.join("keep.bin"), b"payload").unwrap();
@@ -847,6 +881,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let mut app_with_loc = app.clone();
@@ -890,8 +925,65 @@ mod tests {
             .item_details
             .iter()
             .any(|d| { d.status == "skipped" && d.message == "user_data red line" }));
+    }
 
-        std::fs::remove_dir_all(&root).unwrap();
+    /// F-18: backup enabled but nothing to back up must not create (and seal)
+    /// an empty session that the Safety Vault then offers for restore.
+    #[test]
+    fn empty_plan_skips_backup_session_creation() {
+        let _guard = crate::backup::lock_backup_env();
+        let root = crate::test_support::TempDir::new("no_empty_session");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", root.join("Backup"));
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\Program Files\DemoApp".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        // A valid selection whose every row the gate refuses: the plan has
+        // nothing to back up, but the run is not the empty-selection early exit.
+        let fixture = crate::test_support::TempDir::new("no_empty_session_item");
+        let kept = fixture.join("keep.bin");
+        std::fs::write(&kept, b"x").unwrap();
+        let item = CleanupItem {
+            path: kept.to_string_lossy().into_owned(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "user data".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: true,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let report = run_full_cleanup(
+            &app,
+            &[item],
+            &FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: true,
+                restore_point: false,
+                cleanup_source: None,
+            },
+        );
+        assert!(!report.aborted, "{:?}", report.errors);
+        assert_eq!(report.backup_dir, "");
+        assert!(
+            crate::restore::list_sessions().unwrap().is_empty(),
+            "a run with nothing allowed must not leave a session on disk"
+        );
     }
 
     /// A registry key the vendor uninstaller already removed is recorded as
@@ -928,6 +1020,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }];
         // The uninstall key itself exists but the GUID subkey does not, which is
@@ -959,6 +1052,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }];
         let value_outcome = delete_planned_items_with_native(&value_items, &mut |_| None);

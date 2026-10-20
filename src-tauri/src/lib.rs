@@ -556,7 +556,7 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<Vec<scanner::CleanupItem>, String> {
+async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<orphans::OrphanScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "orphan", || {
@@ -571,14 +571,17 @@ async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<Vec<scanner::Clea
 
 /// Idle software radar (read-only ranking).
 #[tauri::command]
-async fn rank_idle_apps(scan_id: Option<u32>) -> Result<Vec<idle::IdleApp>, String> {
+async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "idle", || {
             scan_task::checkpoint("registry", 0);
             let mut installed = apps::scan_installed_inventory();
             if scan_task::cancelled() {
-                return Vec::new();
+                return idle::IdleScanResult {
+                    items: Vec::new(),
+                    omitted: 0,
+                };
             }
             apps::filter_visible_apps(&mut installed, &ignore::load());
             idle::rank_idle_apps(&installed)

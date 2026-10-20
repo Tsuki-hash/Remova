@@ -369,10 +369,15 @@ fn backup_item_with_map(
                 return Ok(());
             }
             let digest = format!("{:x}", crate::fsutil::fnv1a64(&item.path));
-            let name = src
+            // F-13: a 255-character file name plus the digest prefix exceeded
+            // the Windows component limit and aborted the whole cleanup.
+            let name: String = src
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "item".into());
+                .unwrap_or_else(|| "item".into())
+                .chars()
+                .take(180)
+                .collect();
             let rel = format!("{digest}_{name}");
             let dest = session.join("files").join(&rel);
             if src.is_dir() {
@@ -457,6 +462,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let file_item = item.clone();
@@ -574,6 +580,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let bad = CleanupItem {
@@ -588,6 +595,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let session = create_session("partial").unwrap();
@@ -654,6 +662,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         assert!(backup_item(&item, &tmp).is_ok());
@@ -694,6 +703,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let mut map = std::collections::BTreeMap::new();

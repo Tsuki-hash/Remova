@@ -22,7 +22,12 @@ pub fn run_cleanup_dry_for_app_source(
     let mut skipped = 0u32;
     let errors = vec![];
     let mut details = vec![];
-    let ignore = crate::ignore::load();
+    // CQ-7 / F-17: the preview must not answer a damaged ignore list with a
+    // wider list than the run that follows. `load()` swallows the read error.
+    let ignore = match crate::ignore::load_checked() {
+        Ok(ignore) => ignore,
+        Err(e) => return ignore_read_abort(app.name.clone(), e),
+    };
 
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
@@ -86,7 +91,10 @@ pub fn run_cleanup_dry_for_app_source(
 /// Legacy dry-run without app context —still shares policy safety/user_data gates (A-N3).
 /// Prefer `run_cleanup_dry_for_app` when an InstalledApp is known.
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
-    let ignore = crate::ignore::load();
+    let ignore = match crate::ignore::load_checked() {
+        Ok(ignore) => ignore,
+        Err(e) => return ignore_read_abort(app_name.to_string(), e),
+    };
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
     let errors = vec![];
@@ -155,6 +163,20 @@ fn path_entry_in_system_path(entry: &str) -> bool {
     crate::regops::scrub_path_entry_ok(entry)
 }
 
+/// A preview stops, like the real run, when the ignore list cannot be read.
+fn ignore_read_abort(app_name: String, error: String) -> CleanupReport {
+    CleanupReport {
+        app_name,
+        dry_run: true,
+        uninstall_command: vec![],
+        uninstall_message: error.clone(),
+        deleted_planned: 0,
+        skipped: 0,
+        errors: vec![error],
+        item_details: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +195,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }];
         let r = run_cleanup_dry("App", &items);
@@ -195,6 +218,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }];
         let r = run_cleanup_dry("App", &items);

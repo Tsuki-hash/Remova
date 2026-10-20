@@ -428,6 +428,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }
     }
@@ -698,6 +699,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         assert!(!super::non_fs_associated_with_app(&app, &item));

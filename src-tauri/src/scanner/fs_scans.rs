@@ -45,66 +45,82 @@ pub(super) fn scan_other_drive_roots(name_slugs: &[String], items: &mut Vec<Clea
         if !root.exists() {
             continue;
         }
-        let Ok(rd) = root.read_dir() else {
+        scan_one_drive_root(&root, &drive, name_slugs, items);
+    }
+}
+
+/// One drive's top-level scan.
+///
+/// Split from the drive loop so the order-then-truncate contract behind
+/// [`OTHER_DRIVE_ROOT_CAP`] is testable against a fixture directory instead of
+/// requiring a second real drive.
+fn scan_one_drive_root(
+    root: &Path,
+    drive: &str,
+    name_slugs: &[String],
+    items: &mut Vec<CleanupItem>,
+) {
+    let Ok(rd) = root.read_dir() else {
+        return;
+    };
+    // Collect everything first: a `take(n)` during enumeration would make the
+    // result depend on filesystem order.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for e in rd.flatten() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        // PERF-C: the directory bit is already in the FindNextFileW buffer.
+        if !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let p = e.path();
+        dirs.push(p);
+    }
+    for p in crate::fsutil::order_candidates(dirs)
+        .into_iter()
+        .take(OTHER_DRIVE_ROOT_CAP)
+    {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        // Collect everything first: a `take(n)` during enumeration would make the
-        // result depend on filesystem order.
-        let mut dirs: Vec<PathBuf> = Vec::new();
-        for e in rd.flatten() {
-            if crate::scan_task::cancelled() {
-                break;
-            }
-            let p = e.path();
-            if !p.is_dir() {
-                continue;
-            }
-            dirs.push(p);
+        if !is_safe_fs(&p) {
+            continue;
         }
-        for p in crate::fsutil::order_candidates(dirs)
-            .into_iter()
-            .take(OTHER_DRIVE_ROOT_CAP)
-        {
-            if crate::scan_task::cancelled() {
-                break;
-            }
-            let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if !is_safe_fs(&p) {
-                continue;
-            }
-            let Some(m) = matches_product_dir(fname, name_slugs, &[]) else {
-                continue;
-            };
-            items.push(CleanupItem {
-                path: p.to_string_lossy().to_string(),
-                kind: ItemKind::Dir,
-                score: if m == "confirmed" { 50 } else { 35 },
-                confidence: if m == "confirmed" {
-                    Confidence::Confirmed
-                } else {
-                    Confidence::Suspected
-                },
-                risk: if m == "confirmed" {
-                    RiskLevel::Medium
-                } else {
-                    RiskLevel::High
-                },
-                reason: format!("Other-drive product folder: {drive}{fname}"),
-                evidence: vec![Evidence {
-                    code: "cross_drive".into(),
-                    label: "Folder on non-default drive matches product".into(),
-                    weight: if m == "confirmed" { 50 } else { 35 },
-                    detail: p.to_string_lossy().chars().take(120).collect(),
-                }],
-                shared: false,
-                user_data: is_user_data(&p),
-                user_library: is_user_library(&p),
-                size_kb: None,
-                bucket: None,
-            });
-        }
+        let Some(m) = matches_product_dir(fname, name_slugs, &[]) else {
+            continue;
+        };
+        items.push(CleanupItem {
+            path: p.to_string_lossy().to_string(),
+            kind: ItemKind::Dir,
+            score: if m == "confirmed" { 50 } else { 35 },
+            confidence: if m == "confirmed" {
+                Confidence::Confirmed
+            } else {
+                Confidence::Suspected
+            },
+            risk: if m == "confirmed" {
+                RiskLevel::Medium
+            } else {
+                RiskLevel::High
+            },
+            reason: format!("Other-drive product folder: {drive}{fname}"),
+            evidence: vec![Evidence {
+                code: "cross_drive".into(),
+                label: "Folder on non-default drive matches product".into(),
+                weight: if m == "confirmed" { 50 } else { 35 },
+                detail: p.to_string_lossy().chars().take(120).collect(),
+            }],
+            shared: false,
+            user_data: is_user_data(&p),
+            user_library: is_user_library(&p),
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        });
     }
 }
 
@@ -146,10 +162,10 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
             if crate::scan_task::cancelled() {
                 break;
             }
-            let p = e.path();
-            if !p.is_dir() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
+            let p = e.path();
             let Some(fname) = p.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -183,6 +199,7 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
                 user_data: is_user_data(&p),
                 user_library: is_user_library(&p),
                 size_kb: None,
+                size_capped: false,
                 bucket: None,
             });
         }
@@ -240,8 +257,9 @@ fn walk_shortcuts(
         if crate::scan_task::cancelled() {
             break;
         }
+        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
         let p = e.path();
-        if p.is_dir() {
+        if is_dir {
             walk_shortcuts(&p, depth + 1, name_slugs, exe_stems, install_low, items);
             continue;
         }
@@ -308,6 +326,7 @@ fn walk_shortcuts(
             user_data: is_user_data(&p),
             user_library: is_user_library(&p),
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -336,6 +355,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
         if crate::scan_task::cancelled() {
             break;
         }
+        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
         let p = e.path();
         // Match the entry NAME only — a slug appearing in a directory
         // component (user name, `Local`, `Temp`, product root) must not
@@ -351,7 +371,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
         }
         items.push(CleanupItem {
             path: p.to_string_lossy().to_string(),
-            kind: if p.is_dir() {
+            kind: if is_dir {
                 ItemKind::Dir
             } else {
                 ItemKind::File
@@ -374,6 +394,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
             user_data: is_user_data(&p),
             user_library: is_user_library(&p),
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -423,5 +444,52 @@ mod tests {
         assert!(!temp_entry_matches("savegame.tmp", &slugs));
         // Name-insensitive composite still matches.
         assert!(temp_entry_matches("MySteamTemp", &slugs));
+    }
+
+    /// P3-6 (CQ-2): the cross-drive scan collects every top-level directory,
+    /// orders the collected set, and only then truncates. The fixture names make
+    /// the filesystem's enumeration order the reverse of the sort order: NTFS
+    /// compares upper-cased code units, so `_` (0x5F) enumerates after `Z`
+    /// (0x5A), while `order_candidates` sorts lower-cased strings, where `_`
+    /// comes before `z`. A take-during-enumeration shape therefore keeps a
+    /// disjoint subset, so this test fails if the ordering is reverted.
+    #[test]
+    fn cross_drive_root_cap_selects_a_deterministic_subset() {
+        let root = crate::test_support::TempDir::new("drive_root_cap");
+        // `normalize_for_match` strips punctuation, so both families match the
+        // "acme" slug; only the *order* differs between the two views.
+        const EARLY_IN_SORT_ORDER: usize = 12;
+        let names = (0..EARLY_IN_SORT_ORDER)
+            .map(|i| format!("_AcmeSpare{i:03}"))
+            .chain((0..OTHER_DRIVE_ROOT_CAP).map(|i| format!("ZuluAcme{i:03}")));
+        for name in names {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let slugs = vec![normalize_for_match("Acme")];
+        let mut items = Vec::new();
+        scan_one_drive_root(root.path(), "Q:\\", &slugs, &mut items);
+
+        assert_eq!(items.len(), OTHER_DRIVE_ROOT_CAP);
+        let paths: Vec<&str> = items.iter().map(|it| it.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort_by_key(|p| p.to_lowercase());
+        assert_eq!(
+            paths, sorted,
+            "the reported subset must be in a stable order"
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with("_AcmeSpare000")),
+            "a folder that sorts first must survive the cap even though NTFS enumerates it last"
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with("ZuluAcme079")),
+            "a folder that sorts last must be the one the cap drops"
+        );
+        // Rows carry the cross-drive evidence and name the drive they came from.
+        assert!(items.iter().all(|it| it.evidence[0].code == "cross_drive"));
+        assert!(items.iter().all(|it| it.reason.contains("Q:\\")));
+        assert!(items
+            .iter()
+            .all(|it| it.confidence == Confidence::Suspected));
     }
 }

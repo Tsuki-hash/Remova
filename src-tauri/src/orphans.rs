@@ -35,7 +35,7 @@ fn dir_shape(p: &std::path::Path) -> (usize, bool, bool) {
         {
             has_config = true;
         }
-        if e.path().is_file() {
+        if e.file_type().is_ok_and(|t| t.is_file()) {
             files += 1;
         }
     }
@@ -123,9 +123,21 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     false
 }
 
-pub fn scan_orphans(installed: &[InstalledApp]) -> Vec<CleanupItem> {
+/// UX-14: the cap used to be invisible. The UI now says how many candidates
+/// the result limit left out.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OrphanScanResult {
+    pub items: Vec<CleanupItem>,
+    #[serde(default)]
+    pub omitted: u32,
+}
+
+pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
     if crate::scan_task::cancelled() {
-        return Vec::new();
+        return OrphanScanResult {
+            items: Vec::new(),
+            omitted: 0,
+        };
     }
     // load ignore rules once (was per candidate in the loop).
     let ignore = crate::ignore::load();
@@ -147,7 +159,7 @@ fn scan_orphans_in_roots(
     installed: &[InstalledApp],
     ignore: &crate::ignore::IgnoreList,
     roots: Vec<std::path::PathBuf>,
-) -> Vec<CleanupItem> {
+) -> OrphanScanResult {
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Collect candidates across every root first, then order and truncate. The
@@ -157,19 +169,25 @@ fn scan_orphans_in_roots(
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     for root in roots {
         if !crate::scan_task::checkpoint("files", candidates.len()) {
-            return out;
+            return OrphanScanResult {
+                items: out,
+                omitted: 0,
+            };
         }
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
         };
         for e in rd.flatten() {
             if !crate::scan_task::checkpoint("files", candidates.len()) {
-                return out;
+                return OrphanScanResult {
+                    items: out,
+                    omitted: 0,
+                };
             }
-            let p = e.path();
-            if !p.is_dir() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
+            let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
             // skip obvious system / installer cache folders
             if matches!(
@@ -212,12 +230,19 @@ fn scan_orphans_in_roots(
             candidates.push(p);
         }
     }
-    for p in crate::fsutil::order_candidates(candidates)
+    let ordered = crate::fsutil::order_candidates(candidates);
+    let omitted = ordered
+        .len()
+        .saturating_sub(crate::constants::ORPHAN_RESULT_CAP) as u32;
+    for p in ordered
         .into_iter()
         .take(crate::constants::ORPHAN_RESULT_CAP)
     {
         if !crate::scan_task::checkpoint("files", out.len()) {
-            return out;
+            return OrphanScanResult {
+                items: out,
+                omitted,
+            };
         }
         // The expensive shape probe runs only for what the cap keeps.
         if !looks_like_app_dir(&p) {
@@ -289,19 +314,29 @@ fn scan_orphans_in_roots(
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
     if !crate::scan_task::checkpoint("sizes", out.len()) {
-        return out;
+        return OrphanScanResult {
+            items: out,
+            omitted,
+        };
     }
     crate::scanner::fill_item_sizes(&mut out);
     if !crate::scan_task::checkpoint("finalizing", out.len()) {
-        return out;
+        return OrphanScanResult {
+            items: out,
+            omitted,
+        };
     }
     crate::scanner::fill_item_buckets(&mut out, "");
     remember_orphan_paths(&scanned);
-    out
+    OrphanScanResult {
+        items: out,
+        omitted,
+    }
 }
 
 /// Server-side allow-list of paths from the latest `scan_orphans`.
@@ -444,7 +479,7 @@ mod tests {
     fn scan_orphans_runs() {
         let _guard = crate::scan_allow::test_lock();
         let apps = crate::apps::scan_installed_inventory();
-        let items = scan_orphans(&apps);
+        let items = scan_orphans(&apps).items;
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
             assert!(it.path.len() > 3);
@@ -463,33 +498,45 @@ mod tests {
     /// reported depended on `read_dir` order. Collecting every candidate first
     /// and ordering through `order_candidates` makes the reported subset — and
     /// the allow-list armed from it — reproducible.
+    ///
+    /// CQ-2: the fixture names make the filesystem's enumeration order the
+    /// *reverse* of the sort order. NTFS compares names case-insensitively on
+    /// upper-cased code units, so `_` (0x5F) enumerates after `Z` (0x5A);
+    /// `order_candidates` sorts lower-cased strings, where `_` (0x5F) comes
+    /// before `z` (0x7A). A `take(cap)` applied during enumeration therefore
+    /// keeps a subset disjoint from the sorted one. The old `Leftover###`
+    /// names enumerated in the same order they sorted, so the test stayed
+    /// green even with the ordering reverted.
     #[test]
     fn orphan_cap_selects_a_deterministic_subset() {
         let _guard = crate::scan_allow::test_lock();
-        let root = std::env::temp_dir().join(format!(
-            "remova-orphan-cap-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        // More orphan-like folders than the cap, created in an order no
-        // filesystem is obliged to preserve.
-        for i in 0..(crate::constants::ORPHAN_RESULT_CAP + 12) {
-            let dir = root.join(format!("Leftover{i:03}"));
+        let cap = crate::constants::ORPHAN_RESULT_CAP;
+        let root = crate::test_support::TempDir::new("orphan_cap");
+        // `cap + 12` orphan-like folders. The `_Anchor` ones sort first but
+        // enumerate last; reversing the production ordering flips which subset
+        // survives the cap.
+        const EARLY_IN_SORT_ORDER: usize = 12;
+        let names = (0..EARLY_IN_SORT_ORDER)
+            .map(|i| format!("_Anchor{i:03}"))
+            .chain((0..cap).map(|i| format!("Zulu{i:03}")));
+        for name in names {
+            let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("app.exe"), b"mz").unwrap();
         }
 
-        let rows = scan_orphans_in_roots(
+        let result = scan_orphans_in_roots(
             &[],
             &crate::ignore::IgnoreList::default(),
-            vec![root.clone()],
+            vec![root.path().to_path_buf()],
         );
+        let rows = result.items;
 
-        assert_eq!(rows.len(), crate::constants::ORPHAN_RESULT_CAP);
+        assert_eq!(rows.len(), cap);
+        assert_eq!(
+            result.omitted, EARLY_IN_SORT_ORDER as u32,
+            "candidates the cap dropped must be reported, not silently lost"
+        );
         let paths: Vec<&str> = rows.iter().map(|it| it.path.as_str()).collect();
         let mut sorted = paths.clone();
         sorted.sort_by_key(|p| p.to_lowercase());
@@ -497,19 +544,23 @@ mod tests {
             paths, sorted,
             "the reported subset must be in a stable order"
         );
-        // The cap keeps the alphabetically-first folders, not an arbitrary
-        // filesystem-order subset.
-        assert!(paths.iter().any(|p| p.ends_with("Leftover000")));
-        assert!(!paths.iter().any(|p| p.ends_with("Leftover091")));
+        // The cap keeps the alphabetically-first folders, not whichever subset
+        // the filesystem happened to enumerate first.
+        assert!(
+            paths.iter().any(|p| p.ends_with("_Anchor000")),
+            "a folder that sorts first must survive the cap even though NTFS enumerates it last"
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with("Zulu079")),
+            "a folder that sorts last must be the one the cap drops"
+        );
         // Every reported row is authorized; a dropped candidate is not.
         for it in &rows {
             assert!(was_recent_orphan_path(&it.path), "{}", it.path);
         }
         assert!(!was_recent_orphan_path(
-            &root.join("Leftover091").to_string_lossy()
+            &root.join("Zulu079").to_string_lossy()
         ));
-
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -546,7 +597,7 @@ mod tests {
             let mut visible = inventory.clone();
             crate::apps::filter_visible_apps(&mut visible, &ignore);
             assert!(visible.is_empty());
-            let rows = scan_orphans_in_roots(&inventory, &ignore, vec![root.clone()]);
+            let rows = scan_orphans_in_roots(&inventory, &ignore, vec![root.clone()]).items;
             assert!(rows.is_empty());
             assert!(!was_recent_orphan_path(&path));
         }

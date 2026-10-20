@@ -229,11 +229,21 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                 },
             }
         }
-        _ => OfficialUninstallResult {
-            ok: false,
-            message: "no uninstall string".into(),
-            had_command: false,
-        },
+        _ => {
+            // A command string exists but cannot be turned into argv (dirty
+            // vendor data: an unterminated quote, or a `remova-store:`
+            // PackageFullName with illegal characters / over 200 chars).
+            // Reporting `had_command: false` here was a lie — it told the caller
+            // there was nothing to run, so `pipeline`'s `had_command && !ok`
+            // abort gate never fired and cleanup deleted the leftovers of an app
+            // that is still registered in Programs & Features, leaving it
+            // un-uninstallable from there.
+            OfficialUninstallResult {
+                ok: false,
+                message: "unusable uninstall command".into(),
+                had_command: true,
+            }
+        }
     }
 }
 
@@ -423,5 +433,61 @@ mod tests {
             r.had_command,
             "a refused command must still be reported so cleanup aborts"
         );
+    }
+
+    /// An uninstall string that is present but cannot be parsed into argv must
+    /// also count as "there was a command". Both shapes below are reachable
+    /// from real vendor data (dirty `UninstallString` values), and reporting
+    /// `had_command: false` for them meant the pipeline's abort gate never
+    /// fired, so cleanup deleted the leftovers of an app that is still
+    /// registered in Programs & Features.
+    #[test]
+    fn unparseable_uninstall_string_still_counts_as_having_a_command() {
+        let saved_trust = crate::apps::trust_test_support::snapshot();
+        for bad in [
+            // Opens a quoted exe path but never closes the quote.
+            r#""C:\Vendor\My App\unins000.exe /SILENT"#,
+            // Appx PackageFullName with a character outside [A-Za-z0-9._-].
+            "remova-store:Vendor App_1.2.3.0_x64__8wekyb3d8bbwe!",
+            // Over the 200-char PackageFullName ceiling.
+            format!("remova-store:{}", "a".repeat(201)).as_str(),
+        ] {
+            let app = crate::apps::InstalledApp {
+                name: "Dirty".into(),
+                version: String::new(),
+                publisher: String::new(),
+                install_location: String::new(),
+                uninstall_string: bad.to_string(),
+                quiet_uninstall_string: String::new(),
+                source: "HKLM64".into(),
+                registry_key: String::new(),
+                estimated_size_kb: 0,
+                install_date: String::new(),
+                display_icon: String::new(),
+            };
+            // The command string must be non-empty, or the early return is the
+            // legitimate "there really is no command" case.
+            assert!(!app.uninstall_string.trim().is_empty());
+            assert!(
+                build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true)
+                    .is_none(),
+                "fixture must actually be unparseable"
+            );
+            // Arm the trust set for exactly this command so the run reaches the
+            // parse step instead of the earlier "not from latest scan" refusal,
+            // then put the process-wide set back the way it was found.
+            crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
+            let r = run_official_uninstall(&app);
+            assert!(!r.ok);
+            assert_eq!(
+                r.message, "unusable uninstall command",
+                "the message must not claim there was no command for {bad:?}"
+            );
+            assert!(
+                r.had_command,
+                "an unparseable command must still be reported so cleanup aborts"
+            );
+        }
+        crate::apps::trust_test_support::restore(saved_trust);
     }
 }

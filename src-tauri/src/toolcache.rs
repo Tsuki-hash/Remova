@@ -120,9 +120,14 @@ struct ToolCacheEnv {
     pnpm_home: Option<PathBuf>,
     npm_cache: Option<PathBuf>,
     xdg_cache_home: Option<PathBuf>,
-    /// Yarn 1 (`Yarn\Cache`) and Yarn Berry (`~/.yarn/berry/cache`) read the
-    /// same variable.
+    /// Yarn 1 (`Yarn\Cache`). Yarn Berry only honours this when a project sets
+    /// `enableGlobalCache: false` — see `yarn_global_folder` for the default.
     yarn_cache_folder: Option<PathBuf>,
+    /// Yarn Berry's global folder (`<globalFolder>/berry/cache`): most Berry
+    /// projects cache in the global folder, relocated by `YARN_GLOBAL_FOLDER`
+    /// (default `~/.yarn/berry` on non-Windows, `%LOCALAPPDATA%\Yarn\Berry` on
+    /// Windows — both fold to `~/.yarn/berry` here via the `up` default).
+    yarn_global_folder: Option<PathBuf>,
     bun_install_cache: Option<PathBuf>,
 }
 
@@ -148,6 +153,7 @@ impl ToolCacheEnv {
             npm_cache: None,
             xdg_cache_home: None,
             yarn_cache_folder: None,
+            yarn_global_folder: None,
             bun_install_cache: None,
         }
     }
@@ -180,6 +186,7 @@ impl ToolCacheEnv {
             npm_cache: first_path("npm_config_cache"),
             xdg_cache_home: first_path("XDG_CACHE_HOME"),
             yarn_cache_folder: first_path("YARN_CACHE_FOLDER"),
+            yarn_global_folder: first_path("YARN_GLOBAL_FOLDER"),
             bun_install_cache: first_path("BUN_INSTALL_CACHE_DIR"),
         }
     }
@@ -259,13 +266,19 @@ fn tool_roots_from(
         .nuget_packages
         .clone()
         .unwrap_or_else(|| up.join(".nuget").join("packages"));
+    // Yarn 1 relocates its cache with YARN_CACHE_FOLDER. Yarn Berry only reads
+    // that variable when a project opts out with enableGlobalCache:false — by
+    // default it keeps the cache in <globalFolder>/cache, relocated with
+    // YARN_GLOBAL_FOLDER. Feeding YARN_CACHE_FOLDER to berry too used to fold
+    // both rules onto the same path whenever the variable was set.
     let yarn_cache = env
         .yarn_cache_folder
         .clone()
         .unwrap_or_else(|| local.join("Yarn").join("Cache"));
     let yarn_berry = env
-        .yarn_cache_folder
-        .clone()
+        .yarn_global_folder
+        .as_ref()
+        .map(|p| p.join("berry").join("cache"))
         .unwrap_or_else(|| up.join(".yarn").join("berry").join("cache"));
     let pnpm_stores: Vec<PathBuf> = env
         .pnpm_home
@@ -398,14 +411,7 @@ fn vscode_family_caches(
         // Not-found is just "no editors here"; anything else is a root we could
         // not look at, which must not read as "no editor caches".
         if std::fs::metadata(roaming).is_ok() {
-            degraded.push(format!(
-                "could not read {}",
-                roaming
-                    .to_string_lossy()
-                    .chars()
-                    .take(120)
-                    .collect::<String>()
-            ));
+            degraded.push(crate::scanner::unreadable_root_code(roaming));
         }
         return Vec::new();
     };
@@ -479,10 +485,7 @@ fn chromium_profile_caches(
             // A known browser root that exists but cannot be read is a real gap;
             // one that is simply absent is not.
             if std::fs::metadata(&root).is_ok() {
-                degraded.push(format!(
-                    "could not read {}",
-                    root.to_string_lossy().chars().take(120).collect::<String>()
-                ));
+                degraded.push(crate::scanner::unreadable_root_code(&root));
             }
             continue;
         };
@@ -539,11 +542,10 @@ fn shared_cache_roots_from(up: &Path, env: &ToolCacheEnv) -> Vec<PathBuf> {
 /// child is reported on its own, so a shared root is never itself a target.
 fn shared_cache_roots(degraded: &mut Vec<String>) -> Vec<PathBuf> {
     if userprofile().is_none() {
-        degraded
-            .push("USERPROFILE is not set; the shared cache root under it was not scanned".into());
+        degraded.push(crate::scanner::DEGRADED_USERPROFILE_NOT_SET.to_string());
     }
     if env_path("LOCALAPPDATA").is_none() {
-        degraded.push("LOCALAPPDATA is not set; the JetBrains cache root was not scanned".into());
+        degraded.push(crate::scanner::DEGRADED_LOCALAPPDATA_NOT_SET.to_string());
     }
     let env = ToolCacheEnv::from_process();
     let mut out = match userprofile() {
@@ -579,10 +581,7 @@ fn scan_shared_cache_children(
     let Ok(rd) = std::fs::read_dir(root) else {
         // A root that exists but cannot be read is not an empty root: saying
         // nothing would read as "this machine has no tool caches here".
-        report.degraded.push(format!(
-            "could not read {}",
-            root.to_string_lossy().chars().take(120).collect::<String>()
-        ));
+        report.degrade(crate::scanner::unreadable_root_code(root));
         return;
     };
     // Collect first, then order and truncate: a `take(n)` during enumeration
@@ -593,18 +592,38 @@ fn scan_shared_cache_children(
             return;
         }
         let path = entry.path();
-        if !path.is_dir() {
+        // PERF-C: one buffered metadata read answers both the directory and the
+        // reparse-bit questions instead of two extra syscalls per child.
+        let Ok(meta) = entry.metadata() else {
             continue;
-        }
-        // Junctions/mounts are never enumerated as targets; the delete gate
-        // would refuse them anyway.
-        if crate::fsutil::is_reparse_point(&path) {
+        };
+        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
             continue;
         }
         children.push(path);
     }
     let children = crate::fsutil::order_candidates(children);
-    report.omitted += children.len().saturating_sub(TOOL_CACHE_CHILD_CAP) as u32;
+    // CQ-8: `omitted` is rows, not children. A JetBrains child expands into its
+    // cache subdirectories, so a dropped child can hide more than one row.
+    let dropped = children.len().saturating_sub(TOOL_CACHE_CHILD_CAP);
+    if dropped > 0 {
+        let rows = if jetbrains_home {
+            children
+                .iter()
+                .skip(TOOL_CACHE_CHILD_CAP)
+                .map(|p| {
+                    let n = JETBRAINS_SAFE_SUBDIRS
+                        .iter()
+                        .filter(|sub| p.join(sub).is_dir())
+                        .count();
+                    n.max(1)
+                })
+                .sum()
+        } else {
+            dropped
+        };
+        report.omit(rows);
+    }
     for path in children.into_iter().take(TOOL_CACHE_CHILD_CAP) {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return;
@@ -699,6 +718,7 @@ fn push_item(
         user_library: crate::safety::is_user_library_path(&p)
             && !crate::safety::is_user_data_path(&p),
         size_kb: None,
+        size_capped: false,
         bucket: Some(domain.as_str().into()),
     });
     scanned.insert(p);
@@ -718,8 +738,7 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
         return Ok(ScopedScanResult::empty());
     }
     let roots = tool_roots(&mut report.degraded);
-    let root_count = roots.len();
-    for (index, (domain, path, label, mode)) in roots.into_iter().enumerate() {
+    for (domain, path, label, mode) in roots {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return Ok(ScopedScanResult::empty());
         }
@@ -728,12 +747,6 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
             continue;
         }
         push_item(&mut out, &mut scanned, path, domain, label, true);
-        if out.len() >= SPECIALTY_RESULT_CAP {
-            // Every fixed root after this one is a candidate that was found and
-            // not reported — the total cap, not the enumeration, is the reason.
-            report.omitted += (root_count - index - 1) as u32;
-            break;
-        }
     }
     // Each shared root bounds itself, so neither crowds the other out.
     for root in shared_cache_roots(&mut report.degraded) {
@@ -756,7 +769,7 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
             .iter()
             .map(|it| it.path.clone())
             .collect();
-        report.omitted += (out.len() - SPECIALTY_RESULT_CAP) as u32;
+        report.omit(out.len() - SPECIALTY_RESULT_CAP);
         out.truncate(SPECIALTY_RESULT_CAP);
         scanned.retain(|p| reported.contains(p));
     }
@@ -950,6 +963,7 @@ mod tests {
             &uv_cache,
             &pnpm_home,
             &yarn_cache,
+            &drive_d.join("yarn-global"),
             &bun_cache,
             &nuget_http,
             &drive_d.join("pip-cache"),
@@ -971,6 +985,7 @@ mod tests {
             npm_cache: Some(drive_d.join("npm-cache")),
             xdg_cache_home: Some(drive_d.join("xdg-cache")),
             yarn_cache_folder: Some(yarn_cache.clone()),
+            yarn_global_folder: Some(drive_d.join("yarn-global")),
             bun_install_cache: Some(bun_cache.clone()),
         };
         let roots = tool_roots_from(&up, &local, None, &env);
@@ -1000,9 +1015,18 @@ mod tests {
             1,
             "PNPM_HOME must replace the default variants, not add to them"
         );
-        // Yarn 1 and Yarn Berry read the same variable from different defaults.
+        // Yarn 1 takes YARN_CACHE_FOLDER; Berry follows YARN_GLOBAL_FOLDER
+        // (which YARN_CACHE_FOLDER neither feeds nor displaces). The two rules
+        // must never fold onto one path — that used to produce a duplicate row
+        // whose second delete was always "path missing".
         assert_eq!(find("yarn-cache"), Some(yarn_cache.clone()));
-        assert_eq!(find("yarn-berry-cache"), Some(yarn_cache));
+        let berry_default = drive_d.join("yarn-global").join("berry").join("cache");
+        assert_eq!(find("yarn-berry-cache"), Some(berry_default));
+        assert_ne!(
+            find("yarn-berry-cache"),
+            find("yarn-cache"),
+            "the two Yarn caches must never be the same directory"
+        );
         // Bun and NuGet's HTTP cache each name their own directory.
         assert_eq!(find("bun-cache"), Some(bun_cache));
         assert_eq!(find("nuget-cache"), Some(nuget_http));
@@ -1135,6 +1159,26 @@ mod tests {
         );
         assert!(paths.iter().any(|p| p.ends_with("tool-000-cache")));
         assert!(!paths.iter().any(|p| p.ends_with("tool-071-cache")));
+    }
+
+    /// CQ-8: `omitted` is measured in rows. Three dropped JetBrains homes, each
+    /// expanding into two cache rows, hide six rows — not three children.
+    #[test]
+    fn dropped_jetbrains_children_are_counted_as_expanded_rows() {
+        let root = unique_temp("ordered-rows");
+        let dropped = 3;
+        for i in 0..(TOOL_CACHE_CHILD_CAP + dropped) {
+            let home = root.join(format!("IDE-{i:03}"));
+            std::fs::create_dir_all(home.join("caches")).expect("create caches");
+            std::fs::create_dir_all(home.join("tmp")).expect("create tmp");
+        }
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_shared_cache_children(&root, true, &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(gaps.omitted, (dropped * 2) as u32);
     }
 
     /// Forks are recognised by the cache layout, not by name, so an editor this
@@ -1341,7 +1385,7 @@ mod tests {
             gaps.degraded
         );
         assert!(
-            gaps.degraded[0].contains("could not read"),
+            gaps.degraded[0].starts_with("unreadable_root:"),
             "{}",
             gaps.degraded[0]
         );

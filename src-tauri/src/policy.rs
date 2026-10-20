@@ -106,6 +106,30 @@ fn env_root(var: &str) -> Option<String> {
     }
 }
 
+/// F-14: only a `%NAME%`-shaped remnant means "an env var we could not
+/// expand". A literal `50% Off` directory is a real, scrubable PATH entry.
+fn has_unexpanded_env_token(s: &str) -> bool {
+    let mut i = 0;
+    while i < s.len() {
+        if !s[i..].starts_with('%') {
+            i += s[i..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let Some(rel_end) = s[i + 1..].find('%') else {
+            return false;
+        };
+        let name = &s[i + 1..i + 1 + rel_end];
+        if !name.is_empty()
+            && name.len() <= 64
+            && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            return true;
+        }
+        i += 1 + rel_end + 1;
+    }
+    false
+}
+
 /// PATH segments that must never be scrubbed (system PATH).
 /// Public so write primitives can apply an intrinsic secondary gate.
 pub fn is_dangerous_path_entry(entry: &str) -> bool {
@@ -133,7 +157,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         || !bytes[0].is_ascii_alphabetic()
         || bytes[1] != b':'
         || bytes[2] != b'\\'
-        || s.contains('%')
+        || has_unexpanded_env_token(&s)
     {
         return true;
     }
@@ -342,6 +366,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         }
     }
@@ -499,6 +524,10 @@ mod tests {
             r"C:\Vendor\Tool\bin",
             r"C:\Program Files\DemoApp\bin",
             r"D:\Games\Tool\bin",
+            // F-14: a literal percent is part of a real directory name, not an
+            // unexpanded variable, and must remain scrubable/restorable.
+            r"C:\Tools\50% Off\bin",
+            r"D:\Games\100% Complete",
         ] {
             let it = item(p, ItemKind::Path);
             let d = gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore);

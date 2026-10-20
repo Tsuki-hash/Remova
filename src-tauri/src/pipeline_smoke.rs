@@ -11,15 +11,8 @@ use crate::executor::{
 };
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
 
-fn tmp_root() -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let p = std::env::temp_dir().join(format!("remova_pipeline_{}_{}", std::process::id(), nanos));
-    let _ = fs::remove_dir_all(&p);
-    fs::create_dir_all(&p).unwrap();
-    p
+fn tmp_root() -> crate::test_support::TempDir {
+    crate::test_support::TempDir::new("pipeline")
 }
 
 fn fake_app(name: &str, loc: &str) -> InstalledApp {
@@ -58,6 +51,7 @@ fn file_item(path: &str) -> CleanupItem {
         user_data: false,
         user_library: false,
         size_kb: None,
+        size_capped: false,
         bucket: None,
     }
 }
@@ -127,7 +121,6 @@ fn pipeline_dry_run_backup_delete_restore() {
     );
 
     // cleanup temp (and the session we created under ProgramData for this smoke run)
-    let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&session);
 }
 
@@ -146,6 +139,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         },
         CleanupItem {
@@ -160,6 +154,7 @@ fn pipeline_skips_protected_and_shallow_paths() {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         },
     ];

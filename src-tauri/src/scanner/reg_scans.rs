@@ -62,6 +62,7 @@ pub(super) fn scan_path_env(
                 user_data: false,
                 user_library: false,
                 size_kb: None,
+                size_capped: false,
                 bucket: None,
             });
         }
@@ -157,6 +158,7 @@ pub(super) fn scan_shell_extensions(
                 user_data: false,
                 user_library: false,
                 size_kb: None,
+                size_capped: false,
                 bucket: None,
             });
         }
@@ -215,6 +217,7 @@ pub(super) fn scan_shell_extensions(
                     user_data: false,
                     user_library: false,
                     size_kb: None,
+                    size_capped: false,
                     bucket: None,
                 });
             }
@@ -274,6 +277,7 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -328,6 +332,7 @@ fn scan_software_keys_with(
                 user_data: false,
                 user_library: false,
                 size_kb: None,
+                size_capped: false,
                 bucket: None,
             });
         }
@@ -381,6 +386,7 @@ pub(super) fn scan_services(
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -426,6 +432,7 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }

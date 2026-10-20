@@ -39,6 +39,28 @@ pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
         .unwrap_or(false)
 }
 
+/// Test-only access to the process-wide trust set. Arming it via
+/// `remember_uninstall_commands` *replaces* the whole set, so a test that needs
+/// a specific command trusted must restore what was there or it silently
+/// changes another test's outcome.
+#[cfg(test)]
+pub mod trust_test_support {
+    use std::collections::HashSet;
+
+    pub fn snapshot() -> HashSet<String> {
+        super::uninstall_trust()
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn restore(saved: HashSet<String>) {
+        if let Ok(mut g) = super::uninstall_trust().lock() {
+            *g = saved;
+        }
+    }
+}
+
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]

@@ -111,12 +111,23 @@ fn size_kb_of(app: &InstalledApp) -> (i64, bool) {
     (0, false)
 }
 
+/// UX-14: the result cap used to be silent; carry the dropped count to the UI.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IdleScanResult {
+    pub items: Vec<IdleApp>,
+    #[serde(default)]
+    pub omitted: u32,
+}
+
 /// Rank idle candidates. Soft evidence only — caller must confirm before uninstall.
-pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
+pub fn rank_idle_apps(installed: &[InstalledApp]) -> IdleScanResult {
     let mut out: Vec<IdleApp> = Vec::new();
     for app in installed {
         if !crate::scan_task::checkpoint("files", out.len()) {
-            return out;
+            return IdleScanResult {
+                items: out,
+                omitted: 0,
+            };
         }
         if app.name.trim().is_empty() {
             continue;
@@ -152,7 +163,10 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
         }
         let (size_kb, capped) = size_kb_of(app);
         if crate::scan_task::cancelled() {
-            return out;
+            return IdleScanResult {
+                items: out,
+                omitted: 0,
+            };
         }
         if capped {
             evidence.push(IdleEvidence {
@@ -173,8 +187,12 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> Vec<IdleApp> {
         });
     }
     out.sort_by_key(|a| std::cmp::Reverse(a.score));
+    let omitted = out.len().saturating_sub(IDLE_RESULT_CAP) as u32;
     out.truncate(IDLE_RESULT_CAP);
-    out
+    IdleScanResult {
+        items: out,
+        omitted,
+    }
 }
 
 #[cfg(test)]
@@ -227,14 +245,14 @@ mod tests {
     fn rank_skips_small_and_recent() {
         let small = app("Small", "20200101", "", 10);
         let recent = app("Recent", "29991231", "", 5_000_000);
-        let ranked = rank_idle_apps(&[small, recent]);
+        let ranked = rank_idle_apps(&[small, recent]).items;
         assert!(ranked.is_empty());
     }
 
     #[test]
     fn rank_includes_old_and_large() {
         let old = app("Old", "20190101", "", 2_000_000);
-        let ranked = rank_idle_apps(&[old]);
+        let ranked = rank_idle_apps(&[old]).items;
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0].idle_days >= IDLE_MIN_DAYS);
         assert!(ranked[0].score > 0);
@@ -260,7 +278,7 @@ mod tests {
             .set_times(std::fs::FileTimes::new().set_modified(old))
             .unwrap();
         let candidate = app("R23Partial", "20100101", &dir.to_string_lossy(), 0);
-        let ranked = rank_idle_apps(&[candidate]);
+        let ranked = rank_idle_apps(&[candidate]).items;
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0]
             .evidence
@@ -279,7 +297,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("recent.bin"), b"x").unwrap();
         let old = app("Active", "20150101", &dir.to_string_lossy(), 2_000_000);
-        let ranked = rank_idle_apps(&[old]);
+        let ranked = rank_idle_apps(&[old]).items;
         assert!(
             ranked.is_empty(),
             "recent dir mtime must cancel install-age idle (got {:?})",

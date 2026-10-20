@@ -234,6 +234,7 @@ fn push_file_item(
         // one drive and never preselected on another.
         user_library: false,
         size_kb: None,
+        size_capped: false,
         bucket: Some(bucket.into()),
     });
     scanned.insert(p);
@@ -266,6 +267,7 @@ fn push_dir_item(
         user_library: crate::safety::is_user_library_path(&p)
             && !crate::safety::is_user_data_path(&p),
         size_kb: None,
+        size_capped: false,
         bucket: Some(bucket.into()),
     });
     scanned.insert(p);
@@ -277,9 +279,7 @@ fn scan_downloads(
     report: &mut ScanGaps,
 ) {
     let Some(dir) = user_downloads() else {
-        report
-            .degraded
-            .push("the Downloads folder could not be located".into());
+        report.degrade("downloads_root_missing");
         return;
     };
     scan_downloads_from(&dir, out, scanned, report);
@@ -295,10 +295,7 @@ fn scan_downloads_from(
         return;
     }
     let Ok(rd) = std::fs::read_dir(dir) else {
-        report.degraded.push(format!(
-            "could not read {}",
-            dir.to_string_lossy().chars().take(120).collect::<String>()
-        ));
+        report.degrade(crate::scanner::unreadable_root_code(dir));
         return;
     };
     // Collect everything first: truncating during enumeration would make the
@@ -335,7 +332,7 @@ fn scan_downloads_from(
     definite.sort_by_cached_key(|(p, _)| p.to_string_lossy().to_lowercase());
     let definite_total = definite.len();
     definite.truncate(INSTALLER_PHASE_CAP);
-    report.omitted += definite_total.saturating_sub(INSTALLER_PHASE_CAP) as u32;
+    report.omit(definite_total.saturating_sub(INSTALLER_PHASE_CAP));
     // The expensive PE check runs only for what the definite group left room
     // for, and in sorted order, so the number of file opens is bounded by the
     // result cap rather than by the size of the Downloads folder.
@@ -353,9 +350,16 @@ fn scan_downloads_from(
             }
         }
     }
-    // Every ambiguous executable the budget never reached is a candidate that
-    // was found and not reported.
-    report.omitted += ambiguous.len().saturating_sub(examined) as u32;
+    // Executables the PE budget never reached are NOT rows the list dropped —
+    // most are not installers at all. Report them as a degraded phase instead
+    // of inflating "N more not shown".
+    let unchecked = ambiguous.len().saturating_sub(examined);
+    if unchecked > 0 {
+        report.degrade(format!(
+            "{}:{unchecked}",
+            crate::scanner::DEGRADED_PE_BUDGET_EXHAUSTED
+        ));
+    }
     for (path, evidence) in definite {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return;
@@ -414,14 +418,9 @@ fn scan_updater_dirs_from(
         return;
     }
     let Ok(rd) = std::fs::read_dir(local) else {
-        report.degraded.push(format!(
-            "could not read {}",
-            local
-                .to_string_lossy()
-                .chars()
-                .take(120)
-                .collect::<String>()
-        ));
+        report
+            .degraded
+            .push(crate::scanner::unreadable_root_code(local));
         return;
     };
     // Every first-level entry is examined, then the whole set is ordered,
@@ -434,14 +433,12 @@ fn scan_updater_dirs_from(
             return;
         }
         let vpath = vendor.path();
-        if !vpath.is_dir() {
+        // PERF-C: one buffered metadata read for the directory bit and the
+        // reparse bit, instead of `is_dir()` (which follows links) + a stat.
+        let Ok(meta) = vendor.metadata() else {
             continue;
-        }
-        // `%LOCALAPPDATA%\Application Data` is a junction back to
-        // `%LOCALAPPDATA%`, so probing it for a `packages` leaf resolves to the
-        // real `%LOCALAPPDATA%\Packages` — the LocalState root of every Store
-        // app. `is_dir()` follows links, so the reparse check has to come first.
-        if crate::fsutil::is_reparse_point(&vpath) {
+        };
+        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
             continue;
         }
         if vendor.file_name().to_str().is_some_and(is_updater_dir_name) {
@@ -461,7 +458,7 @@ fn scan_updater_dirs_from(
     // nested must not consume a slot the cap could have given a real candidate.
     let candidates = crate::fsutil::order_candidates(candidates);
     let candidates = drop_nested(candidates);
-    report.omitted += candidates.len().saturating_sub(INSTALLER_PHASE_CAP) as u32;
+    report.omit(candidates.len().saturating_sub(INSTALLER_PHASE_CAP));
     for cand in candidates.into_iter().take(INSTALLER_PHASE_CAP) {
         if !crate::scan_task::checkpoint("caches", out.len()) {
             return;
@@ -540,15 +537,7 @@ mod tests {
     /// which is asserted separately against a real header.
     #[test]
     fn guess_download_separates_packages_from_maybe_packages() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-downloads-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-downloads");
 
         // A real PE header, so the classifier can recognise an executable that
         // carries no installer name at all.
@@ -618,8 +607,6 @@ mod tests {
             DownloadGuess::Rejected,
             "an undersized executable must not reach the PE tier"
         );
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// Naming conventions differ per vendor, ecosystem and language, so the
@@ -628,15 +615,7 @@ mod tests {
     /// name-keyword rule missed most of them.
     #[test]
     fn realistic_global_installer_names_are_all_shown() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-downloads-global-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-downloads-global");
         // A real PE header, so an app-named `.exe` is recognised without a marker.
         let pe = root.join("app-named.exe");
         let mut bytes = b"MZ".to_vec();
@@ -714,8 +693,6 @@ mod tests {
                 "{name}"
             );
         }
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// The PE check costs a file open per candidate. It must run only for what
@@ -723,15 +700,7 @@ mod tests {
     /// of app-named executables does not open all of them to report 60 rows.
     #[test]
     fn pe_check_runs_only_for_what_the_budget_allows() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-pe-budget-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-pe-budget");
         // A valid PE header, reused for every app-named executable.
         let mut pe_bytes = b"MZ".to_vec();
         pe_bytes.extend_from_slice(&[0u8; 0x3A]);
@@ -760,26 +729,70 @@ mod tests {
         assert!(out.iter().all(|it| it.reason == "installer package"));
         assert!(out.iter().all(|it| it.path.contains("setup-")));
         assert!(scanned.len() == out.len());
-        // The executables the budget never reached are counted as omitted rather
-        // than silently dropped.
-        assert_eq!(gaps.omitted as usize, ambiguous_count);
+        // Executables the budget never reached are a degraded phase, not rows
+        // the list dropped — most of them are not installers at all.
+        assert_eq!(
+            gaps.omitted, 0,
+            "unchecked executables are not dropped rows"
+        );
+        assert!(
+            gaps.degraded.contains(&format!(
+                "{}:{ambiguous_count}",
+                crate::scanner::DEGRADED_PE_BUDGET_EXHAUSTED
+            )),
+            "{:?}",
+            gaps.degraded
+        );
+    }
 
-        std::fs::remove_dir_all(root).expect("remove fixture root");
+    /// CQ-2: the over-cap Downloads fixture used to write exactly
+    /// `INSTALLER_PHASE_CAP` definite packages, so `definite_total - cap` was 0
+    /// and deleting the `omitted` accumulation left the whole suite green. This
+    /// fixture writes more definite packages than the cap and no ambiguous files
+    /// at all, so the excess is visible only through `omitted`.
+    #[test]
+    fn downloads_over_the_cap_report_the_dropped_packages_as_omitted() {
+        let root = crate::test_support::TempDir::new("downloads_over_cap");
+        let definite_count = INSTALLER_PHASE_CAP + 7;
+        for i in 0..definite_count {
+            std::fs::write(root.join(format!("setup-{i:04}.msi")), b"msi").expect("write msi");
+        }
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_downloads_from(root.path(), &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(out.len(), INSTALLER_PHASE_CAP);
+        assert_eq!(
+            gaps.omitted as usize,
+            definite_count - INSTALLER_PHASE_CAP,
+            "every definite package the cap dropped must be counted"
+        );
+        // Ordering decides *which* packages are dropped, so the kept subset is
+        // the alphabetically first cap-sized one.
+        let paths: Vec<&str> = out.iter().map(|it| it.path.as_str()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort_by_key(|p| p.to_lowercase());
+        assert_eq!(paths, sorted, "packages must be reported in sorted order");
+        assert!(paths.iter().any(|p| p.ends_with("setup-0000.msi")));
+        let last = format!("setup-{:04}.msi", definite_count - 1);
+        assert!(
+            !paths.iter().any(|p| p.ends_with(&last)),
+            "the last-sorting package is the one the cap drops"
+        );
+        assert_eq!(
+            scanned.len(),
+            out.len(),
+            "only reported rows are authorized"
+        );
     }
 
     /// The proven regression: a machine with more first-level entries than the
     /// old `take(200)` silently lost updater directories that sorted past it.
     #[test]
     fn updater_scan_examines_every_first_level_entry() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-updater-order-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-updater-order");
         // 214 filler directories, then the target — so the target sits far past
         // where a 200-entry cap would have stopped looking.
         for i in 0..214 {
@@ -806,8 +819,6 @@ mod tests {
             gaps.omitted, 0,
             "214 fillers plus one target fits under the cap"
         );
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// `%LOCALAPPDATA%\Application Data` is a junction back to
@@ -818,15 +829,7 @@ mod tests {
     /// the real-machine layout is covered by the read-only scan check below.
     #[test]
     fn reparse_entries_are_never_enumeration_candidates() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-reparse-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-reparse");
         // The shape that matters: a leaf directory that is reachable both
         // directly and through an alias.
         std::fs::create_dir_all(root.join("Vendor").join("packages")).expect("create leaf");
@@ -848,8 +851,6 @@ mod tests {
                 it.path
             );
         }
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     #[test]
@@ -876,15 +877,7 @@ mod tests {
     #[test]
     fn updater_scan_finds_suffix_roots_and_existing_cache_leaves() {
         let _allow = crate::scan_allow::test_lock();
-        let root = std::env::temp_dir().join(format!(
-            "remova-installer-scan-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-installer-scan");
         for name in [
             "perfectworldarena-updater",
             "@deepseek-aidsh-desktop-updater",
@@ -942,8 +935,6 @@ mod tests {
         assert!(out
             .iter()
             .all(|item| !item.path.ends_with("ordinary-directory")));
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// Downloads packages and updater directories are independent result sets
@@ -986,20 +977,21 @@ mod tests {
     /// selected the parent deletes first and the child then reports
     /// `skipped: path missing` — a row the user can do nothing about. The nested
     /// leaf must be dropped, and dropped candidates must not be authorized.
+    ///
+    /// CQ-2: the fixture crosses the phase cap — exactly `cap` real candidates
+    /// survive the de-nesting, and the five nested leaves sort into the first
+    /// six pre-drop positions. If `drop_nested` ran after the truncation, those
+    /// five dead leaves would consume cap slots: only 55 rows would be
+    /// reported, the last real candidate would be cut, and 5 would be counted
+    /// omitted. The old fixture had 11 candidates against a cap of 60, so it
+    /// stayed green in that shape.
     #[test]
     fn nested_updater_leaves_are_not_reported_twice() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-nested-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("nested");
         // The exact shape from the report: an updater directory that also holds
-        // two of the recognized cache leaves.
-        let updater = root.join("someapp-updater");
+        // the recognized cache leaves. It sorts first, so its leaves land at the
+        // very front of the pre-drop candidate list.
+        let updater = root.join("aaa-updater");
         for leaf in UPDATER_CACHE_LEAVES {
             std::fs::create_dir_all(updater.join(leaf)).expect("create cache leaf");
         }
@@ -1008,6 +1000,13 @@ mod tests {
         let vendor = root.join("Application Data");
         for leaf in UPDATER_CACHE_LEAVES {
             std::fs::create_dir_all(vendor.join(leaf)).expect("create cache leaf");
+        }
+        // One-candidate vendors, enough that the de-nested set lands exactly on
+        // the cap: 1 updater parent + 5 standalone leaves + fillers == cap.
+        let filler_count = INSTALLER_PHASE_CAP - 1 - UPDATER_CACHE_LEAVES.len();
+        for i in 0..filler_count {
+            std::fs::create_dir_all(root.join(format!("filler-{i:03}")).join("updates"))
+                .expect("create filler cache leaf");
         }
 
         let mut out = Vec::new();
@@ -1038,9 +1037,22 @@ mod tests {
                 "{leaf} under a plain vendor directory must still be reported"
             );
         }
-        assert_eq!(gaps.omitted, 0, "nothing here was dropped by a cap");
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
+        // Dropping first leaves exactly `cap` real candidates, so none may be
+        // cut and none may be reported as omitted.
+        assert_eq!(out.len(), INSTALLER_PHASE_CAP);
+        assert_eq!(gaps.omitted, 0, "de-nesting must free the cap slots");
+        // The last filler sorts after everything else; it survives only when the
+        // nested leaves never consumed cap slots.
+        let last = crate::fsutil::path_utf8(
+            &root
+                .join(format!("filler-{:03}", filler_count - 1))
+                .join("updates"),
+        )
+        .expect("utf8 fixture path");
+        assert!(
+            out.iter().any(|it| it.path == last),
+            "the nested leaves must not crowd a real candidate out of the cap"
+        );
     }
 
     /// An installer package is what this panel offers, so it must be `Confirmed`
@@ -1051,15 +1063,7 @@ mod tests {
     /// `D:\...`. The flag must not depend on the drive at all.
     #[test]
     fn installer_packages_are_preselected_whatever_drive_downloads_lives_on() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-library-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-library");
         // Both shapes are synthetic: a default-profile Downloads and a
         // relocated one on another drive.
         let default_profile = root.join("users").join("someone").join("Downloads");
@@ -1094,8 +1098,6 @@ mod tests {
             }
             assert_eq!(gaps.degraded.len(), 0);
         }
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// The setup-name evidence is read off the file name. Running it over the
@@ -1103,14 +1105,7 @@ mod tests {
     /// the evidence weight for a perfectly good package.
     #[test]
     fn setup_name_evidence_uses_the_file_name_not_the_parent_path() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-parent-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
+        let root = crate::test_support::TempDir::new("remova-parent");
         // A parent directory that contains "uninstall" and "setup".
         let downloads = root.join("uninstall").join("setup-tools");
         std::fs::create_dir_all(&downloads).expect("create downloads fixture");
@@ -1130,8 +1125,6 @@ mod tests {
             "the file name says setup, so the evidence must be there: {:?}",
             out[0].evidence
         );
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 
     /// A root that exists but cannot be read must say so. An empty list with no
@@ -1139,15 +1132,7 @@ mod tests {
     /// permission-restricted user concludes the machine is clean.
     #[test]
     fn unreadable_scan_roots_are_reported_as_degraded() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-degraded-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock before epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("create fixture root");
+        let root = crate::test_support::TempDir::new("remova-degraded");
         let blocked = root.join("blocked");
         std::fs::write(&blocked, b"not a directory").expect("create blocked root");
 
@@ -1157,12 +1142,10 @@ mod tests {
         scan_downloads_from(&blocked, &mut out, &mut scanned, &mut gaps);
         assert!(out.is_empty());
         assert_eq!(gaps.degraded.len(), 1, "{:?}", gaps.degraded);
-        assert!(gaps.degraded[0].starts_with("could not read"));
+        assert!(gaps.degraded[0].starts_with("unreadable_root:"));
 
         scan_updater_dirs_from(&blocked, &mut out, &mut scanned, &mut gaps);
         assert!(out.is_empty());
         assert_eq!(gaps.degraded.len(), 2, "{:?}", gaps.degraded);
-
-        std::fs::remove_dir_all(root).expect("remove fixture root");
     }
 }
