@@ -19,6 +19,11 @@ export const pathKey = (path: string) =>
 /** Pure estimate behind the scan action bar's size/attention numbers. */
 export function summarizeCleanupPlan(items: CleanupItem[], selected: Set<string>) {
   const picked = items.filter(item => selected.has(item.path));
+  // R38-7: `count` is deduplicated by path identity, while the backend's
+  // plan/delete phases are not. Scanners never emit the same path twice (the
+  // allow-list and `scanned` sets are keyed by exact path), so the two only
+  // diverge on a hand-forged payload — if that ever changes, deduplicate the
+  // backend instead of counting raw rows here.
   const uniquePicked = new Map<string, CleanupItem>();
   for (const item of picked) {
     const key = pathKey(item.path);

@@ -26,7 +26,7 @@ pub fn run_cleanup_dry_for_app_source(
     // wider list than the run that follows. `load()` swallows the read error.
     let ignore = match crate::ignore::load_checked() {
         Ok(ignore) => ignore,
-        Err(e) => return ignore_read_abort(app.name.clone(), e),
+        Err(e) => return ignore_read_abort_dry(app.name.clone(), e),
     };
 
     for it in items {
@@ -93,7 +93,7 @@ pub fn run_cleanup_dry_for_app_source(
 pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
     let ignore = match crate::ignore::load_checked() {
         Ok(ignore) => ignore,
-        Err(e) => return ignore_read_abort(app_name.to_string(), e),
+        Err(e) => return ignore_read_abort_dry(app_name.to_string(), e),
     };
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
@@ -164,7 +164,9 @@ fn path_entry_in_system_path(entry: &str) -> bool {
 }
 
 /// A preview stops, like the real run, when the ignore list cannot be read.
-fn ignore_read_abort(app_name: String, error: String) -> CleanupReport {
+/// Named apart from pipeline.rs's FullCleanupReport variant on purpose: the
+/// two share a purpose, not a return type.
+fn ignore_read_abort_dry(app_name: String, error: String) -> CleanupReport {
     CleanupReport {
         app_name,
         dry_run: true,

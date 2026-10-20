@@ -1,4 +1,5 @@
 /** Linked-item buckets for the right detail panel (path heuristics only). */
+import { pathKey } from "./cleanupPlan";
 import type { ToolIconName } from "../components/ToolIcons";
 import type { CleanupItem, InstalledApp } from "../types";
 
@@ -31,7 +32,8 @@ function isLnk(path: string): boolean {
 }
 
 function isStartupPath(path: string): boolean {
-  const p = (path || "").toLowerCase().replace(/\//g, "\\");
+  // R38-8: one shared path identity instead of a local lowercasing spelling.
+  const p = pathKey(path || "");
   return (
     p.includes("\\currentversion\\run") ||
     p.includes("\\startup") ||
@@ -40,7 +42,7 @@ function isStartupPath(path: string): boolean {
 }
 
 function isConfigPath(path: string): boolean {
-  const p = (path || "").toLowerCase().replace(/\//g, "\\");
+  const p = pathKey(path || "");
   return (
     p.includes("\\appdata\\") ||
     p.includes("\\programdata\\") ||
@@ -49,8 +51,8 @@ function isConfigPath(path: string): boolean {
 }
 
 function isUnderInstall(path: string, install: string): boolean {
-  const a = (path || "").toLowerCase().replace(/\//g, "\\");
-  const b = (install || "").toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "");
+  const a = pathKey(path || "");
+  const b = pathKey(install || "");
   if (!b) return false;
   return a === b || a.startsWith(`${b}\\`);
 }

@@ -284,8 +284,9 @@ pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
 /// Outcome of one bounded size walk inside a scan pass.
 ///
 /// `Exact` is the true total. `Floor` is a partial sum that stayed within every
-/// bound it hit — a valid lower bound, safe to publish as `>= N` (round 36's
-/// rule: a truncated value must never be shown as exact). `Unknown` is no
+/// bound it hit — a valid lower bound, safe to publish as `>= N` (the
+/// size_capped contract: a truncated value must never be shown as exact).
+/// `Unknown` is no
 /// trustworthy answer at all: the path vanished, an entry could not be read, or
 /// the scan was cancelled mid-walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

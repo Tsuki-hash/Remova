@@ -1,14 +1,17 @@
 import type { CleanupItem, IdleApp, IdleScanResult, OrphanScanResult, ScopedScanResult } from "../types";
 
 /** Tolerate a bare array from a backend that predates the omitted field. */
-export function normalizeOrphanScan(raw: OrphanScanResult | CleanupItem[] | null | undefined) {
+function normalizeScan<T>(raw: { items: T[]; omitted: number } | T[] | null | undefined) {
   if (Array.isArray(raw)) return { items: raw, omitted: 0 };
   return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0 };
 }
 
+export function normalizeOrphanScan(raw: OrphanScanResult | CleanupItem[] | null | undefined) {
+  return normalizeScan<CleanupItem>(raw);
+}
+
 export function normalizeIdleScan(raw: IdleScanResult | IdleApp[] | null | undefined) {
-  if (Array.isArray(raw)) return { items: raw, omitted: 0 };
-  return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0 };
+  return normalizeScan<IdleApp>(raw);
 }
 
 /**
