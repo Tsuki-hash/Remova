@@ -87,8 +87,9 @@ thread_local! {
 /// Charge `n` entries against the budget in force on this thread. `false` once
 /// exhausted.
 pub fn charge_walk_budget(n: u64) -> bool {
-    if let Some(pool) = SHARED_BUDGET.with(|s| s.borrow().clone()) {
-        return pool.charge(n);
+    // PERF-E: borrow the pool instead of cloning the Arc on every entry.
+    if let Some(charged) = SHARED_BUDGET.with(|s| s.borrow().as_ref().map(|pool| pool.charge(n))) {
+        return charged;
     }
     WALK_BUDGET.with(|b| {
         let left = b.get();
@@ -112,8 +113,8 @@ pub fn reset_walk_budget() {
 /// A parallel size pass seeds its shared pool with what the calling thread had
 /// left, so N workers cannot turn one bounded pass into N of them.
 pub fn remaining_walk_budget() -> u64 {
-    if let Some(pool) = SHARED_BUDGET.with(|s| s.borrow().clone()) {
-        return pool.remaining();
+    if let Some(left) = SHARED_BUDGET.with(|s| s.borrow().as_ref().map(|pool| pool.remaining())) {
+        return left;
     }
     WALK_BUDGET.with(|b| b.get())
 }
@@ -177,7 +178,7 @@ impl Drop for SharedWalkBudgetGuard {
 /// Concurrent scans shared no bound at all, so a machine with idle cores did
 /// that many directory walks at once and the interactive size estimate queued
 /// behind every one of them.
-const MAX_CONCURRENT_WALKERS: usize = 3;
+pub(crate) const MAX_CONCURRENT_WALKERS: usize = 3;
 
 /// Slots held back for a foreground walk — one started by a direct user request
 /// rather than from inside a batch scan — so it always finds a free slot instead
@@ -211,15 +212,36 @@ impl Drop for WalkSlot {
 /// Take one of the global size-walk slots, yielding until one is free.
 ///
 /// `None` means this thread already holds a slot — a nested walk — so there is
-/// nothing to release. Background walks stop taking the last slot while a
-/// foreground walk is waiting, which is what makes a direct size request never
-/// queue behind concurrent scans without starving them: the restriction lifts
-/// the moment no foreground walk is waiting.
+/// nothing to release. A direct size request counts as foreground; a scan pass
+/// (a thread inside `scan_task::run_scoped` or a worker it spawned) counts as
+/// background. Background walks stop taking the last slot while a foreground
+/// walk is waiting, which is what makes a direct size request never queue
+/// behind concurrent scans without starving them: the restriction lifts the
+/// moment no foreground walk is waiting.
 pub fn acquire_walk_slot() -> Option<WalkSlot> {
+    // PERF-B: the foreground/background split used to read the thread-local
+    // `scan_task::has_task()`, but a worker spawned inside a scan does not
+    // inherit that thread-local, so a scan's own walkers were all judged
+    // foreground — the scan filled the reserved slots itself and squeezed real
+    // background walks to fewer slots. The distinction is now explicit.
+    acquire_walk_slot_classified(!crate::scan_task::has_task())
+}
+
+/// Like [`acquire_walk_slot`], but the walk is unconditionally background —
+/// for walkers that a scan pass spawned directly and can classify themselves.
+pub fn acquire_walk_slot_background() -> Option<WalkSlot> {
+    acquire_walk_slot_classified(false)
+}
+
+fn acquire_walk_slot_classified(foreground: bool) -> Option<WalkSlot> {
+    // A thread that already holds a slot must not take a second one: a worker
+    // walks item after item under ONE slot, and its per-row walks are nested.
+    // This check lives here rather than in one entry point so the background
+    // path cannot bypass it — doing so deadlocked the parallel sizing pass
+    // (every worker held one slot while its rows waited for a fourth).
     if HOLDS_WALK_SLOT.with(|h| h.get()) {
         return None;
     }
-    let foreground = !crate::scan_task::has_task();
     if foreground {
         FOREGROUND_WAITERS.fetch_add(1, Ordering::SeqCst);
     }
@@ -253,29 +275,257 @@ fn walk_limit(foreground: bool, foreground_waiters: usize) -> usize {
 }
 
 pub fn walk_size_kb_limited(root: &Path) -> Option<u64> {
-    let _slot = acquire_walk_slot();
-    if crate::scan_task::cancelled() {
-        return None;
+    match walk_size_kb_with_quota(root, u64::MAX) {
+        WalkSize::Exact(kb) => Some(kb),
+        WalkSize::Floor(_) | WalkSize::Unknown => None,
     }
-    if !root.exists() {
-        return None;
-    }
-    if root.is_file() {
-        let meta = root.metadata().ok()?;
-        return Some(meta.len().div_ceil(1024));
-    }
-    let mut entries_seen = 0u64;
-    walk_bytes_limited(root, 0, &mut entries_seen).map(|b| b.div_ceil(1024))
 }
 
-fn walk_bytes_limited(dir: &Path, depth: u32, entries_seen: &mut u64) -> Option<u64> {
-    walk_bytes_limited_with(
-        dir,
-        depth,
-        entries_seen,
+/// Outcome of one bounded size walk inside a scan pass.
+///
+/// `Exact` is the true total. `Floor` is a partial sum that stayed within every
+/// bound it hit — a valid lower bound, safe to publish as `>= N` (round 36's
+/// rule: a truncated value must never be shown as exact). `Unknown` is no
+/// trustworthy answer at all: the path vanished, an entry could not be read, or
+/// the scan was cancelled mid-walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkSize {
+    Exact(u64),
+    Floor(u64),
+    Unknown,
+}
+
+/// Per-row entry sub-quota for one walk (PERF-A). The walk stops early — with
+/// a `Floor`, never a fake exact — once it has charged this many entries.
+pub struct WalkQuota {
+    limit: u64,
+    used: std::cell::Cell<u64>,
+}
+
+impl WalkQuota {
+    pub fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            used: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Charge one entry. `false` once this walk's sub-quota is spent.
+    fn charge(&self) -> bool {
+        let used = self.used.get() + 1;
+        if used > self.limit {
+            false
+        } else {
+            self.used.set(used);
+            true
+        }
+    }
+}
+
+/// One row's size under a per-row entry sub-quota (PERF-A).
+///
+/// `Exact` when the walk finished inside every bound; a `Floor` partial sum
+/// when it stopped on a bound (this walk's sub-quota, the pass-wide pool, or
+/// the per-walk entry cap — all leave a valid lower bound); `Unknown` on an
+/// I/O error, a vanished path, or a cancelled scan.
+pub fn walk_size_kb_with_quota(root: &Path, quota: u64) -> WalkSize {
+    // Same classification as `acquire_walk_slot`: a thread inside a scan task
+    // is background, everything else (a direct user request) is foreground.
+    walk_size_kb_with_quota_bg(root, quota, crate::scan_task::has_task())
+}
+
+/// [`walk_size_kb_with_quota`] with an explicit slot classification (PERF-B).
+/// `background = true` stops the walk from occupying the foreground reserve —
+/// scan-pass walkers must report themselves as background so the reserve stays
+/// free for direct size requests.
+pub fn walk_size_kb_with_quota_bg(root: &Path, quota: u64, background: bool) -> WalkSize {
+    let _slot = if background {
+        acquire_walk_slot_background()
+    } else {
+        acquire_walk_slot()
+    };
+    if crate::scan_task::cancelled() {
+        return WalkSize::Unknown;
+    }
+    match root.metadata() {
+        Ok(meta) if !meta.is_dir() => {
+            if meta.is_file() {
+                return WalkSize::Exact(meta.len().div_ceil(1024));
+            }
+            return WalkSize::Unknown;
+        }
+        Ok(_) => {}
+        Err(_) => return WalkSize::Unknown,
+    }
+    let mut entries_seen = 0u64;
+    let walk_quota = WalkQuota::new(quota);
+    match walk_bytes_limited_quota_with(
+        root,
+        0,
+        &mut entries_seen,
+        &walk_quota,
         &|p: &Path| std::fs::read_dir(p),
         &std::fs::DirEntry::metadata,
-    )
+    ) {
+        WalkSize::Exact(bytes) => WalkSize::Exact(bytes.div_ceil(1024)),
+        WalkSize::Floor(bytes) => WalkSize::Floor(bytes.div_ceil(1024)),
+        WalkSize::Unknown => WalkSize::Unknown,
+    }
+}
+
+/// Entry ceiling for one [`walk_size_kb_unbudgeted`] call. Deliberately its own
+/// `AtomicU64` per walk instead of `charge_walk_budget`: the thread-local /
+/// shared budgets belong to scan passes (reset in `fill_item_sizes`), and a
+/// blocking-pool thread reused from a spent scan used to make every later walk
+/// report `None` — the Safety Vault's all-sessions-show-0-KB defect.
+const UNBUDGETED_DIR_CEILING: u64 = 20_000;
+
+/// Bounded walk with its own local ceiling — no global cancel flag, no
+/// thread-local budget, no shared pool.
+///
+/// For callers outside a scan pass (`restore::dir_size_kb`): thread reuse must
+/// not change the answer, and `scan_task::cancelled()` is a no-op off a scan
+/// thread, so the scan-time machinery can only make results worse here.
+pub fn walk_size_kb_unbudgeted(root: &Path) -> Option<u64> {
+    let _slot = acquire_walk_slot();
+    let meta = root.metadata().ok()?;
+    if !meta.is_dir() {
+        if meta.is_file() {
+            return Some(meta.len().div_ceil(1024));
+        }
+        return None;
+    }
+    let seen = std::sync::atomic::AtomicU64::new(0);
+    let bytes = walk_unbudgeted_with(root, 0, &seen)?;
+    Some(bytes.div_ceil(1024))
+}
+
+fn walk_unbudgeted_with(
+    dir: &Path,
+    depth: u32,
+    seen: &std::sync::atomic::AtomicU64,
+) -> Option<u64> {
+    if depth > MAX_WALK_DEPTH
+        || seen.load(std::sync::atomic::Ordering::Relaxed) >= UNBUDGETED_DIR_CEILING
+    {
+        return None;
+    }
+    let mut total: u64 = 0;
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries {
+        let entry = entry.ok()?;
+        if seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 > UNBUDGETED_DIR_CEILING {
+            return None;
+        }
+        let meta = entry.metadata().ok()?;
+        if is_reparse_metadata(&meta) {
+            continue;
+        }
+        if meta.is_dir() {
+            total = total.saturating_add(walk_unbudgeted_with(&entry.path(), depth + 1, seen)?);
+        } else if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    Some(total)
+}
+
+/// Quota-aware walk for scan passes (PERF-A): `Exact` when it finished, a
+/// `Floor` when it stopped on a bound it can honestly vouch for, `Unknown` when
+/// an entry could not be read or the scan was cancelled.
+///
+/// `pub(crate)` so the error-path tests with injected readers and the scanner's
+/// fixture tests drive the same core `fill_item_sizes` uses.
+pub(crate) fn walk_bytes_limited_quota_with<F, I>(
+    dir: &Path,
+    depth: u32,
+    entries_seen: &mut u64,
+    quota: &WalkQuota,
+    read: &F,
+    metadata: &impl Fn(&std::fs::DirEntry) -> std::io::Result<std::fs::Metadata>,
+) -> WalkSize
+where
+    F: Fn(&Path) -> std::io::Result<I>,
+    I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
+{
+    if depth > MAX_WALK_DEPTH || crate::scan_task::cancelled() {
+        return WalkSize::Unknown;
+    }
+    let mut total: u64 = 0;
+    let mut floor = false;
+    let entries = match read(dir) {
+        Ok(entries) => entries,
+        Err(_) => return WalkSize::Unknown,
+    };
+    for entry in entries {
+        if crate::scan_task::cancelled() {
+            return WalkSize::Unknown;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => return WalkSize::Unknown,
+        };
+        *entries_seen += 1;
+        if *entries_seen >= MAX_WALK_ENTRIES {
+            return floor_walk(total);
+        }
+        // The pass-wide pool is shared across every item in one pass, so a scan
+        // with many items cannot multiply the per-directory cost. Each row also
+        // has its own sub-quota, so the pool cannot be eaten by the first rows.
+        let charged_quota = quota.charge();
+        if !charged_quota || !charge_walk_budget(1) {
+            return floor_walk(total);
+        }
+        let meta = match metadata(&entry) {
+            Ok(meta) => meta,
+            Err(_) => return WalkSize::Unknown,
+        };
+        // `is_symlink()` misses Windows junctions, and reparse points must never
+        // be followed. The attribute is already in the metadata we just read, so
+        // this used to cost a second stat per entry — which doubled the cost of
+        // every scan that estimates sizes.
+        if is_reparse_metadata(&meta) {
+            continue;
+        }
+        if meta.is_dir() {
+            let sub = walk_bytes_limited_quota_with(
+                &entry.path(),
+                depth + 1,
+                entries_seen,
+                quota,
+                read,
+                metadata,
+            );
+            match sub {
+                WalkSize::Exact(sub) => total = total.saturating_add(sub),
+                // A subtree that stopped on a bound still vouches for its own
+                // partial sum; the parent inherits the floor.
+                WalkSize::Floor(sub) => {
+                    total = total.saturating_add(sub);
+                    floor = true;
+                }
+                WalkSize::Unknown => return WalkSize::Unknown,
+            }
+        } else if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    if floor {
+        WalkSize::Floor(total)
+    } else {
+        WalkSize::Exact(total)
+    }
+}
+
+/// Wrap a partial total as a verified lower bound. Zero is excluded: a bound
+/// of `>= 0 KB` carries no information the row did not already have, so the
+/// row stays unmeasured rather than displaying a meaningless floor.
+fn floor_walk(total: u64) -> WalkSize {
+    if total == 0 {
+        WalkSize::Unknown
+    } else {
+        WalkSize::Floor(total)
+    }
 }
 
 /// Whether metadata describes a reparse point (junction / mount / symlink).
@@ -295,55 +545,6 @@ pub(crate) fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
     {
         meta.file_type().is_symlink()
     }
-}
-
-fn walk_bytes_limited_with<F, I>(
-    dir: &Path,
-    depth: u32,
-    entries_seen: &mut u64,
-    read: &F,
-    metadata: &impl Fn(&std::fs::DirEntry) -> std::io::Result<std::fs::Metadata>,
-) -> Option<u64>
-where
-    F: Fn(&Path) -> std::io::Result<I>,
-    I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
-{
-    if depth > MAX_WALK_DEPTH || crate::scan_task::cancelled() {
-        return None;
-    }
-    let mut total: u64 = 0;
-    let entries = read(dir).ok()?;
-    for entry in entries {
-        if crate::scan_task::cancelled() {
-            return None;
-        }
-        let entry = entry.ok()?;
-        *entries_seen += 1;
-        if *entries_seen >= MAX_WALK_ENTRIES {
-            return None;
-        }
-        // The overall budget is shared across every item in one pass, so a scan
-        // with many items cannot multiply the per-directory cost.
-        if !charge_walk_budget(1) {
-            return None;
-        }
-        let meta = metadata(&entry).ok()?;
-        // `is_symlink()` misses Windows junctions, and reparse points must never
-        // be followed. The attribute is already in the metadata we just read, so
-        // this used to cost a second stat per entry — which doubled the cost of
-        // every scan that estimates sizes.
-        if is_reparse_metadata(&meta) {
-            continue;
-        }
-        if meta.is_dir() {
-            let sub =
-                walk_bytes_limited_with(&entry.path(), depth + 1, entries_seen, read, metadata)?;
-            total = total.saturating_add(sub);
-        } else if meta.is_file() {
-            total = total.saturating_add(meta.len());
-        }
-    }
-    Some(total)
 }
 
 /// Bounded walk returning (bytes, incomplete). Budget or IO errors make bytes a floor.
@@ -438,7 +639,9 @@ mod tests {
         fs::write(&root, b"file, not a directory").unwrap();
         let cancel = AtomicBool::new(false);
         assert_eq!(walk_size_kb_with_capped(&root, &cancel), (0, true));
-        assert_eq!(walk_bytes_limited(&root, 0, &mut 0), None);
+        // A plain file is exact even with a tiny quota — the quota gates
+        // entries walked, not files.
+        assert_eq!(walk_size_kb_with_quota(&root, 0), WalkSize::Exact(1));
         fs::remove_file(&root).unwrap();
         assert_eq!(walk_size_kb_with_capped(&root, &cancel), (0, false));
     }
@@ -475,9 +678,13 @@ mod tests {
                 (0, true)
             );
             fs::write(&file, b"payload").unwrap();
+            // The quota-aware core must not dress an unreadable entry up as a
+            // floor, either — a read/iterator/metadata error is Unknown.
+            let mut seen = 0u64;
+            let unlimited = WalkQuota::new(u64::MAX);
             assert_eq!(
-                walk_bytes_limited_with(&root, 0, &mut 0, &reader, &metadata),
-                None
+                walk_bytes_limited_quota_with(&root, 0, &mut seen, &unlimited, &reader, &metadata),
+                WalkSize::Unknown
             );
         }
         fs::remove_dir_all(root).unwrap();
@@ -500,6 +707,26 @@ mod tests {
         let kb = walk_size_kb_with(&tmp, &AtomicBool::new(false));
         assert_eq!(kb, 3);
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// The one-player defect: a spent thread-local budget must not bleed into
+    /// `walk_size_kb_unbudgeted`. A blocking-pool thread reused after a scan
+    /// used to return None for every later session-size read.
+    #[test]
+    fn unbudgeted_walk_survives_a_spent_thread_local_budget() {
+        let tmp = crate::test_support::TempDir::new("dirsize_unb");
+        let session = tmp.join("1700000000_session");
+        fs::create_dir_all(session.join("files")).unwrap();
+        fs::write(session.join("files/fixture.bin"), vec![0u8; 2048]).unwrap();
+        // Spend this thread's own budget exactly as a finished scan leaves it.
+        assert!(charge_walk_budget(SIZE_WALK_ENTRY_BUDGET));
+        assert!(!charge_walk_budget(1), "budget is spent");
+        let kb = walk_size_kb_unbudgeted(&session);
+        assert_eq!(
+            kb,
+            Some(2),
+            "a reused thread must still measure the session"
+        );
     }
 
     #[test]
@@ -683,5 +910,74 @@ mod tests {
         // The global counters are deliberately not asserted here: other tests
         // walk concurrently in the same process, so only the cap — which is
         // enforced globally — is a stable invariant.
+    }
+
+    /// PERF-B: a walk that declares itself background must not be classified as
+    /// foreground — otherwise a scan's own walkers could fill the foreground
+    /// reserve and squeeze real background walks out. One slot, so concurrent
+    /// size-walk tests only ever have to wait briefly.
+    #[test]
+    fn background_acquisition_is_never_classified_as_foreground() {
+        let slot = acquire_walk_slot_background().expect("background walk slot");
+        // A private field, asserted from inside the module: the classification
+        // rides on the slot object, not on any shared global, so parallel tests
+        // cannot race this.
+        assert!(
+            !slot.foreground,
+            "a background acquisition must not take the foreground path"
+        );
+        drop(slot);
+    }
+
+    /// PERF-B: a scan task's own thread (or a worker it spawned) may not grab
+    /// the foreground reserve. A worker spawned inside a scan runs on a thread
+    /// without the task's thread-local, so before this fix every such walker
+    /// was judged foreground and the scan occupied its own reserve.
+    #[test]
+    fn acquire_inside_a_scan_task_is_background() {
+        let id = crate::scan_task::begin().expect("test scan task");
+        crate::scan_task::run(id, || {
+            let slot = acquire_walk_slot().expect("walk slot inside a scan");
+            assert!(
+                !slot.foreground,
+                "a walk inside a scan task must not take the foreground path"
+            );
+            drop(slot);
+        })
+        .expect("run inside scan task");
+    }
+
+    /// A thread that already holds a slot must never take a second one — from
+    /// either entry point. A parallel sizing worker holds one slot for its
+    /// whole slice and its per-row walks are nested; if the nested acquisition
+    /// waited instead of returning `None`, every worker would hold one slot
+    /// while waiting for the next, which deadlocked the sizing pass outright
+    /// (three workers, three slots, zero progress).
+    #[test]
+    fn nested_acquisition_reuses_the_threads_slot() {
+        let outer = acquire_walk_slot_background().expect("outer slot");
+        assert!(
+            acquire_walk_slot_background().is_none(),
+            "a nested background walk must reuse the held slot"
+        );
+        assert!(
+            acquire_walk_slot().is_none(),
+            "a nested walk must reuse the held slot whatever its classification"
+        );
+        drop(outer);
+    }
+
+    /// The counterpoint of [`acquire_inside_a_scan_task_is_background`]: a plain
+    /// thread with no scan task counts as foreground, so a direct size request
+    /// keeps its reserve.
+    #[test]
+    fn acquire_outside_any_scan_task_is_foreground() {
+        assert!(!crate::scan_task::has_task());
+        let slot = acquire_walk_slot().expect("walk slot outside scans");
+        assert!(
+            slot.foreground,
+            "a direct size request must take the foreground path"
+        );
+        drop(slot);
     }
 }

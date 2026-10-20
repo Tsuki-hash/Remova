@@ -195,7 +195,11 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             return rows;
         }
         let p = ent.path();
-        if !p.is_dir() || crate::fsutil::is_reparse_point(&p) {
+        // PERF-C: one buffered metadata read answers dir + reparse.
+        let Ok(meta) = ent.metadata() else {
+            continue;
+        };
+        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
