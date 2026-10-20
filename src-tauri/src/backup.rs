@@ -111,6 +111,31 @@ fn reg_view_flag(key_path: &str) -> &'static str {
     }
 }
 
+/// The `files/`-relative backup name for one fs item.
+///
+/// F-13: a 255-character file name plus the digest prefix exceeded the Windows
+/// component limit and aborted the whole cleanup. The limit counts UTF-16 code
+/// units, so the budget is spent in units (R38-1): the 16-hex digest plus `_`
+/// leave 238 for the name, and the truncation always lands on a char boundary.
+fn backup_rel_name(src: &Path, original: &str) -> String {
+    let digest = format!("{:x}", crate::fsutil::fnv1a64(original));
+    let lossy = src
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "item".into());
+    let mut name = String::new();
+    let mut units = 0usize;
+    for ch in lossy.chars() {
+        let ch_units = ch.len_utf16();
+        if units + ch_units > 238 {
+            break;
+        }
+        name.push(ch);
+        units += ch_units;
+    }
+    format!("{digest}_{name}")
+}
+
 fn safe_name(path: &str) -> String {
     let base = path
         .replace(['\\', '/'], "__")
@@ -368,17 +393,7 @@ fn backup_item_with_map(
             if crate::fsutil::is_reparse_point(src) {
                 return Ok(());
             }
-            let digest = format!("{:x}", crate::fsutil::fnv1a64(&item.path));
-            // F-13: a 255-character file name plus the digest prefix exceeded
-            // the Windows component limit and aborted the whole cleanup.
-            let name: String = src
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "item".into())
-                .chars()
-                .take(180)
-                .collect();
-            let rel = format!("{digest}_{name}");
+            let rel = backup_rel_name(src, &item.path);
             let dest = session.join("files").join(&rel);
             if src.is_dir() {
                 // copy_dir pins each level (including this root) with a
@@ -406,6 +421,28 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
+
+    /// R38-1: the component limit counts UTF-16 units. 130 astral chars are
+    /// 260 units — a `chars().take(180)` budget kept them all and pushed the
+    /// digest-prefixed name past 255, aborting the whole cleanup again.
+    #[test]
+    fn backup_name_budget_is_spent_in_utf16_units() {
+        let astral = "\u{1F980}".repeat(130);
+        let rel = backup_rel_name(Path::new(&format!(r"C:\t\{astral}")), r"C:\t\name");
+        assert!(
+            rel.encode_utf16().count() <= 255,
+            "rel must fit the component limit, got {} units",
+            rel.encode_utf16().count()
+        );
+        // The truncation is why it fits: the name itself stopped at 238 units.
+        assert_eq!(rel.encode_utf16().count(), 17 + 238);
+        // A plain ASCII name fits without truncation.
+        let plain = backup_rel_name(Path::new(r"C:\t\setup.exe"), r"C:\t\setup.exe");
+        assert_eq!(
+            plain,
+            format!("{:x}_setup.exe", crate::fsutil::fnv1a64(r"C:\t\setup.exe"))
+        );
+    }
 
     #[test]
     #[cfg(windows)]
