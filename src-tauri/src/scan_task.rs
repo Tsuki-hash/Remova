@@ -259,13 +259,24 @@ pub fn cancel_watch() -> CancelWatch {
     })
 }
 
-pub fn checkpoint(stage: &str, found: usize) -> bool {
+/// Report progress and check for cancellation.
+///
+/// Stage names must live for the whole process: pointer identity lets a repeated
+/// `(stage, found)` pair skip re-publishing without an allocation or string
+/// comparison. A temporary string could reuse an earlier stage's address and
+/// suppress a real change, so its lifetime is rejected by the signature.
+///
+/// ```
+/// assert!(remova_lib::scan_task::checkpoint("files", 0));
+/// ```
+///
+/// ```compile_fail
+/// let stage = String::from("files");
+/// remova_lib::scan_task::checkpoint(stage.as_str(), 0);
+/// ```
+pub fn checkpoint(stage: &'static str, found: usize) -> bool {
     CURRENT.with(|c| {
         if let Some(task) = c.borrow().as_ref() {
-            // Stage names are `&'static str` literals at every call site, so the
-            // pointer identifies the stage. A dynamically built equal string
-            // merely misses the short-circuit — it is never mistaken for a
-            // different stage.
             let ptr = stage.as_ptr() as usize;
             let len = stage.len();
             let unchanged = task.last_stage_ptr.load(Ordering::Relaxed) == ptr
