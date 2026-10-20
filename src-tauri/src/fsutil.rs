@@ -43,6 +43,10 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
     let mut pins = vec![];
     let ancestors: Vec<&Path> = p.ancestors().collect();
     let total = ancestors.len();
+    // R38-4: a drive root has no parent to hold the next component, so the
+    // "ancestors are non-empty by construction" argument does not apply to it —
+    // never drop a marker into `C:\` when it is itself the target.
+    let is_drive_root = p.parent().is_none();
     for (index, ancestor) in ancestors.into_iter().rev().enumerate() {
         if ancestor.as_os_str().is_empty() {
             continue;
@@ -55,7 +59,7 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
         // non-empty. Ancestors (including `C:\` and `%ProgramData%`) get a
         // marker only when they are actually empty — a marker left behind by a
         // crash must never land in a shared system directory.
-        pin.guard_empty(index + 1 == total)?;
+        pin.guard_empty(index + 1 == total && !is_drive_root)?;
         pins.push(pin);
     }
     Ok(pins)
@@ -182,10 +186,10 @@ pub struct DirPin {
 }
 
 impl DirPin {
-    fn guard_empty(&mut self, always: bool) -> std::io::Result<()> {
+    fn guard_empty(&mut self, mark_even_if_non_empty: bool) -> std::io::Result<()> {
         #[cfg(windows)]
         {
-            self.guard = guard_empty_directory(self.handle, always)?;
+            self.guard = guard_empty_directory(self.handle, mark_even_if_non_empty)?;
         }
         Ok(())
     }
@@ -196,14 +200,14 @@ impl DirPin {
 /// handle, so the directory cannot become empty under us. Never resolve its
 /// pathname a second time.
 ///
-/// `always`: the directory may be emptied by this operation, so mark it even
-/// when it is currently non-empty. Ancestors pass `false` and get no marker, so
-/// a shared system directory like `C:\` or `%ProgramData%` is never written to
-/// (F-16).
+/// `mark_even_if_non_empty`: the directory may be emptied by this operation, so
+/// mark it even when it is currently non-empty. Ancestors pass `false` and get
+/// no marker, so a shared system directory like `C:\` or `%ProgramData%` is
+/// never written to (F-16).
 #[cfg(windows)]
 pub(crate) fn guard_empty_directory(
     handle: windows::Win32::Foundation::HANDLE,
-    always: bool,
+    mark_even_if_non_empty: bool,
 ) -> std::io::Result<Option<(String, std::fs::File)>> {
     use std::os::windows::io::FromRawHandle;
     use windows::core::PWSTR;
@@ -219,62 +223,75 @@ pub(crate) fn guard_empty_directory(
     // by construction (they hold the next path component), and writing a marker
     // into `C:\` or `%ProgramData%` just to learn they are non-empty would need
     // list access the pin does not have.
-    if !always {
+    if !mark_even_if_non_empty {
         return Ok(None);
     }
-    let name = format!(
-        ".remova-guard-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let mut wide: Vec<u16> = name.encode_utf16().collect();
-    let unicode = UNICODE_STRING {
-        Length: (wide.len() * 2) as u16,
-        MaximumLength: (wide.len() * 2) as u16,
-        Buffer: PWSTR(wide.as_mut_ptr()),
-    };
-    let attributes = OBJECT_ATTRIBUTES {
-        Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
-        RootDirectory: handle,
-        ObjectName: &unicode,
-        Attributes: 0x40 | 0x1000,
-        ..Default::default()
-    };
-    let mut marker = HANDLE::default();
-    let mut status = IO_STATUS_BLOCK::default();
-    let marker_result = unsafe {
-        NtCreateFile(
-            &mut marker,
-            FILE_ACCESS_RIGHTS(0x0011_0082),
-            &attributes,
-            &mut status,
-            None,
-            FILE_FLAGS_AND_ATTRIBUTES(0x102),
-            FILE_SHARE_MODE(0),
-            FILE_CREATE,
-            NTCREATEFILE_CREATE_OPTIONS(
-                FILE_DELETE_ON_CLOSE.0
-                    | FILE_NON_DIRECTORY_FILE.0
-                    | FILE_OPEN_REPARSE_POINT.0
-                    | FILE_SYNCHRONOUS_IO_NONALERT.0,
-            ),
-            None,
-            0,
-        )
-        .ok()
-    };
-    match marker_result {
-        Ok(()) => Ok(Some((name, unsafe {
-            std::fs::File::from_raw_handle(marker.0)
-        }))),
-        // No write access means no one with those rights can swap the directory
-        // either; refusing here would only break backups into protected roots.
-        Err(e) if e.code().0 as u32 == 0x8007_0005 => Ok(None),
-        Err(e) => Err(std::io::Error::other(e.to_string())),
+    // R38-4: the marker name carries a nanosecond stamp, but two threads can
+    // still stamp in the same tick; a name collision is worth one retry with a
+    // fresh stamp rather than failing the whole operation.
+    for attempt in 0..3u32 {
+        let name = format!(
+            ".remova-guard-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+                + attempt as u128
+        );
+        let mut wide: Vec<u16> = name.encode_utf16().collect();
+        let unicode = UNICODE_STRING {
+            Length: (wide.len() * 2) as u16,
+            MaximumLength: (wide.len() * 2) as u16,
+            Buffer: PWSTR(wide.as_mut_ptr()),
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: handle,
+            ObjectName: &unicode,
+            Attributes: 0x40 | 0x1000,
+            ..Default::default()
+        };
+        let mut marker = HANDLE::default();
+        let mut status = IO_STATUS_BLOCK::default();
+        let marker_result = unsafe {
+            NtCreateFile(
+                &mut marker,
+                FILE_ACCESS_RIGHTS(0x0011_0082),
+                &attributes,
+                &mut status,
+                None,
+                FILE_FLAGS_AND_ATTRIBUTES(0x102),
+                FILE_SHARE_MODE(0),
+                FILE_CREATE,
+                NTCREATEFILE_CREATE_OPTIONS(
+                    FILE_DELETE_ON_CLOSE.0
+                        | FILE_NON_DIRECTORY_FILE.0
+                        | FILE_OPEN_REPARSE_POINT.0
+                        | FILE_SYNCHRONOUS_IO_NONALERT.0,
+                ),
+                None,
+                0,
+            )
+            .ok()
+        };
+        match marker_result {
+            Ok(()) => {
+                return Ok(Some((name, unsafe {
+                    std::fs::File::from_raw_handle(marker.0)
+                })))
+            }
+            // This process cannot create the marker, which usually means the
+            // directory's ACL denies it. That does not strictly prove a swap is
+            // impossible (a creator-owner ACL could allow another process to
+            // empty and convert the target), but refusing here would break
+            // backups into protected roots; the name pin remains the backstop.
+            Err(e) if e.code().0 as u32 == 0x8007_0005 => return Ok(None),
+            Err(_) if attempt + 1 < 3 => continue,
+            Err(e) => return Err(std::io::Error::other(e.to_string())),
+        }
     }
+    unreachable!("the retry loop always returns")
 }
 
 impl Drop for DirPin {
@@ -1204,6 +1221,33 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&root);
     }
+    /// R38-11 / F-16: only the operation's own target carries a guard marker.
+    /// A crash mid-operation must never leave `.remova-guard-*` in `C:\` or
+    /// `%ProgramData%`, and the ancestor chain must stay marker-free.
+    #[cfg(windows)]
+    #[test]
+    fn create_dirs_pinned_marks_only_the_target() {
+        let root = unique_tmp("guard_ancestors");
+        let deep = root.join("a").join("b").join("target");
+        let pins = create_dirs_pinned(&deep).unwrap();
+        let has_guard = |dir: &std::path::Path| {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with(".remova-guard"))
+        };
+        assert!(has_guard(&deep), "the target must carry the marker");
+        for ancestor in [root.join("a"), root.join("a").join("b")] {
+            assert!(
+                !has_guard(&ancestor),
+                "an ancestor must never be marked: {}",
+                ancestor.display()
+            );
+        }
+        drop(pins);
+        assert!(!has_guard(&deep), "the marker must disappear on close");
+    }
+
     #[cfg(windows)]
     #[test]
     fn directory_pins_block_reparse_mutation_but_allow_child_io() {
