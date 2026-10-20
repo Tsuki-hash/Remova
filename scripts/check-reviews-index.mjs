@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Docs index gate: every dated file under docs/reviews/ must be named in
-// docs/reviews/README.md.
+// Docs index gate: every dated `.md` file under docs/reviews/ must be named in
+// docs/reviews/README.md. Non-Markdown attachments in the dated folders are out
+// of scope (the README index only lists reports).
 //
 // The README promises "本 README 的索引、版号一览和最新报告入口随新文件同步更新".
 // That promise was broken five times in a row (the index stopped at round 30

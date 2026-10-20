@@ -21,6 +21,10 @@ npm run test:scripts # CLI regression tests
 npm run check:i18n   # read-only unused-key gate; never prunes files
 npm run check-versions
 npm run check-commands
+npm run check:reviews-index   # local-only: docs/ is gitignored, CI skips it
+pwsh -NoProfile -File scripts/check-workflows-enabled.ps1
+pwsh -NoProfile -File scripts/test-release-signing-policy.ps1
+pwsh -NoProfile -File scripts/test-updater-signature.ps1
 
 # Backend
 cd src-tauri

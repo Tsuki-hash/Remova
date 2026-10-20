@@ -59,11 +59,13 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 ### Clean & backup
 - Dry-run first; real clean can opt into a safety backup (**unchecked by default**)  
+- A system restore point is attempted before cleaning; turn it off under More  
 - Shared runtimes (VC++ / .NET, …) unchecked by default  
 - Backup root: `%PROGRAMDATA%\Remova\Backup\`
 
 ### More tools
 - Orphans page, startup / services / scheduled tasks  
+- Installer & updater caches, specialty caches, disk radar, idle-app radar; results state “N more not shown” and which locations could not be read  
 - History timeline, CSV export, install monitor  
 - Dark / light theme, Chinese / English
 
