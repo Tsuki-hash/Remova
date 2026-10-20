@@ -75,7 +75,22 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
                 let seq = sm.llSequenceNumber;
                 (true, format!("restore point seq={seq}"))
             } else {
-                (false, "SRSetRestorePointW failed".into())
+                // F-9: the real Win32 status was discarded, so a benign result
+                // looked identical to "System Restore is turned off". Doc'd
+                // nStatus values (STATEMGRSTATUS): ERROR_SERVICE_DISABLED (1058,
+                // restore disabled), ERROR_BAD_ENVIRONMENT (10, safe mode),
+                // ERROR_TIMEOUT (1460, mutex wait), ERROR_ACCESS_DENIED (5).
+                // On Win8+ the 24h frequency limit is not an error — the call
+                // still succeeds and returns the previous sequence number.
+                let code = sm.nStatus.0;
+                let detail = match code {
+                    1058 => "system restore is disabled on this machine".to_string(),
+                    10 => "cannot create a restore point in safe mode".to_string(),
+                    1460 => "another restore-point creation is still in progress".to_string(),
+                    5 => "access denied creating a restore point (needs elevation)".to_string(),
+                    other => format!("win32 error {other} (0x{other:X})"),
+                };
+                (false, format!("SRSetRestorePointW failed: {detail}"))
             }
         }
     }
