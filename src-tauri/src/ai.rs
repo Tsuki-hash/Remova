@@ -364,6 +364,14 @@ pub fn mask_profile_usernames(s: &str) -> String {
     out
 }
 
+/// Drive-letter or UNC shape — the tokens that must go through the path gate.
+fn looks_like_path_token(s: &str) -> bool {
+    let t = s.trim();
+    let b = t.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        || t.starts_with(r"\\")
+}
+
 /// Free text (reason / evidence) scrubbed before any cloud upload : /// profile names masked, absolute path tokens reduced via [`sanitize_path`].
 pub fn scrub_cloud_text(s: &str) -> String {
     let masked = mask_profile_usernames(s);
@@ -671,10 +679,12 @@ fn explain_items_with_completion(
     if items.is_empty() {
         return Ok(vec![]);
     }
-    let mut out = Vec::new();
-    let mut pending: Vec<ExplainInput> = Vec::new();
+    // F-22: results are placed back at the caller's index, so cache hits and
+    // chunked completions cannot reorder the output relative to the input.
+    let mut slots: Vec<Option<ExplainOutput>> = (0..items.len()).map(|_| None).collect();
+    let mut pending: Vec<(usize, ExplainInput)> = Vec::new();
 
-    for it in items {
+    for (idx, it) in items.iter().enumerate() {
         // Cache key includes risk + publisher: a verdict cached for a low-risk
         // classification (or another publisher's identical path) must never be
         // replayed for a high-risk one.
@@ -690,23 +700,23 @@ fn explain_items_with_completion(
                 if parsed.suggest_check && it.risk.as_str() == "high" {
                     parsed.suggest_check = false;
                 }
-                out.push(parsed);
+                slots[idx] = Some(parsed);
                 continue;
             }
         }
-        pending.push(it.clone());
+        pending.push((idx, it.clone()));
     }
 
     if pending.is_empty() {
-        return Ok(out);
+        return Ok(slots.into_iter().flatten().collect());
     }
 
     // Bound each request, while processing every uncached item in this call.
     for chunk in pending.chunks(crate::constants::AI_EXPLAIN_MAX_ITEMS) {
-        let batch: Vec<&ExplainInput> = chunk.iter().collect();
+        let batch: Vec<&(usize, ExplainInput)> = chunk.iter().collect();
         let payload: Vec<serde_json::Value> = batch
             .iter()
-            .map(|it| {
+            .map(|(_, it)| {
                 serde_json::json!({
                                    "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
                                    "kind": it.kind,
@@ -744,7 +754,7 @@ fn explain_items_with_completion(
             std::collections::HashMap::new();
         for (idx, b) in batch.iter().enumerate() {
             sent_map
-                .entry(sanitize_path(&b.path, cfg.allow_cloud_paths))
+                .entry(sanitize_path(&b.1.path, cfg.allow_cloud_paths))
                 .or_default()
                 .push(idx);
         }
@@ -761,7 +771,7 @@ fn explain_items_with_completion(
                 None => batch
                     .iter()
                     .enumerate()
-                    .filter(|(_, b)| b.path == p.path)
+                    .filter(|(_, (_, b))| b.path == p.path)
                     .map(|(i, _)| i)
                     .collect(),
             };
@@ -769,7 +779,7 @@ fn explain_items_with_completion(
                 continue;
             };
             consumed.insert(idx);
-            let orig = &batch[idx];
+            let (orig_idx, orig) = &batch[idx];
             let item = ExplainOutput {
                 path: orig.path.clone(),
                 summary: p.summary.clone(),
@@ -782,10 +792,10 @@ fn explain_items_with_completion(
             if let Ok(s) = serde_json::to_string(&item) {
                 cache_put(key, s);
             }
-            out.push(item);
+            slots[*orig_idx] = Some(item);
         }
     }
-    Ok(out)
+    Ok(slots.into_iter().flatten().collect())
 }
 
 // ── Risk brief ─────────────────────────────────────────────────
@@ -943,10 +953,23 @@ pub fn parse_nl_intent(
     user_text: &str,
     app_names: &[String],
 ) -> Result<NlIntent, String> {
-    let names: Vec<&str> = app_names.iter().take(40).map(|s| s.as_str()).collect();
+    // F-15: this was the only AI call that sent free text and app names raw,
+    // bypassing both `scrub_cloud_text` and the `allow_cloud_paths` gate.
+    let scrubbed_text = scrub_cloud_text(user_text.trim());
+    let names: Vec<String> = app_names
+        .iter()
+        .take(40)
+        .map(|s| {
+            if looks_like_path_token(s) {
+                sanitize_path(s, cfg.allow_cloud_paths)
+            } else {
+                scrub_cloud_text(s)
+            }
+        })
+        .collect();
     let user = format!(
         "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",
-        user_text.trim(),
+        scrubbed_text,
         names.join(" | ")
     );
     let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
@@ -1344,6 +1367,12 @@ mod tests {
             .unwrap();
         assert_eq!(batches, [12, 12, 1]);
         assert_eq!(out.len(), inputs.len());
+        // F-22: the caller's order is the contract, even though the model
+        // echoes each batch reversed.
+        assert_eq!(
+            out.iter().map(|o| o.path.as_str()).collect::<Vec<_>>(),
+            inputs.iter().map(|i| i.path.as_str()).collect::<Vec<_>>()
+        );
         for input in &inputs {
             let result = out.iter().find(|item| item.path == input.path).unwrap();
             assert_eq!(result.summary, sanitize_path(&input.path, false));
@@ -1355,6 +1384,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(cached.len(), inputs.len());
+        assert_eq!(
+            cached.iter().map(|o| o.path.as_str()).collect::<Vec<_>>(),
+            inputs.iter().map(|i| i.path.as_str()).collect::<Vec<_>>(),
+            "fully cached results must keep the input order"
+        );
         assert!(cached
             .iter()
             .all(|item| out.iter().any(|v| v.path == item.path
