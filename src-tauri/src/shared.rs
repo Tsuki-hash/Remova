@@ -119,12 +119,53 @@ pub fn is_common_files_vendor_path(path: &str) -> bool {
     true
 }
 
+/// Split a haystack into path/name segments on the separators that occur in
+/// real Windows paths, registry keys, product names and file stems. A token is
+/// only ever compared against a **whole segment** or a run of adjacent segments,
+/// so `unity` matches `Unity Hub` and `C:\Program Files\Unity\Editor` but not
+/// `Community` / `Impunity` / `Opportunity`.
+fn segments(s: &str) -> Vec<&str> {
+    s.split(['\\', '/', ':', '_', '.', ' ', '-'])
+        .filter(|seg| !seg.is_empty())
+        .collect()
+}
+
+/// Anchored token match: the token (already lowercased) must equal one segment
+/// or a run of adjacent segments. Mirrors the publisher match in
+/// `association.rs`, which the round-37 review (F-2) pointed at as the model.
+fn token_hits(haystack: &str, token: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty() {
+        return false;
+    }
+    let needle: Vec<&str> = segments(token);
+    if needle.is_empty() {
+        return false;
+    }
+    let hay: Vec<&str> = segments(haystack);
+    if needle.len() == 1 {
+        hay.iter().any(|seg| *seg == needle[0])
+    } else {
+        hay.windows(needle.len()).any(|w| w == needle.as_slice())
+    }
+}
+
 /// Hard shared: exact CF roots, Microsoft Shared, name tokens, non-CF hard path markers.
 /// Matching is **name + path only** — free-text `reason` must not force shared.
+///
+/// Token matching is anchored to segment boundaries: an unanchored substring
+/// test made every app whose name merely *contains* a shared token
+/// (`Community Server`, `Impunity Games`, `PhysXtreme Editor`) permanently
+/// uncleanable, because `gate_cleanup_item` skips `shared` items before any
+/// source-specific logic runs.
 pub fn is_hard_shared_item(name: &str, path: &str, reason: &str) -> bool {
     let _ = reason;
-    let blob = format!("{}\n{}", lower(name), lower(path));
-    if SHARED_NAME_TOKENS.iter().any(|t| blob.contains(t)) {
+    let name_low = lower(name);
+    let path_low = lower(path);
+    if SHARED_NAME_TOKENS
+        .iter()
+        .any(|t| token_hits(&name_low, t) || token_hits(&path_low, t))
+    {
         return true;
     }
     if is_common_files_root(path) || is_microsoft_shared_path(path) {
@@ -160,6 +201,84 @@ mod tests {
             "Microsoft Visual C++ 2015-2022 Redistributable",
             r"C:\ProgramData\Package Cache\{guid}\vc_redist.x64.exe",
             "install dir match"
+        ));
+    }
+
+    /// A token must sit on a segment boundary. These are the names the round-37
+    /// review measured as false positives under the old `blob.contains` test;
+    /// each one was permanently skipped by `gate_cleanup_item` with
+    /// "可能是共享组件，默认保留" and could never be cleaned by any round.
+    #[test]
+    fn shared_tokens_do_not_match_inside_a_larger_word() {
+        for (name, path) in [
+            ("Community Server 5", r"C:\Program Files\CommunityServer"),
+            ("Opportunity Dashboard", r"C:\Program Files\Opportunity"),
+            ("Impunity Games", r"C:\Games\Impunity"),
+            // Concatenated forms only. A name that literally contains the
+            // standalone word "Python" (`Monty Python Fan Tool`) is a *correct*
+            // match and stays flagged — the review's false positive was the
+            // joined spelling `MontyPython`, where no segment equals the token.
+            ("MontyPython Fan Tool", r"C:\Tools\MontyPython"),
+            ("PhysXtreme Editor", r"C:\Tools\PhysXtreme"),
+            ("Node.jsexport CLI", r"C:\Tools\node.jsexport"),
+            // `jre`/`jdk` are stored with a trailing space so the old substring
+            // test needed `"jre "`; on segment boundaries the space is a
+            // separator, so the bare token is what must be compared.
+            ("Sjrender Studio", r"C:\Tools\Sjrender"),
+        ] {
+            assert!(
+                !is_shared_item(name, path, ""),
+                "{name} / {path} must not be treated as a shared runtime"
+            );
+        }
+    }
+
+    /// The true positives must survive the anchoring: these really are shared
+    /// runtimes, and dropping them would let a user delete DirectX or the VC++
+    /// redist out from under every other app on the box.
+    #[test]
+    fn shared_tokens_still_match_whole_segments() {
+        for (name, path) in [
+            ("Unity Hub", r"C:\Program Files\Unity"),
+            ("Unity", r"C:\Program Files\Unity\Editor\Data"),
+            ("Python 3.12", r"C:\Python312"),
+            ("Python", r"C:\Python312\Lib\site-packages"),
+            // Multi-word tokens must match a run of adjacent segments.
+            (
+                "Microsoft Visual C++ 2015-2022 Redistributable",
+                r"C:\Program Files (x86)\Microsoft Visual C++ 2015-2022 Redistributable",
+            ),
+            ("Microsoft .NET Runtime 8.0", r"C:\Program Files\dotnet"),
+            ("Java Runtime Environment", r"C:\Program Files\Java\jre"),
+            ("Java Development Kit", r"C:\Program Files\Java\jdk"),
+            ("Microsoft Edge WebView2", r"C:\Program Files\WebView2"),
+            ("NVIDIA PhysX", r"C:\Program Files\PhysX"),
+            ("DirectX End-User Runtime", r"C:\Windows\System32\DirectX"),
+            // A name that spells the token out as its own word is a genuine hit.
+            ("Monty Python Fan Tool", r"C:\Tools\MontyPython"),
+        ] {
+            assert!(
+                is_shared_item(name, path, ""),
+                "{name} / {path} is a shared runtime and must stay flagged"
+            );
+        }
+    }
+
+    /// Token equality is ASCII-case-insensitive because both sides are lowered
+    /// before comparison, and the split set includes `-`/`_`/`.` so
+    /// `VC_REDIST.x64` and `vc-redist` still land on `vc_redist` / `vc`.
+    #[test]
+    fn shared_token_matching_is_case_and_separator_insensitive() {
+        assert!(is_shared_item("UNITY HUB", r"C:\PROGRAM FILES\UNITY", ""));
+        assert!(is_shared_item(
+            "Acme",
+            r"C:\ProgramData\Package Cache\{guid}\VC_REDIST.x64.exe",
+            ""
+        ));
+        assert!(is_shared_item(
+            "Acme",
+            r"C:\ProgramData\Package Cache\{guid}\vc-redist.x64.exe",
+            ""
         ));
     }
 
