@@ -29,8 +29,9 @@ describe("groupScannedItems", () => {
       item("browser", { bucket: "browser", size_kb: 2_097_152 }),
       item("tiny-dev", { bucket: "dev", size_kb: 512 }),
     ]);
-    expect(groups.map(g => g.bucket)).toEqual(["browser", "dev"]);
-    expect(groups[1]!.items.map(i => i.path)).toEqual(["big-dev", "small-dev", "tiny-dev"]);
+    // UX-16: the group with the largest item leads, regardless of its name.
+    expect(groups.map(g => g.bucket)).toEqual(["dev", "browser"]);
+    expect(groups[0]!.items.map(i => i.path)).toEqual(["big-dev", "small-dev", "tiny-dev"]);
   });
 
   it("sinks unmeasured sizes to the bottom instead of treating them as zero", () => {

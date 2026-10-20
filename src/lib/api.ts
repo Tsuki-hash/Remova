@@ -11,11 +11,13 @@ import type {
   FullCleanupReport,
   HistoryEntry,
   IdleApp,
+  IdleScanResult,
   IgnoreSuggestion,
   InstalledApp,
   ManageItem,
   NlIntent,
   OfficialUninstallResult,
+  OrphanScanResult,
   ReportBriefRequest,
   RiskBriefRequest,
   ScanResult,
@@ -36,6 +38,14 @@ export type FullCleanupOptions = {
   backup_enabled: boolean;
   /** Gate source: uninstall | orphan | monitor | copilot | installer | toolcache */
   cleanup_source?: CleanupSourceId;
+  /**
+   * Ask Windows for a restore point before deleting. The backend owns the
+   * decision when the field is absent (`#[serde(default = "default_true")]`),
+   * so every cleanup used to request one with no way to opt out — a request
+   * Windows rate-limits to one per 24 hours, which made the (previously
+   * undiagnosable) failure look permanent.
+   */
+  restore_point?: boolean;
 };
 
 export type IgnoreLists = { publishers: string[]; names: string[]; paths?: string[] };
@@ -58,7 +68,13 @@ export type MonitorDiff = {
 };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
-export type BackupSession = { name: string; size_kb: number; created_at: string };
+export type BackupSession = {
+  name: string;
+  size_kb: number;
+  created_at: string;
+  /** `false` = an aborted backup's leftover directory; it has no seal and can never be restored. */
+  sealed: boolean;
+};
 export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
@@ -88,8 +104,10 @@ export const api = {
     invoke<OfficialUninstallResult>("run_official_uninstall", { app }),
   verifyLeftovers: (items: CleanupItem[]) =>
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
-  orphanScan: (scanId?: number) => invoke<CleanupItem[]>("scan_orphan_leftovers", { scanId }),
-  rankIdleApps: (scanId?: number) => invoke<IdleApp[]>("rank_idle_apps", { scanId }),
+  orphanScan: (scanId?: number) =>
+    invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId }),
+  rankIdleApps: (scanId?: number) =>
+    invoke<IdleScanResult | IdleApp[]>("rank_idle_apps", { scanId }),
   scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),
   scanToolCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_tool_caches", { scanId }),
   listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),

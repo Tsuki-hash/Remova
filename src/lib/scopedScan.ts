@@ -1,4 +1,15 @@
-import type { CleanupItem, ScopedScanResult } from "../types";
+import type { CleanupItem, IdleApp, IdleScanResult, OrphanScanResult, ScopedScanResult } from "../types";
+
+/** Tolerate a bare array from a backend that predates the omitted field. */
+export function normalizeOrphanScan(raw: OrphanScanResult | CleanupItem[] | null | undefined) {
+  if (Array.isArray(raw)) return { items: raw, omitted: 0 };
+  return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0 };
+}
+
+export function normalizeIdleScan(raw: IdleScanResult | IdleApp[] | null | undefined) {
+  if (Array.isArray(raw)) return { items: raw, omitted: 0 };
+  return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0 };
+}
 
 /**
  * Accept the scoped payload and, while the backend field rollout is in flight,
@@ -38,5 +49,10 @@ export function groupScannedItems(items: CleanupItem[]): ScannedGroup[] {
       // instead of being treated as zero and floating to the top.
       items: [...list].sort((a, b) => (b.size_kb ?? -1) - (a.size_kb ?? -1) || a.path.localeCompare(b.path)),
     }))
-    .sort((a, b) => bucketRank(a.bucket) - bucketRank(b.bucket) || a.bucket.localeCompare(b.bucket));
+    // UX-16: "biggest first" must hold between groups too, not only inside
+    // each one. Unknown buckets stay last; ties fall back to the name.
+    .sort((a, b) => {
+      const max = (g: ScannedGroup) => g.items.reduce((m, it) => Math.max(m, it.size_kb ?? -1), -1);
+      return bucketRank(a.bucket) - bucketRank(b.bucket) || max(b) - max(a) || a.bucket.localeCompare(b.bucket);
+    });
 }

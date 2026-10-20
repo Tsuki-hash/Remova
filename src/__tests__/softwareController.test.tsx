@@ -75,6 +75,10 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
     dryRunning: false,
     batching: false,
     error: null,
+    // F-6: both were read by the memo body but absent from the dependency array,
+    // so a change to either returned the memoized object unchanged.
+    forceBusy: false,
+    runAiReport: async () => {},
     report: null,
     aiReportBusy: false,
     aiReportNote: null,
@@ -135,6 +139,27 @@ describe("useSoftwareController mapping", () => {
     expect(result.current.busy).toBe(true);
     const idle = renderHook(() => useSoftwareController(input())).result.current;
     expect(idle.busy).toBe(false);
+  });
+
+  // F-6: `busy` is `dryRunning || forceBusy || batching || scanning || aiBusy`.
+  // `forceBusy` was read but not declared, so `SoftwarePage`'s own memo bailed
+  // out and the cleanup / dry-run / "skip official uninstall" controls stayed
+  // live for the whole in-flight analyze + fullCleanup.
+  it("recomputes busy when forceBusy flips mid-flight", () => {
+    // One stable input object: input() rebuilds every nested object (and calls
+    // t()) on each render, which would recompute the memo anyway and make this
+    // test unable to see a missing dependency. Only forceBusy changes here.
+    const base = input();
+    const { result, rerender } = renderHook(
+      (props: { forceBusy: boolean }) =>
+        useSoftwareController({ ...base, forceBusy: props.forceBusy }),
+      { initialProps: { forceBusy: false } },
+    );
+    expect(result.current.busy).toBe(false);
+    rerender({ forceBusy: true });
+    expect(result.current.busy, "forceBusy must not be swallowed by the memo").toBe(true);
+    rerender({ forceBusy: false });
+    expect(result.current.busy).toBe(false);
   });
 
   it("onQuery updates the query and drops the copilot list", () => {

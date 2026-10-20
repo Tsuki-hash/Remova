@@ -5,7 +5,7 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendText } from "../lib/backendText";
-import { cleanupFeedback } from "../lib/cleanupFeedback";
+import { cleanupAccomplishedSomething, cleanupFeedback } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { ToolGlyph } from "./ToolIcons";
@@ -15,6 +15,7 @@ import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import {
   buildCleanupRiskBits,
+  bucketItem,
   defaultSelectable,
   formatRiskNote,
   leftoverReasonLine,
@@ -22,11 +23,13 @@ import {
   riskTierLabel,
   summarizeLeftovers,
 } from "../lib/decision";
-import { summarizeCleanupPlan } from "../lib/cleanupPlan";
+import { summarizeCleanupPlan, summarizeScanTotal } from "../lib/cleanupPlan";
+import { degradedText } from "../lib/degradedText";
 import { groupScannedItems, normalizeScopedScan } from "../lib/scopedScan";
 import type { CleanupItem, FullCleanupReport, InstalledApp, ScopedScanResult } from "../types";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
 import { CleanupResultDetails } from "./CleanupResultDetails";
+import { loadRestorePointPref } from "../lib/restorePointPref";
 
 const channelFor = (src: string) => `scoped-scan-${src}`;
 
@@ -36,6 +39,20 @@ type Row =
   | { kind: "item"; key: string; item: CleanupItem };
 
 const rowKey = (row: Row) => row.key;
+
+/**
+ * UX-15: mounts stable and announces only the settled text. Ticking 30 rows
+ * used to re-announce the summary 30 times; the timer collapses the burst into
+ * one announcement.
+ */
+function useSettledText(text: string, delay = 400) {
+  const [settled, setSettled] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(text), delay);
+    return () => clearTimeout(id);
+  }, [text, delay]);
+  return settled;
+}
 
 /** Shared panel for installer / toolcache scoped scans (same trust model as orphans). */
 export function ScopedScanPanel({
@@ -60,6 +77,8 @@ export function ScopedScanPanel({
   const L = t();
   const channel = channelFor(cleanupSource);
   const [items, setItems] = useState<CleanupItem[] | null>(null);
+  /** UX-6: a failed scan must not leave the list saying "measuring" forever. */
+  const [scanError, setScanError] = useState<string | null>(null);
   const [omitted, setOmitted] = useState(0);
   const [degraded, setDegraded] = useState<string[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
@@ -67,6 +86,8 @@ export function ScopedScanPanel({
   /** Kept on screen after the toast fades so failures stay actionable (UX-04). */
   const [result, setResult] = useState<FullCleanupReport | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
+  // UX-18: the toast disappears in seconds; the header keeps the finding.
+  const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const submitted = useRef<CleanupItem[]>([]);
   /** Backup choice from the last confirmation — a retry must not silently flip it. */
   const backupEnabled = useRef(false);
@@ -75,7 +96,25 @@ export function ScopedScanPanel({
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
   // Nested directories are collapsed and unknown sizes counted, so the header can
   // say what will actually be freed instead of only how many rows are checked.
-  const plan = useMemo(() => summarizeCleanupPlan(items || [], selected), [items, selected]);
+  const plan = useMemo(() => summarizeCleanupPlan(items || [], selected), [items, selected]);  // UX-1: the same subtotal over every scan-found row. The biggest category is
+  // often unchecked by default, so "12 MB selected" used to read as "found nothing".
+  const found = useMemo(() => summarizeScanTotal(items || []), [items]);
+  const summaryText = items
+    ? [
+        found.knownKb > 0 ? L.scanFoundTotal(formatSize(found.knownKb)) : "",
+        L.orphanSelectedMeta(selected.size, formatSize(plan.knownKb)),
+        plan.unknown > 0 ? L.planUnknownSize(plan.unknown) : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+  // UX-15: the progress bar no longer announces its 250 ms stage updates.
+  // This outer region collapses them into one announcement when a stage settles.
+  const liveText =
+    busy && progress && (progress.status === "running" || progress.status === "stopping")
+      ? L.scanStage(progress.stage)
+      : summaryText;
+  const announcedSummary = useSettledText(liveText, busy ? 800 : 400);
   // UX-05: bucket groups, largest measured item first inside each group. Backend
   // insertion order buried a multi-GB browser cache under KB-sized npm dirs.
   const rows = useMemo<Row[]>(() => {
@@ -91,9 +130,17 @@ export function ScopedScanPanel({
     const round = nextScanRound();
     setBusy(true);
     setItems(null);
+    setScanError(null);
+    setLastScanCount(null);
     setSelected(new Set());
     setOmitted(0);
     setDegraded([]);
+    // UX-7: an explicit rescan retires the previous report and its retry list.
+    // The internal post-cleanup refresh must keep them on screen.
+    if (!quiet) {
+      setResult(null);
+      submitted.current = [];
+    }
     if (!quiet) toast.info(L.scanInProgress, { channel });
     try {
       // `normalizeScopedScan` runs before the progress counter reads the result,
@@ -106,24 +153,33 @@ export function ScopedScanPanel({
       setItems(found.items);
       setOmitted(found.omitted);
       setDegraded(found.degraded);
+      setLastScanCount(found.items.length);
       setSelected(new Set(found.items.filter(defaultSelectable).map((it) => it.path)));
-      if (!quiet && found.items.length === 0) toast.info(L.scanComplete(0), { channel });
+      // UX-10: a degraded or capped scan must not read as a complete one —
+      // the toast was the only part a screen reader actually announced.
+      const partial = found.degraded.length > 0;
+      const text = partial ? L.scanCompleteIncomplete(found.items.length) : L.scanComplete(found.items.length);
+      const full = found.omitted > 0 ? `${text} · ${L.scanOmitted(found.omitted)}` : text;
+      if (!quiet && (found.items.length === 0 || partial || found.omitted > 0)) toast.info(full, { channel });
       else if (!quiet) {
-        toast.success(L.scanComplete(found.items.length), { channel, ttl: 2500 });
+        toast.success(full, { channel, ttl: 2500 });
       }
     } catch (e) {
       if (!isCurrentScanRound(round)) return;
       if (scanCancelled(e)) {
+        setScanError(L.scanCancelledIncomplete);
         if (!quiet) toast.info(L.scanCancelledIncomplete, { channel });
         return;
       }
       const msg = formatError(e, "analyze");
+      setScanError(L.scanFailedIncomplete);
       onError(msg);
       toast.error(msg, { channel: quiet ? `${channel}-refresh` : channel });
     } finally {
       if (isCurrentScanRound(round)) setBusy(false);
     }
-  }, [scan, runReadOnly, L, onError, channel, nextScanRound, isCurrentScanRound]);
+  }, [scan, runReadOnly, L, onError, channel, nextScanRound, isCurrentScanRound,
+      setBusy, setItems, setScanError, setLastScanCount, setSelected, setOmitted, setDegraded, setResult]);
 
   useEffect(() => {
     void runScan();
@@ -147,9 +203,21 @@ export function ScopedScanPanel({
     display_icon: "",
   }), [appName, cleanupSource]);
 
-  /** Run a cleanup for the given candidates and keep the report on screen. */
-  const runCleanup = useCallback(async (picked: CleanupItem[], backupEnabled: boolean, quiet = false) => {
-    if (picked.length === 0 || busy) return;
+  /**
+   * Run a cleanup for the given candidates and keep the report on screen.
+   *
+   * F-8: returns whether the cleanup actually accomplished something. The retry
+   * path used to read nothing and then pushed an unconditional success toast on
+   * the same channel, and `toast.push` cancels every earlier toast on that
+   * channel — so a rejection or a `failed > 0` / `aborted` report had its error
+   * toast destroyed and replaced with "已重试 N 项".
+   */
+  const runCleanup = useCallback(async (
+    picked: CleanupItem[],
+    backupEnabled: boolean,
+    quiet = false,
+  ): Promise<boolean> => {
+    if (picked.length === 0 || busy) return false;
     submitted.current = picked;
     setBusy(true);
     try {
@@ -157,6 +225,9 @@ export function ScopedScanPanel({
         dry_run: false,
         skip_official_uninstall: true,
         backup_enabled: backupEnabled,
+        // F-9: the user can decline a restore point; the backend still
+        // owns the decision when this is absent.
+        restore_point: loadRestorePointPref(),
         cleanup_source: cleanupSource,
       });
       setResult(report);
@@ -166,14 +237,20 @@ export function ScopedScanPanel({
       if (!report.aborted) {
         await runScan(true);
       }
+      return cleanupAccomplishedSomething(report);
     } catch (e) {
       const msg = formatError(e, "cleanup");
+      // UX-7: the IPC never ran, so the previous report and its retry button
+      // must not stay on screen as if they described this attempt.
+      setResult(null);
+      submitted.current = [];
       onError(msg);
       toast.error(msg, { channel });
+      return false;
     } finally {
       setBusy(false);
     }
-  }, [busy, buildApp, cleanupSource, L, onError, onLastReport, runScan, channel]);
+  }, [busy, buildApp, cleanupSource, L, onError, onLastReport, runScan, channel, setBusy, setResult]);
 
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
@@ -202,8 +279,11 @@ export function ScopedScanPanel({
     }
     setRetryBusy(true);
     try {
-      await runCleanup(picked, backupEnabled.current, true);
-      toast.success(L.cleanupRetriedDone(picked.length), { channel, ttl: 2500 });
+      const done = await runCleanup(picked, backupEnabled.current, true);
+      // F-8: only report a successful retry when the retry actually deleted
+      // something. An error toast on this same channel was previously cancelled
+      // and replaced by this success toast.
+      if (done) toast.success(L.cleanupRetriedDone(picked.length), { channel, ttl: 2500 });
     } finally {
       setRetryBusy(false);
     }
@@ -212,8 +292,37 @@ export function ScopedScanPanel({
   /** Bucket headers use the same localized bucket names as the report view. */
   const groupLabel = (bucket: string) => {
     if (!bucket) return L.linkedOther;
+    // UX-8: the installer panel's two groups used to repeat the panel title.
+    if (cleanupSource === "installer") {
+      if (bucket === "updater_cache") return L.scanEvidenceLabel("updater_cache", "");
+      if (bucket === "download_pkg") return L.scanEvidenceLabel("installer_package", "");
+    }
     const text = backendText(bucket, "scan");
     return text === L.backendDetailUnavailable ? bucket : text;
+  };
+
+  /**
+   * UX-4 / UX-5: the row reason was written for an installed app. In these
+   * panels "belongs to the software" or "suspected leftover of the software"
+   * names an app that does not exist; say what the category is instead.
+   */
+  const reasonLine = (it: CleanupItem) => {
+    if (it.bucket === "updater_cache") return L.reasonUpdaterCache;
+    if (
+      it.confidence === "confirmed" &&
+      (it.bucket === "dev" || it.bucket === "game" || it.bucket === "browser")
+    ) {
+      return backendText(it.bucket, "scan");
+    }
+    return leftoverReasonLine(it, L);
+  };
+
+  const copyPath = (path: string) => {
+    if (!navigator.clipboard) return;
+    void navigator.clipboard.writeText(path).then(
+      () => toast.success(L.pathCopied),
+      () => toast.error(L.pathCopyFailed),
+    );
   };
 
   return (
@@ -221,6 +330,11 @@ export function ScopedScanPanel({
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0, fontSize: 13.5, fontWeight: 650 }}>{title}</h2>
         <span style={css.muted}>{hint}</span>
+        {!busy && lastScanCount !== null && (
+          <span style={css.muted}>
+            {`${L.orphanJustScanned} · ${lastScanCount}`}
+          </span>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
             style={{ ...css.btn, height: 30, opacity: busy || selected.size === 0 ? 0.5 : 1 }}
@@ -232,7 +346,18 @@ export function ScopedScanPanel({
           <button
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy || !items || items.length === 0}
-            onClick={() => setSelected(new Set(items!.map((it) => it.path)))}
+            title={L.orphanSelectAllHint}
+            onClick={() =>
+              setSelected(
+                new Set(
+                  items!
+                    // UX-9: "select all" means the same thing here as on the
+                    // orphan page — keep-class rows stay unchecked.
+                    .filter((it) => bucketItem(it) !== "keep")
+                    .map((it) => it.path),
+                ),
+              )
+            }
           >
             {L.orphanSelectAll}
           </button>
@@ -251,8 +376,29 @@ export function ScopedScanPanel({
           </button>
         </div>
       </div>
+      {/* UX-15: a live region that exists before the scan and announces only
+          the settled summary; the visible line stays silent. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          margin: -1,
+          padding: 0,
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        {announcedSummary}
+      </div>
       {items && (
-        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
+        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
+          {found.knownKb > 0 ? `${L.scanFoundTotal(formatSize(found.knownKb))} · ` : ""}
           {L.orphanSelectedMeta(selected.size, formatSize(plan.knownKb))}
           {plan.unknown > 0 ? ` · ${L.planUnknownSize(plan.unknown)}` : ""}
         </div>
@@ -266,7 +412,7 @@ export function ScopedScanPanel({
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
           <div>{L.scanDegradedHint}</div>
           <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-            {degraded.map((root) => <li key={root}>{root}</li>)}
+            {degraded.map((root) => <li key={root}>{degradedText(root)}</li>)}
           </ul>
         </div>
       )}
@@ -274,11 +420,12 @@ export function ScopedScanPanel({
       <ScanProgressBar progress={progress} onCancel={cancel} />
       <VirtualList
         items={rows}
-        height={320}
+        height="min(320px, 40vh)"
         estimateSize={44}
         listRole
         ariaLabel={title}
         keyOf={rowKey}
+        rowRole={(row) => (row.kind === "header" ? "presentation" : "listitem")}
         renderItem={(row) => row.kind === "header" ? (
           <div style={{ ...css.muted, fontSize: 11, fontWeight: 650, padding: "8px 4px 2px", letterSpacing: 0.3 }}>
             {groupLabel(row.bucket)} · {row.count}
@@ -319,13 +466,15 @@ export function ScopedScanPanel({
               <ToolGlyph name={row.item.kind === "dir" ? "folder" : "file"} />
             </span>
             <span style={{ minWidth: 0, flex: 1 }}>
-              <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>
+              <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }} title={row.item.path}>
                 {row.item.path}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {leftoverReasonLine(row.item, L)}
+                {reasonLine(row.item)}
                 {row.item.reason ? ` · ${backendText(row.item.reason, "scan")}` : ""}
-                {row.item.size_kb != null ? ` · ${formatSize(row.item.size_kb)}` : " · —"}
+                {row.item.size_kb != null
+                  ? ` · ${row.item.size_capped ? "≥ " : ""}${formatSize(row.item.size_kb)}`
+                  : " · —"}
               </div>
               <div style={{ fontSize: 10.5, marginTop: 1 }}>
                 <span
@@ -349,11 +498,19 @@ export function ScopedScanPanel({
           >
             {L.openLocation}
           </button>
+          <button
+            type="button"
+            style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0, alignSelf: "flex-start" }}
+            aria-label={`${L.copyPath}: ${row.item.path}`}
+            onClick={() => copyPath(row.item.path)}
+          >
+            {L.copyPath}
+          </button>
           </div>
         )}
         empty={
           items === null
-            ? <div style={css.muted}>{L.scanEstimatingItems}</div>
+            ? <div style={css.muted}>{scanError ?? L.scanEstimatingItems}</div>
             : <div style={css.muted}>{L.scanEmptyNone}</div>
         }
       />

@@ -15,8 +15,9 @@ import {
 } from "../lib/decision";
 import { appKey, scanMatchesApp } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
-import { cleanupFeedback } from "../lib/cleanupFeedback";
+import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
+import { loadRestorePointPref } from "../lib/restorePointPref";
 
 /** Grouped cleanup setters (A-4). */
 export type CleanupFlowSetters = {
@@ -132,6 +133,9 @@ export function useCleanupHandlers({
           dry_run: false,
           skip_official_uninstall: true,
           backup_enabled: checked,
+        // F-9: the user can decline a restore point; the backend still
+        // owns the decision when this is absent.
+        restore_point: loadRestorePointPref(),
           cleanup_source:
             target.source === "Orphan" || target.source === "Monitor"
               ? (target.source.toLowerCase() as "orphan" | "monitor")
@@ -224,6 +228,9 @@ export function useCleanupHandlers({
  // Normal analysis runs official uninstall unless advanced direct cleanup is selected.
         skip_official_uninstall: !runOfficial,
         backup_enabled: backupEnabledRef.current,
+        // F-9: the user can decline a restore point; the backend still
+        // owns the decision when this is absent.
+        restore_point: loadRestorePointPref(),
         cleanup_source:
           selected.source === "Monitor"
             ? "monitor"
@@ -248,8 +255,13 @@ export function useCleanupHandlers({
       setScan?.(null);
       if (r.failed > 0) {
         toast.error(L.batchDetail(r.deleted, r.failed));
+      } else if (!cleanupAccomplishedSomething(r)) {
+        // F-1: `failed === 0` here used to mean "success". A selection the keep
+        // rules refused every row of also has `failed === 0`, and it was
+        // reported as a green "成功 0 · 失败 0".
+        toast.error(cleanupNothingText(r, L));
       } else {
-        toast.success(L.batchDetail(r.deleted, r.failed));
+        toast.success(cleanupOutcomeText(r, L));
       }
  // SOP checklist: re-probe cleaned paths
       const vseq = ++verifySeqRef.current;
@@ -343,6 +355,11 @@ export function useCleanupHandlers({
         if (brief) {
           setAiRisk(brief);
           message = `${message}\n\n${L.aiRiskTitle}: ${brief.slice(0, 160)}`;
+        } else {
+          // F-19: `ai_risk_brief` returns Ok(None) when the feature is off, so
+          // the confirm dialog silently lacked the AI line. Say it is absent.
+          setAiRisk(null);
+          message = `${message}\n\n${L.aiRiskBriefFailed}`;
         }
       } catch (e) {
  // CQ-10: the AI brief used to fail silently, so a missing model line read as

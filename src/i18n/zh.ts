@@ -97,6 +97,9 @@ export const dict = {
     closeModeHint: "托盘模式下点关闭只隐藏窗口，可在托盘图标菜单中退出",
     rescanAfterUninstall: "卸载后自动重新扫描",
     rescanAfterUninstallHint: "官方卸载成功后自动深度扫描，检查是否产生新残留（默认开启）",
+    restorePointBeforeCleanup: "清理前创建系统还原点",
+    restorePointBeforeCleanupHint:
+      "深度清理前请求创建 Windows 系统还原点（Windows 约 24 小时只允许创建一次，关闭后跳过；默认开启）",
     closeToTrayHint: "已最小化到托盘，双击托盘图标可重新打开",
     closeChoiceTitle: "关闭 Remova？",
     closeChoiceBody: "可以最小化到系统托盘继续在后台运行，也可以完全退出程序。",
@@ -159,6 +162,10 @@ export const dict = {
     batchRetryFailed: "重试失败项",
     batchDismiss: "关闭",
     restoreNoSessions: "暂无备份会话",
+    // F-5: 备份中止会留下没有封印的会话目录，它永远无法还原。不列出它，但要
+    // 告诉用户它在那儿、可以删掉，而不是让用户以为备份凭空少了一个。
+    restoreUnsealedSessions: (n: number) => `另有 ${n} 个未完成的备份会话（备份中止留下，无法还原，可删除）`,
+    restorePathFailed: "PATH 条目未能还原",
     restoreSelect: "选择要还原的会话",
     restorePreviewTitle: "还原预览",
     restoreCreated: "备份时间",
@@ -246,6 +253,7 @@ export const dict = {
     confirmDisableTask: (name: string) => `将禁用计划任务「${name}」。确定？`,
     confirmDisableStartup: (name: string) => `将禁止「${name}」开机自启。确定？`,
     ignorePub: "忽略发布者",
+    ignorePublisherMissing: "当前软件没有发布者信息，无法忽略发布者",
     appWhitelist: "应用白名单",
     appWhitelistHint: "管理已忽略的软件与发布者，可移除以恢复显示",
     whitelistRemove: "移除",
@@ -269,6 +277,7 @@ export const dict = {
     monitorRunning: "安装追踪中…完成安装后再结束",
     scanStart: "扫描",
     scanComplete: (n: number) => `扫描完成，发现 ${n} 项`,
+    scanCompleteIncomplete: (n: number) => `扫描完成，发现 ${n} 项；部分位置无法读取`,
     scanInProgress: "扫描进行中",
     cancelScan: "取消扫描",
     scanStopping: "正在停止扫描，等待当前读取返回…",
@@ -284,6 +293,11 @@ export const dict = {
     // UX-07: "genuinely nothing" and "could not read the roots" are different facts.
     scanEmptyNone: "未发现可清理的项目",
     scanDegradedHint: "以下位置无法读取，本次结果可能不完整：",
+    degradedUnreadableRoot: (path: string) => `无法读取 ${path}`,
+    degradedDownloadsRootMissing: "找不到“下载”文件夹，未扫描该目录",
+    degradedProfileNotSet: "USERPROFILE 环境变量未设置，未扫描其下的共享缓存根",
+    degradedLocalAppDataNotSet: "LOCALAPPDATA 环境变量未设置，未扫描 JetBrains 缓存根",
+    degradedPeBudgetExhausted: (n: number) => `另有 ${n} 个可执行文件未做安装包校验（受单次扫描上限限制）`,
     scanStage: (stage: string) => ({ preparing: "准备扫描", files: "扫描文件", registry: "扫描注册表",
       services: "扫描服务", tasks: "扫描计划任务", shortcuts: "扫描快捷方式与临时文件",
       other: "扫描 PATH 与其他关联项", caches: "扫描更新缓存", sizes: "估算占用", finalizing: "核对扫描结果" } as Record<string, string>)[stage] ?? "准备扫描",
@@ -350,6 +364,12 @@ export const dict = {
     // reboot-delayed counts, so the headline must state all four outcomes.
     cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
       `成功 ${deleted} · 失败 ${failed} · 跳过 ${skipped} · 待重启 ${delayed}`,
+    // F-1: `failed === 0` used to be reported as a green success. When every
+    // hand-picked row was refused by the keep rules the user was told "成功 0".
+    cleanupNothingRemoved: (skipped: number) =>
+      skipped > 0
+        ? `没有清理任何项目：${skipped} 项被保留规则拒绝（高风险 / 共享组件 / 用户数据）`
+        : "没有可清理的项目",
     retryFailedItems: "重试失败项",
     cleanupResultTitle: "本次清理结果",
     cleanupRetriedDone: (n: number) => `已重试 ${n} 项`,
@@ -443,6 +463,8 @@ export const dict = {
     conclusionSourceAi: "智能解读",
     conclusionSpace: (kb: string) => `预计可释放约 ${kb}`,
     planUnknownSize: (n: number) => `另有 ${n} 项体积未能测算`,
+    // UX-1：把扫描发现的总量与"已选"并列展示——最大的一类往往默认不勾，只报已选会被读成"没找到"。
+    scanFoundTotal: (sizeText: string) => `扫描发现合计 ~${sizeText}`,
     conclusionCleanSafe: (n: number) => `选中建议项（${n}）`,
     conclusionShowConfirm: (n: number) => `需确认（${n}）`,
     conclusionShowKeep: (n: number) => `为何保留（${n}）`,
@@ -592,6 +614,7 @@ export const dict = {
     reasonShared: "可能是共享组件，默认保留",
     reasonHigh: "高风险，请确认后再决定",
     reasonSuspect: "疑似残留，建议确认后清理",
+    reasonUpdaterCache: "更新程序缓存（不是应用残留）",
     reasonUserData: "用户数据，默认不删",
     reasonUserLibrary: "用户库中的应用数据（可能含存档），确认后再清",
     reasonIgnored: "已在忽略列表中，跳过",
@@ -660,6 +683,9 @@ export const dict = {
     basicInfo: "基本信息",
     linkedItems: "关联项目",
     openLocation: "查看位置",
+    copyPath: "复制路径",
+    pathCopied: "路径已复制",
+    pathCopyFailed: "复制路径失败",
     linkedProgramFiles: "程序文件",
     linkedConfigFiles: "配置文件",
     linkedRegistry: "注册表项",

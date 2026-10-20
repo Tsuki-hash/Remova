@@ -10,6 +10,7 @@ import type { IdleApp } from "../types";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import { ScanProgressBar } from "./ScanProgressBar";
+import { normalizeIdleScan } from "../lib/scopedScan";
 
 /** Idle software radar — read-only ranking; jump back to the software list to uninstall. */
 export function IdleRadarPanel({
@@ -23,16 +24,25 @@ export function IdleRadarPanel({
 }) {
   const L = t();
   const [rows, setRows] = useState<IdleApp[] | null>(null);
+  const [omitted, setOmitted] = useState(0);
   const [busy, setBusy] = useState(false);
-  const { runItems, cancel, progress } = useAssociationScan();
+  const { runReadOnly, cancel, progress } = useAssociationScan();
   const { next: nextRound, isCurrent: isCurrentRound, invalidate: invalidateRound } = useRequestSeq();
 
   const load = async () => {
     const round = nextRound();
     setBusy(true);
     setRows(null);
+    setOmitted(0);
     try {
-      setRows(await runItems(api.rankIdleApps));
+      const { items, omitted } = normalizeIdleScan(
+        await runReadOnly(
+          (id: number) => api.rankIdleApps(id),
+          (r) => normalizeIdleScan(r).items.length,
+        ),
+      );
+      setRows(items);
+      setOmitted(omitted);
     } catch (e) {
       if (isCurrentRound(round) && !scanCancelled(e)) onError(formatError(e));
     } finally {
@@ -63,6 +73,11 @@ export function IdleRadarPanel({
         </div>
       </div>
       <ScanProgressBar progress={progress} onCancel={cancel} />
+      {omitted > 0 && (
+        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
+          {L.scanOmitted(omitted)}
+        </div>
+      )}
       <VirtualList
         items={rows ?? []}
         height={320}

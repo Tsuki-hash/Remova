@@ -7,10 +7,13 @@ export type SessionInfo = {
   name: string;
   size_kb: number;
   created_at: string;
+  /** `false` = an aborted backup's leftover directory; it has no seal and can never be restored. */
+  sealed: boolean;
 };
 
 export function RestorePanel({
   sessions,
+  unsealedCount = 0,
   loading,
   loadError,
   onReload,
@@ -27,6 +30,8 @@ export function RestorePanel({
   onClose,
 }: {
   sessions: SessionInfo[];
+  /** Session directories that never got a seal and are therefore not listed above. */
+  unsealedCount?: number;
   loading?: boolean;
   loadError?: string | null;
   onReload?: () => void;
@@ -74,8 +79,7 @@ export function RestorePanel({
         <div style={css.muted}>{loading ? L.loadingGeneric : L.restoreNoSessions}</div>
       ) : (
         <>
-          <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>
-          <div style={{ maxHeight: 220, overflow: "auto" }}>
+          <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>          <div style={{ maxHeight: 220, overflow: "auto" }}>
             {sessions.map((s) => {
               const date = /^\d{10}$/.test(s.created_at)
                 ? new Date(Number(s.created_at) * 1000).toLocaleString(currentLang() === "zh" ? "zh-CN" : "en-US")
@@ -129,6 +133,11 @@ export function RestorePanel({
               </div>
             ); })}
           </div>
+          {unsealedCount > 0 && (
+            <p style={{ ...css.muted, fontSize: 12, marginTop: 6 }} data-testid="restore-unsealed">
+              {L.restoreUnsealedSessions(unsealedCount)}
+            </p>
+          )}
         </>
       )}
       {!!pick && !loadError && <section aria-label={L.restorePreviewTitle} style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>

@@ -24,6 +24,9 @@ import {
   formatRiskNote,
 } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
+import { loadRestorePointPref } from "../lib/restorePointPref";
+import { summarizeCleanupPlan } from "../lib/cleanupPlan";
+import { normalizeOrphanScan } from "../lib/scopedScan";
 
 const ORPHAN_CHANNEL = "orphan-scan";
 
@@ -40,7 +43,8 @@ export function OrphanPage({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
-  const { runItems, cancel, progress } = useAssociationScan();
+  const [omitted, setOmitted] = useState(0);
+  const { runReadOnly, cancel, progress } = useAssociationScan();
   const { next: nextScanRound, isCurrent: isCurrentScanRound, invalidate: invalidateScanRound } = useRequestSeq();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useListViewportHeight(scrollRef);
@@ -49,9 +53,10 @@ export function OrphanPage({
 
   const selectedMeta = useMemo(() => {
     if (!items) return "";
-    const picked = items.filter((it) => selected.has(it.path));
-    const kb = picked.reduce((sum, it) => sum + (it.size_kb || 0), 0);
-    return L.orphanSelectedMeta(picked.length, kb > 0 ? formatSize(kb) : "");
+    const plan = summarizeCleanupPlan(items, selected);
+    const kb = plan.knownKb > 0 ? formatSize(plan.knownKb) : "";
+    const unknown = plan.unknown > 0 ? ` · ${L.planUnknownSize(plan.unknown)}` : "";
+    return `${L.orphanSelectedMeta(plan.count, kb)}${unknown}`;
   }, [items, selected, L]);
 
   const scan = async (quiet = false) => {
@@ -61,10 +66,16 @@ export function OrphanPage({
     setItems(null);
     setSelected(new Set());
     setLastScanCount(null);
+    setOmitted(0);
  // One channel for the whole run — no sticky pile-up.
     if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
-      const list = await runItems(api.orphanScan);
+      const raw = await runReadOnly(
+        (id: number) => api.orphanScan(id),
+        (r) => normalizeOrphanScan(r).items.length,
+      );
+      const { items: list, omitted: leftOut } = normalizeOrphanScan(raw);
+      setOmitted(leftOut);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       const s = summarizeLeftovers(list);
@@ -133,6 +144,9 @@ export function OrphanPage({
         dry_run: false,
         skip_official_uninstall: true,
         backup_enabled: checked,
+        // F-9: the user can decline a restore point; the backend still
+        // owns the decision when this is absent.
+        restore_point: loadRestorePointPref(),
         cleanup_source: "orphan",
       });
       if (report.aborted) {
@@ -193,6 +207,11 @@ export function OrphanPage({
           </button>
         </div>
         <ScanProgressBar progress={progress} onCancel={cancel} />
+        {omitted > 0 && (
+          <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
+            {L.scanOmitted(omitted)}
+          </div>
+        )}
       </div>
       {items && (
         <div

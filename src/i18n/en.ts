@@ -161,6 +161,11 @@ export const dict: EnDict = {
     batchRetryFailed: "Retry failed",
     batchDismiss: "Dismiss",
     restoreNoSessions: "No backup sessions",
+    // F-5: an aborted backup leaves a session directory with no seal, which can
+    // never be restored. It is not listed, but the user is told it exists and
+    // can be deleted rather than left wondering where a backup went.
+    restoreUnsealedSessions: (n: number) => `${n} unfinished backup session(s) left by an aborted backup (cannot be restored, can be deleted)`,
+    restorePathFailed: "PATH entry could not be restored",
     restoreSelect: "Select a session to restore",
     restorePreviewTitle: "Restore preview",
     restoreCreated: "Backed up",
@@ -248,6 +253,7 @@ export const dict: EnDict = {
     confirmDisableTask: (name: string) => `Disable scheduled task "${name}"?`,
     confirmDisableStartup: (name: string) => `Stop "${name}" from starting with Windows?`,
     ignorePub: "Ignore publisher",
+    ignorePublisherMissing: "This app has no publisher information",
     appWhitelist: "App whitelist",
     appWhitelistHint: "Manage ignored apps and publishers; remove an entry to show it again",
     whitelistRemove: "Remove",
@@ -265,6 +271,9 @@ export const dict: EnDict = {
     rescanAfterUninstall: "Rescan after uninstall",
     rescanAfterUninstallHint:
       "Automatically deep-scan leftovers after official uninstall succeeds (default on)",
+    restorePointBeforeCleanup: "Create a system restore point before cleanup",
+    restorePointBeforeCleanupHint:
+      "Ask Windows to create a restore point before deep cleanup (Windows only allows one about every 24 hours; skipped when off; default on)",
     closeToTrayHint: "Minimized to tray — double-click the tray icon to reopen",
     closeChoiceTitle: "Close Remova?",
     closeChoiceBody: "Minimize to the system tray and keep running in the background, or quit completely.",
@@ -282,6 +291,8 @@ export const dict: EnDict = {
     monitorRunning: "Install tracking on… stop after the install finishes",
     scanStart: "Scan",
     scanComplete: (n: number) => `Scan complete: ${n} items found`,
+    scanCompleteIncomplete: (n: number) =>
+      `Scan complete: ${n} items found; some locations could not be read`,
     scanInProgress: "A scan is running",
     cancelScan: "Cancel scan",
     scanStopping: "Stopping scan; waiting for the current read…",
@@ -297,6 +308,12 @@ export const dict: EnDict = {
     // UX-07: "genuinely nothing" and "could not read the roots" are different facts.
     scanEmptyNone: "No cleanable items found",
     scanDegradedHint: "These locations could not be read, so this result may be incomplete:",
+    degradedUnreadableRoot: (path: string) => `Could not read ${path}`,
+    degradedDownloadsRootMissing: "The Downloads folder could not be located; it was not scanned",
+    degradedProfileNotSet: "USERPROFILE is not set; the shared cache root under it was not scanned",
+    degradedLocalAppDataNotSet: "LOCALAPPDATA is not set; the JetBrains cache root was not scanned",
+    degradedPeBudgetExhausted: (n: number) =>
+      `${n} more executable(s) were not checked for being installers (per-scan limit)`,
     scanStage: (stage: string) => ({ preparing: "Preparing scan", files: "Scanning files", registry: "Scanning registry",
       services: "Scanning services", tasks: "Scanning scheduled tasks", shortcuts: "Scanning shortcuts and temporary files",
       other: "Scanning PATH and other linked items", caches: "Scanning update caches", sizes: "Estimating size", finalizing: "Checking scan results" } as Record<string, string>)[stage] ?? "Preparing scan",
@@ -363,6 +380,12 @@ export const dict: EnDict = {
     // reboot-delayed counts, so the headline must state all four outcomes.
     cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
       `ok ${deleted} · failed ${failed} · skipped ${skipped} · pending reboot ${delayed}`,
+    // F-1: `failed === 0` used to be reported as a green success. When every
+    // hand-picked row was refused by the keep rules the user was told "ok 0".
+    cleanupNothingRemoved: (skipped: number) =>
+      skipped > 0
+        ? `Nothing was cleaned: ${skipped} item(s) were refused by the keep rules (high risk / shared component / user data)`
+        : "There was nothing to clean",
     retryFailedItems: "Retry failed items",
     cleanupResultTitle: "This cleanup result",
     cleanupRetriedDone: (n: number) => `Retried ${n} item(s)`,
@@ -458,6 +481,9 @@ export const dict: EnDict = {
     conclusionSourceAi: "Smart reading",
     conclusionSpace: (kb: string) => `About ${kb} can be freed`,
     planUnknownSize: (n: number) => `${n} more item(s) could not be measured`,
+    // UX-1: the scan's total, next to the selected total — the biggest rows are
+    // often unchecked, and the selected subtotal alone read as "found nothing".
+    scanFoundTotal: (sizeText: string) => `Found total ~${sizeText}`,
     conclusionCleanSafe: (n: number) => `Select suggested (${n})`,
     conclusionShowConfirm: (n: number) => `Review (${n})`,
     conclusionShowKeep: (n: number) => `Why keep (${n})`,
@@ -607,6 +633,7 @@ export const dict: EnDict = {
     reasonShared: "Possible shared component — kept by default",
     reasonHigh: "High risk — confirm before deleting",
     reasonSuspect: "Possible leftover — review before cleaning",
+    reasonUpdaterCache: "Updater cache (not an app leftover)",
     reasonUserData: "User data — not deleted by default",
     reasonUserLibrary: "App data under a user library (may include saves) — confirm before cleaning",
     reasonIgnored: "On the ignore list — skipped",
@@ -675,6 +702,9 @@ export const dict: EnDict = {
     basicInfo: "Basic info",
     linkedItems: "Linked items",
     openLocation: "Open location",
+    copyPath: "Copy path",
+    pathCopied: "Path copied",
+    pathCopyFailed: "Could not copy the path",
     linkedProgramFiles: "Program files",
     linkedConfigFiles: "Config files",
     linkedRegistry: "Registry",

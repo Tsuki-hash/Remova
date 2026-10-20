@@ -4,9 +4,15 @@ import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { backendText } from "./backendText";
 import { defaultSelectable } from "../lib/decision";
+import {
+  cleanupAccomplishedSomething,
+  cleanupNothingText,
+  cleanupOutcomeText,
+} from "../lib/cleanupFeedback";
 import { toast } from "../lib/toast";
 import type { InstalledApp } from "../types";
 import type { BatchItemResult } from "../components/BatchPanels";
+import { loadRestorePointPref } from "./restorePointPref";
 
 export type BatchCallbacks = {
   onIndex: (i: number) => void;
@@ -62,6 +68,9 @@ export async function runBatchCleanup(
           dry_run: false,
           skip_official_uninstall: !runOfficial,
           backup_enabled: backupEnabled,
+        // F-9: the user can decline a restore point; the backend still
+        // owns the decision when this is absent.
+        restore_point: loadRestorePointPref(),
           cleanup_source: "uninstall",
         });
         officialDone ||= runOfficial && report.uninstall_ok;
@@ -85,7 +94,9 @@ export async function runBatchCleanup(
           cb.onResults([...results]);
           continue;
         }
-        const detail = L.batchDetail(report.deleted, report.failed);
+        // F-1: the per-app line states all four counts, not just deleted/failed,
+        // so a run that deleted nothing is legible in the batch summary too.
+        const detail = cleanupOutcomeText(report, L);
         if (report.failed > 0) {
           results.push({ key, name: app.name, status: "failed", detail, officialDone });
         } else if (!items.length && report.uninstall_ok) {
@@ -96,6 +107,17 @@ export async function runBatchCleanup(
             detail: L.batchDetail(0, 0),
           });
           okKeys.add(key);
+        } else if (!cleanupAccomplishedSomething(report)) {
+          // F-1: `failed === 0` counted the app as "processed" even when the
+          // keep rules refused every hand-picked row. Report it as skipped so
+          // the batch summary does not claim the app was cleaned.
+          results.push({
+            key,
+            name: app.name,
+            status: "skipped",
+            detail: cleanupNothingText(report, L),
+            officialDone,
+          });
         } else {
           results.push({ key, name: app.name, status: "ok", detail });
           okKeys.add(key);

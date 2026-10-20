@@ -58,7 +58,12 @@ export function MonitorPanel({
           {L.monitorDegraded}
         </div>
       )}
-      <div style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}>
+      <div
+        tabIndex={0}
+        role="group"
+        aria-label={L.monitorDiff}
+        style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}
+      >
         {total === 0 ? (
           <div style={{ ...css.muted, padding: "8px 0" }}>{L.monitorEmptyHint}</div>
         ) : (

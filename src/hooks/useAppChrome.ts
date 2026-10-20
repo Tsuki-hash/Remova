@@ -8,6 +8,7 @@ import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { isRecentInstall } from "../lib/decision";
+import { normalizeOrphanScan } from "../lib/scopedScan";
 
 /** Grouped chrome/tool setters (same shape as CleanupFlowSetters). */
 export type AppChromeFlow = {
@@ -72,6 +73,10 @@ export function useAppChrome({
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const checkupScan = useAssociationScan();
   const monitorScan = useAssociationScan();
+  // F-20: bind the stable callbacks, so the dependency arrays can name them
+  // without depending on the hook's re-created container object.
+  const checkupRunReadOnly = checkupScan.runReadOnly;
+  const monitorRunReadOnly = monitorScan.runReadOnly;
   const checkupBusyRef = useRef(false);
   const monitorBusyRef = useRef(false);
 
@@ -102,8 +107,18 @@ export function useAppChrome({
 
   const doIgnorePublisher = useCallback(
     async (appOverride?: InstalledApp) => {
-      const pub = (appOverride ?? selected)?.publisher;
-      if (!pub) return;
+      const app = appOverride ?? selected;
+      // F-21: without an app this used to return undefined into a `pending`
+      // mutation — a spinner with no action and no feedback.
+      if (!app) {
+        toast.info(L.selectRowHint);
+        return;
+      }
+      const pub = app.publisher;
+      if (!pub) {
+        toast.info(L.ignorePublisherMissing);
+        return;
+      }
       try {
         const ig = await api.ignorePublisher(pub);
         flow.setIgnorePub(ig.publishers || []);
@@ -150,13 +165,13 @@ export function useAppChrome({
     try {
       if (!monitoring) {
         toast.info(L.monitorStarting, { channel: MON_CH });
-        await monitorScan.runReadOnly(api.beginInstallMonitor, () => 0);
+        await monitorRunReadOnly(api.beginInstallMonitor, () => 0);
         residual.setMonitoring(true);
         residual.setMonitorDiff(null);
         toast.success(L.monitorRunning, { channel: MON_CH, ttl: 3000 });
       } else {
         toast.info(L.monitorFinishing, { channel: MON_CH });
-        const result = await monitorScan.runReadOnly(api.endInstallMonitor, result => result.diff.added_files.length + result.diff.added_reg_values.length);
+        const result = await monitorRunReadOnly(api.endInstallMonitor, result => result.diff.added_files.length + result.diff.added_reg_values.length);
         residual.setMonitoring(false);
         residual.setMonitorDiff({ ...result.diff, items: result.items });
         toast.success(
@@ -180,7 +195,7 @@ export function useAppChrome({
     } finally {
       monitorBusyRef.current = false;
     }
-  }, [monitoring, L, residual, flow, selected, monitorScan.runReadOnly]);
+  }, [monitoring, L, residual, flow, selected, monitorRunReadOnly]);
 
   const monitorDiffToCleanup = useCallback(
     (_diff: { added_files: string[]; added_reg_values: string[] }) => {
@@ -227,8 +242,11 @@ export function useAppChrome({
     void (async () => {
       setCheckupOrphanBusy(true);
       try {
-        const items = await checkupScan.runItems(api.orphanScan);
-        setCheckupOrphanCount(items.length);
+        const raw = await checkupRunReadOnly(
+          (id: number) => api.orphanScan(id),
+          (r) => normalizeOrphanScan(r).items.length,
+        );
+        setCheckupOrphanCount(normalizeOrphanScan(raw).items.length);
       } catch (e) {
         setCheckupOrphanCount(null);
         if (!scanCancelled(e)) toast.error(formatError(e, "analyze"));
@@ -237,7 +255,7 @@ export function useAppChrome({
         checkupBusyRef.current = false;
       }
     })();
-  }, [setCheckupOrphanCount, checkupScan.runItems]);
+  }, [setCheckupOrphanCount, checkupRunReadOnly]);
 
   return {
     checkupOrphanBusy,

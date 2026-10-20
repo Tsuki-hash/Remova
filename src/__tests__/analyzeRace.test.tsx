@@ -190,4 +190,50 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(captured.scanning).toBe(false);
     expect(result.current.scanProgress?.status).toBe("cancelled");
   });
+
+  // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only, and
+  // `analyze` never set it. A destructive action could therefore start while a
+  // deep scan was in flight, and the scan then landed on top of that action's
+  // report (it never increments `analyzeSeqRef`).
+  it("holds busyRef for the whole scan and releases it afterwards", async () => {
+    let finish!: (scan: ScanResult) => void;
+    analyzeMock.mockImplementationOnce(() => new Promise<ScanResult>(r => { finish = r; }));
+    const busyRef = { current: false };
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef }));
+    let work!: Promise<void>;
+    await act(async () => { work = result.current.analyze(app("AppA")); });
+    expect(busyRef.current, "a destructive action must be blocked mid-scan").toBe(true);
+    await act(async () => { finish(scan("AppA")); await work; });
+    expect(busyRef.current, "the guard must not leak once the scan settles").toBe(false);
+  });
+
+  it("does not release another holder's claim when analyze is superseded", async () => {
+    // A newer analyze supersedes an older one; the older one's `finally` is
+    // gated on its own seq, so it must not be what clears the ref.
+    let resolveA: (r: ScanResult) => void = () => {};
+    analyzeMock
+      .mockImplementationOnce(() => new Promise<ScanResult>(r => { resolveA = r; }))
+      .mockResolvedValueOnce(scan("AppB"));
+    const busyRef = { current: false };
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef }));
+    let workA!: Promise<void>;
+    await act(async () => { workA = result.current.analyze(app("AppA")); });
+    await act(async () => { await result.current.analyze(app("AppB")); });
+    expect(busyRef.current, "AppB still in flight").toBe(true);
+    await act(async () => { resolveA(scan("AppA")); await workA; });
+    expect(busyRef.current, "the superseded scan must not clear AppB's hold").toBe(false);
+  });
+
+  it("keeps the outer holder's claim when analyze is nested inside it", async () => {
+    // `startUninstall` sets busyRef itself and then calls analyze({fromUninstall}).
+    // analyze must restore the ref rather than clear it out from under it.
+    analyzeMock.mockResolvedValue(scan("AppA"));
+    const busyRef = { current: true };
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef }));
+    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
+    expect(busyRef.current, "startUninstall is still holding the ref").toBe(true);
+  });
 });

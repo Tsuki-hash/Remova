@@ -14,7 +14,9 @@ export function ScanProgressBar({ progress, onCancel, title, cancelledLabel, fai
   return <div style={{ ...css.card, padding: 10, marginBottom: 10 }}>
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
       {title && <strong>{title}</strong>}
-      <span role="status">{progress.status === "cancelled" ? cancelledLabel ?? L.scanCancelledIncomplete
+      {/* UX-15: the stage changes every poll (250 ms); announcing it drowned
+          out everything else. Only terminal states stay a live status. */}
+      <span role={running ? undefined : "status"}>{progress.status === "cancelled" ? cancelledLabel ?? L.scanCancelledIncomplete
         : progress.status === "failed" ? failedLabel ?? L.scanFailedIncomplete
         : progress.status === "stopping" ? L.scanStopping : L.scanStage(progress.stage)}</span>
       {running && <span style={css.muted}>{L.scanFound(progress.found)}</span>}

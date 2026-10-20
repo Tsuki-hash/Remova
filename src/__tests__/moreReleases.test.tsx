@@ -10,7 +10,7 @@ import { requestBackupSession } from "../lib/backupSessionNavigation";
 
 vi.mock("../lib/api", () => ({
   api: { openPath: vi.fn().mockResolvedValue(undefined),
-    backupSessions: vi.fn().mockResolvedValue([{ name: "newest", size_kb: 1, created_at: "2" }, { name: "requested", size_kb: 1, created_at: "1" }]),
+    backupSessions: vi.fn().mockResolvedValue([{ name: "newest", size_kb: 1, created_at: "2", sealed: true }, { name: "requested", size_kb: 1, created_at: "1", sealed: true }]),
     previewRestore: vi.fn(async (name: string) => ({ name, files: 0, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] })),
     restoreSessionByName: vi.fn() },
 }));

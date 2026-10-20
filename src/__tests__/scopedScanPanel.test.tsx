@@ -54,6 +54,12 @@ const installerFile = (path: string, sizeKb: number | null = null): CleanupItem 
   shared: false, user_library: true, size_kb: sizeKb, bucket: "download_pkg",
 });
 
+/** PERF-A: a walk that hit a bound reports a lower bound, not a fake exact. */
+const cappedToolCache = (path: string, kb: number): CleanupItem => ({
+  ...toolCache(path, "dev", kb),
+  size_capped: true,
+});
+
 const result = (items: CleanupItem[], over: Partial<ScopedScanResult> = {}): ScopedScanResult =>
   ({ items, omitted: 0, degraded: [], ...over });
 
@@ -66,6 +72,10 @@ const report = (over: Partial<FullCleanupReport> = {}): FullCleanupReport => ({
 const panel = (scan: () => Promise<ScopedScanResult>) =>
   render(<ScopedScanPanel title={t().toolcacheTitle} hint="" appName={t().toolcacheTitle}
     scan={scan} cleanupSource="toolcache" onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
+
+const installerPanel = (scan: () => Promise<ScopedScanResult>) =>
+  render(<ScopedScanPanel title={t().installerTitle} hint={t().installerHint} appName={t().installerTitle}
+    scan={scan} cleanupSource="installer" onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
 
 it.each([
   { name: "tool cache whole dir", item: toolCache("C:\\Users\\u\\AppData\\Local\\uv\\cache", "dev", 4_608_000) },
@@ -111,14 +121,20 @@ it("reports the freed space for the selection and counts what it could not measu
     sharedChild("C:\\cache\\npm-child", "dev", null),
   ])));
   await screen.findByText("C:\\cache\\uv");
-  const status = screen.getByRole("status");
-  // Both confirmed rows are preselected, so the header sums both.
-  expect(status.textContent).toContain(L.orphanSelectedMeta(2, formatSize(3_145_728)));
+  // UX-15: the summary is announced from a live region that settles after the
+  // selection stops changing.
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toContain(
+      L.orphanSelectedMeta(2, formatSize(3_145_728)),
+    ),
+  );
   // An unmeasured row is a caveat, not a silent zero.
-  expect(status.textContent).not.toContain(L.planUnknownSize(1));
+  expect(screen.getByRole("status").textContent).not.toContain(L.planUnknownSize(1));
   fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toContain(L.planUnknownSize(1)),
+  );
   expect(screen.getByRole("status").textContent).toContain(formatSize(3_145_728));
-  expect(screen.getByRole("status").textContent).toContain(L.planUnknownSize(1));
 });
 
 it("groups rows by bucket and puts the largest measured item first in each group", async () => {
@@ -126,7 +142,7 @@ it("groups rows by bucket and puts the largest measured item first in each group
   const tinyDev = toolCache("C:\\cache\\dev-tiny", "dev", 4_096);
   const bigDev = toolCache("C:\\cache\\dev-big", "dev", 2_097_152);
   const unmeasuredDev = sharedChild("C:\\cache\\dev-unknown", "dev", null);
-  panel(() => Promise.resolve(result([tinyDev, browser, bigDev, unmeasuredDev])));
+  const { container } = panel(() => Promise.resolve(result([tinyDev, browser, bigDev, unmeasuredDev])));
   await screen.findByText("C:\\cache\\dev-big");
   const rows = screen.getAllByRole("listitem").map(el => el.textContent ?? "");
   const at = (needle: string) => rows.findIndex(p => p.includes(needle));
@@ -137,9 +153,11 @@ it("groups rows by bucket and puts the largest measured item first in each group
   expect(at("dev-big")).toBeLessThan(at("dev-tiny"));
   // An unmeasured row sinks to the bottom of its group instead of reading as 0 KB.
   expect(at("dev-unknown")).toBeGreaterThan(at("dev-tiny"));
-  // One header per bucket, labelled with the localized bucket name.
+  // One header per bucket, labelled with the localized bucket name. Headers are
+  // presentation, not list items, so they are not announced as rows (UX-16).
   const devHeader = backendText("dev", "scan");
-  expect(rows.filter(r => r.includes(devHeader)).length).toBe(1);
+  const headers = [...container.querySelectorAll('[role="presentation"]')];
+  expect(headers.filter(el => el.textContent?.includes(devHeader)).length).toBe(1);
   expect(at("browser")).toBeLessThan(at("dev-big"));
 });
 
@@ -154,20 +172,71 @@ it("shows an estimating placeholder instead of an empty list while the scan runs
   expect(screen.queryByText(t().scanEstimatingItems)).toBeNull();
 });
 
+// UX-6: the empty state only branched on `items === null`, so a failed or
+// cancelled scan left the list saying "measuring item sizes" forever while the
+// progress bar above said the scan did not complete.
+it("replaces the estimating placeholder with an error when the scan fails", async () => {
+  const L = t();
+  panel(() => Promise.reject(new Error("scan backend exploded")));
+  await waitFor(() => expect(screen.queryByText(L.scanEstimatingItems)).toBeNull());
+  expect(screen.getAllByText(L.scanFailedIncomplete).length).toBeGreaterThan(0);
+  expect(screen.queryByText(L.scanEmptyNone)).toBeNull();
+});
+
+it("says a scan was cancelled instead of leaving the estimating placeholder", async () => {
+  const L = t();
+  panel(() => Promise.reject(new Error("scan:cancelled")));
+  await waitFor(() => expect(screen.queryByText(L.scanEstimatingItems)).toBeNull());
+  expect(screen.getAllByText(L.scanCancelledIncomplete).length).toBeGreaterThan(0);
+});
+
+// UX-7: a cleanup IPC that never started used to leave the previous report and
+// its still-clickable retry button on screen as if they described this attempt.
+it("clears the previous report when a cleanup cannot even be submitted", async () => {
+  const L = t();
+  const items = [toolCache("C:\\cache\\uv", "dev", 2_097_152)];
+  vi.mocked(api.fullCleanup).mockResolvedValueOnce(report({
+    deleted: 1, failed: 1,
+    item_details: [
+      { path: "C:\\cache\\uv", kind: "dir", status: "deleted", message: "ok" },
+      { path: "C:\\cache\\cargo", kind: "dir", status: "failed", message: "os error 32: being used by another process" },
+    ],
+  })).mockRejectedValueOnce(new Error("ipc closed"));
+  panel(() => Promise.resolve(result(items)));
+  await screen.findByText("C:\\cache\\uv");
+  fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.cleanup) }));
+  await screen.findByText(L.cleanupResultTitle);
+  expect(screen.getByRole("button", { name: new RegExp(L.retryFailedItems) })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.cleanup) }));
+  await waitFor(() => expect(screen.queryByText(L.cleanupResultTitle)).toBeNull());
+  expect(screen.queryByRole("button", { name: new RegExp(L.retryFailedItems) })).toBeNull();
+  expect(screen.getByText("C:\\cache\\uv")).toBeTruthy();
+});
+
 it("distinguishes 'nothing found' from 'could not read the roots'", async () => {
   const L = t();
-  const degraded = ["C:\\Users\\u\\AppData\\Local\\npm-cache", "D:\\jetbrains-cache"];
+  // UX-2: the backend now sends stable codes, not raw English prose.
+  const degraded = ["unreadable_root:C:\\Users\\u\\AppData\\Local\\npm-cache", "downloads_root_missing"];
   panel(() => Promise.resolve(result([], { degraded })));
   await screen.findByText(L.scanDegradedHint);
   // Nothing was found AND the read was incomplete — say both, and name the roots.
   expect(screen.getByText(L.scanEmptyNone)).toBeTruthy();
-  for (const root of degraded) expect(screen.getByText(root)).toBeTruthy();
+  const readableRoot = "C:\\Users\\u\\AppData\\Local\\npm-cache";
+  expect(screen.getByText(L.degradedUnreadableRoot(readableRoot))).toBeTruthy();
+  expect(screen.getByText(L.degradedDownloadsRootMissing)).toBeTruthy();
   // Rows exist but a root was unreadable: no "nothing found" claim at all.
   cleanup();
   panel(() => Promise.resolve(result([toolCache("C:\\cache\\uv", "dev", 1_024)], { degraded })));
   await screen.findByText("C:\\cache\\uv");
   expect(screen.queryByText(L.scanEmptyNone)).toBeNull();
   expect(screen.getByText(L.scanDegradedHint)).toBeTruthy();
+  // An unrecognized degraded string (older/newer backend) still surfaces raw.
+  cleanup();
+  panel(() => Promise.resolve(result([], { degraded: ["some-unknown-code"] })));
+  await screen.findByText(L.scanDegradedHint);
+  expect(screen.getByText("some-unknown-code")).toBeTruthy();
 });
 
 it("says how many rows the scan cap left out instead of implying the list is complete", async () => {
@@ -180,6 +249,20 @@ it("says how many rows the scan cap left out instead of implying the list is com
   panel(() => Promise.resolve(result([toolCache("C:\\cache\\uv", "dev", 1_024)])));
   await screen.findByText("C:\\cache\\uv");
   expect(screen.queryByText(L.scanOmitted(137))).toBeNull();
+});
+
+it("shows a capped size as a floor (≥ N), never as an exact number", async () => {
+  // PERF-A: walks that stop on a bound report a verified lower bound; the
+  // display must not dress it up as exact.
+  panel(() => Promise.resolve(result([
+    cappedToolCache("C:\\cache\\uv", 256),
+    toolCache("C:\\cache\\cargo", "dev", 512),
+  ])));
+  await screen.findByText("C:\\cache\\uv");
+  // The size rides on the same line as the localized reason, so match the
+  // substring inside that row line.
+  expect(screen.getByText(`· ≥ ${formatSize(256)}`, { exact: false })).toBeTruthy();
+  expect(screen.getByText(`· ${formatSize(512)}`, { exact: false })).toBeTruthy();
 });
 
 it("keeps the per-item outcome on screen with a locate button and a retry", async () => {
@@ -215,6 +298,61 @@ it("keeps the per-item outcome on screen with a locate button and a retry", asyn
   expect(second[1].map(it => it.path)).toEqual(["C:\\cache\\cargo"]);
 });
 
+// F-8: the retry path used to push an unconditional success toast on the same
+// channel as the error toast. `toast.push` cancels every earlier toast on a
+// channel, so a retry that failed again had its error destroyed and replaced
+// with "已重试 N 项".
+it("does not replace a retry failure with a success toast", async () => {
+  const L = t();
+  const items = [toolCache("C:\\cache\\uv", "dev", 2_097_152), toolCache("C:\\cache\\cargo", "dev", 1_048_576)];
+  vi.mocked(api.fullCleanup).mockResolvedValue(report({
+    deleted: 1, failed: 1,
+    item_details: [
+      { path: "C:\\cache\\uv", kind: "dir", status: "deleted", message: "ok" },
+      { path: "C:\\cache\\cargo", kind: "dir", status: "failed", message: "os error 32: being used by another process" },
+    ],
+  }));
+  panel(() => Promise.resolve(result(items)));
+  await screen.findByText("C:\\cache\\uv");
+  fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.cleanup) }));
+  await screen.findByText(L.cleanupResultTitle);
+
+  // The retry fails the same way.
+  vi.mocked(api.fullCleanup).mockResolvedValue(report({
+    deleted: 0, failed: 1,
+    item_details: [{ path: "C:\\cache\\cargo", kind: "dir", status: "failed", message: "os error 32: being used by another process" }],
+  }));
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.error).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: `${L.retryFailedItems} (1)` }));
+  await waitFor(() => expect(api.fullCleanup).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(toast.success, "a failed retry must not be reported as a success").not.toHaveBeenCalled();
+});
+
+it("still reports a retry that deleted something", async () => {
+  const L = t();
+  const items = [toolCache("C:\\cache\\uv", "dev", 2_097_152), toolCache("C:\\cache\\cargo", "dev", 1_048_576)];
+  vi.mocked(api.fullCleanup).mockResolvedValueOnce(report({
+    deleted: 1, failed: 1,
+    item_details: [
+      { path: "C:\\cache\\uv", kind: "dir", status: "deleted", message: "ok" },
+      { path: "C:\\cache\\cargo", kind: "dir", status: "failed", message: "os error 32: being used by another process" },
+    ],
+  })).mockResolvedValueOnce(report({
+    deleted: 1, failed: 0,
+    item_details: [{ path: "C:\\cache\\cargo", kind: "dir", status: "deleted", message: "ok" }],
+  }));
+  panel(() => Promise.resolve(result(items)));
+  await screen.findByText("C:\\cache\\uv");
+  fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.cleanup) }));
+  await screen.findByText(L.cleanupResultTitle);
+  vi.mocked(toast.success).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: `${L.retryFailedItems} (1)` }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith(L.cleanupRetriedDone(1), expect.anything()));
+});
 it("states all four cleanup outcomes, not just deleted and failed", async () => {
   const L = t();
   vi.mocked(api.fullCleanup).mockResolvedValue(report({
@@ -242,4 +380,79 @@ it("names the suspected / shared-root category in the cleanup confirmation", asy
   expect(countMatches.length).toBe(1);
   expect(message).toContain(L.riskBitSuspected);
   expect(message).not.toContain(`${L.riskTierPrefix(L.riskTierLow)} ${1}`);
+});
+
+// UX-4: the updater rows sit under a panel that says "not app leftovers", yet
+// their reason line claimed "possible leftover of the software".
+it("does not call an updater cache a suspected app leftover", async () => {
+  const L = t();
+  installerPanel(() => Promise.resolve(result([updaterDir("C:\\ProgramData\\Acme\\Downloads", 1_024)])));
+  await screen.findByText("C:\\ProgramData\\Acme\\Downloads");
+  expect(screen.getByText(L.reasonUpdaterCache, { exact: false })).toBeTruthy();
+  expect(screen.queryByText(L.reasonSuspect, { exact: false })).toBeNull();
+});
+
+// UX-5: "linked to this app's install/config" names an app the panel invented.
+it("describes a confirmed tool cache by its bucket, not as app-linked", async () => {
+  const L = t();
+  panel(() => Promise.resolve(result([toolCache("C:\\Users\\u\\AppData\\Local\\uv\\cache", "dev", 1_024)])));
+  await screen.findByText("C:\\Users\\u\\AppData\\Local\\uv\\cache");
+  // The group header carries the same bucket label, so the row's reason line is
+  // one of (at least) two occurrences.
+  expect(screen.getAllByText(L.toolcacheDomainDev, { exact: false }).length).toBeGreaterThan(0);
+  expect(screen.queryByText(L.reasonBelongs, { exact: false })).toBeNull();
+});
+
+// UX-8: both installer groups used to carry the panel title as their header.
+it("gives the two installer groups distinguishable headers", async () => {
+  const L = t();
+  const { container } = installerPanel(() => Promise.resolve(result([
+    updaterDir("C:\\ProgramData\\Acme\\Downloads", 1_024),
+    installerFile("C:\\Users\\u\\Downloads\\Acme.msi", 2_048),
+  ])));
+  await screen.findByText("C:\\ProgramData\\Acme\\Downloads");
+  const headers = [...container.querySelectorAll('[role="presentation"]')].map(el => el.textContent ?? "");
+  expect(headers.some(h => h.includes(L.scanEvidenceLabel("updater_cache", "")))).toBe(true);
+  expect(headers.some(h => h.includes(L.scanEvidenceLabel("installer_package", "")))).toBe(true);
+});
+
+// UX-9: "select all" must not select the keep class (user library here).
+it("select-all leaves keep-class rows unchecked", async () => {
+  const L = t();
+  const highRisk = { ...updaterDir("C:\\ProgramData\\Acme\\Downloads", 2_048), risk: "high" as const };
+  panel(() => Promise.resolve(result([
+    toolCache("C:\\cache\\uv", "dev", 1_024),
+    highRisk,
+  ])));
+  await screen.findByText("C:\\ProgramData\\Acme\\Downloads");
+  fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
+  expect(screen.getByRole("button", { name: new RegExp(L.cleanup) }).textContent).toContain("1");
+});
+
+// UX-16: "biggest first" also holds between groups.
+it("orders bucket groups by their largest item", async () => {
+  const tinyA = toolCache("C:\\cache\\a-tiny", "browser", 1_024);
+  const hugeB = toolCache("C:\\cache\\b-huge", "dev", 4_194_304);
+  const { container } = panel(() => Promise.resolve(result([tinyA, hugeB])));
+  await screen.findByText("C:\\cache\\b-huge");
+  const headers = [...container.querySelectorAll('[role="presentation"]')].map(el => el.textContent ?? "");
+  expect(headers[0]).toContain(backendText("dev", "scan"));
+});
+
+// UX-18: the toast expires; the finding stays in the header.
+it("keeps the last scan count after the toast is gone", async () => {
+  const L = t();
+  panel(() => Promise.resolve(result([toolCache("C:\\cache\\uv", "dev", 1_024)])));
+  await screen.findByText("C:\\cache\\uv");
+  expect(screen.getByText(`${L.orphanJustScanned} · 1`)).toBeTruthy();
+});
+
+// UX-10: a degraded scan must not announce a complete result.
+it("does not claim a complete scan when a root was unreadable", async () => {
+  const L = t();
+  panel(() => Promise.resolve(result([], { degraded: ["downloads_root_missing"] })));
+  await waitFor(() => expect(toast.info).toHaveBeenCalledWith(
+    L.scanCompleteIncomplete(0),
+    expect.anything(),
+  ));
 });

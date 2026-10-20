@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScopedScanPanel } from "../components/ScopedScanPanel";
-import { cleanupFeedback } from "../lib/cleanupFeedback";
+import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { setLang, t, formatSize } from "../i18n";
@@ -25,6 +25,33 @@ it.each([{ aborted: true }, { failed: 2, deleted: 0 }, { failed: 1, deleted: 1 }
     expect(toast.error).toHaveBeenCalledTimes(value.aborted || value.failed ? 1 : 0);
     expect(toast.success).toHaveBeenCalledTimes(value.aborted || value.failed ? 0 : 1);
   });
+
+// F-1: `failed === 0` is not "success". A hand-picked selection the keep rules
+// refused every row of is `deleted: 0, failed: 0, skipped: N, aborted: false`,
+// and it was being reported as a green "ok 0 · failed 0".
+it.each([
+  { over: { deleted: 0, failed: 0, skipped: 3 }, done: false, why: "keep rules refused every row" },
+  { over: { deleted: 0, failed: 0, skipped: 0 }, done: false, why: "there was nothing to delete" },
+  { over: { deleted: 0, failed: 0, skipped: 0, uninstall_ok: true }, done: true, why: "the official uninstaller ran" },
+  { over: { deleted: 0, failed: 0, delayed: 2 }, done: true, why: "deletes are pending reboot" },
+  { over: { deleted: 1, failed: 0, skipped: 4 }, done: true, why: "something was deleted" },
+  { over: { deleted: 0, failed: 1, skipped: 0 }, done: false, why: "a delete failed" },
+  { over: { aborted: true, deleted: 0, failed: 0 }, done: false, why: "the run aborted" },
+])("cleanupAccomplishedSomething is $done when $why", ({ over, done }) => {
+  expect(cleanupAccomplishedSomething(report(over))).toBe(done);
+});
+
+it("explains a zero-delete cleanup instead of claiming success", () => {
+  const L = t();
+  expect(cleanupNothingText(report({ skipped: 3 }), L)).toContain("3");
+  expect(cleanupNothingText(report({ skipped: 0 }), L)).not.toContain("0");
+  // Both languages must say something, and they must differ.
+  setLang("en");
+  expect(cleanupNothingText(report({ skipped: 3 }), t())).not.toBe(
+    cleanupNothingText(report({ skipped: 3 }), L),
+  );
+  setLang("zh");
+});
 it.each([true, false])("retains scoped cleanup feedback after refresh, aborted=%s", async aborted => {
   const item: CleanupItem = { path: "fixture", kind: "file", score: 90, confidence: "confirmed",
     risk: "low", reason: "fixture", evidence: [] };
@@ -69,7 +96,8 @@ it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targ
   expect(screen.queryByText("old-target")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
   await act(async () => { finish([item]); });
-  expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
+  const statusText = screen.getAllByRole("status").map(el => el.textContent).join(" ");
+  expect(statusText).toContain(t().scanCancelledIncomplete);
   expect(screen.getByRole("button", { name: new RegExp(t().cleanup) }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText(t().scanComplete(0))).toBeNull();
   expect(toast.success).toHaveBeenCalledTimes(1);
@@ -140,9 +168,12 @@ it("shows the space to be freed, a select count, and select-all", async () => {
   expect(cleanupBtn.textContent).toContain("1");
   // The header reports the space for what is selected. An unmeasured item only
   // counts once it is actually selected — it is not selected yet, so no caveat.
-  const status = screen.getByRole("status");
-  expect(status.textContent).toContain(formatSize(2_000_000));
-  expect(status.textContent).not.toContain(L.planUnknownSize(1));
+  // The header reports the space for what is selected. The live region settles
+  // after the selection stops changing (UX-15).
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toContain(formatSize(2_000_000)),
+  );
+  expect(screen.getByRole("status").textContent).not.toContain(L.planUnknownSize(1));
   // Rows carry a risk label and a confidence label.
   expect(screen.getAllByText(L.low).length).toBeGreaterThan(0);
   expect(screen.getAllByText(L.suspected).length).toBeGreaterThan(0);
@@ -150,7 +181,9 @@ it("shows the space to be freed, a select count, and select-all", async () => {
   // Select-all checks everything, and now the unmeasured item is in scope.
   fireEvent.click(screen.getByRole("button", { name: L.orphanSelectAll }));
   expect(cleanupBtn.textContent).toContain("3");
-  expect(screen.getByRole("status").textContent).toContain(L.planUnknownSize(1));
+  await waitFor(() =>
+    expect(screen.getByRole("status").textContent).toContain(L.planUnknownSize(1)),
+  );
 
   // Clear selection empties it and disables cleanup.
   fireEvent.click(screen.getByRole("button", { name: L.clearSelection }));

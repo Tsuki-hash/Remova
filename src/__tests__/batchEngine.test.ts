@@ -16,6 +16,8 @@ vi.mock("../i18n", () => ({
     selectRowHint: "select",
     toastBatchProgress: (i: number, n: number, name: string) => `${i}/${n} ${name}`,
     batchDetail: (d: number, f: number) => `del${d} fail${f}`,
+    cleanupOutcome: (d: number, f: number, s: number, p: number) => `del${d} fail${f} skip${s} pend${p}`,
+    cleanupNothingRemoved: (s: number) => (s > 0 ? `refused ${s}` : "nothing to clean"),
     batchCancelled: "cancelled",
     batchDone: "done",
     backendBackupFailed: "backup stopped cleanup",
@@ -165,8 +167,21 @@ describe("runBatchCleanup", () => {
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe("failed");
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
   });
-  it("marks ok when leftovers cleaned", async () => {
-    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+  // F-1: `failed === 0` used to mark the app "ok" and count it as processed.
+  // A selection the keep rules refused every row of is
+  // `deleted: 0, failed: 0, skipped: N`, which is not a cleaned app.
+  it("does not count an app as cleaned when the keep rules refused every row", async () => {
+    const target = app("Refused");
+    analyze.mockResolvedValue(scan("Refused", [item("C:\\Program Files\\Refused")]));
+    fullCleanup.mockResolvedValue(report({ deleted: 0, failed: 0, skipped: 4, uninstall_ok: false }));
+    const cb = makeCb();
+    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "skipped" });
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.detail).toContain("refused 4");
+    expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
+  });
+
+  it("marks ok when leftovers cleaned", async () => {    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
     fullCleanup.mockResolvedValue(report({ deleted: 1, failed: 0 }));
     const cb = makeCb();
     await runBatchCleanup([app("A")], true, keyOf, cb);

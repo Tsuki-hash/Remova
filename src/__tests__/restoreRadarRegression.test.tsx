@@ -18,7 +18,7 @@ vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), info: vi.fn(), error
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
-  native.backupSessions.mockResolvedValue([{ name: "older-backup", size_kb: 1, created_at: "" }]);
+  native.backupSessions.mockResolvedValue([{ name: "older-backup", size_kb: 1, created_at: "", sealed: true }]);
   native.previewRestore.mockImplementation(async (name: string) => ({ name, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] }));
   native.listLocalDrives.mockResolvedValue([{ letter: "C", is_system: true, total_gb: 1, free_gb: 1 }]);
   native.listTopDirSizes.mockResolvedValue([{ path: "root", name: "root", size_kb: 1, capped: true }]);
@@ -142,7 +142,7 @@ it("keeps the current parent after a failed drill and disables back while pendin
 });
 
 it("updates the selected backup after deletion and preserves selection when another is deleted", async () => {
-  const older = { name: "older-backup", size_kb: 1, created_at: "" };
+  const older = { name: "older-backup", size_kb: 1, created_at: "", sealed: true };
   const newer = { ...older, name: "newer-backup" };
   native.backupSessions.mockResolvedValueOnce([older, newer]);
   native.deleteBackupSession.mockResolvedValue(undefined);
@@ -189,13 +189,13 @@ it("reports rejected restore IPC and releases busy state so it can be retried", 
 });
 
 it("selects the requested backup by identity and never falls back to the newest session", async () => {
-  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2" },
-    { name: "requested", size_kb: 1, created_at: "1" }]);
+  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2", sealed: true },
+    { name: "requested", size_kb: 1, created_at: "1", sealed: true }]);
   const onError = vi.fn();
   const { result } = renderHook(() => useMoreRestore(onError));
   await act(async () => { await result.current.loadRestore("requested"); });
   expect(result.current.restorePick).toBe("requested");
-  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2" }]);
+  native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2", sealed: true }]);
   await act(async () => { await result.current.loadRestore("missing"); });
   expect(result.current.restorePick).toBe("");
   expect(result.current.restoreLoadError).toBe(t().restoreSessionMissing);
@@ -254,7 +254,7 @@ it("refreshes conflict counts before confirmation and locks duplicate restore re
 });
 
 it("shows restore target conflicts and missing entries while rejecting stale or failed previews", () => {
-  const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000" }],
+  const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000", sealed: true }],
     pick: "older-backup", setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
   const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, unavailable: 2,
     entries: [{ target: "available-file", status: "available" as const }, { target: "existing-file", status: "existing" as const },

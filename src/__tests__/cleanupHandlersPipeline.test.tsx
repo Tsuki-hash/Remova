@@ -36,6 +36,7 @@ import { useCleanupHandlers } from "../hooks/useCleanupHandlers";
 import { useAppCoreState } from "../hooks/useAppCoreState";
 import { runBatchCleanup } from "../lib/batchEngine";
 import { toast } from "../lib/toast";
+import { api } from "../lib/api";
 
 const runBatchCleanupMock = vi.mocked(runBatchCleanup);
 import { t } from "../i18n";
@@ -260,6 +261,7 @@ describe("useCleanupHandlers deep pipeline", () => {
       selectedPaths?: Set<string>;
       apps?: InstalledApp[];
       multi?: Set<string>;
+      aiEnabled?: boolean;
     } = {},
   ) {
     const busyRef = { current: false };
@@ -281,7 +283,7 @@ describe("useCleanupHandlers deep pipeline", () => {
         selectedPaths: opts.selectedPaths ?? new Set(["C:\\Program Files\\DemoApp\\x"]),
         residualFromUninstall: false,
         useOfficial: false,
-        aiEnabled: false,
+        aiEnabled: opts.aiEnabled ?? false,
         aiRisk: null,
         apps: opts.apps ?? [],
         multi: opts.multi ?? new Set<string>(),
@@ -326,6 +328,19 @@ describe("useCleanupHandlers deep pipeline", () => {
     expect(opts.backup_enabled).toBe(true);
     expect(flowDeep.setReport).toHaveBeenCalled();
     expect(busyRef.current).toBe(false);
+  });
+
+  it("handleCleanupConfirm says the AI brief is unavailable when the backend returns null", async () => {
+    // F-19: `ai_risk_brief` returns Ok(None) when the feature is disabled, and
+    // the dialog used to drop the AI line without saying anything.
+    (api.aiRiskBrief as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(null);
+    requestConfirmEx.mockResolvedValue({ ok: false, checked: false });
+    const { result } = setupDeep({ aiEnabled: true });
+    await act(async () => {
+      await result.current.handleCleanupConfirm();
+    });
+    const message = vi.mocked(requestConfirmEx).mock.calls[0]![0].message ?? "";
+    expect(message).toContain(t().aiRiskBriefFailed);
   });
 
   it("handleCleanupConfirm with empty selection only hints", async () => {

@@ -15,6 +15,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [openRestore, setOpenRestore] = useState(false);
   const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [unsealedSessions, setUnsealedSessions] = useState(0);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTick, setPreviewTick] = useState(0);
@@ -44,18 +45,24 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
+    setUnsealedSessions(0);
     setRestoreLoading(true);
     setRestoreLoadError(null);
     try {
       const list = await api.backupSessions();
-      setSessions(list);
+      // F-5: an aborted backup leaves a session directory with no seal. It can
+      // never be restored (`validate_session` rejects it with `seal:missing`),
+      // so it must not become the default selection and then fail on confirm.
+      const restorable = list.filter(session => session.sealed);
+      setUnsealedSessions(list.length - restorable.length);
+      setSessions(restorable);
       setOpenRestore(true);
-      if (requestedName && !list.some(session => session.name === requestedName)) {
+      if (requestedName && !restorable.some(session => session.name === requestedName)) {
         setRestoreLoadError(t().restoreSessionMissing);
         onError(t().restoreSessionMissing);
         return;
       }
-      setRestorePick(requestedName ?? list[0]?.name ?? "");
+      setRestorePick(requestedName ?? restorable[0]?.name ?? "");
     } catch (e) {
       setRestoreLoadError(formatError(e));
       onError(formatError(e));
@@ -81,8 +88,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
         if (!ok) return;
         await api.deleteBackupSession(name);
         const list = await api.backupSessions();
-        setSessions(list);
-        setRestorePick((cur) => (cur === name ? (list[0]?.name ?? "") : cur));
+        const restorable = list.filter(session => session.sealed);
+        setUnsealedSessions(list.length - restorable.length);
+        setSessions(restorable);
+        setRestorePick((cur) => (cur === name ? (restorable[0]?.name ?? "") : cur));
       } catch (e) {
         onError(formatError(e));
       } finally {
@@ -132,6 +141,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
         if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
         if (msg.startsWith("imported ")) return `${L.restoreDone}: ${msg.slice(9)}`;
         if (msg.startsWith("PATH entry already present: ")) return `${L.restoreAlreadyPresent}: ${msg.slice(28)}`;
+        // F-4: a PATH entry that could not be merged back is aggregated with its
+        // real cause and the restore continues, so the cause must be shown
+        // rather than collapsing to "no detail".
+        if (msg.startsWith("PATH restore failed for ")) return `${L.restorePathFailed}: ${msg.slice(24)}`;
         if (msg.startsWith("skipped ")) return `${L.restoreSkipped}: ${msg.slice(msg.indexOf(": ") + 2)}`;
         if (msg.startsWith("restore failed for ")) return `${L.restoreIncomplete}: ${msg.slice(19).split(": ")[0]}`;
         return L.restoreNoDetail;
@@ -160,6 +173,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
 
   return {
     sessions,
+    unsealedSessions,
     restoreLoading,
     restoreLoadError,
     restorePreview: restorePreview?.name === restorePick ? restorePreview : null,

@@ -49,7 +49,7 @@ function ResultGroup({
     {/* UX-12: the scroll box is reachable by keyboard so a long failure list can
         be paged with the arrow keys instead of only by mouse wheel. */}
     <div tabIndex={0} role="group" aria-label={`${label} · ${items.length}`}
-      style={{ maxHeight: 180, overflow: "auto" }}>
+      style={{ maxHeight: "min(320px, 45vh)", overflow: "auto" }}>
       {items.slice(0, limit).map((item, index) => {
         const canLocate = ["file", "dir", "path"].includes(item.kind) && /^[a-z]:[\\/]/i.test(item.path)
           && !item.path.includes('"') && ![...item.path].some(char => char.charCodeAt(0) < 32);
@@ -94,7 +94,7 @@ export function CleanupResultDetails({
   const known = new Set<string>(groups.map(([status]) => status));
   const other = items.filter(item => !known.has(item.status));
   return <div style={{ color: "var(--muted)", fontSize: 12 }}>
-    {title && <h4 style={{ margin: "8px 0 0", fontSize: 12.5, fontWeight: 650, color: "var(--fg)" }}>{title}</h4>}
+    {title && <h3 style={{ margin: "8px 0 0", fontSize: 12.5, fontWeight: 650, color: "var(--fg)" }}>{title}</h3>}
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
       return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"}

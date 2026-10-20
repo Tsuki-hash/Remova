@@ -16,18 +16,22 @@ export function VirtualList<T>({
   rowGap = 6,
   listRole = false,
   ariaLabel,
+  rowRole,
 }: {
   items: T[];
   keyOf: (item: T, index: number) => string;
   renderItem: (item: T, index: number) => ReactNode;
   empty?: ReactNode;
-  height?: number;
+  /** px or any CSS length, so a panel can shrink with the viewport (UX-13). */
+  height?: number | string;
   estimateSize?: number;
   rowGap?: number;
   /** expose list/listitem semantics for screen readers. */
   listRole?: boolean;
   /** Accessible name for the scrollable list region. */
   ariaLabel?: string;
+  /** Per-row override, e.g. a visual group header is not a list item (UX-16). */
+  rowRole?: (item: T, index: number) => "listitem" | "presentation" | undefined;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -59,7 +63,7 @@ export function VirtualList<T>({
           ? items.map((it, i) => (
               <div
                 key={keyOf(it, i)}
-                role={listRole ? "listitem" : undefined}
+                role={rowRole ? rowRole(it, i) : listRole ? "listitem" : undefined}
                 style={{ paddingBottom: rowGap }}
               >
                 {renderItem(it, i)}
@@ -70,7 +74,7 @@ export function VirtualList<T>({
                 key={vr.key}
                 data-index={vr.index}
                 ref={virtualizer.measureElement}
-                role={listRole ? "listitem" : undefined}
+                role={rowRole ? rowRole(items[vr.index]!, vr.index) : listRole ? "listitem" : undefined}
                 style={{
                   position: "absolute",
                   top: 0,

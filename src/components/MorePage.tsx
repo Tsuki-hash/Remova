@@ -147,7 +147,9 @@ export function MorePage({
       title: L.installerTitle,
       desc: L.installerHint,
       icon: "installers",
-      action: () => tools.setOpenTool("installers"),
+      // UX-20: a second click on the highlighted card now closes the panel,
+      // like the AI card — not a silent no-op.
+      action: () => tools.toggleTool("installers"),
     },
     {
       id: "diskradar",
@@ -161,7 +163,7 @@ export function MorePage({
       title: L.toolcacheTitle,
       desc: L.toolcacheHint,
       icon: "toolcache",
-      action: () => tools.setOpenTool("toolcache"),
+      action: () => tools.toggleTool("toolcache"),
     },
     {
       id: "monitor",
@@ -225,6 +227,7 @@ export function MorePage({
       {openTool === "restore" && (
         <RestorePanel
           sessions={rest.sessions}
+          unsealedCount={rest.unsealedSessions}
           preview={rest.restorePreview}
           previewLoading={rest.previewLoading}
           previewError={rest.previewError}
@@ -360,6 +363,27 @@ export function MorePage({
             <span style={{ fontWeight: 600 }}>{L.rescanAfterUninstall}</span>
             <span style={{ color: "var(--muted)", fontSize: 12 }}>
               {L.rescanAfterUninstallHint}
+            </span>
+          </label>
+          <label
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              marginBottom: 12,
+              fontSize: 13,
+              color: "var(--fg)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={tools.restorePointOn}
+              onChange={() => tools.toggleRestorePoint()}
+            />
+            <span style={{ fontWeight: 600 }}>{L.restorePointBeforeCleanup}</span>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              {L.restorePointBeforeCleanupHint}
             </span>
           </label>
           <div

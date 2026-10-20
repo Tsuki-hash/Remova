@@ -34,6 +34,8 @@ export type CleanupItem = {
   user_library?: boolean;
   /** Best-effort size in KB (file/dir only; null/omitted for registry/path). */
   size_kb?: number | null;
+  /** `size_kb` hit a walk bound and is a verified floor — display `>= N`, never as exact. */
+  size_capped?: boolean;
   /** Display bucket from backend (programFiles/configFiles/…). */
   bucket?: string | null;
 };
@@ -65,6 +67,10 @@ export type ScopedScanResult = {
   omitted: number;
   degraded: string[];
 };
+
+/** UX-14: orphan/idle scans used to truncate at their cap with no signal. */
+export type OrphanScanResult = { items: CleanupItem[]; omitted: number };
+export type IdleScanResult = { items: IdleApp[]; omitted: number };
 
 export type CleanupReport = {
   app_name: string;

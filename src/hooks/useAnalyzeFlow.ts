@@ -58,6 +58,14 @@ export function useAnalyzeFlow({
     setEvidence,
   } = flow;
   const analyzeSeqRef = useRef(0);
+  /**
+   * F-7: how many `analyze` calls currently hold `busyRef`. A plain
+   * save/restore leaks when a newer analyze supersedes an older one (the older
+   * one's `finally` is gated on its own `seq`, so it never runs), and a plain
+   * clear steals the ref from `startUninstall`, which holds it across its own
+   * nested `analyze` call. Depth plus "was it already held" covers both.
+   */
+  const analyzeHoldRef = useRef(0);
   const { run: runScan, cancel: cancelScan, progress: scanProgress } = useAssociationScan();
   const analyzingRef = useRef(false);
   /** -11: stage idle timers must be cleared on unmount / replacement. */
@@ -76,6 +84,14 @@ export function useAnalyzeFlow({
  // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
+      // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only,
+      // and it was never set here. A destructive action could therefore start
+      // while a deep scan was in flight, and the scan then landed on top of the
+      // other action's report (it never increments `analyzeSeqRef`). App.tsx's
+      // "one guard" comment already claimed this ref is the single gate.
+      const nestedInOtherHolder = busyRef.current;
+      analyzeHoldRef.current += 1;
+      busyRef.current = true;
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
       if (opts?.afterCleanup) setResidualFromUninstall(true);
@@ -122,6 +138,11 @@ export function useAnalyzeFlow({
         setError(formatError(e, "analyze"));
         toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
       } finally {
+        analyzeHoldRef.current -= 1;
+        // Release only this call’s own claim: a superseded older scan must not
+        // clear the newer one’s hold, and a scan nested inside startUninstall
+        // must not steal the ref that flow is still holding.
+        if (analyzeHoldRef.current === 0 && !nestedInOtherHolder) busyRef.current = false;
         if (seq === analyzeSeqRef.current) {
           analyzingRef.current = false;
           setScanning(false);
@@ -130,6 +151,7 @@ export function useAnalyzeFlow({
     },
     [
       goNav,
+      busyRef,
       setSelected,
       setScanning,
       setScan,
