@@ -302,6 +302,7 @@ export const dict: EnDict = {
     // UX-05: the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
     scanOmitted: (n: number) => `${n} more item(s) not shown (per-scan limit)`,
+    orphanOmitted: (n: number) => `${n} more candidate folder(s) not shown (per-scan limit)`,
     // UX-09: the size-estimation phase is the longest one for a large cache and
     // reports no per-item progress, so show a placeholder rather than a frozen list.
     scanEstimatingItems: "Measuring item sizes…",
@@ -316,7 +317,7 @@ export const dict: EnDict = {
       `${n} more executable(s) were not checked for being installers (per-scan limit)`,
     scanStage: (stage: string) => ({ preparing: "Preparing scan", files: "Scanning files", registry: "Scanning registry",
       services: "Scanning services", tasks: "Scanning scheduled tasks", shortcuts: "Scanning shortcuts and temporary files",
-      other: "Scanning PATH and other linked items", caches: "Scanning update caches", sizes: "Estimating size", finalizing: "Checking scan results" } as Record<string, string>)[stage] ?? "Preparing scan",
+      other: "Scanning PATH and other linked items", caches: "Scanning update caches", sizes: "Estimating size", sizing: "Measuring item sizes", finalizing: "Checking scan results" } as Record<string, string>)[stage] ?? "Preparing scan",
     uninstallRunning: "Official uninstall in progress",
     monitorStarting: "Creating pre-install snapshot…",
     monitorFinishing: "Building the install change set…",

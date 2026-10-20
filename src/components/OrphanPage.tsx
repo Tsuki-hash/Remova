@@ -209,7 +209,9 @@ export function OrphanPage({
         <ScanProgressBar progress={progress} onCancel={cancel} />
         {omitted > 0 && (
           <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
-            {L.scanOmitted(omitted)}
+            {/* R38-5: the cap is applied before the shape probe, so the dropped
+                set is candidates, not confirmed rows — say so. */}
+            {L.orphanOmitted(omitted)}
           </div>
         )}
       </div>

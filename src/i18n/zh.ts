@@ -287,6 +287,7 @@ export const dict = {
     // UX-05: the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
     scanOmitted: (n: number) => `还有 ${n} 项未显示（受单次扫描上限限制）`,
+    orphanOmitted: (n: number) => `还有 ${n} 个候选目录未显示（受单次扫描上限限制）`,
     // UX-09: the size-estimation phase is the longest one for a large cache and
     // reports no per-item progress, so show a placeholder rather than a frozen list.
     scanEstimatingItems: "正在分析各项占用…",
@@ -300,7 +301,7 @@ export const dict = {
     degradedPeBudgetExhausted: (n: number) => `另有 ${n} 个可执行文件未做安装包校验（受单次扫描上限限制）`,
     scanStage: (stage: string) => ({ preparing: "准备扫描", files: "扫描文件", registry: "扫描注册表",
       services: "扫描服务", tasks: "扫描计划任务", shortcuts: "扫描快捷方式与临时文件",
-      other: "扫描 PATH 与其他关联项", caches: "扫描更新缓存", sizes: "估算占用", finalizing: "核对扫描结果" } as Record<string, string>)[stage] ?? "准备扫描",
+      other: "扫描 PATH 与其他关联项", caches: "扫描更新缓存", sizes: "估算占用", sizing: "估算各项占用", finalizing: "核对扫描结果" } as Record<string, string>)[stage] ?? "准备扫描",
     uninstallRunning: "官方卸载进行中",
     monitorStarting: "正在建立安装前快照…",
     monitorFinishing: "正在生成安装变更对比…",
