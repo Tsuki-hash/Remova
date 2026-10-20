@@ -286,11 +286,7 @@ fn unix_now_secs() -> String {
 
 #[cfg(test)]
 mod tests {
-    // history writes to PROGRAMDATA — skip disk tests; pure helpers only
     use std::collections::HashMap;
-
-    /// Serializes tests that mutate process-wide PROGRAMDATA.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[cfg(windows)]
     #[test]
@@ -405,16 +401,14 @@ mod tests {
     /// Disk round-trip under a temp PROGRAMDATA (does not touch the real history file).
     #[test]
     fn disk_append_load_delete_clear_roundtrip() {
-        let tmp = std::env::temp_dir().join(format!("remova_hist_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(tmp.join("Remova")).unwrap();
-        // Point history_path at the temp tree via PROGRAMDATA for this test only.
-        // SAFETY: tests run multi-threaded; serialize with a process-local lock and restore env.
-        let _g = ENV_LOCK.lock().unwrap();
-        let prev = std::env::var_os("PROGRAMDATA");
-        std::env::set_var("PROGRAMDATA", &tmp);
+        let tmp = crate::test_support::TempDir::new("hist");
+        tmp.subdir("Remova");
+        // CQ-1: the fixture takes the shared process-wide lock, not a private one
+        // that the readers of PROGRAMDATA do not observe, and restores on panic.
+        let _lock = crate::test_support::EnvLock::new();
+        let _env = crate::test_support::EnvVar::set("PROGRAMDATA", tmp.path());
         let p = super::history_path();
-        assert!(p.starts_with(&tmp));
+        assert!(p.starts_with(tmp.path()));
 
         assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
         assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
@@ -430,23 +424,15 @@ mod tests {
 
         super::clear_all().unwrap();
         assert!(super::load(10).is_empty());
-
-        match prev {
-            Some(v) => std::env::set_var("PROGRAMDATA", v),
-            None => std::env::remove_var("PROGRAMDATA"),
-        }
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// a torn non-UTF-8 row must survive delete rewrites untouched.
     #[test]
     fn delete_preserves_non_utf8_lines() {
-        let tmp = std::env::temp_dir().join(format!("remova_hist_nu_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(tmp.join("Remova")).unwrap();
-        let _g = ENV_LOCK.lock().unwrap();
-        let prev = std::env::var_os("PROGRAMDATA");
-        std::env::set_var("PROGRAMDATA", &tmp);
+        let tmp = crate::test_support::TempDir::new("hist_nu");
+        tmp.subdir("Remova");
+        let _lock = crate::test_support::EnvLock::new();
+        let _env = crate::test_support::EnvVar::set("PROGRAMDATA", tmp.path());
         let p = super::history_path();
 
         assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
@@ -480,11 +466,5 @@ mod tests {
             !out.windows(3).any(|w| w == b"\"A\""),
             "selected row must be gone"
         );
-
-        match prev {
-            Some(v) => std::env::set_var("PROGRAMDATA", v),
-            None => std::env::remove_var("PROGRAMDATA"),
-        }
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

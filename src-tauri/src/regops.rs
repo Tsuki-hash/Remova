@@ -1268,9 +1268,9 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
             .ok()
             .map_err(|_| format!("open failed {key_path}"))?;
             let mut typ = REG_VALUE_TYPE(0);
-            let mut data = vec![0u8; 8192];
+            let mut data = vec![0u8; 16 * 1024];
             let mut data_len = data.len() as u32;
-            let st = RegQueryValueExW(
+            let mut st = RegQueryValueExW(
                 hk,
                 PCWSTR(from_w.as_ptr()),
                 None,
@@ -1278,6 +1278,24 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
                 Some(data.as_mut_ptr()),
                 Some(&mut data_len),
             );
+            // F-12: values above the initial buffer must be readable, like
+            // `read_reg_value_bytes` — otherwise a rename fails forever.
+            while st == ERROR_MORE_DATA && data_len as usize > data.len() {
+                let need = data_len as usize;
+                if need > (1 << 20) {
+                    break;
+                }
+                data = vec![0u8; need];
+                data_len = data.len() as u32;
+                st = RegQueryValueExW(
+                    hk,
+                    PCWSTR(from_w.as_ptr()),
+                    None,
+                    Some(&mut typ),
+                    Some(data.as_mut_ptr()),
+                    Some(&mut data_len),
+                );
+            }
             if st != ERROR_SUCCESS {
                 let _ = RegCloseKey(hk);
                 return Err(format!("query failed {from}"));
@@ -2074,10 +2092,7 @@ mod tests {
             nonce
         );
         let _cleanup = KeyCleanup(key.clone());
-        let tmp =
-            std::env::temp_dir().join(format!("remova_read_fail_{}_{}", std::process::id(), nonce));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
+        let tmp = crate::test_support::TempDir::new("read_fail");
         let dest = tmp.join("value.reg");
         // Create the fixture key, then write straight through the Win32 API: the
         // product-level registry-write allowlist does not apply to a fixture key,
@@ -2146,8 +2161,6 @@ mod tests {
             !huge_dest.exists(),
             "no partial .reg may be left behind for a value that failed to read"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(windows)]
@@ -2205,8 +2218,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn expand_env_string_expands_and_passes_through() {
-        // Unique name: set_var is process-global, other tests never read this.
-        std::env::set_var("REMOVA_QA02_VAR", r"C:\Vendor Tool");
+        let _lock = crate::test_support::EnvLock::new();
+        let _var = crate::test_support::EnvVar::set("REMOVA_QA02_VAR", r"C:\Vendor Tool");
         assert_eq!(
             super::expand_env_string(r"%REMOVA_QA02_VAR%\bin"),
             r"C:\Vendor Tool\bin"

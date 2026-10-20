@@ -63,12 +63,25 @@ fn lock_held() -> bool {
 /// One `EnvLock` may cover any number of [`EnvVar`] overrides. It must **not** be
 /// acquired while another is alive on the same thread — `std::sync::Mutex` is not
 /// re-entrant, so a nested acquire deadlocks. Take the lock once, at the top.
+///
+/// `#[must_use]`: an `EnvLock::new();` written as a bare statement compiles
+/// without this attribute, releases the lock at the semicolon, and leaves the
+/// test unprotected — the exact defect this module exists to prevent.
+#[must_use = "an unbound EnvLock is released at the semicolon and protects nothing"]
 pub struct EnvLock {
     _guard: MutexGuard<'static, ()>,
 }
 
 impl EnvLock {
     pub fn new() -> Self {
+        // A second acquisition on this thread would block forever on a
+        // non-re-entrant mutex; the failure mode would be a hung test binary
+        // (CI timeout) with no diagnosis. `LOCK_HELD` makes it a panic instead.
+        debug_assert!(
+            !lock_held(),
+            "EnvLock::new on a thread that already holds the lock would deadlock: \
+             std::sync::Mutex is not re-entrant. Take the lock once, at the top."
+        );
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let guard = LOCK
             .get_or_init(|| Mutex::new(()))
@@ -103,6 +116,12 @@ impl TempDir {
             .unwrap_or(0);
         let path =
             std::env::temp_dir().join(format!("remova_{tag}_{}_{nonce}", std::process::id()));
+        // Validate before either deletion or creation, not only in Drop: the
+        // caller-supplied tag must not turn pre-cleanup into a delete elsewhere.
+        assert!(
+            owns(&path),
+            "test fixture tag escapes the temp root: {tag:?}"
+        );
         // A stale directory from an earlier leaked run must not be mistaken for
         // this run's fixture.
         let _ = std::fs::remove_dir_all(&path);
@@ -171,6 +190,12 @@ fn owns(path: &Path) -> bool {
 /// Keep the guard alive for as long as the override is meant to apply; dropping it
 /// restores the variable. Values are stored as `OsString`, so a fixture can
 /// reproduce the non-UTF-8 paths production has to fail closed on.
+///
+/// `#[must_use]`: `EnvVar::set("X", "y");` written as a bare statement applies
+/// the override and undoes it at the semicolon, so the test then reads the real
+/// value and fails as if the product were broken. The compiler can see the
+/// value is unused even though it cannot see the process-wide mutation.
+#[must_use = "an unbound EnvVar is restored at the semicolon and the override never applies"]
 pub struct EnvVar {
     name: OsString,
     previous: Option<OsString>,
@@ -374,5 +399,25 @@ mod tests {
         );
         // The rejected override must not have been applied.
         assert!(std::env::var_os("REMOVA_TEST_SUPPORT_PROBE").is_none());
+    }
+
+    /// The nested-acquire guard in `EnvLock::new` is the only thing between a
+    /// second lock on the same thread and a permanent block on the
+    /// non-re-entrant mutex — a hung test binary instead of a named failure.
+    #[test]
+    fn nested_env_lock_is_rejected_instead_of_deadlocking() {
+        if !cfg!(debug_assertions) {
+            // The guard is a debug assertion; in release the acquire would
+            // deadlock, so the attempt must not be made.
+            return;
+        }
+        let _outer = EnvLock::new();
+        let outcome = std::panic::catch_unwind(|| {
+            let _nested = EnvLock::new();
+        });
+        assert!(
+            outcome.is_err(),
+            "a nested EnvLock must panic, not deadlock"
+        );
     }
 }
