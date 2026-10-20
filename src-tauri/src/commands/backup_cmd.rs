@@ -91,12 +91,29 @@ mod tests {
         assert!(crate::restore::list_session_info().is_err());
         std::fs::remove_file(isolated.path()).unwrap();
         std::fs::create_dir(isolated.path()).unwrap();
-        std::fs::create_dir(isolated.path().join("20261003-120000_test")).unwrap();
+        // list_restore_sessions filters sealed sessions (F-5), so the fixture
+        // needs a real seal to be offered for restore. The seals root lives
+        // OUTSIDE the backup root — list_session_info reports every directory
+        // inside the backup root as a session.
+        let seal_dir = crate::test_support::TempDir::new("backup-seals");
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seal_dir.path().to_path_buf()));
+        let sess = isolated.path().join("20261003-120000_test");
+        std::fs::create_dir(&sess).unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "abc_file.txt".to_string(),
+            r"C:\Nonexistent\file.txt".to_string(),
+        );
+        std::fs::create_dir(sess.join("files")).unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        // List under the same override — the seal only verifies against this root.
         assert_eq!(
             super::list_restore_sessions().unwrap(),
             ["20261003-120000_test"]
         );
         assert_eq!(crate::restore::list_session_info().unwrap().len(), 1);
+        crate::path_seal::set_seals_root_for_tests(None);
     }
 
     #[test]

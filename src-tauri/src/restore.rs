@@ -207,13 +207,14 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
                 Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
                 Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                Err(_) => {
-                    return Err(crate::error::restore_path_err(format!(
-                        "PATH restore failed for {}",
-                        it.entry
-                    ))
-                    .to_ipc())
-                }
+                // F-4: this used to `return Err(..)`, which threw away the real
+                // cause and abandoned everything after it — the registry import
+                // below never ran, so the filesystem was already modified while
+                // the registry never was, and a retry hit the same PATH failure
+                // forever. A per-entry failure is aggregated instead and the
+                // restore continues; the caller still sees the failures in
+                // `messages` and reports a non-clean result.
+                Err(e) => messages.push(format!("PATH restore failed for {}: {e}", it.entry)),
             }
         }
     }
@@ -547,8 +548,16 @@ fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 pub fn list_session_names() -> Result<Vec<String>, String> {
-    Ok(list_sessions()?
+    list_session_names_at(&crate::backup::backup_root())
+}
+
+/// Restorable sessions only. A directory left behind by an aborted backup has
+/// no seal, so offering it here produced a session the user could pick and
+/// that then always failed with `seal:missing` for the whole 7-day retention.
+fn list_session_names_at(root: &Path) -> Result<Vec<String>, String> {
+    Ok(list_sessions_at(root)?
         .iter()
+        .filter(|p| session_is_sealed(p))
         .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
         .collect())
 }
@@ -661,17 +670,44 @@ pub struct SessionInfo {
     pub name: String,
     pub size_kb: u64,
     pub created_at: String,
+    /// `false` for a session directory that never got its seal — an aborted
+    /// backup leaves `files/` and `registry/` behind without reaching
+    /// `write_seal`. Such a session can never be restored
+    /// (`validate_session` rejects it with `seal:missing`), so the UI must not
+    /// offer it as a restore target.
+    pub sealed: bool,
 }
 
 fn dir_size_kb(p: &Path) -> u64 {
     // bounded, reparse-safe walk — a huge or junction-planted session
-    // must not turn the listing path into an unbounded traversal.
-    crate::dirsize::walk_size_kb_limited(p).unwrap_or(0)
+    // must not turn the listing path into an unbounded traversal. Uses the
+    // unbudgeted variant: the scan-time entry budget is per scan pass and its
+    // thread had no reason to still carry quota.
+    crate::dirsize::walk_size_kb_unbudgeted(p).unwrap_or(0)
+}
+
+/// A session is only restorable when its seal verifies. The seal is what binds
+/// the captured bytes to this session, so "directory exists" is not enough.
+fn session_is_sealed(dir: &Path) -> bool {
+    crate::path_seal::verified_seal(dir).is_ok()
 }
 
 /// List backup sessions with size (KB). Does NOT prune (read path is pure).
+///
+/// Every session directory is reported, with `sealed` telling the UI which ones
+/// are restorable. `prune_old_sessions` still walks the unfiltered list, so an
+/// aborted backup's leftover directory is aged out instead of accumulating.
 pub fn list_session_info() -> Result<Vec<SessionInfo>, String> {
-    Ok(list_sessions()?
+    list_session_info_at(&crate::backup::backup_root())
+}
+
+/// List backup sessions with size (KB). Does NOT prune (read path is pure).
+///
+/// Every session directory is reported, with `sealed` telling the UI which ones
+/// are restorable. `prune_old_sessions` still walks the unfiltered list, so an
+/// aborted backup's leftover directory is aged out instead of accumulating.
+fn list_session_info_at(root: &Path) -> Result<Vec<SessionInfo>, String> {
+    Ok(list_sessions_at(root)?
         .iter()
         .filter_map(|p| {
             let name = p.file_name()?.to_string_lossy().to_string();
@@ -679,6 +715,7 @@ pub fn list_session_info() -> Result<Vec<SessionInfo>, String> {
                 name: name.clone(),
                 size_kb: dir_size_kb(p),
                 created_at: name.split('_').next().unwrap_or("").to_string(),
+                sealed: session_is_sealed(p),
             })
         })
         .collect())
@@ -866,6 +903,40 @@ mod tests {
     fn restore_missing_session_errors() {
         let p = std::env::temp_dir().join("remova_no_such_session_xyz");
         assert!(restore_session(&p).is_err());
+    }
+
+    /// F-5: `backup_batch` creates the session directory and then can return
+    /// `Err` before `write_seal`, leaving an unsealed directory on disk. It was
+    /// offered as a restore target and then always failed with `seal:missing`
+    /// for the whole 7-day retention window.
+    #[test]
+    fn unsealed_sessions_are_reported_but_never_offered_for_restore() {
+        let root = crate::test_support::TempDir::new("unsealed");
+        // The shape an aborted backup leaves behind: `files/` + `registry/`,
+        // no seal.
+        let aborted = root.join("1700000000_aborted");
+        fs::create_dir_all(aborted.join("files")).unwrap();
+        fs::create_dir_all(aborted.join("registry")).unwrap();
+        fs::write(aborted.join("files/some.txt"), b"partial").unwrap();
+        // A directory that is not even a session shape.
+        let junk = root.join("1700000001_not_a_session");
+        fs::create_dir_all(&junk).unwrap();
+
+        let info = super::list_session_info_at(&root).unwrap();
+        assert_eq!(info.len(), 2, "both directories are still reported");
+        for session in &info {
+            assert!(
+                !session.sealed,
+                "{} has no seal and must be reported as unrestorable",
+                session.name
+            );
+        }
+        // The restore selector must offer neither.
+        assert!(super::list_session_names_at(&root).unwrap().is_empty());
+        // Retention must still see them, or aborted leftovers would accumulate.
+        // `prune_old_sessions_at` reads `list_sessions()` = `list_sessions_at(
+        // backup_root())`, i.e. the same unfiltered list.
+        assert_eq!(super::list_sessions_at(&root).unwrap().len(), 2);
     }
 
     #[test]

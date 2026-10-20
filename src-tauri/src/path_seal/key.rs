@@ -267,7 +267,7 @@ fn load_at(
         let parent_pin = pin(ancestor, true)?;
         validate(&parent_pin, false)?;
         if let Some((_, guard)) =
-            crate::fsutil::guard_empty_directory(HANDLE(parent_pin.as_raw_handle()))
+            crate::fsutil::guard_empty_directory(HANDLE(parent_pin.as_raw_handle()), false)
                 .map_err(|_| "seal:key_parent_guard")?
         {
             parent_pins.push(guard);
@@ -502,6 +502,7 @@ mod tests {
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         };
         let (ok, fail, errors) = crate::backup::backup_items(&[item], &session);

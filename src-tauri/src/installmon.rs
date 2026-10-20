@@ -86,17 +86,44 @@ fn roots() -> Vec<PathBuf> {
     roots_from(|key| std::env::var(key).ok())
 }
 
-/// Remova's own state under `%ProgramData%` (this snapshot, the Safety Vault).
+/// Every directory Remova itself writes under a snapshot root.
 ///
-/// Once `%ProgramData%` is a snapshot root, its own baseline file shows up in the
-/// end-of-session diff as a path "added during the monitored install" — and the
-/// allow-list is armed from that diff, so the monitor would offer to delete its
-/// own snapshot. Remova's state is never an install artifact.
-fn remova_state_root() -> Option<PathBuf> {
-    let base = std::env::var("PROGRAMDATA")
-        .ok()
-        .filter(|v| !v.trim().is_empty())?;
-    Some(PathBuf::from(base).join("Remova"))
+/// Once `%ProgramData%` and `%LOCALAPPDATA%` are snapshot roots, anything Remova
+/// creates during the monitored window shows up in the end-of-session diff as a
+/// path "added during the monitored install" — and the allow-list is armed from
+/// that diff, so the monitor would offer to delete its own state. Remova's state
+/// is never an install artifact.
+///
+/// This is deliberately a **list**, derived once, rather than a single literal at
+/// the call site. The first version excluded only `%ProgramData%\Remova`, which
+/// left `%ProgramData%\RemovaSealKeys` — the directory holding `seal.key`, the
+/// HMAC key every RSEAL2 seal is MAC'd with — exposed. A first backup taken during
+/// a monitored install creates that key, the monitor then reported it as an install
+/// artifact with `Confirmed`/`Low` (i.e. preselected), and one click on Cleanup
+/// destroyed the product's own undo safety net: every existing Safety Vault session
+/// became unrestorable and `key::load(true)` returned `seal:key_lost`.
+///
+/// Adding a new Remova state location means adding it here; there is no second
+/// place that has to remember to.
+fn remova_state_roots() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |base: Option<String>, sub: &str| {
+        if let Some(base) = base.filter(|v| !v.trim().is_empty()) {
+            let candidate = PathBuf::from(base).join(sub);
+            if !out.iter().any(|existing| existing == &candidate) {
+                out.push(candidate);
+            }
+        }
+    };
+    let program_data = std::env::var("PROGRAMDATA").ok();
+    let local_app_data = std::env::var("LOCALAPPDATA").ok();
+    // History, ignore list, Safety Vault sessions, monitor snapshot, seals.
+    push(program_data.clone(), "Remova");
+    // The privileged seal-key store: seal.key, initialized.v2, stage_<pid>_<nanos>.
+    push(program_data, "RemovaSealKeys");
+    // AI configuration (holds the user's cloud API key) and the icon cache.
+    push(local_app_data, "Remova");
+    out
 }
 
 fn is_noise_path(p: &str) -> bool {
@@ -118,7 +145,7 @@ fn walk_names(
     budget: &mut usize,
     depth: usize,
     truncated: &mut bool,
-    exclude: Option<&Path>,
+    exclude: &[PathBuf],
 ) {
     if crate::scan_task::cancelled() {
         *truncated = true;
@@ -154,9 +181,18 @@ fn walk_names(
             return;
         }
         let p = e.path();
-        // Remova's own state is not an install artifact: reporting it would put
-        // the monitor's own baseline into the diff it arms deletions from.
-        if exclude.is_some_and(|ex| p.starts_with(ex)) {
+        // Remova's own state is not an install artifact: reporting it would put the
+        // monitor's own baseline into the diff it arms deletions from.
+        //
+        // The comparison is case-insensitive per component, because
+        // `Path::starts_with` on Windows is a byte comparison that folds only the
+        // drive letter — so `C:\ProgramData\remova` did not start with
+        // `C:\ProgramData\Remova`, and neither did a path that merely differed in
+        // drive-letter case. `read_dir` reports the casing stored on disk, so the
+        // guard used to depend on the on-disk name of a directory Remova does not
+        // own. Comparing `path_key` (already lowercase + backslash-normalized)
+        // removes that dependency.
+        if is_under_any(&p, exclude) {
             continue;
         }
         // Keep original casing for display/delete; NTFS compare is case-insensitive.
@@ -175,24 +211,34 @@ fn walk_names(
     }
 }
 
+/// True when `path` is one of `roots` or sits anywhere underneath one.
+///
+/// Case-insensitive per component, matching how NTFS resolves names — a guard
+/// that only holds for the exact on-disk casing is a guard an unrelated directory
+/// name can switch off.
+fn is_under_any(path: &Path, roots: &[PathBuf]) -> bool {
+    let Some(key) = crate::fsutil::path_key(path) else {
+        return false;
+    };
+    roots.iter().any(|root| {
+        let Some(root_key) = crate::fsutil::path_key(root) else {
+            return false;
+        };
+        key == root_key || key.starts_with(&format!("{root_key}\\"))
+    })
+}
+
 fn take_fs_snapshot() -> FsSnapshot {
     let mut files = BTreeSet::new();
     let mut truncated = false;
     let mut budget = walk_budget();
-    let exclude = remova_state_root();
+    let exclude = remova_state_roots();
     for r in roots() {
         if crate::scan_task::cancelled() {
             truncated = true;
             break;
         }
-        walk_names(
-            &r,
-            &mut files,
-            &mut budget,
-            0,
-            &mut truncated,
-            exclude.as_deref(),
-        );
+        walk_names(&r, &mut files, &mut budget, 0, &mut truncated, &exclude);
     }
     FsSnapshot { files, truncated }
 }
@@ -374,9 +420,57 @@ fn diff_and_arm(
 /// Noise (cache/temp/log) is demoted to Suspected/Medium so it is not auto-selected as "safe".
 /// user-data / library red lines use the same classification as the
 /// analyzer, never hardcoded `false`.
+/// Roots where "this path changed while I was watching" is **not** evidence that
+/// the monitored install created it.
+///
+/// `Program Files` and `%LOCALAPPDATA%` are per-machine/per-user install territory,
+/// so a new path there during a monitored install is a reasonable candidate. But
+/// `%APPDATA%` (Roaming) is where unrelated applications keep their live
+/// configuration, and `%ProgramData%` is machine-wide shared by every product on
+/// the box — OneDrive, Teams, Office, a browser, a driver updater, or another
+/// user's non-elevated process all write there continuously.
+///
+/// Reporting those as `Confirmed`/`Low` preselected them, so one click on Cleanup
+/// deleted an unrelated application's live configuration under a risk label that
+/// actively said "low". They are still reported — the user asked what changed —
+/// but as `Suspected`/`Medium`, which `defaultSelectable` never preselects.
+const WEAK_EVIDENCE_ROOTS: &[&str] = &["APPDATA", "ProgramData"];
+
+fn weak_evidence_roots() -> Vec<PathBuf> {
+    WEAK_EVIDENCE_ROOTS
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// Path identity for weak-root containment, using the same `path_key`
+/// normalization as the delete gate so `C:\Users\A\AppData\Roaming\X`,
+/// `c:/users/a/appdata/roaming/X` and `...\Roaming\X\` all match one root.
+fn weak_root_keys() -> Vec<String> {
+    weak_evidence_roots()
+        .iter()
+        .filter_map(|root| crate::fsutil::path_key(root))
+        .collect()
+}
+
+fn is_weak_evidence_path(path: &str, weak_keys: &[String]) -> bool {
+    if weak_keys.is_empty() {
+        return false;
+    }
+    let Some(key) = crate::fsutil::path_key(std::path::Path::new(path)) else {
+        return false;
+    };
+    weak_keys
+        .iter()
+        .any(|root| key == *root || key.starts_with(&format!("{root}\\")))
+}
+
 pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupItem> {
     use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel};
     let mut items = Vec::new();
+    let weak_keys = weak_root_keys();
     for f in &diff.added_files {
         let p = std::path::Path::new(f);
         let kind = if p.is_dir() {
@@ -388,24 +482,38 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
         let user_data =
             crate::safety::is_user_data_path(f) || crate::safety::looks_like_sync_conflict(f);
         let user_library = !user_data && crate::safety::is_user_library_path(f);
+        // A change under a shared root proves nothing about this install, so it is
+        // never preselected and never labelled low-risk.
+        let weak = !user_data && is_weak_evidence_path(f, &weak_keys);
+        // Reported, but never preselected. `user_data` already blocks selection on
+        // its own and keeps its own (higher) risk label, so it is excluded here.
+        let demoted = (noisy || weak) && !user_data;
         items.push(CleanupItem {
             path: f.clone(),
             kind,
-            score: if noisy { 40 } else { 70 },
-            confidence: if noisy && !user_data {
+            score: if noisy {
+                40
+            } else if weak {
+                50
+            } else {
+                70
+            },
+            confidence: if demoted {
                 Confidence::Suspected
             } else {
                 Confidence::Confirmed
             },
             risk: if user_data {
                 RiskLevel::High
-            } else if noisy {
+            } else if noisy || weak {
                 RiskLevel::Medium
             } else {
                 RiskLevel::Low
             },
             reason: if noisy {
                 "Install monitor: cache/log-like path".into()
+            } else if weak {
+                "Install monitor: changed in a shared directory".into()
             } else {
                 "Install monitor: new path".into()
             },
@@ -413,16 +521,25 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
                 code: "install_monitor".into(),
                 label: if noisy {
                     "Added during install (likely cache/temp)".into()
+                } else if weak {
+                    "Added during monitored install (shared directory, unproven)".into()
                 } else {
                     "Added during monitored install".into()
                 },
-                weight: if noisy { 40 } else { 70 },
+                weight: if noisy {
+                    40
+                } else if weak {
+                    50
+                } else {
+                    70
+                },
                 detail: String::new(),
             }],
             shared: false,
             user_data,
             user_library,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -444,6 +561,7 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
             user_data: false,
             user_library: false,
             size_kb: None,
+            size_capped: false,
             bucket: None,
         });
     }
@@ -498,7 +616,7 @@ mod tests {
                 &mut budget,
                 0,
                 &mut truncated,
-                None,
+                &[],
             );
             assert!(super::reg_value_names().is_err());
         });
@@ -554,7 +672,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("remova_mon_file_{}", std::process::id()));
         std::fs::write(&tmp, b"not a directory").unwrap();
         let mut degraded = false;
-        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded, None);
+        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded, &[]);
         assert!(degraded);
         std::fs::remove_file(tmp).unwrap();
     }
@@ -595,24 +713,31 @@ mod tests {
         assert!(relocated.iter().any(|r| r.ends_with("ProgramData")));
     }
 
-    /// Remova's own state lives under `%ProgramData%\Remova`, which is now a
-    /// snapshot root. Its baseline file would otherwise appear in the end diff
-    /// as a path "added during the monitored install" and be armed for deletion
-    /// — the monitor deleting its own snapshot.
+    /// Remova writes three state directories under snapshot roots, and only one of
+    /// them used to be excluded. `RemovaSealKeys` holds `seal.key` — the HMAC key
+    /// every RSEAL2 seal is MAC'd with — which a first Safety Vault backup taken
+    /// during a monitored install creates. It then appeared in the end-of-session
+    /// diff as an install artifact, was rated Confirmed/Low (preselected), and one
+    /// click on Cleanup made every existing session unrestorable.
+    ///
+    /// The exclusion is also case-insensitive per component: `Path::starts_with`
+    /// folds only the drive letter on Windows, so a state directory that happened
+    /// to be created as `remova` rather than `Remova` switched the guard off.
     #[test]
     fn removas_own_state_is_never_a_snapshot_candidate() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-mon-own-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_support::TempDir::new("mon-own");
+        // Three state roots, one of them deliberately mis-cased on disk.
         let state = root.join("Remova");
-        std::fs::create_dir_all(&state).unwrap();
+        let seal_keys = root.join("RemovaSealKeys");
+        let mis_cased = root.join("remova");
+        for dir in [&state, &seal_keys, &mis_cased] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
         std::fs::write(state.join("monitor_snapshot.json"), b"{}").unwrap();
-        // A real install target next to it must still be snapshotted.
+        std::fs::write(seal_keys.join("seal.key"), b"k".repeat(32)).unwrap();
+        std::fs::write(seal_keys.join("initialized.v2"), b"1").unwrap();
+        std::fs::write(mis_cased.join("ignore.json"), b"{}").unwrap();
+        // A real install target next to them must still be snapshotted.
         let vendor = root.join("Vendor");
         std::fs::create_dir_all(&vendor).unwrap();
         std::fs::write(vendor.join("app.bin"), b"payload").unwrap();
@@ -626,7 +751,7 @@ mod tests {
             &mut budget,
             0,
             &mut truncated,
-            Some(&state),
+            &[state, seal_keys, mis_cased],
         );
 
         assert!(
@@ -634,13 +759,43 @@ mod tests {
             "a real install target must still be snapshotted: {names:?}"
         );
         for n in &names {
+            let lower = n.replace('/', "\\").to_lowercase();
+            for marker in ["\\remova\\", "\\removasealkeys\\"] {
+                assert!(
+                    !lower.contains(marker),
+                    "Remova's own state must never enter the snapshot ({marker}): {n}"
+                );
+            }
+        }
+    }
+
+    /// The exclusion must be case-insensitive per component, so a state directory
+    /// created with different casing cannot switch the guard off.
+    #[test]
+    fn remova_state_exclusion_ignores_casing() {
+        let root = crate::test_support::TempDir::new("mon-case");
+        let excluded = root.join("RemovaSealKeys");
+        std::fs::create_dir_all(excluded.join("stage_1_2")).unwrap();
+        std::fs::write(excluded.join("seal.key"), b"k".repeat(32)).unwrap();
+        let lower_cased = std::path::PathBuf::from(excluded.to_string_lossy().to_lowercase());
+        for candidate in [
+            excluded.clone(),
+            excluded.join("seal.key"),
+            excluded.join("stage_1_2"),
+            lower_cased,
+        ] {
             assert!(
-                !n.replace('/', "\\").to_lowercase().contains("\\remova\\"),
-                "Remova's own state must never enter the snapshot: {n}"
+                super::is_under_any(&candidate, std::slice::from_ref(&excluded)),
+                "must be excluded regardless of casing: {candidate:?}"
             );
         }
-
-        std::fs::remove_dir_all(root).unwrap();
+        // A sibling that merely shares a prefix is NOT excluded.
+        let sibling = root.join("RemovaSealKeysExtra");
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert!(
+            !super::is_under_any(&sibling, std::slice::from_ref(&excluded)),
+            "a same-prefix sibling must not be excluded"
+        );
     }
 
     #[test]
@@ -741,6 +896,93 @@ mod tests {
         assert!(!under_docs.user_data && !docs_root.user_library);
         let pf = items.iter().find(|i| i.path.ends_with("new.dll")).unwrap();
         assert!(!pf.user_data && !pf.user_library);
+    }
+
+    /// A change under `%APPDATA%` or `%ProgramData%` proves nothing about the
+    /// monitored install — those roots are shared with every other product on the
+    /// machine. They must never be preselected and never labelled low-risk, or one
+    /// click on Cleanup deletes an unrelated application's live configuration.
+    #[test]
+    fn shared_root_additions_are_never_preselected() {
+        let _guard = crate::test_support::EnvLock::new();
+        let root = crate::test_support::TempDir::new("mon-weak");
+        // Point the two weak-evidence roots at the fixture so the test does not
+        // depend on the machine's real `%APPDATA%`/`%ProgramData%`.
+        let roaming = root.subdir("Roaming");
+        let machine = root.subdir("Machine");
+        let _roaming_var = crate::test_support::EnvVar::set("APPDATA", &roaming);
+        let _machine_var = crate::test_support::EnvVar::set("ProgramData", &machine);
+        let weak_keys = super::weak_root_keys();
+        assert_eq!(weak_keys.len(), 2);
+        for probe in [
+            roaming.join("Teams\\cache").to_string_lossy().into_owned(),
+            // Same path spelled with forward slashes, a trailing separator and
+            // different case must resolve to the same root: `path_key` is the
+            // delete gate's path identity, so containment uses it too.
+            roaming.join("teams/").to_string_lossy().into_owned(),
+            machine
+                .join("SomeDriver\\config")
+                .to_string_lossy()
+                .into_owned(),
+        ] {
+            assert!(
+                super::is_weak_evidence_path(&probe, &weak_keys),
+                "{probe} should be weak evidence"
+            );
+        }
+        // A sibling of the fixture root is outside both weak roots.
+        assert!(!super::is_weak_evidence_path(
+            &root.subdir("Elsewhere\\app.exe").to_string_lossy(),
+            &weak_keys
+        ));
+        assert!(!super::is_weak_evidence_path("", &weak_keys));
+        assert!(!super::is_weak_evidence_path("   ", &weak_keys));
+
+        let diff = MonitorDiff {
+            added_files: vec![
+                roaming
+                    .join("Teams\\cache.db")
+                    .to_string_lossy()
+                    .into_owned(),
+                machine
+                    .join("SomeDriver\\config.ini")
+                    .to_string_lossy()
+                    .into_owned(),
+                // A synthetic install-root path: the fixture itself lives under
+                // `%TEMP%`, which `is_noise_path` would (correctly) demote, so a
+                // fixture file cannot stand in for a real install location.
+                r"C:\Program Files\Vendor\App\app.exe".into(),
+            ],
+            added_reg_values: vec![],
+            files_truncated: 0,
+            reg_truncated: 0,
+            walk_degraded: false,
+        };
+        let items = diff_to_cleanup_items(&diff);
+        for path in ["cache.db", "config.ini"] {
+            let item = items.iter().find(|i| i.path.ends_with(path)).unwrap();
+            assert_eq!(
+                item.confidence,
+                crate::scanner::Confidence::Suspected,
+                "{path} lives in a shared root and must not be Confirmed"
+            );
+            assert_eq!(
+                item.risk,
+                crate::scanner::RiskLevel::Medium,
+                "{path} must not be labelled low-risk"
+            );
+            // The frontend preselects on `confirmed && !high && !shared &&
+            // !user_data`; the server-side gate is the authority, so assert both.
+            assert!(
+                item.confidence != crate::scanner::Confidence::Confirmed
+                    && item.risk != crate::scanner::RiskLevel::Low,
+                "{path} must not satisfy the frontend's preselect predicate"
+            );
+        }
+        // A path in a real install root is still strong evidence.
+        let vendor = items.iter().find(|i| i.path.ends_with("app.exe")).unwrap();
+        assert_eq!(vendor.confidence, crate::scanner::Confidence::Confirmed);
+        assert_eq!(vendor.risk, crate::scanner::RiskLevel::Low);
     }
 
     /// Convert path only; allow-list is armed by `end()` on the server diff.
@@ -851,7 +1093,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 100usize;
         let mut truncated = false;
-        walk_names(&a, &mut files, &mut budget, 0, &mut truncated, None);
+        walk_names(&a, &mut files, &mut budget, 0, &mut truncated, &[]);
         assert!(
             files.contains(&a.join("own.txt").to_string_lossy().to_string()),
             "own file must be walked"
@@ -888,7 +1130,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 10_000usize;
         let mut truncated = false;
-        walk_names(&base, &mut files, &mut budget, 0, &mut truncated, None);
+        walk_names(&base, &mut files, &mut budget, 0, &mut truncated, &[]);
         assert!(truncated, "hitting the depth cap must flag the snapshot");
         let cap = crate::constants::INSTALLMON_MAX_WALK_DEPTH;
         assert!(

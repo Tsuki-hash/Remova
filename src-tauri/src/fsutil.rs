@@ -41,7 +41,9 @@ pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 /// replacement. Never follow a junction planted above an output directory.
 pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
     let mut pins = vec![];
-    for ancestor in p.ancestors().collect::<Vec<_>>().into_iter().rev() {
+    let ancestors: Vec<&Path> = p.ancestors().collect();
+    let total = ancestors.len();
+    for (index, ancestor) in ancestors.into_iter().rev().enumerate() {
         if ancestor.as_os_str().is_empty() {
             continue;
         }
@@ -49,7 +51,11 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
             std::fs::create_dir(ancestor)?;
         }
         let mut pin = pin_dir_with_access(ancestor, 0x0081)?;
-        pin.guard_empty()?;
+        // F-16: only the output directory itself is guarded even when it is
+        // non-empty. Ancestors (including `C:\` and `%ProgramData%`) get a
+        // marker only when they are actually empty — a marker left behind by a
+        // crash must never land in a shared system directory.
+        pin.guard_empty(index + 1 == total)?;
         pins.push(pin);
     }
     Ok(pins)
@@ -63,7 +69,7 @@ fn copy_dir_before_file(
     // Per-level pin (same as the delete path): a child swapped for a junction
     // between the reparse check and this open is refused, not followed.
     let mut pin = pin_dir_with_access(src, 0x0081)?;
-    pin.guard_empty()?;
+    pin.guard_empty(true)?;
     let _dest_pins = create_dirs_pinned(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -176,32 +182,46 @@ pub struct DirPin {
 }
 
 impl DirPin {
-    fn guard_empty(&mut self) -> std::io::Result<()> {
+    fn guard_empty(&mut self, always: bool) -> std::io::Result<()> {
         #[cfg(windows)]
         {
-            self.guard = guard_empty_directory(self.handle)?;
+            self.guard = guard_empty_directory(self.handle, always)?;
         }
         Ok(())
     }
 }
 
 /// An empty directory can be changed into a junction even while a handle pins
-/// its name. Keep a child pinned (or create an exclusive delete-on-close marker)
-/// through that verified handle. Never resolve its pathname a second time.
+/// its name. Create an exclusive delete-on-close marker through that verified
+/// handle, so the directory cannot become empty under us. Never resolve its
+/// pathname a second time.
+///
+/// `always`: the directory may be emptied by this operation, so mark it even
+/// when it is currently non-empty. Ancestors pass `false` and get no marker, so
+/// a shared system directory like `C:\` or `%ProgramData%` is never written to
+/// (F-16).
 #[cfg(windows)]
 pub(crate) fn guard_empty_directory(
     handle: windows::Win32::Foundation::HANDLE,
+    always: bool,
 ) -> std::io::Result<Option<(String, std::fs::File)>> {
     use std::os::windows::io::FromRawHandle;
     use windows::core::PWSTR;
     use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
     use windows::Wdk::Storage::FileSystem::{
-        NtCreateFile, FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+        NtCreateFile, FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_NON_DIRECTORY_FILE,
         FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_OPTIONS,
     };
     use windows::Win32::Foundation::{HANDLE, UNICODE_STRING};
     use windows::Win32::Storage::FileSystem::*;
     use windows::Win32::System::IO::IO_STATUS_BLOCK;
+    // F-16: only the operation's own target is marked. Ancestors are non-empty
+    // by construction (they hold the next path component), and writing a marker
+    // into `C:\` or `%ProgramData%` just to learn they are non-empty would need
+    // list access the pin does not have.
+    if !always {
+        return Ok(None);
+    }
     let name = format!(
         ".remova-guard-{}-{}",
         std::process::id(),
@@ -245,95 +265,16 @@ pub(crate) fn guard_empty_directory(
             0,
         )
         .ok()
-    }
-    .map_err(|e| std::io::Error::other(e.to_string()));
-    if marker_result.is_ok() {
-        return Ok(Some((name, unsafe {
+    };
+    match marker_result {
+        Ok(()) => Ok(Some((name, unsafe {
             std::fs::File::from_raw_handle(marker.0)
-        })));
+        }))),
+        // No write access means no one with those rights can swap the directory
+        // either; refusing here would only break backups into protected roots.
+        Err(e) if e.code().0 as u32 == 0x8007_0005 => Ok(None),
+        Err(e) => Err(std::io::Error::other(e.to_string())),
     }
-    let mut buffer = vec![0u64; 8192];
-    let mut class = FileIdBothDirectoryRestartInfo;
-    loop {
-        let result = unsafe {
-            GetFileInformationByHandleEx(
-                handle,
-                class,
-                buffer.as_mut_ptr().cast(),
-                (buffer.len() * 8) as u32,
-            )
-        };
-        if let Err(e) = result {
-            if e.code().0 as u32 == 0x80070012 {
-                break;
-            }
-            return Err(std::io::Error::other(e.to_string()));
-        }
-        let mut offset = 0usize;
-        loop {
-            let entry = unsafe {
-                &*(buffer
-                    .as_ptr()
-                    .cast::<u8>()
-                    .add(offset)
-                    .cast::<FILE_ID_BOTH_DIR_INFO>())
-            };
-            let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
-            let bytes = entry.FileNameLength as usize;
-            if bytes % 2 != 0 || offset + name_offset + bytes > buffer.len() * 8 {
-                return Err(std::io::Error::other("invalid directory information"));
-            }
-            let name = unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), bytes / 2) };
-            if name != [46] && name != [46, 46] {
-                let mut child_name = name.to_vec();
-                let unicode = UNICODE_STRING {
-                    Length: bytes as u16,
-                    MaximumLength: bytes as u16,
-                    Buffer: PWSTR(child_name.as_mut_ptr()),
-                };
-                let attributes = OBJECT_ATTRIBUTES {
-                    Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
-                    RootDirectory: handle,
-                    ObjectName: &unicode,
-                    Attributes: 0x40 | 0x1000,
-                    ..Default::default()
-                };
-                let mut child = HANDLE::default();
-                let mut status = IO_STATUS_BLOCK::default();
-                let opened = unsafe {
-                    NtCreateFile(
-                        &mut child,
-                        FILE_ACCESS_RIGHTS(0x81),
-                        &attributes,
-                        &mut status,
-                        None,
-                        FILE_FLAGS_AND_ATTRIBUTES(0),
-                        FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        FILE_OPEN,
-                        FILE_OPEN_REPARSE_POINT,
-                        None,
-                        0,
-                    )
-                    .ok()
-                };
-                if opened.is_ok() {
-                    // Empty name means an existing child, which must still be copied.
-                    return Ok(Some((String::new(), unsafe {
-                        std::fs::File::from_raw_handle(child.0)
-                    })));
-                }
-            }
-            if entry.NextEntryOffset == 0 {
-                break;
-            }
-            offset += entry.NextEntryOffset as usize;
-            if offset + name_offset > buffer.len() * 8 {
-                return Err(std::io::Error::other("invalid directory offset"));
-            }
-        }
-        class = FileIdBothDirectoryInfo;
-    }
-    Err(marker_result.unwrap_err())
 }
 
 impl Drop for DirPin {
@@ -613,7 +554,7 @@ pub fn pin_existing_parents(p: &Path) -> std::io::Result<Vec<DirPin>> {
         .rev()
     {
         let mut pin = pin_dir_with_access(ancestor, 0x0081)?;
-        pin.guard_empty()?;
+        pin.guard_empty(false)?;
         pins.push(pin);
     }
     Ok(pins)
@@ -628,7 +569,7 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
     let is_dir = {
         let meta = std::fs::symlink_metadata(p)?;
         if meta.is_dir() {
-            pin.guard_empty()?;
+            pin.guard_empty(true)?;
             for entry in std::fs::read_dir(p)? {
                 let entry = entry?;
                 #[cfg(windows)]
