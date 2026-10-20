@@ -1270,6 +1270,30 @@ mod tests {
     /// `sanitize_path` is deliberately NOT idempotent for the
     /// common AppData shape — the explain rematch must therefore consult the
     /// strings actually sent to the model instead of re-sanitizing the echo.
+    /// F-15: the path gate only applies to tokens that look like paths; plain
+    /// product names must keep going through `scrub_cloud_text` untouched.
+    #[test]
+    fn path_token_detection_covers_drive_letter_and_unc_shapes() {
+        for s in [
+            r"C:\Program Files\App",
+            "C:/Tools/app",
+            r"\\server\share\app",
+            " D:\\x ",
+        ] {
+            assert!(looks_like_path_token(s), "{s:?} must look like a path");
+        }
+        for s in [
+            "Notepad++",
+            "微信输入法",
+            "",
+            "C:",
+            "C:relative",
+            "Microsoft .NET",
+        ] {
+            assert!(!looks_like_path_token(s), "{s:?} must not look like a path");
+        }
+    }
+
     #[test]
     fn sanitize_path_is_not_idempotent_for_appdata_shapes() {
         let once = sanitize_path(r"C:\Users\a\AppData\Local\Vendor\Product", false);

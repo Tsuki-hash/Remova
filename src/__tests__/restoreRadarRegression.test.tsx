@@ -242,6 +242,18 @@ it("retries only the preview after a preview failure", async () => {
   expect(result.current.restorePick).toBe("older-backup");
 });
 
+it("keeps an unsealed session out of the restore selector and counts it (F-5)", async () => {
+  native.backupSessions.mockResolvedValueOnce([
+    { name: "aborted", size_kb: 1, created_at: "", sealed: false },
+    { name: "good", size_kb: 1, created_at: "", sealed: true },
+  ]);
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  expect(result.current.sessions.map(s => s.name)).toEqual(["good"]);
+  expect(result.current.restorePick).toBe("good");
+  expect(result.current.unsealedSessions).toBe(1);
+});
+
 it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
   await act(async () => { await result.current.loadRestore(); });

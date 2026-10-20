@@ -927,6 +927,74 @@ mod tests {
             .any(|d| { d.status == "skipped" && d.message == "user_data red line" }));
     }
 
+    /// F-3 end to end: an uninstall string that exists but cannot be parsed
+    /// must abort the whole run — deleting leftovers of an app that is still
+    /// registered would leave it un-uninstallable from Programs & Features.
+    #[test]
+    fn unusable_uninstall_command_aborts_before_any_delete() {
+        let root = crate::test_support::TempDir::new("had_cmd");
+        let dir = root.join("App");
+        std::fs::create_dir_all(&dir).unwrap();
+        let kept = dir.join("keep.bin");
+        std::fs::write(&kept, b"payload").unwrap();
+        // A leading quote with no closing one is real vendor dirty data and
+        // makes build_uninstall_command return None.
+        let app = crate::apps::InstalledApp {
+            name: "DemoApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: dir.to_string_lossy().into_owned(),
+            uninstall_string: r#""C:\Program Files\App\unins.exe"#.into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        // Trust the command pair so the run reaches the parse branch; the
+        // trust set is process-global, so restore whatever was there.
+        let saved = crate::apps::trust_test_support::snapshot();
+        crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
+        let item = CleanupItem {
+            path: kept.to_string_lossy().into_owned(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let report = run_full_cleanup(
+            &app,
+            &[item],
+            &FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: false,
+                backup_enabled: false,
+                restore_point: false,
+                cleanup_source: None,
+            },
+        );
+        crate::apps::trust_test_support::restore(saved);
+        assert!(report.aborted, "{:?}", report.item_details);
+        assert_eq!(report.deleted, 0);
+        assert!(
+            report
+                .uninstall_message
+                .contains("unusable uninstall command"),
+            "the real cause must be reported, got {:?}",
+            report.uninstall_message
+        );
+        assert!(kept.exists(), "nothing may be deleted on an aborted run");
+    }
+
     /// F-18: backup enabled but nothing to back up must not create (and seal)
     /// an empty session that the Safety Vault then offers for restore.
     #[test]

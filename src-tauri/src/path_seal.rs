@@ -188,7 +188,7 @@ fn seal_path(session_name: &str) -> PathBuf {
     seals_root().join(format!("{session_name}.seal.json"))
 }
 
-fn map_digest(bytes: &[u8]) -> String {
+pub(crate) fn map_digest(bytes: &[u8]) -> String {
     #[cfg(windows)]
     {
         v2::sha256(bytes).unwrap_or_default()

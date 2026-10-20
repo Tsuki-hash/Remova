@@ -2163,6 +2163,86 @@ mod tests {
         );
     }
 
+    /// F-12: a value above the initial 16 KiB buffer must still be renameable —
+    /// the anti-rollback `.remova-disabled` rename used to fail on it forever.
+    #[cfg(windows)]
+    #[test]
+    fn rename_reg_value_reads_values_beyond_the_first_buffer() {
+        // The raw Win32 setter: the crate's own RegSetValueExW wrapper is
+        // allowlist-gated and would refuse this fixture key.
+        use windows::Win32::System::Registry::{RegSetValueExW as RawSetValueExW, REG_SZ};
+
+        struct KeyCleanup(String);
+        impl Drop for KeyCleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(super::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        // rename_reg_value writes through the allowlist-gated primitive, so the
+        // fixture key must live inside the Uninstall subtree it is allowed to
+        // manage; it is deleted again on drop.
+        let key = format!(
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\RemovaRenameBig_{}_{}",
+            std::process::id(),
+            nonce
+        );
+        let _cleanup = KeyCleanup(key.clone());
+        let created = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args(["add", &key, "/v", "Big", "/t", "REG_SZ", "/d", "seed", "/f"])
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "fixture key write failed");
+
+        // Overwrite "Big" with a 20_000-char string straight through the Win32
+        // API — reg.exe cannot carry 20 KB on a command line.
+        let payload: Vec<u16> = std::iter::repeat('x' as u16)
+            .take(20_000)
+            .chain(std::iter::once(0))
+            .collect();
+        let (hive, sub, view) = super::parse(&key).unwrap();
+        let sub_w = super::to_wide(&sub);
+        let name_w = super::to_wide("Big");
+        let mut hk = super::HKEY::default();
+        unsafe {
+            super::RegOpenKeyExW(
+                hive,
+                super::PCWSTR(sub_w.as_ptr()),
+                0,
+                super::KEY_SET_VALUE | view,
+                &mut hk,
+            )
+            .ok()
+            .unwrap();
+            RawSetValueExW(
+                hk,
+                super::PCWSTR(name_w.as_ptr()),
+                0,
+                REG_SZ,
+                Some(std::slice::from_raw_parts(
+                    payload.as_ptr().cast::<u8>(),
+                    payload.len() * 2,
+                )),
+            )
+            .ok()
+            .unwrap();
+            let _ = super::RegCloseKey(hk);
+        }
+
+        super::rename_reg_value(&key, "Big", "Big2").unwrap();
+        let (bytes, _typ) = super::read_reg_value_bytes(&key, "Big2").unwrap().unwrap();
+        assert_eq!(bytes.len() / 2 - 1, 20_000, "the value must survive intact");
+        assert!(
+            super::read_reg_value_bytes(&key, "Big").unwrap().is_none(),
+            "the source value must be gone after the rename"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn export_reg_value_writes_existing_value() {

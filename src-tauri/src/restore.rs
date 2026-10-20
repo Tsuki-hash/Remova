@@ -1296,6 +1296,75 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
+    /// F-4: a PATH entry that cannot be restored is aggregated with its real
+    /// cause and the session continues — the file write-back must never leave
+    /// the registry import undone because one PATH entry failed.
+    #[cfg(windows)]
+    #[test]
+    fn path_restore_failure_is_aggregated_and_continues() {
+        let tmp =
+            std::env::temp_dir().join(format!("remova_restore_pathfail_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("sess");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let orig = tmp.join("orig\\file.txt");
+        fs::create_dir_all(orig.parent().unwrap()).unwrap();
+        fs::write(&orig, b"hello").unwrap();
+        let rel = "abc_file.txt";
+        fs::write(files.join(rel), b"hello-backup").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(rel.to_string(), orig.to_string_lossy().to_string());
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        // A PATH snapshot whose single entry cannot be restored.
+        let snap = crate::backup::PathSnapshot {
+            items: vec![crate::backup::PathSnapshotItem {
+                entry: r"C:\RemovaNoSuchVendor\bin".into(),
+                scopes: vec!["User".into()],
+                user_path: String::new(),
+                machine_path: String::new(),
+            }],
+        };
+        let path_bytes = serde_json::to_vec(&snap).unwrap();
+        fs::write(sess.join("path.json"), &path_bytes).unwrap();
+        let mut digests = std::collections::BTreeMap::new();
+        digests.insert(
+            "path.json".to_string(),
+            crate::path_seal::map_digest(&path_bytes),
+        );
+        crate::path_seal::write_seal(&sess, "", &map, &digests).unwrap();
+
+        // Force every PATH read to fail so restore_path_entry errors per
+        // scope. The mock must be INSTALLED (not merely cleared): with no mock
+        // state the reader falls through to the real registry.
+        let _mock = crate::regops::path_mock::lock_mock();
+        crate::regops::path_mock::install(r"C:\Windows", r"C:\Windows");
+        crate::regops::path_mock::set_fail_read(true);
+        let msgs = restore_session(&sess).unwrap();
+        crate::regops::path_mock::clear();
+        crate::path_seal::set_seals_root_for_tests(None);
+
+        assert!(
+            msgs.iter().any(|m| m.contains("restored")),
+            "the file write-back must still happen: {msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| { m.contains(r"PATH restore failed for C:\RemovaNoSuchVendor\bin") }),
+            "the PATH failure must be aggregated with its entry and real cause: {msgs:?}"
+        );
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn delete_session_requires_timestamp_name() {
         // Only `YYYYMMDD-HHMMSS…` session folders are deletable by name.
