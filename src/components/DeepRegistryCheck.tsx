@@ -18,7 +18,14 @@ export function DeepRegistryCheck({ appName }: { appName: string }) {
     try {
       setResult(await api.deepRegistryCheck(appName));
     } catch (e) {
-      setError(formatError(e));
+      const message = formatError(e);
+      setError(
+        message.includes("deep_registry_too_generic")
+          ? L.deepRegistryTooGeneric
+          : message.includes("deep_registry_invalid_name")
+            ? L.deepRegistryInvalidName
+            : message,
+      );
     } finally {
       setBusy(false);
     }
@@ -51,7 +58,14 @@ export function DeepRegistryCheck({ appName }: { appName: string }) {
               {result.hits.map((hit) => (
                 <li key={hit.key} style={{ overflowWrap: "anywhere" }}>
                   <code>{hit.key}</code>
-                  <span style={css.muted}> · {hit.detail}</span>
+                  <span style={css.muted}>
+                    {" · "}
+                    {hit.detail === "top_level"
+                      ? L.deepRegistryTopLevel
+                      : hit.detail === "nested"
+                        ? L.deepRegistryNested
+                        : hit.detail}
+                  </span>
                 </li>
               ))}
             </ul>

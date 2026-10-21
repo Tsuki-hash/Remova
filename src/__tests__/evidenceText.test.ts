@@ -40,5 +40,10 @@ it.each(["zh", "en"] as const)("localizes native orphan evidence without guessin
   expect(evidenceText({ ...sample, code: "orphan_mtime", detail: "31 day(s) ago" }).detail)
     .toBe(t().orphanEvDays(31));
   expect(evidenceText({ ...sample, code: "orphan_root", detail: "Program Files" }).detail).toBe("Program Files");
+  expect(evidenceText({ ...sample, code: "orphan_recent", detail: "written 2 day(s) ago" }))
+    .toEqual({ label: t().orphanEvRecentLabel, detail: t().orphanEvRecent(2) });
+  expect(t().scanEvidenceLabel("service_bound", "")).not.toBe("");
+  expect(evidenceText({ ...sample, code: "service_bound", label: "Registered service uses this path" }).label)
+    .toBe(t().scanEvidenceLabel("service_bound", ""));
   expect(evidenceText({ ...sample, code: "other" })).toEqual({ ...sample, code: "other" });
 });

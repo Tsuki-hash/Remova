@@ -80,12 +80,16 @@ export function ReportPanel({
           </div>}
         </div>
       )}
-      {"deleted" in report && (report.reclaimed_kb || report.kept_kb) ? (
+      {"deleted" in report &&
+      (report.reclaimed_kb || report.kept_kb || report.delayed_kb) ? (
         <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
           {L.reportReclaimedKept(
             formatSize(report.reclaimed_kb ?? 0),
             formatSize(report.kept_kb ?? 0),
           )}
+          {report.delayed_kb
+            ? ` · ${L.reportPendingKb(formatSize(report.delayed_kb))}`
+            : null}
         </div>
       ) : null}
       <details open={"aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>

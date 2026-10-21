@@ -21,6 +21,8 @@ describe("degradedText", () => {
     expect(degradedText("userprofile_not_set")).toBe(L.degradedProfileNotSet);
     expect(degradedText("localappdata_not_set")).toBe(L.degradedLocalAppDataNotSet);
     expect(degradedText("pe_budget_exhausted:37")).toBe(L.degradedPeBudgetExhausted(37));
+    expect(degradedText("home_dot_truncated")).toBe(L.degradedHomeDotTruncated);
+    expect(degradedText("muicache_truncated")).toBe(L.degradedMuicacheTruncated);
   });
 
   it("passes unrecognized codes through unchanged (older/newer backend tolerance)", () => {

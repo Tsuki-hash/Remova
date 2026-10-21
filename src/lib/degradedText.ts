@@ -24,6 +24,10 @@ export function degradedText(raw: string): string {
       return L.degradedProfileNotSet;
     case "localappdata_not_set":
       return L.degradedLocalAppDataNotSet;
+    case "home_dot_truncated":
+      return L.degradedHomeDotTruncated;
+    case "muicache_truncated":
+      return L.degradedMuicacheTruncated;
     default:
       return raw;
   }

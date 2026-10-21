@@ -16,6 +16,7 @@ import type { VerifyRow } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { defaultSelectable } from "../lib/decision";
+import { degradedText } from "../lib/degradedText";
 import { SoftwareToolbar } from "./SoftwareToolbar";
 import { UninstallStageBar } from "./UninstallStageBar";
 import { SelectedAppCard } from "./SelectedAppCard";
@@ -49,7 +50,10 @@ export type SoftwarePageProps = {
   setSelected: (a: InstalledApp | null) => void;
   toggleMulti: (key: string) => void;
   listStartUninstall: (a: InstalledApp) => void;
-  listAnalyze: (a: InstalledApp, opts?: { afterCleanup?: boolean }) => void;
+  listAnalyze: (
+    a: InstalledApp,
+    opts?: { afterCleanup?: boolean; keepReport?: boolean },
+  ) => void;
   listForceClean: (a: InstalledApp) => void;
   listIgnoreApp: (a: InstalledApp) => void;
   listIgnorePublisher: (a: InstalledApp) => void;
@@ -142,6 +146,15 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
     ? p.apps.find((a) => a.name === report.app_name) ??
       (p.selected?.name === report.app_name ? p.selected : undefined)
     : undefined;
+  // Only a completed official uninstall may set the "uninstall finished" state
+  // when the user rescans; dry-run/aborted/skipped reports must not.
+  const rescanAfterUninstall = Boolean(
+    report &&
+      "uninstall_ok" in report &&
+      !report.dry_run &&
+      !report.aborted &&
+      report.uninstall_ok,
+  );
   return (
     <>
       <SoftwareToolbar
@@ -174,6 +187,17 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
       )}
 
       {p.error && <ErrorBanner error={p.error} onDismiss={() => p.setError(null)} />}
+
+      {p.scan?.degraded && p.scan.degraded.length > 0 && (
+        <div
+          role="status"
+          style={{ ...css.card, padding: "8px 12px", marginBottom: 10, color: "var(--warn-ink)", fontSize: 12 }}
+        >
+          {p.scan.degraded.map((code) => (
+            <div key={code}>{degradedText(code)}</div>
+          ))}
+        </div>
+      )}
 
       {p.scan && p.ignoreSuggestions.length > 0 && (
         <IgnoreSuggestBar
@@ -217,7 +241,15 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
           residualScan={{ scanning: p.scanning, count: p.residualFromUninstall ? p.scan?.items.length : undefined }}
-          onRescan={reportApp ? () => p.listAnalyze(reportApp, { afterCleanup: true }) : undefined}
+          onRescan={
+            reportApp
+              ? () =>
+                  p.listAnalyze(
+                    reportApp,
+                    rescanAfterUninstall ? { afterCleanup: true } : { keepReport: true },
+                  )
+              : undefined
+          }
           rescanBusy={p.scanning}
           deepCheckApp={reportApp ? { name: reportApp.name } : null}
           appInstallLocation={reportApp?.install_location}

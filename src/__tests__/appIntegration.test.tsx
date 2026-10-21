@@ -208,6 +208,19 @@ describe("App orchestration", () => {
     expect(software().report).not.toBeNull();
   });
 
+  it("does not mark a dry-run report rescan as an uninstall", async () => {
+    saveRescanAfterUninstall(false);
+    await mount();
+    await analyzeDemo();
+    act(() => software().onDryRun());
+    await waitFor(() => expect(software().report?.dry_run).toBe(true));
+    act(() => software().listAnalyze(demo, { keepReport: true }));
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
+    expect(software().residualFromUninstall).toBe(false);
+    expect(software().selectedPaths.size).toBe(0);
+    expect(software().report).not.toBeNull();
+  });
+
   it("matches full path boundaries in pending and drag entry points", async () => {
     const adjacent = { ...other, install_location: `${demo.install_location}Bar` };
     const nested = { ...other, name: "Nested", install_location: `${demo.install_location}\\Nested` };

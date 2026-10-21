@@ -30,6 +30,7 @@ it("reports matching keys read-only and never offers a delete control", async ()
   expect(deepRegistryCheck).toHaveBeenCalledWith("Acme Tool");
   expect(screen.getByText(t().deepRegistryReadOnly)).toBeTruthy();
   expect(screen.getByText(t().deepRegistryHits(1))).toBeTruthy();
+  expect(screen.getByText(t().deepRegistryNested, { exact: false })).toBeTruthy();
   expect(screen.queryByRole("button", { name: /delete|删除/i })).toBeNull();
 });
 
@@ -51,4 +52,12 @@ it("surfaces bounded-scan warnings and errors", async () => {
   render(<DeepRegistryCheck appName="Acme Tool" />);
   fireEvent.click(screen.getByRole("button", { name: t().deepRegistryCheck }));
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("registry denied"));
+  cleanup();
+
+  deepRegistryCheck.mockRejectedValueOnce(new Error("deep_registry_too_generic"));
+  render(<DeepRegistryCheck appName="QQ" />);
+  fireEvent.click(screen.getByRole("button", { name: t().deepRegistryCheck }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toContain(t().deepRegistryTooGeneric),
+  );
 });

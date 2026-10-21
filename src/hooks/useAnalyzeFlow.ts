@@ -79,7 +79,10 @@ export function useAnalyzeFlow({
   useEffect(() => clearStageTimer, [clearStageTimer]);
   useEffect(() => () => { analyzeSeqRef.current++; }, []);
   const analyze = useCallback(
-    async (app: InstalledApp, opts?: { fromUninstall?: boolean; afterCleanup?: boolean }) => {
+    async (
+      app: InstalledApp,
+      opts?: { fromUninstall?: boolean; afterCleanup?: boolean; keepReport?: boolean },
+    ) => {
  // single in-flight ref (was dual scanningRef/analyzingRef).
  // Newer analyze supersedes via seq — do not early-return here (race tests require it).
       analyzingRef.current = true;
@@ -95,12 +98,13 @@ export function useAnalyzeFlow({
       goNav("software");
       if (!opts?.fromUninstall) setResidualFromUninstall(false);
       if (opts?.afterCleanup) setResidualFromUninstall(true);
+      const keepReport = Boolean(opts?.afterCleanup || opts?.keepReport);
       setSelected(app);
       setScanning(true);
       setScan(null);
       setSelectedPaths(new Set());
       setError(null);
-      if (!opts?.afterCleanup) setReport(null);
+      if (!keepReport) setReport(null);
       setAiNotes({});
       setAiRisk(null);
       setIgnoreSuggestions([]);
@@ -120,7 +124,7 @@ export function useAnalyzeFlow({
             })
             .catch(() => {});
         }
-        setSelectedPaths(opts?.afterCleanup ? new Set() : new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
+        setSelectedPaths(keepReport ? new Set() : new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
         setError(null);
         toast.success(
           t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),

@@ -48,6 +48,8 @@ export type ScanResult = {
    * scans (monitor diff / orphan) which fall back to name comparison. */
   app_key?: string;
   items: CleanupItem[];
+  /** Stable codes for bounded scans that dropped matches. */
+  degraded?: string[];
 };
 
 export type ItemDetail = {
@@ -139,9 +141,10 @@ export type FullCleanupReport = {
   skipped: number;
   /** Reboot-delayed deletes (not in `deleted`). */
   delayed?: number;
-  /** M5: size actually deleted, and size kept by the gate. */
+  /** M5: size actually deleted, kept by the gate, and scheduled for reboot. */
   reclaimed_kb?: number;
   kept_kb?: number;
+  delayed_kb?: number;
   aborted: boolean;
   restore_point_ok: boolean;
   restore_point_msg: string;

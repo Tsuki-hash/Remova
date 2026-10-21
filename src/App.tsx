@@ -199,7 +199,10 @@ export default function App() {
   );
   const busyRef = useRef(false);
   const analyzeRef = useRef<
-    (app: InstalledApp, opts?: { fromUninstall?: boolean; afterCleanup?: boolean }) => Promise<void>
+    (
+      app: InstalledApp,
+      opts?: { fromUninstall?: boolean; afterCleanup?: boolean; keepReport?: boolean },
+    ) => Promise<void>
   >(async () => {});
   const scanUiState = useScanUiState();
   const {
@@ -560,7 +563,7 @@ export default function App() {
     [startUninstall],
   );
   const listAnalyze = useCallback(
-    (a: InstalledApp, opts?: { afterCleanup?: boolean }) => {
+    (a: InstalledApp, opts?: { afterCleanup?: boolean; keepReport?: boolean }) => {
       if (scanning) return;
       void analyze(a, opts);
     },

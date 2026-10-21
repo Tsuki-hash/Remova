@@ -56,7 +56,12 @@ it("offers end-and-retry only for images under the install root", async () => {
   fireEvent.click(buttons[0]!);
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(1));
   await waitFor(() =>
-    expect(endLockingProcess).toHaveBeenCalledWith(123, "C:\\Apps\\Demo\\demo.exe", root),
+    expect(endLockingProcess).toHaveBeenCalledWith(
+      123,
+      "C:\\Apps\\Demo\\demo.exe",
+      root,
+      item.path,
+    ),
   );
   await waitFor(() => expect(onRetry).toHaveBeenCalledWith([item.path]));
 });

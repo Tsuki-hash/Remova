@@ -58,6 +58,18 @@ it.each(["zh", "en"] as const)("separates pending reboot counts and never claims
     v.unmount();
   }
 });
+it("shows deleted, kept, and pending-reboot sizes in the report", () => {
+  setLang("zh");
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",
+    uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0, delayed: 1,
+    reclaimed_kb: 1024, kept_kb: 2048, delayed_kb: 512, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const { container } = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
+    aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  expect(container.textContent).toContain(t().reportReclaimedKept("1.0 MB", "2.0 MB"));
+  expect(container.textContent).toContain(t().reportPendingKb("512 KB"));
+});
+
 it.each(["zh", "en"] as const)("states the backup prerequisite in the actual guide in %s", lang => {
   setLang(lang);
   render(<SoftwareToolbar q="" category="all" estimating={false} scanning={false} aiEnabled={false}

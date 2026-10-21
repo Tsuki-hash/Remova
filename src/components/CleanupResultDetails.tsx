@@ -72,7 +72,7 @@ function ResultGroup({
       [itemPath]: { ...prev[itemPath], procs: prev[itemPath]?.procs ?? [], busyPid: proc.pid },
     }));
     try {
-      await api.endLockingProcess(proc.pid, proc.path, lockRoot);
+      await api.endLockingProcess(proc.pid, proc.path, lockRoot, itemPath);
     } catch (e) {
       setLockInfo((prev) => ({
         ...prev,

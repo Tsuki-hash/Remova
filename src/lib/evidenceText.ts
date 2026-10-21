@@ -6,7 +6,8 @@ export function evidenceText(evidence: Evidence): Pick<Evidence, "label" | "deta
   const L = t();
   const labels: Record<string, string> = { orphan_no_owner: L.orphanEvNoOwner,
     orphan_has_exe: L.orphanEvExe, orphan_many_files: L.orphanEvFiles,
-    orphan_has_config: L.orphanEvConfig, orphan_root: L.orphanEvRoot, orphan_mtime: L.orphanEvAge };
+    orphan_has_config: L.orphanEvConfig, orphan_root: L.orphanEvRoot, orphan_mtime: L.orphanEvAge,
+    orphan_recent: L.orphanEvRecentLabel };
   if (!Object.hasOwn(labels, evidence.code)) {
     const label = L.scanEvidenceLabel(evidence.code, evidence.label);
     return label ? { label, detail: evidence.detail } : evidence;
@@ -19,5 +20,7 @@ export function evidenceText(evidence: Evidence): Pick<Evidence, "label" | "deta
   if (evidence.code === "orphan_many_files" && files) detail = L.orphanEvFileCount(Number(files[1]));
   const days = evidence.detail.match(/^(\d+) day\(s\) ago$/);
   if (evidence.code === "orphan_mtime" && days) detail = L.orphanEvDays(Number(days[1]));
+  const recent = evidence.detail.match(/^written (\d+) day\(s\) ago$/);
+  if (evidence.code === "orphan_recent" && recent) detail = L.orphanEvRecent(Number(recent[1]));
   return { label: labels[evidence.code]!, detail };
 }

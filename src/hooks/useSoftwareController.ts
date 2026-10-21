@@ -35,7 +35,10 @@ export type SoftwareControllerInput = {
   selectApp: (a: InstalledApp) => void;
   toggleMulti: (key: string) => void;
   listStartUninstall: (a: InstalledApp) => void;
-  listAnalyze: (a: InstalledApp, opts?: { afterCleanup?: boolean }) => void;
+  listAnalyze: (
+    a: InstalledApp,
+    opts?: { afterCleanup?: boolean; keepReport?: boolean },
+  ) => void;
   listForceClean: (a: InstalledApp) => void;
   listIgnoreApp: (a: InstalledApp) => void;
   listIgnorePublisher: (a: InstalledApp) => void;
