@@ -25,6 +25,8 @@ type Props = {
   rescanBusy?: boolean;
   /** M5-4: explicit read-only deep registry check for this app. */
   deepCheckApp?: { name: string } | null;
+  /** M4: install directory bounding the "end process and retry" action. */
+  appInstallLocation?: string;
   onDismiss: () => void;
   onRegenerate: () => void;
 };
@@ -39,6 +41,7 @@ export function ReportPanel({
   onRescan,
   rescanBusy,
   deepCheckApp,
+  appInstallLocation,
   onDismiss,
   onRegenerate,
 }: Props) {
@@ -301,7 +304,7 @@ export function ReportPanel({
         </div>
       )}
       {deepCheckApp && <DeepRegistryCheck key={deepCheckApp.name} appName={deepCheckApp.name} />}
-      {!!report.item_details.length && <CleanupResultDetails key={JSON.stringify(report.item_details)} items={report.item_details} />}
+      {!!report.item_details.length && <CleanupResultDetails key={JSON.stringify(report.item_details)} items={report.item_details} lockRoot={appInstallLocation} />}
       {"uninstall_message" in report && report.uninstall_message && (
         <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
       )}

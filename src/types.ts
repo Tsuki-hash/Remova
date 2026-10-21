@@ -106,7 +106,7 @@ export type FirewallCleanupReport = {
 };
 
 /** M4: processes the Restart Manager reports as holding a path. */
-export type LockingProcess = { pid: number; name: string };
+export type LockingProcess = { pid: number; name: string; path?: string };
 
 /** M5: bounded, read-only registry key matches. */
 export type RegistryCheckHit = { key: string; name: string; detail: string };

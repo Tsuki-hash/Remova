@@ -220,6 +220,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onRescan={reportApp ? () => p.listAnalyze(reportApp, { afterCleanup: true }) : undefined}
           rescanBusy={p.scanning}
           deepCheckApp={reportApp ? { name: reportApp.name } : null}
+          appInstallLocation={reportApp?.install_location}
           onDismiss={() => p.setReport(null)}
           onRegenerate={p.onRegenerateAiReport}
         />

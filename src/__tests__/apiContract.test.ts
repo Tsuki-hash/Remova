@@ -26,6 +26,7 @@ const COMMAND_KEYS = [
   "firewallOrphans",
   "deleteFirewallRules",
   "diagnoseLockedPath",
+  "endLockingProcess",
   "deepRegistryCheck",
   "scanInstallerCaches",
   "scanToolCaches",

@@ -125,6 +125,9 @@ export const api = {
   /** M4: name the processes holding a path (read-only). */
   diagnoseLockedPath: (path: string) =>
     invoke<LockingProcess[]>("diagnose_locked_path", { path }),
+  /** M4: end one confirmed process after server-side image verification. */
+  endLockingProcess: (pid: number, expectedPath: string, installRoot: string) =>
+    invoke<void>("end_locking_process", { pid, expectedPath, installRoot }),
   /** M5: bounded read-only registry key search. */
   deepRegistryCheck: (appName: string) =>
     invoke<RegistryCheckResult>("deep_registry_check", { appName }),
