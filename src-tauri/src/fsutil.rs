@@ -195,15 +195,6 @@ impl DirPin {
     }
 }
 
-/// An empty directory can be changed into a junction even while a handle pins
-/// its name. Create an exclusive delete-on-close marker through that verified
-/// handle, so the directory cannot become empty under us. Never resolve its
-/// pathname a second time.
-///
-/// `mark_even_if_non_empty`: the directory may be emptied by this operation, so
-/// mark it even when it is currently non-empty. Ancestors pass `false` and get
-/// no marker, so a shared system directory like `C:\` or `%ProgramData%` is
-/// never written to (F-16).
 /// A marker name that is unique per attempt and always short (A10 keeps it
 /// testable): pid + nanosecond stamp + attempt offset.
 #[cfg(windows)]
@@ -227,6 +218,15 @@ fn is_access_denied_error(error: &windows::core::Error) -> bool {
     matches!(error.code().0 as u32, 0x8007_0005 | 0xD000_0022)
 }
 
+/// An empty directory can be changed into a junction even while a handle pins
+/// its name. Create an exclusive delete-on-close marker through that verified
+/// handle, so the directory cannot become empty under us. Never resolve its
+/// pathname a second time.
+///
+/// `mark_even_if_non_empty`: the directory may be emptied by this operation, so
+/// mark it even when it is currently non-empty. Ancestors pass `false` and get
+/// no marker, so a shared system directory like `C:\` or `%ProgramData%` is
+/// never written to (F-16).
 #[cfg(windows)]
 pub(crate) fn guard_empty_directory(
     handle: windows::Win32::Foundation::HANDLE,
@@ -791,9 +791,6 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
     String::from_utf16_lossy(&u16s)
 }
 
-/// Unique tmp sibling for atomic publish: `p` + `.{pid}.{nonce}.tmp`.
-/// The pid keeps a second Remova process from clobbering our tmp; the
-/// nonce also unshares concurrent writers of the same target in-process.
 /// Sibling temp name for an atomic replace.
 ///
 /// The name deliberately does **not** embed the destination file name: Windows
