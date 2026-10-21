@@ -370,6 +370,7 @@ fn looks_like_path_token(s: &str) -> bool {
     let b = t.as_bytes();
     (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
         || t.starts_with(r"\\")
+        || t.starts_with("//")
 }
 
 /// Free text (reason / evidence) scrubbed before any cloud upload : /// profile names masked, absolute path tokens reduced via [`sanitize_path`].
@@ -1278,6 +1279,7 @@ mod tests {
             r"C:\Program Files\App",
             "C:/Tools/app",
             r"\\server\share\app",
+            "//server/share/app",
             " D:\\x ",
         ] {
             assert!(looks_like_path_token(s), "{s:?} must look like a path");
@@ -1289,6 +1291,7 @@ mod tests {
             "C:",
             "C:relative",
             "Microsoft .NET",
+            r".\relative",
         ] {
             assert!(!looks_like_path_token(s), "{s:?} must not look like a path");
         }
