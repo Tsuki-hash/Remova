@@ -954,7 +954,7 @@ mod tests {
         };
         // Trust the command pair so the run reaches the parse branch; the
         // trust set is process-global, so restore whatever was there.
-        let saved = crate::apps::trust_test_support::snapshot();
+        let _trust = crate::apps::trust_test_support::guard();
         crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
         let item = CleanupItem {
             path: kept.to_string_lossy().into_owned(),
@@ -982,7 +982,6 @@ mod tests {
                 cleanup_source: None,
             },
         );
-        crate::apps::trust_test_support::restore(saved);
         assert!(report.aborted, "{:?}", report.item_details);
         assert_eq!(report.deleted, 0);
         assert!(

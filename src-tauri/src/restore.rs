@@ -1306,9 +1306,9 @@ mod tests {
             std::env::temp_dir().join(format!("remova_restore_pathfail_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let seals = tmp.join("seals");
-        fs::create_dir_all(&seals).unwrap();
-        let _g = crate::path_seal::test_lock();
-        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        // TestStore owns the seal-root override AND its lock; taking test_lock
+        // separately here would deadlock (A5 regression caught by the suite).
+        let _store = crate::path_seal::TestStore::new(seals);
         let sess = tmp.join("sess");
         let files = sess.join("files");
         fs::create_dir_all(&files).unwrap();
@@ -1344,13 +1344,13 @@ mod tests {
 
         // Force every PATH read to fail so restore_path_entry errors per
         // scope. The mock must be INSTALLED (not merely cleared): with no mock
-        // state the reader falls through to the real registry.
+        // state the reader falls through to the real registry. The reset guard
+        // clears it even if an assertion below panics (A5).
         let _mock = crate::regops::path_mock::lock_mock();
+        let _reset = crate::regops::path_mock::reset_on_drop();
         crate::regops::path_mock::install(r"C:\Windows", r"C:\Windows");
         crate::regops::path_mock::set_fail_read(true);
         let msgs = restore_session(&sess).unwrap();
-        crate::regops::path_mock::clear();
-        crate::path_seal::set_seals_root_for_tests(None);
 
         assert!(
             msgs.iter().any(|m| m.contains("restored")),

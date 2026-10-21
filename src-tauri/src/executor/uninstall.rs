@@ -443,7 +443,7 @@ mod tests {
     /// registered in Programs & Features.
     #[test]
     fn unparseable_uninstall_string_still_counts_as_having_a_command() {
-        let saved_trust = crate::apps::trust_test_support::snapshot();
+        let _trust = crate::apps::trust_test_support::guard();
         for bad in [
             // Opens a quoted exe path but never closes the quote.
             r#""C:\Vendor\My App\unins000.exe /SILENT"#,
@@ -488,6 +488,5 @@ mod tests {
                 "an unparseable command must still be reported so cleanup aborts"
             );
         }
-        crate::apps::trust_test_support::restore(saved_trust);
     }
 }

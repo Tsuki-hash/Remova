@@ -46,6 +46,12 @@ pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
 #[cfg(test)]
 pub mod trust_test_support {
     use std::collections::HashSet;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serializes tests that replace the process-wide trust set. The product
+    /// lock cannot be held here (the test itself calls
+    /// `remember_uninstall_commands`), so a separate test mutex orders them.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     pub fn snapshot() -> HashSet<String> {
         super::uninstall_trust()
@@ -57,6 +63,27 @@ pub mod trust_test_support {
     pub fn restore(saved: HashSet<String>) {
         if let Ok(mut g) = super::uninstall_trust().lock() {
             *g = saved;
+        }
+    }
+
+    /// Snapshot + exclusive test lock. Restores on drop, including on panic
+    /// (A5): a failed assertion must not leave another test's trust set armed.
+    pub struct TrustGuard {
+        saved: HashSet<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    pub fn guard() -> TrustGuard {
+        let lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        TrustGuard {
+            saved: snapshot(),
+            _lock: lock,
+        }
+    }
+
+    impl Drop for TrustGuard {
+        fn drop(&mut self) {
+            restore(std::mem::take(&mut self.saved));
         }
     }
 }

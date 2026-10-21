@@ -765,6 +765,20 @@ pub(crate) mod path_mock {
         *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
+    /// Clears the mock on drop, so a failing assertion cannot leave
+    /// `FAIL_READ`/fixture PATH installed for the rest of the test binary (A5).
+    pub struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            clear();
+        }
+    }
+
+    pub fn reset_on_drop() -> ResetGuard {
+        ResetGuard
+    }
+
     pub fn active() -> bool {
         STATE.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
@@ -2241,6 +2255,18 @@ mod tests {
             super::read_reg_value_bytes(&key, "Big").unwrap().is_none(),
             "the source value must be gone after the rename"
         );
+        // A6: delete explicitly and prove the real-registry fixture is gone
+        // (the Drop fallback only runs when the test returns).
+        let removed = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args(["delete", &key, "/f"])
+            .output()
+            .unwrap();
+        assert!(removed.status.success(), "fixture key delete failed");
+        let gone = std::process::Command::new(super::sys_tool("reg.exe"))
+            .args(["query", &key])
+            .output()
+            .unwrap();
+        assert!(!gone.status.success(), "fixture key must be gone");
     }
 
     #[cfg(windows)]
