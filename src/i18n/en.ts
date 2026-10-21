@@ -642,6 +642,7 @@ export const dict: EnDict = {
     bucketKeepHint: "High risk or shared component — kept by default",
     reasonBelongs: "Linked to this app's install/config",
     reasonShared: "Possible shared component — kept by default",
+    reasonServiceBound: "A registered Windows service uses this directory — kept by default",
     reasonHigh: "High risk — confirm before deleting",
     reasonSuspect: "Possible leftover — review before cleaning",
     reasonUpdaterCache: "Updater cache (not an app leftover)",

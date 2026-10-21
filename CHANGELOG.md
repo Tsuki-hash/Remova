@@ -4,6 +4,15 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### 新增
+
+- **损坏的安装记录（M1）**：安装目录已丢失但 Uninstall 记录仍在的 MSI 应用会在「更多」页单独列出，可直接重新运行官方卸载器并自动重扫；只读扫描，不自动删除任何记录。
+- **服务绑定保护（M2）**：候选目录若承载已注册 Windows 服务的 ImagePath，会标记为 keep 类、默认不勾选，删除门禁直接拒绝——避免删掉仍在使用中的服务数据目录。
+- **活跃孤儿保护（M2）**：孤儿目录近 3 天仍有写入时提升为高风险并注明「近期仍在写入」，不再作为普通残留展示。
+- **空壳目录裁剪（M2）**：删除应用目录后会清理名称匹配产品/厂商且确为空的祖先目录（如 `Program Files\Vendor`），不越过已知根、不处理 reparse 点。
+
 ## [1.3.2] - 2026-10-21
 
 本次发布汇总自 v1.3.1 以来的安全、正确性与可用性修复，以及专项扫描与性能改进。

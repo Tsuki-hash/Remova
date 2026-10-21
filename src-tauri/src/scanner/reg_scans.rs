@@ -59,6 +59,7 @@ pub(super) fn scan_path_env(
                     detail: e.chars().take(120).collect(),
                 }],
                 shared: false,
+                service_bound: false,
                 user_data: false,
                 user_library: false,
                 size_kb: None,
@@ -155,6 +156,7 @@ pub(super) fn scan_shell_extensions(
                     detail: leaf,
                 }],
                 shared: false,
+                service_bound: false,
                 user_data: false,
                 user_library: false,
                 size_kb: None,
@@ -214,6 +216,7 @@ pub(super) fn scan_shell_extensions(
                         detail: def.chars().take(80).collect(),
                     }],
                     shared: false,
+                    service_bound: false,
                     user_data: false,
                     user_library: false,
                     size_kb: None,
@@ -274,6 +277,7 @@ pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut
                 detail: image.chars().take(120).collect(),
             }],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -329,6 +333,7 @@ fn scan_software_keys_with(
                     detail: slug.clone(),
                 }],
                 shared: false,
+                service_bound: false,
                 user_data: false,
                 user_library: false,
                 size_kb: None,
@@ -383,12 +388,80 @@ pub(super) fn scan_services(
                 detail: image.chars().take(120).collect(),
             }],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
             size_capped: false,
             bucket: None,
         });
+    }
+}
+
+/// Executable path from a service `ImagePath` (quotes and arguments stripped).
+fn service_image_exe(image: &str) -> Option<std::path::PathBuf> {
+    let trimmed = image.trim();
+    if trimmed.is_empty() || trimmed.contains('%') {
+        // Unexpanded system variables belong to Windows services, never to an
+        // app leftover; skipping avoids matching them against user paths.
+        return None;
+    }
+    let exe = if let Some(rest) = trimmed.strip_prefix('"') {
+        rest.split('"').next()?
+    } else {
+        trimmed.split_whitespace().next()?
+    };
+    if exe.len() <= 3 {
+        return None;
+    }
+    Some(std::path::PathBuf::from(exe))
+}
+
+/// Mark app-like candidates whose directory hosts a registered service image.
+///
+/// SOP §2.3: a directory referenced by a service is a service data directory,
+/// not a leftover — deleting it breaks a still-installed service. The match is
+/// component-wise on the resolved key, so `C:\App` does not claim `C:\AppData`.
+pub(super) fn mark_service_bound(items: &mut [CleanupItem]) {
+    let mut service_keys: Vec<String> = Vec::new();
+    let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
+    for svc in crate::regscan::list_subkeys(root) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let image = service_image_string(&format!("{root}\\{svc}"));
+        if let Some(exe) = service_image_exe(&image) {
+            if let Some(key) = crate::fsutil::path_key(&exe) {
+                service_keys.push(key);
+            }
+        }
+    }
+    mark_service_bound_with(items, &service_keys);
+}
+
+fn mark_service_bound_with(items: &mut [CleanupItem], service_keys: &[String]) {
+    if service_keys.is_empty() {
+        return;
+    }
+    for item in items.iter_mut() {
+        if !matches!(item.kind, ItemKind::Dir | ItemKind::File) {
+            continue;
+        }
+        let Some(key) = crate::fsutil::path_key(std::path::Path::new(&item.path)) else {
+            continue;
+        };
+        let hit = service_keys
+            .iter()
+            .find(|svc| svc.as_str() == key || svc.starts_with(&format!("{key}\\")));
+        if let Some(svc) = hit {
+            item.service_bound = true;
+            item.evidence.push(Evidence {
+                code: "service_bound".into(),
+                label: "Registered service uses this path".into(),
+                weight: 0,
+                detail: svc.chars().take(120).collect(),
+            });
+        }
     }
 }
 
@@ -429,6 +502,7 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
                 detail: top,
             }],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -567,5 +641,60 @@ mod tests {
             non_empty >= 1,
             "expected at least one real ImagePath read, got {non_empty}"
         );
+    }
+
+    /// M2 (SOP §2.3): a candidate directory hosting a registered service image
+    /// is keep-class; matching is component-wise, so `C:\App` does not claim
+    /// the sibling `C:\AppData`.
+    #[test]
+    fn service_bound_matching_is_component_wise() {
+        use crate::scanner::{CleanupItem, Confidence, ItemKind, RiskLevel};
+        let mk = |path: &str, kind: ItemKind| CleanupItem {
+            path: path.into(),
+            kind,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let mut items = vec![
+            mk(r"C:\App", ItemKind::Dir),
+            mk(r"C:\AppData", ItemKind::Dir),
+            mk(r"C:\App\svc.exe", ItemKind::File),
+        ];
+        super::mark_service_bound_with(&mut items, &[r"c:\app\svc.exe".to_string()]);
+        assert!(
+            items[0].service_bound,
+            "the hosting directory must be bound"
+        );
+        assert!(
+            !items[1].service_bound,
+            "a prefix sibling must not be bound"
+        );
+        assert!(
+            items[2].service_bound,
+            "the service image itself must be bound"
+        );
+    }
+
+    #[test]
+    fn service_image_exe_strips_quotes_and_arguments() {
+        assert_eq!(
+            super::service_image_exe(r#""C:\Program Files\Vendor\svc.exe" -k arg"#),
+            Some(std::path::PathBuf::from(r"C:\Program Files\Vendor\svc.exe"))
+        );
+        assert_eq!(
+            super::service_image_exe(r"C:\Windows\system32\svchost.exe -k netsvcs"),
+            Some(std::path::PathBuf::from(r"C:\Windows\system32\svchost.exe"))
+        );
+        assert!(super::service_image_exe(r"%SystemRoot%\system32\x.exe").is_none());
     }
 }

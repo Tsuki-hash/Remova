@@ -291,15 +291,28 @@ fn scan_orphans_in_roots(
                 detail: root.into(),
             });
         }
-        if let Some(days) = last_write_age_days(&p) {
+        let write_age_days = last_write_age_days(&p);
+        if let Some(days) = write_age_days {
             evidence.push(Evidence {
                 code: "orphan_mtime".into(),
                 label: "Last write age".into(),
                 weight: 0,
                 detail: format!("{days} day(s) ago"),
             });
+            // SOP §2.3: a directory still being written is active data, not a
+            // leftover. Keep-class (high risk) rather than a hard refusal: the
+            // user can still inspect and confirm it explicitly.
+            if days < 3 {
+                evidence.push(Evidence {
+                    code: "orphan_recent".into(),
+                    label: "Recently written (active data)".into(),
+                    weight: 0,
+                    detail: format!("written {days} day(s) ago"),
+                });
+            }
         }
         // Orphans stay Suspected/Medium —never auto-select; user must confirm.
+        let recent = write_age_days.is_some_and(|days| days < 3);
         let path_str = p.to_string_lossy().to_string();
         scanned.insert(path_str.clone());
         out.push(CleanupItem {
@@ -307,10 +320,15 @@ fn scan_orphans_in_roots(
             kind: ItemKind::Dir,
             score,
             confidence: Confidence::Suspected,
-            risk: RiskLevel::Medium,
+            risk: if recent {
+                RiskLevel::High
+            } else {
+                RiskLevel::Medium
+            },
             reason: "Orphan app-like folder (no matching uninstall entry)".into(),
             evidence,
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -561,6 +579,32 @@ mod tests {
         assert!(!was_recent_orphan_path(
             &root.join("Zulu079").to_string_lossy()
         ));
+    }
+
+    #[test]
+    fn recently_written_orphans_are_keep_class() {
+        let _guard = crate::scan_allow::test_lock();
+        let root = crate::test_support::TempDir::new("orphan_recent");
+        let dir = root.join("FreshLeftover");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.exe"), b"mz").unwrap();
+
+        let result = scan_orphans_in_roots(
+            &[],
+            &crate::ignore::IgnoreList::default(),
+            vec![root.path().to_path_buf()],
+        );
+        let row = result
+            .items
+            .iter()
+            .find(|it| it.path.ends_with("FreshLeftover"))
+            .expect("fixture must be reported");
+        assert_eq!(
+            row.risk,
+            RiskLevel::High,
+            "a directory written moments ago is active data, not a plain leftover"
+        );
+        assert!(row.evidence.iter().any(|e| e.code == "orphan_recent"));
     }
 
     #[test]

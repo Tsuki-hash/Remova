@@ -240,6 +240,9 @@ pub fn gate_cleanup_item(
     {
         return GateDecision::Skip("path not associated with app");
     }
+    if item.service_bound {
+        return GateDecision::Skip("service data directory");
+    }
     // hard shared: client flag, name tokens, CF roots, Microsoft Shared, non-CF markers.
     // `is_hard_shared_item` matches name + path only, so the app name goes in the
     // name slot. Passing `item.reason` here fed the scan's free-text reason into
@@ -363,12 +366,24 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
             size_capped: false,
             bucket: None,
         }
+    }
+
+    #[test]
+    fn service_bound_directories_are_refused() {
+        let ignore = crate::ignore::IgnoreList::default();
+        let mut it = item(r"C:\Program Files\Vendor\App", ItemKind::Dir);
+        it.service_bound = true;
+        assert_eq!(
+            gate_cleanup_item(None, &it, CleanupSource::Uninstall, &ignore),
+            GateDecision::Skip("service data directory")
+        );
     }
 
     #[test]

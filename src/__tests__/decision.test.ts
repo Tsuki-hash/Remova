@@ -45,6 +45,7 @@ const L = {
   chipHasPath: "已定位目录",
   reasonBelongs: "与该软件安装/配置相关",
   reasonShared: "可能是共享组件，默认保留",
+  reasonServiceBound: "已注册的系统服务正在使用该目录，默认保留",
   reasonHigh: "高风险，请确认后再决定",
   reasonSuspect: "疑似残留，建议确认后清理",
   reasonUserData: "用户数据，默认不删",
@@ -214,6 +215,7 @@ describe("leftoverReasonLine / gateReasonText", () => {
     expect(leftoverReasonLine(item({ user_data: true }), L)).toBe(L.reasonUserData);
     expect(leftoverReasonLine(item({ user_library: true }), L)).toBe(L.reasonUserLibrary);
     expect(leftoverReasonLine(item({ shared: true }), L)).toBe(L.reasonShared);
+    expect(leftoverReasonLine(item({ service_bound: true }), L)).toBe(L.reasonServiceBound);
     expect(leftoverReasonLine(item({ risk: "high" }), L)).toBe(L.reasonHigh);
     expect(leftoverReasonLine(item(), L)).toBe(L.reasonBelongs);
     expect(leftoverReasonLine(item({ confidence: "suspected" }), L)).toBe(L.reasonSuspect);
@@ -225,6 +227,7 @@ describe("leftoverReasonLine / gateReasonText", () => {
   it("gateReasonText maps delete-gate skip codes to user copy", () => {
     expect(gateReasonText("user_data red line", L)).toBe(L.reasonUserData);
     expect(gateReasonText("shared runtime", L)).toBe(L.reasonShared);
+    expect(gateReasonText("service data directory", L)).toBe(L.reasonServiceBound);
     expect(gateReasonText("ignored path", L)).toBe(L.reasonIgnored);
     expect(gateReasonText("protected PATH entry", L)).toBe(L.reasonPathProtected);
     expect(gateReasonText("failed safety gate", L)).toBe(L.reasonSafetyGate);

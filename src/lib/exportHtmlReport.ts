@@ -18,6 +18,7 @@ type Strings = {
   reportBackup: string;
   reasonUserData: string;
   reasonShared: string;
+  reasonServiceBound: string;
   reasonIgnored: string;
   reasonPathProtected: string;
   reasonSafetyGate: string;

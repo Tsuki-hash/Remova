@@ -623,6 +623,7 @@ export const dict = {
     bucketKeepHint: "高风险或可能是共享组件，默认不删除",
     reasonBelongs: "与该软件安装/配置相关",
     reasonShared: "可能是共享组件，默认保留",
+    reasonServiceBound: "已注册的系统服务正在使用该目录，默认保留",
     reasonHigh: "高风险，请确认后再决定",
     reasonSuspect: "疑似残留，建议确认后清理",
     reasonUpdaterCache: "更新程序缓存（不是应用残留）",

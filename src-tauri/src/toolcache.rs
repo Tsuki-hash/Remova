@@ -714,6 +714,7 @@ fn push_item(
             detail: label.into(),
         }],
         shared: false,
+        service_bound: false,
         user_data: crate::safety::is_user_data_path(&p),
         user_library: crate::safety::is_user_library_path(&p)
             && !crate::safety::is_user_data_path(&p),

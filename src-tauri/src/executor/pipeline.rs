@@ -596,6 +596,29 @@ pub fn run_full_cleanup(
     // the deleter only manufactured spurious failures. The set deleted is the
     // set that was backed up, by construction.
     let mut del = delete_planned_items_with_native(&plan.allowed, &mut native_delete_note);
+    // M2 (SOP §8-22): drop empty vendor/product shells left by the delete.
+    let tokens: Vec<String> = [app.name.clone(), app.publisher.clone()]
+        .into_iter()
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    for detail in del.details.iter_mut() {
+        if detail.status == "deleted" && detail.kind == "dir" {
+            let removed =
+                crate::fsutil::prune_empty_ancestors(std::path::Path::new(&detail.path), &tokens);
+            if !removed.is_empty() {
+                let names: Vec<String> = removed
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                let note = format!("removed empty parent: {}", names.join(", "));
+                detail.message = if detail.message.is_empty() {
+                    note
+                } else {
+                    format!("{}; {note}", detail.message)
+                };
+            }
+        }
+    }
     del.skipped += plan.refused.len() as u32;
     del.details.extend(plan.refused);
 
@@ -754,6 +777,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -859,6 +883,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: true,
             user_library: false,
             size_kb: None,
@@ -878,6 +903,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -965,6 +991,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -1028,6 +1055,7 @@ mod tests {
             reason: "user data".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: true,
             user_library: false,
             size_kb: None,
@@ -1084,6 +1112,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -1116,6 +1145,7 @@ mod tests {
             reason: "t".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,

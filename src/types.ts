@@ -28,6 +28,8 @@ export type CleanupItem = {
   reason: string;
   evidence: Evidence[];
   shared?: boolean;
+  /** Hosts a registered Windows service image — keep-class, never default-select. */
+  service_bound?: boolean;
   /** Likely user documents/downloads — never auto-select (SOP). */
   user_data?: boolean;
   /** Under a user library folder but not the root — confirm only, never default-select. */

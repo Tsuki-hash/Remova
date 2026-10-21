@@ -191,7 +191,7 @@ export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
 
 /** Keep bucket predicate (high risk / shared / user data) — single source for UI filters. */
 export function isKeepItem(it: CleanupItem): boolean {
-  return it.risk === "high" || Boolean(it.shared) || Boolean(it.user_data);
+  return it.risk === "high" || Boolean(it.shared) || Boolean(it.service_bound) || Boolean(it.user_data);
 }
 
 export type RiskTier = "low" | "medium" | "high";
@@ -256,6 +256,7 @@ export function defaultSelectable(it: CleanupItem): boolean {
     it.confidence === "confirmed" &&
     it.risk !== "high" &&
     !it.shared &&
+    !it.service_bound &&
     !it.user_data &&
     !it.user_library
   );
@@ -290,6 +291,7 @@ export function leftoverReasonLine(
   L: {
     reasonBelongs: string;
     reasonShared: string;
+    reasonServiceBound: string;
     reasonHigh: string;
     reasonSuspect: string;
     reasonUserData: string;
@@ -298,6 +300,7 @@ export function leftoverReasonLine(
 ): string {
   if (it.user_data) return L.reasonUserData;
   if (it.user_library) return L.reasonUserLibrary;
+  if (it.service_bound) return L.reasonServiceBound;
   if (it.shared) return L.reasonShared;
   if (it.risk === "high") return L.reasonHigh;
   if (it.confidence === "confirmed") return L.reasonBelongs;
@@ -308,6 +311,7 @@ export function leftoverReasonLine(
 export type GateReasonLabels = {
   reasonUserData: string;
   reasonShared: string;
+  reasonServiceBound: string;
   reasonIgnored: string;
   reasonPathProtected: string;
   reasonSafetyGate: string;
@@ -326,6 +330,7 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
     return L.reasonUserData;
   }
   if (m.includes("shared runtime") || m === "shared") return L.reasonShared;
+  if (m.includes("service data directory")) return L.reasonServiceBound;
   if (m.includes("ignored")) return L.reasonIgnored;
   if (m.includes("protected path")) return L.reasonPathProtected;
   if (m.includes("safety gate") || m.includes("failed safety")) return L.reasonSafetyGate;

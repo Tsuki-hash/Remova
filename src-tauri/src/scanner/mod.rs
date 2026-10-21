@@ -52,6 +52,11 @@ pub struct CleanupItem {
     /// Shared runtime / redistributable —default do-not-select.
     #[serde(default)]
     pub shared: bool,
+    /// A registered Windows service's image lives under this directory (SOP §2.3).
+    /// Treated as keep-class: deleting it would break a service that is still
+    /// installed, even when the directory looks like an app leftover.
+    #[serde(default)]
+    pub service_bound: bool,
     /// Library roots / sync-conflict red line —never delete.
     #[serde(default)]
     pub user_data: bool,
@@ -518,6 +523,7 @@ pub(crate) fn push_item(
         reason,
         evidence,
         shared: false,
+        service_bound: false,
         user_data: false,
         user_library: false,
         size_kb,
@@ -622,6 +628,7 @@ pub fn analyze_associations(
                     detail: root.to_string_lossy().to_string(),
                 }],
                 shared: false,
+                service_bound: false,
                 user_data: false,
                 user_library: false,
                 size_kb: None,
@@ -720,6 +727,7 @@ pub fn analyze_associations(
                     detail: file_name.to_string(),
                 }],
                 shared: false,
+                service_bound: false,
                 user_data: false,
                 user_library: false,
                 size_kb: None,
@@ -746,6 +754,7 @@ pub fn analyze_associations(
                 detail: registry_key.to_string(),
             }],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
@@ -790,6 +799,7 @@ pub fn analyze_associations(
                                 detail: target,
                             }],
                             shared: false,
+                            service_bound: false,
                             user_data: false,
                             user_library: false,
                             size_kb: None,
@@ -904,6 +914,10 @@ pub fn analyze_associations(
             it.user_library = true;
         }
     }
+
+    // M2 (SOP §2.3): a directory hosting a registered service image is live
+    // service data, not a leftover — mark it keep-class before sizing.
+    reg_scans::mark_service_bound(&mut items);
 
     phase!("sizes");
     fill_item_sizes(&mut items);

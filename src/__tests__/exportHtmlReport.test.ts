@@ -16,6 +16,7 @@ const L = {
   reportBackup: "备份",
   reasonUserData: "用户数据，默认不删",
   reasonShared: "可能是共享组件，默认保留",
+  reasonServiceBound: "已注册的系统服务正在使用该目录，默认保留",
   reasonIgnored: "已在忽略列表中，跳过",
   reasonPathProtected: "系统 PATH 条目，受保护",
   reasonSafetyGate: "未通过删除安全门，跳过",

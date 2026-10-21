@@ -791,6 +791,80 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
     String::from_utf16_lossy(&u16s)
 }
 
+/// M2 (SOP §8-22): remove empty ancestor shells left after deleting an app
+/// directory (e.g. `Program Files\Vendor`). Only directories that are empty,
+/// below one of the known roots, not reparse points, and whose name matches a
+/// product/publisher token are removed; the root itself is never touched.
+pub fn prune_empty_ancestors(path: &Path, tokens: &[String]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for env in [
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "PROGRAMDATA",
+        "LOCALAPPDATA",
+        "APPDATA",
+    ] {
+        if let Some(v) = std::env::var_os(env) {
+            if let Some(key) = path_key(Path::new(&v)) {
+                roots.push(PathBuf::from(key));
+            }
+        }
+    }
+    prune_empty_ancestors_under(path, tokens, &roots)
+}
+
+fn prune_empty_ancestors_under(path: &Path, tokens: &[String], roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    let normalized: Vec<String> = tokens
+        .iter()
+        .map(|t| crate::scanner::normalize_for_match(t))
+        .filter(|t| t.len() >= 3)
+        .collect();
+    if normalized.is_empty() {
+        return removed;
+    }
+    let Some(mut current) = path.parent().map(Path::to_path_buf) else {
+        return removed;
+    };
+    while let Some(dir_key) = path_key(&current) {
+        let inside_root = roots.iter().any(|root| {
+            let root = root.to_string_lossy();
+            dir_key != root.as_ref() && dir_key.starts_with(&format!("{root}\\"))
+        });
+        if !inside_root {
+            break;
+        }
+        if is_reparse_point(&current) {
+            break;
+        }
+        let name = crate::scanner::normalize_for_match(
+            &current
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+        if !normalized.iter().any(|t| t == &name) {
+            break;
+        }
+        let mut entries = match std::fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(_) => break,
+        };
+        if entries.next().is_some() {
+            break;
+        }
+        if std::fs::remove_dir(&current).is_err() {
+            break;
+        }
+        removed.push(current.clone());
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent.to_path_buf();
+    }
+    removed
+}
+
 /// Sibling temp name for an atomic replace.
 ///
 /// The name deliberately does **not** embed the destination file name: Windows
@@ -1269,8 +1343,33 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&root);
     }
-    /// R38-4 / A10: the root-skip rule is a pure decision, so it can be tested
-    /// without pinning a real volume root.
+    /// M2 (SOP §8-22): only empty, matching vendor/product shells below a known
+    /// root are removed; the root and sibling directories survive.
+    #[test]
+    fn prune_removes_only_empty_matching_shells() {
+        let root = unique_tmp("prune");
+        let root_key = PathBuf::from(path_key(root.path()).unwrap());
+        let roots = [root_key.clone()];
+        let vendor = root.join("Vendor");
+        let app = vendor.join("App");
+        std::fs::create_dir_all(app.join("bin")).unwrap();
+        std::fs::write(app.join("bin").join("a.bin"), b"x").unwrap();
+        std::fs::create_dir_all(root.join("Unrelated").join("App")).unwrap();
+
+        std::fs::remove_dir_all(&app).unwrap();
+        let removed = prune_empty_ancestors_under(&app, &["Vendor".into()], &roots);
+        assert_eq!(removed, vec![vendor.clone()]);
+        assert!(!vendor.exists(), "the empty vendor shell must be gone");
+        assert!(root.exists(), "the known root must survive");
+
+        let other = root.join("Unrelated").join("App");
+        std::fs::remove_dir_all(&other).unwrap();
+        let removed = prune_empty_ancestors_under(&other, &["Vendor".into()], &roots);
+        assert!(removed.is_empty(), "a non-matching name must not be pruned");
+        assert!(root.join("Unrelated").exists());
+    }
+
+    /// R38-4 / A10: the root-skip rule is a pure decision, so it can be tested    /// without pinning a real volume root.
     #[test]
     fn target_can_be_marked_covers_roots_and_unc_shares() {
         assert!(!target_can_be_marked(std::path::Path::new(r"C:\")));

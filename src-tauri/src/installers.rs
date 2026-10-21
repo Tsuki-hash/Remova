@@ -226,6 +226,7 @@ fn push_file_item(
         },
         evidence: evidence_list,
         shared: false,
+        service_bound: false,
         user_data: crate::safety::is_user_data_path(&p),
         // Never `user_library`: an installer package is the object of this scan,
         // not personal data that happens to live under a library folder. The
@@ -263,6 +264,7 @@ fn push_dir_item(
             detail: bucket.into(),
         }],
         shared: false,
+        service_bound: false,
         user_data: crate::safety::is_user_data_path(&p),
         user_library: crate::safety::is_user_library_path(&p)
             && !crate::safety::is_user_data_path(&p),

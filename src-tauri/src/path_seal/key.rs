@@ -499,6 +499,7 @@ mod tests {
             reason: "test".into(),
             evidence: vec![],
             shared: false,
+            service_bound: false,
             user_data: false,
             user_library: false,
             size_kb: None,
