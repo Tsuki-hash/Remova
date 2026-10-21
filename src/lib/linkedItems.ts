@@ -50,16 +50,20 @@ function isConfigPath(path: string): boolean {
   );
 }
 
-function isUnderInstall(path: string, install: string): boolean {
+function isUnderInstall(path: string, installKey: string): boolean {
   const a = pathKey(path || "");
-  const b = pathKey(install || "");
-  if (!b) return false;
-  return a === b || a.startsWith(`${b}\\`);
+  if (!installKey) return false;
+  return a === installKey || a.startsWith(`${installKey}\\`);
 }
 
 /** Classify one leftover into a display bucket (presentation only). */
 export function classifyItem(it: CleanupItem, app: InstalledApp): LinkedBucketId {
- // Prefer backend bucket when present (1.1).
+  // A8: callers that classify many rows pass one precomputed install key.
+  return classifyItemWith(it, pathKey(app.install_location));
+}
+
+function classifyItemWith(it: CleanupItem, installKey: string): LinkedBucketId {
+  // Prefer backend bucket when present (1.1).
   const b = (it.bucket || "").trim();
   if (
     b === "programFiles" ||
@@ -84,7 +88,7 @@ export function classifyItem(it: CleanupItem, app: InstalledApp): LinkedBucketId
   if (kind === "file" || kind === "dir") {
     if (isStartupPath(path)) return "startup";
     if (isConfigPath(path)) return "configFiles";
-    if (isUnderInstall(path, app.install_location) || /\\program files( \(x86\))?\\/i.test(path)) {
+    if (isUnderInstall(path, installKey) || /\\program files( \(x86\))?\\/i.test(path)) {
       return "programFiles";
     }
     return "configFiles";
@@ -97,9 +101,10 @@ export function buildLinkedBuckets(
   items: CleanupItem[],
   app: InstalledApp,
 ): LinkedBucket[] {
+  const installKey = pathKey(app.install_location);
   const map = new Map<LinkedBucketId, { count: number; sizeSum: number; hasSize: boolean }>();
   for (const it of items) {
-    const id = classifyItem(it, app);
+    const id = classifyItemWith(it, installKey);
     const cur = map.get(id) ?? { count: 0, sizeSum: 0, hasSize: false };
     cur.count += 1;
     const kind = (it.kind || "").toLowerCase();
@@ -132,7 +137,8 @@ export function filterItemsByBucket(
   bucket: LinkedBucketId | null | undefined,
 ): CleanupItem[] {
   if (!bucket) return items;
-  return items.filter((it) => classifyItem(it, app) === bucket);
+  const installKey = pathKey(app.install_location);
+  return items.filter((it) => classifyItemWith(it, installKey) === bucket);
 }
 
 /** Keys into the i18n `Strings` record — typed so callers index without a cast. */
