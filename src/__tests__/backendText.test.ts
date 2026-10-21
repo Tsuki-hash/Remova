@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
 import { setLang, t } from "../i18n";
-import { backendText } from "../lib/backendText";
+import { backendErrorText, backendText } from "../lib/backendText";
 afterEach(() => setLang("zh"));
 it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics in %s", lang => {
   setLang(lang);
@@ -25,6 +25,11 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("shared tool cache", "scan")).toBe(L.toolcacheSharedTitle);
   expect(backendText("tool cache (dev)", "scan")).toBe(L.toolcacheTitle);
   expect(backendText("Run startup: Vendor", "scan")).toBe(L.linkedStartup);
+  expect(backendText("uninstaller finished (reboot required): vendor.exe")).toBe(L.backendRebootRequired);
+  expect(backendText("operation failed: process image changed; refresh")).toBe(L.lockImageChanged);
+  expect(backendText("operation failed: process no longer holds this path")).toBe(L.lockNoLongerHolds);
+  expect(backendText("operation failed: path is not from the latest cleanup")).toBe(L.lockTargetStale);
+  expect(backendErrorText("future_unknown")).toBe("future_unknown");
   expect(backendText("")).toBe("");
   for (const code of ["constructor", "toString", "__proto__"]) {
     for (const context of ["cleanup", "scan", "idle"] as const) {

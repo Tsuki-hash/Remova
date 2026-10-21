@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendErrorText } from "../lib/backendText";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import type { FirewallRule } from "../types";
@@ -74,7 +75,7 @@ export function FirewallRulesPanel({
       }
       await scan();
     } catch (e) {
-      const msg = formatError(e);
+      const msg = backendErrorText(formatError(e));
       if (msg.toLowerCase().includes("administrator privileges")) {
         toast.error(L.firewallNeedAdmin);
       } else {

@@ -202,8 +202,8 @@ export default function App() {
     (
       app: InstalledApp,
       opts?: { fromUninstall?: boolean; afterCleanup?: boolean; keepReport?: boolean },
-    ) => Promise<void>
-  >(async () => {});
+    ) => Promise<boolean>
+  >(() => Promise.resolve(false));
   const scanUiState = useScanUiState();
   const {
     kindFilter,

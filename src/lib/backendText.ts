@@ -51,12 +51,27 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "SRSetRestorePointW failed": L.restorePointFail, "not windows": L.backendUnsupported,
   };
   if (Object.hasOwn(exact, raw)) return exact[raw]!;
+  if (raw.startsWith("uninstaller finished (reboot required): ")) return L.backendRebootRequired;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");
+  if (raw.includes("process image changed")) return L.lockImageChanged;
+  if (raw.includes("process no longer holds this path")) return L.lockNoLongerHolds;
+  if (raw.includes("process did not exit in time")) return L.lockExitTimeout;
+  if (raw.includes("process image is outside the install directory")) return L.lockOutsideRoot;
+  if (raw.includes("path is not from the latest cleanup")) return L.lockTargetStale;
+  if (raw.includes("firewall rule is no longer an orphan")) return L.firewallRuleStale;
+  if (raw.includes("broken install record no longer present")) return L.brokenInstallsGone;
   if (raw.startsWith("backup failed for ")) return L.backendBackupFailed;
   if (raw.startsWith("restore point seq=")) return L.restorePointOk;
   if (/^(sc|schtasks) delete .+: ok$/.test(raw)) return L.backendNativeDeleted;
   if (/^(sc|schtasks) delete .+: failed or not found$/.test(raw)) return L.backendNativeDeleteFailed;
   return L.backendDetailUnavailable;
+}
+
+/** Localize known backend diagnostics, preserving unknown raw text verbatim. */
+export function backendErrorText(raw: string, context: "cleanup" | "scan" = "cleanup"): string {
+  const L = t();
+  const localized = backendText(raw, context);
+  return localized === L.backendDetailUnavailable ? raw : localized;
 }

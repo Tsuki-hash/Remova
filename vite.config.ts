@@ -23,7 +23,17 @@ export default defineConfig({
       // Logic + App orchestration gate (R23-QA-05). Components are exercised by
       // smoke tests; api.ts is thin invoke wrappers whose contract is checked
       // by apiContract.test, not by execution.
-      include: ["src/lib/**", "src/hooks/**", "src/App.tsx"],
+      include: [
+        "src/lib/**",
+        "src/hooks/**",
+        "src/App.tsx",
+        // 1.3.2 destructive panels: lock these paths to the coverage gate so
+        // new cleanup/report actions cannot regress without a test.
+        "src/components/BrokenInstallsPanel.tsx",
+        "src/components/FirewallRulesPanel.tsx",
+        "src/components/CleanupResultDetails.tsx",
+        "src/components/DeepRegistryCheck.tsx",
+      ],
       exclude: ["src/lib/api.ts"],
       thresholds: {
         // Preserve the existing logic-layer floor; App gets its own gate so

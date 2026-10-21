@@ -245,7 +245,9 @@ export function useCleanupHandlers({
         setError(msg);
         setVerifyRows(null);
         setAiReportNote(null);
-        setResidualFromUninstall(false);
+        // Keep the post-uninstall residual state: this abort is a cleanup
+        // failure, not a fresh install state. Clearing it re-arms the official
+        // uninstaller for an app that was already uninstalled.
         void refreshApps();
         return;
       }

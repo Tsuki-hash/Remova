@@ -59,6 +59,8 @@ export function ToolCard({
       disabled={item.disabled}
       className="remova-tool-card"
       type="button"
+      aria-expanded={active}
+      aria-controls={active ? "remova-more-tool-panel" : undefined}
       onClick={item.action}
       style={{
         ...cardBase,

@@ -223,7 +223,14 @@ export function MorePage({
         paddingRight: 2,
       }}
     >
-      <div ref={panelRef} tabIndex={-1} style={{ outline: "none" }}>
+      <div
+        ref={panelRef}
+        id="remova-more-tool-panel"
+        role="region"
+        aria-label={L.toolboxTitle}
+        tabIndex={-1}
+        style={{ outline: "none" }}
+      >
       {openTool === "history" && (
         <HistoryPanel
           history={hist.history}

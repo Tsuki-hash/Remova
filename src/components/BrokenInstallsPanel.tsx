@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendErrorText } from "../lib/backendText";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import type { BrokenInstall } from "../types";
@@ -50,7 +51,7 @@ export function BrokenInstallsPanel({
         toast.success(L.brokenInstallsRerunOk);
         await scan();
       } else {
-        toast.error(L.brokenInstallsFailed(result.message));
+        toast.error(L.brokenInstallsFailed(backendErrorText(result.message)));
         // The record may still be gone even when the uninstaller exits non-zero
         // (1605/1603); a rescan tells the truth.
         const next = await api.brokenInstalls();

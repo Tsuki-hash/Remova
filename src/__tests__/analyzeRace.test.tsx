@@ -181,7 +181,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     captured.selectedPaths.add("old-authorized-path");
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef: { current: false } }));
-    let work!: Promise<void>;
+    let work!: Promise<boolean>;
     await act(async () => { work = result.current.analyze(app("AppA")); });
     expect(captured.selectedPaths.size).toBe(0);
     await act(async () => { await result.current.cancelScan(); finish(scan("AppA")); await work; });
@@ -201,7 +201,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     const busyRef = { current: false };
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef }));
-    let work!: Promise<void>;
+    let work!: Promise<boolean>;
     await act(async () => { work = result.current.analyze(app("AppA")); });
     expect(busyRef.current, "a destructive action must be blocked mid-scan").toBe(true);
     await act(async () => { finish(scan("AppA")); await work; });
@@ -218,7 +218,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     const busyRef = { current: false };
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef }));
-    let workA!: Promise<void>;
+    let workA!: Promise<boolean>;
     await act(async () => { workA = result.current.analyze(app("AppA")); });
     await act(async () => { await result.current.analyze(app("AppB")); });
     expect(busyRef.current, "AppB still in flight").toBe(true);

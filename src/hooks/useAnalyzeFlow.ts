@@ -85,6 +85,18 @@ export function useAnalyzeFlow({
     ) => {
  // single in-flight ref (was dual scanningRef/analyzingRef).
  // Newer analyze supersedes via seq — do not early-return here (race tests require it).
+      // A cleanup/dry-run owns busyRef without analyzingRef. Starting an
+      // unrelated scan then would let its report land on the wrong app; nested
+      // uninstall/after-cleanup scans are explicitly allowed below.
+      if (
+        busyRef.current &&
+        !analyzingRef.current &&
+        !opts?.fromUninstall &&
+        !opts?.afterCleanup
+      ) {
+        toast.info(t().taskBusy, { channel: "analyze-flow" });
+        return false;
+      }
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
       // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only,
@@ -113,7 +125,7 @@ export function useAnalyzeFlow({
       const t0 = performance.now();
       try {
         const r = await runScan(app);
-        if (seq !== analyzeSeqRef.current) return;
+        if (seq !== analyzeSeqRef.current) return false;
         setScan(r, app);
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
@@ -130,17 +142,19 @@ export function useAnalyzeFlow({
           t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),
           { channel: "analyze-flow", ttl: 3000 },
         );
+        return true;
       } catch (e) {
-        if (seq !== analyzeSeqRef.current) return;
+        if (seq !== analyzeSeqRef.current) return false;
         setResidualFromUninstall(false);
         if (scanCancelled(e)) {
           setSelectedPaths(new Set());
           setError(null);
           toast.info(t().scanCancelledIncomplete, { channel: "analyze-flow" });
-          return;
+          return false;
         }
         setError(formatError(e, "analyze"));
         toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
+        return false;
       } finally {
         analyzeHoldRef.current -= 1;
         // Release only this call’s own claim: a superseded older scan must not
@@ -230,12 +244,16 @@ export function useAnalyzeFlow({
  // the cleanup UI must hide the official-uninstall toggle. execReal
  // clears the flag once the residual pass finishes.
           setResidualFromUninstall(true);
-          await analyze(app, { fromUninstall: true });
-          setUninstallStage("analyze");
-          await new Promise((resolve) => setTimeout(resolve, 320));
-          setUninstallStage("report");
-          clearStageTimer();
-          stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2200);
+          const analyzed = await analyze(app, { fromUninstall: true });
+          if (analyzed) {
+            setUninstallStage("analyze");
+            await new Promise((resolve) => setTimeout(resolve, 320));
+            setUninstallStage("report");
+            clearStageTimer();
+            stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2200);
+          } else {
+            setUninstallStage("idle");
+          }
         } else {
           setUninstallStage("idle");
         }
@@ -322,12 +340,16 @@ const openOfficialOnly = useCallback(
           // pass cleans leftovers WITHOUT re-running the official
           // uninstaller — without this flag a re-run aborts the cleanup.
           setResidualFromUninstall(true);
-          await analyze(app, { fromUninstall: true });
-          setUninstallStage("analyze");
-          await new Promise((resolve) => setTimeout(resolve, 280));
-          setUninstallStage("report");
-          clearStageTimer();
-          stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
+          const analyzed = await analyze(app, { fromUninstall: true });
+          if (analyzed) {
+            setUninstallStage("analyze");
+            await new Promise((resolve) => setTimeout(resolve, 280));
+            setUninstallStage("report");
+            clearStageTimer();
+            stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
+          } else {
+            setUninstallStage("idle");
+          }
         }
         await refreshApps();
       } catch (e) {
