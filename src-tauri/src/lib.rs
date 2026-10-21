@@ -625,6 +625,20 @@ async fn diagnose_locked_path(path: String) -> Result<Vec<locks::LockingProcess>
         .map_err(|e| e.to_string())?
 }
 
+/// End one confirmed process after re-verifying its image is inside the app.
+#[tauri::command]
+async fn end_locking_process(
+    pid: u32,
+    expected_path: String,
+    install_root: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        locks::end_locking_process(pid, &expected_path, &install_root)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Bounded, read-only search for product-named keys under SOFTWARE (M5-4).
 #[tauri::command]
 async fn deep_registry_check(app_name: String) -> Result<deep_reg::RegistryCheckResult, String> {
@@ -890,6 +904,7 @@ pub fn run() {
         // `scan_firewall_orphans`
         // `delete_firewall_rules`
         // `diagnose_locked_path`
+        // `end_locking_process`
         // `deep_registry_check`
         // `scan_installer_caches`
         // `scan_tool_caches`
@@ -956,6 +971,7 @@ pub fn run() {
             scan_firewall_orphans,
             delete_firewall_rules,
             diagnose_locked_path,
+            end_locking_process,
             deep_registry_check,
             scan_installer_caches,
             scan_tool_caches,
