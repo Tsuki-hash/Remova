@@ -102,12 +102,21 @@ export function IdleRadarPanel({
               <div style={{ fontWeight: 600 }}>{r.app.name}</div>
               <div style={{ ...css.muted, fontSize: 11.5, fontFamily: "var(--mono)" }}>
                 {L.idleDays(r.idle_days)} · {r.evidence.some(e => e.code === "idle_size_partial") ? "≥" : ""}{formatSize(Math.max(0, r.size_kb))}
-                {r.app.install_date ? ` · ${r.app.install_date}` : ""}
               </div>
               <div style={{ ...css.muted, fontSize: 11 }}>
-                {r.evidence
-                  .map((e) => backendText(e.code, "idle"))
-                  .join(" · ")}
+                {r.evidence.map((e, i) => (
+                  <span key={`${e.code}-${i}`}>
+                    {i > 0 ? " · " : ""}
+                    {/* The date belongs to its label; keep the pair on one line. */}
+                    {e.code === "idle_install_age" && r.app.install_date ? (
+                      <span style={{ whiteSpace: "nowrap" }}>
+                        {backendText(e.code, "idle")} {r.app.install_date}
+                      </span>
+                    ) : (
+                      backendText(e.code, "idle")
+                    )}
+                  </span>
+                ))}
               </div>
             </div>
             <button style={{ ...css.btnGhost, height: 28 }} onClick={onGoSoftware}>
