@@ -64,7 +64,9 @@ export function DeepRegistryCheck({ appName }: { appName: string }) {
                       ? L.deepRegistryTopLevel
                       : hit.detail === "nested"
                         ? L.deepRegistryNested
-                        : hit.detail}
+                        : hit.detail === "nested_weak"
+                          ? L.deepRegistryNestedWeak
+                          : hit.detail}
                   </span>
                 </li>
               ))}

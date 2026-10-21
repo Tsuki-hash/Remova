@@ -19,7 +19,10 @@ beforeEach(() => {
 
 it("reports matching keys read-only and never offers a delete control", async () => {
   deepRegistryCheck.mockResolvedValue({
-    hits: [{ key: "HKLM64\\SOFTWARE\\Acme\\AcmeTool", name: "AcmeTool", detail: "nested" }],
+    hits: [
+      { key: "HKLM64\\SOFTWARE\\Acme\\AcmeTool", name: "AcmeTool", detail: "nested" },
+      { key: "HKLM64\\SOFTWARE\\Vendor\\Acme", name: "Acme", detail: "nested_weak" },
+    ],
     scanned: 42,
     truncated: false,
     timed_out: false,
@@ -29,8 +32,9 @@ it("reports matching keys read-only and never offers a delete control", async ()
   await screen.findByText("HKLM64\\SOFTWARE\\Acme\\AcmeTool");
   expect(deepRegistryCheck).toHaveBeenCalledWith("Acme Tool");
   expect(screen.getByText(t().deepRegistryReadOnly)).toBeTruthy();
-  expect(screen.getByText(t().deepRegistryHits(1))).toBeTruthy();
+  expect(screen.getByText(t().deepRegistryHits(2))).toBeTruthy();
   expect(screen.getByText(t().deepRegistryNested, { exact: false })).toBeTruthy();
+  expect(screen.getByText(t().deepRegistryNestedWeak, { exact: false })).toBeTruthy();
   expect(screen.queryByRole("button", { name: /delete|删除/i })).toBeNull();
 });
 

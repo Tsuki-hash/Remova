@@ -148,6 +148,7 @@ export const dict = {
     deepRegistryEmpty: "未发现更深层的同名注册表键",
     deepRegistryTopLevel: "顶层厂商键",
     deepRegistryNested: "厂商下的产品键",
+    deepRegistryNestedWeak: "厂商下的疑似产品键（单词匹配，仅供参考）",
     deepRegistryTruncated: "已达到扫描上限，结果可能不完整",
     deepRegistryTimedOut: "扫描超时，结果可能不完整",
     deepRegistryFailed: (msg: string) => `深度核查失败：${msg}`,

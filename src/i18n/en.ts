@@ -147,6 +147,7 @@ export const dict: EnDict = {
     deepRegistryEmpty: "No deeper matching registry keys found",
     deepRegistryTopLevel: "Top-level vendor key",
     deepRegistryNested: "Product key under the vendor",
+    deepRegistryNestedWeak: "Possible product key under the vendor (word match only)",
     deepRegistryTruncated: "Scan limit reached; results may be incomplete",
     deepRegistryTimedOut: "Scan timed out; results may be incomplete",
     deepRegistryFailed: (msg: string) => `Deep registry check failed: ${msg}`,

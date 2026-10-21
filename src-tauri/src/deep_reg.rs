@@ -171,9 +171,17 @@ fn walk_with(
                     break 'roots;
                 }
                 result.scanned += 1;
-                if leaf_matches(&child, &keywords.strong) || leaf_matches(&child, &keywords.weak) {
+                let strong_hit = leaf_matches(&child, &keywords.strong);
+                let weak_hit = !strong_hit && leaf_matches(&child, &keywords.weak);
+                if strong_hit || weak_hit {
                     let child_path = format!("{vendor_path}\\{child}");
-                    push_hit(&mut result, &mut seen, &child_path, &child, "nested");
+                    push_hit(
+                        &mut result,
+                        &mut seen,
+                        &child_path,
+                        &child,
+                        if weak_hit { "nested_weak" } else { "nested" },
+                    );
                 }
             }
             // A vendor key that matches only because the product name starts
@@ -306,6 +314,14 @@ mod tests {
         assert!(!keys
             .iter()
             .any(|k| k.eq_ignore_ascii_case(r"HKLM64\SOFTWARE\Microsoft")));
+        assert_eq!(
+            result
+                .hits
+                .iter()
+                .find(|h| h.key.ends_with(r"\Microsoft\Office"))
+                .map(|h| h.detail.as_str()),
+            Some("nested_weak")
+        );
     }
 
     #[test]
