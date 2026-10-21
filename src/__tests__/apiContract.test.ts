@@ -21,6 +21,7 @@ const COMMAND_KEYS = [
   "verifyLeftovers",
   "orphanScan",
   "rankIdleApps",
+  "brokenInstalls",
   "scanInstallerCaches",
   "scanToolCaches",
   "listTopDirSizes",

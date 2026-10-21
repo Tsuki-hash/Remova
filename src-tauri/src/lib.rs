@@ -569,6 +569,15 @@ async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<orphans::OrphanSc
     .map_err(|e| e.to_string())?
 }
 
+/// Broken MSI install records: the directory is gone but the Uninstall entry
+/// remains, so Programs & Features can no longer remove the product (§9.7).
+#[tauri::command]
+async fn scan_broken_installs() -> Result<Vec<apps::BrokenInstall>, String> {
+    tauri::async_runtime::spawn_blocking(apps::scan_broken_installs)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Idle software radar (read-only ranking).
 #[tauri::command]
 async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, String> {
@@ -821,6 +830,7 @@ pub fn run() {
         // `apply_ignore_suggestions`
         // `scan_orphan_leftovers`
         // `rank_idle_apps`
+        // `scan_broken_installs`
         // `scan_installer_caches`
         // `scan_tool_caches`
         // `list_local_drives`
@@ -881,6 +891,7 @@ pub fn run() {
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,
             rank_idle_apps,
+            scan_broken_installs,
             scan_installer_caches,
             scan_tool_caches,
             list_local_drives,

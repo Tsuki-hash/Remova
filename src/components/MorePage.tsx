@@ -8,6 +8,7 @@ import { AiSettingsPanel } from "./AiSettingsPanel";
 import { WhitelistPanel } from "./WhitelistPanel";
 import { IdleRadarPanel } from "./IdleRadarPanel";
 import { ScopedScanPanel } from "./ScopedScanPanel";
+import { BrokenInstallsPanel } from "./BrokenInstallsPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { api, type IgnoreLists } from "../lib/api";
 import { formatError } from "../lib/format";
@@ -166,6 +167,13 @@ export function MorePage({
       action: () => tools.toggleTool("toolcache"),
     },
     {
+      id: "broken",
+      title: L.brokenInstallsTitle,
+      desc: L.brokenInstallsHint,
+      icon: "report",
+      action: () => tools.toggleTool("broken"),
+    },
+    {
       id: "monitor",
       disabled: monitorSnapshotBusy,
       title: monitoring ? L.monitorStop : L.monitorInstall,
@@ -286,6 +294,9 @@ export function MorePage({
           onLastReport={(r) => onLastReport?.(r)}
           onError={onError}
         />
+      )}
+      {openTool === "broken" && (
+        <BrokenInstallsPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />

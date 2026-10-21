@@ -17,7 +17,8 @@ export type ToolId =
   | "idle"
   | "installers"
   | "diskradar"
-  | "toolcache";
+  | "toolcache"
+  | "broken";
 
 export type ToolItem = {
   id: ToolId;

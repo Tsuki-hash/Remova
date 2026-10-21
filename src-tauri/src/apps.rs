@@ -540,6 +540,51 @@ fn looks_system_update(name: &str) -> bool {
 #[cfg(windows)]
 use crate::fsutil::{to_wide, wstring_from_reg_data};
 
+/// An MSI product whose Uninstall record still exists while its install
+/// directory is gone — Programs & Features can no longer uninstall it (SOP §9.7).
+/// Detection is read-only; record cleanup is a separate, backed-up action.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BrokenInstall {
+    pub app: InstalledApp,
+    /// Lower-case `{GUID}` from the MsiExec uninstall command.
+    pub guid: String,
+    /// Stable code the UI localises (`broken_install_missing_dir`).
+    pub reason: String,
+}
+
+pub const BROKEN_INSTALL_MISSING_DIR: &str = "broken_install_missing_dir";
+
+/// Scan the installed inventory for broken MSI uninstall records.
+pub fn scan_broken_installs() -> Vec<BrokenInstall> {
+    scan_broken_installs_from(&scan_installed_inventory())
+}
+
+fn scan_broken_installs_from(apps: &[InstalledApp]) -> Vec<BrokenInstall> {
+    apps.iter().filter_map(broken_install_from).collect()
+}
+
+fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
+    let cmd = if !app.uninstall_string.trim().is_empty() {
+        app.uninstall_string.as_str()
+    } else {
+        app.quiet_uninstall_string.as_str()
+    };
+    let lower = cmd.to_ascii_lowercase();
+    if !lower.contains("msiexec") || !lower.contains("/x") {
+        return None;
+    }
+    let guid = crate::shared::first_guid(cmd)?;
+    let location = app.install_location.trim();
+    if location.is_empty() || std::path::Path::new(location).exists() {
+        return None;
+    }
+    Some(BrokenInstall {
+        app: app.clone(),
+        guid,
+        reason: BROKEN_INSTALL_MISSING_DIR.into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,6 +594,49 @@ mod tests {
         assert!(looks_system_update("KB5021234"));
         assert!(looks_system_update("Update for Windows 10"));
         assert!(!looks_system_update("7-Zip 24.08"));
+    }
+
+    fn sample_app(name: &str, location: &str, uninstall: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.into(),
+            version: "1.0".into(),
+            publisher: "Vendor".into(),
+            install_location: location.into(),
+            uninstall_string: uninstall.into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: "k".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn broken_install_requires_msi_and_a_missing_directory() {
+        let guid = "{11111111-1111-1111-1111-111111111111}";
+        let msi = format!(r#"MsiExec.exe /X{guid}"#);
+        let missing = sample_app("Broken", r"C:\RemovaNoSuchVendor\App", &msi);
+        let hit = broken_install_from(&missing).expect("missing dir + MSI must be detected");
+        assert_eq!(hit.guid, guid);
+        assert_eq!(hit.reason, BROKEN_INSTALL_MISSING_DIR);
+
+        // A present install directory is not broken, even for MSI.
+        let dir = crate::test_support::TempDir::new("broken_install_present");
+        let present = sample_app("Healthy", &dir.to_string_lossy(), &msi);
+        assert!(broken_install_from(&present).is_none());
+
+        // A non-MSI uninstaller is out of scope.
+        let exe = sample_app(
+            "Other",
+            r"C:\RemovaNoSuchVendor\Other",
+            r"C:\Other\uninstall.exe",
+        );
+        assert!(broken_install_from(&exe).is_none());
+
+        // Without an install location there is nothing to prove missing.
+        let unknown = sample_app("Unknown", "", &msi);
+        assert!(broken_install_from(&unknown).is_none());
     }
 
     #[cfg(windows)]

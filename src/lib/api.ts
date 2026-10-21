@@ -5,6 +5,7 @@ import type {
   AiConfigView,
   AiExplainInput,
   AiExplainOutput,
+  BrokenInstall,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -106,6 +107,8 @@ export const api = {
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
   orphanScan: (scanId?: number) =>
     invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId }),
+  /** M1: broken MSI install records (read-only). */
+  brokenInstalls: () => invoke<BrokenInstall[]>("scan_broken_installs"),
   rankIdleApps: (scanId?: number) =>
     invoke<IdleScanResult | IdleApp[]>("rank_idle_apps", { scanId }),
   scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),

@@ -72,6 +72,13 @@ export type ScopedScanResult = {
 export type OrphanScanResult = { items: CleanupItem[]; omitted: number };
 export type IdleScanResult = { items: IdleApp[]; omitted: number };
 
+/** M1: an MSI product whose install directory is gone but whose record remains. */
+export type BrokenInstall = {
+  app: InstalledApp;
+  guid: string;
+  reason: string;
+};
+
 export type CleanupReport = {
   app_name: string;
   dry_run: boolean;
