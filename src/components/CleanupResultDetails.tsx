@@ -13,7 +13,11 @@ function imageUnderRoot(image: string | undefined, root: string | undefined): bo
   if (!image || !root) return false;
   const img = image.replace(/\//g, "\\").toLowerCase();
   const base = root.replace(/\//g, "\\").toLowerCase().replace(/\\+$/, "");
-  return img.endsWith(".exe") && img.startsWith(`${base}\\`);
+  const segments = img.split("\\");
+  return img.endsWith(".exe")
+    && !segments.includes("..")
+    && !segments.includes(".")
+    && img.startsWith(`${base}\\`);
 }
 
 function reason(message: string) {
