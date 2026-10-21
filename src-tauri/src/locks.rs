@@ -171,7 +171,7 @@ pub fn end_locking_process(
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
         OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_TERMINATE,
+        PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     };
 
     if pid == 0 || pid == std::process::id() {
@@ -192,7 +192,7 @@ pub fn end_locking_process(
     }
     let handle = unsafe {
         OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
             false,
             pid,
         )
