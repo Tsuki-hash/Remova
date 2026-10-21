@@ -142,6 +142,131 @@ pub(crate) fn webview_mask_matches(dir_name: &str, name_slugs: &[String]) -> boo
     })
 }
 
+/// M4 (SOP §8-20): dot-directories at the user-profile root (`.ollama`,
+/// `.gemini\<app>`) are invisible to the AppData/Program Files roots. Only
+/// names matching a product slug are reported; shared vendor roots themselves
+/// are never candidates, only their matching children.
+pub(super) fn scan_home_dot_dirs(
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let Some(up) = std::env::var_os("USERPROFILE") else {
+        return;
+    };
+    scan_home_dot_dirs_from(std::path::Path::new(&up), name_slugs, install_low, items);
+}
+
+fn scan_home_dot_dirs_from(
+    up: &Path,
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let normalized: Vec<String> = name_slugs
+        .iter()
+        .map(|s| super::normalize_for_match(s))
+        .filter(|s| s.len() >= 4)
+        .collect();
+    if normalized.is_empty() {
+        return;
+    }
+    let matches_slug = |name: &str| {
+        let n = super::normalize_for_match(name);
+        normalized
+            .iter()
+            .any(|s| n == *s || n.starts_with(&format!("{s}-")))
+    };
+    const SHARED_DOT_ROOTS: &[&str] = &[
+        ".config", ".gemini", ".claude", ".codex", ".vscode", ".cursor", ".npm", ".cargo",
+        ".gradle", ".m2", ".nuget", ".bun",
+    ];
+    let Ok(rd) = up.read_dir() else {
+        return;
+    };
+    // Home profiles are small, but a shared dot root can hold thousands of
+    // children on dev machines. Bound the walk so analyze stays predictable.
+    const MAX_SHARED_CHILDREN: usize = 2_000;
+    let mut shared_children = 0usize;
+    for entry in rd.flatten() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with('.') || name == ".git" || name == ".ssh" || name == ".gnupg" {
+            continue;
+        }
+        let path = entry.path();
+        let shared = SHARED_DOT_ROOTS
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(&name));
+        if !shared && matches_slug(&name) {
+            push_home_dot_item(&path, &name, install_low, items);
+        }
+        if !shared {
+            continue;
+        }
+        let Ok(children) = path.read_dir() else {
+            continue;
+        };
+        for child in children.flatten() {
+            if crate::scan_task::cancelled() || shared_children >= MAX_SHARED_CHILDREN {
+                break;
+            }
+            shared_children += 1;
+            let Ok(meta) = child.metadata() else {
+                continue;
+            };
+            if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+                continue;
+            }
+            let child_name = child.file_name().to_string_lossy().to_string();
+            if matches_slug(&child_name) {
+                push_home_dot_item(&child.path(), &child_name, install_low, items);
+            }
+        }
+    }
+}
+
+fn push_home_dot_item(path: &Path, name: &str, install_low: &str, items: &mut Vec<CleanupItem>) {
+    let path_str = path.to_string_lossy().to_string();
+    let path_low = path_str.to_lowercase();
+    let install_low = install_low.trim_end_matches('\\');
+    // A dot directory that *is* the install root is handled by the normal scan.
+    if !install_low.is_empty()
+        && (path_low == install_low || path_low.starts_with(&format!("{install_low}\\")))
+    {
+        return;
+    }
+    items.push(CleanupItem {
+        path: path_str,
+        kind: ItemKind::Dir,
+        score: 30,
+        confidence: Confidence::Suspected,
+        risk: RiskLevel::Medium,
+        reason: format!("Home dot-directory: {name}"),
+        evidence: vec![Evidence {
+            code: "home_dot_dir".into(),
+            label: "Dot-directory under the user profile".into(),
+            weight: 20,
+            detail: name.into(),
+        }],
+        shared: false,
+        service_bound: false,
+        user_data: false,
+        user_library: false,
+        size_kb: None,
+        size_capped: false,
+        bucket: Some("configFiles".into()),
+    });
+}
+
 /// WebView2 cache dirs named like `app.exe` (SOP: ollama app.exe\EBWebView).
 pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     let Some(local) = std::env::var_os("LOCALAPPDATA") else {
@@ -495,5 +620,41 @@ mod tests {
         assert!(items
             .iter()
             .all(|it| it.confidence == Confidence::Suspected));
+    }
+
+    /// M4 (SOP §8-20): home dot-directories are matched by product slug;
+    /// shared vendor roots contribute only matching children, never the root.
+    #[test]
+    fn home_dot_dirs_report_matching_dirs_and_shared_children_only() {
+        let up = crate::test_support::TempDir::new("home_dot");
+        std::fs::create_dir_all(up.join(".acmeproduct").join("config")).unwrap();
+        std::fs::create_dir_all(up.join(".gemini").join("acmeproduct")).unwrap();
+        std::fs::create_dir_all(up.join(".gemini").join("other")).unwrap();
+        let mut items = Vec::new();
+        super::scan_home_dot_dirs_from(up.path(), &["AcmeProduct".to_string()], "", &mut items);
+        let paths: Vec<String> = items.iter().map(|i| i.path.to_lowercase()).collect();
+        assert!(paths.iter().any(|p| p.ends_with(".acmeproduct")));
+        assert!(paths.iter().any(|p| p.ends_with(".gemini\\acmeproduct")));
+        assert!(
+            !paths.iter().any(|p| p.ends_with(".gemini")),
+            "shared root must never be a target"
+        );
+        assert!(!paths.iter().any(|p| p.ends_with("\\other")));
+    }
+
+    /// A shared dot root whose name happens to match a product slug stays
+    /// off the candidate list; only its matching children may be reported.
+    #[test]
+    fn shared_dot_root_is_never_a_target_even_when_the_slug_matches() {
+        let up = crate::test_support::TempDir::new("home_dot_shared");
+        std::fs::create_dir_all(up.join(".config").join("config")).unwrap();
+        let mut items = Vec::new();
+        super::scan_home_dot_dirs_from(up.path(), &["Config".to_string()], "", &mut items);
+        let paths: Vec<String> = items.iter().map(|i| i.path.to_lowercase()).collect();
+        assert!(
+            !paths.iter().any(|p| p.ends_with("\\.config")),
+            "shared root must never be a target"
+        );
+        assert!(paths.iter().any(|p| p.ends_with("\\.config\\config")));
     }
 }

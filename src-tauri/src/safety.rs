@@ -280,6 +280,20 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         return Ok(());
     }
 
+    // MuiCache (M4/SOP §8-2): only the exact shell cache key, and only a
+    // FriendlyAppName value. The key itself (or any other value) must never be
+    // deletable — the scanner only ever emits these trace values.
+    const MUICACHE_KEY: &str =
+        "HKCU\\SOFTWARE\\CLASSES\\LOCAL SETTINGS\\SOFTWARE\\MICROSOFT\\WINDOWS\\SHELL\\MUICACHE";
+    if low == MUICACHE_KEY {
+        return match value_name {
+            Some(v) if v.trim().to_lowercase().ends_with(".friendlyappname") => Ok(()),
+            _ => Err(
+                crate::error::safety_err("MuiCache accepts only FriendlyAppName values").to_ipc(),
+            ),
+        };
+    }
+
     // Installer database (SOP §9.7): everything under Classes\Installer is
     // protected except the packed 32-hex product key directly under
     // Products (either view). Callers must still match ProductName against a
@@ -1510,6 +1524,23 @@ mod tests {
             r"HKLM64\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules2|X"
         )
         .is_err());
+    }
+
+    /// M4 (SOP §8-2): MuiCache is deletable only as a FriendlyAppName value —
+    /// never as the key itself, and never for other value types.
+    #[test]
+    fn muicache_allows_only_friendly_app_name_values() {
+        let key = r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
+        assert!(super::is_safe_to_delete_registry(&format!(
+            r"{key}|C:\Tools\Acme.exe.FriendlyAppName"
+        ))
+        .is_ok());
+        assert!(super::is_safe_to_delete_registry(key).is_err());
+        assert!(super::is_safe_to_delete_registry(&format!(
+            r"{key}|C:\Tools\Acme.exe.ApplicationCompany"
+        ))
+        .is_err());
+        assert!(super::is_safe_to_delete_registry(&format!("{key}|")).is_err());
     }
 
     /// M2 (SOP §9.7): the Installer product database is deletable only at the

@@ -465,6 +465,89 @@ fn mark_service_bound_with(items: &mut [CleanupItem], service_keys: &[String]) {
     }
 }
 
+/// M4 (SOP §8-2): MuiCache keeps `FriendlyAppName` values keyed by the full
+/// executable path. Only entries whose executable is gone are reported, and
+/// only when the path/name matches the app being analyzed.
+pub(super) fn scan_muicache(
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    const KEY: &str =
+        r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
+    let normalized: Vec<String> = name_slugs
+        .iter()
+        .map(|s| super::normalize_for_match(s))
+        .filter(|s| s.len() >= 4)
+        .collect();
+    if normalized.is_empty() {
+        return;
+    }
+    for (value_name, _data) in crate::regscan::list_values(KEY) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        if !muicache_matches(&value_name, &normalized, install_low, |p| {
+            p.try_exists().is_ok_and(|exists| !exists)
+        }) {
+            continue;
+        }
+        let exe = value_name
+            .strip_suffix(".FriendlyAppName")
+            .unwrap_or(&value_name);
+        items.push(CleanupItem {
+            path: format!("{KEY}|{value_name}"),
+            kind: ItemKind::Registry,
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "MuiCache trace (executable missing)".into(),
+            evidence: vec![Evidence {
+                code: "muicache_trace".into(),
+                label: "Shell friendly-name cache for a missing executable".into(),
+                weight: 0,
+                detail: exe.chars().take(160).collect(),
+            }],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: Some("registry".into()),
+        });
+    }
+}
+
+/// True when a MuiCache value names a missing executable that belongs to this
+/// app (path under the install root, or an exe stem matching a product slug).
+fn muicache_matches(
+    value_name: &str,
+    normalized_slugs: &[String],
+    install_low: &str,
+    missing: impl Fn(&std::path::Path) -> bool,
+) -> bool {
+    let Some(exe) = value_name.strip_suffix(".FriendlyAppName") else {
+        return false;
+    };
+    let install_low = install_low.trim_end_matches('\\');
+    let exe_low = exe.to_lowercase();
+    let path_hit = !install_low.is_empty()
+        && (exe_low == install_low || exe_low.starts_with(&format!("{install_low}\\")));
+    let name_hit = std::path::Path::new(exe)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .map(|s| super::normalize_for_match(&s))
+        .is_some_and(|stem| {
+            normalized_slugs.iter().any(|slug| {
+                stem == *slug
+                    || stem.starts_with(&format!("{slug}-"))
+                    || stem.starts_with(&format!("{slug}."))
+            })
+        });
+    (path_hit || name_hit) && missing(std::path::Path::new(exe))
+}
+
 pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
     for top in crate::regscan::list_subkeys(root) {
@@ -641,6 +724,52 @@ mod tests {
             non_empty >= 1,
             "expected at least one real ImagePath read, got {non_empty}"
         );
+    }
+
+    /// M4 (SOP §8-2): MuiCache entries are only offered when the executable is
+    /// gone and the path/stem belongs to the app being analyzed.
+    #[test]
+    fn muicache_matches_only_missing_owned_executables() {
+        let slugs = vec!["acmetool".to_string()];
+        let missing = |_p: &std::path::Path| true;
+        let present = |_p: &std::path::Path| false;
+        assert!(super::muicache_matches(
+            r"C:\Tools\AcmeTool.exe.FriendlyAppName",
+            &slugs,
+            "",
+            missing
+        ));
+        assert!(super::muicache_matches(
+            r"C:\Program Files\Acme\bin\launcher.exe.FriendlyAppName",
+            &slugs,
+            r"c:\program files\acme\",
+            missing
+        ));
+        assert!(!super::muicache_matches(
+            r"C:\Tools\AcmeTool.exe.FriendlyAppName",
+            &slugs,
+            "",
+            present
+        ));
+        // Install-root matching is segment-boundary anchored.
+        assert!(!super::muicache_matches(
+            r"C:\Program Files\AcmeTool\launcher.exe.FriendlyAppName",
+            &slugs,
+            r"c:\program files\acme",
+            missing
+        ));
+        assert!(!super::muicache_matches(
+            r"C:\Tools\Other.exe.FriendlyAppName",
+            &slugs,
+            "",
+            missing
+        ));
+        assert!(!super::muicache_matches(
+            r"C:\Tools\AcmeTool.exe.ApplicationCompany",
+            &slugs,
+            "",
+            missing
+        ));
     }
 
     /// M2 (SOP §2.3): a candidate directory hosting a registered service image

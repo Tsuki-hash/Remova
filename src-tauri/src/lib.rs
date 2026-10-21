@@ -6,6 +6,7 @@ pub mod association;
 pub mod backup;
 pub mod commands;
 pub mod constants;
+pub mod deep_reg;
 pub mod dirsize;
 pub mod diskradar;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod idle;
 pub mod ignore;
 pub mod installers;
 pub mod installmon;
+pub mod locks;
 pub mod manage;
 pub mod orphans;
 pub mod path_seal;
@@ -615,6 +617,22 @@ async fn delete_firewall_rules(
         .map_err(|e| e.to_string())?
 }
 
+/// Name the processes holding a file/directory (read-only, Restart Manager).
+#[tauri::command]
+async fn diagnose_locked_path(path: String) -> Result<Vec<locks::LockingProcess>, String> {
+    tauri::async_runtime::spawn_blocking(move || locks::diagnose_locked_path(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Bounded, read-only search for product-named keys under SOFTWARE (M5-4).
+#[tauri::command]
+async fn deep_registry_check(app_name: String) -> Result<deep_reg::RegistryCheckResult, String> {
+    tauri::async_runtime::spawn_blocking(move || deep_reg::deep_registry_check(&app_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Idle software radar (read-only ranking).
 #[tauri::command]
 async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, String> {
@@ -871,6 +889,8 @@ pub fn run() {
         // `cleanup_broken_install`
         // `scan_firewall_orphans`
         // `delete_firewall_rules`
+        // `diagnose_locked_path`
+        // `deep_registry_check`
         // `scan_installer_caches`
         // `scan_tool_caches`
         // `list_local_drives`
@@ -935,6 +955,8 @@ pub fn run() {
             cleanup_broken_install,
             scan_firewall_orphans,
             delete_firewall_rules,
+            diagnose_locked_path,
+            deep_registry_check,
             scan_installer_caches,
             scan_tool_caches,
             list_local_drives,

@@ -897,6 +897,10 @@ pub fn analyze_associations(
     fs_scans::scan_other_drive_roots(&name_slugs, &mut items);
     phase!("other");
     fs_scans::scan_webview_masks(&name_slugs, &mut items);
+    phase!("other");
+    fs_scans::scan_home_dot_dirs(&name_slugs, &install_low, &mut items);
+    phase!("other");
+    reg_scans::scan_muicache(&name_slugs, &install_low, &mut items);
 
     for it in &mut items {
         if crate::scan_task::cancelled() {

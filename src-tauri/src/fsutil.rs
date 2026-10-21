@@ -645,8 +645,8 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
                 let child = entry.path();
                 if is_reparse_point(&child) {
                     // Unlink the reparse itself (file link / dir junction) without descending.
-                    if std::fs::remove_file(&child).is_err() {
-                        std::fs::remove_dir(&child)?;
+                    if remove_file_with_readonly_retry(&child).is_err() {
+                        remove_dir_with_readonly_retry(&child)?;
                     }
                     continue;
                 }
@@ -654,7 +654,7 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
                 if ty.is_dir() {
                     remove_tree_pinned(&child)?;
                 } else {
-                    std::fs::remove_file(&child)?;
+                    remove_file_with_readonly_retry(&child)?;
                 }
             }
             true
@@ -668,10 +668,55 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
     // benign — a swapped-in junction link or empty dir is removed as-is,
     // never followed.
     if is_dir {
-        std::fs::remove_dir(p)
+        remove_dir_with_readonly_retry(p)
     } else {
-        std::fs::remove_file(p)
+        remove_file_with_readonly_retry(p)
     }
+}
+
+/// SOP §9.3: a READONLY attribute makes delete fail like a lock. Clear
+/// READONLY/HIDDEN/SYSTEM on the target and retry once — never on a reparse
+/// point, and never outside the tree being removed.
+fn remove_file_with_readonly_retry(p: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(first) => {
+            if clear_attributes_for_delete(p) {
+                std::fs::remove_file(p)
+            } else {
+                Err(first)
+            }
+        }
+    }
+}
+
+fn remove_dir_with_readonly_retry(p: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir(p) {
+        Ok(()) => Ok(()),
+        Err(first) => {
+            if clear_attributes_for_delete(p) {
+                std::fs::remove_dir(p)
+            } else {
+                Err(first)
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn clear_attributes_for_delete(p: &Path) -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_NORMAL};
+    let Some(text) = p.to_str() else {
+        return false;
+    };
+    let wide = to_wide(text);
+    unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_NORMAL).is_ok() }
+}
+
+#[cfg(not(windows))]
+fn clear_attributes_for_delete(_p: &Path) -> bool {
+    false
 }
 
 /// CSV field escape: wrap in quotes when needed; double internal quotes.
@@ -1367,6 +1412,26 @@ mod tests {
         let removed = prune_empty_ancestors_under(&other, &["Vendor".into()], &roots);
         assert!(removed.is_empty(), "a non-matching name must not be pruned");
         assert!(root.join("Unrelated").exists());
+    }
+
+    /// M4 (SOP §9.3): READONLY/HIDDEN/SYSTEM is an attribute, not a lock —
+    /// the delete path clears it and retries once.
+    #[cfg(windows)]
+    #[test]
+    fn readonly_tree_is_removed_after_clearing_attributes() {
+        let root = unique_tmp("readonly");
+        let tree = root.join("tree");
+        let inner = tree.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(tree.join("a.bin"), b"a").unwrap();
+        std::fs::write(inner.join("b.bin"), b"b").unwrap();
+        for p in [tree.join("a.bin"), inner.join("b.bin"), inner.clone()] {
+            let mut perm = std::fs::metadata(&p).unwrap().permissions();
+            perm.set_readonly(true);
+            std::fs::set_permissions(&p, perm).unwrap();
+        }
+        remove_tree_no_reparse(&tree).expect("readonly attributes must not block deletion");
+        assert!(!tree.exists());
     }
 
     /// R38-4 / A10: the root-skip rule is a pure decision, so it can be tested    /// without pinning a real volume root.

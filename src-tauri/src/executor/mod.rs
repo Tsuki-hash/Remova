@@ -85,6 +85,12 @@ pub struct FullCleanupReport {
     /// Reboot-delayed deletes (not counted in `deleted`) — .
     #[serde(default)]
     pub delayed: u32,
+    /// Sum of `size_kb` for rows this run actually deleted (M5).
+    #[serde(default)]
+    pub reclaimed_kb: u64,
+    /// Sum of `size_kb` for selected rows the gate refused (keep-class).
+    #[serde(default)]
+    pub kept_kb: u64,
     pub aborted: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,

@@ -109,6 +109,8 @@ fn try_backup_phase(
                     failed: 0,
                     skipped: 0,
                     delayed: 0,
+                    reclaimed_kb: 0,
+                    kept_kb: 0,
                     aborted: true,
                     restore_point_ok,
                     restore_point_msg,
@@ -132,6 +134,8 @@ fn try_backup_phase(
             failed: 0,
             skipped: 0,
             delayed: 0,
+            reclaimed_kb: 0,
+            kept_kb: 0,
             aborted: true,
             restore_point_ok,
             restore_point_msg,
@@ -477,6 +481,8 @@ fn ignore_read_abort(
         failed: 0,
         skipped: 0,
         delayed: 0,
+        reclaimed_kb: 0,
+        kept_kb: 0,
         aborted: true,
         restore_point_ok: false,
         restore_point_msg: String::new(),
@@ -509,6 +515,8 @@ pub fn run_full_cleanup(
             failed: 0,
             skipped: dry.skipped,
             delayed: 0,
+            reclaimed_kb: 0,
+            kept_kb: 0,
             aborted: false,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -534,6 +542,8 @@ pub fn run_full_cleanup(
             failed: 0,
             skipped: 0,
             delayed: 0,
+            reclaimed_kb: 0,
+            kept_kb: 0,
             aborted: true,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -583,6 +593,8 @@ pub fn run_full_cleanup(
             failed: 0,
             skipped: 0,
             delayed: 0,
+            reclaimed_kb: 0,
+            kept_kb: 0,
             aborted: true,
             restore_point_ok,
             restore_point_msg,
@@ -619,6 +631,26 @@ pub fn run_full_cleanup(
             }
         }
     }
+    // M5: report what was actually freed and what the gate kept, by size.
+    let deleted_paths: std::collections::HashSet<&str> = del
+        .details
+        .iter()
+        .filter(|d| d.status == "deleted")
+        .map(|d| d.path.as_str())
+        .collect();
+    let reclaimed_kb: u64 = plan
+        .allowed
+        .iter()
+        .filter(|it| deleted_paths.contains(it.path.as_str()))
+        .filter_map(|it| it.size_kb)
+        .sum();
+    let allowed_paths: std::collections::HashSet<&str> =
+        plan.allowed.iter().map(|it| it.path.as_str()).collect();
+    let kept_kb: u64 = owned_selected
+        .iter()
+        .filter(|it| !allowed_paths.contains(it.path.as_str()))
+        .filter_map(|it| it.size_kb)
+        .sum();
     del.skipped += plan.refused.len() as u32;
     del.details.extend(plan.refused);
 
@@ -632,6 +664,8 @@ pub fn run_full_cleanup(
         failed: del.failed,
         skipped: del.skipped,
         delayed: del.delayed,
+        reclaimed_kb,
+        kept_kb,
         aborted: false,
         restore_point_ok,
         restore_point_msg,
