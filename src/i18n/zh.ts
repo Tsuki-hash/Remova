@@ -283,6 +283,7 @@ export const dict = {
     lockEndMessage: (name: string, pid: number) => `结束 ${name} (${pid}) 后重试清理？未保存的数据可能丢失。`,
     lockEndConfirm: "结束进程",
     lockEndFailed: (msg: string) => `无法结束进程：${msg}`,
+    lockRetryFailed: (msg: string) => `进程已结束，但重试失败：${msg}`,
     brokenInstallsRunning: "正在运行卸载器…",
     brokenInstallsRerunOk: "卸载器已完成，正在重新扫描…",
     brokenInstallsStillBroken: "卸载器未能清除该记录；可稍后手动清理安装记录",

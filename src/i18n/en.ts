@@ -284,6 +284,7 @@ export const dict: EnDict = {
     lockEndMessage: (name: string, pid: number) => `End ${name} (${pid}) and retry cleanup? Unsaved data may be lost.`,
     lockEndConfirm: "End process",
     lockEndFailed: (msg: string) => `Could not end the process: ${msg}`,
+    lockRetryFailed: (msg: string) => `Process ended, but the retry failed: ${msg}`,
     brokenInstallsRunning: "Running the uninstaller…",
     brokenInstallsRerunOk: "Uninstaller finished; rescanning…",
     brokenInstallsStillBroken: "The uninstaller did not remove this record; manual record cleanup will be offered later",

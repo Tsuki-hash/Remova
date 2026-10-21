@@ -90,10 +90,17 @@ function ResultGroup({
       delete next[itemPath];
       return next;
     });
-    if (onRetry) {
-      await onRetry([itemPath]);
-    } else {
-      onRescan?.();
+    try {
+      if (onRetry) {
+        await onRetry([itemPath]);
+      } else {
+        onRescan?.();
+      }
+    } catch (e) {
+      setLockInfo((prev) => ({
+        ...prev,
+        [itemPath]: { procs: [], error: L.lockRetryFailed(formatError(e)) },
+      }));
     }
   };
   const failed = items.filter((item) => item.status === "failed");
