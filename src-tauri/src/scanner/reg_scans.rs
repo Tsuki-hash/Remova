@@ -399,22 +399,42 @@ pub(super) fn scan_services(
 }
 
 /// Executable path from a service `ImagePath` (quotes and arguments stripped).
+/// Environment variables are expanded first: third-party services may use
+/// `%ProgramFiles%`, and an unresolved `%VAR%` cannot be matched safely.
 fn service_image_exe(image: &str) -> Option<std::path::PathBuf> {
-    let trimmed = image.trim();
-    if trimmed.is_empty() || trimmed.contains('%') {
-        // Unexpanded system variables belong to Windows services, never to an
-        // app leftover; skipping avoids matching them against user paths.
+    let expanded = crate::regops::expand_env_string(image.trim());
+    let expanded = expanded.trim();
+    if expanded.is_empty() || expanded.contains('%') {
         return None;
     }
-    let exe = if let Some(rest) = trimmed.strip_prefix('"') {
+    let exe = if let Some(rest) = expanded.strip_prefix('"') {
         rest.split('"').next()?
     } else {
-        trimmed.split_whitespace().next()?
+        // Unquoted ImagePath values with spaces are legal. Cut at the first
+        // `.exe` that ends the token, so `C:\Program Files\Vendor\svc.exe -k`
+        // keeps the whole executable path.
+        match exe_token_end(expanded) {
+            Some(end) => &expanded[..end],
+            None => expanded.split_whitespace().next()?,
+        }
     };
     if exe.len() <= 3 {
         return None;
     }
     Some(std::path::PathBuf::from(exe))
+}
+
+fn exe_token_end(s: &str) -> Option<usize> {
+    let lower = s.to_ascii_lowercase();
+    let mut from = 0usize;
+    while let Some(rel) = lower[from..].find(".exe") {
+        let end = from + rel + 4;
+        if end == s.len() || s.as_bytes().get(end).is_some_and(u8::is_ascii_whitespace) {
+            return Some(end);
+        }
+        from = end;
+    }
+    None
 }
 
 /// Mark app-like candidates whose directory hosts a registered service image.
@@ -472,31 +492,53 @@ pub(super) fn scan_muicache(
     name_slugs: &[String],
     install_low: &str,
     items: &mut Vec<CleanupItem>,
-) {
+) -> bool {
     const KEY: &str =
         r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
-    let normalized: Vec<String> = name_slugs
+    const MAX_VALUES: usize = 2_000;
+    let slugs: Vec<String> = name_slugs
         .iter()
-        .map(|s| super::normalize_for_match(s))
-        .filter(|s| s.len() >= 4)
+        .filter(|s| super::normalize_for_match(s).len() >= 4)
+        .cloned()
         .collect();
-    if normalized.is_empty() {
-        return;
+    if slugs.is_empty() {
+        return false;
     }
-    for (value_name, _data) in crate::regscan::list_values(KEY) {
+    scan_muicache_values(
+        crate::regscan::list_values(KEY).into_iter(),
+        KEY,
+        &slugs,
+        install_low,
+        |p| p.try_exists().is_ok_and(|exists| !exists),
+        items,
+        MAX_VALUES,
+    )
+}
+
+fn scan_muicache_values(
+    values: impl Iterator<Item = (String, String)>,
+    key: &str,
+    slugs: &[String],
+    install_low: &str,
+    missing: impl Fn(&std::path::Path) -> bool,
+    items: &mut Vec<CleanupItem>,
+    max_values: usize,
+) -> bool {
+    for (seen, (value_name, _data)) in values.enumerate() {
         if crate::scan_task::cancelled() {
             break;
         }
-        if !muicache_matches(&value_name, &normalized, install_low, |p| {
-            p.try_exists().is_ok_and(|exists| !exists)
-        }) {
+        if seen >= max_values {
+            return true;
+        }
+        if !muicache_matches(&value_name, slugs, install_low, &missing) {
             continue;
         }
         let exe = value_name
             .strip_suffix(".FriendlyAppName")
             .unwrap_or(&value_name);
         items.push(CleanupItem {
-            path: format!("{KEY}|{value_name}"),
+            path: format!("{key}|{value_name}"),
             kind: ItemKind::Registry,
             score: 30,
             confidence: Confidence::Suspected,
@@ -517,13 +559,14 @@ pub(super) fn scan_muicache(
             bucket: Some("registry".into()),
         });
     }
+    false
 }
 
 /// True when a MuiCache value names a missing executable that belongs to this
 /// app (path under the install root, or an exe stem matching a product slug).
 fn muicache_matches(
     value_name: &str,
-    normalized_slugs: &[String],
+    slugs: &[String],
     install_low: &str,
     missing: impl Fn(&std::path::Path) -> bool,
 ) -> bool {
@@ -537,13 +580,10 @@ fn muicache_matches(
     let name_hit = std::path::Path::new(exe)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
-        .map(|s| super::normalize_for_match(&s))
         .is_some_and(|stem| {
-            normalized_slugs.iter().any(|slug| {
-                stem == *slug
-                    || stem.starts_with(&format!("{slug}-"))
-                    || stem.starts_with(&format!("{slug}."))
-            })
+            slugs
+                .iter()
+                .any(|slug| super::name_variant_hit(&stem, slug))
         });
     (path_hit || name_hit) && missing(std::path::Path::new(exe))
 }
@@ -751,6 +791,18 @@ mod tests {
             "",
             present
         ));
+        assert!(super::muicache_matches(
+            r"C:\Tools\Acme-Tool.exe.FriendlyAppName",
+            &["acme".to_string()],
+            "",
+            missing
+        ));
+        assert!(super::muicache_matches(
+            r"C:\Tools\Acme.Tool.exe.FriendlyAppName",
+            &["acme".to_string()],
+            "",
+            missing
+        ));
         // Install-root matching is segment-boundary anchored.
         assert!(!super::muicache_matches(
             r"C:\Program Files\AcmeTool\launcher.exe.FriendlyAppName",
@@ -764,6 +816,21 @@ mod tests {
             "",
             missing
         ));
+        let values = vec![
+            ("a.ApplicationCompany".to_string(), String::new()),
+            ("b.ApplicationCompany".to_string(), String::new()),
+        ];
+        let mut items = Vec::new();
+        assert!(super::scan_muicache_values(
+            values.into_iter(),
+            "K",
+            &["acme".to_string()],
+            "",
+            |_| true,
+            &mut items,
+            1
+        ));
+        assert!(items.is_empty());
         assert!(!super::muicache_matches(
             r"C:\Tools\AcmeTool.exe.ApplicationCompany",
             &slugs,
@@ -824,6 +891,21 @@ mod tests {
             super::service_image_exe(r"C:\Windows\system32\svchost.exe -k netsvcs"),
             Some(std::path::PathBuf::from(r"C:\Windows\system32\svchost.exe"))
         );
-        assert!(super::service_image_exe(r"%SystemRoot%\system32\x.exe").is_none());
+        assert_eq!(
+            super::service_image_exe(r"C:\Program Files\Vendor\svc.exe -k arg"),
+            Some(std::path::PathBuf::from(r"C:\Program Files\Vendor\svc.exe")),
+            "unquoted ImagePath values with spaces must not truncate at Program"
+        );
+        let _lock = crate::test_support::EnvLock::new();
+        let _var = crate::test_support::EnvVar::set("REMOVA_SVC_ROOT", r"C:\Program Files\Vendor");
+        assert_eq!(
+            super::service_image_exe(r"%REMOVA_SVC_ROOT%\svc.exe -k"),
+            Some(std::path::PathBuf::from(r"C:\Program Files\Vendor\svc.exe"))
+        );
+        let _removed = crate::test_support::EnvVar::remove("REMOVA_SVC_ROOT");
+        assert!(
+            super::service_image_exe(r"%REMOVA_SVC_ROOT%\svc.exe").is_none(),
+            "unresolved variables must fail closed"
+        );
     }
 }

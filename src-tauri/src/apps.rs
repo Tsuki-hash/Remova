@@ -569,13 +569,16 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
     } else {
         app.quiet_uninstall_string.as_str()
     };
-    let lower = cmd.to_ascii_lowercase();
-    if !lower.contains("msiexec") || !lower.contains("/x") {
-        return None;
-    }
-    let guid = crate::shared::first_guid(cmd)?;
-    let location = app.install_location.trim();
-    if location.is_empty() || std::path::Path::new(location).exists() {
+    let guid = msiexec_uninstall_guid(cmd)?;
+    let location = crate::regops::expand_env_string(app.install_location.trim());
+    let location = location.trim().trim_matches('"').trim();
+    // An unexpanded variable or relative location cannot prove the product is
+    // broken; fail closed rather than offering a record delete.
+    if location.is_empty()
+        || location.contains('%')
+        || !std::path::Path::new(location).is_absolute()
+        || std::path::Path::new(location).exists()
+    {
         return None;
     }
     Some(BrokenInstall {
@@ -583,6 +586,49 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
         guid,
         reason: BROKEN_INSTALL_MISSING_DIR.into(),
     })
+}
+
+/// Parse a real `msiexec.exe /x {GUID}` command. A substring match would also
+/// catch wrappers such as `msiexec-helper.exe /x ...`, whose record must not be
+/// deleted as if it were an MSI product.
+fn msiexec_uninstall_guid(cmd: &str) -> Option<String> {
+    let cmd = cmd.trim();
+    let (exe, rest) = split_command_token(cmd)?;
+    let exe_name = std::path::Path::new(exe)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())?;
+    if !exe_name.eq_ignore_ascii_case("msiexec") && !exe_name.eq_ignore_ascii_case("msiexec.exe") {
+        return None;
+    }
+    let args: Vec<&str> = rest.split_whitespace().collect();
+    let x_at = args.iter().position(|arg| {
+        let lower = arg.to_ascii_lowercase();
+        lower == "/x" || (lower.starts_with("/x{") && lower.ends_with('}'))
+    })?;
+    // Only the token carrying (or immediately following) `/x` is a product
+    // code; a GUID in a later log path must not redirect installer-key cleanup.
+    let x_arg = args[x_at];
+    if x_arg.to_ascii_lowercase().starts_with("/x{") {
+        crate::shared::first_guid(x_arg)
+    } else {
+        args.get(x_at + 1)
+            .and_then(|arg| crate::shared::first_guid(arg))
+    }
+}
+
+/// First whitespace-delimited command token, honoring a leading quoted path.
+fn split_command_token(s: &str) -> Option<(&str, &str)> {
+    if let Some(rest) = s.strip_prefix('"') {
+        let end = rest.find('"')?;
+        return Some((&rest[..end], &rest[end + 1..]));
+    }
+    let end = s.find(char::is_whitespace).unwrap_or(s.len());
+    let token = &s[..end];
+    if token.is_empty() {
+        None
+    } else {
+        Some((token, &s[end..]))
+    }
 }
 
 /// Outcome of removing a broken record. The backup session is returned so the
@@ -596,7 +642,8 @@ pub struct BrokenCleanupReport {
 
 /// Remove a broken MSI record after exporting every key to a Safety Vault
 /// session. The record is re-scanned here, so the webview cannot point this at
-/// an arbitrary product; the packed installer keys are matched by ProductName.
+/// an arbitrary product; the packed installer keys are matched by the exact
+/// ProductCode derived from the `/x{GUID}` command.
 pub fn cleanup_broken_install(
     app_name: &str,
     registry_key: &str,
@@ -605,15 +652,11 @@ pub fn cleanup_broken_install(
 ) -> Result<BrokenCleanupReport, String> {
     let target = scan_broken_installs()
         .into_iter()
-        .find(|b| {
-            b.app.registry_key.eq_ignore_ascii_case(registry_key)
-                && b.guid.eq_ignore_ascii_case(guid)
-                && b.app.name.eq_ignore_ascii_case(app_name)
-        })
+        .find(|b| broken_record_matches(b, app_name, registry_key, guid))
         .ok_or_else(|| "broken install record no longer present".to_string())?;
 
     let mut keys = vec![target.app.registry_key.clone()];
-    keys.extend(find_installer_product_keys(&target.app.name));
+    keys.extend(find_installer_product_keys(&target.guid));
     keys.sort();
     keys.dedup();
     if !elevated
@@ -648,25 +691,57 @@ pub fn cleanup_broken_install(
     })
 }
 
-/// Packed product keys (`Classes\Installer\Products\<32 hex>`) whose
-/// ProductName matches the app — SOP §9.7's MSI orphan database.
-fn find_installer_product_keys(product_name: &str) -> Vec<String> {
+fn broken_record_matches(
+    record: &BrokenInstall,
+    app_name: &str,
+    registry_key: &str,
+    guid: &str,
+) -> bool {
+    record.app.registry_key.eq_ignore_ascii_case(registry_key)
+        && record.guid.eq_ignore_ascii_case(guid)
+        && record.app.name.eq_ignore_ascii_case(app_name)
+}
+
+/// Packed product keys (`Classes\Installer\Products\<32 hex>`) for the exact
+/// product code from the uninstall command. Matching by ProductName alone could
+/// delete an unrelated MSI product that happens to share the display name.
+fn find_installer_product_keys(guid: &str) -> Vec<String> {
+    let Some(packed) = packed_product_code(guid) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for alias in ["HKLM64", "HKLM32"] {
         let root = format!(r"{alias}\SOFTWARE\Classes\Installer\Products");
         for sub in crate::regscan::list_subkeys(&root) {
-            if sub.len() != 32 || !sub.bytes().all(|b| b.is_ascii_hexdigit()) {
-                continue;
-            }
-            let key = format!(r"{root}\{sub}");
-            if crate::regscan::read_string(&key, "ProductName")
-                .is_some_and(|n| n.trim().eq_ignore_ascii_case(product_name.trim()))
-            {
-                out.push(key);
+            if sub.eq_ignore_ascii_case(&packed) {
+                out.push(format!(r"{root}\{sub}"));
             }
         }
     }
     out
+}
+
+/// Windows Installer's compressed ProductCode form used as the
+/// `Installer\Products` key: reverse the first three GUID groups, then swap the
+/// nibbles of every remaining byte.
+fn packed_product_code(guid: &str) -> Option<String> {
+    let hex: String = guid
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut out = String::with_capacity(32);
+    for range in [0..8, 8..12, 12..16] {
+        out.extend(hex[range].chars().rev());
+    }
+    for pair in hex.as_bytes()[16..].chunks(2) {
+        out.push(pair[1] as char);
+        out.push(pair[0] as char);
+    }
+    Some(out)
 }
 
 fn registry_item(path: &str) -> crate::scanner::CleanupItem {
@@ -741,6 +816,96 @@ mod tests {
         // Without an install location there is nothing to prove missing.
         let unknown = sample_app("Unknown", "", &msi);
         assert!(broken_install_from(&unknown).is_none());
+
+        // A wrapper whose name merely contains "msiexec" is not MSI.
+        let wrapper = sample_app(
+            "Wrapper",
+            r"C:\RemovaNoSuchVendor\Wrapper",
+            &format!(r"C:\Tools\msiexec-helper.exe /x {guid}"),
+        );
+        assert!(broken_install_from(&wrapper).is_none());
+        assert!(broken_install_from(&sample_app(
+            "Patch",
+            r"C:\RemovaNoSuchVendor\Patch",
+            &format!(r"MsiExec.exe /I{guid}")
+        ))
+        .is_none());
+    }
+
+    #[test]
+    fn msiexec_commands_require_the_real_executable_and_uninstall_switch() {
+        let guid = "{11111111-1111-1111-1111-111111111111}";
+        assert_eq!(
+            msiexec_uninstall_guid(&format!("MsiExec.exe /X{guid}")),
+            Some(guid.into())
+        );
+        assert_eq!(
+            msiexec_uninstall_guid(&format!(r#""C:\Windows\System32\msiexec.exe" /x {guid}"#)),
+            Some(guid.into())
+        );
+        assert!(
+            msiexec_uninstall_guid(&format!(r"C:\Tools\msiexec-helper.exe /x {guid}")).is_none()
+        );
+        assert!(msiexec_uninstall_guid(&format!("MsiExec.exe /I{guid}")).is_none());
+        assert!(msiexec_uninstall_guid("MsiExec.exe /x").is_none());
+        assert!(
+            msiexec_uninstall_guid(&format!("MsiExec.exe /x /qn {guid}")).is_none(),
+            "a GUID in a later argument is not the uninstall target"
+        );
+    }
+
+    #[test]
+    fn install_location_env_and_quotes_are_normalized_before_existence_check() {
+        let _lock = crate::test_support::EnvLock::new();
+        let dir = crate::test_support::TempDir::new("broken_env_location");
+        let _var = crate::test_support::EnvVar::set(
+            "REMOVA_BROKEN_LOCATION",
+            dir.to_string_lossy().to_string(),
+        );
+        let msi = r#"MsiExec.exe /X{11111111-1111-1111-1111-111111111111}"#;
+        let healthy = sample_app("HealthyEnv", r#""%REMOVA_BROKEN_LOCATION%""#, msi);
+        assert!(broken_install_from(&healthy).is_none());
+
+        let missing = sample_app("MissingEnv", r#""%REMOVA_BROKEN_LOCATION%\gone""#, msi);
+        assert!(broken_install_from(&missing).is_some());
+        let _var = crate::test_support::EnvVar::remove("REMOVA_BROKEN_LOCATION");
+        let unknown = sample_app("UnknownEnv", r#""%REMOVA_BROKEN_LOCATION%""#, msi);
+        assert!(
+            broken_install_from(&unknown).is_none(),
+            "unexpanded variables must fail closed"
+        );
+    }
+
+    #[test]
+    fn cleanup_targets_only_the_rescanned_record_identity() {
+        let guid = "{11111111-1111-1111-1111-111111111111}";
+        let record = BrokenInstall {
+            app: sample_app("Broken", r"C:\Missing", &format!("MsiExec.exe /X{guid}")),
+            guid: guid.into(),
+            reason: BROKEN_INSTALL_MISSING_DIR.into(),
+        };
+        assert!(broken_record_matches(&record, "broken", "k", guid));
+        assert!(!broken_record_matches(&record, "Other", "k", guid));
+        assert!(!broken_record_matches(&record, "Broken", "other", guid));
+        assert!(!broken_record_matches(
+            &record,
+            "Broken",
+            "k",
+            "{22222222-2222-2222-2222-222222222222}"
+        ));
+    }
+
+    #[test]
+    fn packed_product_code_matches_windows_installer_layout() {
+        assert_eq!(
+            packed_product_code("{C35E2C10-133A-BA91-B44E-890B88561421}").unwrap(),
+            "01C2E53CA33119AB4BE498B088654112"
+        );
+        assert_eq!(
+            packed_product_code("{90160000-008C-0000-1000-0000000FF1CE}").unwrap(),
+            "00006109C80000000100000000F01FEC"
+        );
+        assert!(packed_product_code("not-a-product-code").is_none());
     }
 
     #[cfg(windows)]

@@ -111,6 +111,7 @@ fn try_backup_phase(
                     delayed: 0,
                     reclaimed_kb: 0,
                     kept_kb: 0,
+                    delayed_kb: 0,
                     aborted: true,
                     restore_point_ok,
                     restore_point_msg,
@@ -136,6 +137,7 @@ fn try_backup_phase(
             delayed: 0,
             reclaimed_kb: 0,
             kept_kb: 0,
+            delayed_kb: 0,
             aborted: true,
             restore_point_ok,
             restore_point_msg,
@@ -465,6 +467,29 @@ fn delete_planned_items_with_io(
     }
 }
 
+/// Sum item sizes without double-counting a child when its parent is also in
+/// the set (both can be selected from different scan phases). Registry/path
+/// rows have no size and never contribute.
+fn sum_sizes_without_nested<'a>(items: impl Iterator<Item = &'a CleanupItem>) -> u64 {
+    let mut rows: Vec<&CleanupItem> = items.filter(|it| it.size_kb.is_some()).collect();
+    rows.sort_by_key(|it| it.path.len());
+    let mut roots: Vec<String> = Vec::new();
+    let mut sum = 0u64;
+    for item in rows {
+        let key = crate::fsutil::path_key(std::path::Path::new(&item.path))
+            .unwrap_or_else(|| item.path.to_lowercase());
+        if roots
+            .iter()
+            .any(|root| key == *root || key.starts_with(&format!("{root}\\")))
+        {
+            continue;
+        }
+        roots.push(key);
+        sum = sum.saturating_add(item.size_kb.unwrap_or(0));
+    }
+    sum
+}
+
 /// Full cleanup: optional backup →official uninstall →residual delete.
 fn ignore_read_abort(
     app: &crate::apps::InstalledApp,
@@ -483,6 +508,7 @@ fn ignore_read_abort(
         delayed: 0,
         reclaimed_kb: 0,
         kept_kb: 0,
+        delayed_kb: 0,
         aborted: true,
         restore_point_ok: false,
         restore_point_msg: String::new(),
@@ -517,6 +543,7 @@ pub fn run_full_cleanup(
             delayed: 0,
             reclaimed_kb: 0,
             kept_kb: 0,
+            delayed_kb: 0,
             aborted: false,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -544,6 +571,7 @@ pub fn run_full_cleanup(
             delayed: 0,
             reclaimed_kb: 0,
             kept_kb: 0,
+            delayed_kb: 0,
             aborted: true,
             restore_point_ok: false,
             restore_point_msg: String::new(),
@@ -595,6 +623,7 @@ pub fn run_full_cleanup(
             delayed: 0,
             reclaimed_kb: 0,
             kept_kb: 0,
+            delayed_kb: 0,
             aborted: true,
             restore_point_ok,
             restore_point_msg,
@@ -638,19 +667,29 @@ pub fn run_full_cleanup(
         .filter(|d| d.status == "deleted")
         .map(|d| d.path.as_str())
         .collect();
-    let reclaimed_kb: u64 = plan
-        .allowed
-        .iter()
-        .filter(|it| deleted_paths.contains(it.path.as_str()))
-        .filter_map(|it| it.size_kb)
-        .sum();
+    let reclaimed_kb = sum_sizes_without_nested(
+        plan.allowed
+            .iter()
+            .filter(|it| deleted_paths.contains(it.path.as_str())),
+    );
     let allowed_paths: std::collections::HashSet<&str> =
         plan.allowed.iter().map(|it| it.path.as_str()).collect();
-    let kept_kb: u64 = owned_selected
+    let kept_kb = sum_sizes_without_nested(
+        owned_selected
+            .iter()
+            .filter(|it| !allowed_paths.contains(it.path.as_str())),
+    );
+    let delayed_paths: std::collections::HashSet<&str> = del
+        .details
         .iter()
-        .filter(|it| !allowed_paths.contains(it.path.as_str()))
-        .filter_map(|it| it.size_kb)
-        .sum();
+        .filter(|d| d.status == "delayed")
+        .map(|d| d.path.as_str())
+        .collect();
+    let delayed_kb = sum_sizes_without_nested(
+        plan.allowed
+            .iter()
+            .filter(|it| delayed_paths.contains(it.path.as_str())),
+    );
     del.skipped += plan.refused.len() as u32;
     del.details.extend(plan.refused);
 
@@ -666,6 +705,7 @@ pub fn run_full_cleanup(
         delayed: del.delayed,
         reclaimed_kb,
         kept_kb,
+        delayed_kb,
         aborted: false,
         restore_point_ok,
         restore_point_msg,
@@ -677,6 +717,33 @@ pub fn run_full_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_totals_do_not_double_count_nested_paths() {
+        let mk = |path: &str, kb: Option<u64>| CleanupItem {
+            path: path.into(),
+            kind: ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: kb,
+            size_capped: false,
+            bucket: None,
+        };
+        let items = [
+            mk(r"C:\Apps\Demo", Some(100)),
+            mk(r"C:\Apps\Demo\cache", Some(40)),
+            mk(r"C:\Apps\Other", Some(10)),
+            mk(r"HKCU\Software\Demo", None),
+        ];
+        assert_eq!(super::sum_sizes_without_nested(items.iter()), 110);
+    }
 
     #[test]
     fn task_full_name_from_taskcache_tree() {

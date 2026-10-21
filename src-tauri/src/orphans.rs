@@ -65,15 +65,43 @@ fn scan_root_label(path: &str) -> Option<&'static str> {
     None
 }
 
-fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
-    let meta = std::fs::metadata(p).ok()?;
-    let modified = meta.modified().ok()?;
+fn modified_age_days(modified: std::time::SystemTime) -> Option<i64> {
     let age = std::time::SystemTime::now()
         .duration_since(modified)
         .ok()?
         .as_secs()
         / 86_400;
     Some(age as i64)
+}
+
+fn last_write_age_days(p: &std::path::Path) -> Option<i64> {
+    let meta = std::fs::metadata(p).ok()?;
+    modified_age_days(meta.modified().ok()?)
+}
+
+/// The newest write among the directory and its top-level entries. Writing an
+/// existing file does not update the parent directory's mtime on Windows, so a
+/// directory-only check misses active logs/config files.
+fn recent_write_age_days(p: &std::path::Path) -> Option<i64> {
+    let mut newest = last_write_age_days(p);
+    let Ok(entries) = std::fs::read_dir(p) else {
+        return newest;
+    };
+    for entry in entries.flatten().take(200) {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if let Some(age) = modified_age_days(modified) {
+            newest = Some(newest.map_or(age, |current| current.min(age)));
+        }
+    }
+    newest
 }
 
 /// Path prefix with segment boundary : `C:\App` must not own `C:\AppEvil`.
@@ -291,7 +319,7 @@ fn scan_orphans_in_roots(
                 detail: root.into(),
             });
         }
-        let write_age_days = last_write_age_days(&p);
+        let write_age_days = recent_write_age_days(&p);
         if let Some(days) = write_age_days {
             evidence.push(Evidence {
                 code: "orphan_mtime".into(),
@@ -579,6 +607,15 @@ mod tests {
         assert!(!was_recent_orphan_path(
             &root.join("Zulu079").to_string_lossy()
         ));
+    }
+
+    #[test]
+    fn recent_write_activity_includes_top_level_files() {
+        let root = crate::test_support::TempDir::new("orphan_recent_file");
+        let dir = root.join("App");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.log"), b"live").unwrap();
+        assert_eq!(super::recent_write_age_days(&dir), Some(0));
     }
 
     #[test]

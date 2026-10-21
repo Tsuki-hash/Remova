@@ -58,11 +58,15 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
     if app_path.is_empty() || app_path.contains('%') {
         return None;
     }
-    let rule_name = field(&fields, "Name")
+    let name = field(&fields, "Name")
         .map(str::trim)
-        .filter(|n| !n.is_empty() && !n.starts_with('@'))
-        .unwrap_or(value_name)
-        .to_string();
+        .filter(|n| !n.is_empty());
+    // Resource-named rules are Windows built-ins; SOP §8-1 excludes them even
+    // when their App path is missing.
+    if name.is_some_and(|n| n.starts_with('@')) {
+        return None;
+    }
+    let rule_name = name.unwrap_or(value_name).to_string();
     Some(FirewallRule {
         value_name: value_name.to_string(),
         rule_name,
@@ -78,7 +82,6 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
 /// offline path) are treated as "still unknown" and never offered.
 pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
     let mut rules = Vec::new();
-    let mut omitted = 0u32;
     for (value_name, raw) in crate::regscan::list_values(FIREWALL_RULES_KEY) {
         if crate::scan_task::cancelled() {
             break;
@@ -86,20 +89,38 @@ pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
         let Some(rule) = parse_rule(&value_name, &raw) else {
             continue;
         };
-        if !std::path::Path::new(&rule.app_path)
+        if std::path::Path::new(&rule.app_path)
             .try_exists()
             .is_ok_and(|exists| !exists)
         {
-            continue;
+            rules.push(rule);
         }
-        if rules.len() >= RESULT_CAP {
-            omitted += 1;
-            continue;
-        }
-        rules.push(rule);
     }
-    rules.sort_by_key(|r| r.rule_name.to_lowercase());
+    finalize_rules(rules)
+}
+
+/// Sort before capping: registry enumeration order must not decide which 200
+/// rules are shown, otherwise a fresh delete re-scan can disagree with the
+/// list the user selected from.
+fn finalize_rules(mut rules: Vec<FirewallRule>) -> FirewallScanResult {
+    rules.sort_by(|a, b| {
+        a.rule_name
+            .to_lowercase()
+            .cmp(&b.rule_name.to_lowercase())
+            .then_with(|| a.value_name.cmp(&b.value_name))
+    });
+    let omitted = rules.len().saturating_sub(RESULT_CAP) as u32;
+    rules.truncate(RESULT_CAP);
     FirewallScanResult { rules, omitted }
+}
+
+fn ensure_still_orphans(wanted: &[String], fresh: &[FirewallRule]) -> Result<(), String> {
+    let allowed: std::collections::HashSet<&str> =
+        fresh.iter().map(|r| r.value_name.as_str()).collect();
+    if let Some(unknown) = wanted.iter().find(|n| !allowed.contains(n.as_str())) {
+        return Err(format!("firewall rule is no longer an orphan: {unknown}"));
+    }
+    Ok(())
 }
 
 /// Delete the given rule values after a fresh scan proves each one is still an
@@ -116,11 +137,7 @@ pub fn delete_firewall_rules(value_names: &[String]) -> Result<FirewallCleanupRe
         return Err("no rules selected".into());
     }
     let fresh = scan_orphan_firewall_rules();
-    let allowed: std::collections::HashSet<&str> =
-        fresh.rules.iter().map(|r| r.value_name.as_str()).collect();
-    if let Some(unknown) = wanted.iter().find(|n| !allowed.contains(n.as_str())) {
-        return Err(format!("firewall rule is no longer an orphan: {unknown}"));
-    }
+    ensure_still_orphans(&wanted, &fresh.rules)?;
 
     let session = crate::backup::create_session("firewall-rules")
         .map_err(|e| format!("backup session failed: {e}"))?;
@@ -193,11 +210,52 @@ mod tests {
         assert!(parse_rule("a", "v2.10|Action=Allow|Dir=In|Name=NoApp").is_none());
         assert!(parse_rule("a", "v2.10|App=%SystemRoot%\\x.exe|Name=x").is_none());
         assert!(parse_rule("a", "not-a-rule").is_none());
-        let resource = parse_rule(
-            "value-name",
-            "v2.10|App=C:\\x.exe|Name=@firewallapi.dll,-28752",
-        )
-        .expect("rule");
-        assert_eq!(resource.rule_name, "value-name");
+        assert!(
+            parse_rule(
+                "value-name",
+                "v2.10|App=C:\\x.exe|Name=@firewallapi.dll,-28752"
+            )
+            .is_none(),
+            "resource-named built-in rules must not be offered"
+        );
+    }
+
+    #[test]
+    fn delete_selection_must_still_be_orphaned_in_a_fresh_scan() {
+        let rule = |name: &str| FirewallRule {
+            value_name: name.into(),
+            rule_name: name.into(),
+            app_path: r"C:\Tools\gone.exe".into(),
+            direction: "In".into(),
+            action: "Allow".into(),
+            protocol: "6".into(),
+            reason: FIREWALL_APP_MISSING.into(),
+        };
+        let fresh = vec![rule("a")];
+        assert!(ensure_still_orphans(&["a".to_string()], &fresh).is_ok());
+        assert!(ensure_still_orphans(&["a".to_string(), "b".to_string()], &fresh).is_err());
+    }
+
+    #[test]
+    fn result_cap_is_applied_after_deterministic_sorting() {
+        let rule = |n: u32| FirewallRule {
+            value_name: format!("value-{n:03}"),
+            rule_name: format!("Rule {n:03}"),
+            app_path: format!(r"C:\Tools\gone-{n}.exe"),
+            direction: "In".into(),
+            action: "Allow".into(),
+            protocol: "6".into(),
+            reason: FIREWALL_APP_MISSING.into(),
+        };
+        let mut input: Vec<FirewallRule> = (0..205).rev().map(rule).collect();
+        input.reverse();
+        let result = finalize_rules(input);
+        assert_eq!(result.rules.len(), RESULT_CAP);
+        assert_eq!(result.omitted, 5);
+        assert_eq!(result.rules[0].rule_name, "Rule 000");
+        assert_eq!(
+            result.rules.last().map(|r| r.rule_name.as_str()),
+            Some("Rule 199")
+        );
     }
 }

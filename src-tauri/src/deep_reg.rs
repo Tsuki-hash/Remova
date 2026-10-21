@@ -25,7 +25,6 @@ pub struct RegistryCheckResult {
 
 const ROOTS: [&str; 3] = [r"HKLM64\SOFTWARE", r"HKLM32\SOFTWARE", r"HKCU\SOFTWARE"];
 const SKIP_VENDORS: &[&str] = &[
-    "MICROSOFT",
     "CLASSES",
     "POLICIES",
     "WOW6432NODE",
@@ -40,12 +39,12 @@ const BUDGET: Duration = Duration::from_millis(2_000);
 
 pub fn deep_registry_check(app_name: &str) -> Result<RegistryCheckResult, String> {
     if app_name.trim().is_empty() || app_name.chars().count() > 200 {
-        return Err("invalid app name".into());
+        return Err("deep_registry_invalid_name".into());
     }
     crate::fsutil::validate_native_name(app_name)?;
     let keywords = keywords(app_name);
     if keywords.is_empty() {
-        return Err("app name is too generic for a deep registry check".into());
+        return Err("deep_registry_too_generic".into());
     }
     let start = std::time::Instant::now();
     Ok(walk_with(
@@ -55,25 +54,81 @@ pub fn deep_registry_check(app_name: &str) -> Result<RegistryCheckResult, String
     ))
 }
 
-/// Full product-name variants only — a single generic token (`Acme`) must not
-/// turn a shared vendor key into a reported "leftover".
-fn keywords(app_name: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+#[derive(Debug, Default)]
+struct Keywords {
+    /// Whole-product variants; used for a vendor-level key.
+    strong: Vec<String>,
+    /// Individual meaningful words; used only for a child key such as
+    /// `Microsoft\Office`, never to report a vendor root.
+    weak: Vec<String>,
+}
+
+impl Keywords {
+    fn is_empty(&self) -> bool {
+        self.strong.is_empty() && self.weak.is_empty()
+    }
+}
+
+fn keywords(app_name: &str) -> Keywords {
+    const STOPWORDS: &[&str] = &[
+        "update",
+        "updater",
+        "client",
+        "server",
+        "tools",
+        "tool",
+        "suite",
+        "studio",
+        "driver",
+        "drivers",
+        "runtime",
+        "library",
+        "service",
+        "desktop",
+        "cloud",
+        "player",
+        "editor",
+        "manager",
+        "console",
+        "launcher",
+        "windows",
+        "software",
+        "application",
+        "app",
+        "setup",
+        "installer",
+        "uninstall",
+    ];
+    let mut out = Keywords::default();
     for slug in crate::scanner::slugify(app_name) {
         let slug = slug.trim().to_lowercase();
-        if slug.chars().count() < 4 || out.contains(&slug) {
+        if slug.chars().count() < 4 || out.strong.contains(&slug) {
             continue;
         }
-        out.push(slug);
+        out.strong.push(slug);
     }
-    out.truncate(8);
+    out.strong.truncate(8);
+    for token in app_name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+    {
+        let token = token.to_lowercase();
+        if token.chars().count() < 4
+            || STOPWORDS.contains(&token.as_str())
+            || out.strong.contains(&token)
+            || out.weak.contains(&token)
+        {
+            continue;
+        }
+        out.weak.push(token);
+    }
     out
 }
 
 fn walk_with(
     mut list: impl FnMut(&str) -> Vec<String>,
     mut elapsed: impl FnMut() -> Duration,
-    keywords: &[String],
+    keywords: &Keywords,
 ) -> RegistryCheckResult {
     let mut result = RegistryCheckResult {
         hits: Vec::new(),
@@ -100,7 +155,7 @@ fn walk_with(
             {
                 continue;
             }
-            let vendor_hit = leaf_matches(&vendor, keywords);
+            let vendor_hit = leaf_matches(&vendor, &keywords.strong);
             let hits_before = result.hits.len();
             let children = list(&vendor_path);
             if children.len() > MAX_CHILDREN_PER_VENDOR {
@@ -116,7 +171,7 @@ fn walk_with(
                     break 'roots;
                 }
                 result.scanned += 1;
-                if leaf_matches(&child, keywords) {
+                if leaf_matches(&child, &keywords.strong) || leaf_matches(&child, &keywords.weak) {
                     let child_path = format!("{vendor_path}\\{child}");
                     push_hit(&mut result, &mut seen, &child_path, &child, "nested");
                 }
@@ -126,7 +181,7 @@ fn walk_with(
             // concrete child key; report the vendor itself only when no child
             // matched.
             if vendor_hit && result.hits.len() == hits_before {
-                push_hit(&mut result, &mut seen, &vendor_path, &vendor, "top-level");
+                push_hit(&mut result, &mut seen, &vendor_path, &vendor, "top_level");
             }
         }
     }
@@ -153,7 +208,7 @@ fn push_hit(
     result.hits.push(RegistryCheckHit {
         key: path.to_string(),
         name: name.to_string(),
-        detail: detail.into(),
+        detail: detail.to_string(),
     });
 }
 
@@ -232,6 +287,25 @@ mod tests {
         );
         assert!(slow.timed_out);
         assert!(slow.scanned < 2);
+    }
+
+    #[test]
+    fn microsoft_vendor_children_are_searchable_without_flagging_the_vendor() {
+        let fake = |key: &str| {
+            if key == ROOTS[0] {
+                vec!["Microsoft".into()]
+            } else if key == r"HKLM64\SOFTWARE\Microsoft" {
+                vec!["Office".into(), "Windows".into()]
+            } else {
+                vec![]
+            }
+        };
+        let result = walk_with(fake, || Duration::ZERO, &keywords("Microsoft Office"));
+        let keys: Vec<&str> = result.hits.iter().map(|h| h.key.as_str()).collect();
+        assert!(keys.contains(&r"HKLM64\SOFTWARE\Microsoft\Office"));
+        assert!(!keys
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(r"HKLM64\SOFTWARE\Microsoft")));
     }
 
     #[test]

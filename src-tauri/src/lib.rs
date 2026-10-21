@@ -631,9 +631,10 @@ async fn end_locking_process(
     pid: u32,
     expected_path: String,
     install_root: String,
+    target_path: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        locks::end_locking_process(pid, &expected_path, &install_root)
+        locks::end_locking_process(pid, &expected_path, &install_root, &target_path)
     })
     .await
     .map_err(|e| e.to_string())?

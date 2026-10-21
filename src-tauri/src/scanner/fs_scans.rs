@@ -150,11 +150,11 @@ pub(super) fn scan_home_dot_dirs(
     name_slugs: &[String],
     install_low: &str,
     items: &mut Vec<CleanupItem>,
-) {
+) -> bool {
     let Some(up) = std::env::var_os("USERPROFILE") else {
-        return;
+        return false;
     };
-    scan_home_dot_dirs_from(std::path::Path::new(&up), name_slugs, install_low, items);
+    scan_home_dot_dirs_from(std::path::Path::new(&up), name_slugs, install_low, items)
 }
 
 fn scan_home_dot_dirs_from(
@@ -162,32 +162,36 @@ fn scan_home_dot_dirs_from(
     name_slugs: &[String],
     install_low: &str,
     items: &mut Vec<CleanupItem>,
-) {
-    let normalized: Vec<String> = name_slugs
+) -> bool {
+    scan_home_dot_dirs_with_cap(up, name_slugs, install_low, items, 2_000)
+}
+
+fn scan_home_dot_dirs_with_cap(
+    up: &Path,
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+    max_shared_children: usize,
+) -> bool {
+    let slugs: Vec<&String> = name_slugs
         .iter()
-        .map(|s| super::normalize_for_match(s))
-        .filter(|s| s.len() >= 4)
+        .filter(|s| super::normalize_for_match(s).len() >= 4)
         .collect();
-    if normalized.is_empty() {
-        return;
+    if slugs.is_empty() {
+        return false;
     }
-    let matches_slug = |name: &str| {
-        let n = super::normalize_for_match(name);
-        normalized
-            .iter()
-            .any(|s| n == *s || n.starts_with(&format!("{s}-")))
-    };
+    let matches_slug = |name: &str| slugs.iter().any(|slug| super::name_variant_hit(name, slug));
     const SHARED_DOT_ROOTS: &[&str] = &[
         ".config", ".gemini", ".claude", ".codex", ".vscode", ".cursor", ".npm", ".cargo",
         ".gradle", ".m2", ".nuget", ".bun",
     ];
     let Ok(rd) = up.read_dir() else {
-        return;
+        return false;
     };
     // Home profiles are small, but a shared dot root can hold thousands of
     // children on dev machines. Bound the walk so analyze stays predictable.
-    const MAX_SHARED_CHILDREN: usize = 2_000;
     let mut shared_children = 0usize;
+    let mut truncated = false;
     for entry in rd.flatten() {
         if crate::scan_task::cancelled() {
             break;
@@ -216,7 +220,11 @@ fn scan_home_dot_dirs_from(
             continue;
         };
         for child in children.flatten() {
-            if crate::scan_task::cancelled() || shared_children >= MAX_SHARED_CHILDREN {
+            if crate::scan_task::cancelled() {
+                break;
+            }
+            if shared_children >= max_shared_children {
+                truncated = true;
                 break;
             }
             shared_children += 1;
@@ -231,7 +239,13 @@ fn scan_home_dot_dirs_from(
                 push_home_dot_item(&child.path(), &child_name, install_low, items);
             }
         }
+        if truncated {
+            // Keep scanning top-level dot dirs (they are not capped); only the
+            // shared roots' child enumeration is budgeted.
+            continue;
+        }
     }
+    truncated
 }
 
 fn push_home_dot_item(path: &Path, name: &str, install_low: &str, items: &mut Vec<CleanupItem>) {
@@ -628,18 +642,42 @@ mod tests {
     fn home_dot_dirs_report_matching_dirs_and_shared_children_only() {
         let up = crate::test_support::TempDir::new("home_dot");
         std::fs::create_dir_all(up.join(".acmeproduct").join("config")).unwrap();
+        std::fs::create_dir_all(up.join(".acme-product")).unwrap();
         std::fs::create_dir_all(up.join(".gemini").join("acmeproduct")).unwrap();
         std::fs::create_dir_all(up.join(".gemini").join("other")).unwrap();
         let mut items = Vec::new();
         super::scan_home_dot_dirs_from(up.path(), &["AcmeProduct".to_string()], "", &mut items);
         let paths: Vec<String> = items.iter().map(|i| i.path.to_lowercase()).collect();
         assert!(paths.iter().any(|p| p.ends_with(".acmeproduct")));
+        assert!(paths.iter().any(|p| p.ends_with(".acme-product")));
         assert!(paths.iter().any(|p| p.ends_with(".gemini\\acmeproduct")));
         assert!(
             !paths.iter().any(|p| p.ends_with(".gemini")),
             "shared root must never be a target"
         );
         assert!(!paths.iter().any(|p| p.ends_with("\\other")));
+    }
+
+    #[test]
+    fn shared_child_cap_reports_truncation() {
+        let up = crate::test_support::TempDir::new("home_dot_cap");
+        std::fs::create_dir_all(up.join(".config").join("acme")).unwrap();
+        std::fs::create_dir_all(up.join(".config").join("second")).unwrap();
+        std::fs::create_dir_all(up.join(".acme")).unwrap();
+        let mut items = Vec::new();
+        assert!(super::scan_home_dot_dirs_with_cap(
+            up.path(),
+            &["Acme".to_string()],
+            "",
+            &mut items,
+            1
+        ));
+        assert!(
+            items
+                .iter()
+                .any(|it| it.path.to_lowercase().ends_with("\\.acme")),
+            "the shared-child cap must not hide top-level dot dirs"
+        );
     }
 
     /// A shared dot root whose name happens to match a product slug stays

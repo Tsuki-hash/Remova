@@ -290,6 +290,9 @@ pub struct ScanResult {
     #[serde(default)]
     pub app_key: String,
     pub items: Vec<CleanupItem>,
+    /// Stable codes for bounded scans that dropped matches (M4).
+    #[serde(default)]
+    pub degraded: Vec<String>,
 }
 
 /// Result of a scoped scan (installer packages / tool caches).
@@ -378,6 +381,25 @@ pub fn normalize_for_match(s: &str) -> String {
         .chars()
         .filter(|c| c.is_alphanumeric())
         .collect()
+}
+
+/// Name equality plus the suffix forms `.acme-tool`, `acme.tool`, `acme_tool`
+/// and `acme tool`. The separator must be checked on the RAW strings:
+/// `normalize_for_match` removes it, so a normalized prefix check can never see
+/// the boundary.
+pub(crate) fn name_variant_hit(candidate: &str, slug: &str) -> bool {
+    let candidate = candidate.trim_start_matches('.');
+    let slug = slug.trim_start_matches('.');
+    if normalize_for_match(candidate) == normalize_for_match(slug) {
+        return true;
+    }
+    let candidate = candidate.to_lowercase();
+    let slug = slug.to_lowercase();
+    ["-", "_", ".", " "].iter().any(|sep| {
+        candidate
+            .strip_prefix(&slug)
+            .is_some_and(|rest| rest.starts_with(sep))
+    })
 }
 
 pub fn slugify(text: &str) -> Vec<String> {
@@ -600,6 +622,7 @@ pub fn analyze_associations(
                     app_name: name.to_string(),
                     app_key: format!("{source}\0{registry_key}\0{name}"),
                     items,
+                    degraded: Vec::new(),
                 };
             }
         };
@@ -898,9 +921,14 @@ pub fn analyze_associations(
     phase!("other");
     fs_scans::scan_webview_masks(&name_slugs, &mut items);
     phase!("other");
-    fs_scans::scan_home_dot_dirs(&name_slugs, &install_low, &mut items);
+    let mut degraded = Vec::new();
+    if fs_scans::scan_home_dot_dirs(&name_slugs, &install_low, &mut items) {
+        degraded.push("home_dot_truncated".to_string());
+    }
     phase!("other");
-    reg_scans::scan_muicache(&name_slugs, &install_low, &mut items);
+    if reg_scans::scan_muicache(&name_slugs, &install_low, &mut items) {
+        degraded.push("muicache_truncated".to_string());
+    }
 
     for it in &mut items {
         if crate::scan_task::cancelled() {
@@ -936,6 +964,7 @@ pub fn analyze_associations(
         app_name: name.to_string(),
         app_key: format!("{source}\0{registry_key}\0{name}"),
         items,
+        degraded,
     }
 }
 
@@ -1012,6 +1041,17 @@ mod tests {
         assert!(name_boundary_hit("steamtray", "steamtray"));
         assert!(!name_boundary_hit("SteamToolsSvc", "steam"));
         assert!(!name_boundary_hit("mysteamapp", "steam"));
+    }
+
+    #[test]
+    fn name_variants_use_raw_separators_not_normalized_prefixes() {
+        assert!(name_variant_hit(".acme-tool", "acme"));
+        assert!(name_variant_hit("Acme.Tool", "acme"));
+        assert!(name_variant_hit("acme_tool", "acme"));
+        assert!(name_variant_hit("acme tool", "acme"));
+        assert!(!name_variant_hit("acmetool", "acme"));
+        assert!(!name_variant_hit("acmeevil", "acme"));
+        assert!(name_variant_hit("Acme-Tool", "acme-tool"));
     }
 
     #[test]

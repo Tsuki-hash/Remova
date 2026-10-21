@@ -91,6 +91,9 @@ pub struct FullCleanupReport {
     /// Sum of `size_kb` for selected rows the gate refused (keep-class).
     #[serde(default)]
     pub kept_kb: u64,
+    /// Sum of `size_kb` for deletes scheduled on reboot (not in `deleted`).
+    #[serde(default)]
+    pub delayed_kb: u64,
     pub aborted: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,

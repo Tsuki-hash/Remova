@@ -154,17 +154,24 @@ fn same_path(a: &str, b: &str) -> bool {
     }
 }
 
-/// End one process after verifying the live image path. The caller must have
-/// obtained user confirmation; this is never called automatically.
+fn process_still_holds(pid: u32, holders: &[LockingProcess]) -> bool {
+    holders.iter().any(|p| p.pid == pid)
+}
+
+/// End one process after verifying the live image path and re-checking that it
+/// still holds the failed target. The caller must have obtained user
+/// confirmation; this is never called automatically.
 #[cfg(windows)]
 pub fn end_locking_process(
     pid: u32,
     expected_path: &str,
     install_root: &str,
+    target_path: &str,
 ) -> Result<(), String> {
-    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
-        OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_TERMINATE,
     };
 
     if pid == 0 || pid == std::process::id() {
@@ -172,8 +179,16 @@ pub fn end_locking_process(
     }
     crate::fsutil::validate_native_name(expected_path)?;
     crate::fsutil::validate_native_name(install_root)?;
+    crate::fsutil::validate_native_name(target_path)?;
+    if target_path.trim().is_empty() || !std::path::Path::new(target_path).is_absolute() {
+        return Err("invalid lock target".into());
+    }
     if !can_end_process(expected_path, install_root) {
         return Err("process image is not a program under the install directory".into());
+    }
+    let holders = diagnose_locked_path(target_path)?;
+    if !process_still_holds(pid, &holders) {
+        return Err("process no longer holds this path; refresh the lock list".into());
     }
     let handle = unsafe {
         OpenProcess(
@@ -191,7 +206,12 @@ pub fn end_locking_process(
         if !can_end_process(&current, install_root) {
             return Err("process image is outside the install directory".to_string());
         }
-        unsafe { TerminateProcess(handle, 1) }.map_err(|e| format!("TerminateProcess failed: {e}"))
+        unsafe { TerminateProcess(handle, 1) }
+            .map_err(|e| format!("TerminateProcess failed: {e}"))?;
+        if unsafe { WaitForSingleObject(handle, 5_000) } != WAIT_OBJECT_0 {
+            return Err("process did not exit in time".to_string());
+        }
+        Ok(())
     })();
     unsafe {
         let _ = CloseHandle(handle);
@@ -209,6 +229,7 @@ pub fn end_locking_process(
     _pid: u32,
     _expected_path: &str,
     _install_root: &str,
+    _target_path: &str,
 ) -> Result<(), String> {
     Err("not windows".into())
 }
@@ -250,18 +271,39 @@ mod tests {
             r"C:\Apps\Demo\Demo.EXE",
             r"c:/apps/demo/demo.exe"
         ));
+        let holders = vec![super::LockingProcess {
+            pid: 42,
+            name: "demo".into(),
+            path: r"C:\Apps\Demo\demo.exe".into(),
+        }];
+        assert!(super::process_still_holds(42, &holders));
+        assert!(!super::process_still_holds(43, &holders));
     }
 
     #[cfg(windows)]
     #[test]
     fn end_process_refuses_self_and_unrelated_images() {
-        assert!(super::end_locking_process(0, r"C:\Apps\Demo\demo.exe", r"C:\Apps\Demo").is_err());
+        assert!(super::end_locking_process(
+            0,
+            r"C:\Apps\Demo\demo.exe",
+            r"C:\Apps\Demo",
+            r"C:\Apps\Demo\cache"
+        )
+        .is_err());
         let this = std::process::id();
-        assert!(
-            super::end_locking_process(this, r"C:\Apps\Demo\demo.exe", r"C:\Apps\Demo").is_err()
-        );
-        assert!(
-            super::end_locking_process(999_999, r"C:\Other\demo.exe", r"C:\Apps\Demo").is_err()
-        );
+        assert!(super::end_locking_process(
+            this,
+            r"C:\Apps\Demo\demo.exe",
+            r"C:\Apps\Demo",
+            r"C:\Apps\Demo\cache"
+        )
+        .is_err());
+        assert!(super::end_locking_process(
+            999_999,
+            r"C:\Other\demo.exe",
+            r"C:\Apps\Demo",
+            r"C:\Apps\Demo\cache"
+        )
+        .is_err());
     }
 }

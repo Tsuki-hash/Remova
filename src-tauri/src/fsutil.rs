@@ -681,7 +681,8 @@ fn remove_file_with_readonly_retry(p: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(p) {
         Ok(()) => Ok(()),
         Err(first) => {
-            if clear_attributes_for_delete(p) {
+            if should_clear_attributes(&first, delete_blocking_attributes(p)) {
+                clear_attributes_for_delete(p);
                 std::fs::remove_file(p)
             } else {
                 Err(first)
@@ -694,13 +695,35 @@ fn remove_dir_with_readonly_retry(p: &Path) -> std::io::Result<()> {
     match std::fs::remove_dir(p) {
         Ok(()) => Ok(()),
         Err(first) => {
-            if clear_attributes_for_delete(p) {
+            if should_clear_attributes(&first, delete_blocking_attributes(p)) {
+                clear_attributes_for_delete(p);
                 std::fs::remove_dir(p)
             } else {
                 Err(first)
             }
         }
     }
+}
+
+/// Only an ACCESS_DENIED on an object that actually carries READONLY/HIDDEN/
+/// SYSTEM is an attribute problem. Sharing violations (32/33) and ACL-only
+/// failures must not silently strip attributes from a file we fail to delete.
+fn should_clear_attributes(error: &std::io::Error, attributes: u32) -> bool {
+    // Never rewrite a reparse link's attributes; the caller unlinks it as-is.
+    error.raw_os_error() == Some(5) && attributes & 0x7 != 0 && attributes & 0x400 == 0
+}
+
+#[cfg(windows)]
+fn delete_blocking_attributes(p: &Path) -> u32 {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::symlink_metadata(p)
+        .map(|m| m.file_attributes())
+        .unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+fn delete_blocking_attributes(_p: &Path) -> u32 {
+    0
 }
 
 #[cfg(windows)]
@@ -1412,6 +1435,30 @@ mod tests {
         let removed = prune_empty_ancestors_under(&other, &["Vendor".into()], &roots);
         assert!(removed.is_empty(), "a non-matching name must not be pruned");
         assert!(root.join("Unrelated").exists());
+    }
+
+    #[test]
+    fn attribute_retry_is_limited_to_access_denied_with_protected_attributes() {
+        assert!(super::should_clear_attributes(
+            &std::io::Error::from_raw_os_error(5),
+            0x1
+        ));
+        assert!(super::should_clear_attributes(
+            &std::io::Error::from_raw_os_error(5),
+            0x2 | 0x4
+        ));
+        assert!(!super::should_clear_attributes(
+            &std::io::Error::from_raw_os_error(32),
+            0x1
+        ));
+        assert!(!super::should_clear_attributes(
+            &std::io::Error::from_raw_os_error(5),
+            0
+        ));
+        assert!(!super::should_clear_attributes(
+            &std::io::Error::from_raw_os_error(5),
+            0x400 | 0x1
+        ));
     }
 
     /// M4 (SOP §9.3): READONLY/HIDDEN/SYSTEM is an attribute, not a lock —
