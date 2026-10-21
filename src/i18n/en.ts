@@ -244,7 +244,7 @@ export const dict: EnDict = {
     firewallTitle: "Orphan firewall rules",
     firewallHint: "Rules whose program file no longer exists (read-only scan, unselected by default)",
     firewallEmpty: "No orphan firewall rules found",
-    firewallApp: "Program",
+    firewallApp: "Program",
     firewallDirection: "Direction",
     firewallDirectionIn: "Inbound",
     firewallDirectionOut: "Outbound",

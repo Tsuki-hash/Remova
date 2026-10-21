@@ -244,7 +244,7 @@ export const dict = {
     firewallTitle: "孤儿网络规则",
     firewallHint: "程序文件已不存在的防火墙规则（只读扫描，默认不选）",
     firewallEmpty: "没有发现孤立的防火墙规则",
-    firewallApp: "程序",
+    firewallApp: "程序",
     firewallDirection: "方向",
     firewallDirectionIn: "入站",
     firewallDirectionOut: "出站",
