@@ -76,7 +76,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
-> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.3.2 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page.
+> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.3.2 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. The `latest.json` and `.sig` assets are the updater manifest and its signature: until an updater public key is configured they are not consumed by the in-app update channel, and the MSI install is not wired into auto-update either — download updates manually.
 
 | Artifact | Notes |
 |---|---|

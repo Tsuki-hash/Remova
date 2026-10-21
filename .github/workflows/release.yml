@@ -57,8 +57,15 @@ jobs:
               --jq '[.workflow_runs[] | select(.event=="push")] as $runs | if ($runs | length) == 0 then "NONE" else ($runs | max_by(.run_number) | "\(.run_number)|\(.status)|\(.conclusion)") end'
           }
           $state = (Get-CiState).Trim()
-          if ($state -eq 'NONE' -or -not $state) {
-            throw "No CI run exists for commit $sha. Push the commit to main, let CI finish, then tag."
+          # A tag can beat CI run registration by a few seconds. Retry briefly,
+          # but keep treating a persistent missing run as "no evidence".
+          $registrationDeadline = (Get-Date).AddMinutes(2)
+          while ($state -eq 'NONE' -or -not $state) {
+            if ((Get-Date) -gt $registrationDeadline) {
+              throw "No CI run exists for commit $sha. Push the commit to main, let CI finish, then tag."
+            }
+            Start-Sleep -Seconds 10
+            $state = (Get-CiState).Trim()
           }
           $parts = $state.Split('|')
           Write-Host "CI run #$($parts[0]) status=$($parts[1]) conclusion=$($parts[2])"

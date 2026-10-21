@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "test:scripts": "node --test scripts/__tests__/*.test.mjs",
+    "test:scripts": "node --test scripts/__tests__/*.test.mjs && node scripts/check-internal-jargon.mjs",
     "check:i18n": "node scripts/find-dead-i18n.mjs --check",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "check-versions": "pwsh -NoProfile -File scripts/check-versions.ps1",
@@ -20,7 +20,8 @@
     "smoke:portable": "pwsh -NoProfile -File scripts/smoke-portable.ps1",
     "smoke:launch": "pwsh -NoProfile -File scripts/smoke-launch.ps1",
     "smoke:app": "pwsh -NoProfile -File scripts/smoke-app.ps1",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check:jargon": "node scripts/check-internal-jargon.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.12",
