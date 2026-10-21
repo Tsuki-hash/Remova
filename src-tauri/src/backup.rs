@@ -422,6 +422,56 @@ mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
 
+    /// A1: the truncated name must survive the real backup path, including the
+    /// atomic temp file. A 238-unit ASCII name (rel = 255 units) and a
+    /// 115-emoji name both used to fail at the temp component.
+    #[test]
+    fn long_names_backup_end_to_end() {
+        use crate::scanner::ItemKind;
+        for (label, name) in [
+            ("ascii238", "a".repeat(238)),
+            ("emoji115", "\u{1F980}".repeat(115)),
+        ] {
+            let root = crate::test_support::TempDir::new(&format!("bk_long_{label}"));
+            let src = root.join(&name);
+            std::fs::write(&src, b"payload").unwrap();
+            let _store = crate::path_seal::TestStore::new(root.join("seals"));
+            let session = root.join("sess");
+            std::fs::create_dir_all(session.join("files")).unwrap();
+            let item = CleanupItem {
+                path: src.to_string_lossy().into_owned(),
+                kind: ItemKind::File,
+                score: 90,
+                confidence: Confidence::Confirmed,
+                risk: RiskLevel::Low,
+                reason: "t".into(),
+                evidence: vec![],
+                shared: false,
+                user_data: false,
+                user_library: false,
+                size_kb: None,
+                size_capped: false,
+                bucket: None,
+            };
+            backup_item(&item, &session).unwrap_or_else(|e| panic!("{label} must back up: {e}"));
+            let files: Vec<_> = std::fs::read_dir(session.join("files"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name() != "path_map.json")
+                .collect();
+            assert_eq!(files.len(), 1, "{label}");
+            assert!(
+                files[0]
+                    .file_name()
+                    .to_string_lossy()
+                    .encode_utf16()
+                    .count()
+                    <= 255,
+                "{label}: backup component must fit the limit"
+            );
+        }
+    }
+
     /// R38-1: the component limit counts UTF-16 units. 130 astral chars are
     /// 260 units — a `chars().take(180)` budget kept them all and pushed the
     /// digest-prefixed name past 255, aborting the whole cleanup again.

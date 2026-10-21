@@ -46,7 +46,7 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
     // R38-4: a drive root has no parent to hold the next component, so the
     // "ancestors are non-empty by construction" argument does not apply to it —
     // never drop a marker into `C:\` when it is itself the target.
-    let is_drive_root = p.parent().is_none();
+    let is_drive_root = !target_can_be_marked(p);
     for (index, ancestor) in ancestors.into_iter().rev().enumerate() {
         if ancestor.as_os_str().is_empty() {
             continue;
@@ -204,6 +204,29 @@ impl DirPin {
 /// mark it even when it is currently non-empty. Ancestors pass `false` and get
 /// no marker, so a shared system directory like `C:\` or `%ProgramData%` is
 /// never written to (F-16).
+/// A marker name that is unique per attempt and always short (A10 keeps it
+/// testable): pid + nanosecond stamp + attempt offset.
+#[cfg(windows)]
+fn guard_marker_name(attempt: u32) -> String {
+    format!(
+        ".remova-guard-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            + attempt as u128
+    )
+}
+
+/// Raw NtCreateFile errors carry an NTSTATUS-derived HRESULT (`0xD0000022`
+/// for ACCESS_DENIED), not the Win32 `0x80070005` that `GetLastError` would
+/// return (A4). Accept both so the fallback is reachable and its intent clear.
+#[cfg(windows)]
+fn is_access_denied_error(error: &windows::core::Error) -> bool {
+    matches!(error.code().0 as u32, 0x8007_0005 | 0xD000_0022)
+}
+
 #[cfg(windows)]
 pub(crate) fn guard_empty_directory(
     handle: windows::Win32::Foundation::HANDLE,
@@ -230,15 +253,7 @@ pub(crate) fn guard_empty_directory(
     // still stamp in the same tick; a name collision is worth one retry with a
     // fresh stamp rather than failing the whole operation.
     for attempt in 0..3u32 {
-        let name = format!(
-            ".remova-guard-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-                + attempt as u128
-        );
+        let name = guard_marker_name(attempt);
         let mut wide: Vec<u16> = name.encode_utf16().collect();
         let unicode = UNICODE_STRING {
             Length: (wide.len() * 2) as u16,
@@ -286,7 +301,7 @@ pub(crate) fn guard_empty_directory(
             // impossible (a creator-owner ACL could allow another process to
             // empty and convert the target), but refusing here would break
             // backups into protected roots; the name pin remains the backstop.
-            Err(e) if e.code().0 as u32 == 0x8007_0005 => return Ok(None),
+            Err(e) if is_access_denied_error(&e) => return Ok(None),
             Err(_) if attempt + 1 < 3 => continue,
             Err(e) => return Err(std::io::Error::other(e.to_string())),
         }
@@ -346,7 +361,7 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
             ));
         };
         unsafe {
-            let wide = to_wide(path_str);
+            let wide = wide_path_for_create_file(path_str);
             // Denying DELETE sharing prevents later rename/delete opens.
             let handle = CreateFileW(
                 PCWSTR(wide.as_ptr()),
@@ -385,6 +400,36 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
         }
         Ok(DirPin {})
     }
+}
+
+/// A path can carry a guard marker only when it has a parent directory. Drive
+/// roots and UNC share roots cannot be converted to a junction in place and
+/// must never receive a marker (R38-4, pinned by a pure unit test in A10).
+fn target_can_be_marked(p: &Path) -> bool {
+    p.parent().is_some()
+}
+
+/// A NUL-terminated UTF-16 path for a raw `CreateFileW`.
+///
+/// Raw Win32 calls do not get std's automatic `\\?\` conversion, so a
+/// destination whose absolute length passes MAX_PATH failed even when every
+/// component was valid (A2). Short paths keep their ordinary form; long
+/// absolute paths are promoted to an extended-length form. Relative paths are
+/// left alone — they cannot be made verbatim without changing their meaning.
+#[cfg(windows)]
+fn wide_path_for_create_file(raw: &str) -> Vec<u16> {
+    let path = raw.replace('/', "\\");
+    let long = path.encode_utf16().count() >= 240;
+    let promoted = if !long || path.starts_with(r"\\?\") {
+        path
+    } else if let Some(rest) = path.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{rest}")
+    } else if path.as_bytes().get(1) == Some(&b':') {
+        format!(r"\\?\{path}")
+    } else {
+        path
+    };
+    promoted.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// A pin on a directory plus its by-handle resolved final path. While held,
@@ -434,7 +479,7 @@ pub fn pin_dir_resolved(p: &Path) -> std::io::Result<DirResolvedPin> {
             ));
         };
         unsafe {
-            let wide = to_wide(path_str);
+            let wide = wide_path_for_create_file(path_str);
             // No FILE_FLAG_OPEN_REPARSE_POINT: the handle must land on the
             // chain target so the final path exposes any planted junction.
             let handle = CreateFileW(
@@ -749,12 +794,18 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
 /// Unique tmp sibling for atomic publish: `p` + `.{pid}.{nonce}.tmp`.
 /// The pid keeps a second Remova process from clobbering our tmp; the
 /// nonce also unshares concurrent writers of the same target in-process.
+/// Sibling temp name for an atomic replace.
+///
+/// The name deliberately does **not** embed the destination file name: Windows
+/// caps one path component at 255 UTF-16 units, and appending
+/// `.<pid>.<nonce>.tmp` to an already-truncated 255-unit backup name made the
+/// temp component invalid — the exact failure F-13 exists to remove (A1).
+/// pid + counter keeps the name unique across processes and threads, and it
+/// stays in the destination directory so the rename remains atomic.
 pub fn atomic_tmp_path(p: &Path) -> PathBuf {
     static NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut name = p.as_os_str().to_owned();
-    name.push(format!(".{}.{}.tmp", std::process::id(), nonce));
-    PathBuf::from(name)
+    p.with_file_name(format!(".remova-tmp-{}-{nonce}", std::process::id()))
 }
 
 pub(crate) fn create_atomic_tmp(p: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
@@ -1221,6 +1272,87 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&root);
     }
+    /// R38-4 / A10: the root-skip rule is a pure decision, so it can be tested
+    /// without pinning a real volume root.
+    #[test]
+    fn target_can_be_marked_covers_roots_and_unc_shares() {
+        assert!(!target_can_be_marked(std::path::Path::new(r"C:\")));
+        assert!(!target_can_be_marked(std::path::Path::new("C:/")));
+        assert!(!target_can_be_marked(std::path::Path::new(
+            r"\\server\share"
+        )));
+        assert!(target_can_be_marked(std::path::Path::new(r"C:\Temp")));
+        assert!(target_can_be_marked(std::path::Path::new(
+            r"C:\Temp\nested"
+        )));
+        assert!(target_can_be_marked(std::path::Path::new("relative")));
+    }
+
+    /// A10 / A4: the marker name is bounded, unique per attempt, and still
+    /// parses as a hidden file name.
+    #[cfg(windows)]
+    #[test]
+    fn guard_marker_names_are_short_and_distinct() {
+        let names: Vec<String> = (0..3).map(guard_marker_name).collect();
+        assert_eq!(names.len(), 3);
+        assert_ne!(names[0], names[1]);
+        assert_ne!(names[1], names[2]);
+        for name in &names {
+            assert!(name.starts_with(".remova-guard-"));
+            assert!(name.encode_utf16().count() < 255);
+        }
+    }
+
+    /// A2: raw CreateFileW does not get std's verbatim conversion. Long
+    /// absolute paths must be promoted so a valid deep destination can still
+    /// be pinned; short and relative paths must keep their ordinary form.
+    #[cfg(windows)]
+    #[test]
+    fn wide_path_promotes_only_long_absolute_paths() {
+        let short = wide_path_for_create_file(r"C:\Temp\x");
+        assert_eq!(
+            String::from_utf16(&short[..short.len() - 1]).unwrap(),
+            r"C:\Temp\x"
+        );
+
+        let long_drive = format!(r"C:\{}", "a".repeat(260));
+        let wide = wide_path_for_create_file(&long_drive);
+        let text = String::from_utf16(&wide[..wide.len() - 1]).unwrap();
+        assert!(text.starts_with(r"\\?\C:\"), "{text}");
+
+        let long_unc = format!(r"\\server\share\{}", "a".repeat(260));
+        let wide = wide_path_for_create_file(&long_unc);
+        let text = String::from_utf16(&wide[..wide.len() - 1]).unwrap();
+        assert!(text.starts_with(r"\\?\UNC\server\share\"), "{text}");
+
+        let relative = format!(r"rel\{}", "a".repeat(260));
+        let wide = wide_path_for_create_file(&relative);
+        let text = String::from_utf16(&wide[..wide.len() - 1]).unwrap();
+        assert_eq!(text, relative.replace('/', "\\"));
+    }
+
+    /// A2 e2e: a destination deeper than MAX_PATH must pin successfully, and
+    /// its target must carry the marker.
+    #[cfg(windows)]
+    #[test]
+    fn create_dirs_pinned_supports_paths_beyond_max_path() {
+        let root = unique_tmp("long_path");
+        let deep = root
+            .join("a".repeat(140))
+            .join("b".repeat(140))
+            .join("target");
+        assert!(deep.to_string_lossy().len() > 260);
+        let pins = create_dirs_pinned(&deep).unwrap();
+        assert!(
+            std::fs::read_dir(&deep)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with(".remova-guard")),
+            "the deep target must be reachable and marked"
+        );
+        drop(pins);
+    }
+
     /// R38-11 / F-16: only the operation's own target carries a guard marker.
     /// A crash mid-operation must never leave `.remova-guard-*` in `C:\` or
     /// `%ProgramData%`, and the ancestor chain must stay marker-free.
