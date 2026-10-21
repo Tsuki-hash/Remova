@@ -33,7 +33,7 @@ export function useAppFilter({
 }) {
   const filtered = useMemo(() => {
     const needle = deferredQ.trim().toLowerCase();
-    // PERF-5: this Map is only read in the `copilotList !== null` branch, yet it
+    // performance fix: this Map is only read in the `copilotList !== null` branch, yet it
     // was rebuilt (300 `appKey` hashes) on every recompute — including every
     // keystroke and every size-estimate batch, when the branch is unreachable.
     let list = copilotList === null ? apps : (() => {
@@ -71,7 +71,7 @@ export function useAppFilter({
       );
     }
     if (!sortCol) return list;
-    // PERF-8: decorate-sort-undecorate. The comparator used to call
+    // performance fix: decorate-sort-undecorate. The comparator used to call
     // `recommendScore` (regex + `Date` parsing) inside every comparison —
     // O(n log n) evaluations, about 5,000 regexes for a 300-row list. Each row is
     // scored exactly once here instead.

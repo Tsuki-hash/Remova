@@ -258,7 +258,7 @@ export default function App() {
     [],
   );
 
- // PERF-6: the grouped setter bags handed to the flow hooks were object
+ // performance fix: the grouped setter bags handed to the flow hooks were object
  // literals, so they had a new identity on every render. That propagated
  // through useCleanupHandlers / useAnalyzeFlow / useAppChrome into `doIgnoreApp`
  // → `listIgnoreApp`, so `SoftwarePage` (memo) could never bail out and every

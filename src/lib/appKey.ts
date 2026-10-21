@@ -19,6 +19,7 @@ export function findReportApp<T extends InstalledApp>(
   apps: readonly T[],
   selected: T | null | undefined,
 ): T | undefined {
-  const matches = (a: T) => !report.app_key || appKey(a) === report.app_key;
+  const matches = (a: T) =>
+    report.app_key ? appKey(a) === report.app_key : a.name === report.app_name;
   return apps.find(matches) ?? (selected && matches(selected) ? selected : undefined);
 }

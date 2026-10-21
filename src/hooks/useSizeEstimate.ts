@@ -86,7 +86,7 @@ export function useSizeEstimate(apps: InstalledApp[], loading: boolean) {
 
     let disposed = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
-    // PERF-5: `setSizeProgress` ran once per estimated path, so a 300-app list
+    // performance fix: `setSizeProgress` ran once per estimated path, so a 300-app list
     // triggered 300 App re-renders during the one phase the user is watching.
     // The counter is still exact; only the publish is coalesced.
     let progressTimer: ReturnType<typeof setTimeout> | null = null;

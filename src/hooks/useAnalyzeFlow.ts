@@ -97,6 +97,10 @@ export function useAnalyzeFlow({
         toast.info(t().taskBusy, { channel: "analyze-flow" });
         return false;
       }
+      // Detect whether busyRef is held by a destructive action before this
+      // analyze claims it. If another analyze already holds it, this call
+      // inherits that claim and must release it when it becomes the survivor.
+      const busyRefHeldExternally = busyRef.current && !analyzingRef.current;
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
       // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only,
@@ -104,7 +108,6 @@ export function useAnalyzeFlow({
       // while a deep scan was in flight, and the scan then landed on top of the
       // other action's report (it never increments `analyzeSeqRef`). App.tsx's
       // "one guard" comment already claimed this ref is the single gate.
-      const nestedInOtherHolder = busyRef.current;
       analyzeHoldRef.current += 1;
       busyRef.current = true;
       goNav("software");
@@ -157,10 +160,10 @@ export function useAnalyzeFlow({
         return false;
       } finally {
         analyzeHoldRef.current -= 1;
-        // Release only this call’s own claim: a superseded older scan must not
-        // clear the newer one’s hold, and a scan nested inside startUninstall
-        // must not steal the ref that flow is still holding.
-        if (analyzeHoldRef.current === 0 && !nestedInOtherHolder) busyRef.current = false;
+        // Release only when no analyze remains and this flow actually acquired
+        // busyRef. A superseded scan must not clear a newer scan's claim, and a
+        // scan nested inside startUninstall/cleanup must not steal that ref.
+        if (analyzeHoldRef.current === 0 && !busyRefHeldExternally) busyRef.current = false;
         if (seq === analyzeSeqRef.current) {
           analyzingRef.current = false;
           setScanning(false);

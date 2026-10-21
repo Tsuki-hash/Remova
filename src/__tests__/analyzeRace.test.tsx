@@ -208,6 +208,47 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(busyRef.current, "the guard must not leak once the scan settles").toBe(false);
   });
 
+  it("releases busyRef after a superseded scan settles before its replacement", async () => {
+    let resolveA: (r: ScanResult) => void = () => {};
+    let resolveB: (r: ScanResult) => void = () => {};
+    analyzeMock
+      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveA = res)))
+      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveB = res)));
+
+    const busyRef = { current: false };
+    const { result } = renderHook(() =>
+      useAnalyzeFlow({
+        goNav: () => {},
+        flow: flow as never,
+        refreshApps: async () => {},
+        busyRef,
+      }),
+    );
+
+    let workA!: Promise<boolean>;
+    let workB!: Promise<boolean>;
+    await act(async () => {
+      workA = result.current.analyze(app("AppA"));
+    });
+    await act(async () => {
+      workB = result.current.analyze(app("AppB"));
+    });
+
+    // A was superseded and settles first; B still owns the busy claim.
+    await act(async () => {
+      result.current.cancelScan();
+      resolveA(scan("AppA"));
+      await workA;
+    });
+    expect(busyRef.current, "AppB is still in flight").toBe(true);
+
+    await act(async () => {
+      resolveB(scan("AppB"));
+      await workB;
+    });
+    expect(busyRef.current, "the surviving analyze must release busyRef").toBe(false);
+  });
+
   it("does not release another holder's claim when analyze is superseded", async () => {
     // A newer analyze supersedes an older one; the older one's `finally` is
     // gated on its own seq, so it must not be what clears the ref.

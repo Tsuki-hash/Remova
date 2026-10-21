@@ -609,7 +609,7 @@ describe("App orchestration", () => {
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
   });
 
-  // PERF-6: the grouped setter bags handed to useCleanupHandlers /
+  // performance fix: the grouped setter bags handed to useCleanupHandlers /
   // useAnalyzeFlow / useAppChrome were object literals, so `doIgnoreApp` got a new
   // identity on every App render → `listIgnoreApp` → `softwareProps` → `memo`
   // never held and every visible AppRow re-rendered. Assert the callback

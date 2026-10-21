@@ -732,6 +732,7 @@ export const dict: EnDict = {
     backendLaunchFailed: "Could not start the official uninstaller",
     backendWaitFailed: "Could not confirm the official uninstaller result",
     backendRebootRequired: "The uninstaller finished; a reboot is required to complete remaining file operations",
+    backendRebootInitiated: "The uninstaller initiated a reboot; residual cleanup was skipped. Rescan after reboot",
     backendBackupFailed: "Backup failed; cleanup was stopped",
     backendDryRun: "Preview only; no uninstall or deletion was performed",
     backendPathRemoved: "PATH entry removed",

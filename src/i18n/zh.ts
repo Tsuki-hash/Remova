@@ -712,6 +712,7 @@ export const dict = {
     backendLaunchFailed: "无法启动官方卸载程序",
     backendWaitFailed: "无法确认官方卸载程序的执行结果",
     backendRebootRequired: "卸载器已完成；需要重启系统才能完成剩余文件操作",
+    backendRebootInitiated: "卸载器已发起系统重启；本次残留清理已跳过，请在重启后重新扫描",
     backendBackupFailed: "备份失败，已停止清理",
     backendDryRun: "仅预览，未执行卸载或删除",
     backendPathRemoved: "已移除 PATH 条目",

@@ -295,7 +295,7 @@ export function ManageListPage({
                     padding: "0 10px",
                     borderBottom: "1px solid var(--border)",
                     boxSizing: "border-box",
-                    // PERF-12: rows are a fixed 72px. Without a clip, three-line
+                    // performance fix: rows are a fixed 72px. Without a clip, three-line
                     // task text and wrapped service details grew past the row and
                     // overlapped the rows above and below it.
                     overflow: "hidden",

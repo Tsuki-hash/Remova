@@ -129,6 +129,10 @@ function ResultGroup({
         const canLocate = ["file", "dir", "path"].includes(item.kind) && /^[a-z]:[\\/]/i.test(item.path)
           && !item.path.includes('"') && ![...item.path].some(char => char.charCodeAt(0) < 32);
         const lock = lockInfo[item.path];
+        // App cleanups authorize the install root; orphan cleanups authorize the
+        // reported directory itself. The backend map remains authoritative.
+        const effectiveLockRoot =
+          lockRoot || (item.kind === "dir" ? item.path : undefined);
         return <div key={`${item.path}-${index}`} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
           <code style={{ display: "block", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.path}</code>
           {item.message && <div>{reason(item.message)}</div>}
@@ -149,7 +153,7 @@ function ResultGroup({
                       <div key={proc.pid}>
                         {proc.name} ({proc.pid})
                         {proc.path ? <code style={{ marginLeft: 6 }}>{proc.path}</code> : null}
-                        {(onRetry || onRescan) && imageUnderRoot(proc.path, lockRoot) && (
+                        {(onRetry || onRescan) && imageUnderRoot(proc.path, effectiveLockRoot) && (
                           <button
                             style={{ ...css.btnGhost, height: 24, marginLeft: 6 }}
                             disabled={lock.busyPid !== undefined}

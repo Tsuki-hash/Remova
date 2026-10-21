@@ -7,7 +7,7 @@ export function useListViewportHeight(ref: RefObject<HTMLDivElement | null>) {
     const main = list?.closest("main");
     if (!list || !main) return;
     let frame = 0;
-    // PERF-7: `paddingBottom` was read through `getComputedStyle` on every
+    // performance fix: `paddingBottom` was read through `getComputedStyle` on every
     // observation, which forces a style recalculation + reflow. It only changes
     // when the layout changes, so it is refreshed on resize instead of per call.
     let bottomPadding = Number.parseFloat(getComputedStyle(main).paddingBottom) || 0;
@@ -31,7 +31,7 @@ export function useListViewportHeight(ref: RefObject<HTMLDivElement | null>) {
     });
     resize?.observe(main);
     const content = new MutationObserver((records) => {
-      // PERF-7: `characterData: true` fired on every keystroke anywhere under
+      // performance fix: `characterData: true` fired on every keystroke anywhere under
       // `main`, and `childList` + `subtree` fired on every row the virtualizer
       // swapped in during a scroll — each callback ran `getComputedStyle`, so
       // scrolling forced a reflow per frame. Text cannot move the toolbar, and

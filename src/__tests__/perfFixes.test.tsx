@@ -30,7 +30,7 @@ vi.mock("../lib/api", () => ({
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 
-// PERF-8: count `recommendScore` evaluations without changing its behaviour.
+// performance fix: count `recommendScore` evaluations without changing its behaviour.
 const decision = vi.hoisted(() => ({ recommendScore: vi.fn() }));
 vi.mock("../lib/decision", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/decision")>();
@@ -46,7 +46,7 @@ const app = (name: string, over: Partial<InstalledApp> = {}): InstalledApp => ({
   estimated_size_kb: 1024, install_date: "2024-01-15", display_icon: "", ...over,
 });
 
-/** A row with three-line task text — the shape PERF-12 clipped. */
+/** A row with three-line task text — the shape performance fix clipped. */
 const task = (over: Partial<ManageItem> = {}): ManageItem => ({
   name: "Acme Backup Task", detail: "C:\\Program Files\\Acme\\backup.exe /verbose /log C:\\very\\long\\path\\that\\wraps",
   location: "\\Acme\\Backup", enabled: true, kind: "task",

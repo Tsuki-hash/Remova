@@ -26,8 +26,10 @@ describe("findReportApp", () => {
   });
 
   it("falls back to name for legacy reports without app_key", () => {
-    const first = app("first");
-    const second = app("second");
-    expect(findReportApp({ app_name: first.name }, [first, second], null)).toBe(first);
+    const wrong = { ...app("wrong"), name: "Other Product" };
+    const expected = app("expected");
+    expect(findReportApp({ app_name: expected.name }, [wrong, expected], null)).toBe(expected);
+    // No list match: the selected app still resolves by name.
+    expect(findReportApp({ app_name: expected.name }, [wrong], expected)).toBe(expected);
   });
 });

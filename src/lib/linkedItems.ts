@@ -32,7 +32,7 @@ function isLnk(path: string): boolean {
 }
 
 function isStartupPath(path: string): boolean {
-  // R38-8: one shared path identity instead of a local lowercasing spelling.
+  // regression fix: one shared path identity instead of a local lowercasing spelling.
   const p = pathKey(path || "");
   return (
     p.includes("\\currentversion\\run") ||
