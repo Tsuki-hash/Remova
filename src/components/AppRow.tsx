@@ -33,6 +33,8 @@ type Props = {
   checked: boolean;
   sizeText: string;
   sizeKb: number;
+  /** M5-3: count of rows sharing this display name (1 = single install). */
+  variantCount?: number;
   uninstalling: boolean;
   onSelect: (app: InstalledApp) => void;
   onUninstall: (app: InstalledApp) => void;
@@ -193,6 +195,7 @@ function AppRowImpl({
   checked,
   sizeText,
   sizeKb,
+  variantCount = 1,
   uninstalling,
   onSelect,
   onUninstall,
@@ -270,8 +273,23 @@ function AppRowImpl({
                 .filter((s) => s && s !== "—")
                 .join(" · ")}
             </div>
-            {chips.length > 0 && (
+            {(chips.length > 0 || variantCount > 1) && (
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 2 }}>
+                {variantCount > 1 && (
+                  <span
+                    title={L.multiInstallHint}
+                    style={{
+                      ...css.chip,
+                      height: 16,
+                      fontSize: 10,
+                      padding: "0 5px",
+                      color: "var(--warn-ink)",
+                      borderColor: "var(--warn)",
+                    }}
+                  >
+                    {L.multiInstallChip(variantCount)}
+                  </span>
+                )}
                 {chips.map((c) => (
                   <span
                     key={c.id}

@@ -100,6 +100,23 @@ it.each(["zh", "en"] as const)("offers backup restoration only for a completed b
   }
 });
 
+it("offers a post-cleanup rescan button and honors the busy state", () => {
+  const onRescan = vi.fn();
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",
+    uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
+    aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const view = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
+    aiReportNote={null} verifyRows={null} onRescan={onRescan} rescanBusy onDismiss={() => {}}
+    onRegenerate={() => {}} />);
+  const busy = screen.getByRole("button", { name: t().analyzing });
+  expect(busy.hasAttribute("disabled")).toBe(true);
+  view.rerender(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
+    aiReportNote={null} verifyRows={null} onRescan={onRescan} rescanBusy={false}
+    onDismiss={() => {}} onRegenerate={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp }));
+  expect(onRescan).toHaveBeenCalledTimes(1);
+});
+
 it("publishes the exact cleanup backup identity without executing restore", () => {
   const store = renderHook(useBackupSessionRequest);
   const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "C:\\Backups\\123_sample",

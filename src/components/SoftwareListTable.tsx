@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
@@ -10,6 +10,7 @@ import type { SortCol, CategoryId } from "../lib/categories";
 
 export function SoftwareListTable({
   filtered,
+  allApps,
   loading,
   q,
   category,
@@ -32,6 +33,8 @@ export function SoftwareListTable({
   setSelected,
 }: {
   filtered: InstalledApp[];
+  /** Unfiltered list — variant badges must not disappear with a search. */
+  allApps?: InstalledApp[];
   loading: boolean;
   q: string;
   category: CategoryId;
@@ -75,6 +78,18 @@ export function SoftwareListTable({
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
+  // M5-3: same display name with a different registry record = multiple
+  // install vectors. Rows stay separate (delete semantics unchanged); the
+  // badge only tells the user why the same name appears twice.
+  const variantSource = allApps ?? filtered;
+  const variantCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const app of variantSource) {
+      const name = app.name.trim().toLowerCase();
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return counts;
+  }, [variantSource]);
 
   const renderRow = (a: InstalledApp, index: number) => {
     const key = appKey(a);
@@ -89,6 +104,7 @@ export function SoftwareListTable({
         checked={multi.has(key)}
         sizeText={sizeText(a)}
         sizeKb={sizeOf(a)}
+        variantCount={variantCounts.get(a.name.trim().toLowerCase()) ?? 1}
         uninstalling={uninstallingKey === key}
         onSelect={selectApp}
         onUninstall={startUninstall}

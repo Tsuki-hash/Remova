@@ -18,10 +18,12 @@ import type {
   IdleScanResult,
   IgnoreSuggestion,
   InstalledApp,
+  LockingProcess,
   ManageItem,
   NlIntent,
   OfficialUninstallResult,
   OrphanScanResult,
+  RegistryCheckResult,
   ReportBriefRequest,
   RiskBriefRequest,
   ScanResult,
@@ -120,6 +122,12 @@ export const api = {
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),
+  /** M4: name the processes holding a path (read-only). */
+  diagnoseLockedPath: (path: string) =>
+    invoke<LockingProcess[]>("diagnose_locked_path", { path }),
+  /** M5: bounded read-only registry key search. */
+  deepRegistryCheck: (appName: string) =>
+    invoke<RegistryCheckResult>("deep_registry_check", { appName }),
   rankIdleApps: (scanId?: number) =>
     invoke<IdleScanResult | IdleApp[]>("rank_idle_apps", { scanId }),
   scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),

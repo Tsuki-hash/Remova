@@ -32,6 +32,20 @@ function ResultGroup({
   const L = t();
   const [limit, setLimit] = useState(50);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [lockInfo, setLockInfo] = useState<Record<string, string>>({});
+  const diagnose = async (path: string) => {
+    try {
+      const procs = await api.diagnoseLockedPath(path);
+      setLockInfo((prev) => ({
+        ...prev,
+        [path]: procs.length
+          ? procs.map((p) => `${p.name} (${p.pid})`).join(" · ")
+          : L.lockDiagnoseEmpty,
+      }));
+    } catch (e) {
+      setLockInfo((prev) => ({ ...prev, [path]: L.lockDiagnoseFailed(formatError(e)) }));
+    }
+  };
   const failed = items.filter((item) => item.status === "failed");
   return <details open={expanded} style={{ marginTop: 8 }}>
     <summary>{label} · {items.length}</summary>
@@ -59,6 +73,11 @@ function ResultGroup({
           {item.status === "failed" && <button style={{ ...css.btnGhost, height: 28 }} disabled={!canLocate}
             title={canLocate ? item.path : L.reportLocateUnavailable} aria-label={`${L.openLocation}: ${item.path}`}
             onClick={() => { setOpenError(null); void api.openPath(item.path).catch(e => setOpenError(`${item.path}: ${formatError(e)}`)); }}>{L.openLocation}</button>}
+          {item.status === "failed" && (
+            <button style={{ ...css.btnGhost, height: 28 }} disabled={!canLocate}
+              onClick={() => void diagnose(item.path)}>{L.lockDiagnose}</button>
+          )}
+          {lockInfo[item.path] && <div style={css.muted}>{lockInfo[item.path]}</div>}
           {item.status === "failed" && !canLocate && <span style={css.muted}>{L.reportLocateUnavailable}</span>}
           {item.message && <details><summary>{L.reportItemDetails}</summary>
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.message}</pre></details>}

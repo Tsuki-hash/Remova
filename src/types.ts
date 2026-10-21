@@ -105,6 +105,18 @@ export type FirewallCleanupReport = {
   backup_dir: string;
 };
 
+/** M4: processes the Restart Manager reports as holding a path. */
+export type LockingProcess = { pid: number; name: string };
+
+/** M5: bounded, read-only registry key matches. */
+export type RegistryCheckHit = { key: string; name: string; detail: string };
+export type RegistryCheckResult = {
+  hits: RegistryCheckHit[];
+  scanned: number;
+  truncated: boolean;
+  timed_out: boolean;
+};
+
 export type CleanupReport = {
   app_name: string;
   dry_run: boolean;
@@ -127,6 +139,9 @@ export type FullCleanupReport = {
   skipped: number;
   /** Reboot-delayed deletes (not in `deleted`). */
   delayed?: number;
+  /** M5: size actually deleted, and size kept by the gate. */
+  reclaimed_kb?: number;
+  kept_kb?: number;
   aborted: boolean;
   restore_point_ok: boolean;
   restore_point_msg: string;

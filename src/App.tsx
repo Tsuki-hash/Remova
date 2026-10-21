@@ -560,9 +560,9 @@ export default function App() {
     [startUninstall],
   );
   const listAnalyze = useCallback(
-    (a: InstalledApp) => {
+    (a: InstalledApp, opts?: { afterCleanup?: boolean }) => {
       if (scanning) return;
-      void analyze(a);
+      void analyze(a, opts);
     },
     [analyze, scanning],
   );

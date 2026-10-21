@@ -25,6 +25,8 @@ const COMMAND_KEYS = [
   "cleanupBrokenInstall",
   "firewallOrphans",
   "deleteFirewallRules",
+  "diagnoseLockedPath",
+  "deepRegistryCheck",
   "scanInstallerCaches",
   "scanToolCaches",
   "listTopDirSizes",

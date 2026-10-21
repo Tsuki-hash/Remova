@@ -2,6 +2,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SoftwareListTable } from "../components/SoftwareListTable";
+import { t } from "../i18n";
 import type { InstalledApp } from "../types";
 
 function app(n: number): InstalledApp {
@@ -114,6 +115,27 @@ describe("SoftwareListTable", () => {
     if (!box) throw new Error("no row checkbox");
     fireEvent.click(box);
     expect(toggleMulti).toHaveBeenCalledWith("Demo App 1");
+  });
+
+  it("badges same-name install vectors without merging their rows", () => {
+    const first = app(1);
+    const second = {
+      ...first,
+      install_location: "D:\\Programs\\Demo1",
+      registry_key: "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Demo1",
+    };
+    const { container } = render(
+      <SoftwareListTable
+        {...props({
+          filtered: [first, second],
+          appKey: (a: InstalledApp) => a.registry_key,
+        })}
+      />,
+    );
+    const rows = container.querySelectorAll<HTMLTableRowElement>("tbody tr[data-index]");
+    expect(rows.length).toBe(2);
+    expect(screen.getAllByText(t().multiInstallChip(2)).length).toBe(2);
+    expect(screen.getAllByTitle(t().multiInstallHint).length).toBe(2);
   });
 
   it("shows the empty state without throwing when nothing matches", () => {

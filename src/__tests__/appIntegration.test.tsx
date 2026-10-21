@@ -192,6 +192,22 @@ describe("App orchestration", () => {
     expect(software().verifyRows).toBeNull();
   });
 
+  it("rescans from the report without preselecting new findings", async () => {
+    saveRescanAfterUninstall(false);
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    await mount();
+    await analyzeDemo();
+    act(() => software().onCleanup());
+    await waitFor(() => expect(software().report).not.toBeNull());
+    // Cleanup clears the prior selection; the rescan must not repopulate it.
+    expect(software().selectedPaths.size).toBe(0);
+    act(() => software().listAnalyze(demo, { afterCleanup: true }));
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(software().residualFromUninstall).toBe(true));
+    expect(software().selectedPaths.size).toBe(0);
+    expect(software().report).not.toBeNull();
+  });
+
   it("matches full path boundaries in pending and drag entry points", async () => {
     const adjacent = { ...other, install_location: `${demo.install_location}Bar` };
     const nested = { ...other, name: "Nested", install_location: `${demo.install_location}\\Nested` };

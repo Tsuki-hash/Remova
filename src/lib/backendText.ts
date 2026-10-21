@@ -34,7 +34,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
       ["shared tool cache", L.toolcacheSharedTitle],
       ["tool cache (", L.toolcacheTitle], ["Orphan app-like folder", L.orphanScan],
       ["Install monitor: new registry entry", L.linkedRegistry],
-      ["Install monitor: cache/log-like path", L.linkedConfigFiles], ["Install monitor: new path", L.monitorDiff]];
+      ["Install monitor: cache/log-like path", L.linkedConfigFiles], ["Install monitor: new path", L.monitorDiff],
+      ["MuiCache trace", L.muicacheReason], ["Home dot-directory", L.homeDotReason]];
     const rule = rules.find(([prefix]) => raw.startsWith(prefix));
     return rule ? rule[1] : L.backendDetailUnavailable;
   }

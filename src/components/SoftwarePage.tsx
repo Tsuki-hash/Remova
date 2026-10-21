@@ -49,7 +49,7 @@ export type SoftwarePageProps = {
   setSelected: (a: InstalledApp | null) => void;
   toggleMulti: (key: string) => void;
   listStartUninstall: (a: InstalledApp) => void;
-  listAnalyze: (a: InstalledApp) => void;
+  listAnalyze: (a: InstalledApp, opts?: { afterCleanup?: boolean }) => void;
   listForceClean: (a: InstalledApp) => void;
   listIgnoreApp: (a: InstalledApp) => void;
   listIgnorePublisher: (a: InstalledApp) => void;
@@ -137,6 +137,11 @@ export type SoftwarePageProps = {
 export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
+  const report = p.report;
+  const reportApp = report
+    ? p.apps.find((a) => a.name === report.app_name) ??
+      (p.selected?.name === report.app_name ? p.selected : undefined)
+    : undefined;
   return (
     <>
       <SoftwareToolbar
@@ -204,14 +209,17 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         <AiRiskBanner risk={p.aiRisk} onDismiss={() => p.setAiRisk(null)} />
       )}
 
-      {p.report && (
+      {report && (
         <ReportPanel
-          report={p.report}
+          report={report}
           aiEnabled={p.aiEnabled}
           aiReportBusy={p.aiReportBusy}
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
           residualScan={{ scanning: p.scanning, count: p.residualFromUninstall ? p.scan?.items.length : undefined }}
+          onRescan={reportApp ? () => p.listAnalyze(reportApp, { afterCleanup: true }) : undefined}
+          rescanBusy={p.scanning}
+          deepCheckApp={reportApp ? { name: reportApp.name } : null}
           onDismiss={() => p.setReport(null)}
           onRegenerate={p.onRegenerateAiReport}
         />
@@ -312,6 +320,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
             </div>
             <SoftwareListTable
               filtered={p.filtered}
+              allApps={p.apps}
               loading={p.loading}
               q={p.q}
               category={p.category}

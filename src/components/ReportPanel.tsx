@@ -2,12 +2,13 @@ import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { cleanupProgress } from "../lib/decision";
 import { CleanupResultDetails } from "./CleanupResultDetails";
+import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
 import type { CleanupReport, FullCleanupReport } from "../types";
@@ -19,6 +20,11 @@ type Props = {
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
   residualScan?: { scanning: boolean; count?: number };
+  /** M5-2: re-analyze the same app without preselecting anything. */
+  onRescan?: () => void;
+  rescanBusy?: boolean;
+  /** M5-4: explicit read-only deep registry check for this app. */
+  deepCheckApp?: { name: string } | null;
   onDismiss: () => void;
   onRegenerate: () => void;
 };
@@ -30,6 +36,9 @@ export function ReportPanel({
   aiReportNote,
   verifyRows,
   residualScan,
+  onRescan,
+  rescanBusy,
+  deepCheckApp,
   onDismiss,
   onRegenerate,
 }: Props) {
@@ -68,6 +77,14 @@ export function ReportPanel({
           </div>}
         </div>
       )}
+      {"deleted" in report && (report.reclaimed_kb || report.kept_kb) ? (
+        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
+          {L.reportReclaimedKept(
+            formatSize(report.reclaimed_kb ?? 0),
+            formatSize(report.kept_kb ?? 0),
+          )}
+        </div>
+      ) : null}
       <details open={"aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
         <summary style={{ cursor: "pointer", fontWeight: 600 }}>
           {L.cleanupReportDetails}{"deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}
@@ -225,6 +242,15 @@ export function ReportPanel({
           aria-label={`${L.restorePreviewTitle}: ${backupSession}`} onClick={() => requestBackupSession(backupSession)}>
           {L.restorePreviewTitle}
         </button>}
+        {onRescan && (
+          <button
+            style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
+            disabled={rescanBusy}
+            onClick={onRescan}
+          >
+            {rescanBusy ? L.analyzing : L.reportRescanApp}
+          </button>
+        )}
         {aiEnabled && "deleted" in report && (
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
@@ -274,6 +300,7 @@ export function ReportPanel({
           </div>
         </div>
       )}
+      {deepCheckApp && <DeepRegistryCheck key={deepCheckApp.name} appName={deepCheckApp.name} />}
       {!!report.item_details.length && <CleanupResultDetails key={JSON.stringify(report.item_details)} items={report.item_details} />}
       {"uninstall_message" in report && report.uninstall_message && (
         <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
