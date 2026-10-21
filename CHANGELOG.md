@@ -33,6 +33,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **扫描上限可见**：主目录点目录与 MuiCache 扫描增加条目上限，并在分析结果 `degraded` 中上报，界面不再静默截断。
 - **只读属性副作用**：只有 ACCESS_DENIED 且对象确实带有 READONLY/HIDDEN/SYSTEM 时才清除属性重试；共享冲突或 ACL 失败不会悄悄清掉文件属性。
 - **证据本地化与深查**：`service_bound`、`orphan_recent` 证据标签/天数已本地化；深度核查支持 Microsoft 等厂商下的产品子键、返回稳定的 top-level/nested 标识及可本地化错误。
+- **MuiCache 后缀大小写**：`.FriendlyAppName` 改为大小写不敏感匹配，注册表值名大小写不同时不再漏报。
+- **防火墙 App 路径引号**：解析规则时去除 `App=` 路径首尾引号，避免把仍存在的程序误判为孤儿规则。
+- **深度核查弱匹配标注**：仅单词级命中的厂商子键标记为“疑似产品键（单词匹配）”，与完整产品名匹配区分展示，仍只读。
 
 ### 安全
 
