@@ -76,6 +76,8 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
+> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.3.2 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page.
+
 | Artifact | Notes |
 |---|---|
 | `Remova_*_x64-setup.exe` | NSIS installer (recommended) |
@@ -104,7 +106,7 @@ Requires Windows 10 / 11 (x64).
 # Frontend
 npm ci
 npm run build
-npm test
+npm run coverage
 
 # Backend
 cd src-tauri
@@ -163,7 +165,7 @@ Remova/
 Issues and PRs are welcome:
 
 1. Fork and open a feature branch
-2. Run `cargo test --workspace` and `npm test`
+2. Run `cargo test --workspace` and `npm run coverage`
 3. Use Conventional Commits (`feat:`, `fix:`, `docs:`, …)
 4. Update `CHANGELOG.md` for user-visible changes
 

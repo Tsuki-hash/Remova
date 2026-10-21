@@ -22,6 +22,11 @@ if ($cargoRaw -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
 }
 $cargo = $Matches[1]
 $tauri = Read-JsonVersion "src-tauri/tauri.conf.json"
+$cargoLockRaw = Get-Content -Raw "src-tauri/Cargo.lock"
+if ($cargoLockRaw -notmatch '(?ms)^\[\[package\]\]\s*\r?\nname = "remova"\s*\r?\nversion = "([^"]+)"') {
+    throw "Cargo.lock version not found"
+}
+$cargoLock = $Matches[1]
 
 # package-lock.json carries the version twice and is a fourth source of truth.
 # It was left at 1.3.1 while everything else moved to 1.3.2, and this gate did
@@ -36,6 +41,7 @@ $lockPkgVersion = if ($lockParts.Count -gt 1) { $lockParts[1] } else { "" }
 
 $errors = @()
 if ($pkg -ne $cargo) { $errors += "package.json ($pkg) != Cargo.toml ($cargo)" }
+if ($pkg -ne $cargoLock) { $errors += "package.json ($pkg) != Cargo.lock ($cargoLock)" }
 if ($pkg -ne $tauri) { $errors += "package.json ($pkg) != tauri.conf.json ($tauri)" }
 if ($lock -ne $pkg) { $errors += "package-lock.json ($lock) != package.json ($pkg)" }
 if ($lockPkgVersion -ne $pkg) {
@@ -77,5 +83,5 @@ if ($errors.Count -gt 0) {
     exit 1
 }
 
-Write-Host "check-versions OK: $pkg (package / cargo / tauri / lock)" -ForegroundColor Green
+Write-Host "check-versions OK: $pkg (package / cargo / cargo-lock / tauri / package-lock)" -ForegroundColor Green
 exit 0

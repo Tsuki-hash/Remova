@@ -26,6 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A green PR run is not a release gate: the commit must already be on main.
+      - name: require the tagged commit to be on main
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $state = (& gh api "repos/$env:GITHUB_REPOSITORY/compare/main...$env:GITHUB_SHA" --jq '.status').Trim()
+          if ($state -notin @('behind', 'identical')) {
+            throw "Tagged commit $env:GITHUB_SHA is not on main (compare status: $state)."
+          }
+
       # R-R6-07: v1.3.0 and v1.3.1 were published with no Release run at all, because
       # both workflows were disabled remotely and nothing in the pipeline could see it.
       # A tag push is the last moment anyone is looking, so the release refuses to
@@ -43,7 +54,7 @@ jobs:
           $deadline = (Get-Date).AddMinutes($waitMin)
           function Get-CiState {
             & gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20" `
-              --jq 'if (.workflow_runs | length) == 0 then "NONE" else ([.workflow_runs[]] | max_by(.run_number) | "\(.run_number)|\(.status)|\(.conclusion)") end'
+              --jq '[.workflow_runs[] | select(.event=="push")] as $runs | if ($runs | length) == 0 then "NONE" else ($runs | max_by(.run_number) | "\(.run_number)|\(.status)|\(.conclusion)") end'
           }
           $state = (Get-CiState).Trim()
           if ($state -eq 'NONE' -or -not $state) {
@@ -314,6 +325,10 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/extract-release-notes.ps1
 
+      - name: generate artifact checksums
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/make-checksums.ps1
+
       - name: create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -324,6 +339,7 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/bundle/msi/*.sig
             src-tauri/target/release/bundle/latest.json
+            src-tauri/target/release/bundle/SHA256SUMS.txt
           body_path: .release-notes/${{ github.ref_name }}.md
           generate_release_notes: false
           # a renamed/moved bundle must fail the job, not publish an asset-less Release.
