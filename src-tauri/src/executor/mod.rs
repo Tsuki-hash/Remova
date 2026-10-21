@@ -17,6 +17,9 @@ pub use uninstall::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupReport {
     pub app_name: String,
+    /// Stable scan identity; empty for legacy/synthetic dry runs.
+    #[serde(default)]
+    pub app_key: String,
     pub dry_run: bool,
     pub uninstall_command: Vec<String>,
     pub uninstall_message: String,
@@ -75,6 +78,9 @@ pub struct OfficialUninstallResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullCleanupReport {
     pub app_name: String,
+    /// Stable scan identity, so same-name apps never cross-pair in the UI.
+    #[serde(default)]
+    pub app_key: String,
     pub dry_run: bool,
     pub backup_dir: String,
     pub uninstall_ok: bool,

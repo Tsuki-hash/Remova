@@ -101,6 +101,7 @@ fn try_backup_phase(
             if fail > 0 {
                 return BackupOutcome::Abort(Box::new(FullCleanupReport {
                     app_name: app.name.clone(),
+                    app_key: crate::apps::app_key(app),
                     dry_run: false,
                     backup_dir,
                     uninstall_ok: false,
@@ -127,6 +128,7 @@ fn try_backup_phase(
         }
         Err(e) => BackupOutcome::Abort(Box::new(FullCleanupReport {
             app_name: app.name.clone(),
+            app_key: crate::apps::app_key(app),
             dry_run: false,
             backup_dir: String::new(),
             uninstall_ok: false,
@@ -498,6 +500,7 @@ fn ignore_read_abort(
 ) -> FullCleanupReport {
     FullCleanupReport {
         app_name: app.name.clone(),
+        app_key: crate::apps::app_key(app),
         dry_run,
         backup_dir: String::new(),
         uninstall_ok: false,
@@ -533,6 +536,7 @@ pub fn run_full_cleanup(
         let dry = run_cleanup_dry_for_app_source(app, items, cleanup_source_from_opts(opts));
         return FullCleanupReport {
             app_name: dry.app_name,
+            app_key: dry.app_key,
             dry_run: true,
             backup_dir: String::new(),
             uninstall_ok: false,
@@ -561,6 +565,7 @@ pub fn run_full_cleanup(
     if selected.is_empty() && opts.skip_official_uninstall {
         return FullCleanupReport {
             app_name: app.name.clone(),
+            app_key: crate::apps::app_key(app),
             dry_run: false,
             backup_dir: String::new(),
             uninstall_ok: false,
@@ -580,6 +585,9 @@ pub fn run_full_cleanup(
         };
     }
 
+    // A new cleanup replaces the lock-end authorization; stale failed paths
+    // must never remain valid across reports.
+    crate::locks::remember_failed_lock_roots(&app.install_location, &[]);
     let owned_selected: Vec<CleanupItem> = selected.iter().map(|it| (*it).clone()).collect();
     // The single gate decision, shared by the backup phase and the delete phase.
     let plan = plan_cleanup_items(
@@ -613,6 +621,7 @@ pub fn run_full_cleanup(
     if uninstall_had_command && !uninstall_ok {
         return FullCleanupReport {
             app_name: app.name.clone(),
+            app_key: crate::apps::app_key(app),
             dry_run: false,
             backup_dir,
             uninstall_ok,
@@ -692,9 +701,17 @@ pub fn run_full_cleanup(
     );
     del.skipped += plan.refused.len() as u32;
     del.details.extend(plan.refused);
+    let failed_lock_paths: Vec<String> = del
+        .details
+        .iter()
+        .filter(|d| d.status == "failed")
+        .map(|d| d.path.clone())
+        .collect();
+    crate::locks::remember_failed_lock_roots(&app.install_location, &failed_lock_paths);
 
     FullCleanupReport {
         app_name: app.name.clone(),
+        app_key: crate::apps::app_key(app),
         dry_run: false,
         backup_dir,
         uninstall_ok,

@@ -121,6 +121,8 @@ export type RegistryCheckResult = {
 
 export type CleanupReport = {
   app_name: string;
+  /** Stable scan identity; absent on older/synthetic reports. */
+  app_key?: string;
   dry_run: boolean;
   uninstall_command: string[];
   uninstall_message: string;
@@ -132,6 +134,8 @@ export type CleanupReport = {
 
 export type FullCleanupReport = {
   app_name: string;
+  /** Stable scan identity; absent on older/synthetic reports. */
+  app_key?: string;
   dry_run: boolean;
   backup_dir: string;
   uninstall_ok: boolean;

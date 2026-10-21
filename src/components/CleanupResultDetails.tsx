@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { formatError } from "../lib/format";
 import { gateReasonText } from "../lib/decision";
+import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -56,7 +57,10 @@ function ResultGroup({
       const procs = await api.diagnoseLockedPath(path);
       setLockInfo((prev) => ({ ...prev, [path]: { procs } }));
     } catch (e) {
-      setLockInfo((prev) => ({ ...prev, [path]: { procs: [], error: L.lockDiagnoseFailed(formatError(e)) } }));
+      setLockInfo((prev) => ({
+        ...prev,
+        [path]: { procs: [], error: L.lockDiagnoseFailed(backendErrorText(formatError(e))) },
+      }));
     }
   };
   const endAndRetry = async (itemPath: string, proc: LockingProcess) => {
@@ -74,13 +78,13 @@ function ResultGroup({
       [itemPath]: { ...prev[itemPath], procs: prev[itemPath]?.procs ?? [], busyPid: proc.pid },
     }));
     try {
-      await api.endLockingProcess(proc.pid, proc.path, lockRoot, itemPath);
+      await api.endLockingProcess(proc.pid, proc.path, itemPath);
     } catch (e) {
       setLockInfo((prev) => ({
         ...prev,
         [itemPath]: {
           procs: prev[itemPath]?.procs ?? [],
-          error: L.lockEndFailed(formatError(e)),
+          error: L.lockEndFailed(backendErrorText(formatError(e))),
         },
       }));
       return;
@@ -99,7 +103,7 @@ function ResultGroup({
     } catch (e) {
       setLockInfo((prev) => ({
         ...prev,
-        [itemPath]: { procs: [], error: L.lockRetryFailed(formatError(e)) },
+        [itemPath]: { procs: [], error: L.lockRetryFailed(backendErrorText(formatError(e))) },
       }));
     }
   };

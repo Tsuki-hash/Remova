@@ -5,6 +5,36 @@
 //! install directory.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+/// Failed cleanup paths and the app install root that owns them. Filled by the
+/// executor, never by the webview; this is the only authorization for ending a
+/// process from the cleanup report.
+fn failed_lock_roots() -> &'static Mutex<HashMap<String, String>> {
+    static ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[String]) {
+    let Ok(mut map) = failed_lock_roots().lock() else {
+        return;
+    };
+    map.clear();
+    let Some(root_key) = crate::fsutil::path_key(std::path::Path::new(root)) else {
+        return;
+    };
+    for path in paths {
+        if let Some(path_key) = crate::fsutil::path_key(std::path::Path::new(path)) {
+            map.insert(path_key, root_key.clone());
+        }
+    }
+}
+
+fn authorized_lock_root(target_path: &str) -> Option<String> {
+    let target_key = crate::fsutil::path_key(std::path::Path::new(target_path))?;
+    failed_lock_roots().lock().ok()?.get(&target_key).cloned()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LockingProcess {
@@ -86,15 +116,29 @@ pub fn diagnose_locked_path(path: &str) -> Result<Vec<LockingProcess>, String> {
         return Err(format!("RmGetList failed: {}", probe.0));
     }
     let mut apps: Vec<RM_PROCESS_INFO> = vec![RM_PROCESS_INFO::default(); needed as usize];
-    let status = unsafe {
-        RmGetList(
-            handle,
-            &mut needed,
-            &mut count,
-            Some(apps.as_mut_ptr()),
-            &mut reasons,
-        )
-    };
+    // The process set can grow between the sizing probe and the fill call.
+    // Retry a bounded number of times instead of turning a race into an error.
+    let mut status;
+    let mut attempts = 0u32;
+    loop {
+        count = apps.len() as u32;
+        status = unsafe {
+            RmGetList(
+                handle,
+                &mut needed,
+                &mut count,
+                Some(apps.as_mut_ptr()),
+                &mut reasons,
+            )
+        };
+        if status != ERROR_MORE_DATA || attempts >= 3 {
+            break;
+        }
+        attempts += 1;
+        if needed as usize > apps.len() {
+            apps.resize(needed as usize, RM_PROCESS_INFO::default());
+        }
+    }
     unsafe {
         let _ = RmEndSession(handle);
     }
@@ -162,12 +206,7 @@ fn process_still_holds(pid: u32, holders: &[LockingProcess]) -> bool {
 /// still holds the failed target. The caller must have obtained user
 /// confirmation; this is never called automatically.
 #[cfg(windows)]
-pub fn end_locking_process(
-    pid: u32,
-    expected_path: &str,
-    install_root: &str,
-    target_path: &str,
-) -> Result<(), String> {
+pub fn end_locking_process(pid: u32, expected_path: &str, target_path: &str) -> Result<(), String> {
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
         OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -178,12 +217,13 @@ pub fn end_locking_process(
         return Err("refusing to end this process".into());
     }
     crate::fsutil::validate_native_name(expected_path)?;
-    crate::fsutil::validate_native_name(install_root)?;
     crate::fsutil::validate_native_name(target_path)?;
     if target_path.trim().is_empty() || !std::path::Path::new(target_path).is_absolute() {
         return Err("invalid lock target".into());
     }
-    if !can_end_process(expected_path, install_root) {
+    let install_root = authorized_lock_root(target_path)
+        .ok_or("path is not from the latest cleanup; re-run cleanup and retry")?;
+    if !can_end_process(expected_path, &install_root) {
         return Err("process image is not a program under the install directory".into());
     }
     let holders = diagnose_locked_path(target_path)?;
@@ -203,7 +243,7 @@ pub fn end_locking_process(
         if !same_path(&current, expected_path) {
             return Err("process image changed; refresh the lock list".to_string());
         }
-        if !can_end_process(&current, install_root) {
+        if !can_end_process(&current, &install_root) {
             return Err("process image is outside the install directory".to_string());
         }
         unsafe { TerminateProcess(handle, 1) }
@@ -228,7 +268,6 @@ pub fn diagnose_locked_path(_path: &str) -> Result<Vec<LockingProcess>, String> 
 pub fn end_locking_process(
     _pid: u32,
     _expected_path: &str,
-    _install_root: &str,
     _target_path: &str,
 ) -> Result<(), String> {
     Err("not windows".into())
@@ -280,30 +319,35 @@ mod tests {
         assert!(!super::process_still_holds(43, &holders));
     }
 
+    #[test]
+    fn failed_lock_roots_authorize_only_remembered_targets() {
+        super::remember_failed_lock_roots(
+            r"C:\Apps\R41Demo",
+            &[r"C:\Apps\R41Demo\cache".to_string()],
+        );
+        assert_eq!(
+            super::authorized_lock_root(r"c:/apps/r41demo/cache"),
+            Some(r"c:\apps\r41demo".to_string())
+        );
+        assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\other").is_none());
+        super::remember_failed_lock_roots(r"C:\Apps\R41Demo", &[]);
+        assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\cache").is_none());
+    }
+
     #[cfg(windows)]
     #[test]
     fn end_process_refuses_self_and_unrelated_images() {
-        assert!(super::end_locking_process(
-            0,
-            r"C:\Apps\Demo\demo.exe",
-            r"C:\Apps\Demo",
-            r"C:\Apps\Demo\cache"
-        )
-        .is_err());
+        assert!(
+            super::end_locking_process(0, r"C:\Apps\Demo\demo.exe", r"C:\Apps\Demo\cache").is_err()
+        );
         let this = std::process::id();
-        assert!(super::end_locking_process(
-            this,
-            r"C:\Apps\Demo\demo.exe",
-            r"C:\Apps\Demo",
-            r"C:\Apps\Demo\cache"
-        )
-        .is_err());
-        assert!(super::end_locking_process(
-            999_999,
-            r"C:\Other\demo.exe",
-            r"C:\Apps\Demo",
-            r"C:\Apps\Demo\cache"
-        )
-        .is_err());
+        assert!(
+            super::end_locking_process(this, r"C:\Apps\Demo\demo.exe", r"C:\Apps\Demo\cache")
+                .is_err()
+        );
+        assert!(
+            super::end_locking_process(999_999, r"C:\Other\demo.exe", r"C:\Apps\Demo\cache")
+                .is_err()
+        );
     }
 }

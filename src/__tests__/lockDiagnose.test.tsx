@@ -59,7 +59,6 @@ it("offers end-and-retry only for images under the install root", async () => {
     expect(endLockingProcess).toHaveBeenCalledWith(
       123,
       "C:\\Apps\\Demo\\demo.exe",
-      root,
       item.path,
     ),
   );
@@ -75,7 +74,7 @@ it("falls back to a rescan when no direct retry handler is available", async () 
   await screen.findByText("C:\\Apps\\Demo\\demo.exe");
   fireEvent.click(screen.getByRole("button", { name: t().lockEndRescan }));
   await waitFor(() =>
-    expect(endLockingProcess).toHaveBeenCalledWith(123, "C:\\Apps\\Demo\\demo.exe", root, item.path),
+    expect(endLockingProcess).toHaveBeenCalledWith(123, "C:\\Apps\\Demo\\demo.exe", item.path),
   );
   await waitFor(() => expect(onRescan).toHaveBeenCalledTimes(1));
 });
@@ -96,6 +95,6 @@ it("surfaces a server refusal without retrying", async () => {
   fireEvent.click(screen.getByRole("button", { name: t().lockDiagnose }));
   await screen.findByText("C:\\Apps\\Demo\\demo.exe");
   fireEvent.click(screen.getByRole("button", { name: t().lockEndRetry }));
-  await waitFor(() => expect(view.container.textContent).toContain("process image changed"));
+  await waitFor(() => expect(view.container.textContent).toContain(t().lockImageChanged));
   expect(onRetry).not.toHaveBeenCalled();
 });

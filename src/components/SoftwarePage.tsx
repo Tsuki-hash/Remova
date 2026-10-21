@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
-import { scanMatchesApp } from "../lib/appKey";
+import { findReportApp, scanMatchesApp } from "../lib/appKey";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
 import type { VerifyRow } from "../lib/api";
@@ -142,10 +142,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
   const report = p.report;
-  const reportApp = report
-    ? p.apps.find((a) => a.name === report.app_name) ??
-      (p.selected?.name === report.app_name ? p.selected : undefined)
-    : undefined;
+  const reportApp = report ? findReportApp(report, p.apps, p.selected) : undefined;
   // Only a completed official uninstall may set the "uninstall finished" state
   // when the user rescans; dry-run/aborted/skipped reports must not.
   const rescanAfterUninstall = Boolean(

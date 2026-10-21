@@ -31,6 +31,11 @@ pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
 }
 
 /// True when this app's uninstall command pair came from the latest scan.
+/// Stable scan identity shared by analyze and cleanup reports.
+pub fn app_key(app: &InstalledApp) -> String {
+    format!("{}\0{}\0{}", app.source, app.registry_key, app.name)
+}
+
 pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
     let k = trust_key(&app.uninstall_string, &app.quiet_uninstall_string);
     uninstall_trust()
@@ -572,11 +577,13 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
     let guid = msiexec_uninstall_guid(cmd)?;
     let location = crate::regops::expand_env_string(app.install_location.trim());
     let location = location.trim().trim_matches('"').trim();
-    // An unexpanded variable or relative location cannot prove the product is
-    // broken; fail closed rather than offering a record delete.
+    // An unexpanded variable, relative path, UNC/removable/offline location
+    // cannot prove the product is broken; fail closed rather than offering a
+    // record delete for a product that is currently unavailable.
     if location.is_empty()
         || location.contains('%')
         || !std::path::Path::new(location).is_absolute()
+        || !fixed_local_install_path(location)
         || std::path::Path::new(location).exists()
     {
         return None;
@@ -586,6 +593,19 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
         guid,
         reason: BROKEN_INSTALL_MISSING_DIR.into(),
     })
+}
+
+/// Only fixed local drives are safe to judge by `exists()`: a UNC share or a
+/// currently detached USB drive would otherwise look like a deleted install.
+fn fixed_local_install_path(location: &str) -> bool {
+    let bytes = location.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return false;
+    }
+    if bytes[2] != b'\\' && bytes[2] != b'/' {
+        return false;
+    }
+    crate::diskradar::is_local_fixed_drive(bytes[0] as char)
 }
 
 /// Parse a real `msiexec.exe /x {GUID}` command. A substring match would also
@@ -830,6 +850,15 @@ mod tests {
             &format!(r"MsiExec.exe /I{guid}")
         ))
         .is_none());
+    }
+
+    #[test]
+    fn install_location_must_be_a_fixed_local_path() {
+        assert!(fixed_local_install_path(r"C:\Program Files\Broken App"));
+        assert!(fixed_local_install_path("C:/Apps/Broken"));
+        assert!(!fixed_local_install_path(r"\\server\share\Broken"));
+        assert!(!fixed_local_install_path("Broken"));
+        assert!(!fixed_local_install_path(r"C:Broken"));
     }
 
     #[test]

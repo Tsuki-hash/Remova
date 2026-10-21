@@ -487,6 +487,7 @@ pub fn scan_installer_caches() -> Result<ScopedScanResult, String> {
     if !crate::scan_task::checkpoint("sizes", out.len()) {
         return Ok(ScopedScanResult::empty());
     }
+    crate::scanner::reg_scans::mark_service_bound(&mut out);
     fill_item_sizes(&mut out);
     if !crate::scan_task::checkpoint("finalizing", out.len()) {
         return Ok(ScopedScanResult::empty());

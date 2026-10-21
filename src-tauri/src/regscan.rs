@@ -274,12 +274,18 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
 }
 
 pub fn list_values(key: &str) -> Vec<(String, String)> {
-    if crate::scan_task::cancelled() {
+    list_values_capped(key, usize::MAX)
+}
+
+/// Enumerate at most `max` registry values. Used by bounded scans so a huge
+/// key is not fully materialized before the cap is applied.
+pub fn list_values_capped(key: &str, max: usize) -> Vec<(String, String)> {
+    if crate::scan_task::cancelled() || max == 0 {
         return vec![];
     }
     #[cfg(not(windows))]
     {
-        let _ = key;
+        let _ = (key, max);
         vec![]
     }
     #[cfg(windows)]
@@ -303,7 +309,7 @@ pub fn list_values(key: &str) -> Vec<(String, String)> {
             let mut out = vec![];
             let mut n = 0u32;
             loop {
-                if crate::scan_task::cancelled() {
+                if crate::scan_task::cancelled() || n as usize >= max {
                     break;
                 }
                 let mut vname = vec![0u16; 256];

@@ -442,7 +442,7 @@ fn exe_token_end(s: &str) -> Option<usize> {
 /// SOP §2.3: a directory referenced by a service is a service data directory,
 /// not a leftover — deleting it breaks a still-installed service. The match is
 /// component-wise on the resolved key, so `C:\App` does not claim `C:\AppData`.
-pub(super) fn mark_service_bound(items: &mut [CleanupItem]) {
+pub(crate) fn mark_service_bound(items: &mut [CleanupItem]) {
     let mut service_keys: Vec<String> = Vec::new();
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     for svc in crate::regscan::list_subkeys(root) {
@@ -505,7 +505,7 @@ pub(super) fn scan_muicache(
         return false;
     }
     scan_muicache_values(
-        crate::regscan::list_values(KEY).into_iter(),
+        crate::regscan::list_values_capped(KEY, MAX_VALUES + 1).into_iter(),
         KEY,
         &slugs,
         install_low,

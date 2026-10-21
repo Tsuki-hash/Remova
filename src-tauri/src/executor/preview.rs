@@ -78,6 +78,7 @@ pub fn run_cleanup_dry_for_app_source(
 
     CleanupReport {
         app_name: app.name.clone(),
+        app_key: crate::apps::app_key(app),
         dry_run: true,
         uninstall_command: vec![],
         uninstall_message: "dry-run: official uninstaller not launched".into(),
@@ -148,6 +149,7 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
 
     CleanupReport {
         app_name: app_name.to_string(),
+        app_key: String::new(),
         dry_run: true,
         uninstall_command: vec![],
         uninstall_message: "dry-run: official uninstaller not launched".into(),
@@ -169,6 +171,7 @@ fn path_entry_in_system_path(entry: &str) -> bool {
 fn ignore_read_abort_dry(app_name: String, error: String) -> CleanupReport {
     CleanupReport {
         app_name,
+        app_key: String::new(),
         dry_run: true,
         uninstall_command: vec![],
         uninstall_message: error.clone(),

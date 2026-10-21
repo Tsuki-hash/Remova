@@ -12,3 +12,13 @@ export function appKey(a: InstalledApp): string {
 export function scanMatchesApp(scan: Pick<ScanResult, "app_name" | "app_key">, app: InstalledApp): boolean {
   return scan.app_key ? scan.app_key === appKey(app) : scan.app_name === app.name;
 }
+
+/** Resolve a cleanup report back to its analyzed app; app_key wins over name. */
+export function findReportApp<T extends InstalledApp>(
+  report: { app_name: string; app_key?: string },
+  apps: readonly T[],
+  selected: T | null | undefined,
+): T | undefined {
+  const matches = (a: T) => !report.app_key || appKey(a) === report.app_key;
+  return apps.find(matches) ?? (selected && matches(selected) ? selected : undefined);
+}

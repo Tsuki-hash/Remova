@@ -153,6 +153,12 @@ fn split_win_args(s: &str) -> Vec<String> {
     out
 }
 
+/// MSI 3010/1641 mean success-with-reboot-required, not failure. Treating them
+/// as failure aborted the whole residual cleanup after the product was gone.
+fn uninstaller_exit_ok(code: Option<i32>) -> bool {
+    matches!(code, Some(0 | 3010 | 1641))
+}
+
 /// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
 pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
     // S-RCE: never execute a command the client invented — must match last server scan.
@@ -188,11 +194,14 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                     loop {
                         match child.try_wait() {
                             Ok(Some(status)) => {
-                                let ok = status.success();
-                                let message = if ok {
+                                let code = status.code();
+                                let ok = uninstaller_exit_ok(code);
+                                let message = if ok && matches!(code, Some(3010 | 1641)) {
+                                    format!("uninstaller finished (reboot required): {}", argv[0])
+                                } else if ok {
                                     format!("uninstaller finished: {}", argv[0])
                                 } else {
-                                    format!("uninstaller exited with {:?}", status.code())
+                                    format!("uninstaller exited with {:?}", code)
                                 };
                                 return OfficialUninstallResult {
                                     ok,
@@ -250,6 +259,20 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reboot_required_exit_codes_count_as_success() {
+        for code in [0, 3010, 1641] {
+            assert!(
+                uninstaller_exit_ok(Some(code)),
+                "{code} must not abort cleanup"
+            );
+        }
+        for code in [1603, 5, 1] {
+            assert!(!uninstaller_exit_ok(Some(code)));
+        }
+        assert!(!uninstaller_exit_ok(None));
+    }
 
     #[test]
     fn msi_substrings_do_not_replace_vendor_commands() {

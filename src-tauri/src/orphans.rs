@@ -370,6 +370,8 @@ fn scan_orphans_in_roots(
             omitted,
         };
     }
+    // Orphan rows otherwise bypass the app analyzer's service-bound marking.
+    crate::scanner::reg_scans::mark_service_bound(&mut out);
     crate::scanner::fill_item_sizes(&mut out);
     if !crate::scan_task::checkpoint("finalizing", out.len()) {
         return OrphanScanResult {
