@@ -32,12 +32,13 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | Capability | What you get |
 |---|---|
 | **Decision UI** | Detail drawer before uninstall: size, links, health, official / deep / force modes |
-| **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches** |
+| **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches, home dot-directories, MuiCache** |
 | **Plain language** | Why each leftover belongs (or why it is kept); Safe · Review · Keep buckets |
 | **User-data red line** | Documents / Downloads / sync-conflict folders are never auto-selected |
 | **Safety Vault** | **Optional** backup before clean (unchecked by default); 7-day retention; open existing backups from report/history |
 | **Verified clean** | Post-clean checklist (paths / registry / PATH) |
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin |
+| **Deep-uninstall extras** | Broken MSI records, orphan firewall rules, lock diagnosis (end a process under the app's install dir after confirmation), report totals and post-clean rescan/deep registry check |
 | AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
 
 > Brand: calm, professional, reversible — not a “PC manager”.
@@ -55,7 +56,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 1. **Identify** install type and associations  
 2. **Official uninstaller** first when available  
 3. **Scan leftovers** with live Safe / Review / Keep overview  
-4. **Report** counts + progress + Safety Vault note + verify checklist  
+4. **Report** deleted/kept/pending-reboot sizes + progress + Safety Vault note + verify checklist; rescan the app or run a read-only deep registry check  
 
 ### Clean & backup
 - Dry-run first; real clean can opt into a safety backup (**unchecked by default**)  
@@ -64,7 +65,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 - Backup root: `%PROGRAMDATA%\Remova\Backup\`
 
 ### More tools
-- Orphans page, startup / services / scheduled tasks  
+- Orphans page, startup / services / scheduled tasks; broken MSI records and orphan firewall rules  
 - Installer & updater caches, specialty caches, disk radar, idle-app radar; results state “N more not shown” and which locations could not be read  
 - History timeline, CSV export, install monitor  
 - Dark / light theme, Chinese / English
