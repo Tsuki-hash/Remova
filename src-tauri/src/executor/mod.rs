@@ -73,6 +73,9 @@ pub struct OfficialUninstallResult {
     pub ok: bool,
     pub message: String,
     pub had_command: bool,
+    /// The uninstaller reported that it already initiated a reboot (MSI 1641).
+    #[serde(default)]
+    pub reboot_initiated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

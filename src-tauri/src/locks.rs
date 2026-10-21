@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// Failed cleanup paths and the app install root that owns them. Filled by the
-/// executor, never by the webview; this is the only authorization for ending a
-/// process from the cleanup report.
+/// Failed cleanup paths and the root that owns them. Filled by the executor,
+/// never by the webview; this is the only authorization for ending a process
+/// from the cleanup report. App cleanups use the install root; orphan cleanups
+/// authorize the reported directory itself.
 fn failed_lock_roots() -> &'static Mutex<HashMap<String, String>> {
     static ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -21,13 +22,15 @@ pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[String]) {
         return;
     };
     map.clear();
-    let Some(root_key) = crate::fsutil::path_key(std::path::Path::new(root)) else {
-        return;
-    };
+    let root_key = crate::fsutil::path_key(std::path::Path::new(root));
     for path in paths {
-        if let Some(path_key) = crate::fsutil::path_key(std::path::Path::new(path)) {
-            map.insert(path_key, root_key.clone());
-        }
+        let path_key = crate::fsutil::path_key(std::path::Path::new(path));
+        let (path_key, owner_key) = match (root_key.clone(), path_key) {
+            (Some(root), Some(path)) => (path, root),
+            (None, Some(path)) => (path.clone(), path),
+            _ => continue,
+        };
+        map.insert(path_key, owner_key);
     }
 }
 

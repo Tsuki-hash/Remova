@@ -613,8 +613,36 @@ pub fn run_full_cleanup(
     if !opts.skip_official_uninstall {
         let official = run_official_uninstall(app);
         uninstall_ok = official.ok;
-        uninstall_message = official.message;
+        uninstall_message = official.message.clone();
         uninstall_had_command = official.had_command;
+        // MSI 1641 means the uninstaller already initiated a reboot. The product
+        // was removed, but continuing file/registry deletes while shutdown is
+        // pending can leave the cleanup half-done; ask the user to rerun after
+        // reboot instead.
+        if official.reboot_initiated {
+            return FullCleanupReport {
+                app_name: app.name.clone(),
+                app_key: crate::apps::app_key(app),
+                dry_run: false,
+                backup_dir,
+                uninstall_ok: true,
+                uninstall_message: official.message.clone(),
+                deleted: 0,
+                failed: 0,
+                skipped: 0,
+                delayed: 0,
+                reclaimed_kb: 0,
+                kept_kb: 0,
+                delayed_kb: 0,
+                aborted: true,
+                restore_point_ok,
+                restore_point_msg,
+                errors: vec![
+                    "official uninstaller initiated reboot; residual cleanup skipped".into(),
+                ],
+                item_details: vec![],
+            };
+        }
     }
     // when a vendor uninstaller existed and failed, do not silently wipe leftovers —
     // the main program may still be half-installed. Force-clean / skip_official remains available.
@@ -704,7 +732,9 @@ pub fn run_full_cleanup(
     let failed_lock_paths: Vec<String> = del
         .details
         .iter()
-        .filter(|d| d.status == "failed")
+        .filter(|d| {
+            d.status == "failed" && (!app.install_location.trim().is_empty() || d.kind == "dir")
+        })
         .map(|d| d.path.clone())
         .collect();
     crate::locks::remember_failed_lock_roots(&app.install_location, &failed_lock_paths);

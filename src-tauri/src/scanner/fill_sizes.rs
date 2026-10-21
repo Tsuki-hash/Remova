@@ -38,7 +38,7 @@ const MAX_SIZE_WALK_WORKERS: usize = crate::dirsize::MAX_CONCURRENT_WALKERS;
 /// Fill missing size_kb on file/dir items (idempotent; skips registry/path).
 ///
 /// Bounded by an overall entry budget, so the cost of the pass does not grow
-/// with the number of items (PERF-1's contract). The budget is handed out as a
+/// with the number of items (performance fix's contract). The budget is handed out as a
 /// sub-quota per row (PERF-A): `min(remaining, pool / pending.len())`, so late
 /// rows get a floor too instead of the first few rows eating the whole pool,
 /// and reallocation rounds hand the pool's leftovers to the rows whose walk
@@ -87,7 +87,7 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
     let mut measured: Vec<RowSize> = vec![ROW_SIZE_UNMEASURED; items.len()];
     let mut sized = 0usize;
     let _serial_pool = pool.install();
-    // R38-2: spawned workers have no thread-local task context, so they can
+    // regression fix: spawned workers have no thread-local task context, so they can
     // only observe cancellation through this watch (as the pre-extraction
     // walker in scanner/mod.rs did).
     let cancel = crate::scan_task::cancel_watch();
@@ -129,7 +129,7 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
                 }
             }
         }
-        // R38-6: a re-queued row that would get the same (or smaller) share
+        // regression fix: a re-queued row that would get the same (or smaller) share
         // next round can only repeat its walk — and an entry-cap stop is never
         // improved by a bigger quota anyway. Drop those before they charge the
         // pool a second time.
@@ -190,7 +190,7 @@ fn walk_rows_serial(
 
 /// One parallel round: the rows are chunked across walkers, each holding one
 /// walk slot and the pass pool for its slice. Workers have no thread-local
-/// task context, so cancellation travels through the watch (R38-2).
+/// task context, so cancellation travels through the watch (regression fix).
 fn walk_rows_parallel(
     rows: &[usize],
     items: &[CleanupItem],

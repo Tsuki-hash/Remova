@@ -43,7 +43,7 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
     let mut pins = vec![];
     let ancestors: Vec<&Path> = p.ancestors().collect();
     let total = ancestors.len();
-    // R38-4: a drive root has no parent to hold the next component, so the
+    // regression fix: a drive root has no parent to hold the next component, so the
     // "ancestors are non-empty by construction" argument does not apply to it —
     // never drop a marker into `C:\` when it is itself the target.
     let is_drive_root = !target_can_be_marked(p);
@@ -249,7 +249,7 @@ pub(crate) fn guard_empty_directory(
     if !mark_even_if_non_empty {
         return Ok(None);
     }
-    // R38-4: the marker name carries a nanosecond stamp, but two threads can
+    // regression fix: the marker name carries a nanosecond stamp, but two threads can
     // still stamp in the same tick; a name collision is worth one retry with a
     // fresh stamp rather than failing the whole operation.
     for attempt in 0..3u32 {
@@ -404,7 +404,7 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
 
 /// A path can carry a guard marker only when it has a parent directory. Drive
 /// roots and UNC share roots cannot be converted to a junction in place and
-/// must never receive a marker (R38-4, pinned by a pure unit test in A10).
+/// must never receive a marker (regression fix, pinned by a pure unit test in review action).
 fn target_can_be_marked(p: &Path) -> bool {
     p.parent().is_some()
 }
@@ -1481,7 +1481,7 @@ mod tests {
         assert!(!tree.exists());
     }
 
-    /// R38-4 / A10: the root-skip rule is a pure decision, so it can be tested    /// without pinning a real volume root.
+    /// regression fix / review action: the root-skip rule is a pure decision, so it can be tested    /// without pinning a real volume root.
     #[test]
     fn target_can_be_marked_covers_roots_and_unc_shares() {
         assert!(!target_can_be_marked(std::path::Path::new(r"C:\")));
@@ -1561,7 +1561,7 @@ mod tests {
         drop(pins);
     }
 
-    /// R38-11 / F-16: only the operation's own target carries a guard marker.
+    /// regression fix / F-16: only the operation's own target carries a guard marker.
     /// A crash mid-operation must never leave `.remova-guard-*` in `C:\` or
     /// `%ProgramData%`, and the ancestor chain must stay marker-free.
     #[cfg(windows)]

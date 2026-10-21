@@ -159,6 +159,11 @@ fn uninstaller_exit_ok(code: Option<i32>) -> bool {
     matches!(code, Some(0 | 3010 | 1641))
 }
 
+/// 1641 means the uninstaller already started the reboot; 3010 merely requests one.
+fn uninstaller_reboot_initiated(code: Option<i32>) -> bool {
+    code == Some(1641)
+}
+
 /// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
 pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
     // S-RCE: never execute a command the client invented — must match last server scan.
@@ -167,6 +172,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
             ok: false,
             message: "no uninstall string".into(),
             had_command: false,
+            reboot_initiated: false,
         };
     }
     if !crate::apps::is_trusted_uninstall_app(app) {
@@ -178,6 +184,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
             ok: false,
             message: "uninstall command not from latest app scan".into(),
             had_command: true,
+            reboot_initiated: false,
         };
     }
     let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
@@ -207,6 +214,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                                     ok,
                                     message,
                                     had_command: true,
+                                    reboot_initiated: uninstaller_reboot_initiated(code),
                                 };
                             }
                             Ok(None) => {
@@ -217,6 +225,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                                         ok: false,
                                         message: format!("uninstaller timed out (5m): {}", argv[0]),
                                         had_command: true,
+                                        reboot_initiated: false,
                                     };
                                 }
                                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -226,6 +235,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                                     ok: false,
                                     message: "uninstall wait failed".into(),
                                     had_command: true,
+                                    reboot_initiated: false,
                                 };
                             }
                         }
@@ -235,6 +245,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                     ok: false,
                     message: "uninstall launch failed".into(),
                     had_command: true,
+                    reboot_initiated: false,
                 },
             }
         }
@@ -251,6 +262,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                 ok: false,
                 message: "unusable uninstall command".into(),
                 had_command: true,
+                reboot_initiated: false,
             }
         }
     }
@@ -272,6 +284,15 @@ mod tests {
             assert!(!uninstaller_exit_ok(Some(code)));
         }
         assert!(!uninstaller_exit_ok(None));
+    }
+
+    #[test]
+    fn only_reboot_initiated_blocks_residual_cleanup() {
+        assert!(uninstaller_reboot_initiated(Some(1641)));
+        for code in [0, 3010, 1603] {
+            assert!(!uninstaller_reboot_initiated(Some(code)));
+        }
+        assert!(!uninstaller_reboot_initiated(None));
     }
 
     #[test]

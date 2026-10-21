@@ -564,13 +564,13 @@ fn scan_muicache_values(
 /// be compared the same way or a differently-cased value is silently missed.
 fn friendly_app_name_exe(value_name: &str) -> Option<&str> {
     const SUFFIX: &str = ".FriendlyAppName";
-    if value_name.len() < SUFFIX.len() {
-        return None;
-    }
-    let split = value_name.len() - SUFFIX.len();
-    value_name[split..]
-        .eq_ignore_ascii_case(SUFFIX)
-        .then(|| &value_name[..split])
+    let split = value_name.len().checked_sub(SUFFIX.len())?;
+    // `split` may land inside a multi-byte UTF-8 char in a hostile value name;
+    // `get` fails closed instead of panicking.
+    value_name
+        .get(split..)
+        .filter(|suffix| suffix.eq_ignore_ascii_case(SUFFIX))
+        .map(|_| &value_name[..split])
 }
 
 /// True when a MuiCache value names a missing executable that belongs to this
@@ -814,6 +814,12 @@ mod tests {
             "",
             missing
         ));
+        // A multi-byte value name whose 16-byte tail starts inside a UTF-8
+        // char must fail closed instead of panicking; it does not match the
+        // FriendlyAppName suffix.
+        let hostile = "aaaaaaaaaa中bbbbbbbbbbbbbbbb";
+        assert!(super::friendly_app_name_exe(hostile).is_none());
+        assert!(!super::muicache_matches(hostile, &slugs, "", missing));
         assert!(super::muicache_matches(
             r"C:\Tools\Acme.Tool.exe.FriendlyAppName",
             &["acme".to_string()],

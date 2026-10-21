@@ -115,7 +115,7 @@ fn reg_view_flag(key_path: &str) -> &'static str {
 ///
 /// F-13: a 255-character file name plus the digest prefix exceeded the Windows
 /// component limit and aborted the whole cleanup. The limit counts UTF-16 code
-/// units, so the budget is spent in units (R38-1): the 16-hex digest plus `_`
+/// units, so the budget is spent in units (regression fix): the 16-hex digest plus `_`
 /// leave 238 for the name, and the truncation always lands on a char boundary.
 fn backup_rel_name(src: &Path, original: &str) -> String {
     let digest = format!("{:x}", crate::fsutil::fnv1a64(original));
@@ -473,7 +473,7 @@ mod tests {
         }
     }
 
-    /// R38-1: the component limit counts UTF-16 units. 130 astral chars are
+    /// regression fix: the component limit counts UTF-16 units. 130 astral chars are
     /// 260 units — a `chars().take(180)` budget kept them all and pushed the
     /// digest-prefixed name past 255, aborting the whole cleanup again.
     #[test]
