@@ -278,6 +278,7 @@ export const dict = {
     lockDiagnoseEmpty: "没有找到占用该路径的进程",
     lockDiagnoseFailed: (msg: string) => `无法查询占用进程：${msg}`,
     lockEndRetry: "结束进程并重试",
+    lockEndRescan: "结束进程并重新扫描",
     lockEndTitle: "结束占用进程",
     lockEndMessage: (name: string, pid: number) => `结束 ${name} (${pid}) 后重试清理？未保存的数据可能丢失。`,
     lockEndConfirm: "结束进程",

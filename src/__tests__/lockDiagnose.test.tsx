@@ -66,6 +66,20 @@ it("offers end-and-retry only for images under the install root", async () => {
   await waitFor(() => expect(onRetry).toHaveBeenCalledWith([item.path]));
 });
 
+it("falls back to a rescan when no direct retry handler is available", async () => {
+  const onRescan = vi.fn();
+  render(
+    <CleanupResultDetails items={[item]} lockRoot={root} onRescan={onRescan} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: t().lockDiagnose }));
+  await screen.findByText("C:\\Apps\\Demo\\demo.exe");
+  fireEvent.click(screen.getByRole("button", { name: t().lockEndRescan }));
+  await waitFor(() =>
+    expect(endLockingProcess).toHaveBeenCalledWith(123, "C:\\Apps\\Demo\\demo.exe", root, item.path),
+  );
+  await waitFor(() => expect(onRescan).toHaveBeenCalledTimes(1));
+});
+
 it("keeps diagnosis without offering a kill when no install root is known", async () => {
   render(<CleanupResultDetails items={[item]} onRetry={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: t().lockDiagnose }));

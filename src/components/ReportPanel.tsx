@@ -308,7 +308,14 @@ export function ReportPanel({
         </div>
       )}
       {deepCheckApp && <DeepRegistryCheck key={deepCheckApp.name} appName={deepCheckApp.name} />}
-      {!!report.item_details.length && <CleanupResultDetails key={JSON.stringify(report.item_details)} items={report.item_details} lockRoot={appInstallLocation} />}
+      {!!report.item_details.length && (
+        <CleanupResultDetails
+          key={JSON.stringify(report.item_details)}
+          items={report.item_details}
+          lockRoot={appInstallLocation}
+          onRescan={onRescan}
+        />
+      )}
       {"uninstall_message" in report && report.uninstall_message && (
         <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
       )}

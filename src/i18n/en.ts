@@ -279,6 +279,7 @@ export const dict: EnDict = {
     lockDiagnoseEmpty: "No process is holding this path",
     lockDiagnoseFailed: (msg: string) => `Could not query locking processes: ${msg}`,
     lockEndRetry: "End process and retry",
+    lockEndRescan: "End process and rescan",
     lockEndTitle: "End the locking process",
     lockEndMessage: (name: string, pid: number) => `End ${name} (${pid}) and retry cleanup? Unsaved data may be lost.`,
     lockEndConfirm: "End process",

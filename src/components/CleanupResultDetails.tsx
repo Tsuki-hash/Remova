@@ -35,6 +35,7 @@ function ResultGroup({
   items,
   expanded,
   onRetry,
+  onRescan,
   retryBusy,
   lockRoot,
 }: {
@@ -42,6 +43,7 @@ function ResultGroup({
   items: ItemDetail[];
   expanded: boolean;
   onRetry?: (paths: string[]) => void | Promise<void>;
+  onRescan?: () => void;
   retryBusy?: boolean;
   lockRoot?: string;
 }) {
@@ -58,7 +60,7 @@ function ResultGroup({
     }
   };
   const endAndRetry = async (itemPath: string, proc: LockingProcess) => {
-    if (!lockRoot || !proc.path || !onRetry) return;
+    if (!lockRoot || !proc.path || (!onRetry && !onRescan)) return;
     const ok = await requestConfirmEx({
       title: L.lockEndTitle,
       message: L.lockEndMessage(proc.name, proc.pid),
@@ -88,7 +90,11 @@ function ResultGroup({
       delete next[itemPath];
       return next;
     });
-    await onRetry([itemPath]);
+    if (onRetry) {
+      await onRetry([itemPath]);
+    } else {
+      onRescan?.();
+    }
   };
   const failed = items.filter((item) => item.status === "failed");
   return <details open={expanded} style={{ marginTop: 8 }}>
@@ -132,13 +138,13 @@ function ResultGroup({
                       <div key={proc.pid}>
                         {proc.name} ({proc.pid})
                         {proc.path ? <code style={{ marginLeft: 6 }}>{proc.path}</code> : null}
-                        {onRetry && imageUnderRoot(proc.path, lockRoot) && (
+                        {(onRetry || onRescan) && imageUnderRoot(proc.path, lockRoot) && (
                           <button
                             style={{ ...css.btnGhost, height: 24, marginLeft: 6 }}
                             disabled={lock.busyPid !== undefined}
                             onClick={() => void endAndRetry(item.path, proc)}
                           >
-                            {L.lockEndRetry}
+                            {onRetry ? L.lockEndRetry : L.lockEndRescan}
                           </button>
                         )}
                       </div>
@@ -165,6 +171,7 @@ export function CleanupResultDetails({
   items,
   title,
   onRetry,
+  onRescan,
   retryBusy,
   lockRoot,
 }: {
@@ -173,6 +180,8 @@ export function CleanupResultDetails({
   title?: string;
   /** Retry the given failed paths; omit to hide the retry affordance. */
   onRetry?: (paths: string[]) => void | Promise<void>;
+  /** Safe fallback after ending a process when the caller cannot retry directly. */
+  onRescan?: () => void;
   retryBusy?: boolean;
   /** Install directory that bounds which locking processes may be ended. */
   lockRoot?: string;
@@ -187,7 +196,9 @@ export function CleanupResultDetails({
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
       return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"}
-        onRetry={status === "failed" ? onRetry : undefined} retryBusy={retryBusy} lockRoot={lockRoot} /> : null;
+        onRetry={status === "failed" ? onRetry : undefined}
+        onRescan={status === "failed" ? onRescan : undefined}
+        retryBusy={retryBusy} lockRoot={lockRoot} /> : null;
     })}
     {!!other.length && <ResultGroup label={L.reportOtherResults} items={other} expanded={false} />}
   </div>;
