@@ -259,6 +259,13 @@ pub fn cancel_watch() -> CancelWatch {
     })
 }
 
+/// A watch that is already cancelled. Lets tests prove that a worker which has
+/// no thread-local task context still observes cancellation (A3).
+#[cfg(test)]
+pub(crate) fn cancelled_watch_for_test() -> CancelWatch {
+    CancelWatch(Arc::new(AtomicBool::new(true)))
+}
+
 /// Report progress and check for cancellation.
 ///
 /// Stage names must live for the whole process: pointer identity lets a repeated

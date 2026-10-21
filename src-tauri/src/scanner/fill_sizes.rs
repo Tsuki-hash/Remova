@@ -153,7 +153,15 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
             items[i].size_capped = row.capped;
         }
     }
-    crate::scan_task::checkpoint("sizing", pending.len());
+    // A cancelled pass has not finished every row; reporting `pending.len()`
+    // would tell the UI 100% (A3). Already-measured rows are verified floors
+    // and stay published.
+    let reported = if cancel.cancelled() {
+        sized.min(pending.len())
+    } else {
+        pending.len()
+    };
+    crate::scan_task::checkpoint("sizing", reported);
 }
 
 fn workers_for(rows: usize) -> usize {

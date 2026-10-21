@@ -95,6 +95,34 @@ fn parallel_size_walks_share_one_entry_budget() {
     );
 }
 
+/** A3: the real R38-2 regression. Workers have no thread-local task context;
+ * a cancelled watch must stop them BEFORE any walk starts. Reverting the
+ * worker to `scan_task::cancelled()` makes this test red. */
+#[test]
+fn parallel_workers_stop_on_a_cancelled_watch() {
+    let root = crate::test_support::TempDir::new("par-watch");
+    let mut items = Vec::new();
+    for t in 0..4 {
+        let dir = root.join(format!("tree{t}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("f.bin"), vec![0u8; 1024]).unwrap();
+        items.push(dir_item(&dir));
+    }
+    let rows: Vec<usize> = (0..items.len()).collect();
+    let pool = crate::dirsize::SharedWalkBudget::seeded(1_000);
+    let measured = walk_rows_parallel(
+        &rows,
+        &items,
+        100,
+        &pool,
+        &crate::scan_task::cancelled_watch_for_test(),
+    );
+    assert!(
+        measured.is_empty(),
+        "a cancelled watch must stop every worker before it walks: {measured:?}"
+    );
+}
+
 /** R38-2: a cancelled scan must not keep measuring. Workers have no
  * thread-local task context, so the pass must consult the cancel watch —
  * both in its loop condition and inside every spawned worker. */
