@@ -4,7 +4,9 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.3.2] - 2026-10-21
+
+本次发布汇总自 v1.3.1 以来的安全、正确性与可用性修复，以及专项扫描与性能改进。
 
 ### 安全
 
@@ -49,7 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 并行体积测试夹具改用小预算 + 小树，测试文件数从约 79k 降到约 800。
 - 文档与门禁：架构文档改为单次删除判定与新返回类型、用户指南补充截断说明（以上为本机 `docs/` 文档，不入库，无法被 CI 校验）；`check-reviews-index` 与 `check-commands` 补回归测试，命令门禁不再重复输出 OK。
 
-## [1.3.2] - 2026-10-19
+以下为 1.3.2 早期批次（安装包与更新缓存扫描）的变更：
 
 安装包与更新缓存扫描补上常见的更新器目录形态。
 
