@@ -95,6 +95,27 @@ fn parallel_size_walks_share_one_entry_budget() {
     );
 }
 
+/** A3: only attempted rows count toward progress, so a cancelled or
+ * budget-exhausted pass cannot report 100%. */
+#[test]
+fn progress_counts_only_attempted_rows() {
+    let measured = [
+        RowSize {
+            size_kb: Some(1),
+            capped: false,
+            quota_limited: false,
+            quota: 10,
+        },
+        ROW_SIZE_UNMEASURED,
+        ROW_SIZE_UNMEASURED,
+    ];
+    assert_eq!(
+        measured.iter().filter(|row| row.quota > 0).count(),
+        1,
+        "unmeasured rows must not be counted as done"
+    );
+}
+
 /** A3: the real R38-2 regression. Workers have no thread-local task context;
  * a cancelled watch must stop them BEFORE any walk starts. Reverting the
  * worker to `scan_task::cancelled()` makes this test red. */

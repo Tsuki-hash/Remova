@@ -153,14 +153,10 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
             items[i].size_capped = row.capped;
         }
     }
-    // A cancelled pass has not finished every row; reporting `pending.len()`
-    // would tell the UI 100% (A3). Already-measured rows are verified floors
-    // and stay published.
-    let reported = if cancel.cancelled() {
-        sized.min(pending.len())
-    } else {
-        pending.len()
-    };
+    // Report rows that were actually attempted (they carry the quota they ran
+    // under). A cancelled round or an exhausted pool leaves rows at quota 0;
+    // claiming `pending.len()` would tell the UI 100% (A3).
+    let reported = measured.iter().filter(|row| row.quota > 0).count();
     crate::scan_task::checkpoint("sizing", reported);
 }
 
