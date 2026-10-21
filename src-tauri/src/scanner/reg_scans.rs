@@ -534,9 +534,7 @@ fn scan_muicache_values(
         if !muicache_matches(&value_name, slugs, install_low, &missing) {
             continue;
         }
-        let exe = value_name
-            .strip_suffix(".FriendlyAppName")
-            .unwrap_or(&value_name);
+        let exe = friendly_app_name_exe(&value_name).unwrap_or(&value_name);
         items.push(CleanupItem {
             path: format!("{key}|{value_name}"),
             kind: ItemKind::Registry,
@@ -562,6 +560,19 @@ fn scan_muicache_values(
     false
 }
 
+/// MuiCache value names are case-insensitive in the registry; the suffix must
+/// be compared the same way or a differently-cased value is silently missed.
+fn friendly_app_name_exe(value_name: &str) -> Option<&str> {
+    const SUFFIX: &str = ".FriendlyAppName";
+    if value_name.len() < SUFFIX.len() {
+        return None;
+    }
+    let split = value_name.len() - SUFFIX.len();
+    value_name[split..]
+        .eq_ignore_ascii_case(SUFFIX)
+        .then(|| &value_name[..split])
+}
+
 /// True when a MuiCache value names a missing executable that belongs to this
 /// app (path under the install root, or an exe stem matching a product slug).
 fn muicache_matches(
@@ -570,7 +581,7 @@ fn muicache_matches(
     install_low: &str,
     missing: impl Fn(&std::path::Path) -> bool,
 ) -> bool {
-    let Some(exe) = value_name.strip_suffix(".FriendlyAppName") else {
+    let Some(exe) = friendly_app_name_exe(value_name) else {
         return false;
     };
     let install_low = install_low.trim_end_matches('\\');
@@ -794,6 +805,12 @@ mod tests {
         assert!(super::muicache_matches(
             r"C:\Tools\Acme-Tool.exe.FriendlyAppName",
             &["acme".to_string()],
+            "",
+            missing
+        ));
+        assert!(super::muicache_matches(
+            r"C:\Tools\AcmeTool.exe.FRIENDLYAPPNAME",
+            &slugs,
             "",
             missing
         ));

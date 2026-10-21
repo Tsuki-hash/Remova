@@ -54,7 +54,12 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
         return None;
     }
     let fields: Vec<&str> = parts.collect();
-    let app_path = field(&fields, "App").unwrap_or("").trim().to_string();
+    let app_path = field(&fields, "App")
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim()
+        .to_string();
     if app_path.is_empty() || app_path.contains('%') {
         return None;
     }
@@ -203,6 +208,16 @@ mod tests {
         assert_eq!(rule.direction, "In");
         assert_eq!(rule.action, "Allow");
         assert_eq!(rule.protocol, "6");
+    }
+
+    #[test]
+    fn strips_quotes_from_app_paths() {
+        let rule = parse_rule(
+            "quoted-app",
+            r#"v2.10|Action=Allow|Dir=In|App="C:\Program Files\Vendor\app.exe""#,
+        )
+        .expect("quoted App path");
+        assert_eq!(rule.app_path, r"C:\Program Files\Vendor\app.exe");
     }
 
     #[test]
