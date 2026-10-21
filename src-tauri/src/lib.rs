@@ -10,6 +10,7 @@ pub mod dirsize;
 pub mod diskradar;
 pub mod error;
 pub mod executor;
+pub mod firewall;
 pub mod fsutil;
 pub mod history;
 pub mod icon;
@@ -578,6 +579,42 @@ async fn scan_broken_installs() -> Result<Vec<apps::BrokenInstall>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Remove a broken record after exporting its keys to a Safety Vault session.
+#[tauri::command]
+async fn cleanup_broken_install(
+    app_name: String,
+    registry_key: String,
+    guid: String,
+) -> Result<apps::BrokenCleanupReport, String> {
+    let elevated = is_elevated()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        apps::cleanup_broken_install(&app_name, &registry_key, &guid, elevated)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Orphan firewall rules whose executable is gone (read-only).
+#[tauri::command]
+async fn scan_firewall_orphans() -> Result<firewall::FirewallScanResult, String> {
+    tauri::async_runtime::spawn_blocking(firewall::scan_orphan_firewall_rules)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete rule values after a fresh orphan scan and a registry backup.
+#[tauri::command]
+async fn delete_firewall_rules(
+    value_names: Vec<String>,
+) -> Result<firewall::FirewallCleanupReport, String> {
+    if !is_elevated()? {
+        return Err("administrator privileges are required to delete firewall rules".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || firewall::delete_firewall_rules(&value_names))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Idle software radar (read-only ranking).
 #[tauri::command]
 async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, String> {
@@ -831,6 +868,9 @@ pub fn run() {
         // `scan_orphan_leftovers`
         // `rank_idle_apps`
         // `scan_broken_installs`
+        // `cleanup_broken_install`
+        // `scan_firewall_orphans`
+        // `delete_firewall_rules`
         // `scan_installer_caches`
         // `scan_tool_caches`
         // `list_local_drives`
@@ -892,6 +932,9 @@ pub fn run() {
             scan_orphan_leftovers,
             rank_idle_apps,
             scan_broken_installs,
+            cleanup_broken_install,
+            scan_firewall_orphans,
+            delete_firewall_rules,
             scan_installer_caches,
             scan_tool_caches,
             list_local_drives,

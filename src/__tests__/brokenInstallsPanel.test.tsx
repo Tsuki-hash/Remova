@@ -27,12 +27,15 @@ const row: BrokenInstall = {
 
 const brokenInstalls = vi.fn();
 const officialUninstall = vi.fn();
+const cleanupBrokenInstall = vi.fn();
 vi.mock("../lib/api", () => ({
   api: {
     brokenInstalls: (...a: unknown[]) => brokenInstalls(...a),
     officialUninstall: (...a: unknown[]) => officialUninstall(...a),
+    cleanupBrokenInstall: (...a: unknown[]) => cleanupBrokenInstall(...a),
   },
 }));
+vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })) }));
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -70,4 +73,26 @@ it("re-runs the vendor uninstaller and rescans afterwards", async () => {
   await waitFor(() => expect(officialUninstall).toHaveBeenCalledWith(row.app));
   await waitFor(() => expect(brokenInstalls).toHaveBeenCalledTimes(2));
   await screen.findByText(t().brokenInstallsEmpty);
+});
+
+it("removes a broken record only after confirmation and reports the backup", async () => {
+  const { toast } = await import("../lib/toast");
+  brokenInstalls.mockResolvedValueOnce([row]).mockResolvedValueOnce([]);
+  cleanupBrokenInstall.mockResolvedValue({
+    removed: [row.app.registry_key],
+    failed: [],
+    backup_dir: "C:\\ProgramData\\Remova\\Backup\\sess",
+  });
+  panel();
+  await screen.findByText("Broken App");
+  fireEvent.click(screen.getByRole("button", { name: t().brokenInstallsRemove }));
+  await waitFor(() =>
+    expect(cleanupBrokenInstall).toHaveBeenCalledWith(
+      row.app.name,
+      row.app.registry_key,
+      row.guid,
+    ),
+  );
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  await waitFor(() => expect(brokenInstalls).toHaveBeenCalledTimes(2));
 });

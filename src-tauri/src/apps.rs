@@ -585,6 +585,110 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
     })
 }
 
+/// Outcome of removing a broken record. The backup session is returned so the
+/// UI can tell the user where the exported keys live.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BrokenCleanupReport {
+    pub removed: Vec<String>,
+    pub failed: Vec<String>,
+    pub backup_dir: String,
+}
+
+/// Remove a broken MSI record after exporting every key to a Safety Vault
+/// session. The record is re-scanned here, so the webview cannot point this at
+/// an arbitrary product; the packed installer keys are matched by ProductName.
+pub fn cleanup_broken_install(
+    app_name: &str,
+    registry_key: &str,
+    guid: &str,
+    elevated: bool,
+) -> Result<BrokenCleanupReport, String> {
+    let target = scan_broken_installs()
+        .into_iter()
+        .find(|b| {
+            b.app.registry_key.eq_ignore_ascii_case(registry_key)
+                && b.guid.eq_ignore_ascii_case(guid)
+                && b.app.name.eq_ignore_ascii_case(app_name)
+        })
+        .ok_or_else(|| "broken install record no longer present".to_string())?;
+
+    let mut keys = vec![target.app.registry_key.clone()];
+    keys.extend(find_installer_product_keys(&target.app.name));
+    keys.sort();
+    keys.dedup();
+    if !elevated
+        && keys
+            .iter()
+            .any(|k| k.to_ascii_uppercase().starts_with("HKLM"))
+    {
+        return Err("administrator privileges are required for machine-wide records".into());
+    }
+
+    let session = crate::backup::create_session(&target.app.name)
+        .map_err(|e| format!("backup session failed: {e}"))?;
+    let items: Vec<crate::scanner::CleanupItem> = keys.iter().map(|k| registry_item(k)).collect();
+    let (_ok, fail, errors) = crate::backup::backup_items(&items, &session);
+    if fail > 0 {
+        return Err(format!("backup failed; record kept: {}", errors.join("; ")));
+    }
+
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for key in &keys {
+        match crate::regops::delete_key(key) {
+            Ok(true) => removed.push(key.clone()),
+            Ok(false) => failed.push(format!("{key}: already absent")),
+            Err(e) => failed.push(format!("{key}: {e}")),
+        }
+    }
+    Ok(BrokenCleanupReport {
+        removed,
+        failed,
+        backup_dir: session.to_string_lossy().into_owned(),
+    })
+}
+
+/// Packed product keys (`Classes\Installer\Products\<32 hex>`) whose
+/// ProductName matches the app — SOP §9.7's MSI orphan database.
+fn find_installer_product_keys(product_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for alias in ["HKLM64", "HKLM32"] {
+        let root = format!(r"{alias}\SOFTWARE\Classes\Installer\Products");
+        for sub in crate::regscan::list_subkeys(&root) {
+            if sub.len() != 32 || !sub.bytes().all(|b| b.is_ascii_hexdigit()) {
+                continue;
+            }
+            let key = format!(r"{root}\{sub}");
+            if crate::regscan::read_string(&key, "ProductName")
+                .is_some_and(|n| n.trim().eq_ignore_ascii_case(product_name.trim()))
+            {
+                out.push(key);
+            }
+        }
+    }
+    out
+}
+
+fn registry_item(path: &str) -> crate::scanner::CleanupItem {
+    use crate::scanner::{CleanupItem, Confidence, ItemKind, RiskLevel};
+    CleanupItem {
+        path: path.into(),
+        kind: ItemKind::Registry,
+        score: 90,
+        confidence: Confidence::Confirmed,
+        risk: RiskLevel::Low,
+        reason: "broken install record".into(),
+        evidence: vec![],
+        shared: false,
+        service_bound: false,
+        user_data: false,
+        user_library: false,
+        size_kb: None,
+        size_capped: false,
+        bucket: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

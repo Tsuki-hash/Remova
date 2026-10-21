@@ -18,7 +18,8 @@ export type ToolId =
   | "installers"
   | "diskradar"
   | "toolcache"
-  | "broken";
+  | "broken"
+  | "firewall";
 
 export type ToolItem = {
   id: ToolId;

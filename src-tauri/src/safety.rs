@@ -270,6 +270,40 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         }
     }
 
+    // Windows Firewall rule values (SOP §8-1): only the value-shaped form on
+    // the exact FirewallRules key. The dedicated command re-scans the rule and
+    // backs the key up before calling the primitive.
+    if value_name.is_some_and(|v| !v.trim().is_empty())
+        && low
+            == "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES\\SHAREDACCESS\\PARAMETERS\\FIREWALLPOLICY\\FIREWALLRULES"
+    {
+        return Ok(());
+    }
+
+    // Installer database (SOP §9.7): everything under Classes\Installer is
+    // protected except the packed 32-hex product key directly under
+    // Products (either view). Callers must still match ProductName against a
+    // freshly scanned app.
+    for installer_root in [
+        "HKLM\\SOFTWARE\\CLASSES\\INSTALLER",
+        "HKLM\\SOFTWARE\\WOW6432NODE\\CLASSES\\INSTALLER",
+    ] {
+        if low == installer_root || low.starts_with(&format!("{installer_root}\\")) {
+            let products = format!("{installer_root}\\PRODUCTS");
+            if let Some(rest) = low.strip_prefix(&format!("{products}\\")) {
+                if rest.len() == 32
+                    && !rest.contains('\\')
+                    && rest.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    return Ok(());
+                }
+            }
+            return Err(
+                crate::error::safety_err("only packed installer product keys allowed").to_ipc(),
+            );
+        }
+    }
+
     // Services: direct child only; critical names blocked
     let services_root = "HKLM\\SYSTEM\\CURRENTCONTROLSET\\SERVICES";
     if low == services_root {
@@ -1461,5 +1495,40 @@ mod tests {
             r"C:\Users\a\AppData\Local\App\..\..\..\..\Windows\x"
         )));
         assert!(!super::is_safe_restore_target(Path::new(r"C:\a\.\x")));
+    }
+
+    /// M3 (SOP §8-1): a firewall rule is deletable only as a named value on
+    /// the exact FirewallRules key — never the key itself, never another value
+    /// tree under SharedAccess.
+    #[test]
+    fn firewall_rule_values_are_allowed_only_on_the_exact_key() {
+        let key = r"HKLM64\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+        assert!(super::is_safe_to_delete_registry(&format!("{key}|Vendor-Rule-In")).is_ok());
+        assert!(super::is_safe_to_delete_registry(key).is_err());
+        assert!(super::is_safe_to_delete_registry(&format!("{key}|")).is_err());
+        assert!(super::is_safe_to_delete_registry(
+            r"HKLM64\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules2|X"
+        )
+        .is_err());
+    }
+
+    /// M2 (SOP §9.7): the Installer product database is deletable only at the
+    /// packed 32-hex leaf; parents, nesting and other shapes stay protected.
+    #[test]
+    fn installer_product_keys_are_allowed_only_by_exact_shape() {
+        let ok = r"HKLM64\SOFTWARE\Classes\Installer\Products\D3EC8021BA300174BA12FE44FC277291";
+        assert!(super::is_safe_to_delete_registry(ok).is_ok());
+        for bad in [
+            r"HKLM64\SOFTWARE\Classes\Installer\Products",
+            r"HKLM64\SOFTWARE\Classes\Installer\Products\D3EC8021",
+            r"HKLM64\SOFTWARE\Classes\Installer\Products\D3EC8021BA300174BA12FE44FC277291\child",
+            r"HKLM64\SOFTWARE\Classes\Installer\Products\ZZZZ8021BA300174BA12FE44FC277291",
+            r"HKLM64\SOFTWARE\Classes\Installer\Features\D3EC8021BA300174BA12FE44FC277291",
+        ] {
+            assert!(
+                super::is_safe_to_delete_registry(bad).is_err(),
+                "{bad} must stay protected"
+            );
+        }
     }
 }

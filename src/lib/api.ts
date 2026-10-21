@@ -5,7 +5,10 @@ import type {
   AiConfigView,
   AiExplainInput,
   AiExplainOutput,
+  BrokenCleanupReport,
   BrokenInstall,
+  FirewallCleanupReport,
+  FirewallScanResult,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -109,6 +112,14 @@ export const api = {
     invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId }),
   /** M1: broken MSI install records (read-only). */
   brokenInstalls: () => invoke<BrokenInstall[]>("scan_broken_installs"),
+  /** M2: export then remove a broken record (server re-verifies the record). */
+  cleanupBrokenInstall: (appName: string, registryKey: string, guid: string) =>
+    invoke<BrokenCleanupReport>("cleanup_broken_install", { appName, registryKey, guid }),
+  /** M3: orphan firewall rules (read-only). */
+  firewallOrphans: () => invoke<FirewallScanResult>("scan_firewall_orphans"),
+  /** M3: export then delete rule values (server re-verifies each orphan). */
+  deleteFirewallRules: (valueNames: string[]) =>
+    invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),
   rankIdleApps: (scanId?: number) =>
     invoke<IdleScanResult | IdleApp[]>("rank_idle_apps", { scanId }),
   scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),

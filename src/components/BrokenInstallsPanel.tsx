@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
+import { requestConfirmEx } from "../lib/confirm";
 import type { BrokenInstall } from "../types";
 
 /**
@@ -66,6 +67,39 @@ export function BrokenInstallsPanel({
     }
   };
 
+  const remove = async (row: BrokenInstall) => {
+    if (busy) return;
+    const { ok } = await requestConfirmEx({
+      title: L.brokenInstallsRemove,
+      message: L.brokenInstallsRemoveConfirm(row.app.name),
+      confirmLabel: L.brokenInstallsRemove,
+      danger: true,
+    });
+    if (!ok) return;
+    setRunning(row.guid);
+    setBusy(true);
+    try {
+      const report = await api.cleanupBrokenInstall(
+        row.app.name,
+        row.app.registry_key,
+        row.guid,
+      );
+      if (report.failed.length > 0) {
+        toast.error(L.brokenInstallsRemovePartial(report.failed.length), {
+          detail: report.backup_dir,
+        });
+      } else {
+        toast.success(L.brokenInstallsRemoveOk, { detail: report.backup_dir });
+      }
+      await scan();
+    } catch (e) {
+      toast.error(L.brokenInstallsRemoveFailed(formatError(e)));
+    } finally {
+      setRunning(null);
+      setBusy(false);
+    }
+  };
+
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -115,6 +149,13 @@ export function BrokenInstallsPanel({
                 onClick={() => void rerun(row)}
               >
                 {running === row.guid ? L.brokenInstallsRunning : L.brokenInstallsRerun}
+              </button>
+              <button
+                style={{ ...css.btnGhost, height: 28, color: "var(--danger-text)" }}
+                disabled={busy}
+                onClick={() => void remove(row)}
+              >
+                {L.brokenInstallsRemove}
               </button>
             </div>
           ))}

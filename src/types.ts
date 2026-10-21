@@ -81,6 +81,30 @@ export type BrokenInstall = {
   reason: string;
 };
 
+/** M2: keys removed by the broken-record cleanup, and where the export lives. */
+export type BrokenCleanupReport = {
+  removed: string[];
+  failed: string[];
+  backup_dir: string;
+};
+
+/** M3: a firewall rule whose App= executable no longer exists. */
+export type FirewallRule = {
+  value_name: string;
+  rule_name: string;
+  app_path: string;
+  direction: string;
+  action: string;
+  protocol: string;
+  reason: string;
+};
+export type FirewallScanResult = { rules: FirewallRule[]; omitted: number };
+export type FirewallCleanupReport = {
+  removed: string[];
+  failed: string[];
+  backup_dir: string;
+};
+
 export type CleanupReport = {
   app_name: string;
   dry_run: boolean;

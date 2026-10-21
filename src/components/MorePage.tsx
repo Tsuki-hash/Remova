@@ -9,6 +9,7 @@ import { WhitelistPanel } from "./WhitelistPanel";
 import { IdleRadarPanel } from "./IdleRadarPanel";
 import { ScopedScanPanel } from "./ScopedScanPanel";
 import { BrokenInstallsPanel } from "./BrokenInstallsPanel";
+import { FirewallRulesPanel } from "./FirewallRulesPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { api, type IgnoreLists } from "../lib/api";
 import { formatError } from "../lib/format";
@@ -174,6 +175,13 @@ export function MorePage({
       action: () => tools.toggleTool("broken"),
     },
     {
+      id: "firewall",
+      title: L.firewallTitle,
+      desc: L.firewallHint,
+      icon: "services",
+      action: () => tools.toggleTool("firewall"),
+    },
+    {
       id: "monitor",
       disabled: monitorSnapshotBusy,
       title: monitoring ? L.monitorStop : L.monitorInstall,
@@ -297,6 +305,9 @@ export function MorePage({
       )}
       {openTool === "broken" && (
         <BrokenInstallsPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
+      )}
+      {openTool === "firewall" && (
+        <FirewallRulesPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
