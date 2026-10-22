@@ -222,6 +222,10 @@ function AppRowImpl({
       aria-selected={selected}
       onClick={() => onSelect(a)}
       onKeyDown={(e) => {
+        // Only the row itself activates on Enter/Space. Keys that bubble from
+        // the checkbox, uninstall button or row menu belong to those controls —
+        // cancelling their default action replaced it with row selection.
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect(a);

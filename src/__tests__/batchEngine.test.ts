@@ -3,12 +3,13 @@ import type { InstalledApp, ScanResult, FullCleanupReport, CleanupItem } from ".
 
 const analyze = vi.fn();
 const fullCleanup = vi.fn();
+const beginScan = vi.fn(async () => 7);
 
 vi.mock("../lib/api", () => ({
   api: {
     analyze: (...a: unknown[]) => analyze(...a),
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
-    beginAssociationScan: vi.fn(async () => 7),
+    beginAssociationScan: () => beginScan(),
     cancelAssociationScan: vi.fn(async () => true),
   },
 }));
@@ -112,6 +113,8 @@ const keyOf = (a: InstalledApp) => a.registry_key;
 beforeEach(() => {
   analyze.mockReset();
   fullCleanup.mockReset();
+  beginScan.mockReset();
+  beginScan.mockResolvedValue(7);
 });
 
 describe("runBatchCleanup", () => {
@@ -229,8 +232,19 @@ describe("runBatchCleanup", () => {
     expect(analyze).toHaveBeenCalledTimes(1);
     expect(fullCleanup).toHaveBeenCalledTimes(1);
     const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
-    expect(last?.status).toBe("failed");
+    expect(last?.status).toBe("reboot");
     expect(last?.officialDone).toBe(true);
+  });
+
+  it("fails the row instead of scanning untracked when the task cap rejects begin", async () => {
+    beginScan.mockRejectedValueOnce(new Error("scan:busy"));
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    expect(analyze).not.toHaveBeenCalled();
+    expect(fullCleanup).not.toHaveBeenCalled();
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("failed");
   });
 
   it("maps cleanup abort to failed when items were present (S-R4-06)", async () => {
@@ -284,6 +298,45 @@ describe("runBatchCleanup", () => {
     expect(analyze).toHaveBeenCalledTimes(1);
     const lastResults = cb.onResults.mock.calls.at(-1)?.[0] ?? [];
     expect(lastResults.length).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps the current app's contract: cancel stops the queue, not the in-flight app", async () => {
+    // The UI promises "stops after the current app finishes", so a cancel that
+    // arrives while the current app is being analyzed must still let that app
+    // complete and must not start the next one.
+    analyze.mockImplementation(async () => {
+      cb.cancelRef.current = true;
+      return scan("Ordered", [item("C:\\Program Files\\Ordered")]);
+    });
+    fullCleanup.mockResolvedValue(report({ deleted: 1, failed: 0 }));
+    const cb = makeCb();
+    await runBatchCleanup([app("Ordered"), app("Second")], true, keyOf, cb);
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(fullCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the current scan through the task id it was given", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancelAssociationScan = vi.fn(async () => true);
+      const apiMod = await import("../lib/api");
+      (apiMod.api as unknown as { cancelAssociationScan: unknown }).cancelAssociationScan =
+        cancelAssociationScan;
+      let resolveAnalyze: (r: ScanResult) => void = () => {};
+      analyze.mockImplementation(
+        () => new Promise<ScanResult>((resolve) => { resolveAnalyze = resolve; }),
+      );
+      fullCleanup.mockResolvedValue(report({ deleted: 0, uninstall_ok: true }));
+      const cb = makeCb();
+      const run = runBatchCleanup([app("Slow")], true, keyOf, cb);
+      cb.cancelRef.current = true;
+      await vi.advanceTimersByTimeAsync(300);
+      expect(cancelAssociationScan).toHaveBeenCalledWith(7);
+      resolveAnalyze(scan("Slow", []));
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps invoke errors to failed rows", async () => {

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -31,6 +31,11 @@ import { ScanLeftoversView } from "./ScanLeftoversView";
 import { CopilotPanel } from "./CopilotPanel";
 import { SoftwareListTable } from "./SoftwareListTable";
 import { BatchActionBar } from "./BatchActionBar";
+
+/// Report identity -> the InstalledApp it was opened for. Module-level so the
+/// mapping survives navigating away from the software page and back, which is
+/// exactly when a report outlives its app's presence in the refreshed list.
+const reportAppCache = new Map<string, InstalledApp>();
 
 export type SoftwarePageProps = {
  // list
@@ -147,15 +152,17 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   // A successful uninstall removes the app from the refreshed list and the
   // reducer clears `selected`. Keep the last resolved app for this exact
   // report so rescan/deep-check/lock-root keep working; never let a different
-  // report inherit it.
-  const reportRef = useRef<{ key: string; app: InstalledApp } | null>(null);
+  // report inherit it. The cache is module-level because this page unmounts
+  // when the user navigates to another nav entry — a component-local ref was
+  // rebuilt empty on return, which dropped rescan and lock actions for a
+  // report whose app had already left the list.
   const reportIdentity = report ? `${report.app_name}\u0000${report.app_key ?? ""}` : "";
   const reportApp =
     liveReportApp ??
-    (report && reportRef.current?.key === reportIdentity ? reportRef.current.app : undefined);
+    (report ? reportAppCache.get(reportIdentity) : undefined);
   useEffect(() => {
     if (liveReportApp && reportIdentity) {
-      reportRef.current = { key: reportIdentity, app: liveReportApp };
+      reportAppCache.set(reportIdentity, liveReportApp);
     }
   }, [liveReportApp, reportIdentity]);
   // A completed official uninstall may set the "uninstall finished" state when

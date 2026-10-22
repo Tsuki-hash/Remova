@@ -211,4 +211,29 @@ describe("AI request payload contract (CQ-04)", () => {
     expect(types).toContain("uninstall_ok");
     expect(rust).toContain("pub uninstall_ok: bool");
   });
+
+  // A token search cannot prove the field survives serialization: adding
+  // `#[serde(skip_serializing)]` leaves `pub reboot_pending: bool` in the file
+  // while the payload the UI reads loses the field. These assertions bind the
+  // Rust serde attribute list to the field so that mutation fails here.
+  it("serializes reboot_pending and the abort fields it is read with", () => {
+    const rust = readFileSync("src-tauri/src/executor/mod.rs", "utf8");
+    const reportStart = rust.indexOf("pub struct FullCleanupReport");
+    const reportBody = rust.slice(reportStart, rust.indexOf("}", reportStart));
+    for (const field of ["reboot_pending", "aborted", "uninstall_ok", "uninstall_message"]) {
+      const fieldLine = reportBody
+        .split("\n")
+        .find((line) => line.includes(`pub ${field}:`));
+      expect(fieldLine, `${field} must be declared in FullCleanupReport`).toBeTruthy();
+    }
+    // No field in the report may be skipped on serialize: the UI reads the
+    // whole struct over IPC.
+    expect(reportBody).not.toContain("skip_serializing");
+    expect(reportBody).not.toContain("skip_deserializing");
+
+    const uninstallStart = rust.indexOf("pub struct OfficialUninstallResult");
+    const uninstallBody = rust.slice(uninstallStart, rust.indexOf("}", uninstallStart));
+    expect(uninstallBody).toContain("pub reboot_initiated:");
+    expect(uninstallBody).not.toContain("skip_serializing");
+  });
 });

@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 
-export type BatchStatus = "ok" | "failed" | "skipped";
+export type BatchStatus = "ok" | "failed" | "skipped" | "reboot";
 export type BatchItemResult = {
   key: string;
   name: string;
@@ -72,7 +72,8 @@ export function BatchSummaryPanel({
         <strong>{L.batchSummary}</strong>
         <span style={css.muted}>
           {L.batchOk} {results.filter((r) => r.status === "ok").length} · {L.batchFailed}{" "}
-          {results.filter((r) => r.status === "failed").length} · {L.batchSkipped}{" "}
+          {results.filter((r) => r.status === "failed").length} · {L.batchReboot}{" "}
+          {results.filter((r) => r.status === "reboot").length} · {L.batchSkipped}{" "}
           {results.filter((r) => r.status === "skipped").length}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -94,13 +95,21 @@ export function BatchSummaryPanel({
                 color:
                   r.status === "failed"
                     ? "var(--danger)"
-                    : r.status === "ok"
-                      ? "var(--accent)"
-                      : "var(--muted)",
+                    : r.status === "reboot"
+                      ? "var(--warn-ink)"
+                      : r.status === "ok"
+                        ? "var(--accent)"
+                        : "var(--muted)",
                 marginRight: 8,
               }}
             >
-              {r.status === "ok" ? L.batchOk : r.status === "failed" ? L.batchFailed : L.batchSkipped}
+              {r.status === "ok"
+                ? L.batchOk
+                : r.status === "failed"
+                  ? L.batchFailed
+                  : r.status === "reboot"
+                    ? L.batchReboot
+                    : L.batchSkipped}
             </span>
             {r.name}
             {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}

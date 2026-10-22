@@ -62,20 +62,30 @@ export async function runBatchCleanup(
       try {
         // Run each batch analyze through the scan task so Cancel can stop the
         // current app (not just the next iteration) and the 8-task cap applies.
-        let scanId: number | undefined;
+        // A failed reservation must not fall back to an untracked scan: that
+        // would bypass the task cap and make the current app uncancellable.
+        let scanId: number;
         try {
           scanId = await api.beginAssociationScan();
-        } catch {
-          scanId = undefined;
+        } catch (e) {
+          results.push({
+            key,
+            name: app.name,
+            status: "failed",
+            detail: formatError(e, "cleanup"),
+            officialDone,
+          });
+          cb.onResults([...results]);
+          continue;
         }
-        const cancelPoll = scanId === undefined ? undefined : setInterval(() => {
+        const cancelPoll = setInterval(() => {
           if (cb.cancelRef.current) void api.cancelAssociationScan(scanId);
         }, 250);
         let r: ScanResult;
         try {
           r = await api.analyze(app, scanId);
         } finally {
-          if (cancelPoll !== undefined) clearInterval(cancelPoll);
+          clearInterval(cancelPoll);
         }
         const items = r.items.filter(defaultSelectable);
  // F-1: do not skip the whole app when there are no default-selectable leftovers.
@@ -96,7 +106,10 @@ export async function runBatchCleanup(
           results.push({
             key,
             name: app.name,
-            status: "failed",
+            // Not a failure: the app was uninstalled, but the machine must
+            // restart before residual deletion. The summary keeps this out of
+            // the failure count and never offers a retry for it.
+            status: "reboot",
             detail: backendText(report.uninstall_message) || L.backendRebootInitiated,
             officialDone: true,
           });
