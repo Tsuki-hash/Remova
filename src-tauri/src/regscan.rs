@@ -206,6 +206,165 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
     if crate::scan_task::cancelled() {
         return vec![];
     }
+    if let Some(cached) = subkey_cache_get(key) {
+        return cached;
+    }
+    let fresh = list_subkeys_uncached(key);
+    subkey_cache_put(key, &fresh);
+    fresh
+}
+
+/// One batch scan analyzes app after app, and each analyze re-enumerated the
+/// same Classes/CLSID/Services trees. Those trees do not change while a batch
+/// runs, so an enumeration is reused for a short window.
+///
+/// Two properties keep the reuse honest:
+/// - it is only consulted inside a scan task, so the deletion gates (which
+///   re-verify a live target) always read the registry;
+/// - a destructive operation calls [`invalidate_subkey_cache`], and the entry
+///   expires on its own after [`subkey_cache::TTL`], so a leftover deleted
+///   during a batch cannot be re-offered from a stale list for long.
+mod subkey_cache {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    /// Reuse window. A batch analyzes its items back to back, so this covers the
+    /// run while staying short enough that a stale list is never long-lived.
+    pub(super) const TTL: Duration = Duration::from_secs(3);
+    /// Enumerations larger than this are not cached: copying the pathological
+    /// keys would cost more memory than re-reading them.
+    pub(super) const MAX_CACHED_ENTRIES: usize = 20_000;
+    /// Bound on how many distinct keys may be cached at once.
+    pub(super) const MAX_CACHED_KEYS: usize = 64;
+
+    struct Entry {
+        names: Vec<String>,
+        at: Instant,
+    }
+
+    #[derive(Default)]
+    pub(super) struct Counters {
+        pub hits: u64,
+        pub misses: u64,
+        pub stored: u64,
+        pub expired: u64,
+        pub skipped_too_large: u64,
+        pub evicted: u64,
+    }
+
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
+        static COUNTERS: RefCell<Counters> = RefCell::new(Counters::default());
+    }
+
+    pub(super) fn get(key: &str) -> Option<Vec<String>> {
+        CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            let entry = c.get(key)?;
+            if entry.at.elapsed() >= TTL {
+                c.remove(key);
+                COUNTERS.with(|n| n.borrow_mut().expired += 1);
+                return None;
+            }
+            let names = entry.names.clone();
+            COUNTERS.with(|n| n.borrow_mut().hits += 1);
+            Some(names)
+        })
+    }
+
+    pub(super) fn put(key: &str, value: &[String]) {
+        CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            // Drop expired entries first, so an idle process does not hold them.
+            c.retain(|_, e| e.at.elapsed() < TTL);
+            if !c.contains_key(key) && c.len() >= MAX_CACHED_KEYS {
+                COUNTERS.with(|n| n.borrow_mut().evicted += 1);
+                return;
+            }
+            c.insert(
+                key.to_string(),
+                Entry {
+                    names: value.to_vec(),
+                    at: Instant::now(),
+                },
+            );
+            COUNTERS.with(|n| n.borrow_mut().stored += 1);
+        });
+    }
+
+    pub(super) fn note_uncacheable() {
+        COUNTERS.with(|n| n.borrow_mut().skipped_too_large += 1);
+    }
+
+    pub(super) fn note_miss() {
+        COUNTERS.with(|n| n.borrow_mut().misses += 1);
+    }
+
+    pub(super) fn clear() {
+        CACHE.with(|c| c.borrow_mut().clear());
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_counters() {
+        COUNTERS.with(|n| *n.borrow_mut() = Counters::default());
+    }
+
+    pub(super) fn snapshot() -> (u64, u64, u64, u64, u64, u64) {
+        COUNTERS.with(|n| {
+            let n = n.borrow();
+            (
+                n.hits,
+                n.misses,
+                n.stored,
+                n.expired,
+                n.skipped_too_large,
+                n.evicted,
+            )
+        })
+    }
+}
+
+/// Drop every cached enumeration. Called after a destructive operation so the
+/// next scan reads the registry rather than a list captured before the delete.
+pub fn invalidate_subkey_cache() {
+    subkey_cache::clear();
+}
+
+/// (hits, misses, stored, expired, skipped_too_large, evicted). Test and
+/// diagnostic hook: it proves the reuse actually happened.
+pub fn registry_cache_counters() -> (u64, u64, u64, u64, u64, u64) {
+    subkey_cache::snapshot()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_registry_cache_for_test() {
+    subkey_cache::clear();
+    subkey_cache::reset_counters();
+}
+
+fn subkey_cache_get(key: &str) -> Option<Vec<String>> {
+    // Outside a scan task the registry is read live: only a scan may serve a
+    // list from memory.
+    if !crate::scan_task::has_task() || crate::scan_task::cancelled() {
+        return None;
+    }
+    subkey_cache::get(key)
+}
+
+fn subkey_cache_put(key: &str, value: &[String]) {
+    if !crate::scan_task::has_task() {
+        return;
+    }
+    if value.len() > subkey_cache::MAX_CACHED_ENTRIES {
+        subkey_cache::note_uncacheable();
+        return;
+    }
+    subkey_cache::put(key, value);
+}
+
+fn list_subkeys_uncached(key: &str) -> Vec<String> {
+    subkey_cache::note_miss();
     #[cfg(not(windows))]
     {
         let _ = key;
@@ -635,5 +794,72 @@ mod completeness_tests {
     fn snapshot_rejects_invalid_names_before_native_access() {
         assert!(super::snapshot_names("INVALID").is_err());
         assert!(super::snapshot_names("HKCU\\Software\\Vendor\0Tail").is_err());
+    }
+
+    #[test]
+    fn a_batch_scan_reuses_one_enumeration_instead_of_re_reading_per_app() {
+        let _guard = crate::test_support::EnvLock::new();
+        super::reset_registry_cache_for_test();
+        let id = crate::scan_task::begin().unwrap();
+        let first = crate::scan_task::run(id, || {
+            let a = super::list_subkeys(r"HKCU\SOFTWARE");
+            let (_, misses_after_first, ..) = super::registry_cache_counters();
+            let b = super::list_subkeys(r"HKCU\SOFTWARE");
+            let (hits, misses, stored, ..) = super::registry_cache_counters();
+            (a, b, hits, misses, stored, misses_after_first)
+        })
+        .unwrap();
+        let (a, b, hits, misses, stored, misses_after_first) = first;
+        // The second read inside the same session is served from memory: the
+        // enumeration count does not grow and a hit is recorded.
+        assert_eq!(a, b, "the cached list must equal the live one");
+        assert_eq!(misses_after_first, 1);
+        assert_eq!(misses, 1, "the second read must not re-enumerate");
+        assert_eq!(hits, 1);
+        assert_eq!(stored, 1);
+        super::reset_registry_cache_for_test();
+    }
+
+    #[test]
+    fn enumeration_is_never_reused_outside_a_scan_task() {
+        super::reset_registry_cache_for_test();
+        // No scan task: the deletion gates read live, so nothing may be served
+        // from memory even though a value is already cached.
+        let id = crate::scan_task::begin().unwrap();
+        crate::scan_task::run(id, || {
+            let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+            // Second in-session read: this is the one that may hit the cache.
+            let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+        })
+        .unwrap();
+        let (hits_inside, misses_inside, ..) = super::registry_cache_counters();
+        assert_eq!(hits_inside, 1, "the in-session repeat read hits the cache");
+        assert_eq!(misses_inside, 1);
+
+        let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+        let (hits, misses, ..) = super::registry_cache_counters();
+        assert_eq!(hits, 1, "the out-of-session read must not hit the cache");
+        assert_eq!(misses, 2, "the out-of-session read must re-enumerate");
+        super::reset_registry_cache_for_test();
+    }
+
+    #[test]
+    fn a_destructive_operation_drops_the_cached_enumerations() {
+        super::reset_registry_cache_for_test();
+        let id = crate::scan_task::begin().unwrap();
+        crate::scan_task::run(id, || {
+            let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+            let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+            let (hits, ..) = super::registry_cache_counters();
+            assert_eq!(hits, 1, "fixture must have cached an enumeration");
+            // A delete just changed the registry: the next scan must re-read.
+            super::invalidate_subkey_cache();
+            let _ = super::list_subkeys(r"HKCU\SOFTWARE");
+            let (hits_after, misses_after, ..) = super::registry_cache_counters();
+            assert_eq!(hits_after, 1, "the invalidated entry must not be reused");
+            assert_eq!(misses_after, 2, "the read after invalidation re-enumerates");
+        })
+        .unwrap();
+        super::reset_registry_cache_for_test();
     }
 }

@@ -743,6 +743,9 @@ pub fn run_full_cleanup(
         .map(|d| (d.path.clone(), d.kind == "dir"))
         .collect();
     crate::locks::remember_failed_lock_roots(&app.install_location, &failed_lock_paths);
+    // Rows were just removed from the registry, so any cached enumeration of
+    // those trees must not be reused by the next scan.
+    crate::regscan::invalidate_subkey_cache();
 
     FullCleanupReport {
         app_name: app.name.clone(),
