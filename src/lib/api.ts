@@ -1,5 +1,6 @@
 /** Thin typed wrappers around Tauri invoke — single frontend data layer. */
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { currentLang } from "../i18n";
 import { trackNativeCall } from "./nativeActivity";
 import type {
   AiConfigView,
@@ -156,13 +157,13 @@ export const api = {
     apiKey: string | null;
   }) => invoke<AiConfigView>("save_ai_config", args),
   aiRiskBrief: (request: RiskBriefRequest) =>
-    invoke<string | null>("ai_risk_brief", { request }),
+    invoke<string | null>("ai_risk_brief", { request, locale: currentLang() }),
   aiExplain: (appName: string, publisher: string, items: AiExplainInput[]) =>
-    invoke<AiExplainOutput[]>("ai_explain_items", { appName, publisher, items }),
+    invoke<AiExplainOutput[]>("ai_explain_items", { appName, publisher, items, locale: currentLang() }),
   aiSummarizeReport: (request: ReportBriefRequest) =>
-    invoke<string | null>("ai_summarize_report", { request }),
+    invoke<string | null>("ai_summarize_report", { request, locale: currentLang() }),
   aiParseIntent: (text: string, appNames: string[]) =>
-    invoke<NlIntent>("ai_parse_intent", { text, appNames }),
+    invoke<NlIntent>("ai_parse_intent", { text, appNames, locale: currentLang() }),
   history: () => invoke<HistoryEntry[]>("list_cleanup_history"),
   exportHistoryCsv: () => invoke<string>("export_history_csv"),
   deleteHistory: (ids: string[]) => invoke<number>("delete_cleanup_history", { ids }),

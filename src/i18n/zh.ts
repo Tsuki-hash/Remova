@@ -176,6 +176,7 @@ export const dict = {
     batchSummary: "批量结果",
     batchOk: "成功",
     batchFailed: "失败",
+    batchReboot: "待重启",
     batchSkipped: "无残留跳过",
     batchRetryFailed: "重试失败项",
     batchDismiss: "关闭",

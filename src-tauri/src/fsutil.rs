@@ -432,6 +432,29 @@ fn wide_path_for_create_file(raw: &str) -> Vec<u16> {
     promoted.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// A NUL-terminated UTF-16 path for a raw Win32 security call.
+///
+/// Like [`wide_path_for_create_file`], the path is promoted to an
+/// extended-length form once it approaches MAX_PATH: `SetFileSecurityW` has the
+/// same limit and otherwise fails with a bogus "invalid name" error (123) on a
+/// deep backup tree that every component of which is valid.
+#[cfg(windows)]
+pub fn wide_path_for_security(path: &Path) -> Vec<u16> {
+    let raw = path.to_string_lossy();
+    let promoted = raw.replace('/', "\\");
+    let long = promoted.encode_utf16().count() >= 240;
+    let promoted = if !long || promoted.starts_with(r"\\?\") {
+        promoted
+    } else if let Some(rest) = promoted.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{rest}")
+    } else if promoted.as_bytes().get(1) == Some(&b':') {
+        format!(r"\\?\{promoted}")
+    } else {
+        promoted
+    };
+    promoted.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 /// A pin on a directory plus its by-handle resolved final path. While held,
 /// the pinned object cannot be renamed away (no FILE_SHARE_DELETE), and the
 /// caller can re-run string gates against the *resolved* location instead of
@@ -777,22 +800,115 @@ pub fn path_utf8(p: &Path) -> Option<String> {
     Some(p.to_str()?.replace('/', "\\"))
 }
 
-/// True only for an absolute local-drive path. Registry-controlled read
-/// probes (icons, sizes, Explorer) must not touch UNC/device/verbatim shares,
-/// otherwise rendering a list can trigger SMB/WebDAV authentication.
-pub fn is_local_drive_path(raw: &str) -> bool {
-    let s = raw.trim().trim_matches('"');
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PathProbe {
+    Safe,
+    Missing,
+    Reparse,
+    Error,
+}
+
+fn local_drive_candidate(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_matches('"').replace('/', "\\");
     let b = s.as_bytes();
-    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' {
+    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
+        return None;
+    }
+    if s.starts_with("\\\\") || s.starts_with("\\\\?\\") || s.starts_with("\\\\.\\") {
+        return None;
+    }
+    if s.split('\\').any(|seg| seg == "..") {
+        return None;
+    }
+    Some(s)
+}
+
+/// Injectable policy core: tests model drive classification and reparse probes
+/// without querying mapped shares or touching any network.
+fn is_local_drive_path_with(
+    raw: &str,
+    drive_is_local: impl FnOnce(&str) -> bool,
+    mut probe: impl FnMut(&str) -> PathProbe,
+) -> bool {
+    let Some(path) = local_drive_candidate(raw) else {
+        return false;
+    };
+    let root = &path[..3];
+    if !drive_is_local(root) {
         return false;
     }
-    if b[2] != b'\\' && b[2] != b'/' {
-        return false;
+
+    // Inspect each existing prefix from the local root outward. Rejecting every
+    // reparse point is conservative, and prevents opening a later component
+    // through a junction that could target UNC/WebDAV without contacting it.
+    let mut prefix = root.to_string();
+    for component in path[3..].split('\\').filter(|part| !part.is_empty()) {
+        prefix.push_str(component);
+        match probe(&prefix) {
+            PathProbe::Safe => {}
+            PathProbe::Missing => return true,
+            PathProbe::Reparse | PathProbe::Error => return false,
+        }
+        prefix.push('\\');
     }
-    if s.starts_with("\\\\") || s.starts_with("\\?\\") || s.starts_with("\\.\\") {
-        return false;
+    true
+}
+
+/// True only for an absolute path on a local volume with no reparse point in
+/// its existing prefix chain. Registry-controlled read probes (icons, sizes,
+/// Explorer) must not touch UNC/device/verbatim shares or mapped drives,
+/// otherwise rendering a list can trigger SMB/WebDAV authentication. Local
+/// junctions are conservatively refused too, so a later component is never
+/// opened through a redirection whose target could be remote.
+pub fn is_local_drive_path(raw: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::GetLastError;
+        use windows::Win32::Storage::FileSystem::{
+            GetDriveTypeW, GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT,
+            INVALID_FILE_ATTRIBUTES,
+        };
+
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+        const DRIVE_REMOTE: u32 = 4;
+        const DRIVE_CDROM: u32 = 5;
+        const DRIVE_RAMDISK: u32 = 6;
+
+        is_local_drive_path_with(
+            raw,
+            |root| {
+                let wide = to_wide(root);
+                let drive_type = unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) };
+                drive_type != DRIVE_REMOTE
+                    && matches!(
+                        drive_type,
+                        DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK | DRIVE_CDROM
+                    )
+            },
+            |prefix| {
+                let wide = to_wide(prefix);
+                let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+                if attrs != INVALID_FILE_ATTRIBUTES {
+                    if attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                        PathProbe::Reparse
+                    } else {
+                        PathProbe::Safe
+                    }
+                } else {
+                    match unsafe { GetLastError().0 } {
+                        2 | 3 => PathProbe::Missing,
+                        _ => PathProbe::Error,
+                    }
+                }
+            },
+        )
     }
-    !s.split(['\\', '/']).any(|seg| seg == "..")
+    #[cfg(not(windows))]
+    {
+        is_local_drive_path_with(raw, |_| true, |_| PathProbe::Safe)
+    }
 }
 
 /// The single definition of "these two paths name the same thing".
@@ -1093,6 +1209,62 @@ mod tests {
         assert!(!super::is_local_drive_path(r"\\?\C:\Apps\demo.exe"));
         assert!(!super::is_local_drive_path(r"C:relative\demo.exe"));
         assert!(!super::is_local_drive_path(r"C:\Apps\..\Windows\x.exe"));
+    }
+
+    #[test]
+    fn local_drive_probe_mock_rejects_mapped_network_drives_without_network_io() {
+        let mut probed = Vec::new();
+        let accepted = super::is_local_drive_path_with(
+            r"Z:\mapped\app.exe",
+            |root| root != r"Z:\",
+            |path| {
+                probed.push(path.to_string());
+                super::PathProbe::Safe
+            },
+        );
+        assert!(!accepted);
+        assert!(
+            probed.is_empty(),
+            "remote drives must be rejected before probing paths"
+        );
+    }
+
+    #[test]
+    fn local_drive_probe_mock_rejects_reparse_prefix_before_descending() {
+        let mut probed = Vec::new();
+        let accepted = super::is_local_drive_path_with(
+            r"C:\Apps\redirect\remote.exe",
+            |_| true,
+            |path| {
+                probed.push(path.to_string());
+                if path.eq_ignore_ascii_case(r"C:\Apps\redirect") {
+                    super::PathProbe::Reparse
+                } else {
+                    super::PathProbe::Safe
+                }
+            },
+        );
+        assert!(!accepted);
+        assert_eq!(probed, [r"C:\Apps", r"C:\Apps\redirect"]);
+    }
+
+    #[test]
+    fn local_drive_probe_mock_accepts_local_volume_and_missing_tail() {
+        let mut probed = Vec::new();
+        let accepted = super::is_local_drive_path_with(
+            r"C:\Apps\not-yet-created\app.exe",
+            |root| root == r"C:\",
+            |path| {
+                probed.push(path.to_string());
+                if path.ends_with("not-yet-created") {
+                    super::PathProbe::Missing
+                } else {
+                    super::PathProbe::Safe
+                }
+            },
+        );
+        assert!(accepted);
+        assert_eq!(probed, [r"C:\Apps", r"C:\Apps\not-yet-created"]);
     }
 
     #[test]

@@ -524,7 +524,8 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
 
 pub fn list_sessions() -> Result<Vec<PathBuf>, String> {
     let root = crate::backup::backup_root();
-    crate::backup::ensure_backup_tree_secured(&root);
+    crate::backup::ensure_backup_tree_secured(&root)
+        .map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
     list_sessions_at(&root)
 }
 

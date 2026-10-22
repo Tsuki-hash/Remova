@@ -39,12 +39,16 @@ pub fn save_ai_config(
 }
 
 #[tauri::command]
-pub async fn ai_risk_brief(request: ai::RiskBriefInput) -> Result<Option<String>, String> {
+pub async fn ai_risk_brief(
+    request: ai::RiskBriefInput,
+    locale: Option<String>,
+) -> Result<Option<String>, String> {
     let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request))
+    let locale = locale.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || ai::risk_brief(&cfg, &request, &locale))
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
@@ -58,13 +62,15 @@ pub async fn ai_explain_items(
     app_name: String,
     publisher: String,
     items: Vec<ai::ExplainInput>,
+    locale: Option<String>,
 ) -> Result<Vec<ai::ExplainOutput>, String> {
     let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(vec![]);
     }
+    let locale = locale.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        ai::explain_items(&cfg, &app_name, &publisher, &items)
+        ai::explain_items(&cfg, &app_name, &publisher, &items, &locale)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -73,12 +79,16 @@ pub async fn ai_explain_items(
 }
 
 #[tauri::command]
-pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option<String>, String> {
+pub async fn ai_summarize_report(
+    request: ai::ReportBriefInput,
+    locale: Option<String>,
+) -> Result<Option<String>, String> {
     let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request))
+    let locale = locale.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || ai::summarize_report(&cfg, &request, &locale))
         .await
         .map_err(|e| e.to_string())?
         .map(Some)
@@ -87,13 +97,20 @@ pub async fn ai_summarize_report(request: ai::ReportBriefInput) -> Result<Option
 }
 
 #[tauri::command]
-pub async fn ai_parse_intent(text: String, app_names: Vec<String>) -> Result<ai::NlIntent, String> {
+pub async fn ai_parse_intent(
+    text: String,
+    app_names: Vec<String>,
+    locale: Option<String>,
+) -> Result<ai::NlIntent, String> {
     let cfg = ai::load_config()?;
     if !cfg.enabled {
         return Err("ai:parse_intent_failed::ai disabled".into());
     }
-    tauri::async_runtime::spawn_blocking(move || ai::parse_nl_intent(&cfg, &text, &app_names))
-        .await
-        .map_err(|e| format!("ai:parse_intent_failed::{e}"))?
-        .map_err(|e| format!("ai:parse_intent_failed::{e}"))
+    let locale = locale.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        ai::parse_nl_intent(&cfg, &text, &app_names, &locale)
+    })
+    .await
+    .map_err(|e| format!("ai:parse_intent_failed::{e}"))?
+    .map_err(|e| format!("ai:parse_intent_failed::{e}"))
 }

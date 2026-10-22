@@ -513,13 +513,80 @@ fn cache_put(key: u64, value: String) {
     }
 }
 
-fn normalize_base_url(u: &str, provider: &str) -> String {
-    let u = u.trim().trim_end_matches('/').to_string();
-    if u.is_empty() {
-        let (base, _) = provider_preset(provider);
-        return base.into();
+/// Parsed pieces of a configured endpoint, enough to police where a stored
+/// secret may be sent. Deliberately strict: anything unparseable is refused.
+struct Endpoint {
+    scheme: String,
+    host: String,
+    has_userinfo: bool,
+}
+
+fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Err("ai endpoint empty".into());
     }
-    u
+    let (scheme, rest) = text
+        .split_once("://")
+        .ok_or_else(|| "ai endpoint must be an absolute http(s) URL".to_string())?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("ai endpoint scheme not allowed: {scheme}"));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err("ai endpoint has no host".into());
+    }
+    // Userinfo (`user:pass@host`) can hide the real host from a naive reader and
+    // is never needed for a chat API.
+    let (has_userinfo, hostport) = match authority.rsplit_once('@') {
+        Some((_, hostport)) => (true, hostport),
+        None => (false, authority),
+    };
+    // Strip an optional port, keeping bracketed IPv6 literals intact.
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        let end = rest
+            .find(']')
+            .ok_or_else(|| "ai endpoint has an unterminated IPv6 host".to_string())?;
+        format!("[{}]", &rest[..end])
+    } else {
+        hostport.split(':').next().unwrap_or("").to_string()
+    };
+    if host.is_empty() {
+        return Err("ai endpoint has no host".into());
+    }
+    Ok(Endpoint {
+        scheme,
+        host: host.to_ascii_lowercase(),
+        has_userinfo,
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// A base URL is only usable when it cannot leak the API key in clear text.
+///
+/// Remote endpoints must be HTTPS. Plain HTTP is accepted only for an exact
+/// loopback host, which is how local model servers are addressed. Rejecting
+/// here — before any request is built — means a refused endpoint performs no
+/// network I/O at all.
+fn secure_base_url(raw: &str, provider: &str) -> Result<String, String> {
+    let trimmed = raw.trim().trim_end_matches('/').to_string();
+    let effective = if trimmed.is_empty() {
+        provider_preset(provider).0.to_string()
+    } else {
+        trimmed
+    };
+    let endpoint = parse_endpoint(&effective)?;
+    if endpoint.has_userinfo {
+        return Err("ai endpoint must not contain user information".into());
+    }
+    if endpoint.scheme == "http" && !is_loopback_host(&endpoint.host) {
+        return Err("ai endpoint must use https (http is only allowed for localhost)".into());
+    }
+    Ok(effective)
 }
 
 fn build_agent() -> ureq::Agent {
@@ -535,7 +602,9 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
     if key.is_empty() {
         return Err("anthropic api key empty".into());
     }
-    let base = normalize_base_url(&cfg.base_url, "anthropic");
+    // The key is about to be sent: refuse a cleartext remote endpoint before
+    // building the request.
+    let base = secure_base_url(&cfg.base_url, "anthropic")?;
     // Accept either ".../v1" or full host.
     let url = if base.ends_with("/v1") {
         format!("{base}/messages")
@@ -583,7 +652,7 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
     if needs_key && cfg.api_key.trim().is_empty() {
         return Err("ai api key empty".into());
     }
-    let base = normalize_base_url(&cfg.base_url, &cfg.provider);
+    let base = secure_base_url(&cfg.base_url, &cfg.provider)?;
     let url = format!("{base}/chat/completions");
     let body = serde_json::json!({
         "model": cfg.model.trim(),
@@ -659,14 +728,47 @@ const EXPLAIN_SYSTEM: &str =
 suggest_check 仅当 confidence=confirmed 且 risk!=high 时可为 true。\
 严格输出 JSON 数组，元素字段：path, summary, suggest_check。";
 
+const EXPLAIN_SYSTEM_EN: &str =
+    "You are a Windows deep-uninstall assistant. Using the supplied leftover \
+evidence, write 1-2 sentences in English per item: what it is, why it looks \
+like a leftover, and the usual impact of deleting it. Never invent facts \
+beyond the given paths. Set suggest_check true only when confidence=confirmed \
+and risk!=high. Output a strict JSON array with fields: path, summary, \
+suggest_check.";
+
+/// Normalize an IPC-supplied locale to the two supported UI languages. Anything
+/// unrecognized falls back to Chinese, which is the product default.
+fn normalize_locale(locale: &str) -> &'static str {
+    if locale.trim().to_ascii_lowercase().starts_with("en") {
+        "en"
+    } else {
+        "zh"
+    }
+}
+
+/// Pick the prompt matching the active UI language, so an English UI never gets
+/// a reply the prompt forced into Chinese.
+fn localized_system<'a>(locale: &str, zh: &'a str, en: &'a str) -> &'a str {
+    if normalize_locale(locale) == "en" {
+        en
+    } else {
+        zh
+    }
+}
+
 pub fn explain_items(
     cfg: &AiConfig,
     app_name: &str,
     publisher: &str,
     items: &[ExplainInput],
+    locale: &str,
 ) -> Result<Vec<ExplainOutput>, String> {
-    explain_items_with_completion(cfg, app_name, publisher, items, |user| {
-        chat_completion(cfg, EXPLAIN_SYSTEM, user)
+    explain_items_with_completion(cfg, app_name, publisher, items, locale, |user| {
+        chat_completion(
+            cfg,
+            localized_system(locale, EXPLAIN_SYSTEM, EXPLAIN_SYSTEM_EN),
+            user,
+        )
     })
 }
 
@@ -675,6 +777,7 @@ fn explain_items_with_completion(
     app_name: &str,
     publisher: &str,
     items: &[ExplainInput],
+    locale: &str,
     mut complete: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<Vec<ExplainOutput>, String> {
     if items.is_empty() {
@@ -688,10 +791,16 @@ fn explain_items_with_completion(
     for (idx, it) in items.iter().enumerate() {
         // Cache key includes risk + publisher: a verdict cached for a low-risk
         // classification (or another publisher's identical path) must never be
-        // replayed for a high-risk one.
+        // replayed for a high-risk one. The locale is part of the key as well —
+        // otherwise switching language replays the previous language's text.
         let key = fnv1a64(&format!(
-            "{app_name}|{publisher}|{}|{}|{}|{}|{}",
-            it.path, it.kind, it.confidence, it.risk, it.reason
+            "{app_name}|{publisher}|{}|{}|{}|{}|{}|{}",
+            it.path,
+            it.kind,
+            it.confidence,
+            it.risk,
+            it.reason,
+            normalize_locale(locale)
         ));
         if let Some(cached) = cache_get(key) {
             if let Ok(mut parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
@@ -787,8 +896,13 @@ fn explain_items_with_completion(
                 suggest_check: p.suggest_check && orig.risk.as_str() != "high",
             };
             let key = fnv1a64(&format!(
-                "{app_name}|{publisher}|{}|{}|{}|{}|{}",
-                item.path, orig.kind, orig.confidence, orig.risk, orig.reason
+                "{app_name}|{publisher}|{}|{}|{}|{}|{}|{}",
+                item.path,
+                orig.kind,
+                orig.confidence,
+                orig.risk,
+                orig.reason,
+                normalize_locale(locale)
             ));
             if let Ok(s) = serde_json::to_string(&item) {
                 cache_put(key, s);
@@ -822,11 +936,22 @@ const REPORT_SYSTEM: &str =
     "你是 Windows 卸载报告解读助手。用中文写 3-5 句：删了什么、失败怎么办、\
 是否建议重启、能否从备份还原。语气克制。不要输出 Markdown 标题。";
 
-pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, String> {
+const RISK_SYSTEM_EN: &str = "You are a Windows uninstall risk explainer. Write 2-3 sentences in \
+English: what this operation does, what it may affect, and which items are \
+never deleted by default. Keep the tone measured and actionable. Do not emit \
+Markdown headings.";
+
+const REPORT_SYSTEM_EN: &str =
+    "You are a Windows uninstall report explainer. Write 3-5 sentences in \
+English: what was deleted, what to do about failures, whether a restart is \
+advised, and whether the backup can restore it. Keep the tone measured. Do not \
+emit Markdown headings.";
+
+pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Result<String, String> {
     // publisher is part of the prompt — without it two products from
     // different vendors with the same shape share a 7-day cache entry.
     let key = fnv1a64(&format!(
-        "risk|{}|{}|{}|{}|{}|{}|{}|{}",
+        "risk|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         input.app_name,
         input.publisher,
         input.action,
@@ -834,7 +959,8 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, Stri
         input.has_service,
         input.has_run_key,
         input.has_shared_hint,
-        serde_json::to_string(&input.kind_counts).unwrap_or_default()
+        serde_json::to_string(&input.kind_counts).unwrap_or_default(),
+        normalize_locale(locale)
     ));
     if let Some(c) = cache_get(key) {
         return Ok(c);
@@ -850,7 +976,11 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput) -> Result<String, Stri
         input.has_run_key,
         input.has_shared_hint
     );
-    let text = chat_completion(cfg, RISK_SYSTEM, &user)?;
+    let text = chat_completion(
+        cfg,
+        localized_system(locale, RISK_SYSTEM, RISK_SYSTEM_EN),
+        &user,
+    )?;
     cache_put(key, text.clone());
     Ok(text)
 }
@@ -898,14 +1028,27 @@ fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput) -> String {
     )
 }
 
-pub fn summarize_report(cfg: &AiConfig, input: &ReportBriefInput) -> Result<String, String> {
+pub fn summarize_report(
+    cfg: &AiConfig,
+    input: &ReportBriefInput,
+    locale: &str,
+) -> Result<String, String> {
     let user = report_user_prompt(cfg, input);
-    // Cache exactly the privacy-aware payload; changing permission invalidates it.
-    let key = fnv1a64(&format!("report|{}|{user}", cfg.allow_cloud_paths));
+    // Cache exactly the privacy-aware payload; changing permission invalidates
+    // it, and so does switching the UI language.
+    let key = fnv1a64(&format!(
+        "report|{}|{}|{user}",
+        cfg.allow_cloud_paths,
+        normalize_locale(locale)
+    ));
     if let Some(c) = cache_get(key) {
         return Ok(c);
     }
-    let text = chat_completion(cfg, REPORT_SYSTEM, &user)?;
+    let text = chat_completion(
+        cfg,
+        localized_system(locale, REPORT_SYSTEM, REPORT_SYSTEM_EN),
+        &user,
+    )?;
     cache_put(key, text.clone());
     Ok(text)
 }
@@ -949,10 +1092,19 @@ filter 字段可选：name_like（关键词）、publisher、size_gt_kb（整数
 只输出一个 JSON 对象，不要解释。字段：action, filter, include_leftovers, note。\
 note 用一句话复述计划（中文）。";
 
+const INTENT_SYSTEM_EN: &str = "You are the intent parser for a Windows uninstall assistant. \
+Parse the user's instruction (Chinese or English) into JSON. Only these action \
+values are allowed: list|analyze|batch_uninstall|force_clean. Optional filter \
+fields: name_like (keyword), publisher, size_gt_KB (integer), installed_after \
+(YYYY-MM-DD). Parse dangerous actions normally; the app layer confirms them \
+separately. Output exactly one JSON object with no explanation. Fields: action, \
+filter, include_leftovers, note. Write note in one English sentence.";
+
 pub fn parse_nl_intent(
     cfg: &AiConfig,
     user_text: &str,
     app_names: &[String],
+    locale: &str,
 ) -> Result<NlIntent, String> {
     // F-15: this was the only AI call that sent free text and app names raw,
     // bypassing both `scrub_cloud_text` and the `allow_cloud_paths` gate.
@@ -973,7 +1125,11 @@ pub fn parse_nl_intent(
         scrubbed_text,
         names.join(" | ")
     );
-    let text = chat_completion(cfg, INTENT_SYSTEM, &user)?;
+    let text = chat_completion(
+        cfg,
+        localized_system(locale, INTENT_SYSTEM, INTENT_SYSTEM_EN),
+        &user,
+    )?;
     let cleaned = strip_code_fence(&text);
     let mut intent: NlIntent =
         serde_json::from_str(&cleaned).map_err(|e| format!("ai intent parse failed::{e}"))?;
@@ -988,6 +1144,41 @@ pub fn parse_nl_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleartext_remote_endpoints_are_refused_before_any_request() {
+        for bad in [
+            "http://api.example.com/v1",
+            "http://192.168.1.10:11434/v1",
+            "https://user:pass@api.example.com/v1",
+            "http://user@example.com/v1",
+            "ftp://api.example.com/v1",
+            "api.example.com/v1",
+            "http://localhost.evil.com/v1",
+            "http://127.0.0.1.evil.com/v1",
+        ] {
+            assert!(
+                secure_base_url(bad, "openai").is_err(),
+                "{bad} must be refused"
+            );
+        }
+        for ok in [
+            "https://api.example.com/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:11434/v1",
+            "http://[::1]:11434/v1",
+        ] {
+            assert!(
+                secure_base_url(ok, "openai").is_ok(),
+                "{ok} must be allowed"
+            );
+        }
+        // An empty base falls back to the provider preset, which is HTTPS.
+        assert_eq!(
+            secure_base_url("", "openai").unwrap(),
+            provider_preset("openai").0
+        );
+    }
 
     #[test]
     fn checked_config_transactions_preserve_unreadable_or_corrupt_originals() {
@@ -1202,6 +1393,7 @@ mod tests {
             "privacy-spaced-paths-fixture",
             "Vendor",
             &inputs,
+            "zh",
             |user| {
                 calls += 1;
                 for secret in secrets {
@@ -1365,8 +1557,13 @@ mod tests {
             })
             .collect();
         let mut batches = vec![];
-        let out =
-            explain_items_with_completion(&cfg, "batching-cache-test", "Vendor", &inputs, |user| {
+        let out = explain_items_with_completion(
+            &cfg,
+            "batching-cache-test",
+            "Vendor",
+            &inputs,
+            "zh",
+            |user| {
                 let json = user
                     .split_once("候选(脱敏路径):\n")
                     .unwrap()
@@ -1390,8 +1587,9 @@ mod tests {
                     })
                     .collect();
                 Ok(serde_json::to_string(&echoed).unwrap())
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(batches, [12, 12, 1]);
         assert_eq!(out.len(), inputs.len());
         // F-22: the caller's order is the contract, even though the model
@@ -1405,11 +1603,15 @@ mod tests {
             assert_eq!(result.summary, sanitize_path(&input.path, false));
             assert_eq!(result.suggest_check, input.risk != "high");
         }
-        let cached =
-            explain_items_with_completion(&cfg, "batching-cache-test", "Vendor", &inputs, |_| {
-                panic!("all 25 explanations must hit cache, including the last batch")
-            })
-            .unwrap();
+        let cached = explain_items_with_completion(
+            &cfg,
+            "batching-cache-test",
+            "Vendor",
+            &inputs,
+            "zh",
+            |_| panic!("all 25 explanations must hit cache, including the last batch"),
+        )
+        .unwrap();
         assert_eq!(cached.len(), inputs.len());
         assert_eq!(
             cached.iter().map(|o| o.path.as_str()).collect::<Vec<_>>(),
@@ -1450,6 +1652,7 @@ mod tests {
             "collision-cache-test",
             "Vendor",
             &inputs,
+            "zh",
             |_| Ok(serde_json::to_string(&outputs).unwrap()),
         )
         .unwrap();

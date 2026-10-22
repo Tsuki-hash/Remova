@@ -103,7 +103,6 @@ fn sid_to_string(sid: windows::Win32::Security::PSID) -> Option<String> {
 
 #[cfg(windows)]
 fn apply_private_acl(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
@@ -112,12 +111,9 @@ fn apply_private_acl(path: &Path) -> std::io::Result<()> {
         PSECURITY_DESCRIPTOR,
     };
 
-    // Include the invoking user explicitly: an elevated process creates files
-    // owned by Administrators, and an owner-rights (OW) ACE alone would lock a
-    // later non-elevated restore out of its own backup.
-    let user_ace = current_user_sid()
-        .map(|sid| format!("(A;OICI;FA;;;{sid})"))
-        .unwrap_or_else(|| "(A;OICI;FA;;;OW)".to_string());
+    let sid = current_user_sid()
+        .ok_or_else(|| std::io::Error::other("backup current user SID unavailable"))?;
+    let user_ace = format!("(A;OICI;FA;;;{sid})");
     let sddl = format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){user_ace}");
     let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut sd = PSECURITY_DESCRIPTOR::default();
@@ -130,7 +126,7 @@ fn apply_private_acl(path: &Path) -> std::io::Result<()> {
         )
     }
     .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let wide = crate::fsutil::wide_path_for_security(path);
     let ok = unsafe {
         SetFileSecurityW(
             PCWSTR(wide.as_ptr()),
@@ -154,46 +150,52 @@ fn apply_private_acl(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn secure_tree(path: &Path, depth: u8, budget: &mut u32) {
-    if *budget == 0 || depth > 8 {
-        return;
+fn secure_tree(path: &Path, depth: u8, budget: &mut u32) -> std::io::Result<()> {
+    if *budget == 0 {
+        return Err(std::io::Error::other("backup ACL walk budget exhausted"));
+    }
+    if depth > 64 {
+        return Err(std::io::Error::other("backup ACL walk depth exceeded"));
     }
     *budget -= 1;
-    let _ = apply_private_acl(path);
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return;
+    // A root that does not exist yet has nothing to protect and is not an
+    // error: `create_session` secures the root before the first session exists.
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
     };
+    apply_private_acl(path)?;
     if !meta.is_dir() || meta.file_type().is_symlink() {
-        return;
+        return Ok(());
     }
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        secure_tree(&entry.path(), depth + 1, budget);
+    for entry in std::fs::read_dir(path)? {
+        secure_tree(&entry?.path(), depth + 1, budget)?;
     }
+    Ok(())
 }
 
-/// Secure new and pre-existing backups once per process. New files inherit the
-/// session-directory DACL; the one-time walk fixes sessions created before the
-/// ACL change.
-pub(crate) fn ensure_backup_tree_secured(root: &Path) {
-    secure_backup_tree_once(root);
+/// Secure new and pre-existing backups once per process. Failed or incomplete
+/// walks are not cached, so a later call can retry after permissions are fixed.
+pub(crate) fn ensure_backup_tree_secured(root: &Path) -> std::io::Result<()> {
+    secure_backup_tree_once(root)
 }
 
-fn secure_backup_tree_once(root: &Path) {
+fn secure_backup_tree_once(root: &Path) -> std::io::Result<()> {
     static SECURED: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
     > = std::sync::OnceLock::new();
     let seen = SECURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-    let Ok(mut seen) = seen.lock() else {
-        return;
-    };
-    if !seen.insert(root.to_path_buf()) {
-        return;
+    let mut seen = seen
+        .lock()
+        .map_err(|_| std::io::Error::other("backup ACL state poisoned"))?;
+    if seen.contains(root) {
+        return Ok(());
     }
-    let mut budget = 10_000u32;
-    secure_tree(root, 0, &mut budget);
+    let mut budget = 200_000u32;
+    secure_tree(root, 0, &mut budget)?;
+    seen.insert(root.to_path_buf());
+    Ok(())
 }
 
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
@@ -216,7 +218,7 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     // Claim the session dir with create_dir — never exists-then-reuse (race).
     let root = backup_root();
     fs::create_dir_all(&root)?;
-    secure_backup_tree_once(&root);
+    secure_backup_tree_once(&root)?;
     let mut claimed = None;
     for n in 0..100u32 {
         let dir = if n == 0 {
@@ -241,7 +243,7 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     })?;
     let _pins = crate::fsutil::create_dirs_pinned(&dir.join("files"))?;
     let _pins_reg = crate::fsutil::create_dirs_pinned(&dir.join("registry"))?;
-    secure_backup_tree_once(&dir);
+    secure_backup_tree_once(&dir)?;
     Ok(dir)
 }
 
@@ -413,7 +415,7 @@ fn publish_stage(private: &Path, session: &Path) -> Result<(), String> {
     // Moved files keep the private stage's SYSTEM/Administrators-only DACL;
     // grant the invoking owner access so restore can read them.
     let mut budget = 200_000u32;
-    secure_tree(session, 0, &mut budget);
+    secure_tree(session, 0, &mut budget).map_err(|e| format!("backup ACL securing failed: {e}"))?;
     Ok(())
 }
 
@@ -997,6 +999,60 @@ mod tests {
 
 #[cfg(all(test, windows))]
 mod acl_tests {
+    use super::*;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        GetSecurityDescriptorControl, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+    };
+
+    /// Read the object's real DACL back and return (protected, allow SIDs).
+    fn read_dacl(path: &Path) -> (bool, Vec<String>) {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            GetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(&mut dacl),
+                None,
+                &mut sd,
+            )
+            .ok()
+            .expect("GetNamedSecurityInfoW must succeed on a fixture path");
+            assert!(!dacl.is_null(), "fixture must carry an explicit DACL");
+
+            let mut control = 0u16;
+            let mut revision = 0u32;
+            GetSecurityDescriptorControl(sd, &mut control, &mut revision).unwrap();
+            let protected = control & SE_DACL_PROTECTED.0 != 0;
+
+            let mut sids = Vec::new();
+            for i in 0..(*dacl).AceCount {
+                let mut ace: *mut core::ffi::c_void = std::ptr::null_mut();
+                windows::Win32::Security::GetAce(dacl, i.into(), &mut ace).unwrap();
+                let header = &*(ace as *const windows::Win32::Security::ACE_HEADER);
+                if header.AceType != 0 {
+                    continue;
+                }
+                let allow = &*(ace as *const windows::Win32::Security::ACCESS_ALLOWED_ACE);
+                let sid = PSID(std::ptr::addr_of!(allow.SidStart).cast_mut().cast());
+                if let Some(text) = sid_to_string(sid) {
+                    sids.push(text);
+                }
+            }
+            let _ = LocalFree(HLOCAL(sd.0.cast()));
+            (protected, sids)
+        }
+    }
+
     #[test]
     fn private_acl_can_be_applied_to_a_backup_directory() {
         let tmp = crate::test_support::TempDir::new("backup-acl");
@@ -1005,5 +1061,83 @@ mod acl_tests {
         std::fs::write(dir.join("files").join("sample.bin"), b"x").unwrap();
         super::apply_private_acl(&dir).unwrap();
         super::apply_private_acl(&dir.join("files")).unwrap();
+    }
+
+    #[test]
+    fn the_applied_acl_is_read_back_with_the_current_user_and_no_inheritance() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-read");
+        let dir = tmp.path().join("Backup");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files").join("sample.bin"), b"payload").unwrap();
+        super::apply_private_acl(&dir).unwrap();
+
+        let (protected, sids) = read_dacl(&dir);
+        assert!(protected, "the backup DACL must not inherit BUILTIN\\Users");
+        let me = current_user_sid().expect("current user SID must be resolvable");
+        assert!(
+            sids.iter().any(|s| s == &me),
+            "the invoking user must be able to read back its own backup: {sids:?}"
+        );
+        assert!(
+            sids.iter().any(|s| s == "S-1-5-18"),
+            "SYSTEM must retain access: {sids:?}"
+        );
+        assert!(
+            sids.iter().any(|s| s == "S-1-5-32-544"),
+            "Administrators must retain access: {sids:?}"
+        );
+        assert!(
+            !sids.iter().any(|s| s == "S-1-5-32-545"),
+            "BUILTIN\\Users must not be granted access: {sids:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_root_is_tolerated_but_a_real_failure_is_reported() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-fail");
+        // `create_session` secures the root before the first session exists, so
+        // an absent root is not an error.
+        let missing = tmp.path().join("does-not-exist");
+        let mut budget = 10u32;
+        assert!(secure_tree(&missing, 0, &mut budget).is_ok());
+
+        // A path that exists but cannot be re-secured must surface the error
+        // rather than being silently skipped. A file with an invalid SDDL target
+        // is hard to fabricate portably, so the guaranteed failure used here is
+        // an exhausted budget on a real tree.
+        let dir = tmp.path().join("Backup");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut exhausted = 0u32;
+        assert!(secure_tree(&dir, 0, &mut exhausted).is_err());
+    }
+
+    #[test]
+    fn an_exhausted_budget_stops_the_walk_with_an_error() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-budget");
+        let dir = tmp.path().join("Backup");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        let mut budget = 0u32;
+        assert!(secure_tree(&dir, 0, &mut budget).is_err());
+    }
+
+    #[test]
+    fn deep_backup_trees_are_fully_secured() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-deep");
+        let mut dir = tmp.path().join("Backup");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Deeper than the old depth cap, so the walk must not stop early.
+        for i in 0..12 {
+            dir = dir.join(format!("d{i}"));
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let leaf = dir.join("payload.bin");
+        std::fs::write(&leaf, b"deep").unwrap();
+
+        let root = tmp.path().join("Backup");
+        ensure_backup_tree_secured(&root).unwrap();
+        let (protected, sids) = read_dacl(&leaf);
+        assert!(protected, "a deep payload must not keep inherited access");
+        let me = current_user_sid().unwrap();
+        assert!(sids.iter().any(|s| s == &me), "deep payload SIDs: {sids:?}");
     }
 }
