@@ -60,9 +60,51 @@ pub(crate) fn lock_backup_env() -> crate::test_support::EnvLock {
 /// `BUILTIN\Users` read access, which exposed copied files and registry exports
 /// to other local accounts.
 #[cfg(windows)]
+fn current_user_sid() -> Option<String> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+        if len == 0 {
+            let _ = CloseHandle(token);
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let ok = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as *mut _),
+            len,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        ok.ok()?;
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        sid_to_string(user.User.Sid)
+    }
+}
+
+#[cfg(windows)]
+fn sid_to_string(sid: windows::Win32::Security::PSID) -> Option<String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    let mut raw = windows::core::PWSTR::null();
+    unsafe {
+        ConvertSidToStringSidW(sid, &mut raw).ok()?;
+        let text = raw.to_string().ok();
+        let _ = LocalFree(HLOCAL(raw.0.cast()));
+        text
+    }
+}
+
+#[cfg(windows)]
 fn apply_private_acl(path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::{w, PCWSTR};
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::{
@@ -70,10 +112,18 @@ fn apply_private_acl(path: &Path) -> std::io::Result<()> {
         PSECURITY_DESCRIPTOR,
     };
 
+    // Include the invoking user explicitly: an elevated process creates files
+    // owned by Administrators, and an owner-rights (OW) ACE alone would lock a
+    // later non-elevated restore out of its own backup.
+    let user_ace = current_user_sid()
+        .map(|sid| format!("(A;OICI;FA;;;{sid})"))
+        .unwrap_or_else(|| "(A;OICI;FA;;;OW)".to_string());
+    let sddl = format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){user_ace}");
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"),
+            PCWSTR(sddl_wide.as_ptr()),
             1,
             &mut sd,
             None,
