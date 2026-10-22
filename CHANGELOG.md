@@ -51,6 +51,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **交互与本地化**：占用/结束进程错误本地化；取消重扫后阶段条不再误报报告出现；More 工具卡补 ARIA 展开状态与面板区域。
 - **发布流程**：tag 必须位于 main 且 CI 取 push 运行；发布资产恢复 `SHA256SUMS.txt`；版本门禁增加 Cargo.lock；文档说明手动升级与未签名校验。
 
+- **1641 全局重启门禁**：残留删除/损坏记录/防火墙删除统一受会话级（持久化到本地状态文件）的 reboot pending 门禁约束，深度卸载与批量重试不再绕过；真实重启后自动失效。
+- **损坏 MSI 与预览 fail closed**：`try_exists()` 的 `Err` 不再当作“路径不存在”，避免 ACL 拒绝时误判并删除卸载记录。
+- **备份隐私加固**：Safety Vault 目录/会话设置私有 DACL（SYSTEM/Administrators + 所有者），多用户机器上其他账户不再可读备份。
+- **注册表保护补洞**：显式 `WOW6432Node` 先规范化再比对，不能绕过 Windows/Cryptography 保护前缀。
+- **清理状态与锁**：报告打开期间保留应用身份；自动重扫在 `busyRef` 释放后启动；卸载后锁终止根由后端授权的安装根兜底。
+- **性能**：每次分析只枚举一次 Services 快照；备份改为同卷 rename 发布（失败回退复制）；空闲估价增加全局条目预算；批量分析接入可取消的 scan task。
+- **可用性**：系统语言初始化、1641 提示与 `reboot_pending` 状态、主列表键盘激活、提权时拒绝 HKCU 卸载并在确认框展示命令；图标/大小/open 探针拒绝 UNC/设备路径；窗口最小高度调整为 560。
+
+
 ### 安全
 
 - **安装监视器不再把 Remova 自己的封印密钥当成安装残留。** `%ProgramData%\RemovaSealKeys`（`seal.key`、`initialized.v2`、`stage_*`）与 `%ProgramData%\Remova`、`%LOCALAPPDATA%\Remova` 一起整组排除，并按路径段大小写不敏感比较；此前一次点击即可删除 `seal.key`，让全部安全备份永久无法还原。

@@ -81,12 +81,12 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | Artifact | Notes |
 |---|---|
 | `Remova_*_x64-setup.exe` | NSIS installer (recommended) |
-| `Remova_*_x64_zh-CN.msi` | MSI installer |
+| `Remova_*_x64_zh-CN.msi` | MSI installer (per-machine, Chinese-only wizard; non-admin needs UAC elevation) |
 | `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
 Requires Windows 10 / 11 (x64).
 
-> **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; per-user backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
+> **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 
 ---
 

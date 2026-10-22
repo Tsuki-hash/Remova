@@ -88,7 +88,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | 安装包 | 说明 |
 |---|---|
 | `Remova_*_x64-setup.exe` | NSIS 安装程序（推荐） |
-| `Remova_*_x64_zh-CN.msi` | MSI 安装程序 |
+| `Remova_*_x64_zh-CN.msi` | MSI 安装程序（per-machine，仅中文向导；非管理员需 UAC 提权） |
 | `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
 系统要求：Windows 10 / 11（x64）。
@@ -177,7 +177,7 @@ Remova/
 └── README.en.md         # English
 ```
 
-> 版本号以 `package.json` 的 `version` 为准；`Cargo.toml` / `tauri.conf.json` / `package-lock.json` 由 `npm run check-versions` 对齐。
+> 版本号以 `package.json` 的 `version` 为准；`Cargo.toml` / `Cargo.lock` / `tauri.conf.json` / `package-lock.json` 由 `npm run check-versions` 对齐。
 
 ---
 
