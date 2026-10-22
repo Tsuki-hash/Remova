@@ -245,9 +245,9 @@ export function useCleanupHandlers({
         setError(msg);
         setVerifyRows(null);
         setAiReportNote(null);
-        // Keep the post-uninstall residual state: this abort is a cleanup
-        // failure, not a fresh install state. Clearing it re-arms the official
-        // uninstaller for an app that was already uninstalled.
+        // A 1641 abort still means the official uninstaller succeeded. Keep the
+        // post-uninstall state so a retry never re-runs the uninstaller.
+        setResidualFromUninstall(r.uninstall_ok || residualFromUninstall);
         void refreshApps();
         return;
       }

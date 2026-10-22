@@ -226,10 +226,11 @@ export function useAnalyzeFlow({
         await new Promise((r) => setTimeout(r, 280));
         setUninstallStage("official");
         const r = await api.officialUninstall(app);
+        const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         if (!r.had_command) {
           toast.info(strings.uninstallNoCmd);
         } else if (r.ok) {
-          toast.success(strings.uninstallOk);
+          toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
         } else {
           uninstallFailToast(r.message, strings);
         }
@@ -239,7 +240,9 @@ export function useAnalyzeFlow({
           setSelectedPaths(new Set());
           setResidualFromUninstall(true);
         }
-        if (r.had_command && r.ok && checked) {
+        // MSI 1641 already started a restart: scanning is harmless, but offering
+        // residual cleanup now would delete while the shutdown is pending.
+        if (r.had_command && r.ok && checked && !rebootPending) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
  // arm the residual flag — the post-uninstall rescan must
@@ -327,8 +330,9 @@ const openOfficialOnly = useCallback(
       busyRef.current = true;
       try {
         const r = await api.officialUninstall(app);
+        const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
-        else if (r.ok) toast.success(strings.uninstallOk);
+        else if (r.ok) toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
         else uninstallFailToast(r.message, strings);
         if (r.had_command && r.ok) {
           setReport(null);
@@ -337,7 +341,7 @@ const openOfficialOnly = useCallback(
           setResidualFromUninstall(true);
         }
  // default-on rescan after successful official uninstall only.
-        if (r.had_command && r.ok && loadRescanAfterUninstall()) {
+        if (r.had_command && r.ok && !rebootPending && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
           // Same contract as startUninstall's rescan: the post-uninstall
           // pass cleans leftovers WITHOUT re-running the official

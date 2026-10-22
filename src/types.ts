@@ -160,6 +160,8 @@ export type OfficialUninstallResult = {
   ok: boolean;
   message: string;
   had_command: boolean;
+  /** MSI 1641: the uninstaller already initiated a restart. */
+  reboot_initiated?: boolean;
 };
 
 export type AiConfigView = {

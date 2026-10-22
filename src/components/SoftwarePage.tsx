@@ -143,13 +143,14 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
   const report = p.report;
   const reportApp = report ? findReportApp(report, p.apps, p.selected) : undefined;
-  // Only a completed official uninstall may set the "uninstall finished" state
-  // when the user rescans; dry-run/aborted/skipped reports must not.
+  // A completed official uninstall may set the "uninstall finished" state when
+  // the user rescans. `uninstall_ok` also covers a 1641 abort (official
+  // uninstaller succeeded, residual deletion was postponed), while a failed
+  // uninstall/backup abort has `uninstall_ok === false`.
   const rescanAfterUninstall = Boolean(
     report &&
       "uninstall_ok" in report &&
       !report.dry_run &&
-      !report.aborted &&
       report.uninstall_ok,
   );
   return (

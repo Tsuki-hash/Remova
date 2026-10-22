@@ -26,6 +26,8 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("tool cache (dev)", "scan")).toBe(L.toolcacheTitle);
   expect(backendText("Run startup: Vendor", "scan")).toBe(L.linkedStartup);
   expect(backendText("uninstaller finished (reboot required): vendor.exe")).toBe(L.backendRebootRequired);
+  expect(backendText("official uninstaller initiated reboot; residual cleanup skipped")).toBe(L.backendRebootInitiated);
+  expect(backendText("system reboot pending; residual cleanup postponed")).toBe(L.backendRebootInitiated);
   expect(backendText("operation failed: process image changed; refresh")).toBe(L.lockImageChanged);
   expect(backendText("operation failed: process no longer holds this path")).toBe(L.lockNoLongerHolds);
   expect(backendText("operation failed: path is not from the latest cleanup")).toBe(L.lockTargetStale);

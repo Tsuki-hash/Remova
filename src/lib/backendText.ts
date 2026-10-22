@@ -52,7 +52,10 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   };
   if (Object.hasOwn(exact, raw)) return exact[raw]!;
   if (raw.startsWith("uninstaller finished (reboot required): ")) return L.backendRebootRequired;
-  if (raw === "official uninstaller initiated reboot; residual cleanup skipped")
+  if (
+    raw === "official uninstaller initiated reboot; residual cleanup skipped" ||
+    raw === "system reboot pending; residual cleanup postponed"
+  )
     return L.backendRebootInitiated;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;

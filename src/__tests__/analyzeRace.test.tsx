@@ -3,15 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
 
-const { analyzeMock, suggestMock } = vi.hoisted(() => ({
+const { analyzeMock, suggestMock, officialMock } = vi.hoisted(() => ({
   analyzeMock: vi.fn(),
   suggestMock: vi.fn(async () => []),
+  officialMock: vi.fn(),
 }));
 
 vi.mock("../lib/api", () => ({
-  api: { analyze: analyzeMock, suggestIgnoreRules: suggestMock,
+  api: { analyze: analyzeMock, suggestIgnoreRules: suggestMock, officialUninstall: officialMock,
     beginAssociationScan: vi.fn(async () => 1), cancelAssociationScan: vi.fn(async () => {}),
     associationScanProgress: vi.fn(async () => null) },
+}));
+vi.mock("../lib/confirm", () => ({
+  requestConfirmEx: vi.fn(async () => ({ ok: true, checked: true })),
 }));
 
 import { useAnalyzeFlow } from "../hooks/useAnalyzeFlow";
@@ -63,6 +67,7 @@ describe("useAnalyzeFlow request sequencing", () => {
 
   beforeEach(() => {
     analyzeMock.mockReset();
+    officialMock.mockReset();
     suggestMock.mockClear();
     captured = { scan: null, scanning: false, selectedPaths: new Set(), selected: null };
     flow = {
@@ -276,5 +281,32 @@ describe("useAnalyzeFlow request sequencing", () => {
       refreshApps: async () => {}, busyRef }));
     await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
     expect(busyRef.current, "startUninstall is still holding the ref").toBe(true);
+  });
+
+  it("skips the post-uninstall rescan when the uninstaller initiated a reboot", async () => {
+    officialMock.mockResolvedValue({
+      ok: true, had_command: true, reboot_initiated: true,
+      message: "uninstaller finished (reboot required): msiexec.exe",
+    });
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    await act(async () => { await result.current.startUninstall(app("RebootApp")); });
+    expect(analyzeMock).not.toHaveBeenCalled();
+  });
+
+  it("rescans after a normal official uninstall when the preference is on", async () => {
+    officialMock.mockResolvedValue({
+      ok: true, had_command: true, reboot_initiated: false,
+      message: "uninstaller finished: setup.exe",
+    });
+    analyzeMock.mockResolvedValue(scan("NormalApp"));
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    await act(async () => { await result.current.startUninstall(app("NormalApp")); });
+    // The scan itself is the observable effect of analyze({fromUninstall}).
+    expect(analyzeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "NormalApp" }),
+      expect.anything(),
+    );
   });
 });

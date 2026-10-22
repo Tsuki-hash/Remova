@@ -31,6 +31,13 @@ function reason(message: string) {
   return known;
 }
 
+/** Containing directory for a failed file in an app-less cleanup; drive roots
+ * are excluded so the end-process action never authorizes a whole volume. */
+function parentDirOf(path: string): string | undefined {
+  const cut = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return cut > 2 ? path.slice(0, cut) : undefined;
+}
+
 function ResultGroup({
   label,
   items,
@@ -63,8 +70,8 @@ function ResultGroup({
       }));
     }
   };
-  const endAndRetry = async (itemPath: string, proc: LockingProcess) => {
-    if (!lockRoot || !proc.path || (!onRetry && !onRescan)) return;
+  const endAndRetry = async (itemPath: string, proc: LockingProcess, root: string | undefined) => {
+    if (!root || !proc.path || (!onRetry && !onRescan)) return;
     const ok = await requestConfirmEx({
       title: L.lockEndTitle,
       message: L.lockEndMessage(proc.name, proc.pid),
@@ -129,10 +136,12 @@ function ResultGroup({
         const canLocate = ["file", "dir", "path"].includes(item.kind) && /^[a-z]:[\\/]/i.test(item.path)
           && !item.path.includes('"') && ![...item.path].some(char => char.charCodeAt(0) < 32);
         const lock = lockInfo[item.path];
-        // App cleanups authorize the install root; orphan cleanups authorize the
-        // reported directory itself. The backend map remains authoritative.
-        const effectiveLockRoot =
-          lockRoot || (item.kind === "dir" ? item.path : undefined);
+        // App cleanups authorize the install root; orphan cleanups authorize
+        // the reported directory (or the failed file's parent). The backend
+        // authorization map remains authoritative.
+        const fallbackRoot =
+          item.kind === "dir" ? item.path : item.kind === "file" ? parentDirOf(item.path) : undefined;
+        const effectiveLockRoot = lockRoot || fallbackRoot;
         return <div key={`${item.path}-${index}`} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
           <code style={{ display: "block", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.path}</code>
           {item.message && <div>{reason(item.message)}</div>}
@@ -157,7 +166,7 @@ function ResultGroup({
                           <button
                             style={{ ...css.btnGhost, height: 24, marginLeft: 6 }}
                             disabled={lock.busyPid !== undefined}
-                            onClick={() => void endAndRetry(item.path, proc)}
+                            onClick={() => void endAndRetry(item.path, proc, effectiveLockRoot)}
                           >
                             {onRetry ? L.lockEndRetry : L.lockEndRescan}
                           </button>
