@@ -4,7 +4,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('remova-release-policy-test-' + [Guid]::NewGuid().ToString('N'))
 $names = @('SIGNPATH_ENABLED', 'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG',
     'SIGNPATH_SIGNING_POLICY_SLUG', 'SIGNPATH_CERTIFICATE_THUMBPRINT', 'TAURI_UPDATER_PUBLIC_KEY',
-    'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'GITHUB_OUTPUT', 'GITHUB_REF_NAME', 'GITHUB_REPOSITORY')
+    'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'UPDATER_SIGNING_ENABLED',
+    'GITHUB_OUTPUT', 'GITHUB_REF_NAME', 'GITHUB_REPOSITORY')
 $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $passed = 0
@@ -72,8 +73,26 @@ try {
     $passed++
 
     $env:TAURI_SIGNING_PRIVATE_KEY = ''
-    Assert-Throws { & $prepare } 'TAURI_SIGNING_PRIVATE_KEY'
+    Assert-Throws { & $prepare } 'all three settings'
     $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
+    $passed++
+
+    # Unsigned/manual mode: with none of the updater settings present the
+    # release must still be prepared, and it must advertise updater-enabled=false
+    # so finalize omits the updater assets instead of failing.
+    $savedPublic = $env:TAURI_UPDATER_PUBLIC_KEY
+    $savedPrivate = $env:TAURI_SIGNING_PRIVATE_KEY
+    $savedPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+    [Environment]::SetEnvironmentVariable('TAURI_UPDATER_PUBLIC_KEY', $null)
+    [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY', $null)
+    [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', $null)
+    & $prepare
+    if ((Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) -notmatch 'updater-enabled=false') {
+        throw 'Unsigned/manual mode must report updater-enabled=false.'
+    }
+    $env:TAURI_UPDATER_PUBLIC_KEY = $savedPublic
+    $env:TAURI_SIGNING_PRIVATE_KEY = $savedPrivate
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $savedPassword
     $passed++
 
     # A private key WITHOUT the encrypted-secret marker must be refused even
@@ -117,6 +136,7 @@ try {
     Set-Content -LiteralPath (Join-Path $bundle 'msi/Remova_1.3.0_x64.msi') -Value 'unsigned fixture'
     $finalize = Join-Path $temp 'scripts/finalize-signed-release.ps1'
     $policyState.SignCalls = 0; $policyState.VerifyCalls = 0; $policyState.FailVerification = $false
+    $env:UPDATER_SIGNING_ENABLED = 'true'
     & $finalize
     Assert-PrivateKeysCleared
     $expectedTargets = @('nsis/Remova_1.3.0_x64-setup.exe', 'msi/Remova_1.3.0_x64.msi') |
@@ -142,11 +162,27 @@ try {
 
     $env:SIGNPATH_ENABLED = 'false'
     $policyState.FailVerification = $true
+    $env:UPDATER_SIGNING_ENABLED = 'true'
     $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
     Assert-Throws { & $finalize } 'Updater signature does not match'
     Assert-PrivateKeysCleared
     if (Test-Path -LiteralPath $manifest) { throw 'Invalid updater signature produced a release manifest.' }
+    $passed++
+
+    # Unsigned/manual mode: no updater settings means no signing calls and no
+    # updater assets, but the installers themselves must still be accepted.
+    $env:UPDATER_SIGNING_ENABLED = 'false'
+    $policyState.SignCalls = 0; $policyState.VerifyCalls = 0; $policyState.FailVerification = $false
+    Set-Content -LiteralPath "$($bundle)/nsis/Remova_1.3.0_x64-setup.exe.sig" -Value 'stale'
+    & $finalize
+    if ($policyState.SignCalls -ne 0 -or $policyState.VerifyCalls -ne 0) {
+        throw 'Unsigned/manual mode must not call the updater signer.'
+    }
+    if (Test-Path -LiteralPath $manifest) { throw 'Unsigned/manual mode must not publish latest.json.' }
+    if (Test-Path -LiteralPath "$($bundle)/nsis/Remova_1.3.0_x64-setup.exe.sig") {
+        throw 'Unsigned/manual mode must remove stale signature sidecars.'
+    }
     $passed++
     Write-Host "OK: $passed release policy cases passed (no build or packaging)."
 } finally {
