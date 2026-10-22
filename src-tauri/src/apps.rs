@@ -584,9 +584,14 @@ fn broken_install_from(app: &InstalledApp) -> Option<BrokenInstall> {
         || location.contains('%')
         || !std::path::Path::new(location).is_absolute()
         || !fixed_local_install_path(location)
-        || std::path::Path::new(location).exists()
     {
         return None;
+    }
+    // Only a confirmed "missing" proves the record is broken. An ACL/metadata
+    // error is "cannot tell", never "deleted".
+    match std::path::Path::new(location).try_exists() {
+        Ok(false) => {}
+        _ => return None,
     }
     Some(BrokenInstall {
         app: app.clone(),
@@ -670,6 +675,9 @@ pub fn cleanup_broken_install(
     guid: &str,
     elevated: bool,
 ) -> Result<BrokenCleanupReport, String> {
+    if crate::executor::reboot::any_pending() {
+        return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
+    }
     let target = scan_broken_installs()
         .into_iter()
         .find(|b| broken_record_matches(b, app_name, registry_key, guid))

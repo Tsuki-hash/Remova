@@ -36,6 +36,42 @@ struct CleanupPlan {
     refused: Vec<ItemDetail>,
 }
 
+/// One constructor for aborted reports: every abort has zero counters and no
+/// item details, so copying 20 fields per branch only invited semantic drift.
+#[allow(clippy::too_many_arguments)]
+fn aborted_report(
+    app: &crate::apps::InstalledApp,
+    backup_dir: String,
+    uninstall_ok: bool,
+    uninstall_message: String,
+    reboot_pending: bool,
+    restore_point_ok: bool,
+    restore_point_msg: String,
+    errors: Vec<String>,
+) -> FullCleanupReport {
+    FullCleanupReport {
+        app_name: app.name.clone(),
+        app_key: crate::apps::app_key(app),
+        dry_run: false,
+        backup_dir,
+        uninstall_ok,
+        uninstall_message,
+        deleted: 0,
+        failed: 0,
+        skipped: 0,
+        delayed: 0,
+        reclaimed_kb: 0,
+        kept_kb: 0,
+        delayed_kb: 0,
+        aborted: true,
+        reboot_pending,
+        restore_point_ok,
+        restore_point_msg,
+        errors,
+        item_details: vec![],
+    }
+}
+
 fn plan_cleanup_items(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
@@ -99,26 +135,16 @@ fn try_backup_phase(
             // phase will act on, decided once and above.
             let (_ok, fail, errors) = crate::backup::backup_items(&plan.allowed, &session);
             if fail > 0 {
-                return BackupOutcome::Abort(Box::new(FullCleanupReport {
-                    app_name: app.name.clone(),
-                    app_key: crate::apps::app_key(app),
-                    dry_run: false,
+                return BackupOutcome::Abort(Box::new(aborted_report(
+                    app,
                     backup_dir,
-                    uninstall_ok: false,
-                    uninstall_message: format!("backup failed for {fail} item(s); aborted"),
-                    deleted: 0,
-                    failed: 0,
-                    skipped: 0,
-                    delayed: 0,
-                    reclaimed_kb: 0,
-                    kept_kb: 0,
-                    delayed_kb: 0,
-                    aborted: true,
+                    false,
+                    format!("backup failed for {fail} item(s); aborted"),
+                    false,
                     restore_point_ok,
                     restore_point_msg,
                     errors,
-                    item_details: vec![],
-                }));
+                )));
             }
             BackupOutcome::Ready {
                 backup_dir,
@@ -126,26 +152,16 @@ fn try_backup_phase(
                 restore_point_msg,
             }
         }
-        Err(e) => BackupOutcome::Abort(Box::new(FullCleanupReport {
-            app_name: app.name.clone(),
-            app_key: crate::apps::app_key(app),
-            dry_run: false,
-            backup_dir: String::new(),
-            uninstall_ok: false,
-            uninstall_message: "backup session failed".to_string(),
-            deleted: 0,
-            failed: 0,
-            skipped: 0,
-            delayed: 0,
-            reclaimed_kb: 0,
-            kept_kb: 0,
-            delayed_kb: 0,
-            aborted: true,
+        Err(e) => BackupOutcome::Abort(Box::new(aborted_report(
+            app,
+            String::new(),
+            false,
+            "backup session failed".to_string(),
+            false,
             restore_point_ok,
             restore_point_msg,
-            errors: vec![e.to_string()],
-            item_details: vec![],
-        })),
+            vec![e.to_string()],
+        ))),
     }
 }
 
@@ -513,6 +529,7 @@ fn ignore_read_abort(
         kept_kb: 0,
         delayed_kb: 0,
         aborted: true,
+        reboot_pending: false,
         restore_point_ok: false,
         restore_point_msg: String::new(),
         errors: vec![error],
@@ -549,6 +566,7 @@ pub fn run_full_cleanup(
             kept_kb: 0,
             delayed_kb: 0,
             aborted: false,
+            reboot_pending: false,
             restore_point_ok: false,
             restore_point_msg: String::new(),
             errors: dry.errors,
@@ -556,31 +574,20 @@ pub fn run_full_cleanup(
         };
     }
 
-    let app_key = crate::apps::app_key(app);
-    // A 1641 from an earlier IPC call (deep uninstall, batch retry) has already
-    // started a reboot. Deleting residuals before that reboot finishes can
-    // leave a half-completed state, so fail closed across calls.
-    if super::reboot::is_pending(&app_key) {
-        return FullCleanupReport {
-            app_name: app.name.clone(),
-            app_key,
-            dry_run: false,
-            backup_dir: String::new(),
-            uninstall_ok: true,
-            uninstall_message: super::reboot::PENDING_MESSAGE.into(),
-            deleted: 0,
-            failed: 0,
-            skipped: 0,
-            delayed: 0,
-            reclaimed_kb: 0,
-            kept_kb: 0,
-            delayed_kb: 0,
-            aborted: true,
-            restore_point_ok: false,
-            restore_point_msg: String::new(),
-            errors: vec![],
-            item_details: vec![],
-        };
+    // A 1641 in this session has already started a reboot. Deleting anything
+    // before that reboot finishes can leave a half-completed state, so every
+    // cleanup fails closed, regardless of which app reported the 1641.
+    if super::reboot::any_pending() {
+        return aborted_report(
+            app,
+            String::new(),
+            true,
+            super::reboot::PENDING_MESSAGE.into(),
+            true,
+            false,
+            String::new(),
+            vec![],
+        );
     }
 
     let selected: Vec<&CleanupItem> = items
@@ -590,26 +597,16 @@ pub fn run_full_cleanup(
     // Empty leftover set is valid when the user asked for official uninstall only
     // (batch "no default-selectable residue" — should still remove the app).
     if selected.is_empty() && opts.skip_official_uninstall {
-        return FullCleanupReport {
-            app_name: app.name.clone(),
-            app_key: crate::apps::app_key(app),
-            dry_run: false,
-            backup_dir: String::new(),
-            uninstall_ok: false,
-            uninstall_message: "no items".into(),
-            deleted: 0,
-            failed: 0,
-            skipped: 0,
-            delayed: 0,
-            reclaimed_kb: 0,
-            kept_kb: 0,
-            delayed_kb: 0,
-            aborted: true,
-            restore_point_ok: false,
-            restore_point_msg: String::new(),
-            errors: vec![],
-            item_details: vec![],
-        };
+        return aborted_report(
+            app,
+            String::new(),
+            false,
+            "no items".into(),
+            false,
+            false,
+            String::new(),
+            vec![],
+        );
     }
 
     // A new cleanup replaces the lock-end authorization; stale failed paths
@@ -647,53 +644,33 @@ pub fn run_full_cleanup(
         // pending can leave the cleanup half-done; ask the user to rerun after
         // reboot instead.
         if official.reboot_initiated {
-            return FullCleanupReport {
-                app_name: app.name.clone(),
-                app_key: crate::apps::app_key(app),
-                dry_run: false,
+            // Distinct from the 3010 "reboot required" message: this one
+            // tells the user residual deletion was skipped on purpose.
+            return aborted_report(
+                app,
                 backup_dir,
-                uninstall_ok: true,
-                // Distinct from the 3010 "reboot required" message: this one
-                // tells the user residual deletion was skipped on purpose.
-                uninstall_message: super::reboot::INITIATED_MESSAGE.into(),
-                deleted: 0,
-                failed: 0,
-                skipped: 0,
-                delayed: 0,
-                reclaimed_kb: 0,
-                kept_kb: 0,
-                delayed_kb: 0,
-                aborted: true,
+                true,
+                super::reboot::INITIATED_MESSAGE.into(),
+                true,
                 restore_point_ok,
                 restore_point_msg,
-                errors: vec![],
-                item_details: vec![],
-            };
+                vec![],
+            );
         }
     }
     // when a vendor uninstaller existed and failed, do not silently wipe leftovers —
     // the main program may still be half-installed. Force-clean / skip_official remains available.
     if uninstall_had_command && !uninstall_ok {
-        return FullCleanupReport {
-            app_name: app.name.clone(),
-            app_key: crate::apps::app_key(app),
-            dry_run: false,
+        return aborted_report(
+            app,
             backup_dir,
             uninstall_ok,
             uninstall_message,
-            deleted: 0,
-            failed: 0,
-            skipped: 0,
-            delayed: 0,
-            reclaimed_kb: 0,
-            kept_kb: 0,
-            delayed_kb: 0,
-            aborted: true,
+            false,
             restore_point_ok,
             restore_point_msg,
-            errors: vec!["official uninstaller failed; leftover cleanup skipped".into()],
-            item_details: vec![],
-        };
+            vec!["official uninstaller failed; leftover cleanup skipped".into()],
+        );
     }
 
     // Only items with a real path enter backup/delete — the emptiness check
@@ -783,6 +760,7 @@ pub fn run_full_cleanup(
         kept_kb,
         delayed_kb,
         aborted: false,
+        reboot_pending: false,
         restore_point_ok,
         restore_point_msg,
         errors: del.errors,
@@ -930,9 +908,10 @@ mod tests {
 
     #[test]
     fn pending_reboot_blocks_residual_cleanup_across_calls() {
-        // MSI 1641 happens in one IPC call; the residual pass is a later call.
-        // The registry must make that later call fail closed before any delete.
-        let app = crate::apps::InstalledApp {
+        // MSI 1641 happens in one IPC call; any later cleanup is a separate
+        // call. The gate is global, so cleaning *another* app must also abort
+        // before backup/delete, not just the app that reported the 1641.
+        let marked = crate::apps::InstalledApp {
             name: "RebootPendingFixture".into(),
             publisher: "Vendor".into(),
             version: "1.0".into(),
@@ -947,15 +926,23 @@ mod tests {
             install_date: String::new(),
             display_icon: String::new(),
         };
-        crate::executor::reboot::mark_pending(&crate::apps::app_key(&app));
+        let other = crate::apps::InstalledApp {
+            name: "OtherCleanupFixture".into(),
+            registry_key:
+                r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OtherCleanupFixture"
+                    .into(),
+            ..marked.clone()
+        };
+        crate::executor::reboot::reset_for_test();
+        crate::executor::reboot::mark_pending(&crate::apps::app_key(&marked));
         let opts = FullCleanupOptions {
             dry_run: false,
             skip_official_uninstall: true,
-            backup_enabled: false,
+            backup_enabled: true,
             restore_point: false,
             cleanup_source: Some("uninstall".into()),
         };
-        let report = run_full_cleanup(&app, &[], &opts);
+        let report = run_full_cleanup(&other, &[], &opts);
         assert!(report.aborted);
         assert!(report.uninstall_ok);
         assert_eq!(
@@ -963,6 +950,11 @@ mod tests {
             crate::executor::reboot::PENDING_MESSAGE
         );
         assert_eq!((report.deleted, report.failed), (0, 0));
+        assert!(
+            report.backup_dir.is_empty(),
+            "backup must not run while a reboot is pending"
+        );
+        crate::executor::reboot::reset_for_test();
     }
 
     #[test]

@@ -62,6 +62,10 @@ jobs:
         run: cargo test --workspace
         working-directory: src-tauri
 
+      - name: real registry service ImagePath read (read-only)
+        run: cargo test scanner::reg_scans::tests::service_image_string_reads_real_image_paths -- --ignored
+        working-directory: src-tauri
+
       - name: file symlink swap regression (requires runner privilege)
         run: cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored
         working-directory: src-tauri

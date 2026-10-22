@@ -1,14 +1,14 @@
 //! Uninstall command parsing, dry-run preview and the real cleanup pipeline (Phase 2).
 //!
 //! Split by lifecycle stage: `uninstall` resolves and launches the vendor uninstaller,
-//! `preview` is the no-write dry-run, `pipeline` is backup → uninstall → delete. All three are
+//! `preview` is the no-write dry-run, `pipeline` is backup → uninstall → delete. These stages are
 //! re-exported here so callers keep using `crate::executor::*` unchanged.
 
 use serde::{Deserialize, Serialize};
 
 mod pipeline;
 mod preview;
-mod reboot;
+pub(crate) mod reboot;
 mod uninstall;
 
 pub use pipeline::*;
@@ -92,7 +92,7 @@ pub struct FullCleanupReport {
     pub deleted: u32,
     pub failed: u32,
     pub skipped: u32,
-    /// Reboot-delayed deletes (not counted in `deleted`) — .
+    /// Reboot-delayed deletes (not counted in `deleted`).
     #[serde(default)]
     pub delayed: u32,
     /// Sum of `size_kb` for rows this run actually deleted (M5).
@@ -105,6 +105,10 @@ pub struct FullCleanupReport {
     #[serde(default)]
     pub delayed_kb: u64,
     pub aborted: bool,
+    /// MSI 1641 / global reboot gate: the uninstall succeeded but deletion was
+    /// postponed until the machine restarts.
+    #[serde(default)]
+    pub reboot_pending: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,
     pub errors: Vec<String>,

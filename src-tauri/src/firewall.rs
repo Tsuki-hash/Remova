@@ -131,6 +131,9 @@ fn ensure_still_orphans(wanted: &[String], fresh: &[FirewallRule]) -> Result<(),
 /// Delete the given rule values after a fresh scan proves each one is still an
 /// orphan. All keys are exported to a Safety Vault session before any delete.
 pub fn delete_firewall_rules(value_names: &[String]) -> Result<FirewallCleanupReport, String> {
+    if crate::executor::reboot::any_pending() {
+        return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
+    }
     let mut wanted: Vec<String> = value_names
         .iter()
         .map(|n| n.trim().to_string())

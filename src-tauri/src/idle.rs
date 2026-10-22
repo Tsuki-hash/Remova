@@ -97,18 +97,29 @@ fn dir_mtime_age_days(path: &str) -> Option<i64> {
     Some(age as i64)
 }
 
-fn size_kb_of(app: &InstalledApp) -> (i64, bool) {
+/// Bound the whole idle sizing pass, not just each app: hundreds of apps
+/// otherwise mean hundreds of independent 5k-entry walks in one IPC.
+const IDLE_SIZE_PER_APP: u64 = 5_000;
+const IDLE_SIZE_TOTAL: u64 = 60_000;
+
+fn size_kb_of(app: &InstalledApp, remaining: &mut u64) -> (i64, bool) {
     if app.estimated_size_kb > 0 {
         return (app.estimated_size_kb, false);
     }
-    if !app.install_location.is_empty() {
-        // Private cancel flag: estimate-batch cancel must not zero idle sizes.
-        return crate::dirsize::walk_size_kb_with_capped(
-            std::path::Path::new(&app.install_location),
-            &std::sync::atomic::AtomicBool::new(false),
-        );
+    if app.install_location.is_empty() || *remaining == 0 {
+        return (0, true);
     }
-    (0, false)
+    let quota = (*remaining).min(IDLE_SIZE_PER_APP);
+    *remaining = remaining.saturating_sub(quota);
+    // Private cancel flag: estimate-batch cancel must not zero idle sizes.
+    match crate::dirsize::walk_size_kb_with_quota(
+        std::path::Path::new(&app.install_location),
+        quota,
+    ) {
+        crate::dirsize::WalkSize::Exact(kb) => (kb as i64, false),
+        crate::dirsize::WalkSize::Floor(kb) => (kb as i64, true),
+        crate::dirsize::WalkSize::Unknown => (0, true),
+    }
 }
 
 /// UX-14: the result cap used to be silent; carry the dropped count to the UI.
@@ -122,6 +133,7 @@ pub struct IdleScanResult {
 /// Rank idle candidates. Soft evidence only — caller must confirm before uninstall.
 pub fn rank_idle_apps(installed: &[InstalledApp]) -> IdleScanResult {
     let mut out: Vec<IdleApp> = Vec::new();
+    let mut size_budget = IDLE_SIZE_TOTAL;
     for app in installed {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return IdleScanResult {
@@ -161,7 +173,7 @@ pub fn rank_idle_apps(installed: &[InstalledApp]) -> IdleScanResult {
         if idle_days < IDLE_MIN_DAYS {
             continue;
         }
-        let (size_kb, capped) = size_kb_of(app);
+        let (size_kb, capped) = size_kb_of(app, &mut size_budget);
         if crate::scan_task::cancelled() {
             return IdleScanResult {
                 items: out,

@@ -777,6 +777,24 @@ pub fn path_utf8(p: &Path) -> Option<String> {
     Some(p.to_str()?.replace('/', "\\"))
 }
 
+/// True only for an absolute local-drive path. Registry-controlled read
+/// probes (icons, sizes, Explorer) must not touch UNC/device/verbatim shares,
+/// otherwise rendering a list can trigger SMB/WebDAV authentication.
+pub fn is_local_drive_path(raw: &str) -> bool {
+    let s = raw.trim().trim_matches('"');
+    let b = s.as_bytes();
+    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' {
+        return false;
+    }
+    if b[2] != b'\\' && b[2] != b'/' {
+        return false;
+    }
+    if s.starts_with("\\\\") || s.starts_with("\\?\\") || s.starts_with("\\.\\") {
+        return false;
+    }
+    !s.split(['\\', '/']).any(|seg| seg == "..")
+}
+
 /// The single definition of "these two paths name the same thing".
 ///
 /// Four call sites used to carry their own copy of this logic
@@ -1064,6 +1082,17 @@ mod tests {
         assert!(fs::rename(&path, path.with_extension("moved")).is_err());
         drop(pinned);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn local_drive_probe_rejects_network_and_device_paths() {
+        assert!(super::is_local_drive_path(r"C:\Apps\Demo\demo.exe"));
+        assert!(super::is_local_drive_path("d:/apps/demo"));
+        assert!(!super::is_local_drive_path(r"\\server\share\demo.exe"));
+        assert!(!super::is_local_drive_path(r"\\.\pipe\x"));
+        assert!(!super::is_local_drive_path(r"\\?\C:\Apps\demo.exe"));
+        assert!(!super::is_local_drive_path(r"C:relative\demo.exe"));
+        assert!(!super::is_local_drive_path(r"C:\Apps\..\Windows\x.exe"));
     }
 
     #[test]

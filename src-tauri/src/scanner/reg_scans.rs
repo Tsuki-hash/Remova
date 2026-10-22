@@ -236,40 +236,72 @@ fn clsid_roots(alias: &str) -> Vec<String> {
     roots
 }
 
-/// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
-pub(super) fn scan_drivers(name_slugs: &[String], install_low: &str, items: &mut Vec<CleanupItem>) {
+/// One enumeration of the Services key shared by service/driver scanning and
+/// service-bound marking. Each analyze used to enumerate the same tree three
+/// times (and once more for every batch item).
+pub(crate) struct ServiceSnapshot {
+    pub name: String,
+    pub key_path: String,
+    pub image: String,
+    pub svc_type: Option<u32>,
+}
+
+pub(crate) fn service_snapshot() -> Vec<ServiceSnapshot> {
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
-    for svc in crate::regscan::list_subkeys(root) {
+    let mut out = Vec::new();
+    for name in crate::regscan::list_subkeys(root) {
         if crate::scan_task::cancelled() {
             break;
         }
-        let svc_path = format!(r"{root}\{svc}");
-        let Some(svc_type) = crate::regscan::read_dword(&svc_path, "Type") else {
+        let key_path = format!("{root}\\{name}");
+        out.push(ServiceSnapshot {
+            name,
+            svc_type: crate::regscan::read_dword(&key_path, "Type"),
+            image: service_image_string(&key_path),
+            key_path,
+        });
+    }
+    out
+}
+
+/// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
+pub(super) fn scan_drivers(
+    snapshot: &[ServiceSnapshot],
+    name_slugs: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    for svc in snapshot {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let Some(svc_type) = svc.svc_type else {
             continue;
         };
         // 1 = kernel driver, 2 = file system driver
         if svc_type != 1 && svc_type != 2 {
             continue;
         }
-        if is_safe_to_delete_registry(&svc_path).is_err() {
+        let svc_path = &svc.key_path;
+        if is_safe_to_delete_registry(svc_path).is_err() {
             continue;
         }
-        let image = service_image_string(&svc_path);
-        let hit_install = super::cmdline_refs_install(&image, install_low);
+        let image = &svc.image;
+        let hit_install = super::cmdline_refs_install(image, install_low);
         let strong = hit_install
             || name_slugs
                 .iter()
-                .any(|n| n.len() >= 5 && super::name_boundary_hit(&svc, n));
+                .any(|n| n.len() >= 5 && super::name_boundary_hit(&svc.name, n));
         if !strong {
             continue;
         }
         items.push(CleanupItem {
-            path: svc_path,
+            path: svc_path.clone(),
             kind: ItemKind::Registry,
             score: 45,
             confidence: Confidence::Suspected,
             risk: RiskLevel::High,
-            reason: format!("Driver leftover: {svc}"),
+            reason: format!("Driver leftover: {}", svc.name),
             evidence: vec![Evidence {
                 code: "driver".into(),
                 label: "System driver matches product".into(),
@@ -345,29 +377,29 @@ fn scan_software_keys_with(
 }
 
 pub(super) fn scan_services(
+    snapshot: &[ServiceSnapshot],
     name_slugs: &[String],
     exe_stems: &[String],
     install_low: &str,
     items: &mut Vec<CleanupItem>,
 ) {
-    let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
-    for svc in crate::regscan::list_subkeys(root) {
+    for svc in snapshot {
         if crate::scan_task::cancelled() {
             break;
         }
-        let svc_path = format!("{root}\\{svc}");
-        if is_safe_to_delete_registry(&svc_path).is_err() {
+        let svc_path = &svc.key_path;
+        if is_safe_to_delete_registry(svc_path).is_err() {
             continue;
         }
-        let image = service_image_string(&svc_path);
+        let image = &svc.image;
         // Boundary-anchored install hit on the ImagePath only — a display
         // string or service name that merely contains the install prefix
         // must not look like an install reference.
-        let hit_install = super::cmdline_refs_install(&image, install_low);
+        let hit_install = super::cmdline_refs_install(image, install_low);
         let strong = hit_install
             || name_slugs
                 .iter()
-                .any(|n| n.len() >= 6 && super::name_boundary_hit(&svc, n));
+                .any(|n| n.len() >= 6 && super::name_boundary_hit(&svc.name, n));
         let _ = exe_stems;
         if !strong {
             continue;
@@ -375,12 +407,12 @@ pub(super) fn scan_services(
         // force HIGH suspected regardless of score thresholds
         let score = 40;
         items.push(CleanupItem {
-            path: svc_path,
+            path: svc_path.clone(),
             kind: ItemKind::Registry,
             score,
             confidence: Confidence::Suspected,
             risk: RiskLevel::High,
-            reason: format!("Windows service leftover: {svc}"),
+            reason: format!("Windows service leftover: {}", svc.name),
             evidence: vec![Evidence {
                 code: "windows_service".into(),
                 label: "Service matches product (high risk, unselected)".into(),
@@ -443,14 +475,14 @@ fn exe_token_end(s: &str) -> Option<usize> {
 /// not a leftover — deleting it breaks a still-installed service. The match is
 /// component-wise on the resolved key, so `C:\App` does not claim `C:\AppData`.
 pub(crate) fn mark_service_bound(items: &mut [CleanupItem]) {
+    let snapshot = service_snapshot();
+    mark_service_bound_snapshot(items, &snapshot);
+}
+
+pub(crate) fn mark_service_bound_snapshot(items: &mut [CleanupItem], snapshot: &[ServiceSnapshot]) {
     let mut service_keys: Vec<String> = Vec::new();
-    let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
-    for svc in crate::regscan::list_subkeys(root) {
-        if crate::scan_task::cancelled() {
-            break;
-        }
-        let image = service_image_string(&format!("{root}\\{svc}"));
-        if let Some(exe) = service_image_exe(&image) {
+    for svc in snapshot {
+        if let Some(exe) = service_image_exe(&svc.image) {
             if let Some(key) = crate::fsutil::path_key(&exe) {
                 service_keys.push(key);
             }

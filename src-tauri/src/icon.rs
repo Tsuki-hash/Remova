@@ -64,7 +64,7 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
         }
     }
     let (path, index) = parse_display_icon(raw_display_icon);
-    if path.is_empty() {
+    if path.is_empty() || !crate::fsutil::is_local_drive_path(&path) {
         return None;
     }
     let png = extract_from_path(&path, index)?;

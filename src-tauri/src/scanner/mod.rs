@@ -891,9 +891,13 @@ pub fn analyze_associations(
         }
     }
 
+    // One Services snapshot feeds service/driver scanning and the
+    // service-bound keep gate; three full enumerations became one.
+    let services = reg_scans::service_snapshot();
+
     // 6. Windows services (suspected / high — display only)
     phase!("services");
-    reg_scans::scan_services(&name_slugs, &exe_stems, &install_low, &mut items);
+    reg_scans::scan_services(&services, &name_slugs, &exe_stems, &install_low, &mut items);
 
     // 7. Scheduled tasks (suspected / high — display only)
     phase!("tasks");
@@ -915,7 +919,7 @@ pub fn analyze_associations(
     phase!("other");
     reg_scans::scan_shell_extensions(&name_slugs, &install_low, &mut items);
     phase!("other");
-    reg_scans::scan_drivers(&name_slugs, &install_low, &mut items);
+    reg_scans::scan_drivers(&services, &name_slugs, &install_low, &mut items);
     phase!("other");
     fs_scans::scan_other_drive_roots(&name_slugs, &mut items);
     phase!("other");
@@ -949,7 +953,7 @@ pub fn analyze_associations(
 
     // M2 (SOP §2.3): a directory hosting a registered service image is live
     // service data, not a leftover — mark it keep-class before sizing.
-    reg_scans::mark_service_bound(&mut items);
+    reg_scans::mark_service_bound_snapshot(&mut items, &services);
 
     phase!("sizes");
     fill_item_sizes(&mut items);

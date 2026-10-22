@@ -365,7 +365,7 @@ fn resolve_packaged_display_name(value_name: &str) -> Option<String> {
     None
 }
 
-/// Serialize manage write-side mutations (services / startup / tasks) — .
+/// Serialize manage write-side mutations (services / startup / tasks).
 static MANAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_manage() -> std::sync::MutexGuard<'static, ()> {

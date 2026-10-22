@@ -164,9 +164,33 @@ fn uninstaller_reboot_initiated(code: Option<i32>) -> bool {
     code == Some(1641)
 }
 
+/// Map one uninstaller exit to the session-wide reboot gate. Kept separate so
+/// the producer link (1641 -> pending) is testable without launching a process.
+fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> bool {
+    let initiated = uninstaller_reboot_initiated(code);
+    if initiated {
+        super::reboot::mark_pending(&crate::apps::app_key(app));
+    }
+    initiated
+}
+
 /// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
 pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
     // S-RCE: never execute a command the client invented — must match last server scan.
+    // Per-user uninstall strings are user-writable. Running one from an
+    // elevated Remova would execute an arbitrary user-controlled image as
+    // administrator; require a non-elevated launch for HKCU entries.
+    if matches!(crate::sysops::is_process_elevated(), Ok(true))
+        && (app.source.to_ascii_uppercase().starts_with("HKCU")
+            || app.registry_key.to_ascii_uppercase().starts_with("HKCU"))
+    {
+        return OfficialUninstallResult {
+            ok: false,
+            message: "elevated HKCU uninstall refused".into(),
+            had_command: true,
+            reboot_initiated: false,
+        };
+    }
     if app.uninstall_string.trim().is_empty() && app.quiet_uninstall_string.trim().is_empty() {
         return OfficialUninstallResult {
             ok: false,
@@ -203,10 +227,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                             Ok(Some(status)) => {
                                 let code = status.code();
                                 let ok = uninstaller_exit_ok(code);
-                                let initiated = uninstaller_reboot_initiated(code);
-                                if initiated {
-                                    super::reboot::mark_pending(&crate::apps::app_key(app));
-                                }
+                                let initiated = record_reboot_exit(code, app);
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
                                     format!("uninstaller finished (reboot required): {}", argv[0])
                                 } else if ok {
@@ -297,6 +318,40 @@ mod tests {
             assert!(!uninstaller_reboot_initiated(Some(code)));
         }
         assert!(!uninstaller_reboot_initiated(None));
+    }
+
+    #[test]
+    fn exit_1641_marks_the_global_reboot_gate() {
+        let app = crate::apps::InstalledApp {
+            name: "RebootProducerFixture".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: r"HKLM64\SOFTWARE\RebootProducerFixture".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        crate::executor::reboot::reset_for_test();
+        assert!(record_reboot_exit(Some(1641), &app));
+        assert!(crate::executor::reboot::is_pending(&crate::apps::app_key(
+            &app
+        )));
+        assert!(crate::executor::reboot::any_pending());
+
+        let other = crate::apps::InstalledApp {
+            name: "OtherFixture".into(),
+            ..app.clone()
+        };
+        assert!(!record_reboot_exit(Some(3010), &other));
+        assert!(!crate::executor::reboot::is_pending(&crate::apps::app_key(
+            &other
+        )));
+        crate::executor::reboot::reset_for_test();
+        assert!(!crate::executor::reboot::any_pending());
     }
 
     #[test]

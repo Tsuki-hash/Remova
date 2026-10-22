@@ -10,17 +10,14 @@ use std::sync::{Mutex, OnceLock};
 
 /// Failed cleanup paths and the root that owns them. Filled by the executor,
 /// never by the webview; this is the only authorization for ending a process
-/// from the cleanup report. App cleanups use the install root; orphan cleanups
-/// authorize the reported directory itself.
+/// from the cleanup report. App cleanups use the install root; app-less
+/// cleanups authorize the reported directory, or the parent of a failed file.
 fn failed_lock_roots() -> &'static Mutex<HashMap<String, String>> {
     static ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[(String, bool)]) {
-    let Ok(mut map) = failed_lock_roots().lock() else {
-        return;
-    };
+fn fill_failed_lock_roots(map: &mut HashMap<String, String>, root: &str, paths: &[(String, bool)]) {
     map.clear();
     let root_key = crate::fsutil::path_key(std::path::Path::new(root));
     for (path, is_dir) in paths {
@@ -41,9 +38,21 @@ pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[(String, bool)]) {
     }
 }
 
-fn authorized_lock_root(target_path: &str) -> Option<String> {
+pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[(String, bool)]) {
+    let Ok(mut map) = failed_lock_roots().lock() else {
+        return;
+    };
+    fill_failed_lock_roots(&mut map, root, paths);
+}
+
+fn authorized_lock_root_in(map: &HashMap<String, String>, target_path: &str) -> Option<String> {
     let target_key = crate::fsutil::path_key(std::path::Path::new(target_path))?;
-    failed_lock_roots().lock().ok()?.get(&target_key).cloned()
+    map.get(&target_key).cloned()
+}
+
+fn authorized_lock_root(target_path: &str) -> Option<String> {
+    let map = failed_lock_roots().lock().ok()?;
+    authorized_lock_root_in(&map, target_path)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -331,32 +340,38 @@ mod tests {
 
     #[test]
     fn failed_lock_roots_authorize_only_remembered_targets() {
-        super::remember_failed_lock_roots(
+        // Pure map: these tests never touch the process-global authorization
+        // table, so parallel pipeline tests cannot clear it mid-assertion.
+        let mut map = std::collections::HashMap::new();
+        super::fill_failed_lock_roots(
+            &mut map,
             r"C:\Apps\R41Demo",
             &[(r"C:\Apps\R41Demo\cache".to_string(), true)],
         );
         assert_eq!(
-            super::authorized_lock_root(r"c:/apps/r41demo/cache"),
+            super::authorized_lock_root_in(&map, r"c:/apps/r41demo/cache"),
             Some(r"c:\apps\r41demo".to_string())
         );
-        assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\other").is_none());
-        super::remember_failed_lock_roots(r"C:\Apps\R41Demo", &[]);
-        assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\cache").is_none());
+        assert!(super::authorized_lock_root_in(&map, r"C:\Apps\R41Demo\other").is_none());
+        super::fill_failed_lock_roots(&mut map, r"C:\Apps\R41Demo", &[]);
+        assert!(super::authorized_lock_root_in(&map, r"C:\Apps\R41Demo\cache").is_none());
     }
 
     #[test]
     fn app_less_cleanup_authorizes_the_containing_directory() {
-        super::remember_failed_lock_roots(
+        let mut map = std::collections::HashMap::new();
+        super::fill_failed_lock_roots(
+            &mut map,
             "",
             &[(r"C:\Orphans\Demo\locked.dll".to_string(), false)],
         );
         assert_eq!(
-            super::authorized_lock_root(r"c:/orphans/demo/locked.dll"),
+            super::authorized_lock_root_in(&map, r"c:/orphans/demo/locked.dll"),
             Some(r"c:\orphans\demo".to_string())
         );
-        super::remember_failed_lock_roots("", &[(r"C:\Orphans\Demo".to_string(), true)]);
+        super::fill_failed_lock_roots(&mut map, "", &[(r"C:\Orphans\Demo".to_string(), true)]);
         assert_eq!(
-            super::authorized_lock_root(r"C:\Orphans\Demo"),
+            super::authorized_lock_root_in(&map, r"C:\Orphans\Demo"),
             Some(r"c:\orphans\demo".to_string())
         );
     }

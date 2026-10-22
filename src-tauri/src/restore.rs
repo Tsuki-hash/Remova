@@ -523,7 +523,9 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
 }
 
 pub fn list_sessions() -> Result<Vec<PathBuf>, String> {
-    list_sessions_at(&crate::backup::backup_root())
+    let root = crate::backup::backup_root();
+    crate::backup::ensure_backup_tree_secured(&root);
+    list_sessions_at(&root)
 }
 
 fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {

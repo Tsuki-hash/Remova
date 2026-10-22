@@ -239,6 +239,8 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         None => None,
     };
     let low = normalize_hklm(registry_key_part(key_path));
+    // An explicit 32-bit view must not slip past the protected-prefix arms.
+    let low = low.replace("\\SOFTWARE\\WOW6432NODE\\", "\\SOFTWARE\\");
 
     let uninstall_roots = [
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\UNINSTALL",
@@ -1560,6 +1562,16 @@ mod tests {
                 super::is_safe_to_delete_registry(bad).is_err(),
                 "{bad} must stay protected"
             );
+        }
+    }
+    #[test]
+    fn wow6432node_cannot_bypass_protected_prefix() {
+        for key in [
+            r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion",
+            r"HKCU\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion",
+            r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography",
+        ] {
+            assert!(super::is_safe_to_delete_registry(key).is_err(), "{key}");
         }
     }
 }

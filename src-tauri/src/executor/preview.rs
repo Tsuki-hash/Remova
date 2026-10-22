@@ -41,16 +41,22 @@ pub fn run_cleanup_dry_for_app_source(
             });
             continue;
         }
-        // align dry-run outcome probes with full delete.
+        // align dry-run outcome probes with full delete: a probe error is
+        // "cannot tell" and must not be planned as deletable.
         match it.kind {
             ItemKind::File | ItemKind::Dir => {
-                if !Path::new(&it.path).exists() {
+                let message = match Path::new(&it.path).try_exists() {
+                    Ok(true) => None,
+                    Ok(false) => Some("path missing"),
+                    Err(_) => Some("access denied"),
+                };
+                if let Some(message) = message {
                     skipped += 1;
                     details.push(ItemDetail {
                         path: it.path.clone(),
                         kind: format!("{:?}", it.kind).to_lowercase(),
                         status: "skipped".into(),
-                        message: "path missing".into(),
+                        message: message.into(),
                     });
                     continue;
                 }
@@ -108,11 +114,18 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
             crate::policy::CleanupSource::Uninstall,
             &ignore,
         );
+        let path_probe = match it.kind {
+            ItemKind::File | ItemKind::Dir => Some(Path::new(&it.path).try_exists()),
+            _ => None,
+        };
         let ok = decision.is_allow()
-            && match it.kind {
-                ItemKind::File | ItemKind::Dir => Path::new(&it.path).exists(),
-                ItemKind::Path => path_entry_in_system_path(&it.path),
-                _ => true,
+            && match path_probe {
+                Some(Ok(true)) => true,
+                Some(_) => false,
+                None => match it.kind {
+                    ItemKind::Path => path_entry_in_system_path(&it.path),
+                    _ => true,
+                },
             };
         if !ok {
             skipped += 1;
@@ -121,16 +134,15 @@ pub fn run_cleanup_dry(app_name: &str, items: &[CleanupItem]) -> CleanupReport {
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
                 message: if decision.is_allow() {
-                    if matches!(it.kind, ItemKind::File | ItemKind::Dir)
-                        && !Path::new(&it.path).exists()
-                    {
-                        "path missing".into()
-                    } else if matches!(it.kind, ItemKind::Path)
-                        && !path_entry_in_system_path(&it.path)
-                    {
-                        "not found in PATH".into()
-                    } else {
-                        "failed safety gate".into()
+                    match path_probe {
+                        Some(Ok(false)) => "path missing".into(),
+                        Some(Err(_)) => "access denied".into(),
+                        _ if matches!(it.kind, ItemKind::Path)
+                            && !path_entry_in_system_path(&it.path) =>
+                        {
+                            "not found in PATH".into()
+                        }
+                        _ => "failed safety gate".into(),
                     }
                 } else {
                     decision.message().to_string()

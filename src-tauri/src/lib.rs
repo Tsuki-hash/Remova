@@ -68,7 +68,7 @@ fn begin_size_estimate() {
 /// Estimate on-disk size of an install location (KB).
 /// Runs on the blocking pool so large trees do not freeze the webview.
 /// Result is zeroed if the estimate batch was cancelled / superseded.
-/// `capped` marks a file-cap partial (floor, not total) — .
+/// `capped` marks a file-cap partial (floor, not total).
 #[derive(serde::Serialize)]
 struct SizeEstimate {
     kb: i64,
@@ -87,6 +87,12 @@ async fn estimate_dir_size_kb(path: String) -> Result<SizeEstimate, String> {
     let gen = dirsize::current_batch();
     tauri::async_runtime::spawn_blocking(move || {
         // Honors the global cancel flag (batch cancel must zero in-flight walks).
+        if !crate::fsutil::is_local_drive_path(&path) {
+            return SizeEstimate {
+                kb: 0,
+                capped: false,
+            };
+        }
         let (kb, capped) = dirsize::walk_size_kb_capped(std::path::Path::new(&path));
         if dirsize::batch_stale(gen) {
             SizeEstimate {
@@ -225,6 +231,9 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
         }
         return open_url_shell(path);
     }
+    if !crate::fsutil::is_local_drive_path(path) {
+        return Err("open_path:unsafe".into());
+    }
     let p = std::path::Path::new(path);
     if !p.exists() {
         return Err("open_path:not_found".into());
@@ -254,7 +263,7 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
 async fn app_icon_data(display_icon: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let raw = display_icon?;
-        if raw.trim().is_empty() {
+        if raw.trim().is_empty() || !crate::fsutil::is_local_drive_path(&raw) {
             return None;
         }
         let png = icon::extract_icon_png(&raw)?;
@@ -438,40 +447,7 @@ async fn run_full_cleanup(
 
 #[tauri::command]
 fn is_elevated() -> Result<bool, String> {
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
-        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-        unsafe {
-            let mut token = windows::Win32::Foundation::HANDLE::default();
-            if OpenProcessToken(
-                GetCurrentProcess(),
-                windows::Win32::Security::TOKEN_QUERY,
-                &mut token,
-            )
-            .is_err()
-            {
-                return Err("elevation:query_failed".into());
-            }
-            let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
-            let mut ret = 0u32;
-            let ok = GetTokenInformation(
-                token,
-                TokenElevation,
-                Some(&mut elev as *mut _ as *mut _),
-                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-                &mut ret,
-            );
-            let _ = CloseHandle(token);
-            ok.map_err(|_| "elevation:query_failed".to_string())?;
-            Ok(elev.TokenIsElevated != 0)
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(false)
-    }
+    crate::sysops::is_process_elevated()
 }
 
 #[derive(serde::Serialize)]

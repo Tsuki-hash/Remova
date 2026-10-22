@@ -55,6 +55,97 @@ pub(crate) fn lock_backup_env() -> crate::test_support::EnvLock {
     crate::test_support::EnvLock::new()
 }
 
+/// Apply a private DACL to the backup tree: SYSTEM, Administrators and the
+/// directory owner (the invoking user) only. `%ProgramData%` inheritance grants
+/// `BUILTIN\Users` read access, which exposed copied files and registry exports
+/// to other local accounts.
+#[cfg(windows)]
+fn apply_private_acl(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows::Win32::Security::{
+        SetFileSecurityW, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR,
+    };
+
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"),
+            1,
+            &mut sd,
+            None,
+        )
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let ok = unsafe {
+        SetFileSecurityW(
+            PCWSTR(wide.as_ptr()),
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            sd,
+        )
+    };
+    let err = std::io::Error::last_os_error();
+    unsafe {
+        let _ = LocalFree(HLOCAL(sd.0.cast()));
+    }
+    if ok.as_bool() {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_private_acl(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn secure_tree(path: &Path, depth: u8, budget: &mut u32) {
+    if *budget == 0 || depth > 8 {
+        return;
+    }
+    *budget -= 1;
+    let _ = apply_private_acl(path);
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        secure_tree(&entry.path(), depth + 1, budget);
+    }
+}
+
+/// Secure new and pre-existing backups once per process. New files inherit the
+/// session-directory DACL; the one-time walk fixes sessions created before the
+/// ACL change.
+pub(crate) fn ensure_backup_tree_secured(root: &Path) {
+    secure_backup_tree_once(root);
+}
+
+fn secure_backup_tree_once(root: &Path) {
+    static SECURED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+    let seen = SECURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    let Ok(mut seen) = seen.lock() else {
+        return;
+    };
+    if !seen.insert(root.to_path_buf()) {
+        return;
+    }
+    let mut budget = 10_000u32;
+    secure_tree(root, 0, &mut budget);
+}
+
 pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     // charset must match `is_session_name` (alnum + `-` `_` only).
     let safe: String = app_name
@@ -75,6 +166,7 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     // Claim the session dir with create_dir — never exists-then-reuse (race).
     let root = backup_root();
     fs::create_dir_all(&root)?;
+    secure_backup_tree_once(&root);
     let mut claimed = None;
     for n in 0..100u32 {
         let dir = if n == 0 {
@@ -99,6 +191,7 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     })?;
     let _pins = crate::fsutil::create_dirs_pinned(&dir.join("files"))?;
     let _pins_reg = crate::fsutil::create_dirs_pinned(&dir.join("registry"))?;
+    secure_backup_tree_once(&dir);
     Ok(dir)
 }
 
@@ -245,6 +338,35 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
     }
 }
 
+/// Publish the verified private stage into the session. A same-volume rename
+/// avoids rewriting every backed-up byte; a copy is the fallback for filesystems
+/// or antivirus locks that refuse the move. Either way the seal is written only
+/// after the complete tree is in place.
+fn publish_stage(private: &Path, session: &Path) -> Result<(), String> {
+    for sub in ["files", "registry"] {
+        let _ = fs::remove_dir(session.join(sub));
+    }
+    let entries = fs::read_dir(private).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let src = entry.path();
+        let dest = session.join(entry.file_name());
+        if fs::rename(&src, &dest).is_ok() {
+            continue;
+        }
+        let meta = fs::symlink_metadata(&src).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            crate::fsutil::copy_dir(&src, &dest).map_err(|e| e.to_string())?;
+        } else {
+            crate::fsutil::copy_file_no_reparse(&src, &dest).map_err(|e| e.to_string())?;
+        }
+    }
+    // Moved files keep the private stage's SYSTEM/Administrators-only DACL;
+    // grant the invoking owner access so restore can read them.
+    let mut budget = 200_000u32;
+    secure_tree(session, 0, &mut budget);
+    Ok(())
+}
+
 fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<String>), String> {
     // One-shot sessions only. Never read and re-sign an existing public map/snapshot.
     if session.join("files/path_map.json").exists()
@@ -292,7 +414,7 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     let digests = crate::path_seal::collect_reg_digests(private)?;
     let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
     write_bytes_atomic(&private.join("files/path_map.json"), json.as_bytes())?;
-    crate::fsutil::copy_dir(private, session).map_err(|e| e.to_string())?;
+    publish_stage(private, session)?;
     crate::path_seal::write_seal(session, &json, &map, &digests)?;
     Ok((ok, fail, errors))
 }
@@ -820,5 +942,18 @@ mod tests {
             "PATH backup must not tree-copy directory contents: {copied:?}"
         );
         let _ = fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod acl_tests {
+    #[test]
+    fn private_acl_can_be_applied_to_a_backup_directory() {
+        let tmp = crate::test_support::TempDir::new("backup-acl");
+        let dir = tmp.path().join("Backup");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+        std::fs::write(dir.join("files").join("sample.bin"), b"x").unwrap();
+        super::apply_private_acl(&dir).unwrap();
+        super::apply_private_acl(&dir.join("files")).unwrap();
     }
 }

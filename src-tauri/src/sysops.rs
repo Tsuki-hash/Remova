@@ -96,6 +96,44 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
     }
 }
 
+/// Is this process running with an elevated token?
+pub fn is_process_elevated() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        unsafe {
+            let mut token = windows::Win32::Foundation::HANDLE::default();
+            if OpenProcessToken(
+                GetCurrentProcess(),
+                windows::Win32::Security::TOKEN_QUERY,
+                &mut token,
+            )
+            .is_err()
+            {
+                return Err("elevation:query_failed".into());
+            }
+            let mut elev = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut ret = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elev as *mut _ as *mut _),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut ret,
+            );
+            let _ = CloseHandle(token);
+            ok.map_err(|_| "elevation:query_failed".to_string())?;
+            Ok(elev.TokenIsElevated != 0)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 /// Relaunch current exe elevated via ShellExecuteW "runas".
 /// On failure returns a stable `elevate:<kind>:<code>` string for UI localization:
 /// denied / cancelled / not_found / failed.
