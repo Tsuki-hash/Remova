@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use std::sync::Mutex;
+
+pub(crate) static CLEANUP_LOCK: Mutex<()> = Mutex::new(());
+
 mod pipeline;
 mod preview;
 pub(crate) mod reboot;

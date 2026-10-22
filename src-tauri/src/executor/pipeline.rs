@@ -4,11 +4,10 @@ use crate::scanner::{CleanupItem, ItemKind};
 use std::path::Path;
 
 use super::preview::run_cleanup_dry_for_app_source;
-use super::uninstall::run_official_uninstall;
-use super::{cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail};
-
-/// Process-wide lock so batch + manual cleanup cannot race PATH/backup.
-static CLEANUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use super::uninstall::run_official_uninstall_locked;
+use super::{
+    cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail, CLEANUP_LOCK,
+};
 
 /// Stage 1: restore point + Safety Vault backup.
 enum BackupOutcome {
@@ -635,7 +634,7 @@ pub fn run_full_cleanup(
     let mut uninstall_message = "skipped".into();
     let mut uninstall_had_command = false;
     if !opts.skip_official_uninstall {
-        let official = run_official_uninstall(app);
+        let official = run_official_uninstall_locked(app);
         uninstall_ok = official.ok;
         uninstall_message = official.message.clone();
         uninstall_had_command = official.had_command;
@@ -933,6 +932,29 @@ mod tests {
                     .into(),
             ..marked.clone()
         };
+        // A real, deletable file: the gate must abort before touching it. An
+        // empty item list could not prove the delete phase was skipped.
+        let tmp = crate::test_support::TempDir::new("pending-gate");
+        let dir = tmp.path().join("OtherCleanupFixture");
+        std::fs::create_dir_all(&dir).unwrap();
+        let payload = dir.join("residual.bin");
+        std::fs::write(&payload, b"must survive the pending gate").unwrap();
+        let item = crate::scanner::CleanupItem {
+            path: dir.to_string_lossy().into_owned(),
+            kind: crate::scanner::ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "fixture".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
         crate::executor::reboot::reset_for_test();
         crate::executor::reboot::mark_pending(&crate::apps::app_key(&marked));
         let opts = FullCleanupOptions {
@@ -942,7 +964,7 @@ mod tests {
             restore_point: false,
             cleanup_source: Some("uninstall".into()),
         };
-        let report = run_full_cleanup(&other, &[], &opts);
+        let report = run_full_cleanup(&other, &[item], &opts);
         assert!(report.aborted);
         assert!(report.uninstall_ok);
         assert_eq!(
@@ -954,7 +976,13 @@ mod tests {
             report.backup_dir.is_empty(),
             "backup must not run while a reboot is pending"
         );
+        assert!(
+            payload.exists(),
+            "the pending gate must block the delete phase, not just the report"
+        );
         crate::executor::reboot::reset_for_test();
+        // 3010 (reboot merely requested) must not arm the gate at all.
+        assert!(!crate::executor::reboot::any_pending());
     }
 
     #[test]

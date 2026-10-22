@@ -1,14 +1,17 @@
 //! Enumerate Windows uninstall registry entries (read-only).
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
 /// Uninstall command fingerprints from the latest server-side app scan (blocks IPC-forged RCE).
-static UNINSTALL_TRUST: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Keyed by the stable scan identity, so the record also pins the source
+/// (HKCU vs HKLM) the command was scanned from. A caller that keeps a trusted
+/// command pair but rewrites `source`/`registry_key` no longer matches.
+static UNINSTALL_TRUST: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+    OnceLock::new();
 
-fn uninstall_trust() -> &'static Mutex<HashSet<String>> {
-    UNINSTALL_TRUST.get_or_init(|| Mutex::new(HashSet::new()))
+fn uninstall_trust() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    UNINSTALL_TRUST.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
 fn trust_key(uninstall: &str, quiet: &str) -> String {
@@ -16,14 +19,17 @@ fn trust_key(uninstall: &str, quiet: &str) -> String {
 }
 
 /// Remember uninstall command pairs produced by the latest scan.
-/// Build the next set first, then swap — never leave an empty trust window for concurrent uninstall.
+/// Build the next map first, then swap — never leave an empty trust window for concurrent uninstall.
 pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
-    let mut next = HashSet::new();
+    let mut next = std::collections::HashMap::new();
     for a in apps {
         if a.uninstall_string.trim().is_empty() && a.quiet_uninstall_string.trim().is_empty() {
             continue;
         }
-        next.insert(trust_key(&a.uninstall_string, &a.quiet_uninstall_string));
+        next.insert(
+            app_key(a),
+            trust_key(&a.uninstall_string, &a.quiet_uninstall_string),
+        );
     }
     if let Ok(mut g) = uninstall_trust().lock() {
         *g = next;
@@ -37,11 +43,25 @@ pub fn app_key(app: &InstalledApp) -> String {
 }
 
 pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
-    let k = trust_key(&app.uninstall_string, &app.quiet_uninstall_string);
+    trusted_scan_source(app).is_some()
+}
+
+/// The scan-time source recorded for this app identity, if the latest scan
+/// produced this exact identity with this exact command pair.
+///
+/// Authorization decisions must use this rather than the client-supplied
+/// `source` field, which any IPC caller can rewrite.
+pub fn trusted_scan_source(app: &InstalledApp) -> Option<String> {
+    let expected = trust_key(&app.uninstall_string, &app.quiet_uninstall_string);
+    let key = app_key(app);
+    // The recorded entry stores the command pair; the source is part of `key`
+    // itself, so a rewritten source cannot resolve unless the server really
+    // scanned that identity.
     uninstall_trust()
         .lock()
-        .map(|g| g.contains(&k))
-        .unwrap_or(false)
+        .ok()
+        .filter(|g| g.get(&key) == Some(&expected))
+        .map(|_| app.source.clone())
 }
 
 /// Test-only access to the process-wide trust set. Arming it via
@@ -50,7 +70,7 @@ pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
 /// changes another test's outcome.
 #[cfg(test)]
 pub mod trust_test_support {
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard};
 
     /// Serializes tests that replace the process-wide trust set. The product
@@ -58,14 +78,14 @@ pub mod trust_test_support {
     /// `remember_uninstall_commands`), so a separate test mutex orders them.
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    pub fn snapshot() -> HashSet<String> {
+    pub fn snapshot() -> HashMap<String, String> {
         super::uninstall_trust()
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default()
     }
 
-    pub fn restore(saved: HashSet<String>) {
+    pub fn restore(saved: HashMap<String, String>) {
         if let Ok(mut g) = super::uninstall_trust().lock() {
             *g = saved;
         }
@@ -74,7 +94,7 @@ pub mod trust_test_support {
     /// Snapshot + exclusive test lock. Restores on drop, including on panic
     /// (A5): a failed assertion must not leave another test's trust set armed.
     pub struct TrustGuard {
-        saved: HashSet<String>,
+        saved: HashMap<String, String>,
         _lock: MutexGuard<'static, ()>,
     }
 
@@ -675,6 +695,9 @@ pub fn cleanup_broken_install(
     guid: &str,
     elevated: bool,
 ) -> Result<BrokenCleanupReport, String> {
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if crate::executor::reboot::any_pending() {
         return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
     }

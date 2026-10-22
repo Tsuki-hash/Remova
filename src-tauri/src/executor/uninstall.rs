@@ -174,23 +174,48 @@ fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> boo
     initiated
 }
 
-/// Launch the official uninstaller and wait (shared by full cleanup and beginner uninstall).
-pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
-    // S-RCE: never execute a command the client invented — must match last server scan.
-    // Per-user uninstall strings are user-writable. Running one from an
-    // elevated Remova would execute an arbitrary user-controlled image as
-    // administrator; require a non-elevated launch for HKCU entries.
-    if matches!(crate::sysops::is_process_elevated(), Ok(true))
-        && (app.source.to_ascii_uppercase().starts_with("HKCU")
-            || app.registry_key.to_ascii_uppercase().starts_with("HKCU"))
-    {
-        return OfficialUninstallResult {
-            ok: false,
-            message: "elevated HKCU uninstall refused".into(),
-            had_command: true,
-            reboot_initiated: false,
-        };
+fn pending_result() -> OfficialUninstallResult {
+    OfficialUninstallResult {
+        ok: false,
+        message: super::reboot::PENDING_MESSAGE.into(),
+        had_command: true,
+        reboot_initiated: false,
     }
+}
+
+/// Public official-uninstall entry. It shares the destructive-operation lock
+/// with full cleanup, broken records and firewall deletion.
+pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
+    if super::reboot::any_pending() {
+        return pending_result();
+    }
+    let _guard = super::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if super::reboot::any_pending() {
+        return pending_result();
+    }
+    run_official_uninstall_locked(app)
+}
+
+/// Apply the reboot gate before any destructive official-uninstall work. The
+/// closure is intentionally lazy so a pending reboot cannot reach process spawn.
+fn with_no_reboot_pending<T>(work: impl FnOnce() -> T, pending: T) -> T {
+    if super::reboot::any_pending() {
+        pending
+    } else {
+        work()
+    }
+}
+
+/// Internal path for full cleanup, which already owns CLEANUP_LOCK.
+pub(crate) fn run_official_uninstall_locked(
+    app: &crate::apps::InstalledApp,
+) -> OfficialUninstallResult {
+    with_no_reboot_pending(|| run_official_uninstall_unchecked(app), pending_result())
+}
+
+fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
     if app.uninstall_string.trim().is_empty() && app.quiet_uninstall_string.trim().is_empty() {
         return OfficialUninstallResult {
             ok: false,
@@ -199,7 +224,11 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
             reboot_initiated: false,
         };
     }
-    if !crate::apps::is_trusted_uninstall_app(app) {
+    // S-RCE: never execute a command the client invented — it must match the
+    // latest server-side scan *for this exact identity*. The trust record is
+    // keyed by source + registry key + name, so rewriting `source` (for example
+    // claiming an HKCU entry is HKLM) no longer resolves and is refused here.
+    let Some(scan_source) = crate::apps::trusted_scan_source(app) else {
         // A command exists but we refuse to run it. Reporting `had_command:
         // false` here told the caller there was nothing to run, so cleanup
         // proceeded to delete leftovers of an app that is still installed —
@@ -207,6 +236,20 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
         return OfficialUninstallResult {
             ok: false,
             message: "uninstall command not from latest app scan".into(),
+            had_command: true,
+            reboot_initiated: false,
+        };
+    };
+    // Per-user uninstall strings are user-writable. Running one from an
+    // elevated Remova would execute an arbitrary user-controlled image as
+    // administrator; require a non-elevated launch for HKCU entries. The
+    // decision uses the recorded scan source, never the client-supplied field.
+    if matches!(crate::sysops::is_process_elevated(), Ok(true))
+        && scan_source.to_ascii_uppercase().starts_with("HKCU")
+    {
+        return OfficialUninstallResult {
+            ok: false,
+            message: "elevated HKCU uninstall refused".into(),
             had_command: true,
             reboot_initiated: false,
         };
@@ -352,6 +395,89 @@ mod tests {
         )));
         crate::executor::reboot::reset_for_test();
         assert!(!crate::executor::reboot::any_pending());
+    }
+
+    #[test]
+    fn reboot_pending_prevents_official_uninstall_work_before_spawn() {
+        let app = crate::apps::InstalledApp {
+            name: "PendingGateFixture".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: r"HKLM64\SOFTWARE\PendingGateFixture".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        crate::executor::reboot::reset_for_test();
+        assert!(record_reboot_exit(Some(1641), &app));
+        let mut spawn_calls = 0;
+        let blocked = with_no_reboot_pending(
+            || {
+                spawn_calls += 1;
+                "spawned"
+            },
+            "blocked",
+        );
+        assert_eq!(blocked, "blocked");
+        assert_eq!(spawn_calls, 0);
+
+        crate::executor::reboot::reset_for_test();
+        assert!(!record_reboot_exit(Some(3010), &app));
+        let allowed = with_no_reboot_pending(
+            || {
+                spawn_calls += 1;
+                "spawned"
+            },
+            "blocked",
+        );
+        assert_eq!(allowed, "spawned");
+        assert_eq!(spawn_calls, 1);
+        crate::executor::reboot::reset_for_test();
+    }
+
+    #[test]
+    fn a_rewritten_source_cannot_reuse_another_identitys_trust() {
+        let _g = crate::apps::trust_test_support::guard();
+        let scanned = crate::apps::InstalledApp {
+            name: "HkcuUserApp".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: String::new(),
+            uninstall_string: r"C:\Users\me\AppData\Local\UserApp\uninstall.exe".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKCU".into(),
+            registry_key: r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\HkcuUserApp"
+                .into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        crate::apps::remember_uninstall_commands(std::slice::from_ref(&scanned));
+        assert!(crate::apps::is_trusted_uninstall_app(&scanned));
+
+        // Same command bytes, forged identity: the trust record is keyed by the
+        // scanned identity, so this must no longer resolve.
+        let forged = crate::apps::InstalledApp {
+            source: "HKLM64".into(),
+            registry_key: r"HKLM64\SOFTWARE\Vendor\HkcuUserApp".into(),
+            ..scanned.clone()
+        };
+        assert!(
+            !crate::apps::is_trusted_uninstall_app(&forged),
+            "a forged source/registry key must not inherit trust"
+        );
+        assert!(crate::apps::trusted_scan_source(&forged).is_none());
+
+        // The recorded identity still resolves, and reports its scanned source
+        // (which is what the elevated-HKCU decision now consumes).
+        assert_eq!(
+            crate::apps::trusted_scan_source(&scanned).as_deref(),
+            Some("HKCU")
+        );
     }
 
     #[test]
