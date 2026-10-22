@@ -118,3 +118,87 @@ pub struct FullCleanupReport {
     pub errors: Vec<String>,
     pub item_details: Vec<ItemDetail>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The UI reads these over IPC, so the *serialized* shape is the contract.
+    /// A field-level assertion on the Rust source cannot catch
+    /// `#[serde(skip_serializing)]`, a rename, or a value that never leaves
+    /// `false`; this serializes the real structs instead.
+    #[test]
+    fn report_and_uninstall_results_serialize_the_fields_the_ui_reads() {
+        let report = FullCleanupReport {
+            app_name: "Fixture".into(),
+            app_key: "k".into(),
+            dry_run: false,
+            backup_dir: String::new(),
+            uninstall_ok: true,
+            uninstall_message: "ok".into(),
+            deleted: 1,
+            failed: 2,
+            skipped: 3,
+            delayed: 4,
+            reclaimed_kb: 5,
+            kept_kb: 6,
+            delayed_kb: 7,
+            aborted: true,
+            reboot_pending: true,
+            restore_point_ok: false,
+            restore_point_msg: "msg".into(),
+            errors: vec!["e".into()],
+            item_details: vec![ItemDetail {
+                path: "p".into(),
+                kind: "file".into(),
+                status: "failed".into(),
+                message: "m".into(),
+            }],
+        };
+        let json = serde_json::to_value(&report).unwrap();
+        let obj = json.as_object().unwrap();
+        // Presence and type of every field the frontend consumes.
+        assert_eq!(obj["reboot_pending"], serde_json::json!(true));
+        assert_eq!(obj["aborted"], serde_json::json!(true));
+        assert_eq!(obj["uninstall_ok"], serde_json::json!(true));
+        assert_eq!(obj["uninstall_message"], serde_json::json!("ok"));
+        assert_eq!(obj["deleted"], serde_json::json!(1));
+        assert_eq!(obj["failed"], serde_json::json!(2));
+        assert_eq!(obj["skipped"], serde_json::json!(3));
+        assert_eq!(obj["delayed"], serde_json::json!(4));
+        assert_eq!(obj["reclaimed_kb"], serde_json::json!(5));
+        assert_eq!(obj["kept_kb"], serde_json::json!(6));
+        assert_eq!(obj["delayed_kb"], serde_json::json!(7));
+        assert_eq!(obj["app_key"], serde_json::json!("k"));
+        assert!(obj["item_details"].is_array());
+        assert!(obj["errors"].is_array());
+
+        // `reboot_pending` must survive a round trip, not just serialization.
+        let back: FullCleanupReport = serde_json::from_value(json).unwrap();
+        assert!(back.reboot_pending && back.aborted && back.uninstall_ok);
+
+        let uninstall = OfficialUninstallResult {
+            ok: true,
+            message: "m".into(),
+            had_command: true,
+            reboot_initiated: true,
+        };
+        let ujson = serde_json::to_value(&uninstall).unwrap();
+        assert_eq!(ujson["reboot_initiated"], serde_json::json!(true));
+        assert_eq!(ujson["had_command"], serde_json::json!(true));
+        let uback: OfficialUninstallResult = serde_json::from_value(ujson).unwrap();
+        assert!(uback.reboot_initiated && uback.had_command && uback.ok);
+
+        // A legacy payload without the newer optional fields still parses, so an
+        // older report cannot break the UI.
+        let legacy: FullCleanupReport = serde_json::from_value(serde_json::json!({
+            "app_name": "L", "dry_run": false, "backup_dir": "", "uninstall_ok": false,
+            "uninstall_message": "", "deleted": 0, "failed": 0, "skipped": 0,
+            "aborted": false, "restore_point_ok": false, "restore_point_msg": "",
+            "errors": [], "item_details": []
+        }))
+        .unwrap();
+        assert!(!legacy.reboot_pending);
+        assert_eq!(legacy.delayed, 0);
+    }
+}
