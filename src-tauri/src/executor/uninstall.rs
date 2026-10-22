@@ -203,6 +203,10 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                             Ok(Some(status)) => {
                                 let code = status.code();
                                 let ok = uninstaller_exit_ok(code);
+                                let initiated = uninstaller_reboot_initiated(code);
+                                if initiated {
+                                    super::reboot::mark_pending(&crate::apps::app_key(app));
+                                }
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
                                     format!("uninstaller finished (reboot required): {}", argv[0])
                                 } else if ok {
@@ -214,7 +218,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
                                     ok,
                                     message,
                                     had_command: true,
-                                    reboot_initiated: uninstaller_reboot_initiated(code),
+                                    reboot_initiated: initiated,
                                 };
                             }
                             Ok(None) => {

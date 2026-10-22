@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 mod pipeline;
 mod preview;
+mod reboot;
 mod uninstall;
 
 pub use pipeline::*;

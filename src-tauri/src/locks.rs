@@ -17,20 +17,27 @@ fn failed_lock_roots() -> &'static Mutex<HashMap<String, String>> {
     ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[String]) {
+pub(crate) fn remember_failed_lock_roots(root: &str, paths: &[(String, bool)]) {
     let Ok(mut map) = failed_lock_roots().lock() else {
         return;
     };
     map.clear();
     let root_key = crate::fsutil::path_key(std::path::Path::new(root));
-    for path in paths {
-        let path_key = crate::fsutil::path_key(std::path::Path::new(path));
-        let (path_key, owner_key) = match (root_key.clone(), path_key) {
-            (Some(root), Some(path)) => (path, root),
-            (None, Some(path)) => (path.clone(), path),
-            _ => continue,
+    for (path, is_dir) in paths {
+        let Some(path_key) = crate::fsutil::path_key(std::path::Path::new(path)) else {
+            continue;
         };
-        map.insert(path_key, owner_key);
+        let owner_key = match root_key.clone() {
+            Some(root) => root,
+            None if *is_dir => path_key.clone(),
+            None => std::path::Path::new(path)
+                .parent()
+                .and_then(crate::fsutil::path_key)
+                .unwrap_or_default(),
+        };
+        if !owner_key.is_empty() {
+            map.insert(path_key, owner_key);
+        }
     }
 }
 
@@ -326,7 +333,7 @@ mod tests {
     fn failed_lock_roots_authorize_only_remembered_targets() {
         super::remember_failed_lock_roots(
             r"C:\Apps\R41Demo",
-            &[r"C:\Apps\R41Demo\cache".to_string()],
+            &[(r"C:\Apps\R41Demo\cache".to_string(), true)],
         );
         assert_eq!(
             super::authorized_lock_root(r"c:/apps/r41demo/cache"),
@@ -335,6 +342,23 @@ mod tests {
         assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\other").is_none());
         super::remember_failed_lock_roots(r"C:\Apps\R41Demo", &[]);
         assert!(super::authorized_lock_root(r"C:\Apps\R41Demo\cache").is_none());
+    }
+
+    #[test]
+    fn app_less_cleanup_authorizes_the_containing_directory() {
+        super::remember_failed_lock_roots(
+            "",
+            &[(r"C:\Orphans\Demo\locked.dll".to_string(), false)],
+        );
+        assert_eq!(
+            super::authorized_lock_root(r"c:/orphans/demo/locked.dll"),
+            Some(r"c:\orphans\demo".to_string())
+        );
+        super::remember_failed_lock_roots("", &[(r"C:\Orphans\Demo".to_string(), true)]);
+        assert_eq!(
+            super::authorized_lock_root(r"C:\Orphans\Demo"),
+            Some(r"c:\orphans\demo".to_string())
+        );
     }
 
     #[cfg(windows)]

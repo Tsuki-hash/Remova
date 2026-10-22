@@ -589,8 +589,8 @@ mod tests {
         assert!(temp_entry_matches("MySteamTemp", &slugs));
     }
 
-    /// priority item-6 (CQ-2): the cross-drive scan collects every top-level directory,
-    /// orders the collected set, and only then truncates. The fixture names make
+    /// The cross-drive scan collects every top-level directory, orders the
+    /// collected set, and only then truncates. The fixture names make
     /// the filesystem's enumeration order the reverse of the sort order: NTFS
     /// compares upper-cased code units, so `_` (0x5F) enumerates after `Z`
     /// (0x5A), while `order_candidates` sorts lower-cased strings, where `_`

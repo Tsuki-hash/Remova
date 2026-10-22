@@ -404,7 +404,7 @@ fn pin_dir_with_access(p: &Path, desired_access: u32) -> std::io::Result<DirPin>
 
 /// A path can carry a guard marker only when it has a parent directory. Drive
 /// roots and UNC share roots cannot be converted to a junction in place and
-/// must never receive a marker (regression fix, pinned by a pure unit test in review action).
+/// must never receive a marker; a pure unit test pins this.
 fn target_can_be_marked(p: &Path) -> bool {
     p.parent().is_some()
 }
@@ -1481,7 +1481,8 @@ mod tests {
         assert!(!tree.exists());
     }
 
-    /// regression fix / review action: the root-skip rule is a pure decision, so it can be tested    /// without pinning a real volume root.
+    /// The root-skip rule is a pure decision, so it can be tested without
+    /// pinning a real volume root.
     #[test]
     fn target_can_be_marked_covers_roots_and_unc_shares() {
         assert!(!target_can_be_marked(std::path::Path::new(r"C:\")));

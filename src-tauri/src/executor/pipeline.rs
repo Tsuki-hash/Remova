@@ -556,6 +556,33 @@ pub fn run_full_cleanup(
         };
     }
 
+    let app_key = crate::apps::app_key(app);
+    // A 1641 from an earlier IPC call (deep uninstall, batch retry) has already
+    // started a reboot. Deleting residuals before that reboot finishes can
+    // leave a half-completed state, so fail closed across calls.
+    if super::reboot::is_pending(&app_key) {
+        return FullCleanupReport {
+            app_name: app.name.clone(),
+            app_key,
+            dry_run: false,
+            backup_dir: String::new(),
+            uninstall_ok: true,
+            uninstall_message: super::reboot::PENDING_MESSAGE.into(),
+            deleted: 0,
+            failed: 0,
+            skipped: 0,
+            delayed: 0,
+            reclaimed_kb: 0,
+            kept_kb: 0,
+            delayed_kb: 0,
+            aborted: true,
+            restore_point_ok: false,
+            restore_point_msg: String::new(),
+            errors: vec![],
+            item_details: vec![],
+        };
+    }
+
     let selected: Vec<&CleanupItem> = items
         .iter()
         .filter(|it| !it.path.trim().is_empty())
@@ -626,7 +653,9 @@ pub fn run_full_cleanup(
                 dry_run: false,
                 backup_dir,
                 uninstall_ok: true,
-                uninstall_message: official.message.clone(),
+                // Distinct from the 3010 "reboot required" message: this one
+                // tells the user residual deletion was skipped on purpose.
+                uninstall_message: super::reboot::INITIATED_MESSAGE.into(),
                 deleted: 0,
                 failed: 0,
                 skipped: 0,
@@ -637,9 +666,7 @@ pub fn run_full_cleanup(
                 aborted: true,
                 restore_point_ok,
                 restore_point_msg,
-                errors: vec![
-                    "official uninstaller initiated reboot; residual cleanup skipped".into(),
-                ],
+                errors: vec![],
                 item_details: vec![],
             };
         }
@@ -729,13 +756,15 @@ pub fn run_full_cleanup(
     );
     del.skipped += plan.refused.len() as u32;
     del.details.extend(plan.refused);
-    let failed_lock_paths: Vec<String> = del
+    let failed_lock_paths: Vec<(String, bool)> = del
         .details
         .iter()
         .filter(|d| {
-            d.status == "failed" && (!app.install_location.trim().is_empty() || d.kind == "dir")
+            d.status == "failed"
+                && (!app.install_location.trim().is_empty()
+                    || matches!(d.kind.as_str(), "file" | "dir"))
         })
-        .map(|d| d.path.clone())
+        .map(|d| (d.path.clone(), d.kind == "dir"))
         .collect();
     crate::locks::remember_failed_lock_roots(&app.install_location, &failed_lock_paths);
 
@@ -897,6 +926,43 @@ mod tests {
             r"\Microsoft\Windows\Defrag\ScheduledDefrag"
         ));
         assert!(!crate::regops::schtasks_delete(""));
+    }
+
+    #[test]
+    fn pending_reboot_blocks_residual_cleanup_across_calls() {
+        // MSI 1641 happens in one IPC call; the residual pass is a later call.
+        // The registry must make that later call fail closed before any delete.
+        let app = crate::apps::InstalledApp {
+            name: "RebootPendingFixture".into(),
+            publisher: "Vendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\Program Files\RebootPendingFixture".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key:
+                r"HKLM64\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\RebootPendingFixture"
+                    .into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        crate::executor::reboot::mark_pending(&crate::apps::app_key(&app));
+        let opts = FullCleanupOptions {
+            dry_run: false,
+            skip_official_uninstall: true,
+            backup_enabled: false,
+            restore_point: false,
+            cleanup_source: Some("uninstall".into()),
+        };
+        let report = run_full_cleanup(&app, &[], &opts);
+        assert!(report.aborted);
+        assert!(report.uninstall_ok);
+        assert_eq!(
+            report.uninstall_message,
+            crate::executor::reboot::PENDING_MESSAGE
+        );
+        assert_eq!((report.deleted, report.failed), (0, 0));
     }
 
     #[test]

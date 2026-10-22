@@ -117,9 +117,9 @@ fn progress_counts_only_attempted_rows() {
     );
 }
 
-/** review action: the real regression fix regression. Workers have no thread-local task context;
- * a cancelled watch must stop them BEFORE any walk starts. Reverting the
- * worker to `scan_task::cancelled()` makes this test red. */
+/** Workers have no thread-local task context; a cancelled watch must stop
+ * them BEFORE any walk starts. Reverting the worker to
+ * `scan_task::cancelled()` makes this test red. */
 #[test]
 fn parallel_workers_stop_on_a_cancelled_watch() {
     let root = crate::test_support::TempDir::new("par-watch");
