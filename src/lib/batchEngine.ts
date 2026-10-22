@@ -10,7 +10,7 @@ import {
   cleanupOutcomeText,
 } from "../lib/cleanupFeedback";
 import { toast } from "../lib/toast";
-import type { InstalledApp } from "../types";
+import type { InstalledApp, ScanResult } from "../types";
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "./restorePointPref";
 
@@ -60,7 +60,23 @@ export async function runBatchCleanup(
       cb.onCurrent(app.name);
       toast.info(L.toastBatchProgress(i + 1, queue.length, prettyAppName(app.name, app.source)));
       try {
-        const r = await api.analyze(app);
+        // Run each batch analyze through the scan task so Cancel can stop the
+        // current app (not just the next iteration) and the 8-task cap applies.
+        let scanId: number | undefined;
+        try {
+          scanId = await api.beginAssociationScan();
+        } catch {
+          scanId = undefined;
+        }
+        const cancelPoll = scanId === undefined ? undefined : setInterval(() => {
+          if (cb.cancelRef.current) void api.cancelAssociationScan(scanId);
+        }, 250);
+        let r: ScanResult;
+        try {
+          r = await api.analyze(app, scanId);
+        } finally {
+          if (cancelPoll !== undefined) clearInterval(cancelPoll);
+        }
         const items = r.items.filter(defaultSelectable);
  // F-1: do not skip the whole app when there are no default-selectable leftovers.
  // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
@@ -74,6 +90,20 @@ export async function runBatchCleanup(
           cleanup_source: "uninstall",
         });
         officialDone ||= runOfficial && report.uninstall_ok;
+        // A 1641 (or the global pending gate) means the machine is about to
+        // restart. Do not start another app's uninstall/delete in this batch.
+        if (report.reboot_pending) {
+          results.push({
+            key,
+            name: app.name,
+            status: "failed",
+            detail: backendText(report.uninstall_message) || L.backendRebootInitiated,
+            officialDone: true,
+          });
+          cb.onResults([...results]);
+          toast.info(L.backendRebootInitiated);
+          break;
+        }
         const emptyResidual = report.aborted && !items.length && !runOfficial
           && report.uninstall_message === "no items" && !report.errors.length;
         if ((report.aborted && !emptyResidual) || (runOfficial && !report.uninstall_ok)) {

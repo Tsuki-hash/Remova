@@ -201,9 +201,13 @@ export function useAnalyzeFlow({
         strings.uninstallFlowStepBackup,
       ];
       const defaultRescan = loadRescanAfterUninstall();
+      const command = (app.uninstall_string || app.quiet_uninstall_string || "").trim();
+      const commandLine = command
+        ? `\n\n${strings.uninstallCommand}: ${command.length > 180 ? `${command.slice(0, 180)}…` : command}`
+        : "";
       const { ok, checked } = await requestConfirmEx({
         title: strings.uninstallConfirmDeepTitle || strings.uninstallFlowDeep,
-        message: `${strings.uninstallConfirmDeepBody(label)}\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
+        message: `${strings.uninstallConfirmDeepBody(label)}\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}${commandLine}`,
         confirmLabel: strings.drawerDeepUninstall,
         checkbox: {
           label: strings.uninstallRescanAfter,

@@ -8,15 +8,28 @@ const dict = { zh, en } as const;
 
 let lang: Lang = "zh";
 
+function applyDocumentLang(l: Lang) {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
+  }
+}
+
 export function loadLang() {
   const v = localStorage.getItem("remova_lang");
-  if (v === "en" || v === "zh") lang = v;
+  if (v === "en" || v === "zh") {
+    lang = v;
+  } else if (typeof navigator !== "undefined") {
+    // No saved choice: follow the OS/browser language instead of forcing zh.
+    lang = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+  applyDocumentLang(lang);
   return lang;
 }
 
 export function setLang(l: Lang) {
   lang = l;
   localStorage.setItem("remova_lang", l);
+  applyDocumentLang(l);
 }
 
 export function currentLang() {

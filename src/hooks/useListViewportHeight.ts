@@ -47,5 +47,5 @@ export function useListViewportHeight(ref: RefObject<HTMLDivElement | null>) {
       main.removeEventListener("toggle", schedule, { capture: true });
       cancelAnimationFrame(frame);
     };
-  });
+  }, [ref]);
 }

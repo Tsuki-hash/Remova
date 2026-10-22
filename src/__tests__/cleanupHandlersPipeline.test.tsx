@@ -19,7 +19,7 @@ vi.mock("../lib/api", () => ({
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
     analyze: (...a: unknown[]) => analyze(...a),
     aiRiskBrief: vi.fn(),
-    verifyLeftovers: vi.fn(),
+    verifyLeftovers: vi.fn(async () => []),
     dryRun: vi.fn(),
   },
 }));
@@ -140,6 +140,69 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
       message: expect.stringContaining(t().cleanupConfirmOptionalBackup(1, false)),
     }));
     expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items, expect.anything());
+  });
+
+  it("keeps the uninstall state after a 1641 abort and shows an advisory", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    fullCleanup.mockResolvedValue(
+      report({
+        aborted: true,
+        uninstall_ok: true,
+        reboot_pending: true,
+        uninstall_message: "system reboot pending",
+        deleted: 0,
+      }),
+    );
+    const residualSpy = vi.fn();
+    const busyRef = { current: false };
+    const hook = renderHook(() =>
+      useCleanupHandlers({
+        L: t(),
+        selected: app(),
+        scan: scan(),
+        selectedPaths: new Set([scan().items[0]!.path]),
+        residualFromUninstall: false,
+        useOfficial: false,
+        aiEnabled: false,
+        aiRisk: null,
+        apps: [],
+        multi: new Set<string>(),
+        flow: { ...flow, setResidualFromUninstall: residualSpy },
+        refreshApps: async () => {},
+        busyRef,
+      }),
+    );
+    await act(async () => { await hook.result.current.handleCleanupConfirm(); });
+    expect(residualSpy).toHaveBeenCalledWith(true);
+    expect(toast.info).toHaveBeenCalled();
+  });
+
+  it("releases busyRef before starting the post-cleanup rescan", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    fullCleanup.mockResolvedValue(report({ uninstall_ok: true, deleted: 1 }));
+    const busyRef = { current: false };
+    let busyAtAfter: boolean | undefined;
+    const hook = renderHook(() =>
+      useCleanupHandlers({
+        L: t(),
+        selected: app(),
+        scan: scan(),
+        selectedPaths: new Set([scan().items[0]!.path]),
+        residualFromUninstall: false,
+        useOfficial: false,
+        aiEnabled: false,
+        aiRisk: null,
+        apps: [],
+        multi: new Set<string>(),
+        flow,
+        refreshApps: async () => {},
+        busyRef,
+        onAfterCleanup: () => { busyAtAfter = busyRef.current; },
+      }),
+    );
+    await act(async () => { await hook.result.current.handleCleanupConfirm(); });
+    await waitFor(() => expect(busyAtAfter).toBeDefined());
+    expect(busyAtAfter).toBe(false);
   });
 
   it("cleans bound residuals after the app disappears and rejects a mismatched target", async () => {

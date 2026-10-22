@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScopedScanPanel } from "../components/ScopedScanPanel";
-import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText } from "../lib/cleanupFeedback";
+import { cleanupAccomplishedSomething, shouldRescanAfterUninstall, cleanupFeedback, cleanupNothingText } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
 import { setLang, t, formatSize } from "../i18n";
@@ -189,4 +189,13 @@ it("shows the space to be freed, a select count, and select-all", async () => {
   fireEvent.click(screen.getByRole("button", { name: L.clearSelection }));
   expect(screen.getByRole("button", { name: new RegExp(L.cleanup) }).hasAttribute("disabled")).toBe(true);
   setLang("zh");
+});
+
+describe("shouldRescanAfterUninstall", () => {
+  it("treats a 1641 abort as a completed uninstall but not a dry run", () => {
+    expect(shouldRescanAfterUninstall({ dry_run: false, uninstall_ok: true })).toBe(true);
+    expect(shouldRescanAfterUninstall({ dry_run: true, uninstall_ok: true })).toBe(false);
+    expect(shouldRescanAfterUninstall({ dry_run: false, uninstall_ok: false })).toBe(false);
+    expect(shouldRescanAfterUninstall({ dry_run: false })).toBe(false);
+  });
 });

@@ -16,6 +16,7 @@ vi.mock("../lib/api", () => ({
 }));
 vi.mock("../lib/confirm", () => ({
   requestConfirmEx: vi.fn(async () => ({ ok: true, checked: true })),
+  requestConfirm: vi.fn(async () => true),
 }));
 
 import { useAnalyzeFlow } from "../hooks/useAnalyzeFlow";
@@ -291,6 +292,18 @@ describe("useAnalyzeFlow request sequencing", () => {
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef: { current: false } }));
     await act(async () => { await result.current.startUninstall(app("RebootApp")); });
+    expect(analyzeMock).not.toHaveBeenCalled();
+  });
+
+  it("official-only uninstall skips the rescan after a reboot initiation", async () => {
+    officialMock.mockResolvedValue({
+      ok: true, had_command: true, reboot_initiated: true,
+      message: "uninstaller finished (reboot required): msiexec.exe",
+    });
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    await act(async () => { await result.current.openOfficialOnly(app("OfficialRebootApp")); });
+    expect(officialMock).toHaveBeenCalled();
     expect(analyzeMock).not.toHaveBeenCalled();
   });
 

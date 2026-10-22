@@ -8,6 +8,8 @@ vi.mock("../lib/api", () => ({
   api: {
     analyze: (...a: unknown[]) => analyze(...a),
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
+    beginAssociationScan: vi.fn(async () => 7),
+    cancelAssociationScan: vi.fn(async () => true),
   },
 }));
 
@@ -22,6 +24,7 @@ vi.mock("../i18n", () => ({
     batchDone: "done",
     backendBackupFailed: "backup stopped cleanup",
     backendDetailUnavailable: "diagnostic unavailable",
+    backendRebootInitiated: "reboot pending",
     uninstallFail: "uninstall failed",
   }),
 }));
@@ -207,6 +210,27 @@ describe("runBatchCleanup", () => {
       expect.anything(),
       expect.objectContaining({ backup_enabled: true }),
     );
+  });
+
+  it("stops the queue after a reboot-pending report", async () => {
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    fullCleanup.mockResolvedValue(
+      report({
+        deleted: 0,
+        failed: 0,
+        aborted: true,
+        uninstall_ok: true,
+        reboot_pending: true,
+        uninstall_message: "system reboot pending",
+      }),
+    );
+    const cb = makeCb();
+    await runBatchCleanup([app("A"), app("B")], true, keyOf, cb);
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(fullCleanup).toHaveBeenCalledTimes(1);
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("failed");
+    expect(last?.officialDone).toBe(true);
   });
 
   it("maps cleanup abort to failed when items were present (S-R4-06)", async () => {

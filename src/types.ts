@@ -150,6 +150,8 @@ export type FullCleanupReport = {
   kept_kb?: number;
   delayed_kb?: number;
   aborted: boolean;
+  /** MSI 1641 / global reboot gate: deletion postponed until restart. */
+  reboot_pending?: boolean;
   restore_point_ok: boolean;
   restore_point_msg: string;
   errors: string[];

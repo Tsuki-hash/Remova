@@ -640,6 +640,8 @@ export const dict: EnDict = {
     versionDownloadOpenFailed: "Couldn’t open the browser — visit the Releases page manually",
     uninstallFail: "Official uninstall did not succeed",
     uninstallNoCmd: "No uninstall command for this app",
+    uninstallElevatedHkcu: "Remova is running elevated. For safety it will not run a per-user (HKCU) uninstaller as administrator; restart Remova without elevation and retry.",
+    uninstallCommand: "Uninstall command",
     leftoversTitle: "Possible leftovers",
     leftoversNone: "No obvious leftovers found",
     detailPublisher: "Publisher",

@@ -31,11 +31,21 @@ function reason(message: string) {
   return known;
 }
 
-/** Containing directory for a failed file in an app-less cleanup; drive roots
- * are excluded so the end-process action never authorizes a whole volume. */
+function pathDepth(path: string): number {
+  return path.replace(/\//g, "\\").split("\\").filter(Boolean).length;
+}
+
+/** Containing directory for a failed file in an app-less cleanup. Mirrors the
+ * backend's `is_safe_fs` depth rule (drive + at least two segments), so a
+ * shallow parent never renders a button the server will reject. */
 function parentDirOf(path: string): string | undefined {
   const cut = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  return cut > 2 ? path.slice(0, cut) : undefined;
+  const parent = cut > 2 ? path.slice(0, cut) : undefined;
+  return parent && pathDepth(parent) >= 3 ? parent : undefined;
+}
+
+function safeOwnerPath(path: string): string | undefined {
+  return pathDepth(path) >= 3 ? path : undefined;
 }
 
 function ResultGroup({
@@ -140,7 +150,11 @@ function ResultGroup({
         // the reported directory (or the failed file's parent). The backend
         // authorization map remains authoritative.
         const fallbackRoot =
-          item.kind === "dir" ? item.path : item.kind === "file" ? parentDirOf(item.path) : undefined;
+          item.kind === "dir"
+            ? safeOwnerPath(item.path)
+            : item.kind === "file"
+              ? parentDirOf(item.path)
+              : undefined;
         const effectiveLockRoot = lockRoot || fallbackRoot;
         return <div key={`${item.path}-${index}`} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
           <code style={{ display: "block", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.path}</code>

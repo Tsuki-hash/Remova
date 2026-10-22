@@ -218,7 +218,15 @@ function AppRowImpl({
     <tr
       ref={rowRef}
       data-index={index}
+      tabIndex={0}
+      aria-selected={selected}
       onClick={() => onSelect(a)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(a);
+        }
+      }}
       title={[
         prettyAppName(a.name, a.source),
         a.version && `${L.detailVersion}: ${a.version}`,

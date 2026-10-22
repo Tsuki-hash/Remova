@@ -38,6 +38,16 @@ export function cleanupNothingText(report: FullCleanupReport, L: Strings): strin
   return L.cleanupNothingRemoved(report.skipped);
 }
 
+/** May the report panel offer "rescan after uninstall"? A 1641/pending
+ * report has `uninstall_ok` too: the uninstaller succeeded, only deletion was
+ * postponed. */
+export function shouldRescanAfterUninstall(report: {
+  dry_run: boolean;
+  uninstall_ok?: boolean;
+}): boolean {
+  return !report.dry_run && report.uninstall_ok === true;
+}
+
 export function cleanupFeedback(report: FullCleanupReport, L: Strings, channel?: string, prefix = "") {
   const message = report.aborted
     ? backendText(report.uninstall_message || report.errors[0] || "") || L.uninstallFail

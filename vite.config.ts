@@ -33,15 +33,17 @@ export default defineConfig({
         "src/components/FirewallRulesPanel.tsx",
         "src/components/CleanupResultDetails.tsx",
         "src/components/DeepRegistryCheck.tsx",
+        "src/components/SoftwarePage.tsx",
+        "src/components/BatchPanels.tsx",
       ],
       exclude: ["src/lib/api.ts"],
       thresholds: {
         // Preserve the existing logic-layer floor; App gets its own gate so
         // better hook coverage cannot mask missing orchestration tests.
-        statements: 48,
-        branches: 49,
-        functions: 44,
-        lines: 49,
+        statements: 80,
+        branches: 75,
+        functions: 85,
+        lines: 85,
         // M-12: this per-file gate used to sit at 90/85/90/90, i.e. above the
         // project-wide floor *and* above what App.tsx actually measures today
         // (100 / 93.5 / 98.18 / 100). The effect was perverse: extracting a

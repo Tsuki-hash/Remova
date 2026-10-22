@@ -221,6 +221,7 @@ export function useCleanupHandlers({
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
     verifySeqRef.current += 1;
     setDryRunning(true);
+    let afterCleanup: { app: InstalledApp; report: FullCleanupReport } | null = null;
     try {
       const r = await api.fullCleanup(selected, items, {
         dry_run: false,
@@ -241,7 +242,10 @@ export function useCleanupHandlers({
       setReport(r);
       if (r.aborted) {
         const msg = backendText(r.uninstall_message) || L.uninstallFail;
-        toast.error(msg);
+        // A 1641/pending report is not a failure: the uninstaller succeeded and
+        // deletion was postponed until the restart. Do not style it as one.
+        if (r.reboot_pending) toast.info(msg);
+        else toast.error(msg);
         setError(msg);
         setVerifyRows(null);
         setAiReportNote(null);
@@ -275,7 +279,7 @@ export function useCleanupHandlers({
         .catch(() => {});
       setResidualFromUninstall(r.uninstall_ok || residualFromUninstall);
       if (r.uninstall_ok && selected) {
-        onAfterCleanup?.(selected, r);
+        afterCleanup = { app: selected, report: r };
       }
       void refreshApps();
     } catch (e) {
@@ -286,6 +290,10 @@ export function useCleanupHandlers({
       busyRef.current = false;
       setDryRunning(false);
     }
+    // Start the post-cleanup rescan only after the cleanup released busyRef;
+    // otherwise the nested analyze inherits an external hold while the ref is
+    // already free, letting another destructive action start mid-scan.
+    if (afterCleanup) onAfterCleanup?.(afterCleanup.app, afterCleanup.report);
   }, [
     scan,
     selected,

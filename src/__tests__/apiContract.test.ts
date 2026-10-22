@@ -202,4 +202,13 @@ describe("AI request payload contract (CQ-04)", () => {
       expect(body).toMatch(/request: (RiskBriefRequest|ReportBriefRequest)/);
     }
   });
+
+  it("keeps the full-cleanup report fields the UI consumes", () => {
+    const types = readFileSync("src/types.ts", "utf8");
+    const rust = readFileSync("src-tauri/src/executor/mod.rs", "utf8");
+    expect(types).toContain("reboot_pending");
+    expect(rust).toContain("pub reboot_pending: bool");
+    expect(types).toContain("uninstall_ok");
+    expect(rust).toContain("pub uninstall_ok: bool");
+  });
 });
