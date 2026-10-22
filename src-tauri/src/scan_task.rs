@@ -18,6 +18,9 @@ struct Task {
     /// thread-local `CURRENT` is not visible to a thread spawned inside a scan.
     cancelled: Arc<AtomicBool>,
     committed: AtomicBool,
+    /// Set while the one winner performs its external commit. Cancellation cannot
+    /// revoke a commit after its winner has been reserved.
+    committing: AtomicBool,
     started: bool,
     progress: Mutex<Progress>,
     /// Last (stage pointer, stage length, found) published to `progress`.
@@ -72,6 +75,7 @@ pub fn begin() -> Result<u32, String> {
             scope: None,
             cancelled: Arc::new(AtomicBool::new(false)),
             committed: AtomicBool::new(false),
+            committing: AtomicBool::new(false),
             started: false,
             progress: Mutex::new(Progress {
                 stage: "preparing".into(),
@@ -88,7 +92,7 @@ pub fn begin() -> Result<u32, String> {
 pub fn cancel(id: u32) -> Result<bool, String> {
     let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
     if let Some(task) = tasks.get(&id) {
-        if task.committed.load(Ordering::SeqCst) {
+        if task.committed.load(Ordering::SeqCst) || task.committing.load(Ordering::SeqCst) {
             return Ok(false);
         }
         task.cancelled.store(true, Ordering::SeqCst);
@@ -169,16 +173,28 @@ pub fn commit<T>(work: impl FnOnce(&CommitPermit) -> Result<T, String>) -> Resul
     let Some(task) = task else {
         return work(&CommitPermit(()));
     };
-    let _tasks = tasks().lock().map_err(|_| "scan:state")?;
-    let latest = latest().lock().map_err(|_| "scan:state")?;
-    if task.cancelled.load(Ordering::SeqCst)
-        || task
-            .scope
-            .is_some_and(|scope| latest.get(scope) != Some(&task.id))
     {
-        return Err("scan:cancelled".into());
+        let _tasks = tasks().lock().map_err(|_| "scan:state")?;
+        let _latest = latest().lock().map_err(|_| "scan:state")?;
+        if task.committed.load(Ordering::SeqCst)
+            || task.committing.load(Ordering::SeqCst)
+            || task.cancelled.load(Ordering::SeqCst)
+            || task
+                .scope
+                .is_some_and(|scope| _latest.get(scope) != Some(&task.id))
+        {
+            return Err("scan:cancelled".into());
+        }
+        // Reserve the only commit winner before releasing the locks. A concurrent
+        // cancel observes `committing` and cannot revoke an operation already doing
+        // external I/O; other commit callers are rejected deterministically.
+        task.committing.store(true, Ordering::SeqCst);
     }
     let result = work(&CommitPermit(()));
+    let Ok(_tasks) = tasks().lock() else {
+        return Err("scan:state".into());
+    };
+    task.committing.store(false, Ordering::SeqCst);
     if result.is_ok() {
         task.committed.store(true, Ordering::SeqCst);
     }

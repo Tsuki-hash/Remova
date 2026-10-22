@@ -224,16 +224,27 @@ pub fn acquire_walk_slot() -> Option<WalkSlot> {
     // inherit that thread-local, so a scan's own walkers were all judged
     // foreground — the scan filled the reserved slots itself and squeezed real
     // background walks to fewer slots. The distinction is now explicit.
-    acquire_walk_slot_classified(!crate::scan_task::has_task())
+    acquire_walk_slot_classified(!crate::scan_task::has_task(), None)
 }
 
 /// Like [`acquire_walk_slot`], but the walk is unconditionally background —
 /// for walkers that a scan pass spawned directly and can classify themselves.
 pub fn acquire_walk_slot_background() -> Option<WalkSlot> {
-    acquire_walk_slot_classified(false)
+    acquire_walk_slot_classified(false, None)
 }
 
-fn acquire_walk_slot_classified(foreground: bool) -> Option<WalkSlot> {
+/// Cancellable background slot acquisition for workers without thread-local scan
+/// context. Returns `None` when the scan was cancelled while waiting.
+pub fn acquire_walk_slot_background_with_cancel(
+    cancel: &crate::scan_task::CancelWatch,
+) -> Option<WalkSlot> {
+    acquire_walk_slot_classified(false, Some(cancel))
+}
+
+fn acquire_walk_slot_classified(
+    foreground: bool,
+    cancel: Option<&crate::scan_task::CancelWatch>,
+) -> Option<WalkSlot> {
     // A thread that already holds a slot must not take a second one: a worker
     // walks item after item under ONE slot, and its per-row walks are nested.
     // This check lives here rather than in one entry point so the background
@@ -245,7 +256,14 @@ fn acquire_walk_slot_classified(foreground: bool) -> Option<WalkSlot> {
     if foreground {
         FOREGROUND_WAITERS.fetch_add(1, Ordering::SeqCst);
     }
+    let mut backoff = std::time::Duration::from_millis(1);
     loop {
+        if cancel.is_some_and(|watch| watch.cancelled()) || crate::scan_task::cancelled() {
+            if foreground {
+                FOREGROUND_WAITERS.fetch_sub(1, Ordering::SeqCst);
+            }
+            return None;
+        }
         let limit = walk_limit(foreground, FOREGROUND_WAITERS.load(Ordering::SeqCst));
         let running = WALKERS.load(Ordering::SeqCst);
         if running < limit
@@ -256,7 +274,8 @@ fn acquire_walk_slot_classified(foreground: bool) -> Option<WalkSlot> {
             HOLDS_WALK_SLOT.with(|h| h.set(true));
             return Some(WalkSlot { foreground });
         }
-        std::thread::yield_now();
+        std::thread::sleep(backoff);
+        backoff = (backoff * 2).min(std::time::Duration::from_millis(16));
     }
 }
 
@@ -340,12 +359,27 @@ pub fn walk_size_kb_with_quota(root: &Path, quota: u64) -> WalkSize {
 /// scan-pass walkers must report themselves as background so the reserve stays
 /// free for direct size requests.
 pub fn walk_size_kb_with_quota_bg(root: &Path, quota: u64, background: bool) -> WalkSize {
+    walk_size_kb_with_quota_bg_cancel(root, quota, background, None)
+}
+
+/// Quota-aware scan walk which observes a worker-propagated cancellation watch
+/// inside the directory-entry loop (thread-local scan state is not inherited).
+pub fn walk_size_kb_with_quota_bg_cancel(
+    root: &Path,
+    quota: u64,
+    background: bool,
+    cancel: Option<&crate::scan_task::CancelWatch>,
+) -> WalkSize {
     let _slot = if background {
-        acquire_walk_slot_background()
+        match cancel {
+            Some(watch) => acquire_walk_slot_background_with_cancel(watch),
+            None => acquire_walk_slot_background(),
+        }
     } else {
         acquire_walk_slot()
     };
-    if crate::scan_task::cancelled() {
+    if cancel.is_some_and(crate::scan_task::CancelWatch::cancelled) || crate::scan_task::cancelled()
+    {
         return WalkSize::Unknown;
     }
     match root.metadata() {
@@ -360,13 +394,14 @@ pub fn walk_size_kb_with_quota_bg(root: &Path, quota: u64, background: bool) -> 
     }
     let mut entries_seen = 0u64;
     let walk_quota = WalkQuota::new(quota);
-    match walk_bytes_limited_quota_with(
+    match walk_bytes_limited_quota_with_cancel(
         root,
         0,
         &mut entries_seen,
         &walk_quota,
         &|p: &Path| std::fs::read_dir(p),
         &std::fs::DirEntry::metadata,
+        cancel,
     ) {
         WalkSize::Exact(bytes) => WalkSize::Exact(bytes.div_ceil(1024)),
         WalkSize::Floor(bytes) => WalkSize::Floor(bytes.div_ceil(1024)),
@@ -437,6 +472,7 @@ fn walk_unbudgeted_with(
 ///
 /// `pub(crate)` so the error-path tests with injected readers and the scanner's
 /// fixture tests drive the same core `fill_item_sizes` uses.
+#[cfg(test)]
 pub(crate) fn walk_bytes_limited_quota_with<F, I>(
     dir: &Path,
     depth: u32,
@@ -449,7 +485,26 @@ where
     F: Fn(&Path) -> std::io::Result<I>,
     I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
 {
-    if depth > MAX_WALK_DEPTH || crate::scan_task::cancelled() {
+    walk_bytes_limited_quota_with_cancel(dir, depth, entries_seen, quota, read, metadata, None)
+}
+
+fn walk_bytes_limited_quota_with_cancel<F, I>(
+    dir: &Path,
+    depth: u32,
+    entries_seen: &mut u64,
+    quota: &WalkQuota,
+    read: &F,
+    metadata: &impl Fn(&std::fs::DirEntry) -> std::io::Result<std::fs::Metadata>,
+    cancel: Option<&crate::scan_task::CancelWatch>,
+) -> WalkSize
+where
+    F: Fn(&Path) -> std::io::Result<I>,
+    I: Iterator<Item = std::io::Result<std::fs::DirEntry>>,
+{
+    if depth > MAX_WALK_DEPTH
+        || crate::scan_task::cancelled()
+        || cancel.is_some_and(crate::scan_task::CancelWatch::cancelled)
+    {
         return WalkSize::Unknown;
     }
     let mut total: u64 = 0;
@@ -459,7 +514,9 @@ where
         Err(_) => return WalkSize::Unknown,
     };
     for entry in entries {
-        if crate::scan_task::cancelled() {
+        if crate::scan_task::cancelled()
+            || cancel.is_some_and(crate::scan_task::CancelWatch::cancelled)
+        {
             return WalkSize::Unknown;
         }
         let entry = match entry {
@@ -489,13 +546,14 @@ where
             continue;
         }
         if meta.is_dir() {
-            let sub = walk_bytes_limited_quota_with(
+            let sub = walk_bytes_limited_quota_with_cancel(
                 &entry.path(),
                 depth + 1,
                 entries_seen,
                 quota,
                 read,
                 metadata,
+                cancel,
             );
             match sub {
                 WalkSize::Exact(sub) => total = total.saturating_add(sub),

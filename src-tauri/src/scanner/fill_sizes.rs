@@ -180,7 +180,7 @@ fn walk_rows_serial(
         if cancel.cancelled() {
             break;
         }
-        out.push((i, walk_row(&items[i].path, quota)));
+        out.push((i, walk_row(&items[i].path, quota, Some(cancel))));
         if (done + 1) % progress_stride == 0 || done + 1 == rows.len() {
             crate::scan_task::checkpoint("sizing", sized + done + 1);
         }
@@ -210,7 +210,10 @@ fn walk_rows_parallel(
             handles.push(scope.spawn(move || {
                 // One walk slot (declared background — PERF-B) and the shared
                 // pool for the whole slice.
-                let _slot = crate::dirsize::acquire_walk_slot_background();
+                let _slot = crate::dirsize::acquire_walk_slot_background_with_cancel(&cancel);
+                if cancel.cancelled() {
+                    return Vec::new();
+                }
                 let _budget = pool.install();
                 slice
                     .iter()
@@ -218,7 +221,7 @@ fn walk_rows_parallel(
                         if cancel.cancelled() {
                             return None;
                         }
-                        Some((i, walk_row(&shared[i].path, quota)))
+                        Some((i, walk_row(&shared[i].path, quota, Some(&cancel))))
                     })
                     .collect::<Vec<_>>()
             }));
@@ -232,23 +235,27 @@ fn walk_rows_parallel(
 
 /// The measured answer for one row's walk under one sub-quota. The pass-entry
 /// pool must already be installed on the calling thread.
-fn walk_row(path: &str, quota: u64) -> RowSize {
+fn walk_row(path: &str, quota: u64, cancel: Option<&crate::scan_task::CancelWatch>) -> RowSize {
     // PERF-B: every walk this pass issues declares itself background, so the
     // scan never occupies the foreground-reserved walk slot itself.
-    let (size_kb, capped, quota_limited) =
-        match crate::dirsize::walk_size_kb_with_quota_bg(std::path::Path::new(path), quota, true) {
-            crate::dirsize::WalkSize::Exact(kb) => (Some(kb), false, false),
-            crate::dirsize::WalkSize::Floor(kb) => (
-                Some(kb),
-                true,
-                // A quota stop can improve in a later round; an entry-cap stop
-                // would not, but the walk would have to re-walk thousands of
-                // entries to tell the two apart, so it optimistically re-queues
-                // and the strictly-bigger-quota check on the next round decides.
-                true,
-            ),
-            crate::dirsize::WalkSize::Unknown => (None, false, false),
-        };
+    let (size_kb, capped, quota_limited) = match crate::dirsize::walk_size_kb_with_quota_bg_cancel(
+        std::path::Path::new(path),
+        quota,
+        true,
+        cancel,
+    ) {
+        crate::dirsize::WalkSize::Exact(kb) => (Some(kb), false, false),
+        crate::dirsize::WalkSize::Floor(kb) => (
+            Some(kb),
+            true,
+            // A quota stop can improve in a later round; an entry-cap stop
+            // would not, but the walk would have to re-walk thousands of
+            // entries to tell the two apart, so it optimistically re-queues
+            // and the strictly-bigger-quota check on the next round decides.
+            true,
+        ),
+        crate::dirsize::WalkSize::Unknown => (None, false, false),
+    };
     RowSize {
         size_kb,
         capped,

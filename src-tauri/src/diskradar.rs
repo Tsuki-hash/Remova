@@ -179,6 +179,16 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
     (bytes, capped)
 }
 
+/// Total entries one radar call may inspect across every child row. Without a
+/// call-wide cap, each child reset its own 2,500 budget and a wide directory
+/// multiplied the work (and the temporary row vector) by the child count.
+const RADAR_CALL_BUDGET: u64 = 60_000;
+
+/// Cap on rows kept while ranking: only the top `DISK_RADAR_TOP_N` can ever be
+/// returned, so the rest are dropped as they are produced instead of after a
+/// full sort of every child.
+const RADAR_ROW_CAP: usize = DISK_RADAR_TOP_N * 4;
+
 fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
     let mut rows = Vec::new();
     if !crate::scan_task::checkpoint("sizes", 0) {
@@ -190,9 +200,14 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
     let Ok(rd) = std::fs::read_dir(parent) else {
         return rows;
     };
+    // One budget for the whole call, shared by every child walk.
+    let mut budget = RADAR_CALL_BUDGET;
     for ent in rd.flatten() {
         if !crate::scan_task::checkpoint("sizes", rows.len()) {
             return rows;
+        }
+        if budget == 0 {
+            break;
         }
         let p = ent.path();
         // PERF-C: one buffered metadata read answers dir + reparse.
@@ -203,7 +218,6 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
-        let mut budget = 2_500u64;
         let (size_kb, capped) = shallow_size_kb(&p, 3, &mut budget);
         if size_kb <= 0 {
             continue;
@@ -215,6 +229,12 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             parent: parent.to_string_lossy().to_string(),
             capped,
         });
+        // Keep the working set bounded: prune to the best rows so far whenever
+        // it doubles past the retention cap.
+        if rows.len() >= RADAR_ROW_CAP {
+            rows.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
+            rows.truncate(DISK_RADAR_TOP_N);
+        }
     }
     rows.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
     rows.truncate(DISK_RADAR_TOP_N);
