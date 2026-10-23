@@ -63,15 +63,30 @@ jobs:
         working-directory: src-tauri
 
       - name: real registry service ImagePath read (read-only)
-        run: cargo test scanner::reg_scans::tests::service_image_string_reads_real_image_paths -- --ignored
+        shell: pwsh
+        run: |
+          $out = cargo test scanner::reg_scans::tests::service_image_string_reads_real_image_paths -- --ignored --exact 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
         working-directory: src-tauri
 
       - name: file symlink swap regression (requires runner privilege)
-        run: cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored
+        shell: pwsh
+        run: |
+          $out = cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored --exact 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
         working-directory: src-tauri
 
       - name: privileged seal key ACL and lost-state regression
-        run: cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
+        shell: pwsh
+        run: |
+          $out = cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored --exact 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
         working-directory: src-tauri
 
       - name: npm ci
@@ -82,6 +97,9 @@ jobs:
 
       - name: check commands
         run: npm run check-commands
+
+      - name: check reviews index (skips when docs/ is absent)
+        run: npm run check:reviews-index
 
       - name: updater signature regression
         run: pwsh -NoProfile -File scripts/test-updater-signature.ps1

@@ -93,7 +93,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | `Remova_*_x64_zh-CN.msi` | MSI 安装程序（per-machine，仅中文向导；非管理员需 UAC 提权） |
 | `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
-系统要求：Windows 10 / 11（x64）。
+系统要求：Windows 10 / 11（x64），以及 Microsoft Edge WebView2 Runtime（Windows 11 与多数 Windows 10 已内置；便携版不附带，缺失时需先安装）。清理系统级应用、Machine PATH/服务/防火墙以及还原到受保护目录时，需要以管理员身份运行；普通权限下这些条目会逐条失败并报告原因。
 
 > **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。
 
@@ -135,8 +135,10 @@ npx tauri build
 ## 安全说明
 
 - 真实删除必须经过 UI 确认，并通过 `safety` 门禁检查。
+- 分析和清理只使用最近一次服务端扫描的应用身份与路径；HKCU 与 HKLM 的同名记录不会合并，提权状态不会执行 HKCU 卸载命令，也不会把 HKCU 安装根当作管理员删除目标。
 - 优先使用**仅预览**确认列表，再执行清理。
-- 备份是尽力而为，**不能替代系统备份**。
+- 备份是尽力而为，**不能替代系统备份**；备份目录使用私有 ACL（SYSTEM / Administrators / 当前用户）。
+- 1641 待重启期间所有清理与还原入口保持阻断；状态文件损坏时按“待重启”处理（fail-closed）。
 - 服务 / 计划任务默认视为高风险，且默认不勾选。
 
 ---

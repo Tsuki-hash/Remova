@@ -1,7 +1,11 @@
 # Release signing
 
-Every stable release requires Tauri updater signatures. Windows Authenticode signing
-through SignPath is optional and disabled by default. These signatures serve different
+Updater signing is optional but explicit. The 1.3.2 release is published
+unsigned/manual by maintainer decision (see `RELEASE-STATUS.md`); the workflow sets
+`ALLOW_UNSIGNED_RELEASE=true` so an intentional unsigned release is distinguishable
+from a missing-key misconfiguration. When updater keys are configured, every stable
+release must carry Tauri updater signatures. Windows Authenticode signing through
+SignPath is optional and disabled by default. These signatures serve different
 purposes: the updater signature authenticates the downloaded update; Authenticode
 identifies the Windows publisher. Without Authenticode, Windows may show unknown-publisher
 or SmartScreen warnings even though the updater verifies the download.

@@ -31,6 +31,13 @@ if ($updaterPresent -ne 0 -and $updaterPresent -ne $updaterNames.Count) {
     throw 'Updater signing requires all three settings, or none for unsigned/manual release.'
 }
 $updaterEnabled = $updaterPresent -eq $updaterNames.Count
+# Unsigned/manual releases are supported, but must be requested explicitly:
+# silently omitting updater assets after a key misconfiguration would publish
+# an install-only release while clients keep waiting for an update.
+$allowUnsigned = $env:ALLOW_UNSIGNED_RELEASE -ceq 'true'
+if (-not $updaterEnabled -and -not $allowUnsigned) {
+    throw 'No updater signing keys are configured. Set ALLOW_UNSIGNED_RELEASE=true for an explicit unsigned/manual release.'
+}
 $dir = Join-Path $root '.release-signing'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 if ($updaterEnabled) {

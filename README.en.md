@@ -128,8 +128,10 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
 ## Safety
 
 - Real deletes require UI confirmation and pass `safety` checks.
+- Analysis and cleanup use the latest server-side scan identity and paths. Same-name HKCU and HKLM entries are never merged; an elevated process does not run HKCU uninstall commands or treat a HKCU install root as an administrator deletion target.
 - Prefer **dry-run** before cleaning.
-- Backups are best-effort and **not** a system backup substitute.
+- Backups are best-effort and **not** a system backup substitute; the backup tree uses a private DACL (SYSTEM / Administrators / current user).
+- A pending 1641 reboot blocks every cleanup and restore entry; an unreadable gate file is treated as pending (fail-closed).
 - Services and scheduled tasks are treated as high risk and unchecked by default.
 
 ---

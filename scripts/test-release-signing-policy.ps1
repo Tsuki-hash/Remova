@@ -5,7 +5,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('remova-release-policy-test-' + [G
 $names = @('SIGNPATH_ENABLED', 'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG',
     'SIGNPATH_SIGNING_POLICY_SLUG', 'SIGNPATH_CERTIFICATE_THUMBPRINT', 'TAURI_UPDATER_PUBLIC_KEY',
     'TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'UPDATER_SIGNING_ENABLED',
-    'GITHUB_OUTPUT', 'GITHUB_REF_NAME', 'GITHUB_REPOSITORY')
+    'ALLOW_UNSIGNED_RELEASE', 'GITHUB_OUTPUT', 'GITHUB_REF_NAME', 'GITHUB_REPOSITORY')
 $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $passed = 0
@@ -86,10 +86,13 @@ try {
     [Environment]::SetEnvironmentVariable('TAURI_UPDATER_PUBLIC_KEY', $null)
     [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY', $null)
     [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', $null)
+    Assert-Throws { & $prepare } 'ALLOW_UNSIGNED_RELEASE'
+    $env:ALLOW_UNSIGNED_RELEASE = 'true'
     & $prepare
     if ((Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) -notmatch 'updater-enabled=false') {
         throw 'Unsigned/manual mode must report updater-enabled=false.'
     }
+    $env:ALLOW_UNSIGNED_RELEASE = $null
     $env:TAURI_UPDATER_PUBLIC_KEY = $savedPublic
     $env:TAURI_SIGNING_PRIVATE_KEY = $savedPrivate
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $savedPassword
