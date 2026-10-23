@@ -82,6 +82,12 @@ pub fn build_uninstall_command(
     Some(parts)
 }
 
+/// Only absolute images may be launched. A bare `unins000.exe /S` is resolved
+/// through the process CWD/PATH and can be hijacked by a local user.
+fn uninstall_exe_is_absolute(exe: &str) -> bool {
+    std::path::Path::new(exe).is_absolute()
+}
+
 /// `CommandLineToArgvW`-compatible splitting: honours doubled quotes (`""` → one
 /// literal quote) and backslash-before-quote escapes (`\"`), which a naive quote toggle dropped.
 fn split_win_args(s: &str) -> Vec<String> {
@@ -257,8 +263,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
     // elevated Remova would execute an arbitrary user-controlled image as
     // administrator; require a non-elevated launch for HKCU entries. The
     // decision uses the recorded scan source, never the client-supplied field.
-    if matches!(crate::sysops::is_process_elevated(), Ok(true))
-        && scan_source.to_ascii_uppercase().starts_with("HKCU")
+    if crate::sysops::is_elevated_for_gate() && scan_source.to_ascii_uppercase().starts_with("HKCU")
     {
         return OfficialUninstallResult {
             ok: false,
@@ -277,6 +282,18 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
         Some(argv) if !argv.is_empty() => {
             let mut parts = argv.iter();
             let exe = parts.next().unwrap().clone();
+            if !uninstall_exe_is_absolute(&exe) {
+                // A relative image would be resolved against the process CWD /
+                // PATH, which a local user can influence. MSI/Store paths are
+                // already resolved to absolute system tools above.
+                return OfficialUninstallResult {
+                    ok: false,
+                    message: "uninstall command uses a relative executable; refused".into(),
+                    had_command: true,
+                    reboot_initiated: false,
+                    reboot_gate_persisted: true,
+                };
+            }
             let rest: Vec<String> = parts.cloned().collect();
             match std::process::Command::new(&exe).args(&rest).spawn() {
                 Ok(mut child) => {
@@ -375,6 +392,16 @@ mod tests {
             assert!(!uninstaller_exit_ok(Some(code)));
         }
         assert!(!uninstaller_exit_ok(None));
+    }
+
+    #[test]
+    fn relative_uninstall_images_are_refused() {
+        assert!(uninstall_exe_is_absolute(
+            r"C:\Program Files\App\unins000.exe"
+        ));
+        assert!(uninstall_exe_is_absolute(r"\\server\share\unins000.exe"));
+        assert!(!uninstall_exe_is_absolute("unins000.exe"));
+        assert!(!uninstall_exe_is_absolute(r"bin\unins000.exe"));
     }
 
     #[test]

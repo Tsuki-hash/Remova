@@ -307,6 +307,17 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(analyzeMock).not.toHaveBeenCalled();
   });
 
+  it("clears the previous scan and path selection when another app is selected", () => {
+    captured.scan = scan("Old");
+    captured.selectedPaths = new Set([scan("Old").items[0]?.path ?? "C:\\Old"]);
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    act(() => result.current.selectApp(app("New")));
+    expect(captured.selected?.name).toBe("New");
+    expect(captured.scan).toBeNull();
+    expect(captured.selectedPaths.size).toBe(0);
+  });
+
   it("rescans after a normal official uninstall when the preference is on", async () => {
     officialMock.mockResolvedValue({
       ok: true, had_command: true, reboot_initiated: false,

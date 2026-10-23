@@ -79,6 +79,21 @@ describe("formatError manage codes", () => {
   });
 });
 
+describe("formatError backend refusals", () => {
+  it("localizes known backend diagnostics before the generic wrapper", () => {
+    const elevated = formatError("elevated HKCU analysis refused", "analyze");
+    expect(elevated).toContain("普通权限");
+    expect(elevated).not.toContain("elevated HKCU");
+    const stale = formatError(
+      "cleanup item not from the latest analysis: D:\\Data\\X",
+      "cleanup",
+    );
+    expect(stale).toContain("最近一次分析");
+    expect(stale).not.toContain("cleanup item not from");
+    expect(formatError("app is not from the latest scan", "analyze")).not.toContain("latest scan");
+  });
+});
+
 describe("prettyAppName", () => {
   it("store GUID shortened", () => {
     const out = prettyAppName("5e869a0b1c2d3e4f.a1b2c3d4e5f67890", "Store");

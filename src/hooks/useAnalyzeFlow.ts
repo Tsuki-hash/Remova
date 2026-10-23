@@ -397,8 +397,12 @@ const openOfficialOnly = useCallback(
   const selectApp = useCallback(
     (app: InstalledApp) => {
       setSelected(app);
+      // A previous app's scan (and its selected paths) must not stay on screen
+      // or be submitted for the newly selected app.
+      setScan(null);
+      setSelectedPaths(new Set());
     },
-    [setSelected],
+    [setSelected, setScan, setSelectedPaths],
   );
 
   return {

@@ -42,6 +42,9 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   const exact: Record<string, string> = {
     skipped: L.backendOfficialSkipped, "no items": L.backendNoItems,
     "no uninstall string": L.uninstallNoCmd,
+    "app is not from the latest scan": L.backendAppStale,
+    "analysis must run before cleanup": L.backendAnalysisRequired,
+    "uninstall command uses a relative executable; refused": L.uninstallRelativeRefused,
     "uninstall command not from latest app scan": L.backendScanExpired,
     "uninstall launch failed": L.backendLaunchFailed, "uninstall wait failed": L.backendWaitFailed,
     "elevated HKCU uninstall refused": L.uninstallElevatedHkcu,
@@ -61,6 +64,11 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   )
     return L.backendRebootInitiated;
   if (raw === "system reboot pending; uninstall skipped") return L.backendRebootBlocked;
+  if (raw.startsWith("cleanup item not from the latest analysis: ")) {
+    return L.backendCleanupItemStale(
+      raw.slice("cleanup item not from the latest analysis: ".length),
+    );
+  }
   if (raw === "cleanup cancelled") return L.batchCancelled;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;

@@ -282,9 +282,10 @@ pub fn gate_cleanup_item(
         // server-side scan allow-list. Forged empty InstalledApp + scoped source
         // must not delete arbitrary paths.
         let client_scoped = source.is_scoped_scan();
-        let orphan_shape = crate::association::is_orphan_flow(app)
-            || matches!(source, CleanupSource::Installer | CleanupSource::ToolCache);
-        if client_scoped && orphan_shape {
+        if client_scoped {
+            // A forged non-orphan app must not downgrade a scoped source to
+            // name/install-root association. Scoped sources always have a
+            // server-side allow-list, so it is the only acceptable proof.
             if !source.allow_ok(&item.path) {
                 return GateDecision::Skip("path not associated with app");
             }
@@ -299,8 +300,8 @@ pub fn gate_cleanup_item(
             && crate::shared::is_common_files_vendor_path(&item.path)
         {
             //CF vendor subpaths need vendor-segment association, not path substring.
-            // Scoped scans never get CF vendor allow (shared runtime).
-            if client_scoped || !crate::association::cf_vendor_associated(app, &item.path) {
+            // Scoped scans never reach this branch; they were handled above.
+            if !crate::association::cf_vendor_associated(app, &item.path) {
                 return GateDecision::Skip("shared runtime");
             }
         } else if !crate::association::path_associated_with_app(app, item) {
@@ -373,6 +374,23 @@ mod tests {
             size_capped: false,
             bucket: None,
         }
+    }
+
+    #[test]
+    fn scoped_source_cannot_bypass_the_allow_list_with_a_forged_app() {
+        let ignore = crate::ignore::IgnoreList::default();
+        // A forged non-orphan app (machine source + install root) used to fall
+        // back to name/root association and allow an arbitrary directory.
+        let forged = app("Victim", r"D:\Data\Victim");
+        let it = item(r"D:\Data\Victim", ItemKind::Dir);
+        assert_eq!(
+            gate_cleanup_item(Some(&forged), &it, CleanupSource::Orphan, &ignore),
+            GateDecision::Skip("path not associated with app")
+        );
+        assert_eq!(
+            gate_cleanup_item(Some(&forged), &it, CleanupSource::Monitor, &ignore),
+            GateDecision::Skip("path not associated with app")
+        );
     }
 
     #[test]

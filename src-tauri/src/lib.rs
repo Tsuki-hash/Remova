@@ -441,6 +441,33 @@ mod cleanup_trust_tests {
     }
 
     #[test]
+    fn analysis_refusals_release_the_reserved_scan_task() {
+        let _g = apps::trust_test_support::guard();
+        let forged = app("ForgedDemo", "HKLM64", r"C:\Program Files\ForgedDemo");
+        let id = scan_task::begin().expect("reserve a task");
+        let err = resolve_analysis_app(forged, Some(id), false).unwrap_err();
+        assert!(err.contains("latest scan"));
+        assert!(
+            scan_task::progress(id).is_none(),
+            "a rejected analysis must not leak its scan reservation"
+        );
+
+        let scanned = app(
+            "PerUserDemo",
+            "HKCU",
+            r"C:\Users\demo\AppData\Local\PerUserDemo",
+        );
+        apps::remember_uninstall_commands(std::slice::from_ref(&scanned));
+        let id = scan_task::begin().expect("reserve a task");
+        let err = resolve_analysis_app(scanned, Some(id), true).unwrap_err();
+        assert!(err.contains("elevated HKCU"));
+        assert!(
+            scan_task::progress(id).is_none(),
+            "an elevated-HKCU refusal must not leak its scan reservation"
+        );
+    }
+
+    #[test]
     fn cleanup_resolution_uses_the_server_install_root() {
         let _g = apps::trust_test_support::guard();
         let scanned = app("ResolvedDemo", "HKLM64", r"C:\Program Files\ResolvedDemo");
@@ -491,12 +518,40 @@ fn resolve_cleanup_app(
     }
     let app =
         apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
-    let elevated = matches!(crate::sysops::is_process_elevated(), Ok(true));
+    let elevated = crate::sysops::is_elevated_for_gate();
     if hkcu_refused_when_elevated(&app.source, elevated) {
         // Name-based associations can still point at machine directories, so
         // elevated deletion based on a user-writable HKCU record is refused
         // entirely. The user can run Remova without elevation to clean it.
         return Err("elevated HKCU cleanup refused".into());
+    }
+    Ok(app)
+}
+
+/// Release the scan task a client reserved before an analysis refusal.
+///
+/// The reservation is only removed by `scan_task::run` or `cancel`; a refusal
+/// that returns before `run` would otherwise leave an unstarted task in the
+/// process-wide table forever. Eight such refusals exhaust the task cap and
+/// every scan entry point returns `scan:busy` until the app restarts.
+fn release_scan_reservation(scan_id: Option<u32>) {
+    if let Some(id) = scan_id {
+        let _ = scan_task::cancel(id);
+    }
+}
+
+fn resolve_analysis_app(
+    app: InstalledApp,
+    scan_id: Option<u32>,
+    elevated: bool,
+) -> Result<InstalledApp, String> {
+    let Some(app) = apps::trusted_app(&app) else {
+        release_scan_reservation(scan_id);
+        return Err("app is not from the latest scan".into());
+    };
+    if hkcu_refused_when_elevated(&app.source, elevated) {
+        release_scan_reservation(scan_id);
+        return Err("elevated HKCU analysis refused".into());
     }
     Ok(app)
 }
@@ -540,14 +595,9 @@ async fn analyze_associations(
     scan_id: Option<u32>,
 ) -> Result<ScanResult, String> {
     // The client may rewrite any field; analyze only the server-scanned copy.
-    let app =
-        apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
-    let server_source = app.source.clone();
+    // A refused request must release its reserved scan task (P1-01).
+    let app = resolve_analysis_app(app, scan_id, crate::sysops::is_elevated_for_gate())?;
     let server_app_key = apps::app_key(&app);
-    let elevated = matches!(crate::sysops::is_process_elevated(), Ok(true));
-    if hkcu_refused_when_elevated(&server_source, elevated) {
-        return Err("elevated HKCU analysis refused".into());
-    }
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let work = || {
             scanner::analyze_associations(

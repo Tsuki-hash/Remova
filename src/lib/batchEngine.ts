@@ -87,6 +87,10 @@ export async function runBatchCleanup(
           r = await api.analyze(app, scanId);
         } finally {
           clearInterval(cancelPoll);
+          // A refusal can happen before the backend worker claims the id
+          // (trusted_app / elevated-HKCU). Release the reservation here too,
+          // otherwise eight failed apps exhaust the 8-task cap for the session.
+          void api.cancelAssociationScan(scanId).catch(() => {});
         }
         const items = r.items.filter(defaultSelectable);
  // F-1: do not skip the whole app when there are no default-selectable leftovers.

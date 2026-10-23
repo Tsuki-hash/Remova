@@ -1,5 +1,6 @@
 /** Shared display helpers for app rows and reports. */
 import { t } from "../i18n";
+import { backendErrorText } from "./backendText";
 
 export function prettyPublisher(raw: string): string {
   const s = (raw || "").trim();
@@ -160,6 +161,11 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   if (raw.startsWith("open_path:failed")) {
     return L.errOpenPathFailed;
   }
+  // Known backend diagnostics are localized before the generic context
+  // wrapper, so a refusal does not surface as raw English
+  // ("deep analysis failed: elevated HKCU analysis refused").
+  const backend = backendErrorText(raw);
+  if (backend !== raw) return backend;
   const detail = raw.replace(/^Error:\s*/i, "").trim() || raw;
   const low = detail.toLowerCase();
   if (

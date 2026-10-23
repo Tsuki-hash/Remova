@@ -31,6 +31,15 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("operation failed: process image changed; refresh")).toBe(L.lockImageChanged);
   expect(backendText("operation failed: process no longer holds this path")).toBe(L.lockNoLongerHolds);
   expect(backendText("operation failed: path is not from the latest cleanup")).toBe(L.lockTargetStale);
+  expect(backendText("elevated HKCU analysis refused")).toBe(L.elevatedHkcuBlocked);
+  expect(backendText("app is not from the latest scan")).toBe(L.backendAppStale);
+  expect(backendText("analysis must run before cleanup")).toBe(L.backendAnalysisRequired);
+  expect(backendText("uninstall command uses a relative executable; refused")).toBe(
+    L.uninstallRelativeRefused,
+  );
+  expect(backendText("cleanup item not from the latest analysis: D:\\Data\\X")).toBe(
+    L.backendCleanupItemStale("D:\\Data\\X"),
+  );
   expect(backendErrorText("future_unknown")).toBe("future_unknown");
   expect(backendText("")).toBe("");
   for (const code of ["constructor", "toString", "__proto__"]) {

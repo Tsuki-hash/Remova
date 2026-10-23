@@ -252,4 +252,12 @@ mod tests {
         assert!(!legacy.reboot_pending);
         assert_eq!(legacy.delayed, 0);
     }
+
+    #[test]
+    fn a_new_cleanup_control_clears_a_stale_cancel() {
+        cancel_cleanup_operation();
+        assert!(cleanup_cancelled());
+        begin_cleanup_control();
+        assert!(!cleanup_cancelled());
+    }
 }

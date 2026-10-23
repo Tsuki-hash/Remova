@@ -832,6 +832,7 @@ pub fn cleanup_broken_install(
     let _guard = crate::executor::CLEANUP_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    crate::executor::begin_cleanup_control();
     if crate::executor::reboot::any_pending() {
         return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
     }

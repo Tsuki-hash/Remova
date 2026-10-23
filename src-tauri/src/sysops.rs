@@ -96,6 +96,17 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
     }
 }
 
+/// Gate decision for destructive per-user work: only a confirmed
+/// non-elevated token allows it. An unreadable token must fail closed.
+pub(crate) fn elevation_gate(result: Result<bool, String>) -> bool {
+    !matches!(result, Ok(false))
+}
+
+/// Fail-closed elevation check used by HKCU analysis/cleanup/uninstall gates.
+pub fn is_elevated_for_gate() -> bool {
+    elevation_gate(is_process_elevated())
+}
+
 /// Is this process running with an elevated token?
 pub fn is_process_elevated() -> Result<bool, String> {
     #[cfg(windows)]
@@ -276,6 +287,13 @@ mod tests {
         assert_eq!(super::elevate_error_token(1223), "elevate:cancelled:1223");
         assert_eq!(super::elevate_error_token(2), "elevate:not_found:2");
         assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
+    }
+
+    #[test]
+    fn elevation_gate_fails_closed_when_the_token_cannot_be_read() {
+        assert!(super::elevation_gate(Err("elevation:query_failed".into())));
+        assert!(super::elevation_gate(Ok(true)));
+        assert!(!super::elevation_gate(Ok(false)));
     }
 
     #[test]

@@ -4,13 +4,14 @@ import type { InstalledApp, ScanResult, FullCleanupReport, CleanupItem } from ".
 const analyze = vi.fn();
 const fullCleanup = vi.fn();
 const beginScan = vi.fn(async () => 7);
+const cancelScan = vi.fn(async () => true);
 
 vi.mock("../lib/api", () => ({
   api: {
     analyze: (...a: unknown[]) => analyze(...a),
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
     beginAssociationScan: () => beginScan(),
-    cancelAssociationScan: vi.fn(async () => true),
+    cancelAssociationScan: (...a: unknown[]) => cancelScan(...a),
   },
 }));
 
@@ -115,6 +116,8 @@ beforeEach(() => {
   fullCleanup.mockReset();
   beginScan.mockReset();
   beginScan.mockResolvedValue(7);
+  cancelScan.mockReset();
+  cancelScan.mockResolvedValue(true);
 });
 
 describe("runBatchCleanup", () => {
@@ -329,6 +332,15 @@ describe("runBatchCleanup", () => {
     const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
     expect(last?.status).toBe("skipped");
     expect(fullCleanup).not.toHaveBeenCalled();
+  });
+
+  it("releases the reserved scan slot when analyze is refused before it starts", async () => {
+    analyze.mockRejectedValueOnce(new Error("elevated HKCU analysis refused"));
+    const cb = makeCb();
+    await runBatchCleanup([app("PerUser")], true, keyOf, cb);
+    expect(cancelScan).toHaveBeenCalledWith(7);
+    expect(fullCleanup).not.toHaveBeenCalled();
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe("failed");
   });
 
   it("keeps the current app's contract: cancel stops the queue, not the in-flight app", async () => {

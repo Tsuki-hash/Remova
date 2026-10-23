@@ -1060,6 +1060,7 @@ pub fn summarize_report(
 pub struct NlFilter {
     pub name_like: Option<String>,
     pub publisher: Option<String>,
+    #[serde(alias = "size_gt_KB")]
     pub size_gt_kb: Option<i64>,
     pub installed_after: Option<String>,
 }
@@ -1095,7 +1096,7 @@ note 用一句话复述计划（中文）。";
 const INTENT_SYSTEM_EN: &str = "You are the intent parser for a Windows uninstall assistant. \
 Parse the user's instruction (Chinese or English) into JSON. Only these action \
 values are allowed: list|analyze|batch_uninstall|force_clean. Optional filter \
-fields: name_like (keyword), publisher, size_gt_KB (integer), installed_after \
+fields: name_like (keyword), publisher, size_gt_kb (integer), installed_after \
 (YYYY-MM-DD). Parse dangerous actions normally; the app layer confirms them \
 separately. Output exactly one JSON object with no explanation. Fields: action, \
 filter, include_leftovers, note. Write note in one English sentence.";
@@ -1660,5 +1661,19 @@ mod tests {
         assert_eq!(result[0].path, inputs[0].path);
         assert_eq!(result[1].path, inputs[1].path);
         assert_eq!(result[1].summary, "explanation-1");
+    }
+
+    #[test]
+    fn nl_intent_size_filter_uses_the_serde_field_name() {
+        assert!(INTENT_SYSTEM_EN.contains("size_gt_kb"));
+        assert!(!INTENT_SYSTEM_EN.contains("size_gt_KB"));
+        let lower: NlIntent =
+            serde_json::from_str(r#"{"action":"list","filter":{"size_gt_kb":500}}"#).unwrap();
+        assert_eq!(lower.filter.size_gt_kb, Some(500));
+        // Older prompts / models may still emit the upper-case spelling; the
+        // alias keeps those filters instead of silently dropping them.
+        let alias: NlIntent =
+            serde_json::from_str(r#"{"action":"list","filter":{"size_gt_KB":500}}"#).unwrap();
+        assert_eq!(alias.filter.size_gt_kb, Some(500));
     }
 }
