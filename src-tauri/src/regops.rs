@@ -1292,7 +1292,7 @@ pub fn rename_reg_value(key_path: &str, from: &str, to: &str) -> Result<(), Stri
                 Some(data.as_mut_ptr()),
                 Some(&mut data_len),
             );
-            // F-12: values above the initial buffer must be readable, like
+            // values above the initial buffer must be readable, like
             // `read_reg_value_bytes` — otherwise a rename fails forever.
             while st == ERROR_MORE_DATA && data_len as usize > data.len() {
                 let need = data_len as usize;
@@ -2177,7 +2177,7 @@ mod tests {
         );
     }
 
-    /// F-12: a value above the initial 16 KiB buffer must still be renameable —
+    /// a value above the initial 16 KiB buffer must still be renameable —
     /// the anti-rollback `.remova-disabled` rename used to fail on it forever.
     #[cfg(windows)]
     #[test]

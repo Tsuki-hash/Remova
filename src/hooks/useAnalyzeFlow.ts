@@ -59,7 +59,7 @@ export function useAnalyzeFlow({
   } = flow;
   const analyzeSeqRef = useRef(0);
   /**
-   * F-7: how many `analyze` calls currently hold `busyRef`. A plain
+   * how many `analyze` calls currently hold `busyRef`. A plain
    * save/restore leaks when a newer analyze supersedes an older one (the older
    * one's `finally` is gated on its own `seq`, so it never runs), and a plain
    * clear steals the ref from `startUninstall`, which holds it across its own
@@ -103,7 +103,7 @@ export function useAnalyzeFlow({
       const busyRefHeldExternally = busyRef.current && !analyzingRef.current;
       analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
-      // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only,
+      // `forceClean` and `startUninstall` guard on `busyRef.current` only,
       // and it was never set here. A destructive action could therefore start
       // while a deep scan was in flight, and the scan then landed on top of the
       // other action's report (it never increments `analyzeSeqRef`). App.tsx's

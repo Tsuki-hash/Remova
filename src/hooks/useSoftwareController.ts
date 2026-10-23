@@ -273,7 +273,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.listIgnorePublisher,
       input.estimating,
       input.scanning,
-      // F-6: `busy` above is `dryRunning || forceBusy || batching || scanning ||
+      // `busy` above is `dryRunning || forceBusy || batching || scanning ||
       // aiBusy`. `forceBusy` was read but not declared, so setting it returned the
       // memoized object unchanged: `SoftwarePage`'s own `memo` bailed out and the
       // cleanup / dry-run / "skip official uninstall" controls stayed live for the

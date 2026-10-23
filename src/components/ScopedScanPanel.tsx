@@ -206,7 +206,7 @@ export function ScopedScanPanel({
   /**
    * Run a cleanup for the given candidates and keep the report on screen.
    *
-   * F-8: returns whether the cleanup actually accomplished something. The retry
+   * returns whether the cleanup actually accomplished something. The retry
    * path used to read nothing and then pushed an unconditional success toast on
    * the same channel, and `toast.push` cancels every earlier toast on that
    * channel — so a rejection or a `failed > 0` / `aborted` report had its error
@@ -225,7 +225,7 @@ export function ScopedScanPanel({
         dry_run: false,
         skip_official_uninstall: true,
         backup_enabled: backupEnabled,
-        // F-9: the user can decline a restore point; the backend still
+        // the user can decline a restore point; the backend still
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
         cleanup_source: cleanupSource,
@@ -280,7 +280,7 @@ export function ScopedScanPanel({
     setRetryBusy(true);
     try {
       const done = await runCleanup(picked, backupEnabled.current, true);
-      // F-8: only report a successful retry when the retry actually deleted
+      // only report a successful retry when the retry actually deleted
       // something. An error toast on this same channel was previously cancelled
       // and replaced by this success toast.
       if (done) toast.success(L.cleanupRetriedDone(picked.length), { channel, ttl: 2500 });

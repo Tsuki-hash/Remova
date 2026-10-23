@@ -1027,10 +1027,10 @@ fn reboot_gate_status() -> String {
 
 #[tauri::command]
 fn clear_corrupt_reboot_gate() -> Result<bool, String> {
-    if executor::reboot::clear_corrupt_gate() {
-        Ok(true)
-    } else {
-        Err("reboot gate is not corrupt".into())
+    match executor::reboot::clear_corrupt_gate() {
+        executor::reboot::ClearCorruptGate::Cleared => Ok(true),
+        executor::reboot::ClearCorruptGate::NotCorrupt => Err("reboot:gate_not_corrupt".into()),
+        executor::reboot::ClearCorruptGate::RenameFailed => Err("reboot:gate_rename_failed".into()),
     }
 }
 

@@ -357,7 +357,7 @@ fn reg_view_flag(key_path: &str) -> &'static str {
 
 /// The `files/`-relative backup name for one fs item.
 ///
-/// F-13: a 255-character file name plus the digest prefix exceeded the Windows
+/// a 255-character file name plus the digest prefix exceeded the Windows
 /// component limit and aborted the whole cleanup. The limit counts UTF-16 code
 /// units, so the budget is spent in units (regression fix): the 16-hex digest plus `_`
 /// leave 238 for the name, and the truncation always lands on a char boundary.

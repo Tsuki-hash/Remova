@@ -75,7 +75,7 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
                 let seq = sm.llSequenceNumber;
                 (true, format!("restore point seq={seq}"))
             } else {
-                // F-9: the real Win32 status was discarded, so a benign result
+                // the real Win32 status was discarded, so a benign result
                 // looked identical to "System Restore is turned off". Doc'd
                 // nStatus values (STATEMGRSTATUS): ERROR_SERVICE_DISABLED (1058,
                 // restore disabled), ERROR_BAD_ENVIRONMENT (10, safe mode),
@@ -311,6 +311,22 @@ mod tests {
         assert_eq!(super::elevate_error_token(1223), "elevate:cancelled:1223");
         assert_eq!(super::elevate_error_token(2), "elevate:not_found:2");
         assert_eq!(super::elevate_error_token(99), "elevate:failed:99");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn known_folder_resolves_from_a_worker_thread() {
+        // Scan work runs on tokio blocking threads. SHGetKnownFolderPath must
+        // resolve there too, otherwise every Known Folder root silently vanishes.
+        let handle = std::thread::spawn(|| {
+            super::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+        });
+        let resolved = handle.join().expect("worker thread");
+        assert!(
+            resolved.is_some(),
+            "LocalAppData must resolve on a worker thread"
+        );
+        assert!(resolved.unwrap().is_absolute());
     }
 
     #[test]

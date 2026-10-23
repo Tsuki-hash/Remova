@@ -86,6 +86,28 @@ fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
     id
 }
 
+/// Pin the history file's ancestor chain and refuse a reparse point. Every
+/// rewrite (append, compact, delete, clear) goes through this: a local user can
+/// pre-plant a junction under the shared ProgramData tree, and an elevated
+/// Remova would otherwise write through it. Caller must hold [`FILE_LOCK`].
+fn pin_history_path(p: &Path) -> Result<Vec<crate::fsutil::DirPin>, String> {
+    let parent = p.parent().ok_or("history path has no parent")?;
+    let pins = crate::fsutil::create_dirs_pinned(parent)
+        .map_err(|e| format!("could not pin the history directory: {e}"))?;
+    if crate::fsutil::is_reparse_point(parent) || crate::fsutil::is_reparse_point(p) {
+        return Err("reparse point in the history path".into());
+    }
+    Ok(pins)
+}
+
+/// Re-apply the private ACL after a rewrite created a fresh inode: the atomic
+/// staging file inherits the directory ACL, not the file's previous private ACL.
+fn resecure_history(p: &Path) {
+    if let Err(e) = crate::backup::secure_private_path(p) {
+        eprintln!("cleanup history rewritten but not made private: {e}");
+    }
+}
+
 /// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
 /// one line at a time through a ring buffer — memory is O(keep), never O(file)
 /// (; also removes the old unbounded whole-file read on oversize).
@@ -117,7 +139,9 @@ fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
-    result
+    result?;
+    resecure_history(p);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,24 +176,17 @@ pub fn append(
     };
     let p = history_path();
     let _g = lock_file();
-    let mut _pins = Vec::new();
-    if let Some(parent) = p.parent() {
-        // The history file lives under the shared ProgramData tree. A local user
-        // can pre-plant a junction there; writing through it from an elevated
-        // Remova would append outside the intended directory. Pin the ancestor
-        // chain before the reparse check so a swap after the check is refused.
-        _pins = match crate::fsutil::create_dirs_pinned(parent) {
-            Ok(pins) => pins,
-            Err(e) => {
-                eprintln!("cleanup history refused: could not pin the history directory: {e}");
-                return false;
-            }
-        };
-        if crate::fsutil::is_reparse_point(parent) || crate::fsutil::is_reparse_point(&p) {
-            eprintln!("cleanup history refused: reparse point in the history path");
+    // The history file lives under the shared ProgramData tree. A local user can
+    // pre-plant a junction there; writing through it from an elevated Remova
+    // would append outside the intended directory. Pin the ancestor chain before
+    // the reparse check so a swap after the check is refused.
+    let _pins = match pin_history_path(&p) {
+        Ok(pins) => pins,
+        Err(e) => {
+            eprintln!("cleanup history refused: {e}");
             return false;
         }
-    }
+    };
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
     if let Ok(meta) = fs::metadata(&p) {
         if meta.len() > HISTORY_SOFT_CAP {
@@ -257,6 +274,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     }
     let _g = lock_file();
     let p = history_path();
+    let _pins = pin_history_path(&p).map_err(|e| format!("history rewrite refused: {e}"))?;
     let Ok(file) = fs::File::open(&p) else {
         return Ok(0);
     };
@@ -323,6 +341,8 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
             let _ = fs::remove_file(&tmp);
         })
         .map_err(|e| e.to_string())?;
+    // The rewrite produced a fresh file; restore the private ACL on it.
+    resecure_history(&p);
     Ok(removed)
 }
 
@@ -337,7 +357,10 @@ fn write_history_file(p: &Path, contents: &str) -> Result<(), String> {
 pub fn clear_all() -> Result<(), String> {
     let _g = lock_file();
     let p = history_path();
-    write_history_file(&p, "")
+    let _pins = pin_history_path(&p).map_err(|e| format!("history rewrite refused: {e}"))?;
+    write_history_file(&p, "")?;
+    resecure_history(&p);
+    Ok(())
 }
 
 fn unix_now_secs() -> String {

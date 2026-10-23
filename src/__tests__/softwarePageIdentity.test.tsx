@@ -19,7 +19,7 @@ vi.mock("../components/DeepRegistryCheck", () => ({
   DeepRegistryCheck: () => null,
 }));
 
-import { SoftwarePage } from "../components/SoftwarePage";
+import { SoftwarePage, clearReportAppCache } from "../components/SoftwarePage";
 import { appKey } from "../lib/appKey";
 
 const demo: InstalledApp = {
@@ -134,6 +134,9 @@ function props(over: Partial<ComponentProps<typeof SoftwarePage>> = {}) {
 describe("SoftwarePage report identity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The report cache is module-level; without a reset a case inherits the
+    // previous case's identities and the suite becomes order-dependent.
+    clearReportAppCache();
   });
 
   // RTL auto-cleanup is not enabled for this suite, so a previous render would

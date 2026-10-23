@@ -177,7 +177,7 @@ describe("runBatchCleanup", () => {
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe("failed");
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
   });
-  // F-1: `failed === 0` used to mark the app "ok" and count it as processed.
+  // `failed === 0` used to mark the app "ok" and count it as processed.
   // A selection the keep rules refused every row of is
   // `deleted: 0, failed: 0, skipped: N`, which is not a cleaned app.
   it("does not count an app as cleaned when the keep rules refused every row", async () => {
@@ -263,7 +263,7 @@ describe("runBatchCleanup", () => {
     expect(String(last?.detail)).toContain("backup");
   });
 
-  it("still runs official uninstall when no default-selectable leftovers (F-1)", async () => {
+  it("still runs official uninstall when no default-selectable leftovers", async () => {
     analyze.mockResolvedValue(
       scan("B", [item("C:\\x", { confidence: "suspected", risk: "medium" })]),
     );

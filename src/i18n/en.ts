@@ -182,7 +182,7 @@ export const dict: EnDict = {
     batchRetryFailed: "Retry failed",
     batchDismiss: "Dismiss",
     restoreNoSessions: "No backup sessions",
-    // F-5: an aborted backup leaves a session directory with no seal, which can
+    // an aborted backup leaves a session directory with no seal, which can
     // never be restored. It is not listed, but the user is told it exists and
     // can be deleted rather than left wondering where a backup went.
     restoreUnsealedSessions: (n: number) => `${n} unfinished backup session(s) left by an aborted backup (cannot be restored, can be deleted)`,
@@ -253,6 +253,8 @@ export const dict: EnDict = {
     rebootGateCorruptHint: "Cleanup stays blocked so nothing is deleted while a restart may be pending. If no restart is outstanding, the button below renames the damaged record and clears the block.",
     rebootGateCorruptReset: "Repair and unblock",
     rebootGateCorruptResetDone: "Block cleared; the damaged record was renamed to a .corrupt file.",
+    rebootGateNotCorrupt: "The restart-protection record is not damaged, so there is nothing to repair.",
+    rebootGateRenameFailed: "The damaged restart-protection record could not be renamed. Check permissions on the ProgramData folder and try again.",
     idleTitle: "Idle app radar",
     brokenInstallsTitle: "Broken install records",
     brokenInstallsHint: "MSI apps whose install directory is gone but whose uninstall record remains",
@@ -458,7 +460,7 @@ export const dict: EnDict = {
     // reboot-delayed counts, so the headline must state all four outcomes.
     cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
       `ok ${deleted} · failed ${failed} · skipped ${skipped} · pending reboot ${delayed}`,
-    // F-1: `failed === 0` used to be reported as a green success. When every
+    // `failed === 0` used to be reported as a green success. When every
     // hand-picked row was refused by the keep rules the user was told "ok 0".
     cleanupNothingRemoved: (skipped: number) =>
       skipped > 0

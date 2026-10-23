@@ -106,7 +106,7 @@ fn env_root(var: &str) -> Option<String> {
     }
 }
 
-/// F-14: only a `%NAME%`-shaped remnant means "an env var we could not
+/// only a `%NAME%`-shaped remnant means "an env var we could not
 /// expand". A literal `50% Off` directory is a real, scrubable PATH entry.
 fn has_unexpanded_env_token(s: &str) -> bool {
     let mut i = 0;
@@ -557,7 +557,7 @@ mod tests {
             r"C:\Vendor\Tool\bin",
             r"C:\Program Files\DemoApp\bin",
             r"D:\Games\Tool\bin",
-            // F-14: a literal percent is part of a real directory name, not an
+            // a literal percent is part of a real directory name, not an
             // unexpanded variable, and must remain scrubable/restorable.
             r"C:\Tools\50% Off\bin",
             r"D:\Games\100% Complete",

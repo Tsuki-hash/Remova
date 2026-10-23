@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-// render the real App and domain hooks, substituting page surfaces
+// Render the real App and domain hooks, substituting page surfaces
 // and native IO. Assert observable state and API calls across the App boundary.
+// Page internals are covered by their own real-component suites:
+// softwarePageIdentity (SoftwarePage), moreReleases + moreExportReport (MorePage),
+// orphanSummary (OrphanPage), manageListPage (ManageListPage).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";

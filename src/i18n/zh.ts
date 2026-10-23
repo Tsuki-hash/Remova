@@ -183,7 +183,7 @@ export const dict = {
     batchRetryFailed: "重试失败项",
     batchDismiss: "关闭",
     restoreNoSessions: "暂无备份会话",
-    // F-5: 备份中止会留下没有封印的会话目录，它永远无法还原。不列出它，但要
+    // 备份中止会留下没有封印的会话目录，它永远无法还原。不列出它，但要
     // 告诉用户它在那儿、可以删掉，而不是让用户以为备份凭空少了一个。
     restoreUnsealedSessions: (n: number) => `另有 ${n} 个未完成的备份会话（备份中止留下，无法还原，可删除）`,
     restorePathFailed: "PATH 条目未能还原",
@@ -253,6 +253,8 @@ export const dict = {
     rebootGateCorruptHint: "为避免在可能待重启时删除，清理保持阻断。确认当前没有未完成的重启后，点下方按钮会把损坏记录改名保留并解除阻断。",
     rebootGateCorruptReset: "修复并解除阻断",
     rebootGateCorruptResetDone: "已解除阻断；损坏记录已改名保留为 .corrupt 文件。",
+    rebootGateNotCorrupt: "重启保护记录并未损坏，无需修复。",
+    rebootGateRenameFailed: "无法把损坏的重启保护记录改名保留；请检查 ProgramData 目录权限后重试。",
     idleTitle: "闲置软件雷达",
     brokenInstallsTitle: "损坏的安装记录",
     brokenInstallsHint: "安装目录已丢失、但卸载记录仍在的 MSI 应用",
@@ -441,7 +443,7 @@ export const dict = {
     // reboot-delayed counts, so the headline must state all four outcomes.
     cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
       `成功 ${deleted} · 失败 ${failed} · 跳过 ${skipped} · 待重启 ${delayed}`,
-    // F-1: `failed === 0` used to be reported as a green success. When every
+    // `failed === 0` used to be reported as a green success. When every
     // hand-picked row was refused by the keep rules the user was told "成功 0".
     cleanupNothingRemoved: (skipped: number) =>
       skipped > 0

@@ -783,7 +783,7 @@ fn explain_items_with_completion(
     if items.is_empty() {
         return Ok(vec![]);
     }
-    // F-22: results are placed back at the caller's index, so cache hits and
+    // results are placed back at the caller's index, so cache hits and
     // chunked completions cannot reorder the output relative to the input.
     let mut slots: Vec<Option<ExplainOutput>> = (0..items.len()).map(|_| None).collect();
     let mut pending: Vec<(usize, ExplainInput)> = Vec::new();
@@ -842,12 +842,16 @@ fn explain_items_with_completion(
                                })
             })
             .collect();
-        let user = format!(
-        "软件: {}\n发布者: {}\n候选(脱敏路径):\n{}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。",
-        app_name,
-        publisher,
-        serde_json::to_string_pretty(&payload).unwrap_or_default()
-    );
+        let payload_json = serde_json::to_string_pretty(&payload).unwrap_or_default();
+        let user = if normalize_locale(locale) == "en" {
+            format!(
+                "App: {app_name}\nPublisher: {publisher}\nCandidates (sanitized paths):\n{payload_json}\nReturn a JSON array; every object must echo the same path field exactly as sent."
+            )
+        } else {
+            format!(
+                "软件: {app_name}\n发布者: {publisher}\n候选(脱敏路径):\n{payload_json}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。"
+            )
+        };
 
         let text = complete(&user)?;
         let cleaned = strip_code_fence(&text);
@@ -965,17 +969,31 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Resul
     if let Some(c) = cache_get(key) {
         return Ok(c);
     }
-    let user = format!(
-        "软件: {} ({})\n动作: {}\n候选项: {}\n类型分布: {:?}\n含服务: {}\n含启动项: {}\n疑似共享组件: {}",
-        input.app_name,
-        input.publisher,
-        input.action,
-        input.item_count,
-        input.kind_counts,
-        input.has_service,
-        input.has_run_key,
-        input.has_shared_hint
-    );
+    let user = if normalize_locale(locale) == "en" {
+        format!(
+            "App: {} ({})\nAction: {}\nCandidates: {}\nKind counts: {:?}\nHas service: {}\nHas startup item: {}\nSuspected shared component: {}",
+            input.app_name,
+            input.publisher,
+            input.action,
+            input.item_count,
+            input.kind_counts,
+            input.has_service,
+            input.has_run_key,
+            input.has_shared_hint
+        )
+    } else {
+        format!(
+            "软件: {} ({})\n动作: {}\n候选项: {}\n类型分布: {:?}\n含服务: {}\n含启动项: {}\n疑似共享组件: {}",
+            input.app_name,
+            input.publisher,
+            input.action,
+            input.item_count,
+            input.kind_counts,
+            input.has_service,
+            input.has_run_key,
+            input.has_shared_hint
+        )
+    };
     let text = chat_completion(
         cfg,
         localized_system(locale, RISK_SYSTEM, RISK_SYSTEM_EN),
@@ -1008,13 +1026,26 @@ pub struct ReportBriefInput {
     pub top_failed: Vec<String>,
 }
 
-fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput) -> String {
+fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput, locale: &str) -> String {
     let failed = input
         .top_failed
         .iter()
         .map(|path| sanitize_path(path, cfg.allow_cloud_paths))
         .collect::<Vec<_>>()
         .join(" | ");
+    if normalize_locale(locale) == "en" {
+        return format!(
+            "App: {}\nDeleted: {}\nFailed: {}\nSkipped: {}\nAborted: {}\nBackup dir: {}\nRestore point: {}\nFailed samples: {}",
+            input.app_name,
+            input.deleted,
+            input.failed,
+            input.skipped,
+            input.aborted,
+            sanitize_path(&input.backup_dir, cfg.allow_cloud_paths),
+            input.restore_point_ok,
+            failed
+        );
+    }
     format!(
         "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n备份目录: {}\n还原点: {}\n失败样例: {}",
         input.app_name,
@@ -1033,7 +1064,7 @@ pub fn summarize_report(
     input: &ReportBriefInput,
     locale: &str,
 ) -> Result<String, String> {
-    let user = report_user_prompt(cfg, input);
+    let user = report_user_prompt(cfg, input, locale);
     // Cache exactly the privacy-aware payload; changing permission invalidates
     // it, and so does switching the UI language.
     let key = fnv1a64(&format!(
@@ -1107,7 +1138,7 @@ pub fn parse_nl_intent(
     app_names: &[String],
     locale: &str,
 ) -> Result<NlIntent, String> {
-    // F-15: this was the only AI call that sent free text and app names raw,
+    // this was the only AI call that sent free text and app names raw,
     // bypassing both `scrub_cloud_text` and the `allow_cloud_paths` gate.
     let scrubbed_text = scrub_cloud_text(user_text.trim());
     let names: Vec<String> = app_names
@@ -1121,11 +1152,19 @@ pub fn parse_nl_intent(
             }
         })
         .collect();
-    let user = format!(
-        "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",
-        scrubbed_text,
-        names.join(" | ")
-    );
+    let user = if normalize_locale(locale) == "en" {
+        format!(
+            "User instruction: {}\nInstalled app samples (for matching only): {}",
+            scrubbed_text,
+            names.join(" | ")
+        )
+    } else {
+        format!(
+            "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",
+            scrubbed_text,
+            names.join(" | ")
+        )
+    };
     let text = chat_completion(
         cfg,
         localized_system(locale, INTENT_SYSTEM, INTENT_SYSTEM_EN),
@@ -1281,13 +1320,13 @@ mod tests {
             top_failed: vec![r"C:\Users\PrivacyUser\private\product\failed.bin".into()],
         };
         let mut cfg = AiConfig::default();
-        let scrubbed = report_user_prompt(&cfg, &input);
+        let scrubbed = report_user_prompt(&cfg, &input, "zh");
         assert!(!scrubbed.contains("PrivacyUser"));
         assert!(!scrubbed.contains("private"));
         assert!(!scrubbed.contains(r"C:\Users"));
         assert!(scrubbed.contains(r"product\failed.bin"));
         cfg.allow_cloud_paths = true;
-        let allowed = report_user_prompt(&cfg, &input);
+        let allowed = report_user_prompt(&cfg, &input, "zh");
         assert!(allowed.contains(r"C:\Users\*\private\product\failed.bin"));
         assert!(!allowed.contains("PrivacyUser"));
         assert_ne!(allowed, scrubbed);
@@ -1464,7 +1503,7 @@ mod tests {
     /// `sanitize_path` is deliberately NOT idempotent for the
     /// common AppData shape — the explain rematch must therefore consult the
     /// strings actually sent to the model instead of re-sanitizing the echo.
-    /// F-15: the path gate only applies to tokens that look like paths; plain
+    /// the path gate only applies to tokens that look like paths; plain
     /// product names must keep going through `scrub_cloud_text` untouched.
     #[test]
     fn path_token_detection_covers_drive_letter_and_unc_shapes() {
@@ -1593,7 +1632,7 @@ mod tests {
         .unwrap();
         assert_eq!(batches, [12, 12, 1]);
         assert_eq!(out.len(), inputs.len());
-        // F-22: the caller's order is the contract, even though the model
+        // the caller's order is the contract, even though the model
         // echoes each batch reversed.
         assert_eq!(
             out.iter().map(|o| o.path.as_str()).collect::<Vec<_>>(),
@@ -1661,6 +1700,51 @@ mod tests {
         assert_eq!(result[0].path, inputs[0].path);
         assert_eq!(result[1].path, inputs[1].path);
         assert_eq!(result[1].summary, "explanation-1");
+    }
+
+    #[test]
+    fn user_prompts_follow_the_ui_locale() {
+        let input = ReportBriefInput {
+            app_name: "Vendor".into(),
+            deleted: 1,
+            failed: 0,
+            skipped: 0,
+            aborted: false,
+            restore_point_ok: true,
+            backup_dir: r"C:\Backups\s1".into(),
+            top_failed: vec![],
+        };
+        let cfg = AiConfig::default();
+        let zh = report_user_prompt(&cfg, &input, "zh-CN");
+        let en = report_user_prompt(&cfg, &input, "en-US");
+        assert!(zh.starts_with("软件:"));
+        assert!(en.starts_with("App:"));
+        assert!(!en.contains('软'));
+
+        let items = vec![ExplainInput {
+            path: r"C:\Users\x\AppData\Local\Vendor\LocaleFixture".into(),
+            kind: "dir".into(),
+            confidence: "confirmed".into(),
+            risk: "low".into(),
+            reason: "locale fixture".into(),
+            evidence_labels: vec![],
+        }];
+        let mut seen = String::new();
+        let _ = explain_items_with_completion(
+            &cfg,
+            "locale-prompt-test",
+            "Vendor",
+            &items,
+            "en",
+            |user| {
+                seen = user.to_string();
+                Ok("[]".into())
+            },
+        )
+        .unwrap();
+        assert!(seen.starts_with("App:"));
+        assert!(seen.contains("Candidates"));
+        assert!(!seen.contains("候选"));
     }
 
     #[test]

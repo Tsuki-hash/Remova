@@ -422,8 +422,11 @@ mod scan_cache {
         built
     }
 
+    /// `build` returns `None` when at least one root could not be read. That
+    /// result is served for this call but never cached: a transient permission
+    /// error must not hide TEMP leftovers for the whole batch.
     pub(super) fn temp(
-        build: impl FnOnce() -> Vec<super::TempEntry>,
+        build: impl FnOnce() -> Option<Vec<super::TempEntry>>,
     ) -> Arc<Vec<super::TempEntry>> {
         let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, entries)) = guard.as_ref() {
@@ -431,7 +434,10 @@ mod scan_cache {
                 return Arc::clone(entries);
             }
         }
-        let built = Arc::new(build());
+        let built = match build() {
+            Some(entries) => Arc::new(entries),
+            None => return Arc::new(Vec::new()),
+        };
         if crate::scan_task::cancelled() {
             return built;
         }
@@ -595,18 +601,33 @@ pub(crate) fn clear_scan_caches() {
     scan_cache::clear();
 }
 
-pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+/// TEMP directories to scan. LocalAppData\Temp is the default, but users can
+/// redirect TEMP to another local drive; that root must be scanned too or its
+/// leftovers never surface. UNC/device targets are skipped (read-only walk,
+/// but it would contact a remote share).
+fn temp_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
     #[cfg(windows)]
-    let temp = {
+    {
         use windows::Win32::UI::Shell::FOLDERID_LocalAppData;
-        let Some(local) = crate::sysops::known_folder(&FOLDERID_LocalAppData) else {
-            return;
-        };
-        local.join("Temp")
-    };
-    #[cfg(not(windows))]
-    let temp = PathBuf::new();
-    if !temp.exists() {
+        if let Some(local) = crate::sysops::known_folder(&FOLDERID_LocalAppData) {
+            roots.push(local.join("Temp"));
+        }
+    }
+    if let Some(raw) = std::env::var_os("TEMP") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() && crate::fsutil::is_local_drive_path(&p.to_string_lossy()) {
+            roots.push(p);
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    roots.retain(|p| p.is_dir() && seen.insert(p.to_string_lossy().to_lowercase()));
+    roots
+}
+
+pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+    let roots = temp_roots();
+    if roots.is_empty() {
         return;
     }
     let slugs: Vec<String> = name_slugs
@@ -619,19 +640,31 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     }
     let entries = scan_cache::temp(|| {
         let mut out = Vec::new();
-        if let Ok(rd) = temp.read_dir() {
-            for e in rd.flatten() {
-                if crate::scan_task::cancelled() {
-                    break;
+        let mut complete = true;
+        for root in &roots {
+            match root.read_dir() {
+                Ok(rd) => {
+                    for e in rd.flatten() {
+                        if crate::scan_task::cancelled() {
+                            break;
+                        }
+                        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                        out.push(TempEntry {
+                            path: e.path(),
+                            is_dir,
+                        });
+                    }
                 }
-                let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
-                out.push(TempEntry {
-                    path: e.path(),
-                    is_dir,
-                });
+                // Keep this call's partial data, but do not publish it: a
+                // permission blip at one root must not hide the other roots
+                // for the next five minutes.
+                Err(_) => complete = false,
+            }
+            if crate::scan_task::cancelled() {
+                break;
             }
         }
-        out
+        complete.then_some(out)
     });
     for entry in entries.iter() {
         if crate::scan_task::cancelled() {
@@ -715,6 +748,26 @@ mod cache_tests {
         });
         assert_eq!(calls, 2, "clearing must force a rebuild");
         assert!(third.is_empty());
+        scan_cache::clear();
+    }
+
+    #[test]
+    fn a_failed_temp_walk_does_not_pin_an_empty_listing() {
+        scan_cache::clear();
+        // The builder reports an unreadable root with `None`.
+        let first = scan_cache::temp(|| None);
+        assert!(first.is_empty());
+        // The next build succeeds and must be published; a cached empty list
+        // from the failed walk would have hidden TEMP for the whole batch.
+        let second = scan_cache::temp(|| {
+            Some(vec![TempEntry {
+                path: PathBuf::from(r"C:\Temp\Demo-cache.tmp"),
+                is_dir: false,
+            }])
+        });
+        assert_eq!(second.len(), 1);
+        let third = scan_cache::temp(|| panic!("a successful build must be cached"));
+        assert_eq!(third.len(), 1);
         scan_cache::clear();
     }
 

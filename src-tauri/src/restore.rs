@@ -243,7 +243,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
                 Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
                 Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                // F-4: this used to `return Err(..)`, which threw away the real
+                // this used to `return Err(..)`, which threw away the real
                 // cause and abandoned everything after it — the registry import
                 // below never ran, so the filesystem was already modified while
                 // the registry never was, and a retry hit the same PATH failure
@@ -996,7 +996,7 @@ mod tests {
         assert!(restore_session(&p).is_err());
     }
 
-    /// F-5: `backup_batch` creates the session directory and then can return
+    /// `backup_batch` creates the session directory and then can return
     /// `Err` before `write_seal`, leaving an unsealed directory on disk. It was
     /// offered as a restore target and then always failed with `seal:missing`
     /// for the whole 7-day retention window.
@@ -1387,7 +1387,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// F-4: a PATH entry that cannot be restored is aggregated with its real
+    /// a PATH entry that cannot be restored is aggregated with its real
     /// cause and the session continues — the file write-back must never leave
     /// the registry import undone because one PATH entry failed.
     #[cfg(windows)]

@@ -132,7 +132,7 @@ fn segments(s: &str) -> Vec<&str> {
 
 /// Anchored token match: the token (already lowercased) must equal one segment
 /// or a run of adjacent segments. Mirrors the publisher match in
-/// `association.rs`, which the round-37 review (F-2) pointed at as the model.
+/// `association.rs`, which the round-37 review pointed at as the model.
 fn token_hits(haystack: &str, token: &str) -> bool {
     let token = token.trim();
     if token.is_empty() {

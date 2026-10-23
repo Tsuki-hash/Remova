@@ -144,7 +144,7 @@ export function OrphanPage({
         dry_run: false,
         skip_official_uninstall: true,
         backup_enabled: checked,
-        // F-9: the user can decline a restore point; the backend still
+        // the user can decline a restore point; the backend still
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
         cleanup_source: "orphan",

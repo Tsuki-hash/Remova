@@ -395,7 +395,7 @@ describe("useCleanupHandlers deep pipeline", () => {
   });
 
   it("handleCleanupConfirm says the AI brief is unavailable when the backend returns null", async () => {
-    // F-19: `ai_risk_brief` returns Ok(None) when the feature is disabled, and
+    // `ai_risk_brief` returns Ok(None) when the feature is disabled, and
     // the dialog used to drop the AI line without saying anything.
     (api.aiRiskBrief as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(null);
     requestConfirmEx.mockResolvedValue({ ok: false, checked: false });

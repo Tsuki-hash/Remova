@@ -256,7 +256,7 @@ it("retries only the preview after a preview failure", async () => {
   expect(result.current.restorePick).toBe("older-backup");
 });
 
-it("keeps an unsealed session out of the restore selector and counts it (F-5)", async () => {
+it("keeps an unsealed session out of the restore selector and counts it", async () => {
   native.backupSessions.mockResolvedValueOnce([
     { name: "aborted", size_kb: 1, created_at: "", sealed: false },
     { name: "good", size_kb: 1, created_at: "", sealed: true },

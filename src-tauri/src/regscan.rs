@@ -1034,6 +1034,30 @@ mod completeness_tests {
     }
 
     #[test]
+    fn cached_default_value_reads_live_outside_and_after_cancellation() {
+        super::default_cache::clear();
+        let key = r"HKCU\Software\RemovaP309Missing\NoSuchValue";
+        super::default_cache::put(key, "stale-cached");
+        // Outside any scan task the deletion gate reads the registry; a seeded
+        // cache entry must not be replayed.
+        assert_eq!(super::read_string_default_cached(key), None);
+
+        let id = crate::scan_task::begin().unwrap();
+        let seen = std::cell::Cell::new(Some("sentinel".to_string()));
+        let result = crate::scan_task::run(id, || {
+            let _ = crate::scan_task::cancel(id);
+            // A cancelled task must also fall back to the live read.
+            seen.set(super::read_string_default_cached(key));
+        });
+        assert!(
+            result.is_err(),
+            "the cancelled task must report cancellation"
+        );
+        assert_eq!(seen.take(), None);
+        super::default_cache::clear();
+    }
+
+    #[test]
     fn a_destructive_operation_drops_the_cached_enumerations() {
         super::reset_registry_cache_for_test();
         let id = crate::scan_task::begin().unwrap();

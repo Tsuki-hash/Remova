@@ -55,7 +55,7 @@ pub fn create_dirs_pinned(p: &Path) -> std::io::Result<Vec<DirPin>> {
             std::fs::create_dir(ancestor)?;
         }
         let mut pin = pin_dir_with_access(ancestor, 0x0081)?;
-        // F-16: only the output directory itself is guarded even when it is
+        // only the output directory itself is guarded even when it is
         // non-empty. Ancestors (including `C:\` and `%ProgramData%`) get a
         // marker only when they are actually empty — a marker left behind by a
         // crash must never land in a shared system directory.
@@ -253,7 +253,7 @@ fn is_access_denied_error(error: &windows::core::Error) -> bool {
 /// `mark_even_if_non_empty`: the directory may be emptied by this operation, so
 /// mark it even when it is currently non-empty. Ancestors pass `false` and get
 /// no marker, so a shared system directory like `C:\` or `%ProgramData%` is
-/// never written to (F-16).
+/// never written to.
 #[cfg(windows)]
 pub(crate) fn guard_empty_directory(
     handle: windows::Win32::Foundation::HANDLE,
@@ -269,7 +269,7 @@ pub(crate) fn guard_empty_directory(
     use windows::Win32::Foundation::{HANDLE, UNICODE_STRING};
     use windows::Win32::Storage::FileSystem::*;
     use windows::Win32::System::IO::IO_STATUS_BLOCK;
-    // F-16: only the operation's own target is marked. Ancestors are non-empty
+    // only the operation's own target is marked. Ancestors are non-empty
     // by construction (they hold the next path component), and writing a marker
     // into `C:\` or `%ProgramData%` just to learn they are non-empty would need
     // list access the pin does not have.
@@ -1099,7 +1099,7 @@ fn prune_empty_ancestors_under(path: &Path, tokens: &[String], roots: &[PathBuf]
 /// The name deliberately does **not** embed the destination file name: Windows
 /// caps one path component at 255 UTF-16 units, and appending
 /// `.<pid>.<nonce>.tmp` to an already-truncated 255-unit backup name made the
-/// temp component invalid — the exact failure F-13 exists to remove (A1).
+/// temp component invalid — the exact failure this naming rule prevents (A1).
 /// pid + counter keeps the name unique across processes and threads, and it
 /// stays in the destination directory so the rename remains atomic.
 pub fn atomic_tmp_path(p: &Path) -> PathBuf {
@@ -1790,7 +1790,7 @@ mod tests {
         drop(pins);
     }
 
-    /// regression fix / F-16: only the operation's own target carries a guard marker.
+    /// regression fix: only the operation's own target carries a guard marker.
     /// A crash mid-operation must never leave `.remova-guard-*` in `C:\` or
     /// `%ProgramData%`, and the ancestor chain must stay marker-free.
     #[cfg(windows)]

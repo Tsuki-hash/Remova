@@ -423,10 +423,22 @@ fn rename_corrupt_state(path: &Path) -> bool {
     std::fs::rename(path, backup).is_ok()
 }
 
+/// Outcome of clearing a damaged gate. "Nothing to clear" and "the damaged file
+/// could not be renamed" need different user-facing messages: the first means
+/// the user is looking at stale state, the second means permissions blocked the
+/// repair and retrying the same button is pointless until that is fixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // `Cleared`/`RenameFailed` are only reachable in the production cfg path.
+pub(crate) enum ClearCorruptGate {
+    Cleared,
+    NotCorrupt,
+    RenameFailed,
+}
+
 /// Recover from an unreadable state file only. A real pending gate (in-memory
 /// keys or a valid record) is never cleared here. The damaged file is renamed,
 /// not deleted, so it can still be inspected.
-pub(crate) fn clear_corrupt_gate() -> bool {
+pub(crate) fn clear_corrupt_gate() -> ClearCorruptGate {
     #[cfg(not(test))]
     {
         use std::sync::atomic::Ordering;
@@ -437,19 +449,19 @@ pub(crate) fn clear_corrupt_gate() -> bool {
             .next()
             .is_some();
         if !clear_corrupt_allowed(corrupt_gate().load(Ordering::SeqCst), has_pending_keys) {
-            return false;
+            return ClearCorruptGate::NotCorrupt;
         }
         if let Some(path) = state_path() {
             if !rename_corrupt_state(&path) {
-                return false;
+                return ClearCorruptGate::RenameFailed;
             }
         }
         corrupt_gate().store(false, Ordering::SeqCst);
-        true
+        ClearCorruptGate::Cleared
     }
     #[cfg(test)]
     {
-        false
+        ClearCorruptGate::NotCorrupt
     }
 }
 

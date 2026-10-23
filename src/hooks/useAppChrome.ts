@@ -73,7 +73,7 @@ export function useAppChrome({
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const checkupScan = useAssociationScan();
   const monitorScan = useAssociationScan();
-  // F-20: bind the stable callbacks, so the dependency arrays can name them
+  // bind the stable callbacks, so the dependency arrays can name them
   // without depending on the hook's re-created container object.
   const checkupRunReadOnly = checkupScan.runReadOnly;
   const monitorRunReadOnly = monitorScan.runReadOnly;
@@ -108,7 +108,7 @@ export function useAppChrome({
   const doIgnorePublisher = useCallback(
     async (appOverride?: InstalledApp) => {
       const app = appOverride ?? selected;
-      // F-21: without an app this used to return undefined into a `pending`
+      // without an app this used to return undefined into a `pending`
       // mutation — a spinner with no action and no feedback.
       if (!app) {
         toast.info(L.selectRowHint);

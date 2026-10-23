@@ -91,7 +91,7 @@ mod tests {
         assert!(crate::restore::list_session_info().is_err());
         std::fs::remove_file(isolated.path()).unwrap();
         std::fs::create_dir(isolated.path()).unwrap();
-        // list_restore_sessions filters sealed sessions (F-5), so the fixture
+        // list_restore_sessions filters sealed sessions, so the fixture
         // needs a real seal to be offered for restore. The seals root lives
         // OUTSIDE the backup root — list_session_info reports every directory
         // inside the backup root as a session.

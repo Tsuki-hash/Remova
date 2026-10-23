@@ -75,7 +75,7 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
     dryRunning: false,
     batching: false,
     error: null,
-    // F-6: both were read by the memo body but absent from the dependency array,
+    // both were read by the memo body but absent from the dependency array,
     // so a change to either returned the memoized object unchanged.
     forceBusy: false,
     runAiReport: async () => {},
@@ -141,7 +141,7 @@ describe("useSoftwareController mapping", () => {
     expect(idle.busy).toBe(false);
   });
 
-  // F-6: `busy` is `dryRunning || forceBusy || batching || scanning || aiBusy`.
+  // `busy` is `dryRunning || forceBusy || batching || scanning || aiBusy`.
   // `forceBusy` was read but not declared, so `SoftwarePage`'s own memo bailed
   // out and the cleanup / dry-run / "skip official uninstall" controls stayed
   // live for the whole in-flight analyze + fullCleanup.

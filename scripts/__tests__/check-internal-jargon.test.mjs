@@ -17,7 +17,7 @@ const check = root => spawnSync(process.execPath, [script, "--check"], { cwd: ro
 
 test("rejects every historical review-code family without changing source bytes", () => {
   fixture((root, file) => {
-    for (const id of ["R2-11", "R-R7-02", "FE-R4-04", "R29-SEC-02", "R21-IO-02/BE-01", "REV-SEC-06"]) {
+    for (const id of ["R2-11", "R-R7-02", "FE-R4-04", "R29-SEC-02", "R21-IO-02/BE-01", "REV-SEC-06", "F-22", "F-5"]) {
       const source = `// ${id}: protect the operation\nexport const safe = true;\n`;
       writeFileSync(file, source);
       const result = check(root);

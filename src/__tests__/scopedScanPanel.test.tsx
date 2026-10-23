@@ -298,7 +298,7 @@ it("keeps the per-item outcome on screen with a locate button and a retry", asyn
   expect(second[1].map(it => it.path)).toEqual(["C:\\cache\\cargo"]);
 });
 
-// F-8: the retry path used to push an unconditional success toast on the same
+// the retry path used to push an unconditional success toast on the same
 // channel as the error toast. `toast.push` cancels every earlier toast on a
 // channel, so a retry that failed again had its error destroyed and replaced
 // with "已重试 N 项".

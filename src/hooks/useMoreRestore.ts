@@ -50,7 +50,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreLoadError(null);
     try {
       const list = await api.backupSessions();
-      // F-5: an aborted backup leaves a session directory with no seal. It can
+      // an aborted backup leaves a session directory with no seal. It can
       // never be restored (`validate_session` rejects it with `seal:missing`),
       // so it must not become the default selection and then fail on confirm.
       const restorable = list.filter(session => session.sealed);
@@ -141,7 +141,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
         if (msg.startsWith("imported ")) return `${L.restoreDone}: ${msg.slice(9)}`;
         if (msg.startsWith("PATH entry already present: ")) return `${L.restoreAlreadyPresent}: ${msg.slice(28)}`;
-        // F-4: a PATH entry that could not be merged back is aggregated with its
+        // a PATH entry that could not be merged back is aggregated with its
         // real cause and the restore continues, so the cause must be shown
         // rather than collapsing to "no detail".
         if (msg.startsWith("PATH restore failed for ")) return `${L.restorePathFailed}: ${msg.slice(24)}`;

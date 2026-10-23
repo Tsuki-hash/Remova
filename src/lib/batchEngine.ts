@@ -93,13 +93,13 @@ export async function runBatchCleanup(
           void api.cancelAssociationScan(scanId).catch(() => {});
         }
         const items = r.items.filter(defaultSelectable);
- // F-1: do not skip the whole app when there are no default-selectable leftovers.
+ // do not skip the whole app when there are no default-selectable leftovers.
  // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
         const report = await api.fullCleanup(app, items, {
           dry_run: false,
           skip_official_uninstall: !runOfficial,
           backup_enabled: backupEnabled,
-        // F-9: the user can decline a restore point; the backend still
+        // the user can decline a restore point; the backend still
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
           cleanup_source: "uninstall",
@@ -165,7 +165,7 @@ export async function runBatchCleanup(
           // growing array on every app made the UI update quadratic.
           continue;
         }
-        // F-1: the per-app line states all four counts, not just deleted/failed,
+        // the per-app line states all four counts, not just deleted/failed,
         // so a run that deleted nothing is legible in the batch summary too.
         const detail = cleanupOutcomeText(report, L);
         if (report.failed > 0) {
@@ -179,7 +179,7 @@ export async function runBatchCleanup(
           });
           okKeys.add(key);
         } else if (!cleanupAccomplishedSomething(report)) {
-          // F-1: `failed === 0` counted the app as "processed" even when the
+          // `failed === 0` counted the app as "processed" even when the
           // keep rules refused every hand-picked row. Report it as skipped so
           // the batch summary does not claim the app was cleaned.
           results.push({

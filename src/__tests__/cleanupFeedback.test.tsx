@@ -26,7 +26,7 @@ it.each([{ aborted: true }, { failed: 2, deleted: 0 }, { failed: 1, deleted: 1 }
     expect(toast.success).toHaveBeenCalledTimes(value.aborted || value.failed ? 0 : 1);
   });
 
-// F-1: `failed === 0` is not "success". A hand-picked selection the keep rules
+// `failed === 0` is not "success". A hand-picked selection the keep rules
 // refused every row of is `deleted: 0, failed: 0, skipped: N, aborted: false`,
 // and it was being reported as a green "ok 0 · failed 0".
 it.each([

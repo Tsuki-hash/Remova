@@ -119,7 +119,7 @@ fn try_backup_phase(
             restore_point_msg,
         };
     }
-    // F-18: a run with nothing to back up (e.g. uninstall-only) must not leave
+    // a run with nothing to back up (e.g. uninstall-only) must not leave
     // an empty sealed session in the Safety Vault.
     if plan.allowed.is_empty() {
         return BackupOutcome::Ready {
@@ -169,7 +169,7 @@ fn try_backup_phase(
 pub fn task_full_name_from_reg_path(reg_path: &str) -> String {
     let slashed = reg_path.replace('/', "\\");
     let marker = r"\TaskCache\Tree\";
-    // F-11: matching against a lowercased copy and reusing that byte offset on
+    // matching against a lowercased copy and reusing that byte offset on
     // the original string is wrong — `to_lowercase` can change byte lengths.
     if let Some(pos) = find_ascii_case_insensitive(&slashed, marker) {
         let rest = &slashed[pos + marker.len()..];
@@ -399,7 +399,7 @@ fn delete_planned_items_with_io(
             }
             _ => {
                 let p = Path::new(&it.path);
-                // F-10: `exists()` maps every metadata error to false, so an
+                // `exists()` maps every metadata error to false, so an
                 // ACL-denied or offline path was reported as "already gone".
                 match p.try_exists() {
                     Ok(false) => {
@@ -853,7 +853,7 @@ mod tests {
             task_full_name_from_reg_path(r"HKLM\...\TaskCache\Tree\Simple"),
             r"\Simple"
         );
-        // F-11: `İ` grows under to_lowercase, so an offset measured in the
+        // `İ` grows under to_lowercase, so an offset measured in the
         // lowercased copy used to slice the original string at the wrong byte.
         assert_eq!(
             task_full_name_from_reg_path("HKLM64\\İ\\TaskCache\\Tree\\Vendor\\Foo\\MyTask"),
@@ -1233,7 +1233,7 @@ mod tests {
             .any(|d| { d.status == "skipped" && d.message == "user_data red line" }));
     }
 
-    /// F-3 end to end: an uninstall string that exists but cannot be parsed
+    /// end to end: an uninstall string that exists but cannot be parsed
     /// must abort the whole run — deleting leftovers of an app that is still
     /// registered would leave it un-uninstallable from Programs & Features.
     #[test]
@@ -1301,7 +1301,7 @@ mod tests {
         assert!(kept.exists(), "nothing may be deleted on an aborted run");
     }
 
-    /// F-18: backup enabled but nothing to back up must not create (and seal)
+    /// backup enabled but nothing to back up must not create (and seal)
     /// an empty session that the Safety Vault then offers for restore.
     #[test]
     fn empty_plan_skips_backup_session_creation() {

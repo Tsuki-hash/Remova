@@ -41,6 +41,11 @@ const REPORT_APP_CACHE_MAX = 64;
 const REPORT_APP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const reportAppCache = new Map<string, { app: InstalledApp; at: number }>();
 
+/** Test hook: the cache is process-level, so suites must reset it between cases. */
+export function clearReportAppCache() {
+  reportAppCache.clear();
+}
+
 function cachedReportApp(identity: string): InstalledApp | undefined {
   const entry = reportAppCache.get(identity);
   if (!entry) return undefined;

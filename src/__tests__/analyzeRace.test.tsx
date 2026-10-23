@@ -197,7 +197,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(result.current.scanProgress?.status).toBe("cancelled");
   });
 
-  // F-7: `forceClean` and `startUninstall` guard on `busyRef.current` only, and
+  // `forceClean` and `startUninstall` guard on `busyRef.current` only, and
   // `analyze` never set it. A destructive action could therefore start while a
   // deep scan was in flight, and the scan then landed on top of that action's
   // report (it never increments `analyzeSeqRef`).
