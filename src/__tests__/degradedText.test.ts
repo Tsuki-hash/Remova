@@ -23,6 +23,7 @@ describe("degradedText", () => {
     expect(degradedText("pe_budget_exhausted:37")).toBe(L.degradedPeBudgetExhausted(37));
     expect(degradedText("home_dot_truncated")).toBe(L.degradedHomeDotTruncated);
     expect(degradedText("muicache_truncated")).toBe(L.degradedMuicacheTruncated);
+    expect(degradedText("temp_partial")).toBe(L.degradedTempPartial);
   });
 
   it("passes unrecognized codes through unchanged (older/newer backend tolerance)", () => {

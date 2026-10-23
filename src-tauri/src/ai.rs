@@ -1421,6 +1421,12 @@ mod tests {
             scrub_cloud_text("Shell/Classes leftover: Foo"),
             "Shell/Classes leftover: Foo"
         );
+        // The same helper is applied to `app_name` and `publisher` before a
+        // cloud request; both can carry a path from a hostile registry value.
+        let app = scrub_cloud_text(r"C:\Users\alice\AppData\Local\Acme\acme.exe");
+        assert!(!app.contains("alice"), "{app}");
+        let publisher = scrub_cloud_text(r"\\fileserver\share\Publisher");
+        assert!(!publisher.contains("fileserver"), "{publisher}");
     }
 
     #[test]

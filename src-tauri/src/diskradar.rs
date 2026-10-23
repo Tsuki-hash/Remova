@@ -166,7 +166,7 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
         };
         // One metadata read answers both "is this a reparse point?" and the
         // file size; a separate symlink_metadata call doubled every stat.
-        if crate::dirsize::is_reparse_metadata(&meta) {
+        if crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         if meta.is_dir() {
@@ -213,7 +213,7 @@ fn child_rows(parent: &PathBuf, budget: &mut u64) -> Vec<DirSizeRow> {
         let Ok(meta) = ent.metadata() else {
             continue;
         };
-        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+        if !meta.is_dir() || crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();

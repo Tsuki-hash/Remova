@@ -340,6 +340,7 @@ fn run_official_uninstall_unchecked(
                                     // do not let pre-uninstall snapshots linger.
                                     crate::scanner::reg_scans::invalidate_service_snapshot();
                                     crate::regscan::invalidate_subkey_cache();
+                                    crate::scanner::reg_scans::invalidate_muicache_cache();
                                     crate::scanner::fs_scans::clear_scan_caches();
                                 }
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {

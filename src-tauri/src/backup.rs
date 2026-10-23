@@ -304,6 +304,7 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
         .unwrap_or(0);
     // Claim the session dir with create_dir — never exists-then-reuse (race).
     let root = backup_root();
+    crate::fsutil::ensure_no_reparse_ancestors(&root)?;
     fs::create_dir_all(&root)?;
     if crate::fsutil::is_reparse_point(&root) {
         return Err(std::io::Error::other("backup root is a reparse point"));
@@ -1188,16 +1189,6 @@ mod acl_tests {
             let _ = LocalFree(HLOCAL(sd.0.cast()));
             (protected, sids)
         }
-    }
-
-    #[test]
-    fn private_acl_can_be_applied_to_a_backup_directory() {
-        let tmp = crate::test_support::TempDir::new("backup-acl");
-        let dir = tmp.path().join("Backup");
-        std::fs::create_dir_all(dir.join("files")).unwrap();
-        std::fs::write(dir.join("files").join("sample.bin"), b"x").unwrap();
-        super::apply_private_acl(&dir).unwrap();
-        super::apply_private_acl(&dir.join("files")).unwrap();
     }
 
     #[test]

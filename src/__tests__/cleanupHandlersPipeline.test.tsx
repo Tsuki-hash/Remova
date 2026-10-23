@@ -18,6 +18,8 @@ vi.mock("../lib/api", () => ({
   api: {
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
     analyze: (...a: unknown[]) => analyze(...a),
+    beginAssociationScan: vi.fn(async () => 1),
+    cancelAssociationScan: vi.fn(async () => true),
     aiRiskBrief: vi.fn(),
     verifyLeftovers: vi.fn(async () => []),
     dryRun: vi.fn(),

@@ -790,6 +790,7 @@ pub fn run_full_cleanup(
         .any(|d| d.kind == "registry" && matches!(d.status.as_str(), "deleted" | "delayed"));
     if registry_touched {
         crate::regscan::invalidate_subkey_cache();
+        crate::scanner::reg_scans::invalidate_muicache_cache();
     }
     let service_touched = del.details.iter().any(|d| {
         d.kind == "registry"

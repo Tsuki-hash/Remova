@@ -662,114 +662,77 @@ pub fn analyze_associations(
     }
 
     // 2. Named roots. Known Folders, not process environment: a rewritten
-    // LOCALAPPDATA/ProgramFiles must not become a confirmed delete root.
-    let mut bases: Vec<PathBuf> = vec![];
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::Shell::{
-            FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
-            FOLDERID_ProgramFilesX86, FOLDERID_RoamingAppData,
-        };
-        for id in [
-            &FOLDERID_LocalAppData,
-            &FOLDERID_RoamingAppData,
-            &FOLDERID_ProgramData,
-            &FOLDERID_ProgramFiles,
-            &FOLDERID_ProgramFilesX86,
-        ] {
-            if let Some(base) = crate::sysops::known_folder(id) {
-                bases.push(base);
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        for key in ["LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "ProgramFiles"] {
-            if let Some(v) = std::env::var_os(key) {
-                bases.push(PathBuf::from(v));
-            }
-        }
-    }
-
+    // LOCALAPPDATA/ProgramFiles must not become a confirmed delete root. The
+    // child listing is app-independent; cache it for the batch instead of
+    // re-reading five roots for every app.
+    let children = named_root_children();
     let mut seen = std::collections::HashSet::new();
-    for base in bases {
+    for child in children.iter() {
         if crate::scan_task::cancelled() {
             break;
         }
-        if !base.exists() || !is_safe_fs(&base) {
+        if !child.exists() || !is_safe_fs(child) {
             continue;
         }
-        let Ok(rd) = base.read_dir() else {
+        let key = child.to_string_lossy().to_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
+        let Some(file_name) = child.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        for e in rd.flatten() {
-            if crate::scan_task::cancelled() {
-                break;
-            }
-            let child = e.path();
-            if !e.file_type().is_ok_and(|t| t.is_dir()) {
-                continue;
-            }
-            let key = child.to_string_lossy().to_lowercase();
-            if seen.contains(&key) {
-                continue;
-            }
-            let Some(file_name) = child.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            let Some(m) = matches_product_dir(file_name, &name_slugs, &exe_stems) else {
-                continue;
-            };
-            if !is_safe_fs(&child) {
-                continue;
-            }
-            seen.insert(key);
-            let conf = if m == "confirmed" {
-                Confidence::Confirmed
-            } else {
-                Confidence::Suspected
-            };
-            let risk = if conf == Confidence::Confirmed {
-                RiskLevel::Low
-            } else {
-                RiskLevel::Medium
-            };
-            let score = if conf == Confidence::Confirmed {
-                40
-            } else {
-                30
-            };
-            let label = if conf == Confidence::Confirmed {
-                "Product folder name matches exactly"
-            } else {
-                "Product folder name fuzzy match"
-            };
-            items.push(CleanupItem {
-                path: child.to_string_lossy().to_string(),
-                kind: ItemKind::Dir,
-                score,
-                confidence: conf,
-                risk,
-                reason: format!("Product dir under {}", base.display()),
-                evidence: vec![Evidence {
-                    code: if m == "confirmed" {
-                        "product_dir_exact".into()
-                    } else {
-                        "fuzzy_name_only".into()
-                    },
-                    label: label.into(),
-                    weight: score,
-                    detail: file_name.to_string(),
-                }],
-                shared: false,
-                service_bound: false,
-                user_data: false,
-                user_library: false,
-                size_kb: None,
-                size_capped: false,
-                bucket: None,
-            });
+        let Some(m) = matches_product_dir(file_name, &name_slugs, &exe_stems) else {
+            continue;
+        };
+        if !is_safe_fs(child) {
+            continue;
         }
+        seen.insert(key);
+        let conf = if m == "confirmed" {
+            Confidence::Confirmed
+        } else {
+            Confidence::Suspected
+        };
+        let risk = if conf == Confidence::Confirmed {
+            RiskLevel::Low
+        } else {
+            RiskLevel::Medium
+        };
+        let score = if conf == Confidence::Confirmed {
+            40
+        } else {
+            30
+        };
+        let label = if conf == Confidence::Confirmed {
+            "Product folder name matches exactly"
+        } else {
+            "Product folder name fuzzy match"
+        };
+        items.push(CleanupItem {
+            path: child.to_string_lossy().to_string(),
+            kind: ItemKind::Dir,
+            score,
+            confidence: conf,
+            risk,
+            reason: "Product dir under a known folder".into(),
+            evidence: vec![Evidence {
+                code: if m == "confirmed" {
+                    "product_dir_exact".into()
+                } else {
+                    "fuzzy_name_only".into()
+                },
+                label: label.into(),
+                weight: score,
+                detail: file_name.to_string(),
+            }],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        });
     }
 
     // 3. Uninstall key
@@ -923,7 +886,7 @@ pub fn analyze_associations(
 
     // 8. Software registry keys HKLM64/HKLM32/HKCU SOFTWARE\Product
     phase!("registry");
-    reg_scans::scan_software_keys(&name_slugs, &mut items);
+    reg_scans::scan_software_keys(&name_slugs, name, &mut items);
 
     // 9. Shortcuts + TEMP
     let mut degraded = Vec::new();
@@ -972,7 +935,7 @@ pub fn analyze_associations(
             it.user_data = true;
             it.risk = RiskLevel::High;
         } else if crate::safety::is_user_library_path(&it.path) {
-            // Library subpath (Documents/<App>, Downloads/pkg, — —confirm, never default-select.
+            // Library subpath (Documents/<App>, Downloads/pkg), confirm, never default-select.
             it.user_library = true;
         }
     }
@@ -1021,6 +984,85 @@ fn dedup_items(items: &mut Vec<CleanupItem>) {
 fn path_key_for_dedup(path: &str) -> String {
     crate::fsutil::path_key(Path::new(path))
         .unwrap_or_else(|| path.replace('/', "\\").to_lowercase())
+}
+
+/// Directory children of the five Known Folder roots, cached for the batch.
+/// The set is app-independent; re-reading five roots per analyzed app was the
+/// largest fixed cost of a batch on a machine with many products.
+fn named_root_children() -> std::sync::Arc<Vec<PathBuf>> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    type Cache = Mutex<Option<(Instant, std::sync::Arc<Vec<PathBuf>>)>>;
+    const TTL: Duration = Duration::from_secs(60);
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some((at, children)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return std::sync::Arc::clone(children);
+            }
+        }
+    }
+    let mut bases: Vec<PathBuf> = vec![];
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
+            FOLDERID_ProgramFilesX86, FOLDERID_RoamingAppData,
+        };
+        for id in [
+            &FOLDERID_LocalAppData,
+            &FOLDERID_RoamingAppData,
+            &FOLDERID_ProgramData,
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+        ] {
+            if let Some(base) = crate::sysops::known_folder(id) {
+                bases.push(base);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for key in ["LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "ProgramFiles"] {
+            if let Some(v) = std::env::var_os(key) {
+                bases.push(PathBuf::from(v));
+            }
+        }
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for base in bases {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        if !base.exists() || !is_safe_fs(&base) {
+            continue;
+        }
+        let Ok(rd) = base.read_dir() else {
+            continue;
+        };
+        for e in rd.flatten() {
+            if crate::scan_task::cancelled() {
+                break;
+            }
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            let child = e.path();
+            if !seen.insert(child.to_string_lossy().to_lowercase()) {
+                continue;
+            }
+            out.push(child);
+        }
+    }
+    let out = std::sync::Arc::new(out);
+    if !crate::scan_task::cancelled() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), std::sync::Arc::clone(&out)));
+        }
+    }
+    out
 }
 
 pub(crate) mod fs_scans;

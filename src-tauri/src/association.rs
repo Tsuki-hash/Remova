@@ -1,4 +1,4 @@
-//! Leftover-to-app association ( / / ).
+//! Leftover-to-app association.
 //!
 //! Answers one question: *does this leftover plausibly belong to this app?* `policy` consumes the
 //! boolean verdicts; it deliberately knows nothing about how the evidence is weighed, so the

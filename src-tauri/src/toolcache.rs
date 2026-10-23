@@ -231,6 +231,12 @@ fn under_system_root(p: &Path) -> bool {
     }
 }
 
+/// Lexical `X:\…` shape with no parent traversal. This never touches the path,
+/// so a UNC/device value cannot cause a network probe just by being validated.
+fn is_local_drive_shaped(p: &Path) -> bool {
+    crate::fsutil::local_drive_candidate(&p.to_string_lossy()).is_some()
+}
+
 /// Whether a user-supplied relocation variable names something that could be a
 /// cache root.
 ///
@@ -240,22 +246,7 @@ fn under_system_root(p: &Path) -> bool {
 /// must not turn a work tree into a preselected deletion. The check is
 /// deliberately structural rather than a name list: an absolute drive path with
 /// at least three components, so it can be neither a drive root nor a bare
-/// library folder, and not a reparse point that resolves elsewhere.
-/// Lexical `X:\…` shape with no parent traversal. This never touches the path,
-/// so a UNC/device value cannot cause a network probe just by being validated.
-fn is_local_drive_shaped(p: &Path) -> bool {
-    use std::path::{Component, Prefix};
-    let mut comps = p.components();
-    let disk = matches!(
-        comps.next(),
-        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
-    );
-    if !disk || !matches!(comps.next(), Some(Component::RootDir)) {
-        return false;
-    }
-    !p.components().any(|c| matches!(c, Component::ParentDir))
-}
-
+/// library folder, and it must not resolve through a reparse point elsewhere.
 fn is_plausible_cache_root(p: &Path) -> bool {
     if p.as_os_str().is_empty() || p.is_relative() {
         return false;
@@ -677,7 +668,7 @@ fn scan_shared_cache_children(
         let Ok(meta) = entry.metadata() else {
             continue;
         };
-        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+        if !meta.is_dir() || crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         children.push(path);
@@ -763,6 +754,11 @@ fn push_item(
     let Some(p) = crate::fsutil::path_utf8(&path) else {
         return;
     };
+    // A fixed root and a shared-root child can resolve to the same directory
+    // (redirected XDG/Yarn bases). Keep one row so backup/delete run once.
+    if !scanned.insert(p.clone()) {
+        return;
+    }
     let (risk, score) = if confirmed {
         (RiskLevel::Low, SCORE_CONFIRMED)
     } else {
@@ -802,7 +798,6 @@ fn push_item(
         size_capped: false,
         bucket: Some(domain.as_str().into()),
     });
-    scanned.insert(p);
 }
 
 /// Scan specialty tool caches. Results feed the toolcache allow-list.
@@ -1427,6 +1422,23 @@ mod tests {
                 &it.path
             ));
         }
+    }
+
+    #[test]
+    fn duplicate_cache_roots_are_reported_once() {
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let p = PathBuf::from(r"C:\Users\x\AppData\Local\Yarn\berry\cache");
+        push_item(
+            &mut out,
+            &mut scanned,
+            p.clone(),
+            ToolDomain::Dev,
+            "Yarn",
+            true,
+        );
+        push_item(&mut out, &mut scanned, p, ToolDomain::Dev, "Yarn", true);
+        assert_eq!(out.len(), 1, "a redirected root must not be listed twice");
     }
 
     #[test]

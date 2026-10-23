@@ -454,7 +454,7 @@ fn walk_unbudgeted_with(
             return None;
         }
         let meta = entry.metadata().ok()?;
-        if is_reparse_metadata(&meta) {
+        if crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         if meta.is_dir() {
@@ -542,7 +542,7 @@ where
         // be followed. The attribute is already in the metadata we just read, so
         // this used to cost a second stat per entry — which doubled the cost of
         // every scan that estimates sizes.
-        if is_reparse_metadata(&meta) {
+        if crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         if meta.is_dir() {
@@ -584,25 +584,6 @@ fn floor_walk(total: u64) -> WalkSize {
         WalkSize::Unknown
     } else {
         WalkSize::Floor(total)
-    }
-}
-
-/// Whether metadata describes a reparse point (junction / mount / symlink).
-///
-/// Reads the attribute from metadata already in hand instead of issuing a second
-/// `symlink_metadata` on the path — that second stat doubled the cost of every
-/// size-estimating walk. Shared with the installer scan, which reads the same
-/// attribute out of the directory-entry metadata it already has.
-pub(crate) fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-        meta.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        meta.file_type().is_symlink()
     }
 }
 

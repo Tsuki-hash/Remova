@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { currentLang, t } from "../i18n";
@@ -267,6 +267,10 @@ export function ScanLeftoversView({
   );
   const displayItems = useMemo(() => onlySelected ? riskItems.filter(item => selectedPaths.has(item.path)) : riskItems,
     [onlySelected, riskItems, selectedPaths]);
+  const displayGroups = useMemo(
+    () => (isOrphan ? groupByOrigin(displayItems) : []),
+    [isOrphan, displayItems],
+  );
   const { selectedCount, hiddenSelected, visibleSelected, allVisibleSelected } = useMemo(() => {
     const selected = scan.items.filter(item => selectedPaths.has(item.path)).length;
     const visible = displayItems.filter(item => selectedPaths.has(item.path)).length;
@@ -302,13 +306,16 @@ export function ScanLeftoversView({
     if (evidence) evidenceRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
   }, [evidence]);
   // Same row's ⓘ toggles: open, then close on a second click.
-  const showEvidence = (text: string | null) => {
-    if (text === null) {
-      onEvidence(null);
-      return;
-    }
-    onEvidence(evidence === text ? null : text);
-  };
+  const showEvidence = useCallback(
+    (text: string | null) => {
+      if (text === null) {
+        onEvidence(null);
+        return;
+      }
+      onEvidence(evidence === text ? null : text);
+    },
+    [evidence, onEvidence],
+  );
   useLayoutEffect(() => {
     const el = listRef.current;
     const sc = scrollRef.current;
@@ -375,7 +382,7 @@ export function ScanLeftoversView({
         {isOrphan && displayItems.length > 0 && (
           <div style={{ padding: "10px 14px 0" }}>
             <OrphanOriginGroups
-              groups={groupByOrigin(displayItems)}
+              groups={displayGroups}
               selectedPaths={selectedPaths}
               onToggle={onTogglePath}
             />

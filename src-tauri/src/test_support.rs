@@ -116,20 +116,27 @@ impl Drop for EnvLock {
 /// `unwrap` report a misleading cause.
 pub struct TempDir {
     path: PathBuf,
+    /// Temp root captured at creation. Drop compares against this, not a
+    /// process-wide `TEMP` another test may have redirected in the meantime.
+    base: PathBuf,
 }
 
 impl TempDir {
     pub fn new(tag: &str) -> Self {
+        // Do not take EnvLock here: a test may already hold FILE_LOCK/ignore and
+        // then create a fixture, while another holds EnvLock and loads ignore —
+        // acquiring a second global lock inverted that order. The captured base
+        // below is what keeps Drop from deleting another fixture when TEMP moves.
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let path =
-            std::env::temp_dir().join(format!("remova_{tag}_{}_{nonce}", std::process::id()));
+        let base = std::env::temp_dir();
+        let path = base.join(format!("remova_{tag}_{}_{nonce}", std::process::id()));
         // Validate before either deletion or creation, not only in Drop: the
         // caller-supplied tag must not turn pre-cleanup into a delete elsewhere.
         assert!(
-            owns(&path),
+            path.parent() == Some(base.as_path()),
             "test fixture tag escapes the temp root: {tag:?}"
         );
         // A stale directory from an earlier leaked run must not be mistaken for
@@ -137,7 +144,7 @@ impl TempDir {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path)
             .unwrap_or_else(|e| panic!("test fixture {tag}: create {path:?}: {e}"));
-        Self { path }
+        Self { path, base }
     }
 
     pub fn path(&self) -> &Path {
@@ -154,7 +161,7 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        if owns(&self.path) {
+        if self.path.parent() == Some(self.base.as_path()) {
             let _ = std::fs::remove_dir_all(&self.path);
         }
     }

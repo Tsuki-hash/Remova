@@ -211,7 +211,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
 }
 
 /// Shared leftover gate for dry-run and full delete.
-/// Order: server-side user_data/shared recompute →client flags →ignore → →safety.
+/// Order: server-side user_data/shared recompute → client flags → ignore → safety.
 pub fn gate_cleanup_item(
     app: Option<&InstalledApp>,
     item: &CleanupItem,
@@ -569,7 +569,7 @@ mod tests {
                 "expected allow for vendor PATH {p}, got {d:?}"
             );
         }
-        // %ProgramFiles%\Vendor\* is allowed only when ProgramFiles expands (, not blanket deny).
+        // %ProgramFiles%\Vendor\* is allowed only when ProgramFiles expands, not a blanket deny.
         if let Ok(pf) = std::env::var("ProgramFiles") {
             if pf.trim().len() > 2 {
                 let it = item(r"%ProgramFiles%\Vendor\Tool", ItemKind::Path);

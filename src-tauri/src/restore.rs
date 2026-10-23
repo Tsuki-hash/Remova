@@ -855,6 +855,11 @@ pub fn prune_old_sessions(days: u64) -> usize {
 
 /// Same as [`prune_old_sessions`] with optional fixed `now` (unix secs) for tests.
 pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
+    // A restore holds CLEANUP_LOCK for its whole write phase; pruning must not
+    // delete the session's files underneath it.
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let now = now_override.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -893,6 +898,11 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
 /// Delete one backup session by name. Path-traversal guarded.
 /// Session names must match `^[0-9]{8}-[0-9]{6}` (`YYYYMMDD-HHMMSS…`).
 pub fn delete_session_by_name(name: &str) -> Result<(), String> {
+    // Serialize with restore: deleting a session mid-restore leaves a partial
+    // restore with no source to retry from.
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // Reject `.`, `..`, separators, and anything that is not a real session folder name
     // (`YYYYMMDD-HHMMSS-…`). `backup_root().join(".")` is the backup root itself.
     if name.is_empty()

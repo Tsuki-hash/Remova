@@ -326,7 +326,7 @@ fn scan_downloads_from(
         let Ok(meta) = ent.metadata() else {
             continue;
         };
-        if crate::dirsize::is_reparse_metadata(&meta) {
+        if crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
@@ -391,11 +391,16 @@ fn is_updater_dir_name(name: &str) -> bool {
 /// descendants, so one forward pass is enough.
 fn drop_nested(candidates: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut kept: Vec<PathBuf> = Vec::with_capacity(candidates.len());
+    let mut kept_set: HashSet<PathBuf> = HashSet::new();
     for cand in candidates {
-        let nested = kept
-            .iter()
-            .any(|ancestor| cand != *ancestor && cand.starts_with(ancestor));
+        // Ancestors are kept before descendants; checking the candidate's own
+        // ancestor chain is O(depth) instead of comparing every kept row.
+        let nested = cand
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| kept_set.contains(ancestor));
         if !nested {
+            kept_set.insert(cand.clone());
             kept.push(cand);
         }
     }
@@ -446,7 +451,7 @@ fn scan_updater_dirs_from(
         let Ok(meta) = vendor.metadata() else {
             continue;
         };
-        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+        if !meta.is_dir() || crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         if vendor.file_name().to_str().is_some_and(is_updater_dir_name) {

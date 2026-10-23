@@ -375,25 +375,16 @@ mod subkey_cache {
 /// clears the cache.
 mod default_cache {
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock};
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant};
 
     const TTL: Duration = Duration::from_secs(5 * 60);
     /// CLSID-rich machines can exceed 20k leaves; keep enough headroom that a
     /// full table is rare, but never grow without bound.
     const MAX_ENTRIES: usize = 40_000;
-    /// Do not sweep a full table more than once a minute: a rejected insert
-    /// must stay O(1) even on a machine with more leaves than the cap.
-    const SWEEP_INTERVAL_SECS: u64 = 60;
-    static LAST_SWEEP: AtomicU64 = AtomicU64::new(0);
-
-    fn now_secs() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
-    }
+    /// On a full table, evict the oldest slice instead of refusing every new
+    /// key permanently. Refusing made the excess leaves re-read for every app.
+    const EVICT_SLICE: usize = MAX_ENTRIES / 8;
 
     struct Entry {
         /// `None` caches "this key has no usable default value" so a batch does
@@ -423,17 +414,18 @@ mod default_cache {
     pub(super) fn put(key: &str, value: Option<&str>) {
         let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
         // Never sweep per insert: the CLSID loop inserts ~20k entries and an
-        // O(n) retain on each one made the "optimization" quadratic. Sweep only
-        // at the cap, and reject new keys if the table is still full.
+        // O(n) retain on each one made the "optimization" quadratic. At the cap,
+        // drop expired rows first, then evict the oldest slice so new keys keep
+        // being cached instead of hitting a permanent cliff.
         if !entries.contains_key(key) && entries.len() >= MAX_ENTRIES {
-            let now = now_secs();
-            let last = LAST_SWEEP.load(Ordering::Relaxed);
-            if now.saturating_sub(last) >= SWEEP_INTERVAL_SECS {
-                entries.retain(|_, entry| entry.at.elapsed() < TTL);
-                LAST_SWEEP.store(now, Ordering::Relaxed);
-            }
+            entries.retain(|_, entry| entry.at.elapsed() < TTL);
             if entries.len() >= MAX_ENTRIES {
-                return;
+                let mut aged: Vec<(Instant, String)> =
+                    entries.iter().map(|(k, e)| (e.at, k.clone())).collect();
+                aged.sort_by_key(|(at, _)| *at);
+                for (_, k) in aged.into_iter().take(EVICT_SLICE) {
+                    entries.remove(&k);
+                }
             }
         }
         entries.insert(
@@ -447,7 +439,6 @@ mod default_cache {
 
     pub(super) fn clear() {
         state().lock().unwrap_or_else(|e| e.into_inner()).clear();
-        LAST_SWEEP.store(0, Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -749,7 +740,7 @@ pub fn read_string(key: &str, value_name: &str) -> Option<String> {
     }
 }
 
-/// Read REG_DWORD value by name via RegQueryValueExW (, O(1) — same path as `read_string`).
+/// Read REG_DWORD value by name via RegQueryValueExW (O(1), same path as `read_string`).
 pub fn read_dword(key: &str, value_name: &str) -> Option<u32> {
     #[cfg(not(windows))]
     {
@@ -1051,6 +1042,24 @@ mod completeness_tests {
         );
         super::invalidate_default_value_cache();
         assert!(super::default_cache::get("cls-key").is_none());
+    }
+
+    #[test]
+    fn a_missing_default_value_is_negative_cached_by_the_production_read() {
+        let _cache = crate::test_support::cache_test_lock();
+        super::default_cache::clear();
+        let key = r"HKCU\Software\RemovaNoSuchKey\NoDefault";
+        let id = crate::scan_task::begin().unwrap();
+        crate::scan_task::run(id, || {
+            assert_eq!(super::read_string_default_cached(key), None);
+            assert_eq!(
+                super::default_cache::get(key),
+                Some(None),
+                "the production read must cache a missing default value"
+            );
+        })
+        .unwrap();
+        super::default_cache::clear();
     }
 
     #[test]

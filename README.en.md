@@ -76,7 +76,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
-> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.3.2 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. The `latest.json` and `.sig` assets are the updater manifest and its signature: until an updater public key is configured they are not consumed by the in-app update channel, and the MSI install is not wired into auto-update either — download updates manually.
+> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.3.2 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. When an updater public key is configured, the Release also provides `latest.json` and `.sig` (the updater manifest and its signature); without one they are not generated, and the MSI install is not wired into auto-update — download updates manually.
 >
 > Release modes: with no updater keys configured, the Release runs in unsigned/manual mode and publishes only the NSIS / MSI / portable artifacts plus `SHA256SUMS.txt`; no `latest.json` or `.sig` are produced. Updater signature assets are generated and verified only when all three updater settings are present.
 
@@ -86,7 +86,7 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | `Remova_*_x64_zh-CN.msi` | MSI installer (per-machine, Chinese-only wizard; non-admin needs UAC elevation) |
 | `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
-Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included in Windows 11 and most Windows 10 installs; the portable build does not bundle it). Cleaning machine-wide apps, the machine PATH, services, firewall rules, or restoring into protected directories requires running Remova as administrator; without elevation these items fail individually and report the reason.
+Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included in Windows 11 and most Windows 10 installs; the portable build does not bundle it). The NSIS installer downloads WebView2 when it is missing, so offline networks must install WebView2 first or use the MSI/portable build. Cleaning machine-wide apps, the machine PATH, services, firewall rules, or restoring into protected directories requires running Remova as administrator; without elevation these items fail individually and report the reason.
 
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 
@@ -98,7 +98,7 @@ Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included
 
 | Tool | Version |
 |---|---|
-| Rust | ≥ 1.77 |
+| Rust | ≥ 1.77.2 |
 | Node.js | 22 |
 | Windows | 10 / 11 |
 

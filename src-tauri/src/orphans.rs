@@ -117,6 +117,61 @@ fn path_same_or_under(a: &str, b: &str) -> bool {
     }
 }
 
+struct InstalledMatch {
+    loc: String,
+    rooted: bool,
+    tokens: Vec<String>,
+}
+
+fn build_match_index(installed: &[InstalledApp]) -> Vec<InstalledMatch> {
+    installed
+        .iter()
+        .map(|app| {
+            let loc = app.install_location.replace('/', "\\").to_lowercase();
+            let rooted = loc
+                .trim_end_matches('\\')
+                .split('\\')
+                .filter(|s| !s.is_empty())
+                .count()
+                >= 2;
+            InstalledMatch {
+                loc,
+                rooted,
+                tokens: slug_tokens(&app.name),
+            }
+        })
+        .collect()
+}
+
+fn match_installed_index(index: &[InstalledMatch], dir: &std::path::Path) -> bool {
+    let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
+    let leaf = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    for app in index {
+        if crate::scan_task::cancelled() {
+            return true;
+        }
+        let loc_trim = app.loc.trim_end_matches('\\');
+        if app.rooted && path_same_or_under(&d, loc_trim) {
+            return true;
+        }
+        if leaf.is_empty() {
+            continue;
+        }
+        if app
+            .tokens
+            .iter()
+            .any(|t| t.len() >= 4 && crate::scanner::slug_boundary_hit(&leaf, t))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
 fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
     let leaf = dir
@@ -203,6 +258,8 @@ fn scan_orphans_in_roots(
 ) -> OrphanScanResult {
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Normalize each installed app once instead of once per candidate.
+    let match_index = build_match_index(installed);
     // Collect candidates across every root first, then order and truncate. The
     // old `if out.len() >= ORPHAN_RESULT_CAP { return }` inside the enumeration
     // made the reported subset depend on `read_dir` order, and stopped the scan
@@ -261,7 +318,7 @@ fn scan_orphans_in_roots(
             ) {
                 continue;
             }
-            if match_installed(installed, &p) {
+            if match_installed_index(&match_index, &p) {
                 continue;
             }
             // honor ignore path rules for orphan candidates.

@@ -257,6 +257,27 @@ pub fn is_safe_to_delete_registry(key_path: &str) -> Result<(), String> {
         }
     }
 
+    // A product whose DisplayName is exactly a shared vendor name must never
+    // turn the whole vendor tree into a delete target. Subkeys stay eligible.
+    const VENDOR_ROOTS: &[&str] = &[
+        "MICROSOFT",
+        "ADOBE",
+        "INTEL",
+        "GOOGLE",
+        "NVIDIA",
+        "AMD",
+        "APPLE",
+        "ORACLE",
+        "MOZILLA",
+    ];
+    for hive in ["HKLM\\SOFTWARE", "HKCU\\SOFTWARE"] {
+        for vendor in VENDOR_ROOTS {
+            if low == format!("{hive}\\{vendor}") {
+                return Err(crate::error::safety_err("vendor root protected").to_ipc());
+            }
+        }
+    }
+
     let app_paths_roots = [
         "HKLM\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\APP PATHS",
         "HKLM\\SOFTWARE\\WOW6432NODE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\APP PATHS",
@@ -642,7 +663,7 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
             return false;
         }
     }
-    // : never write into Startup (persistence). Library *subpaths* stay restorable —
+    // Never write into Startup (persistence). Library *subpaths* stay restorable —
     // path_map is the server-side record of where the file came from (roots already blocked).
     if trimmed.contains("\\start menu\\programs\\startup")
         || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
@@ -1237,6 +1258,23 @@ mod tests {
             r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\DemoVendor"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn whole_vendor_roots_are_never_delete_targets() {
+        for key in [
+            r"HKLM\SOFTWARE\Microsoft",
+            r"HKLM\SOFTWARE\Adobe",
+            r"HKCU\SOFTWARE\Google",
+            r"HKLM64\SOFTWARE\NVIDIA",
+        ] {
+            assert!(
+                is_safe_to_delete_registry(key).is_err(),
+                "{key} must not authorize deleting a shared vendor tree"
+            );
+        }
+        // A concrete product under the vendor root remains eligible.
+        assert!(is_safe_to_delete_registry(r"HKLM\SOFTWARE\Microsoft\Edge").is_ok());
     }
 
     #[test]

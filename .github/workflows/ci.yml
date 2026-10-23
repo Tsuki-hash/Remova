@@ -71,6 +71,19 @@ jobs:
           if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
         working-directory: src-tauri
 
+      - name: real StartupApproved and user PATH reads (read-only)
+        shell: pwsh
+        run: |
+          $out = cargo test manage::tests::startup_folder_approved_values_are_full_file_names -- --ignored --exact 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
+          $out = cargo test regops::tests::read_reg_path_value_reads_real_user_environment -- --ignored --exact 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
+        working-directory: src-tauri
+
       - name: file symlink swap regression (requires runner privilege)
         shell: pwsh
         run: |

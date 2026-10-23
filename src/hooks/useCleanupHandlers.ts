@@ -97,7 +97,7 @@ export function useCleanupHandlers({
   const batchQueueRef = useRef<InstalledApp[]>([]);
 
   const backupEnabledRef = useRef(false);
-  /**invalidates an in-flight verify probe when a newer cleanup starts. */
+  /** Invalidates an in-flight verify probe when a newer cleanup starts. */
   const verifySeqRef = useRef(0);
   /** Only the latest dry-run may write its report. */
   const dryRunSeqRef = useRef(0);
@@ -111,8 +111,12 @@ export function useCleanupHandlers({
       setForceBusy(true);
       busyRef.current = true;
       const aseq = ++forceAnalyzeSeqRef.current;
+      let scanId: number | undefined;
       try {
-        const r = await api.analyze(target);
+        // Use a real scan task: the registry caches are only reused inside one,
+        // and the task is what makes the walk cancellable and reportable.
+        scanId = await api.beginAssociationScan();
+        const r = await api.analyze(target, scanId);
  // A newer force-clean/analyze started while this one was in flight.
         if (aseq !== forceAnalyzeSeqRef.current) return;
         const items = r.items.filter(defaultSelectable);
@@ -157,6 +161,7 @@ export function useCleanupHandlers({
         setAiReportNote(null);
         void refreshApps();
       } catch (e) {
+        if (scanId !== undefined) void api.cancelAssociationScan(scanId).catch(() => {});
         setError(formatError(e, "cleanup"));
         toast.error(formatError(e, "cleanup"));
       } finally {

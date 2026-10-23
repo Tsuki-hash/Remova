@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,9 @@ type RecentApp = (u64, Instant, InstalledApp);
 type RecentApps = HashMap<String, RecentApp>;
 static SCANNED_RECENT: OnceLock<Mutex<RecentApps>> = OnceLock::new();
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Set when any uninstall hive could not be opened. A partial inventory must
+/// not replace the trusted generation or authorize cleanup from a short list.
+static INVENTORY_INCOMPLETE: AtomicBool = AtomicBool::new(false);
 const MAX_RECENT_APPS: usize = 8192;
 /// A post-uninstall analysis normally follows within seconds. Keeping an
 /// identity for an hour covers slow sessions without pinning it forever.
@@ -272,9 +275,14 @@ pub struct InstalledApp {
 /// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
 pub fn scan_installed_apps() -> Vec<InstalledApp> {
     let mut out = scan_installed_inventory();
+    let complete = !INVENTORY_INCOMPLETE.load(Ordering::SeqCst);
     let ignore = crate::ignore::load();
     filter_visible_apps(&mut out, &ignore);
-    remember_scan(&out);
+    // Fail closed: one unreadable hive makes the list partial. Replacing trust
+    // with it would drop every app from that hive until a full scan succeeds.
+    if complete {
+        remember_scan(&out);
+    }
     out
 }
 
@@ -289,6 +297,7 @@ pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::i
 /// Complete ownership inventory, including products hidden from the app list.
 /// This read-only scan must not expand or replace uninstall authorization.
 pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
+    INVENTORY_INCOMPLETE.store(false, Ordering::SeqCst);
     let mut out: Vec<InstalledApp> = Vec::new();
     if crate::scan_task::cancelled() {
         return out;
@@ -319,7 +328,9 @@ pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
             if crate::scan_task::cancelled() {
                 return out;
             }
-            collect_uninstall(hive, sub, access, alias, &mut out);
+            if !collect_uninstall(hive, sub, access, alias, &mut out) {
+                INVENTORY_INCOMPLETE.store(true, Ordering::SeqCst);
+            }
         }
         // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
         if crate::scan_task::cancelled() {
@@ -459,7 +470,7 @@ fn collect_uninstall(
     access: REG_SAM_FLAGS,
     alias: &str,
     out: &mut Vec<InstalledApp>,
-) {
+) -> bool {
     unsafe {
         let mut root = HKEY::default();
         let sub_w = to_wide(sub);
@@ -471,7 +482,7 @@ fn collect_uninstall(
             &mut root,
         );
         if st != ERROR_SUCCESS {
-            return;
+            return false;
         }
 
         let mut count = 0u32;
@@ -518,6 +529,7 @@ fn collect_uninstall(
             }
         }
         let _ = RegCloseKey(root);
+        true
     }
 }
 

@@ -210,7 +210,7 @@ fn scan_home_dot_dirs_with_cap(
         let Ok(meta) = entry.metadata() else {
             continue;
         };
-        if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+        if !meta.is_dir() || crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -242,7 +242,7 @@ fn scan_home_dot_dirs_with_cap(
             let Ok(meta) = child.metadata() else {
                 continue;
             };
-            if !meta.is_dir() || crate::dirsize::is_reparse_metadata(&meta) {
+            if !meta.is_dir() || crate::fsutil::is_reparse_metadata(&meta) {
                 continue;
             }
             let child_name = child.file_name().to_string_lossy().to_string();
@@ -373,9 +373,9 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
 struct ShortcutEntry {
     path: PathBuf,
     stem: String,
-    peek: Vec<u8>,
-    /// Lowercased UTF-16 decode of `peek`, computed once per inventory. The
-    /// old matcher decoded every shortcut again for every app in the batch.
+    /// Lowercased first bytes of the target, computed once per inventory.
+    peek_lc: Vec<u8>,
+    /// Lowercased UTF-16 decode of the same bytes, computed once per inventory.
     text_lc: String,
 }
 
@@ -383,6 +383,8 @@ struct ShortcutEntry {
 struct TempEntry {
     path: PathBuf,
     is_dir: bool,
+    /// Lowercased/normalized file name, computed once per inventory.
+    name_norm: String,
 }
 
 /// Shortcut/TEMP listings are app-independent: a batch used to re-walk the
@@ -530,7 +532,15 @@ fn collect_shortcut_dir(dir: &Path, depth: u32, out: &mut Vec<ShortcutEntry>) {
         if crate::scan_task::cancelled() {
             break;
         }
-        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+        let Ok(meta) = e.metadata() else {
+            continue;
+        };
+        // Never walk through a junction/symlink: its target can be a remote
+        // share, and opening a `.lnk` behind it would follow the link.
+        if crate::fsutil::is_reparse_metadata(&meta) {
+            continue;
+        }
+        let is_dir = meta.is_dir();
         let p = e.path();
         if is_dir {
             collect_shortcut_dir(&p, depth + 1, out);
@@ -557,7 +567,7 @@ fn collect_shortcut_dir(dir: &Path, depth: u32, out: &mut Vec<ShortcutEntry>) {
         out.push(ShortcutEntry {
             path: p,
             stem,
-            peek,
+            peek_lc: peek.to_ascii_lowercase(),
             text_lc,
         });
     }
@@ -573,12 +583,11 @@ fn peek_text_lc(peek: &[u8]) -> String {
     String::from_utf16_lossy(&u16s).to_lowercase()
 }
 
-fn shortcut_peek_matches(peek: &[u8], text_lc: &str, install_low: &str) -> bool {
+fn shortcut_peek_matches(peek_lc: &[u8], text_lc: &str, install_low: &str) -> bool {
     if install_low.is_empty() {
         return false;
     }
-    let peek_lc = peek.to_ascii_lowercase();
-    find_bytes(&peek_lc, install_low.as_bytes()) || text_lc.contains(install_low)
+    find_bytes(peek_lc, install_low.as_bytes()) || text_lc.contains(install_low)
 }
 
 pub(super) fn scan_shortcuts(
@@ -597,7 +606,7 @@ pub(super) fn scan_shortcuts(
             || exe_stems
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
-            || shortcut_peek_matches(&entry.peek, &entry.text_lc, install_low);
+            || shortcut_peek_matches(&entry.peek_lc, &entry.text_lc, install_low);
         if !hit || !is_safe_fs(&entry.path) {
             continue;
         }
@@ -696,6 +705,11 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) -> 
                         out.push(TempEntry {
                             path: e.path(),
                             is_dir,
+                            name_norm: e
+                                .file_name()
+                                .to_str()
+                                .map(normalize_for_match)
+                                .unwrap_or_default(),
                         });
                     }
                 }
@@ -710,18 +724,19 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) -> 
         }
         (out, complete)
     });
+    let slug_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
     for entry in entries.iter() {
         if crate::scan_task::cancelled() {
             break;
         }
         let p = &entry.path;
-        // Match the entry NAME only — a slug appearing in a directory
+        // Match the precomputed NAME only — a slug appearing in a directory
         // component (user name, `Local`, `Temp`, product root) must not
         // claim unrelated files under it.
-        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if !temp_entry_matches(name, &slugs) {
+        if !slug_norms
+            .iter()
+            .any(|s| entry.name_norm.contains(s.as_str()))
+        {
             continue;
         }
         if !is_safe_fs(p) {
@@ -777,7 +792,7 @@ mod cache_tests {
             vec![ShortcutEntry {
                 path: PathBuf::from(r"C:\Shortcuts\Demo.lnk"),
                 stem: "Demo".into(),
-                peek: b"target".to_vec(),
+                peek_lc: b"target".to_vec(),
                 text_lc: "target".into(),
             }]
         });
@@ -817,19 +832,20 @@ mod cache_tests {
             crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
         {
             let temp = local.join("Temp");
-            if temp.is_dir() {
-                let _env =
-                    crate::test_support::EnvVar::set("TEMP", format!("{}\\", temp.display()));
-                let roots = temp_roots();
-                assert_eq!(
-                    roots.len(),
-                    1,
-                    "TEMP and LocalAppData\\Temp with a trailing separator are one root"
-                );
-                assert!(roots[0]
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&temp.to_string_lossy()));
-            }
+            assert!(
+                temp.is_dir(),
+                "the runner must provide LocalAppData\\Temp for this regression"
+            );
+            let _env = crate::test_support::EnvVar::set("TEMP", format!("{}\\", temp.display()));
+            let roots = temp_roots();
+            assert_eq!(
+                roots.len(),
+                1,
+                "TEMP and LocalAppData\\Temp with a trailing separator are one root"
+            );
+            assert!(roots[0]
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&temp.to_string_lossy()));
         }
     }
 
@@ -842,6 +858,7 @@ mod cache_tests {
                 vec![TempEntry {
                     path: PathBuf::from(r"C:\Temp\Demo-partial.tmp"),
                     is_dir: false,
+                    name_norm: "demo-partial.tmp".into(),
                 }],
                 false,
             )
@@ -865,10 +882,12 @@ mod cache_tests {
                     TempEntry {
                         path: PathBuf::from(r"C:\Temp\Demo-a.tmp"),
                         is_dir: false,
+                        name_norm: "demo-a.tmp".into(),
                     },
                     TempEntry {
                         path: PathBuf::from(r"C:\Temp\Demo-b.tmp"),
                         is_dir: false,
+                        name_norm: "demo-b.tmp".into(),
                     },
                 ],
                 true,
@@ -884,11 +903,11 @@ mod cache_tests {
 
     #[test]
     fn shortcut_peek_matches_ascii_and_utf16() {
-        let ascii = b"C:\\Apps\\Demo\\demo.exe";
+        let ascii = b"C:\\Apps\\Demo\\demo.exe".to_ascii_lowercase();
         assert!(!shortcut_peek_matches(b"anything", "", ""));
         assert!(shortcut_peek_matches(
-            ascii,
-            &peek_text_lc(ascii),
+            &ascii,
+            &peek_text_lc(&ascii),
             r"c:\apps\demo"
         ));
         let utf16: Vec<u8> = r"C:\Apps\Demo\demo.exe"
@@ -900,10 +919,10 @@ mod cache_tests {
             &peek_text_lc(&utf16),
             r"c:\apps\demo"
         ));
-        let other = b"C:\\Apps\\Other\\other.exe";
+        let other = b"C:\\Apps\\Other\\other.exe".to_ascii_lowercase();
         assert!(!shortcut_peek_matches(
-            other,
-            &peek_text_lc(other),
+            &other,
+            &peek_text_lc(&other),
             r"c:\apps\demo"
         ));
     }

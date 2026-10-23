@@ -1,8 +1,9 @@
-//! User ignore list (-3) persisted as JSON under ProgramData/Remova.
+//! User ignore list persisted as JSON under ProgramData/Remova.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IgnoreList {
@@ -29,9 +30,26 @@ fn ignore_path() -> PathBuf {
     base.join("Remova").join("ignore.json")
 }
 
+/// Batch scans call `load()` once per analyzed app. The file is tiny, but the
+/// read + parse still repeated hundreds of times; a short TTL keeps it fresh
+/// enough for an edit and makes a batch pay for one read.
+static READ_CACHE: Mutex<Option<(Instant, IgnoreList)>> = Mutex::new(None);
+const READ_TTL: Duration = Duration::from_secs(5);
+
 pub fn load() -> IgnoreList {
     // Read-only scan compatibility. Mutations and cleanup must use load_checked.
-    load_checked().unwrap_or_default()
+    if let Ok(cache) = READ_CACHE.lock() {
+        if let Some((at, list)) = cache.as_ref() {
+            if at.elapsed() < READ_TTL {
+                return list.clone();
+            }
+        }
+    }
+    let list = load_checked().unwrap_or_default();
+    if let Ok(mut cache) = READ_CACHE.lock() {
+        *cache = Some((Instant::now(), list.clone()));
+    }
+    list
 }
 
 pub fn load_checked() -> Result<IgnoreList, String> {
@@ -55,10 +73,15 @@ pub fn save(list: &IgnoreList) -> Result<(), String> {
 
 fn save_unlocked(list: &IgnoreList) -> Result<(), String> {
     let p = ignore_path();
-    write_ignore_file(&p, list)
+    write_ignore_file(&p, list)?;
+    if let Ok(mut cache) = READ_CACHE.lock() {
+        *cache = None;
+    }
+    Ok(())
 }
 
 fn write_ignore_file(p: &std::path::Path, list: &IgnoreList) -> Result<(), String> {
+    crate::fsutil::ensure_no_reparse_ancestors(p).map_err(|e| e.to_string())?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }

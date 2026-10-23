@@ -33,6 +33,11 @@ pub fn has_multiple_links(p: &Path) -> bool {
             // A path we cannot spell is not one we will write through.
             return true;
         };
+        // A file that does not exist yet has no link to hijack; the first
+        // append is allowed to create it. Existing files fail closed below.
+        if !p.exists() {
+            return false;
+        }
         unsafe {
             let wide = wide_path_for_create_file(path_str);
             let Ok(handle) = CreateFileW(
@@ -46,12 +51,13 @@ pub fn has_multiple_links(p: &Path) -> bool {
                 ),
                 None,
             ) else {
-                return false;
+                // Cannot prove single-link ownership: refuse the write.
+                return true;
             };
             let mut info = std::mem::zeroed();
             let ok = GetFileInformationByHandle(handle, &mut info).is_ok();
             let _ = CloseHandle(handle);
-            ok && info.nNumberOfLinks > 1
+            !ok || info.nNumberOfLinks > 1
         }
     }
     #[cfg(not(windows))]
@@ -59,8 +65,29 @@ pub fn has_multiple_links(p: &Path) -> bool {
         use std::os::unix::fs::MetadataExt;
         std::fs::symlink_metadata(p)
             .map(|m| m.nlink() > 1)
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
+}
+
+/// Refuse to create or write through a path whose existing ancestors include a
+/// reparse point. Shared ProgramData directories can be pre-planted by a local
+/// user; an elevated writer must not follow that junction into another tree.
+pub fn ensure_no_reparse_ancestors(p: &Path) -> std::io::Result<()> {
+    for ancestor in p.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) if is_reparse_metadata(&meta) => {
+                return Err(std::io::Error::other(format!(
+                    "reparse point in path ancestors: {}",
+                    ancestor.display()
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Windows reparse point (junction / mount / symlink). Never follow when copying.
@@ -691,7 +718,7 @@ pub fn short_path_form(p: &Path) -> Option<String> {
     }
 }
 
-/// Delete a tree without following reparse points ( / ).
+/// Delete a tree without following reparse points.
 /// Every level is pinned (no-DELETE-share handle + by-handle reparse check)
 /// before its children are cleared, so the path cannot be swapped for a
 /// junction mid-recursion; child junctions are unlinked as links only.
@@ -885,7 +912,7 @@ enum PathProbe {
     Error,
 }
 
-fn local_drive_candidate(raw: &str) -> Option<String> {
+pub(crate) fn local_drive_candidate(raw: &str) -> Option<String> {
     let s = raw.trim().trim_matches('"').replace('/', "\\");
     let b = s.as_bytes();
     if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {

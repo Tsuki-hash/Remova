@@ -36,7 +36,7 @@ pub(super) fn scan_path_env(
             let hit_install = is_under_install(low.trim_end_matches('\\'), install_low);
             let hit_name = name_slugs
                 .iter()
-                .any(|n| n.len() >= 5 && super::name_boundary_hit(e, n));
+                .any(|n| n.len() >= 4 && super::name_boundary_hit(e, n));
             if !hit_install && !hit_name {
                 continue;
             }
@@ -300,6 +300,47 @@ pub(crate) fn invalidate_service_snapshot() {
     if let Ok(mut guard) = service_cache().lock() {
         *guard = None;
     }
+    if let Ok(mut guard) = service_key_cache().lock() {
+        *guard = None;
+    }
+}
+
+type ServiceKeyCache = std::sync::Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<String>>)>>;
+
+fn service_key_cache() -> &'static ServiceKeyCache {
+    static CACHE: std::sync::OnceLock<ServiceKeyCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Resolved service image keys for `snapshot`, cached for the same window as the
+/// snapshot itself. Rebuilding 900 `path_key` values for every analyzed app was
+/// pure repetition; the snapshot's invalidation clears this too.
+fn service_keys_for(snapshot: &[ServiceSnapshot]) -> std::sync::Arc<Vec<String>> {
+    use std::time::{Duration, Instant};
+    const TTL: Duration = Duration::from_secs(30);
+    let cache = service_key_cache();
+    if let Ok(guard) = cache.lock() {
+        if let Some((at, keys)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return std::sync::Arc::clone(keys);
+            }
+        }
+    }
+    let mut keys = Vec::new();
+    for svc in snapshot {
+        if let Some(exe) = service_image_exe(&svc.image) {
+            if let Some(key) = crate::fsutil::path_key(&exe) {
+                keys.push(key);
+            }
+        }
+    }
+    let keys = std::sync::Arc::new(keys);
+    if !crate::scan_task::cancelled() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), std::sync::Arc::clone(&keys)));
+        }
+    }
+    keys
 }
 
 /// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
@@ -357,12 +398,13 @@ pub(super) fn scan_drivers(
     }
 }
 
-pub(super) fn scan_software_keys(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
-    scan_software_keys_with(name_slugs, items, crate::regscan::target_exists);
+pub(super) fn scan_software_keys(name_slugs: &[String], name: &str, items: &mut Vec<CleanupItem>) {
+    scan_software_keys_with(name_slugs, name, items, crate::regscan::target_exists);
 }
 
 fn scan_software_keys_with(
     name_slugs: &[String],
+    name: &str,
     items: &mut Vec<CleanupItem>,
     exists: impl Fn(&str) -> Result<bool, String>,
 ) {
@@ -376,11 +418,30 @@ fn scan_software_keys_with(
             break;
         }
         let root = format!("{alias}\\{sub}");
-        for slug in name_slugs.iter().take(3) {
+        // The first three slugs cover most uninstall records, but a key named
+        // after a multi-word display name (`Software\Acme Tool Pro`) is not any
+        // single slug. Try the display name verbatim as well, without letting
+        // the two forms duplicate one key.
+        let mut candidates: Vec<(String, String)> = name_slugs
+            .iter()
+            .take(3)
+            .map(|slug| (format!("{root}\\{slug}"), format!("Software key: {slug}")))
+            .collect();
+        let exact = name.trim();
+        if !exact.is_empty() && !exact.contains('\\') {
+            candidates.push((
+                format!("{root}\\{exact}"),
+                "Software key: exact display name".into(),
+            ));
+        }
+        let mut emitted = std::collections::HashSet::new();
+        for (key, reason) in candidates {
             if crate::scan_task::cancelled() {
                 break;
             }
-            let key = format!("{root}\\{slug}");
+            if !emitted.insert(key.to_lowercase()) {
+                continue;
+            }
             if is_safe_to_delete_registry(&key).is_err() {
                 continue;
             }
@@ -395,12 +456,12 @@ fn scan_software_keys_with(
                 score,
                 confidence,
                 risk,
-                reason: format!("Software key: {slug}"),
+                reason,
                 evidence: vec![Evidence {
                     code: "software_key_exact".into(),
                     label: "HKLM/HKCU Software\\Product".into(),
                     weight: score,
-                    detail: slug.clone(),
+                    detail: name.to_string(),
                 }],
                 shared: false,
                 service_bound: false,
@@ -518,14 +579,7 @@ pub(crate) fn mark_service_bound(items: &mut [CleanupItem]) {
 }
 
 pub(crate) fn mark_service_bound_snapshot(items: &mut [CleanupItem], snapshot: &[ServiceSnapshot]) {
-    let mut service_keys: Vec<String> = Vec::new();
-    for svc in snapshot {
-        if let Some(exe) = service_image_exe(&svc.image) {
-            if let Some(key) = crate::fsutil::path_key(&exe) {
-                service_keys.push(key);
-            }
-        }
-    }
+    let service_keys = service_keys_for(snapshot);
     mark_service_bound_with(items, &service_keys);
 }
 
@@ -540,9 +594,12 @@ fn mark_service_bound_with(items: &mut [CleanupItem], service_keys: &[String]) {
         let Some(key) = crate::fsutil::path_key(std::path::Path::new(&item.path)) else {
             continue;
         };
-        let hit = service_keys
-            .iter()
-            .find(|svc| svc.as_str() == key || svc.starts_with(&format!("{key}\\")));
+        let hit = service_keys.iter().find(|svc| {
+            svc.as_str() == key
+                || svc
+                    .strip_prefix(key.as_str())
+                    .is_some_and(|rest| rest.starts_with('\\'))
+        });
         if let Some(svc) = hit {
             item.service_bound = true;
             item.evidence.push(Evidence {
@@ -574,8 +631,9 @@ pub(super) fn scan_muicache(
     if slugs.is_empty() {
         return false;
     }
+    let values = muicache_values();
     scan_muicache_values(
-        crate::regscan::list_values_capped(KEY, MAX_VALUES + 1).into_iter(),
+        values.iter().cloned(),
         KEY,
         &slugs,
         install_low,
@@ -583,6 +641,45 @@ pub(super) fn scan_muicache(
         items,
         MAX_VALUES,
     )
+}
+
+type MuicacheCache =
+    std::sync::Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<(String, String)>>)>>;
+
+fn muicache_cache() -> &'static MuicacheCache {
+    static CACHE: std::sync::OnceLock<MuicacheCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// The shell cache changes only when programs run or are removed. Cache the
+/// value list for a short window so a batch does not re-enumerate ~800 values
+/// per app; destructive paths clear it.
+fn muicache_values() -> std::sync::Arc<Vec<(String, String)>> {
+    use std::time::{Duration, Instant};
+    const KEY: &str =
+        r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
+    const TTL: Duration = Duration::from_secs(30);
+    let cache = muicache_cache();
+    if let Ok(guard) = cache.lock() {
+        if let Some((at, values)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return std::sync::Arc::clone(values);
+            }
+        }
+    }
+    let values = std::sync::Arc::new(crate::regscan::list_values_capped(KEY, 2_001));
+    if !crate::scan_task::cancelled() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), std::sync::Arc::clone(&values)));
+        }
+    }
+    values
+}
+
+pub(crate) fn invalidate_muicache_cache() {
+    if let Ok(mut guard) = muicache_cache().lock() {
+        *guard = None;
+    }
 }
 
 fn scan_muicache_values(
@@ -759,7 +856,7 @@ mod tests {
         let result = crate::scan_task::run(id, || {
             crate::scan_task::cancel(id).unwrap();
             let mut items = Vec::new();
-            super::scan_software_keys_with(&["sample".into()], &mut items, |_| {
+            super::scan_software_keys_with(&["sample".into()], "Sample", &mut items, |_| {
                 panic!("read after cancellation")
             });
             assert!(items.is_empty());
@@ -772,7 +869,9 @@ mod tests {
         let slugs = vec!["OwnedProductFixture".to_string()];
         for state in [Ok(true), Ok(false), Err("access denied".to_string())] {
             let mut items = Vec::new();
-            super::scan_software_keys_with(&slugs, &mut items, |_| state.clone());
+            super::scan_software_keys_with(&slugs, "OwnedProductFixture", &mut items, |_| {
+                state.clone()
+            });
             assert_eq!(items.len(), if state == Ok(true) { 3 } else { 0 });
         }
     }
