@@ -159,7 +159,7 @@ jobs:
       - name: file symlink swap regression (requires runner privilege)
         shell: pwsh
         run: |
-          $out = cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored --exact 2>&1
+          $out = cargo test fsutil::tests::copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored --exact 2>&1
           $code = $LASTEXITCODE
           $out
           if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
@@ -168,7 +168,7 @@ jobs:
       - name: privileged seal key ACL and lost-state regression
         shell: pwsh
         run: |
-          $out = cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored --exact 2>&1
+          $out = cargo test path_seal::key::tests::privileged_key_store_acl_and_missing_state_regression -- --ignored --exact 2>&1
           $code = $LASTEXITCODE
           $out
           if ($code -ne 0 -or -not ($out | Select-String -SimpleMatch "1 passed")) { exit 1 }
