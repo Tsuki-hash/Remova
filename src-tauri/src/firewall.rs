@@ -94,6 +94,12 @@ pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
         let Some(rule) = parse_rule(&value_name, &raw) else {
             continue;
         };
+        // A rule may point at a UNC/device path. Probing it would make an
+        // elevated process authenticate to an attacker's SMB server; only
+        // local fixed-drive paths are eligible for orphan detection.
+        if !crate::fsutil::is_local_drive_path(&rule.app_path) {
+            continue;
+        }
         if std::path::Path::new(&rule.app_path)
             .try_exists()
             .is_ok_and(|exists| !exists)
@@ -255,6 +261,15 @@ mod tests {
         let fresh = vec![rule("a")];
         assert!(ensure_still_orphans(&["a".to_string()], &fresh).is_ok());
         assert!(ensure_still_orphans(&["a".to_string(), "b".to_string()], &fresh).is_err());
+    }
+
+    #[test]
+    fn a_pending_reboot_blocks_firewall_deletion_before_any_scan() {
+        crate::executor::reboot::reset_for_test();
+        crate::executor::reboot::mark_pending("source\u{0}key\u{0}App");
+        let err = delete_firewall_rules(&["Vendor-Rule".to_string()]).unwrap_err();
+        assert_eq!(err, crate::executor::reboot::PENDING_MESSAGE);
+        crate::executor::reboot::reset_for_test();
     }
 
     #[test]

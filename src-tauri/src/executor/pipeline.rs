@@ -542,6 +542,7 @@ pub fn run_full_cleanup(
     opts: &FullCleanupOptions,
 ) -> FullCleanupReport {
     let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    super::begin_cleanup_control();
     // One ignore-list read for the whole run: the backup and delete phases must
     // not re-read mutable global state between them.
     let ignore = match crate::ignore::load_checked() {
@@ -580,8 +581,10 @@ pub fn run_full_cleanup(
         return aborted_report(
             app,
             String::new(),
-            true,
-            super::reboot::PENDING_MESSAGE.into(),
+            // This app's uninstaller was never launched. Reporting success here
+            // made the batch summary claim the app was uninstalled.
+            false,
+            super::reboot::BLOCKED_MESSAGE.into(),
             true,
             false,
             String::new(),
@@ -629,6 +632,18 @@ pub fn run_full_cleanup(
         } => (backup_dir, restore_point_ok, restore_point_msg),
         BackupOutcome::Abort(report) => return *report,
     };
+    if super::cleanup_cancelled() {
+        return aborted_report(
+            app,
+            backup_dir,
+            false,
+            "cleanup cancelled".into(),
+            false,
+            restore_point_ok,
+            restore_point_msg,
+            vec!["cleanup cancelled before the official uninstaller".into()],
+        );
+    }
 
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
@@ -645,6 +660,10 @@ pub fn run_full_cleanup(
         if official.reboot_initiated {
             // Distinct from the 3010 "reboot required" message: this one
             // tells the user residual deletion was skipped on purpose.
+            let mut errors = vec![];
+            if !official.reboot_gate_persisted {
+                errors.push("reboot gate state could not be persisted".into());
+            }
             return aborted_report(
                 app,
                 backup_dir,
@@ -653,7 +672,7 @@ pub fn run_full_cleanup(
                 true,
                 restore_point_ok,
                 restore_point_msg,
-                vec![],
+                errors,
             );
         }
     }
@@ -669,6 +688,18 @@ pub fn run_full_cleanup(
             restore_point_ok,
             restore_point_msg,
             vec!["official uninstaller failed; leftover cleanup skipped".into()],
+        );
+    }
+    if super::cleanup_cancelled() {
+        return aborted_report(
+            app,
+            backup_dir,
+            uninstall_ok,
+            "cleanup cancelled".into(),
+            false,
+            restore_point_ok,
+            restore_point_msg,
+            vec!["cleanup cancelled before deleting leftovers".into()],
         );
     }
 
@@ -746,6 +777,7 @@ pub fn run_full_cleanup(
     // Rows were just removed from the registry, so any cached enumeration of
     // those trees must not be reused by the next scan.
     crate::regscan::invalidate_subkey_cache();
+    crate::scanner::reg_scans::invalidate_service_snapshot();
 
     FullCleanupReport {
         app_name: app.name.clone(),
@@ -969,10 +1001,13 @@ mod tests {
         };
         let report = run_full_cleanup(&other, &[item], &opts);
         assert!(report.aborted);
-        assert!(report.uninstall_ok);
+        assert!(
+            !report.uninstall_ok,
+            "the other app was never uninstalled and must not be reported as done"
+        );
         assert_eq!(
             report.uninstall_message,
-            crate::executor::reboot::PENDING_MESSAGE
+            crate::executor::reboot::BLOCKED_MESSAGE
         );
         assert_eq!((report.deleted, report.failed), (0, 0));
         assert!(

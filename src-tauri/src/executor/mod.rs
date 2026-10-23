@@ -6,9 +6,55 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 pub(crate) static CLEANUP_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(not(test))]
+static CLEANUP_CANCELLED: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+thread_local! {
+    /// Thread-local in tests so one test's cancellation cannot abort a parallel
+    /// cleanup fixture. Production uses the process-wide flag (the cancel IPC
+    /// arrives on a different thread).
+    static TEST_CLEANUP_CANCELLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Start a new cleanup/restore transaction. Cancellation only aborts at a
+/// phase boundary, so the product is never left mid-delete.
+pub fn begin_cleanup_control() {
+    #[cfg(test)]
+    {
+        TEST_CLEANUP_CANCELLED.with(|v| v.set(false));
+    }
+    #[cfg(not(test))]
+    {
+        CLEANUP_CANCELLED.store(false, Ordering::SeqCst);
+    }
+}
+
+pub fn cancel_cleanup_operation() {
+    #[cfg(test)]
+    {
+        TEST_CLEANUP_CANCELLED.with(|v| v.set(true));
+    }
+    #[cfg(not(test))]
+    {
+        CLEANUP_CANCELLED.store(true, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn cleanup_cancelled() -> bool {
+    #[cfg(test)]
+    {
+        TEST_CLEANUP_CANCELLED.with(|v| v.get())
+    }
+    #[cfg(not(test))]
+    {
+        CLEANUP_CANCELLED.load(Ordering::SeqCst)
+    }
+}
 
 mod pipeline;
 mod preview;
@@ -81,6 +127,10 @@ pub struct OfficialUninstallResult {
     /// The uninstaller reported that it already initiated a reboot (MSI 1641).
     #[serde(default)]
     pub reboot_initiated: bool,
+    /// False when the 1641 gate state could not be written to disk. The
+    /// in-process gate is still active, but a relaunch would lose it.
+    #[serde(default = "default_true")]
+    pub reboot_gate_persisted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +232,7 @@ mod tests {
             message: "m".into(),
             had_command: true,
             reboot_initiated: true,
+            reboot_gate_persisted: true,
         };
         let ujson = serde_json::to_value(&uninstall).unwrap();
         assert_eq!(ujson["reboot_initiated"], serde_json::json!(true));

@@ -108,6 +108,9 @@ pub fn diagnose_locked_path(path: &str) -> Result<Vec<LockingProcess>, String> {
     if path.trim().is_empty() {
         return Err("empty path".into());
     }
+    if !crate::fsutil::is_local_drive_path(path) {
+        return Err("path is not a local drive path".into());
+    }
     crate::fsutil::validate_native_name(path)?;
     let wide = crate::fsutil::to_wide(path);
     let mut handle = 0u32;
@@ -235,8 +238,19 @@ pub fn end_locking_process(pid: u32, expected_path: &str, target_path: &str) -> 
     if pid == 0 || pid == std::process::id() {
         return Err("refusing to end this process".into());
     }
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if crate::executor::reboot::any_pending() {
+        return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
+    }
     crate::fsutil::validate_native_name(expected_path)?;
     crate::fsutil::validate_native_name(target_path)?;
+    if !crate::fsutil::is_local_drive_path(expected_path)
+        || !crate::fsutil::is_local_drive_path(target_path)
+    {
+        return Err("lock paths must be local drive paths".into());
+    }
     if target_path.trim().is_empty() || !std::path::Path::new(target_path).is_absolute() {
         return Err("invalid lock target".into());
     }
@@ -294,6 +308,22 @@ pub fn end_locking_process(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn lock_diagnosis_never_probes_unc_or_device_paths() {
+        for path in [
+            r"\\server\share\locked.exe",
+            r"\\?\C:\Apps\locked.exe",
+            r"\\.\PhysicalDrive0",
+            "relative\\path",
+        ] {
+            assert!(
+                super::diagnose_locked_path(path).is_err(),
+                "must reject {path} before contacting a remote or device object"
+            );
+        }
+    }
+
     #[test]
     fn empty_path_is_rejected() {
         assert!(super::diagnose_locked_path("  ").is_err());

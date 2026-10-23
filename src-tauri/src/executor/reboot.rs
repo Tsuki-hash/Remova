@@ -27,6 +27,9 @@ use std::sync::{Mutex, OnceLock};
 pub(crate) const INITIATED_MESSAGE: &str =
     "official uninstaller initiated reboot; residual cleanup skipped";
 pub(crate) const PENDING_MESSAGE: &str = "system reboot pending; residual cleanup postponed";
+/// Global gate hit before this app's uninstaller was launched. This app was
+/// not uninstalled, so reports must not claim `uninstall_ok`.
+pub(crate) const BLOCKED_MESSAGE: &str = "system reboot pending; uninstall skipped";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct PendingState {
@@ -103,7 +106,7 @@ fn system_boot_id() -> Option<String> {
         let proc = GetProcAddress(
             module,
             PCSTR(c"NtQuerySystemInformation".as_ptr().cast::<u8>()),
-        );
+        )?;
         let query: NtQuerySystemInformationFn = std::mem::transmute(proc);
         let mut buffer = [0u8; 64];
         let mut returned = 0u32;
@@ -130,9 +133,24 @@ fn system_boot_id() -> Option<String> {
     None
 }
 
-fn load_state_from(path: &Path) -> Option<PendingState> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+#[derive(Debug, PartialEq, Eq)]
+enum StateLoad {
+    Missing,
+    /// The file exists but cannot be read or parsed. A pending gate must not
+    /// disappear because its record was truncated or damaged.
+    Corrupt,
+    Loaded(PendingState),
+}
+
+fn load_state_from(path: &Path) -> StateLoad {
+    match std::fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(state) => StateLoad::Loaded(state),
+            Err(_) => StateLoad::Corrupt,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => StateLoad::Missing,
+        Err(_) => StateLoad::Corrupt,
+    }
 }
 
 fn save_state_to(path: &Path, state: &PendingState) -> std::io::Result<()> {
@@ -141,6 +159,31 @@ fn save_state_to(path: &Path, state: &PendingState) -> std::io::Result<()> {
     }
     let bytes = serde_json::to_vec(state).map_err(std::io::Error::other)?;
     crate::fsutil::write_bytes_atomic(path, &bytes)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StateDisposition {
+    /// A reboot has happened since the record was written.
+    Stale,
+    /// Still in the same boot; the gate stays closed.
+    Pending,
+    /// A record exists but carries no app keys, which the writer never
+    /// produces. Treat it as damaged rather than as an explicit clear.
+    Corrupt,
+}
+
+fn state_disposition(
+    stored: &PendingState,
+    current_boot_id: Option<&str>,
+    current_uptime_ms: Option<u64>,
+) -> StateDisposition {
+    if state_is_stale_with(stored, current_boot_id, current_uptime_ms) {
+        StateDisposition::Stale
+    } else if stored.app_keys.is_empty() {
+        StateDisposition::Corrupt
+    } else {
+        StateDisposition::Pending
+    }
 }
 
 /// True when `stored` was written during an earlier boot.
@@ -168,35 +211,57 @@ fn state_is_stale_with(
 }
 
 #[cfg(not(test))]
-fn hydrate_from_disk() -> bool {
-    let Some(path) = state_path() else {
-        return false;
-    };
-    let Some(state) = load_state_from(&path) else {
-        return false;
-    };
-    let boot_id = system_boot_id();
-    if state_is_stale_with(&state, boot_id.as_deref(), Some(uptime_ms())) {
-        let _ = std::fs::remove_file(&path);
-        return false;
-    }
-    if state.app_keys.is_empty() {
-        return false;
-    }
-    if let Ok(mut set) = memory().lock() {
-        set.extend(state.app_keys);
-    }
-    true
+fn corrupt_gate() -> &'static std::sync::atomic::AtomicBool {
+    static CORRUPT: OnceLock<std::sync::atomic::AtomicBool> = OnceLock::new();
+    CORRUPT.get_or_init(|| std::sync::atomic::AtomicBool::new(false))
 }
 
 #[cfg(not(test))]
-fn persist() {
+fn hydrate_from_disk() -> bool {
+    use std::sync::atomic::Ordering;
     let Some(path) = state_path() else {
-        return;
+        return false;
     };
-    let Ok(set) = memory().lock() else {
-        return;
+    match load_state_from(&path) {
+        StateLoad::Missing => false,
+        StateLoad::Corrupt => {
+            // The file exists but its contents cannot be trusted. Keep the
+            // gate closed and leave the file in place for diagnosis.
+            corrupt_gate().store(true, Ordering::SeqCst);
+            eprintln!("reboot-pending state is unreadable; keeping cleanup blocked");
+            true
+        }
+        StateLoad::Loaded(state) => {
+            match state_disposition(&state, system_boot_id().as_deref(), Some(uptime_ms())) {
+                StateDisposition::Stale => {
+                    let _ = std::fs::remove_file(&path);
+                    false
+                }
+                StateDisposition::Corrupt => {
+                    corrupt_gate().store(true, Ordering::SeqCst);
+                    eprintln!("reboot-pending state has no app keys; keeping cleanup blocked");
+                    true
+                }
+                StateDisposition::Pending => {
+                    let mut set = memory().lock().unwrap_or_else(|e| e.into_inner());
+                    set.extend(state.app_keys);
+                    true
+                }
+            }
+        }
+    }
+}
+
+/// Persist the in-memory gate. Returns false when the record could not be
+/// written, so the caller can surface that the gate will not survive a
+/// restart (the in-process gate remains active).
+#[cfg(not(test))]
+fn persist() -> bool {
+    let Some(path) = state_path() else {
+        eprintln!("could not persist reboot-pending state: no LOCALAPPDATA");
+        return false;
     };
+    let set = memory().lock().unwrap_or_else(|e| e.into_inner());
     let mut keys: Vec<String> = set.iter().cloned().collect();
     keys.sort();
     let state = PendingState {
@@ -204,17 +269,18 @@ fn persist() {
         uptime_ms: uptime_ms(),
         app_keys: keys,
     };
-    if let Err(e) = save_state_to(&path, &state) {
-        // The in-memory gate still protects the current process; the persisted
-        // record may be missing, but a reboot can only be proven by a changed
-        // boot identity, so a lost file never opens the gate.
-        eprintln!("could not persist reboot-pending state: {e}");
+    match save_state_to(&path, &state) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("could not persist reboot-pending state: {e}");
+            false
+        }
     }
 }
 
-pub(crate) fn mark_pending(app_key: &str) {
+pub(crate) fn mark_pending(app_key: &str) -> bool {
     if app_key.is_empty() {
-        return;
+        return true;
     }
     #[cfg(test)]
     {
@@ -222,13 +288,15 @@ pub(crate) fn mark_pending(app_key: &str) {
         TEST_PENDING.with(|pending| {
             pending.borrow_mut().insert(app_key.to_string());
         });
+        true
     }
     #[cfg(not(test))]
     {
-        if let Ok(mut set) = memory().lock() {
-            set.insert(app_key.to_string());
-        }
-        persist();
+        memory()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(app_key.to_string());
+        persist()
     }
 }
 
@@ -241,7 +309,17 @@ pub(crate) fn any_pending() -> bool {
     }
     #[cfg(not(test))]
     {
-        if memory().lock().map(|set| !set.is_empty()).unwrap_or(false) {
+        use std::sync::atomic::Ordering;
+        if corrupt_gate().load(Ordering::SeqCst) {
+            return true;
+        }
+        if memory()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .next()
+            .is_some()
+        {
             return true;
         }
         hydrate_from_disk()
@@ -321,7 +399,7 @@ mod tests {
             app_keys: vec!["a".into(), "b".into()],
         };
         save_state_to(&path, &state).unwrap();
-        assert_eq!(load_state_from(&path), Some(state));
+        assert_eq!(load_state_from(&path), StateLoad::Loaded(state));
     }
 
     #[test]
@@ -329,9 +407,47 @@ mod tests {
         let tmp = crate::test_support::TempDir::new("reboot-corrupt");
         let path = tmp.path().join("reboot-pending.json");
         std::fs::write(&path, b"{not json").unwrap();
-        // Parsing fails: the caller must keep the in-memory gate rather than
+        // Parsing fails: the caller must keep the gate closed rather than
         // infer "no pending" from an unreadable file.
-        assert_eq!(load_state_from(&path), None);
+        assert_eq!(load_state_from(&path), StateLoad::Corrupt);
+        let empty_keys = PendingState {
+            boot_id: "aabb".into(),
+            uptime_ms: 100,
+            app_keys: vec![],
+        };
+        assert_eq!(
+            state_disposition(&empty_keys, Some("aabb"), Some(100)),
+            StateDisposition::Corrupt,
+            "a writer-produced record always has at least one app key"
+        );
+    }
+
+    #[test]
+    fn a_saved_pending_record_still_blocks_a_new_process_in_the_same_boot() {
+        let tmp = crate::test_support::TempDir::new("reboot-new-process");
+        let path = tmp.path().join("reboot-pending.json");
+        let state = PendingState {
+            boot_id: "00112233445566778899aabbccddeeff".into(),
+            uptime_ms: 900_000,
+            app_keys: vec!["source\u{0}key\u{0}App".into()],
+        };
+        save_state_to(&path, &state).unwrap();
+        let StateLoad::Loaded(loaded) = load_state_from(&path) else {
+            panic!("saved state must parse");
+        };
+        assert_eq!(
+            state_disposition(&loaded, Some(&state.boot_id), Some(1_000_000)),
+            StateDisposition::Pending
+        );
+        assert_eq!(
+            state_disposition(&loaded, Some("different-boot"), Some(1_000_000)),
+            StateDisposition::Stale,
+            "a real restart releases the gate"
+        );
+        assert_eq!(
+            load_state_from(&tmp.path().join("missing.json")),
+            StateLoad::Missing
+        );
     }
 
     #[test]

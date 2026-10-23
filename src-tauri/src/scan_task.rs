@@ -33,6 +33,14 @@ struct Task {
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
+/// Concurrent scan ceiling. Kept separate from `begin` so the boundary is
+/// testable without occupying the global task map and starving other tests.
+const MAX_SCAN_TASKS: usize = 8;
+
+fn at_capacity(active: usize) -> bool {
+    active >= MAX_SCAN_TASKS
+}
+
 fn latest() -> &'static Mutex<BTreeMap<&'static str, u32>> {
     static LATEST: OnceLock<Mutex<BTreeMap<&'static str, u32>>> = OnceLock::new();
     LATEST.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -47,7 +55,7 @@ thread_local! {
 
 pub fn begin() -> Result<u32, String> {
     let mut tasks = tasks().lock().map_err(|_| "scan:state")?;
-    if tasks.len() >= 8 {
+    if at_capacity(tasks.len()) {
         return Err("scan:busy".into());
     }
     // `fetch_update` is deprecated (renamed `try_update`), and the rename is not
@@ -421,6 +429,15 @@ mod tests {
         );
         assert!(progress(a).is_none());
         assert!(progress(b).is_none());
+    }
+
+    #[test]
+    fn the_task_cap_boundary_is_eight() {
+        assert!(!at_capacity(0));
+        assert!(!at_capacity(7));
+        assert!(at_capacity(8));
+        assert!(at_capacity(9));
+        assert_eq!(MAX_SCAN_TASKS, 8);
     }
 
     #[test]

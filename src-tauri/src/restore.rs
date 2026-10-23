@@ -86,6 +86,16 @@ fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
 }
 
 pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
+    // Restore is a destructive transaction too: it must not interleave with a
+    // cleanup, and a pending 1641 reboot must finish before files are written
+    // back into a half-uninstalled product directory.
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if crate::executor::reboot::any_pending() {
+        return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
+    }
+    crate::executor::begin_cleanup_control();
     let RestoreInputs {
         seal,
         map,
@@ -99,6 +109,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     let files_root = session.join("files");
     if map_path.exists() {
         for (rel, original) in &map {
+            if crate::executor::cleanup_cancelled() {
+                messages.push("restore cancelled".into());
+                break;
+            }
             // Map keys are single backup names under `files/` — never path-shaped.
             if !is_safe_map_rel(rel) {
                 return Err(crate::error::restore_err(format!(
@@ -220,11 +234,23 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     }
 
     // Import only the exact authenticated and validated bytes captured above.
+    // A failed import is aggregated and the remaining exports still run: the
+    // filesystem/PATH work already happened, and aborting here used to discard
+    // every earlier success message and leave the retry in the same state.
     for (entry_dir, target, raw, view) in imports {
+        if crate::executor::cleanup_cancelled() {
+            messages.push("restore cancelled before remaining registry imports".into());
+            break;
+        }
         // Pin every staging ancestor as well as the file. A directory swap
         // must not redirect an elevated staging write or reg.exe's reopen.
-        let _stage_pins = crate::fsutil::create_dirs_pinned(&entry_dir)
-            .map_err(|e| crate::error::restore_reg_err(e.to_string()).to_ipc())?;
+        let _stage_pins = match crate::fsutil::create_dirs_pinned(&entry_dir) {
+            Ok(pins) => pins,
+            Err(e) => {
+                messages.push(format!("registry import failed {}: {e}", target.display()));
+                continue;
+            }
+        };
         let pinned = entry_dir.join(format!(
             "value.import.{}.{}.reg",
             std::process::id(),
@@ -240,15 +266,22 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             use std::os::windows::fs::OpenOptionsExt;
             opts.share_mode(0x0000_0001); // FILE_SHARE_READ only
         }
-        let mut pin = opts.open(&pinned).map_err(|e| e.to_string())?;
+        let mut pin = match opts.open(&pinned) {
+            Ok(pin) => pin,
+            Err(e) => {
+                messages.push(format!("registry import failed {}: {e}", target.display()));
+                continue;
+            }
+        };
         let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
         if let Err(write_err) = staged {
             drop(pin);
             let _ = fs::remove_file(&pinned);
-            return Err(crate::error::restore_reg_err(format!(
-                "reg import staging failed: {write_err}"
-            ))
-            .to_ipc());
+            messages.push(format!(
+                "registry import failed {}: reg import staging failed: {write_err}",
+                target.display()
+            ));
+            continue;
         }
         let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
         cmd.args(["import", &pinned.to_string_lossy(), view]);
@@ -265,8 +298,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         };
         drop(pin);
         let _ = fs::remove_file(&pinned);
-        import_res?;
-        messages.push(format!("imported {}", target.display()));
+        match import_res {
+            Ok(()) => messages.push(format!("imported {}", target.display())),
+            Err(e) => messages.push(format!("registry import failed {}: {e}", target.display())),
+        }
     }
 
     Ok(messages)
@@ -537,10 +572,12 @@ fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {
         Err(e) => return Err(crate::error::restore_err(e.to_string()).to_ipc()),
     };
     for entry in rd {
-        let entry = entry.map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
-        let kind = entry
-            .file_type()
-            .map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
+        // Another account's session may be unreadable (ACL/ownership). One
+        // such entry must not hide every other restorable session.
+        let Ok(entry) = entry else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             out.push(entry.path());
         }
@@ -845,6 +882,18 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn a_pending_reboot_blocks_restore_before_validation_or_writes() {
+        crate::executor::reboot::reset_for_test();
+        crate::executor::reboot::mark_pending("source\u{0}key\u{0}App");
+        let missing = std::path::Path::new("does-not-exist");
+        assert_eq!(
+            super::restore_session(missing).unwrap_err(),
+            crate::executor::reboot::PENDING_MESSAGE
+        );
+        crate::executor::reboot::reset_for_test();
+    }
+
     #[test]
     fn registry_import_requires_authenticated_machine_view() {
         let machine =
