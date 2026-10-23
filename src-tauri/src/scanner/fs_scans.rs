@@ -953,6 +953,7 @@ mod user_flag_tests {
 /// TEMP entry matching is a file-NAME match only: a slug appearing in a
 /// directory component (`Users`, the user name, `Local`, `Temp`, an install
 /// root…) must not claim unrelated entries under it.
+#[cfg(test)]
 pub(super) fn temp_entry_matches(entry_name: &str, slugs: &[String]) -> bool {
     let name = normalize_for_match(entry_name);
     slugs.iter().any(|s| name.contains(s.as_str()))
