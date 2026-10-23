@@ -107,7 +107,7 @@ jobs:
           # 1.3.2 is published unsigned/manual by maintainer decision. The
           # exception is tag-scoped: every later release needs an explicit
           # repository variable instead of inheriting a blanket bypass.
-          ALLOW_UNSIGNED_RELEASE: ${{ startsWith(github.ref_name, 'v1.3.2') && 'true' || vars.ALLOW_UNSIGNED_RELEASE }}
+          ALLOW_UNSIGNED_RELEASE: ${{ github.ref_name == 'v1.3.2' && 'true' || vars.ALLOW_UNSIGNED_RELEASE }}
           SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
           SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}

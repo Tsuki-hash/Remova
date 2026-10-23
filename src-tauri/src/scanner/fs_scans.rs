@@ -151,10 +151,21 @@ pub(super) fn scan_home_dot_dirs(
     install_low: &str,
     items: &mut Vec<CleanupItem>,
 ) -> bool {
-    let Some(up) = std::env::var_os("USERPROFILE") else {
-        return false;
-    };
-    scan_home_dot_dirs_from(std::path::Path::new(&up), name_slugs, install_low, items)
+    #[cfg(windows)]
+    {
+        // Known Folder, not USERPROFILE: a rewritten environment variable must
+        // not redirect the roots that feed cleanup associations.
+        let up = windows::Win32::UI::Shell::FOLDERID_Profile;
+        let Some(profile) = crate::sysops::known_folder(&up) else {
+            return false;
+        };
+        scan_home_dot_dirs_from(&profile, name_slugs, install_low, items)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (name_slugs, install_low, items);
+        false
+    }
 }
 
 fn scan_home_dot_dirs_from(
@@ -347,47 +358,115 @@ pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupI
     }
 }
 
-pub(super) fn scan_shortcuts(
-    name_slugs: &[String],
-    exe_stems: &[String],
-    install_low: &str,
-    items: &mut Vec<CleanupItem>,
-) {
-    let mut roots: Vec<PathBuf> = vec![];
-    if let Some(up) = std::env::var_os("USERPROFILE") {
-        let up = PathBuf::from(up);
-        roots.push(up.join("Desktop"));
-        roots.push(up.join("AppData/Roaming/Microsoft/Windows/Start Menu"));
-    }
-    if let Some(pu) = std::env::var_os("PUBLIC") {
-        roots.push(PathBuf::from(pu).join("Desktop"));
-    }
-    // resolve from the environment so a non-C system drive is still scanned;
-    // the literal path is only the last-resort fallback.
-    let program_data = std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-    roots.push(program_data.join(r"Microsoft\Windows\Start Menu"));
+#[derive(Clone)]
+struct ShortcutEntry {
+    path: PathBuf,
+    stem: String,
+    peek: Vec<u8>,
+}
 
-    for root in roots {
-        if crate::scan_task::cancelled() {
-            break;
+#[derive(Clone)]
+struct TempEntry {
+    path: PathBuf,
+    is_dir: bool,
+}
+
+/// Shortcut/TEMP listings are app-independent: a batch used to re-walk the
+/// same 4 shortcut roots and TEMP directory for every app. Cache the raw
+/// entries for the batch and invalidate on a new inventory.
+mod scan_cache {
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(5 * 60);
+
+    type ShortcutState = Option<(Instant, Arc<Vec<super::ShortcutEntry>>)>;
+    type TempState = Option<(Instant, Arc<Vec<super::TempEntry>>)>;
+
+    fn shortcuts_state() -> &'static Mutex<ShortcutState> {
+        static STATE: OnceLock<Mutex<ShortcutState>> = OnceLock::new();
+        STATE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn temp_state() -> &'static Mutex<TempState> {
+        static STATE: OnceLock<Mutex<TempState>> = OnceLock::new();
+        STATE.get_or_init(|| Mutex::new(None))
+    }
+
+    pub(super) fn shortcuts(
+        build: impl FnOnce() -> Vec<super::ShortcutEntry>,
+    ) -> Arc<Vec<super::ShortcutEntry>> {
+        let mut guard = shortcuts_state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, entries)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return Arc::clone(entries);
+            }
         }
-        if !root.exists() {
-            continue;
+        let built = Arc::new(build());
+        *guard = Some((Instant::now(), Arc::clone(&built)));
+        built
+    }
+
+    pub(super) fn temp(
+        build: impl FnOnce() -> Vec<super::TempEntry>,
+    ) -> Arc<Vec<super::TempEntry>> {
+        let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, entries)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return Arc::clone(entries);
+            }
         }
-        walk_shortcuts(&root, 0, name_slugs, exe_stems, install_low, items);
+        let built = Arc::new(build());
+        *guard = Some((Instant::now(), Arc::clone(&built)));
+        built
+    }
+
+    pub(super) fn clear() {
+        if let Ok(mut g) = shortcuts_state().lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = temp_state().lock() {
+            *g = None;
+        }
     }
 }
 
-fn walk_shortcuts(
-    dir: &Path,
-    depth: u32,
-    name_slugs: &[String],
-    exe_stems: &[String],
-    install_low: &str,
-    items: &mut Vec<CleanupItem>,
-) {
+fn shortcut_roots() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_CommonStartMenu, FOLDERID_Desktop, FOLDERID_PublicDesktop, FOLDERID_StartMenu,
+        };
+        [
+            &FOLDERID_Desktop,
+            &FOLDERID_StartMenu,
+            &FOLDERID_PublicDesktop,
+            &FOLDERID_CommonStartMenu,
+        ]
+        .into_iter()
+        .filter_map(crate::sysops::known_folder)
+        .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+fn collect_shortcut_entries() -> Vec<ShortcutEntry> {
+    let mut out = Vec::new();
+    for root in shortcut_roots() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        if root.exists() {
+            collect_shortcut_dir(&root, 0, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_shortcut_dir(dir: &Path, depth: u32, out: &mut Vec<ShortcutEntry>) {
     if depth > 3 || crate::scan_task::cancelled() {
         return;
     }
@@ -401,57 +480,75 @@ fn walk_shortcuts(
         let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
         let p = e.path();
         if is_dir {
-            walk_shortcuts(&p, depth + 1, name_slugs, exe_stems, install_low, items);
+            collect_shortcut_dir(&p, depth + 1, out);
             continue;
         }
         let Some(ext) = p.extension().and_then(|s| s.to_str()) else {
             continue;
         };
-        let ext = ext.to_lowercase();
-        if !matches!(ext.as_str(), "lnk" | "url" | "appref-ms") {
+        if !matches!(ext.to_lowercase().as_str(), "lnk" | "url" | "appref-ms") {
             continue;
         }
-        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
             continue;
         };
-        let sn = normalize_for_match(stem);
+        let mut peek_buf = [0u8; SHORTCUT_PEEK_BYTES];
+        let peek = std::fs::File::open(&p)
+            .and_then(|mut f| {
+                use std::io::Read;
+                f.read(&mut peek_buf)
+            })
+            .map(|n| peek_buf[..n].to_vec())
+            .unwrap_or_default();
+        out.push(ShortcutEntry {
+            path: p,
+            stem,
+            peek,
+        });
+    }
+}
+
+fn shortcut_peek_matches(peek: &[u8], install_low: &str) -> bool {
+    if install_low.is_empty() {
+        return false;
+    }
+    let peek_lc = peek.to_ascii_lowercase();
+    if find_bytes(&peek_lc, install_low.as_bytes()) {
+        return true;
+    }
+    // decode UTF-16LE and lowercase — byte-searching a lowercase needle in
+    // raw-case UTF-16 always missed.
+    let u16s: Vec<u16> = peek
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16_lossy(&u16s)
+        .to_lowercase()
+        .contains(install_low)
+}
+
+pub(super) fn scan_shortcuts(
+    name_slugs: &[String],
+    exe_stems: &[String],
+    install_low: &str,
+    items: &mut Vec<CleanupItem>,
+) {
+    let entries = scan_cache::shortcuts(collect_shortcut_entries);
+    for entry in entries.iter() {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        let sn = normalize_for_match(&entry.stem);
         let hit = name_slugs.iter().any(|s| normalize_for_match(s) == sn)
             || exe_stems
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
-            || {
-                // peek at most 8KB (lnk target lives near the start) and
-                // search bytes — the read is bounded, never whole-file.
-                let mut peek_buf = [0u8; SHORTCUT_PEEK_BYTES];
-                if let Ok(n) = std::fs::File::open(&p).and_then(|mut f| {
-                    use std::io::Read;
-                    f.read(&mut peek_buf)
-                }) {
-                    let peek = &peek_buf[..n];
-                    // Case-insensitive ASCII peek (paths in LNK are mixed-case).
-                    let peek_lc = peek.to_ascii_lowercase();
-                    !install_low.is_empty() && {
-                        find_bytes(&peek_lc, install_low.as_bytes()) || {
-                            // decode UTF-16LE and lowercase — byte-searching
-                            // a lowercase needle in raw-case UTF-16 always missed.
-                            let u16s: Vec<u16> = peek
-                                .chunks_exact(2)
-                                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                                .collect();
-                            String::from_utf16_lossy(&u16s)
-                                .to_lowercase()
-                                .contains(install_low)
-                        }
-                    }
-                } else {
-                    false
-                }
-            };
-        if !hit || !is_safe_fs(&p) {
+            || shortcut_peek_matches(&entry.peek, install_low);
+        if !hit || !is_safe_fs(&entry.path) {
             continue;
         }
         items.push(CleanupItem {
-            path: p.to_string_lossy().to_string(),
+            path: entry.path.to_string_lossy().to_string(),
             kind: ItemKind::File,
             score: 50,
             confidence: Confidence::Confirmed,
@@ -461,12 +558,12 @@ fn walk_shortcuts(
                 code: "shortcut_target".into(),
                 label: "Shortcut matches product".into(),
                 weight: 50,
-                detail: stem.to_string(),
+                detail: entry.stem.clone(),
             }],
             shared: false,
             service_bound: false,
-            user_data: is_user_data(&p),
-            user_library: is_user_library(&p),
+            user_data: is_user_data(&entry.path),
+            user_library: is_user_library(&entry.path),
             size_kb: None,
             size_capped: false,
             bucket: None,
@@ -474,11 +571,22 @@ fn walk_shortcuts(
     }
 }
 
+/// Drop the batch-scoped shortcut/TEMP listings.
+pub(crate) fn clear_scan_caches() {
+    scan_cache::clear();
+}
+
 pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
-    let Ok(temp) = std::env::var("TEMP") else {
-        return;
+    #[cfg(windows)]
+    let temp = {
+        use windows::Win32::UI::Shell::FOLDERID_LocalAppData;
+        let Some(local) = crate::sysops::known_folder(&FOLDERID_LocalAppData) else {
+            return;
+        };
+        local.join("Temp")
     };
-    let temp = PathBuf::from(temp);
+    #[cfg(not(windows))]
+    let temp = PathBuf::new();
     if !temp.exists() {
         return;
     }
@@ -490,15 +598,27 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
     if slugs.is_empty() {
         return;
     }
-    let Ok(rd) = temp.read_dir() else {
-        return;
-    };
-    for e in rd.flatten() {
+    let entries = scan_cache::temp(|| {
+        let mut out = Vec::new();
+        if let Ok(rd) = temp.read_dir() {
+            for e in rd.flatten() {
+                if crate::scan_task::cancelled() {
+                    break;
+                }
+                let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                out.push(TempEntry {
+                    path: e.path(),
+                    is_dir,
+                });
+            }
+        }
+        out
+    });
+    for entry in entries.iter() {
         if crate::scan_task::cancelled() {
             break;
         }
-        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
-        let p = e.path();
+        let p = &entry.path;
         // Match the entry NAME only — a slug appearing in a directory
         // component (user name, `Local`, `Temp`, product root) must not
         // claim unrelated files under it.
@@ -508,12 +628,12 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
         if !temp_entry_matches(name, &slugs) {
             continue;
         }
-        if !is_safe_fs(&p) {
+        if !is_safe_fs(p) {
             continue;
         }
         items.push(CleanupItem {
             path: p.to_string_lossy().to_string(),
-            kind: if is_dir {
+            kind: if entry.is_dir {
                 ItemKind::Dir
             } else {
                 ItemKind::File
@@ -534,12 +654,64 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
             }],
             shared: false,
             service_bound: false,
-            user_data: is_user_data(&p),
-            user_library: is_user_library(&p),
+            user_data: is_user_data(p),
+            user_library: is_user_library(p),
             size_kb: None,
             size_capped: false,
             bucket: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn shortcut_list_is_built_once_per_generation() {
+        scan_cache::clear();
+        let mut calls = 0;
+        let first = scan_cache::shortcuts(|| {
+            calls += 1;
+            vec![ShortcutEntry {
+                path: PathBuf::from(r"C:\Shortcuts\Demo.lnk"),
+                stem: "Demo".into(),
+                peek: b"target".to_vec(),
+            }]
+        });
+        let second = scan_cache::shortcuts(|| {
+            calls += 1;
+            Vec::new()
+        });
+        assert_eq!(calls, 1, "the second call must reuse the cached list");
+        assert_eq!(first.len(), 1);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        clear_scan_caches();
+        let third = scan_cache::shortcuts(|| {
+            calls += 1;
+            Vec::new()
+        });
+        assert_eq!(calls, 2, "clearing must force a rebuild");
+        assert!(third.is_empty());
+        scan_cache::clear();
+    }
+
+    #[test]
+    fn shortcut_peek_matches_ascii_and_utf16() {
+        assert!(!shortcut_peek_matches(b"anything", ""));
+        assert!(shortcut_peek_matches(
+            b"C:\\Apps\\Demo\\demo.exe",
+            r"c:\apps\demo"
+        ));
+        let utf16: Vec<u8> = r"C:\Apps\Demo\demo.exe"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(shortcut_peek_matches(&utf16, r"c:\apps\demo"));
+        assert!(!shortcut_peek_matches(
+            b"C:\\Apps\\Other\\other.exe",
+            r"c:\apps\demo"
+        ));
     }
 }
 

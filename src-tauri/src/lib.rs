@@ -468,6 +468,19 @@ mod cleanup_trust_tests {
     }
 
     #[test]
+    fn elevated_hkcu_cleanup_is_refused() {
+        let _g = apps::trust_test_support::guard();
+        let scanned = app(
+            "PerUserCleanup",
+            "HKCU",
+            r"C:\Users\demo\AppData\Local\PerUserCleanup",
+        );
+        apps::remember_uninstall_commands(std::slice::from_ref(&scanned));
+        let err = resolve_cleanup_app(scanned, CleanupSource::Uninstall, true).unwrap_err();
+        assert!(err.contains("elevated HKCU cleanup"));
+    }
+
+    #[test]
     fn cleanup_resolution_uses_the_server_install_root() {
         let _g = apps::trust_test_support::guard();
         let scanned = app("ResolvedDemo", "HKLM64", r"C:\Program Files\ResolvedDemo");
@@ -475,7 +488,7 @@ mod cleanup_trust_tests {
         let mut forged = scanned.clone();
         forged.install_location = r"D:\Data\Victim".into();
         let resolved =
-            resolve_cleanup_app(forged, CleanupSource::Uninstall).expect("server identity");
+            resolve_cleanup_app(forged, CleanupSource::Uninstall, false).expect("server identity");
         assert_eq!(resolved.install_location, r"C:\Program Files\ResolvedDemo");
     }
 }
@@ -512,13 +525,13 @@ fn cleanup_source_from_arg(source: Option<&str>) -> policy::CleanupSource {
 fn resolve_cleanup_app(
     app: InstalledApp,
     source: policy::CleanupSource,
+    elevated: bool,
 ) -> Result<InstalledApp, String> {
     if source.is_scoped_scan() {
         return Ok(app);
     }
     let app =
         apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
-    let elevated = crate::sysops::is_elevated_for_gate();
     if hkcu_refused_when_elevated(&app.source, elevated) {
         // Name-based associations can still point at machine directories, so
         // elevated deletion based on a user-writable HKCU record is refused
@@ -632,7 +645,7 @@ async fn run_cleanup_dry_run(
     cleanup_source: Option<String>,
 ) -> Result<CleanupReport, String> {
     let source = cleanup_source_from_arg(cleanup_source.as_deref());
-    let app = resolve_cleanup_app(app, source)?;
+    let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
     authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
         executor::run_cleanup_dry_for_app_source(&app, &items, source)
@@ -659,7 +672,7 @@ async fn run_full_cleanup(
     options: FullCleanupOptions,
 ) -> Result<FullCleanupReport, String> {
     let source = cleanup_source_from_arg(options.cleanup_source.as_deref());
-    let app = resolve_cleanup_app(app, source)?;
+    let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
     authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
         let report = executor::run_full_cleanup(&app, &items, &options);
@@ -683,7 +696,9 @@ async fn run_full_cleanup(
 
 #[tauri::command]
 fn is_elevated() -> Result<bool, String> {
-    crate::sysops::is_process_elevated()
+    // Keep the UI's admin indicator fail-closed with the destructive gates: an
+    // unreadable token is reported as elevated rather than as a normal user.
+    Ok(crate::sysops::is_elevated_for_gate())
 }
 
 #[derive(serde::Serialize)]

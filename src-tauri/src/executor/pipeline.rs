@@ -653,7 +653,7 @@ pub fn run_full_cleanup(
     let mut uninstall_had_command = false;
     let mut reboot_gate_persisted = true;
     if !opts.skip_official_uninstall {
-        let official = run_official_uninstall_locked(app);
+        let official = run_official_uninstall_locked(app, crate::sysops::is_elevated_for_gate());
         uninstall_ok = official.ok;
         uninstall_message = official.message.clone();
         uninstall_had_command = official.had_command;

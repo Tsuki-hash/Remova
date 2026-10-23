@@ -160,6 +160,29 @@ pub struct OrphanScanResult {
     pub omitted: u32,
 }
 
+fn orphan_roots() -> Vec<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
+            FOLDERID_ProgramFilesX86,
+        };
+        [
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+            &FOLDERID_LocalAppData,
+            &FOLDERID_ProgramData,
+        ]
+        .into_iter()
+        .filter_map(crate::sysops::known_folder)
+        .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
     if crate::scan_task::cancelled() {
         return OrphanScanResult {
@@ -169,17 +192,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
     }
     // load ignore rules once (was per candidate in the loop).
     let ignore = crate::ignore::load();
-    let mut roots: Vec<std::path::PathBuf> = vec![];
-    for env in [
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "LOCALAPPDATA",
-        "PROGRAMDATA",
-    ] {
-        if let Ok(v) = std::env::var(env) {
-            roots.push(std::path::PathBuf::from(v));
-        }
-    }
+    let roots = orphan_roots();
     scan_orphans_in_roots(installed, &ignore, roots)
 }
 
@@ -457,6 +470,21 @@ mod tests {
         assert!(match_installed(&installed, p));
         let p2 = std::path::Path::new(r"C:\Program Files\OtherThing");
         assert!(!match_installed(&installed, p2));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn orphan_roots_ignore_environment_overrides() {
+        let _g = crate::test_support::EnvLock::new();
+        std::env::set_var("LOCALAPPDATA", r"D:\");
+        std::env::set_var("ProgramFiles", r"D:\");
+        let roots = super::orphan_roots();
+        assert!(!roots.is_empty(), "Known Folder roots must resolve");
+        assert!(roots.iter().all(|p| p.is_absolute()));
+        assert!(
+            roots.iter().all(|p| p != std::path::Path::new(r"D:\")),
+            "a rewritten environment variable must not become a scan root"
+        );
     }
 
     #[test]

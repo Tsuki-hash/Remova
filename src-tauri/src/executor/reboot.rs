@@ -372,29 +372,49 @@ impl GateStatus {
     }
 }
 
+fn gate_status_from(pending: bool, corrupt: bool) -> GateStatus {
+    if corrupt {
+        GateStatus::Corrupt
+    } else if pending {
+        GateStatus::Pending
+    } else {
+        GateStatus::Clear
+    }
+}
+
 /// Report the gate state so the UI can offer a recovery path when the state
 /// file is unreadable (the normal pending gate must stay non-resettable).
 pub(crate) fn gate_status() -> GateStatus {
     #[cfg(test)]
     {
-        if TEST_PENDING.with(|pending| pending.borrow().is_empty()) {
-            GateStatus::Clear
-        } else {
-            GateStatus::Pending
-        }
+        gate_status_from(
+            !TEST_PENDING.with(|pending| pending.borrow().is_empty()),
+            false,
+        )
     }
     #[cfg(not(test))]
     {
         use std::sync::atomic::Ordering;
-        if corrupt_gate().load(Ordering::SeqCst) {
-            return GateStatus::Corrupt;
-        }
-        if any_pending() {
-            GateStatus::Pending
-        } else {
-            GateStatus::Clear
-        }
+        // Hydrate first: the corrupt flag is set by `any_pending`, so checking
+        // it before hydration reported a corrupt record as "pending" and hid
+        // the recovery card on the first More-page visit.
+        let pending = any_pending();
+        gate_status_from(pending, corrupt_gate().load(Ordering::SeqCst))
     }
+}
+
+fn clear_corrupt_allowed(corrupt: bool, has_pending_keys: bool) -> bool {
+    corrupt && !has_pending_keys
+}
+
+/// Rename the damaged record aside. Returns false if it could not be moved, so
+/// the caller must not report success and leave the gate to re-arm on restart.
+fn rename_corrupt_state(path: &Path) -> bool {
+    if !path.exists() {
+        return true;
+    }
+    let backup = path.with_extension("json.corrupt");
+    std::fs::rename(path, backup).is_ok()
 }
 
 /// Recover from an unreadable state file only. A real pending gate (in-memory
@@ -404,22 +424,18 @@ pub(crate) fn clear_corrupt_gate() -> bool {
     #[cfg(not(test))]
     {
         use std::sync::atomic::Ordering;
-        if !corrupt_gate().load(Ordering::SeqCst) {
-            return false;
-        }
-        if memory()
+        let has_pending_keys = memory()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .next()
-            .is_some()
-        {
+            .is_some();
+        if !clear_corrupt_allowed(corrupt_gate().load(Ordering::SeqCst), has_pending_keys) {
             return false;
         }
         if let Some(path) = state_path() {
-            if path.exists() {
-                let backup = path.with_extension("json.corrupt");
-                let _ = std::fs::rename(&path, &backup);
+            if !rename_corrupt_state(&path) {
+                return false;
             }
         }
         corrupt_gate().store(false, Ordering::SeqCst);
@@ -528,6 +544,26 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_gate_recovery_is_narrow_and_rename_is_checked() {
+        assert!(clear_corrupt_allowed(true, false));
+        assert!(!clear_corrupt_allowed(false, false));
+        assert!(!clear_corrupt_allowed(true, true));
+        let tmp = crate::test_support::TempDir::new("reboot-clear-corrupt");
+        let path = tmp.path().join("reboot-pending.json");
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(rename_corrupt_state(&path));
+        assert!(path.with_extension("json.corrupt").exists());
+        assert!(!path.exists());
+        // If the backup path is blocked (here: a directory), the rename must
+        // fail and the caller must not report a successful repair.
+        let backup = path.with_extension("json.corrupt");
+        std::fs::remove_file(&backup).unwrap();
+        std::fs::create_dir(&backup).unwrap();
+        std::fs::write(&path, b"{not json again").unwrap();
+        assert!(!rename_corrupt_state(&path));
+    }
+
+    #[test]
     fn gate_status_reports_pending_and_clear() {
         reset_for_test();
         assert_eq!(gate_status(), GateStatus::Clear);
@@ -535,6 +571,9 @@ mod tests {
         assert_eq!(gate_status(), GateStatus::Pending);
         reset_for_test();
         assert_eq!(gate_status(), GateStatus::Clear);
+        assert_eq!(gate_status_from(true, true), GateStatus::Corrupt);
+        assert_eq!(gate_status_from(true, false), GateStatus::Pending);
+        assert_eq!(gate_status_from(false, false), GateStatus::Clear);
     }
 
     #[test]

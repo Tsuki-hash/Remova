@@ -87,7 +87,9 @@ pub fn remember_scan(apps: &[InstalledApp]) {
     // A new inventory invalidates every enumeration the previous generation
     // could have cached, including the CLSID default-value index.
     crate::regscan::invalidate_subkey_cache();
+    crate::regscan::invalidate_default_value_cache();
     crate::scanner::reg_scans::invalidate_service_snapshot();
+    crate::scanner::fs_scans::clear_scan_caches();
     rebuild_trust(apps);
     let generation = next_generation();
     let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();

@@ -122,15 +122,23 @@ pub fn append(
     };
     let p = history_path();
     let _g = lock_file();
+    let mut _pins = Vec::new();
     if let Some(parent) = p.parent() {
         // The history file lives under the shared ProgramData tree. A local user
         // can pre-plant a junction there; writing through it from an elevated
-        // Remova would append outside the intended directory.
+        // Remova would append outside the intended directory. Pin the ancestor
+        // chain before the reparse check so a swap after the check is refused.
+        _pins = match crate::fsutil::create_dirs_pinned(parent) {
+            Ok(pins) => pins,
+            Err(e) => {
+                eprintln!("cleanup history refused: could not pin the history directory: {e}");
+                return false;
+            }
+        };
         if crate::fsutil::is_reparse_point(parent) || crate::fsutil::is_reparse_point(&p) {
             eprintln!("cleanup history refused: reparse point in the history path");
             return false;
         }
-        let _ = fs::create_dir_all(parent);
     }
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
     if let Ok(meta) = fs::metadata(&p) {
@@ -140,15 +148,28 @@ pub fn append(
         }
     }
     use std::io::Write;
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&p) {
+    let mut opts = fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the link itself, never its target; deny delete/rename while the
+        // handle is open so the path cannot be swapped between write and ACL.
+        // FILE_SHARE_READ|WRITE lets the ACL call open the same file for
+        // WRITE_DAC; delete sharing stays off.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        opts.share_mode(0x0000_0003); // FILE_SHARE_READ | FILE_SHARE_WRITE
+    }
+    if let Ok(mut f) = opts.open(&p) {
         // A failed write is a lost history row — report it, never claim success.
         let wrote = writeln!(f, "{line}").is_ok();
-        drop(f);
         if wrote {
             if let Err(e) = crate::backup::secure_private_path(&p) {
                 eprintln!("cleanup history written but not made private: {e}");
             }
         }
+        drop(f);
         return wrote;
     }
     false

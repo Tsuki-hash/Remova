@@ -83,9 +83,22 @@ pub fn build_uninstall_command(
 }
 
 /// Only absolute images may be launched. A bare `unins000.exe /S` is resolved
-/// through the process CWD/PATH and can be hijacked by a local user.
+/// through the process CWD/PATH and can be hijacked by a local user, so bare
+/// names are first pinned to System32. Unknown bare names still become an
+/// absolute (usually nonexistent) System32 path instead of a PATH lookup.
+fn resolve_uninstall_exe(exe: &str) -> String {
+    if uninstall_exe_is_absolute(exe) {
+        exe.to_string()
+    } else {
+        crate::regops::sys_tool(exe)
+    }
+}
+
 fn uninstall_exe_is_absolute(exe: &str) -> bool {
-    std::path::Path::new(exe).is_absolute()
+    let absolute = std::path::Path::new(exe).is_absolute();
+    // A UNC/device path can run a remote image and trigger an outbound SMB
+    // authentication. Only drive-letter absolute paths are accepted.
+    absolute && !exe.starts_with(r"\\") && !exe.starts_with("//")
 }
 
 /// `CommandLineToArgvW`-compatible splitting: honours doubled quotes (`""` → one
@@ -210,7 +223,7 @@ pub fn run_official_uninstall(app: &crate::apps::InstalledApp) -> OfficialUninst
     if super::reboot::any_pending() {
         return pending_result();
     }
-    run_official_uninstall_locked(app)
+    run_official_uninstall_locked(app, crate::sysops::is_elevated_for_gate())
 }
 
 /// Apply the reboot gate before any destructive official-uninstall work. The
@@ -226,11 +239,18 @@ fn with_no_reboot_pending<T>(work: impl FnOnce() -> T, pending: T) -> T {
 /// Internal path for full cleanup, which already owns CLEANUP_LOCK.
 pub(crate) fn run_official_uninstall_locked(
     app: &crate::apps::InstalledApp,
+    elevated: bool,
 ) -> OfficialUninstallResult {
-    with_no_reboot_pending(|| run_official_uninstall_unchecked(app), pending_result())
+    with_no_reboot_pending(
+        || run_official_uninstall_unchecked(app, elevated),
+        pending_result(),
+    )
 }
 
-fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> OfficialUninstallResult {
+fn run_official_uninstall_unchecked(
+    app: &crate::apps::InstalledApp,
+    elevated: bool,
+) -> OfficialUninstallResult {
     if app.uninstall_string.trim().is_empty() && app.quiet_uninstall_string.trim().is_empty() {
         return OfficialUninstallResult {
             ok: false,
@@ -263,8 +283,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
     // elevated Remova would execute an arbitrary user-controlled image as
     // administrator; require a non-elevated launch for HKCU entries. The
     // decision uses the recorded scan source, never the client-supplied field.
-    if crate::sysops::is_elevated_for_gate() && scan_source.to_ascii_uppercase().starts_with("HKCU")
-    {
+    if elevated && scan_source.to_ascii_uppercase().starts_with("HKCU") {
         return OfficialUninstallResult {
             ok: false,
             message: "elevated HKCU uninstall refused".into(),
@@ -281,7 +300,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
     match cmd {
         Some(argv) if !argv.is_empty() => {
             let mut parts = argv.iter();
-            let exe = parts.next().unwrap().clone();
+            let exe = resolve_uninstall_exe(&parts.next().unwrap().clone());
             if !uninstall_exe_is_absolute(&exe) {
                 // A relative image would be resolved against the process CWD /
                 // PATH, which a local user can influence. MSI/Store paths are
@@ -406,13 +425,55 @@ mod tests {
     }
 
     #[test]
+    fn elevated_hkcu_uninstall_is_refused_before_spawn() {
+        let _g = crate::apps::trust_test_support::guard();
+        let app = crate::apps::InstalledApp {
+            name: "PerUserUninstall".into(),
+            publisher: "Vendor".into(),
+            version: "1".into(),
+            install_location: r"C:\Users\demo\AppData\Local\PerUserUninstall".into(),
+            uninstall_string: r"C:\Users\demo\AppData\Local\PerUserUninstall\unins000.exe".into(),
+            quiet_uninstall_string: String::new(),
+            source: "HKCU".into(),
+            registry_key: r"HKCU\SOFTWARE\PerUserUninstall".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
+        let result = super::run_official_uninstall_unchecked(&app, true);
+        assert!(!result.ok);
+        assert!(result.message.contains("elevated HKCU"));
+        assert!(result.had_command);
+    }
+
+    #[test]
     fn relative_uninstall_images_are_refused() {
         assert!(uninstall_exe_is_absolute(
             r"C:\Program Files\App\unins000.exe"
         ));
-        assert!(uninstall_exe_is_absolute(r"\\server\share\unins000.exe"));
+        assert!(!uninstall_exe_is_absolute(r"\\server\share\unins000.exe"));
+        assert!(!uninstall_exe_is_absolute(
+            r"\\?\C:\Program Files\App\unins000.exe"
+        ));
         assert!(!uninstall_exe_is_absolute("unins000.exe"));
         assert!(!uninstall_exe_is_absolute(r"bin\unins000.exe"));
+    }
+
+    #[test]
+    fn bare_system_tools_are_pinned_to_system32() {
+        let resolved = resolve_uninstall_exe("rundll32.exe");
+        assert!(
+            uninstall_exe_is_absolute(&resolved),
+            "a bare system tool must become an absolute System32 path: {resolved}"
+        );
+        assert!(resolved
+            .to_ascii_lowercase()
+            .contains(r"\system32\rundll32.exe"));
+        // Unknown bare names are pinned too; they must not fall back to CWD/PATH.
+        let unknown = resolve_uninstall_exe("vendor-uninstaller.exe");
+        assert!(uninstall_exe_is_absolute(&unknown));
+        assert!(unknown.to_ascii_lowercase().contains(r"\system32\"));
     }
 
     #[test]

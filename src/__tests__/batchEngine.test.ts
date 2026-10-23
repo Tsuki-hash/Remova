@@ -27,6 +27,7 @@ vi.mock("../i18n", () => ({
     backendBackupFailed: "backup stopped cleanup",
     backendDetailUnavailable: "diagnostic unavailable",
     backendRebootInitiated: "reboot pending",
+    rebootGateNotPersisted: "gate not persisted",
     uninstallFail: "uninstall failed",
   }),
 }));
@@ -332,6 +333,23 @@ describe("runBatchCleanup", () => {
     const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
     expect(last?.status).toBe("skipped");
     expect(fullCleanup).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a reboot-gate persistence warning in the reboot row", async () => {
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    fullCleanup.mockResolvedValue(
+      report({
+        uninstall_ok: true,
+        reboot_pending: true,
+        reboot_gate_persisted: false,
+        uninstall_message: "uninstaller finished (reboot required): msiexec.exe",
+      }),
+    );
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("reboot");
+    expect(last?.detail).toContain("gate not persisted");
   });
 
   it("releases the reserved scan slot when analyze is refused before it starts", async () => {

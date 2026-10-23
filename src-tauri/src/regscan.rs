@@ -370,7 +370,9 @@ mod default_cache {
     use std::time::{Duration, Instant};
 
     const TTL: Duration = Duration::from_secs(5 * 60);
-    const MAX_ENTRIES: usize = 25_000;
+    /// CLSID-rich machines can exceed 20k leaves; keep enough headroom that a
+    /// full table is rare, but never grow without bound.
+    const MAX_ENTRIES: usize = 40_000;
 
     struct Entry {
         value: String,
@@ -396,11 +398,14 @@ mod default_cache {
 
     pub(super) fn put(key: &str, value: &str) {
         let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
-        entries.retain(|_, entry| entry.at.elapsed() < TTL);
+        // Never sweep per insert: the CLSID loop inserts ~20k entries and an
+        // O(n) retain on each one made the "optimization" quadratic. Sweep only
+        // at the cap, and reject new keys if the table is still full.
         if !entries.contains_key(key) && entries.len() >= MAX_ENTRIES {
-            // Bounded memory matters more than a perfect hit rate; rebuilding
-            // the index costs one pass, not an unbounded map.
-            entries.clear();
+            entries.retain(|_, entry| entry.at.elapsed() < TTL);
+            if entries.len() >= MAX_ENTRIES {
+                return;
+            }
         }
         entries.insert(
             key.to_string(),
@@ -428,10 +433,18 @@ mod default_cache {
     }
 }
 
-/// Drop every cached enumeration. Called after a destructive operation so the
+/// Drop cached subkey enumerations. Called after a destructive operation so the
 /// next scan reads the registry rather than a list captured before the delete.
+/// The default-value cache is intentionally *not* cleared here: a batch runs
+/// analyze → cleanup → next analyze, and refilling ~20k descriptions per app
+/// would erase the reuse this cache exists for. A new inventory clears both.
 pub fn invalidate_subkey_cache() {
     subkey_cache::clear();
+}
+
+/// Drop the CLSID default-value cache. Called when a new app inventory makes
+/// the previous generation's descriptions obsolete.
+pub fn invalidate_default_value_cache() {
     default_cache::clear();
 }
 
@@ -991,7 +1004,14 @@ mod completeness_tests {
         );
         super::default_cache::put_expired("cls-old", "old");
         assert!(super::default_cache::get("cls-old").is_none());
+        // A cleanup clears subkey enumerations but must keep the CLSID values
+        // reusable across the batch.
         super::invalidate_subkey_cache();
+        assert_eq!(
+            super::default_cache::get("cls-key").as_deref(),
+            Some("description")
+        );
+        super::invalidate_default_value_cache();
         assert!(super::default_cache::get("cls-key").is_none());
     }
 

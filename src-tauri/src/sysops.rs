@@ -96,6 +96,30 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
     }
 }
 
+/// Resolve a Windows Known Folder. Environment variables such as
+/// `LOCALAPPDATA`/`ProgramFiles` can be rewritten by a medium-integrity process
+/// in HKCU\Environment; scan roots that later authorize deletes must not be
+/// taken from those values.
+#[cfg(windows)]
+pub fn known_folder(id: &windows::core::GUID) -> Option<std::path::PathBuf> {
+    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    unsafe {
+        let raw = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
+        let text = raw.to_string().ok();
+        windows::Win32::System::Com::CoTaskMemFree(Some(raw.0.cast()));
+        let text = text?;
+        if text.is_empty() {
+            return None;
+        }
+        Some(std::path::PathBuf::from(text))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn known_folder(_id: &std::ffi::c_void) -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Gate decision for destructive per-user work: only a confirmed
 /// non-elevated token allows it. An unreadable token must fail closed.
 pub(crate) fn elevation_gate(result: Result<bool, String>) -> bool {

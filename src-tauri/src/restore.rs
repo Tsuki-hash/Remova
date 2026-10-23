@@ -85,6 +85,12 @@ fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
     })
 }
 
+fn restore_order(map: &std::collections::BTreeMap<String, String>) -> Vec<(&String, &String)> {
+    let mut ordered: Vec<_> = map.iter().collect();
+    ordered.sort_by_cached_key(|(_, original)| original.to_ascii_lowercase());
+    ordered
+}
+
 pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     // Restore is a destructive transaction too: it must not interleave with a
     // cleanup, and a pending 1641 reboot must finish before files are written
@@ -115,7 +121,10 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     let map_path = session.join("files").join("path_map.json");
     let files_root = session.join("files");
     if map_path.exists() {
-        for (rel, original) in &map {
+        // The backup map is keyed by a hash-shaped name, so its natural order
+        // scatters files from the same destination directory. Sort by the
+        // original path first so the parent-pin reuse below actually hits.
+        for (rel, original) in restore_order(&map) {
             if crate::executor::cleanup_cancelled() {
                 messages.push("restore cancelled".into());
                 break;
@@ -127,7 +136,7 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 ))
                 .to_ipc());
             }
-            let src = files_root.join(rel);
+            let src = files_root.join(rel.as_str());
             // Defense-in-depth: joined source must stay under files_root.
             if !src.starts_with(&files_root) {
                 return Err(crate::error::restore_err(format!(
@@ -959,6 +968,22 @@ mod tests {
         assert!(!super::is_safe_map_rel("a/b"));
         assert!(!super::is_safe_map_rel(r"a\b"));
         assert!(!super::is_safe_map_rel(r"C:\Windows\evil"));
+    }
+
+    #[test]
+    fn restore_order_groups_files_by_destination_parent() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("hash-z".to_string(), r"C:\App\z.bin".to_string());
+        map.insert("hash-a".to_string(), r"D:\Other\a.bin".to_string());
+        map.insert("hash-b".to_string(), r"C:\App\b.bin".to_string());
+        let ordered: Vec<&str> = super::restore_order(&map)
+            .into_iter()
+            .map(|(_, original)| original.as_str())
+            .collect();
+        assert_eq!(
+            ordered,
+            vec![r"C:\App\b.bin", r"C:\App\z.bin", r"D:\Other\a.bin"]
+        );
     }
 
     #[test]

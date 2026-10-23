@@ -371,7 +371,8 @@ export function MorePage({
         {rebootGate === "corrupt" && (
           <div
             style={{ ...css.card, borderColor: "var(--warn-ink)", marginTop: 10 }}
-            role="status"
+            role="region"
+            aria-label={L.rebootGateCorruptTitle}
           >
             <strong>{L.rebootGateCorruptTitle}</strong>
             <p style={css.muted}>{L.rebootGateCorruptHint}</p>
