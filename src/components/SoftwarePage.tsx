@@ -35,7 +35,31 @@ import { BatchActionBar } from "./BatchActionBar";
 /// Report identity -> the InstalledApp it was opened for. Module-level so the
 /// mapping survives navigating away from the software page and back, which is
 /// exactly when a report outlives its app's presence in the refreshed list.
-const reportAppCache = new Map<string, InstalledApp>();
+/// Bounded and time-limited: a long session cannot retain every report's app,
+/// and a stale snapshot cannot answer for a much newer report.
+const REPORT_APP_CACHE_MAX = 64;
+const REPORT_APP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const reportAppCache = new Map<string, { app: InstalledApp; at: number }>();
+
+function cachedReportApp(identity: string): InstalledApp | undefined {
+  const entry = reportAppCache.get(identity);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > REPORT_APP_CACHE_TTL_MS) {
+    reportAppCache.delete(identity);
+    return undefined;
+  }
+  return entry.app;
+}
+
+function cacheReportApp(identity: string, app: InstalledApp) {
+  reportAppCache.delete(identity);
+  reportAppCache.set(identity, { app, at: Date.now() });
+  while (reportAppCache.size > REPORT_APP_CACHE_MAX) {
+    const oldest = reportAppCache.keys().next().value;
+    if (oldest === undefined) break;
+    reportAppCache.delete(oldest);
+  }
+}
 
 export type SoftwarePageProps = {
  // list
@@ -100,6 +124,7 @@ export type SoftwarePageProps = {
   onBack: () => void;
   onDryRun: () => void;
   onCleanup: () => void;
+  onCancelCleanup: () => void;
   onAiExplain: () => void;
   onRegenerateAiReport: () => void;
 
@@ -159,10 +184,10 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const reportIdentity = report ? `${report.app_name}\u0000${report.app_key ?? ""}` : "";
   const reportApp =
     liveReportApp ??
-    (report ? reportAppCache.get(reportIdentity) : undefined);
+    (report ? cachedReportApp(reportIdentity) : undefined);
   useEffect(() => {
     if (liveReportApp && reportIdentity) {
-      reportAppCache.set(reportIdentity, liveReportApp);
+      cacheReportApp(reportIdentity, liveReportApp);
     }
   }, [liveReportApp, reportIdentity]);
   // A completed official uninstall may set the "uninstall finished" state when
@@ -240,6 +265,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onUseOfficial={p.setUseOfficial}
           onDryRun={p.onDryRun}
           onCleanup={p.onCleanup}
+          onCancelCleanup={p.onCancelCleanup}
           onAiExplain={p.onAiExplain}
           onOpenSettings={p.onOpenSettings}
           aiNote={p.aiSummaryNote}

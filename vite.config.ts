@@ -60,6 +60,17 @@ export default defineConfig({
           functions: 85,
           lines: 85,
         },
+        // R46 P2-09: SoftwarePage was included in the report but had no
+        // per-file floor, so its destructive action wiring could regress to 0%
+        // while the global average stayed green. This floor is intentionally
+        // below today's measured 36.5/52.1/16/39.3 and should be raised as the
+        // real-component interaction suite grows.
+        "src/components/SoftwarePage.tsx": {
+          statements: 34,
+          branches: 50,
+          functions: 15,
+          lines: 38,
+        },
       },
     },
   },

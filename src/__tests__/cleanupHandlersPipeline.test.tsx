@@ -21,6 +21,7 @@ vi.mock("../lib/api", () => ({
     aiRiskBrief: vi.fn(),
     verifyLeftovers: vi.fn(async () => []),
     dryRun: vi.fn(),
+    cancelCleanup: vi.fn(async () => {}),
   },
 }));
 
@@ -526,6 +527,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     act(() => {
       result.current.cancelBatch();
     });
+    expect(api.cancelCleanup).toHaveBeenCalledTimes(1);
     expect(toast.info).toHaveBeenCalledWith(t().batchCancelHint);
   });
 });

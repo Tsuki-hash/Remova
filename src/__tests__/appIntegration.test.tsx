@@ -31,6 +31,7 @@ const pages = vi.hoisted(() => ({
 
 vi.mock("../lib/api", () => ({ api: {
   ...native,
+  setTrayLanguage: vi.fn(async () => {}),
   beginAssociationScan: vi.fn(async () => 1),
   cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null),

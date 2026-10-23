@@ -58,6 +58,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     raw === "system reboot pending; residual cleanup postponed"
   )
     return L.backendRebootInitiated;
+  if (raw === "system reboot pending; uninstall skipped") return L.backendRebootBlocked;
+  if (raw === "cleanup cancelled") return L.batchCancelled;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");

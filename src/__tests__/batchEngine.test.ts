@@ -300,6 +300,37 @@ describe("runBatchCleanup", () => {
     expect(lastResults.length).toBeLessThanOrEqual(1);
   });
 
+  it("does not mark a global pending gate as officially uninstalled", async () => {
+    analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
+    fullCleanup.mockResolvedValue(
+      report({
+        deleted: 0,
+        failed: 0,
+        aborted: true,
+        uninstall_ok: false,
+        reboot_pending: true,
+        uninstall_message: "system reboot pending; uninstall skipped",
+      }),
+    );
+    const cb = makeCb();
+    await runBatchCleanup([app("A")], true, keyOf, cb);
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("reboot");
+    expect(last?.officialDone).toBe(false);
+  });
+
+  it("does not mark a cancelled in-flight analysis as a failed row", async () => {
+    const cb = makeCb();
+    analyze.mockImplementation(async () => {
+      cb.cancelRef.current = true;
+      throw new Error("scan:cancelled");
+    });
+    await runBatchCleanup([app("Cancelled")], true, keyOf, cb);
+    const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
+    expect(last?.status).toBe("skipped");
+    expect(fullCleanup).not.toHaveBeenCalled();
+  });
+
   it("keeps the current app's contract: cancel stops the queue, not the in-flight app", async () => {
     // The UI promises "stops after the current app finishes", so a cancel that
     // arrives while the current app is being analyzed must still let that app

@@ -234,7 +234,11 @@ export function useAnalyzeFlow({
         if (!r.had_command) {
           toast.info(strings.uninstallNoCmd);
         } else if (r.ok) {
-          toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
+          if (rebootPending && r.reboot_gate_persisted === false) {
+            toast.error(strings.backendRebootGateNotPersisted);
+          } else {
+            toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
+          }
         } else {
           uninstallFailToast(r.message, strings);
         }
@@ -328,6 +332,9 @@ const openOfficialOnly = useCallback(
       });
       if (!ok) return;
       if (busyRef.current) return;
+      // A previous stage timer must not fire during this run and flip the bar
+      // back to idle before the official uninstaller finishes.
+      clearStageTimer();
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
@@ -336,8 +343,13 @@ const openOfficialOnly = useCallback(
         const r = await api.officialUninstall(app);
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         if (!r.had_command) toast.info(strings.uninstallNoCmd);
-        else if (r.ok) toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
-        else uninstallFailToast(r.message, strings);
+        else if (r.ok) {
+          if (rebootPending && r.reboot_gate_persisted === false) {
+            toast.error(strings.backendRebootGateNotPersisted);
+          } else {
+            toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
+          }
+        } else uninstallFailToast(r.message, strings);
         if (r.had_command && r.ok) {
           setReport(null);
           setScan(null);

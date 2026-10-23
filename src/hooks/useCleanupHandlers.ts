@@ -469,8 +469,13 @@ export function useCleanupHandlers({
 
   const cancelBatch = useCallback(() => {
     batchCancelRef.current = true;
+    void api.cancelCleanup().catch(() => {});
     toast.info(L.batchCancelHint);
   }, [L]);
+
+  const cancelCleanup = useCallback(() => {
+    void api.cancelCleanup().catch(() => {});
+  }, []);
 
   const retryFailedBatch = useCallback(() => {
     const failed = batchResults.filter((r) => r.status === "failed");
@@ -496,6 +501,7 @@ export function useCleanupHandlers({
     handleCleanupConfirm,
     batchCleanup,
     cancelBatch,
+    cancelCleanup,
     retryFailedBatch,
   };
 }

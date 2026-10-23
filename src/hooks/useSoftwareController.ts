@@ -63,6 +63,7 @@ export type SoftwareControllerInput = {
   dryRunning: boolean;
   forceBusy: boolean;
   batching: boolean;
+  cancelCleanup: () => void;
   error: string | null;
   report: CleanupReport | FullCleanupReport | null;
   aiReportBusy: boolean;
@@ -198,6 +199,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         onBack: input.closePreview,
         onDryRun: () => void input.dryRun(),
         onCleanup: () => void input.handleCleanupConfirm(),
+        onCancelCleanup: input.cancelCleanup,
         onAiExplain: () => void input.runAiExplain(),
         onRegenerateAiReport: () => void input.runAiReport({ force: true }),
         error: input.error,
@@ -318,6 +320,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.setShowBatchSummary,
       input.retryFailedBatch,
       input.cancelBatch,
+      input.cancelCleanup,
       input.kindFilter,
       input.setKindFilter,
       input.riskFilter,

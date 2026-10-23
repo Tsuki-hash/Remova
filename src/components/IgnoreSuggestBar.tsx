@@ -35,7 +35,17 @@ export function IgnoreSuggestBar({
     >
       <strong>{L.ignoreSuggestTitle}</strong>
       <span style={{ color: "var(--muted)", flex: "1 1 180px" }}>
-        {suggestions.map((s) => `${s.value} (${s.reason})`).join("; ")}
+        {suggestions
+          .map((s) => {
+            const reason =
+              s.reason === "shared_root"
+                ? L.ignoreSuggestSharedRoot
+                : s.reason === "publisher_shared_paths"
+                  ? L.ignoreSuggestPublisher
+                  : s.reason;
+            return `${s.value} (${reason})`;
+          })
+          .join("; ")}
       </span>
       <button
         style={css.btnSm}

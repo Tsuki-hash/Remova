@@ -75,7 +75,8 @@ export async function runBatchCleanup(
             detail: formatError(e, "cleanup"),
             officialDone,
           });
-          cb.onResults([...results]);
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
           continue;
         }
         const cancelPoll = setInterval(() => {
@@ -103,22 +104,36 @@ export async function runBatchCleanup(
         // A 1641 (or the global pending gate) means the machine is about to
         // restart. Do not start another app's uninstall/delete in this batch.
         if (report.reboot_pending) {
+          const appOfficialDone = runOfficial && report.uninstall_ok;
           results.push({
             key,
             name: app.name,
-            // Not a failure: the app was uninstalled, but the machine must
-            // restart before residual deletion. The summary keeps this out of
-            // the failure count and never offers a retry for it.
+            // Not a failure: either this uninstaller started a reboot, or a
+            // previous one did and this app was blocked before uninstall. The
+            // summary must only mark it "official done" in the first case.
             status: "reboot",
             detail: backendText(report.uninstall_message) || L.backendRebootInitiated,
-            officialDone: true,
+            officialDone: appOfficialDone,
           });
-          cb.onResults([...results]);
-          toast.info(L.backendRebootInitiated);
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
+          toast.info(backendText(report.uninstall_message) || L.backendRebootInitiated);
           break;
         }
         const emptyResidual = report.aborted && !items.length && !runOfficial
           && report.uninstall_message === "no items" && !report.errors.length;
+        if (report.aborted && cb.cancelRef.current) {
+          results.push({
+            key,
+            name: app.name,
+            status: "skipped",
+            detail: backendText(report.uninstall_message) || L.batchCancelled,
+            officialDone,
+          });
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
+          break;
+        }
         if ((report.aborted && !emptyResidual) || (runOfficial && !report.uninstall_ok)) {
  // backup/session abort must not look like success.
           results.push({
@@ -128,13 +143,15 @@ export async function runBatchCleanup(
             detail: backendText(report.uninstall_message) || L.uninstallFail,
             officialDone,
           });
-          cb.onResults([...results]);
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
           continue;
         }
         if (emptyResidual) {
           results.push({ key, name: app.name, status: "skipped", detail: "" });
           okKeys.add(key);
-          cb.onResults([...results]);
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
           continue;
         }
         // F-1: the per-app line states all four counts, not just deleted/failed,
@@ -166,6 +183,18 @@ export async function runBatchCleanup(
           okKeys.add(key);
         }
       } catch (e) {
+        if (cb.cancelRef.current) {
+          results.push({
+            key,
+            name: app.name,
+            status: "skipped",
+            detail: L.batchCancelled,
+            officialDone,
+          });
+          // Results are published once after the queue stops: spreading the
+          // growing array on every app made the UI update quadratic.
+          break;
+        }
         results.push({
           key,
           name: app.name,
@@ -174,8 +203,8 @@ export async function runBatchCleanup(
           officialDone,
         });
       }
-      cb.onResults([...results]);
     }
+    cb.onResults([...results]);
     const cancelled = cb.cancelRef.current;
     toast.info(cancelled ? L.batchCancelled : L.batchDone);
     cb.onDoneKeys([...okKeys]);

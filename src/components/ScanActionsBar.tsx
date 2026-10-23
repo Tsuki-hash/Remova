@@ -20,6 +20,7 @@ export function ScanActionsBar({
   onUseOfficial,
   onDryRun,
   onCleanup,
+  onCancelCleanup,
   onAiExplain,
   onOpenSettings,
   aiNote,
@@ -38,6 +39,7 @@ export function ScanActionsBar({
   onUseOfficial: (v: boolean) => void;
   onDryRun: () => void;
   onCleanup: () => void;
+  onCancelCleanup?: () => void;
   onAiExplain: () => void;
   onOpenSettings?: () => void;
   aiNote?: string | null;
@@ -80,6 +82,16 @@ export function ScanActionsBar({
             >
               {runsOfficial ? L.uninstallAndCleanup : `${L.cleanup} (${plan.count})`}
             </button>
+            {dryRunning && (
+              <button
+                type="button"
+                className="scan-actions-cancel"
+                style={{ ...css.btnGhost, height: 38 }}
+                onClick={onCancelCleanup}
+              >
+                {L.cancelCleanup}
+              </button>
+            )}
           </div>
         </div>
         {scanning && <div className="remova-progress" aria-hidden />}

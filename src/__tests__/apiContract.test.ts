@@ -14,6 +14,8 @@ const COMMAND_KEYS = [
   "analyze",
   "beginAssociationScan",
   "cancelAssociationScan",
+  "cancelCleanup",
+  "setTrayLanguage",
   "associationScanProgress",
   "dryRun",
   "fullCleanup",
@@ -234,6 +236,7 @@ describe("AI request payload contract (CQ-04)", () => {
     const uninstallStart = rust.indexOf("pub struct OfficialUninstallResult");
     const uninstallBody = rust.slice(uninstallStart, rust.indexOf("}", uninstallStart));
     expect(uninstallBody).toContain("pub reboot_initiated:");
+    expect(uninstallBody).toContain("pub reboot_gate_persisted:");
     expect(uninstallBody).not.toContain("skip_serializing");
   });
 });

@@ -95,6 +95,8 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
 
 export const api = {
   onlineUpdateSupported: () => invoke<boolean>("online_update_supported"),
+  setTrayLanguage: (lang: string) => invoke<void>("set_tray_language", { lang }),
+  cancelCleanup: () => invoke<void>("cancel_cleanup"),
   listApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   analyze: (app: InstalledApp, scanId?: number) => invoke<ScanResult>("analyze_associations", { app, scanId }),
   beginAssociationScan: () => invoke<number>("begin_association_scan"),

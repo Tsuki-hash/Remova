@@ -164,6 +164,8 @@ export type OfficialUninstallResult = {
   had_command: boolean;
   /** MSI 1641: the uninstaller already initiated a restart. */
   reboot_initiated?: boolean;
+  /** False when the 1641 gate could not be persisted across a relaunch. */
+  reboot_gate_persisted?: boolean;
 };
 
 export type AiConfigView = {

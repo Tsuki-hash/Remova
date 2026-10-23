@@ -177,4 +177,83 @@ describe("SoftwarePage report identity", () => {
     // rescan action must not be offered from another report's cached identity.
     expect(screen.queryByText("重新扫描该应用")).toBeNull();
   });
+
+  it("wires the real cleanup action for a selected scan row", () => {
+    const item = {
+      path: "C:\\Apps\\Demo\\leftover.bin",
+      kind: "file" as const,
+      score: 90,
+      confidence: "confirmed" as const,
+      risk: "low" as const,
+      reason: "leftover",
+      evidence: [],
+      shared: false,
+      service_bound: false,
+      user_data: false,
+      user_library: false,
+      size_kb: 1,
+      size_capped: false,
+      bucket: null,
+    };
+    const scan = {
+      app_name: "Demo",
+      app_key: appKey(demo),
+      items: [item],
+      degraded: [],
+    };
+    const onCleanup = vi.fn();
+    const { container } = render(
+      <SoftwarePage
+        {...props({
+          scan,
+          selectedPaths: new Set([item.path]),
+          onCleanup,
+        })}
+      />,
+    );
+    const button = container.querySelector(".scan-actions-cleanup");
+    expect(button).toBeTruthy();
+    (button as HTMLButtonElement).click();
+    expect(onCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a cancel action while a cleanup is in progress", () => {
+    const item = {
+      path: "C:\\Apps\\Demo\\leftover.bin",
+      kind: "file" as const,
+      score: 90,
+      confidence: "confirmed" as const,
+      risk: "low" as const,
+      reason: "leftover",
+      evidence: [],
+      shared: false,
+      service_bound: false,
+      user_data: false,
+      user_library: false,
+      size_kb: 1,
+      size_capped: false,
+      bucket: null,
+    };
+    const scan = {
+      app_name: "Demo",
+      app_key: appKey(demo),
+      items: [item],
+      degraded: [],
+    };
+    const onCancelCleanup = vi.fn();
+    const { container } = render(
+      <SoftwarePage
+        {...props({
+          scan,
+          selectedPaths: new Set([item.path]),
+          dryRunning: true,
+          onCancelCleanup,
+        })}
+      />,
+    );
+    const button = container.querySelector(".scan-actions-cancel");
+    expect(button).toBeTruthy();
+    (button as HTMLButtonElement).click();
+    expect(onCancelCleanup).toHaveBeenCalledTimes(1);
+  });
 });

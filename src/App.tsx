@@ -1,7 +1,7 @@
 import { api } from "./lib/api";
 import { useBackupSessionRequest } from "./lib/backupSessionNavigation";
 import type { CleanupReport, FullCleanupReport, InstalledApp } from "./types";
-import { loadLang, t } from "./i18n";
+import { loadLang, currentLang, t } from "./i18n";
 import { cssStyles as css } from "./styles";
 import { formatError } from "./lib/format";
 import { applyTheme } from "./lib/theme";
@@ -188,6 +188,14 @@ export default function App() {
     setVerifyRows(null);
     setAiReportNote(null);
   }, [report, setVerifyRows, setAiReportNote]);
+  // Generated AI prose is in the language it was requested in. Switching the
+  // UI language must not leave the previous language's notes on screen until
+  // an unrelated rescan; clear them and let the next request regenerate.
+  useEffect(() => {
+    setAiNotes({});
+    setAiRisk(null);
+    setAiReportNote(null);
+  }, [langVer, setAiNotes, setAiRisk, setAiReportNote]);
 
   const setCategory = useCallback(
     (id: "all" | "desktop" | "store" | "large" | "recent") => {
@@ -364,6 +372,7 @@ export default function App() {
     handleCleanupConfirm,
     batchCleanup,
     cancelBatch,
+    cancelCleanup,
     retryFailedBatch,
   } = useCleanupHandlers({
     L,
@@ -475,6 +484,11 @@ export default function App() {
     setLangVer((v) => v + 1);
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Tray labels are native menu items created before the webview; rebuild them
+  // when the saved/selected UI language changes.
+  useEffect(() => {
+    void api.setTrayLanguage(currentLang()).catch(() => {});
+  }, [langVer]);
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
@@ -676,6 +690,7 @@ export default function App() {
     setShowBatchSummary,
     retryFailedBatch,
     cancelBatch,
+    cancelCleanup,
     kindFilter,
     setKindFilter,
     riskFilter,
