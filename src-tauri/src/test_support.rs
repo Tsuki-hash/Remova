@@ -390,15 +390,19 @@ mod tests {
     /// test and silent process-wide mutation, so it has to be proven to fire.
     #[test]
     fn env_var_without_the_lock_is_rejected() {
+        // A name no other test touches: this test cannot hold the lock (that is
+        // the point), so a shared name would race with the locked fixtures that
+        // set the same variable concurrently.
+        const PROBE: &str = "REMOVA_TEST_SUPPORT_PROBE_UNLOCKED";
         let outcome = std::panic::catch_unwind(|| {
-            let _override = EnvVar::set("REMOVA_TEST_SUPPORT_PROBE", "unlocked");
+            let _override = EnvVar::set(PROBE, "unlocked");
         });
         assert!(
             outcome.is_err(),
             "mutating the environment with no EnvLock held must be rejected"
         );
         // The rejected override must not have been applied.
-        assert!(std::env::var_os("REMOVA_TEST_SUPPORT_PROBE").is_none());
+        assert!(std::env::var_os(PROBE).is_none());
     }
 
     /// The nested-acquire guard in `EnvLock::new` is the only thing between a
