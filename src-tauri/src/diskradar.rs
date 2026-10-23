@@ -255,14 +255,23 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
     // One budget for the whole call, shared by every well-known root.
     let mut budget = RADAR_CALL_BUDGET;
     if letter == sys {
-        for root in system_drive_roots() {
+        let roots: Vec<PathBuf> = system_drive_roots()
+            .into_iter()
+            .filter(|root| root.exists())
+            .collect();
+        let mut remaining = roots.len();
+        for root in roots {
             if crate::scan_task::cancelled() {
                 return out;
             }
-            if root.exists() {
-                let mut rows = child_rows(&root, &mut budget);
-                out.append(&mut rows);
-            }
+            // Give every remaining root a fair share; an unused share returns
+            // to the pool instead of letting the first root consume it all.
+            let share = budget / (remaining.max(1) as u64);
+            remaining = remaining.saturating_sub(1);
+            let mut root_budget = share;
+            let mut rows = child_rows(&root, &mut root_budget);
+            budget = budget.saturating_sub(share.saturating_sub(root_budget));
+            out.append(&mut rows);
         }
         out.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
         out.truncate(DISK_RADAR_TOP_N * 2);

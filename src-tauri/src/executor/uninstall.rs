@@ -300,6 +300,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                     let timeout =
                         std::time::Duration::from_secs(crate::constants::UNINSTALL_TIMEOUT_SECS);
                     let start = std::time::Instant::now();
+                    let mut cancel_noted = false;
                     loop {
                         match child.try_wait() {
                             Ok(Some(status)) => {
@@ -322,6 +323,16 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                                 };
                             }
                             Ok(None) => {
+                                // Cancellation never kills a running vendor
+                                // uninstaller: half-removed products are worse
+                                // than a bounded wait. Record it so the caller's
+                                // post-wait checkpoint aborts residual deletion.
+                                if !cancel_noted && super::cleanup_cancelled() {
+                                    cancel_noted = true;
+                                    eprintln!(
+                                        "cleanup cancel requested; waiting for the vendor uninstaller to exit without killing it"
+                                    );
+                                }
                                 if start.elapsed() >= timeout {
                                     let _ = child.kill();
                                     let _ = child.wait();
@@ -507,7 +518,7 @@ mod tests {
             display_icon: String::new(),
         };
         crate::apps::remember_uninstall_commands(std::slice::from_ref(&scanned));
-        assert!(crate::apps::is_trusted_uninstall_app(&scanned));
+        assert!(crate::apps::trusted_scan_source(&scanned).is_some());
 
         // Same command bytes, forged identity: the trust record is keyed by the
         // scanned identity, so this must no longer resolve.
@@ -517,10 +528,9 @@ mod tests {
             ..scanned.clone()
         };
         assert!(
-            !crate::apps::is_trusted_uninstall_app(&forged),
+            crate::apps::trusted_scan_source(&forged).is_none(),
             "a forged source/registry key must not inherit trust"
         );
-        assert!(crate::apps::trusted_scan_source(&forged).is_none());
 
         // The recorded identity still resolves, and reports its scanned source
         // (which is what the elevated-HKCU decision now consumes).

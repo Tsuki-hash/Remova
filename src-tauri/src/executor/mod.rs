@@ -163,6 +163,10 @@ pub struct FullCleanupReport {
     /// postponed until the machine restarts.
     #[serde(default)]
     pub reboot_pending: bool,
+    /// False when the 1641 gate could not be written to disk, so a relaunch
+    /// would lose it. The batch summary must not hide this warning.
+    #[serde(default = "default_true")]
+    pub reboot_gate_persisted: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,
     pub errors: Vec<String>,
@@ -195,6 +199,7 @@ mod tests {
             delayed_kb: 7,
             aborted: true,
             reboot_pending: true,
+            reboot_gate_persisted: true,
             restore_point_ok: false,
             restore_point_msg: "msg".into(),
             errors: vec!["e".into()],
@@ -209,6 +214,7 @@ mod tests {
         let obj = json.as_object().unwrap();
         // Presence and type of every field the frontend consumes.
         assert_eq!(obj["reboot_pending"], serde_json::json!(true));
+        assert_eq!(obj["reboot_gate_persisted"], serde_json::json!(true));
         assert_eq!(obj["aborted"], serde_json::json!(true));
         assert_eq!(obj["uninstall_ok"], serde_json::json!(true));
         assert_eq!(obj["uninstall_message"], serde_json::json!("ok"));

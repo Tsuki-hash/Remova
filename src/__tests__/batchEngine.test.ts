@@ -4,14 +4,14 @@ import type { InstalledApp, ScanResult, FullCleanupReport, CleanupItem } from ".
 const analyze = vi.fn();
 const fullCleanup = vi.fn();
 const beginScan = vi.fn(async () => 7);
-const cancelScan = vi.fn(async () => true);
+const cancelScan = vi.fn(async (_id: number) => true);
 
 vi.mock("../lib/api", () => ({
   api: {
     analyze: (...a: unknown[]) => analyze(...a),
     fullCleanup: (...a: unknown[]) => fullCleanup(...a),
     beginAssociationScan: () => beginScan(),
-    cancelAssociationScan: (...a: unknown[]) => cancelScan(...a),
+    cancelAssociationScan: (id: number) => cancelScan(id),
   },
 }));
 

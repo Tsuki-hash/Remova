@@ -186,7 +186,7 @@ pub(super) fn scan_shell_extensions(
                 if crate::scan_task::cancelled() {
                     break;
                 }
-                let def = crate::regscan::read_string_default(&format!(r"{root}\{leaf}"))
+                let def = crate::regscan::read_string_default_cached(&format!(r"{root}\{leaf}"))
                     .unwrap_or_default();
                 let name_hit = name_slugs
                     .iter()

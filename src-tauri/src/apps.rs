@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Uninstall command fingerprints from the latest server-side app scan (blocks IPC-forged RCE).
 /// Keyed by the stable scan identity, so the record also pins the source
@@ -15,10 +16,16 @@ static UNINSTALL_TRUST: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new
 /// client's identity here and use the server copy, never the client fields.
 static SCANNED_CURRENT: OnceLock<Mutex<HashMap<String, InstalledApp>>> = OnceLock::new();
 /// Recently scanned apps survive one refresh so a post-uninstall analyze can
-/// still resolve the app that just left the inventory. Bounded by generation.
-static SCANNED_RECENT: OnceLock<Mutex<HashMap<String, (u64, InstalledApp)>>> = OnceLock::new();
+/// still resolve the app that just left the inventory. Bounded by generation,
+/// capacity and a wall-clock TTL.
+type RecentApp = (u64, Instant, InstalledApp);
+type RecentApps = HashMap<String, RecentApp>;
+static SCANNED_RECENT: OnceLock<Mutex<RecentApps>> = OnceLock::new();
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 const MAX_RECENT_APPS: usize = 8192;
+/// A post-uninstall analysis normally follows within seconds. Keeping an
+/// identity for an hour covers slow sessions without pinning it forever.
+const RECENT_APP_TTL: Duration = Duration::from_secs(60 * 60);
 
 fn uninstall_trust() -> &'static Mutex<HashMap<String, String>> {
     UNINSTALL_TRUST.get_or_init(|| Mutex::new(HashMap::new()))
@@ -28,7 +35,7 @@ fn scanned_current() -> &'static Mutex<HashMap<String, InstalledApp>> {
     SCANNED_CURRENT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn scanned_recent() -> &'static Mutex<HashMap<String, (u64, InstalledApp)>> {
+fn scanned_recent() -> &'static Mutex<RecentApps> {
     SCANNED_RECENT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -63,7 +70,7 @@ fn remember_apps_exact(apps: &[InstalledApp]) {
     let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
     let recent: HashMap<_, _> = apps
         .iter()
-        .map(|a| (app_key(a), (generation, a.clone())))
+        .map(|a| (app_key(a), (generation, Instant::now(), a.clone())))
         .collect();
     if let Ok(mut g) = scanned_current().lock() {
         *g = current;
@@ -77,6 +84,10 @@ fn remember_apps_exact(apps: &[InstalledApp]) {
 /// authoritative now); recent is merged so post-uninstall analysis still works
 /// after the inventory refresh removed the app.
 pub fn remember_scan(apps: &[InstalledApp]) {
+    // A new inventory invalidates every enumeration the previous generation
+    // could have cached, including the CLSID default-value index.
+    crate::regscan::invalidate_subkey_cache();
+    crate::scanner::reg_scans::invalidate_service_snapshot();
     rebuild_trust(apps);
     let generation = next_generation();
     let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
@@ -84,12 +95,15 @@ pub fn remember_scan(apps: &[InstalledApp]) {
         *g = current;
     }
     if let Ok(mut g) = scanned_recent().lock() {
+        g.retain(|_, (_, at, _)| at.elapsed() < RECENT_APP_TTL);
         for a in apps {
-            g.insert(app_key(a), (generation, a.clone()));
+            g.insert(app_key(a), (generation, Instant::now(), a.clone()));
         }
         if g.len() > MAX_RECENT_APPS {
-            let mut keys: Vec<(u64, String)> =
-                g.iter().map(|(k, (seen, _))| (*seen, k.clone())).collect();
+            let mut keys: Vec<(u64, String)> = g
+                .iter()
+                .map(|(k, (seen, _, _))| (*seen, k.clone()))
+                .collect();
             keys.sort_unstable();
             for (_, k) in keys.into_iter().take(g.len() - MAX_RECENT_APPS) {
                 g.remove(&k);
@@ -117,20 +131,20 @@ pub fn trusted_app(app: &InstalledApp) -> Option<InstalledApp> {
             return Some(found.clone());
         }
     }
-    scanned_recent()
-        .lock()
-        .ok()
-        .and_then(|g| g.get(&key).map(|(_, found)| found.clone()))
+    if let Ok(mut recent) = scanned_recent().lock() {
+        if let Some((_, at, found)) = recent.get(&key) {
+            if at.elapsed() < RECENT_APP_TTL {
+                return Some(found.clone());
+            }
+            recent.remove(&key);
+        }
+    }
+    None
 }
 
-/// True when this app's uninstall command pair came from the latest scan.
 /// Stable scan identity shared by analyze and cleanup reports.
 pub fn app_key(app: &InstalledApp) -> String {
     format!("{}\0{}\0{}", app.source, app.registry_key, app.name)
-}
-
-pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
-    trusted_scan_source(app).is_some()
 }
 
 /// The scan-time source recorded for this app identity, if the latest scan
@@ -138,6 +152,7 @@ pub fn is_trusted_uninstall_app(app: &InstalledApp) -> bool {
 ///
 /// Authorization decisions must use this rather than the client-supplied
 /// `source` field, which any IPC caller can rewrite.
+#[cfg(test)]
 pub fn trusted_scan_source(app: &InstalledApp) -> Option<String> {
     let expected = trust_key(&app.uninstall_string, &app.quiet_uninstall_string);
     let key = app_key(app);
@@ -163,7 +178,7 @@ pub mod trust_test_support {
     struct Saved {
         trust: HashMap<String, String>,
         current: HashMap<String, super::InstalledApp>,
-        recent: HashMap<String, (u64, super::InstalledApp)>,
+        recent: HashMap<String, super::RecentApp>,
     }
 
     /// Serializes tests that replace the process-wide trust set. The product

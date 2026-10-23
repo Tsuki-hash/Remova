@@ -109,6 +109,7 @@ export async function runBatchCleanup(
         // restart. Do not start another app's uninstall/delete in this batch.
         if (report.reboot_pending) {
           const appOfficialDone = runOfficial && report.uninstall_ok;
+          const gateWarning = report.reboot_gate_persisted === false ? L.rebootGateNotPersisted : "";
           results.push({
             key,
             name: app.name,
@@ -116,12 +117,18 @@ export async function runBatchCleanup(
             // previous one did and this app was blocked before uninstall. The
             // summary must only mark it "official done" in the first case.
             status: "reboot",
-            detail: backendText(report.uninstall_message) || L.backendRebootInitiated,
+            detail: [backendText(report.uninstall_message) || L.backendRebootInitiated, gateWarning]
+              .filter(Boolean)
+              .join(" "),
             officialDone: appOfficialDone,
           });
           // Results are published once after the queue stops: spreading the
           // growing array on every app made the UI update quadratic.
-          toast.info(backendText(report.uninstall_message) || L.backendRebootInitiated);
+          toast.info(
+            [backendText(report.uninstall_message) || L.backendRebootInitiated, gateWarning]
+              .filter(Boolean)
+              .join(" "),
+          );
           break;
         }
         const emptyResidual = report.aborted && !items.length && !runOfficial

@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
@@ -66,6 +66,30 @@ export function MorePage({
   const tools = useMoreTools({ selected, onGoSoftware });
   const hist = useMoreHistory(onError);
   const rest = useMoreRestore(onError);
+  const [rebootGate, setRebootGate] = useState<string>("clear");
+  useEffect(() => {
+    let alive = true;
+    void api
+      .rebootGateStatus()
+      .then((state) => {
+        if (alive) setRebootGate(state);
+      })
+      .catch(() => {
+        // Older backends do not expose the status command.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const resetRebootGate = async () => {
+    try {
+      await api.clearCorruptRebootGate();
+      setRebootGate("clear");
+      toast.success(L.rebootGateCorruptResetDone);
+    } catch (e) {
+      onError(formatError(e));
+    }
+  };
   const requestedBackup = useBackupSessionRequest();
   const handledBackup = useRef(0);
   const { loadRestore } = rest;
@@ -344,6 +368,22 @@ export function MorePage({
         {advanced.map((c) => (
           <ToolCard key={c.id} item={c} active={openTool === c.id} />
         ))}
+        {rebootGate === "corrupt" && (
+          <div
+            style={{ ...css.card, borderColor: "var(--warn-ink)", marginTop: 10 }}
+            role="status"
+          >
+            <strong>{L.rebootGateCorruptTitle}</strong>
+            <p style={css.muted}>{L.rebootGateCorruptHint}</p>
+            <button
+              type="button"
+              style={{ ...css.btnGhost, height: 30 }}
+              onClick={() => void resetRebootGate()}
+            >
+              {L.rebootGateCorruptReset}
+            </button>
+          </div>
+        )}
       </Section>
 
       <Section

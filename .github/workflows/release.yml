@@ -82,16 +82,32 @@ jobs:
           if ($parts[2] -ne 'success') {
             throw "CI run #$($parts[0]) concluded '$($parts[2])' for $sha. Fix CI before tagging a release."
           }
-          Write-Host "CI is green for $sha."
+          # The aggregate conclusion can be green while a required job was
+          # skipped. Assert the two release-critical jobs individually.
+          $runId = (& gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20" `
+            --jq '[.workflow_runs[] | select(.event=="push")] | max_by(.run_number) | .id').Trim()
+          $jobs = (& gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/jobs" `
+            --jq '[.jobs[] | {name, conclusion}]') | ConvertFrom-Json
+          foreach ($required in @('test', 'package')) {
+            $job = $jobs | Where-Object { $_.name -eq $required } | Select-Object -First 1
+            if (-not $job) {
+              throw "CI run $runId has no '$required' job for $sha; refusing to release."
+            }
+            if ($job.conclusion -ne 'success') {
+              throw "CI job '$required' concluded '$($job.conclusion)' for $sha; refusing to release."
+            }
+          }
+          Write-Host "CI is green for $sha (test + package)."
 
       - name: validate release mode and signing configuration
         id: signing-config
         shell: pwsh
         run: pwsh -NoProfile -File scripts/prepare-signed-release.ps1
         env:
-          # 1.3.2 is published unsigned/manual by maintainer decision. This flag
-          # makes that choice explicit instead of implying a signing-key failure.
-          ALLOW_UNSIGNED_RELEASE: "true"
+          # 1.3.2 is published unsigned/manual by maintainer decision. The
+          # exception is tag-scoped: every later release needs an explicit
+          # repository variable instead of inheriting a blanket bypass.
+          ALLOW_UNSIGNED_RELEASE: ${{ startsWith(github.ref_name, 'v1.3.2') && 'true' || vars.ALLOW_UNSIGNED_RELEASE }}
           SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
           SIGNPATH_CERTIFICATE_THUMBPRINT: ${{ vars.SIGNPATH_CERTIFICATE_THUMBPRINT }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}

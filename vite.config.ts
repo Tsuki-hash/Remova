@@ -60,16 +60,15 @@ export default defineConfig({
           functions: 85,
           lines: 85,
         },
-        // R46 P2-09: SoftwarePage was included in the report but had no
-        // per-file floor, so its destructive action wiring could regress to 0%
-        // while the global average stayed green. This floor is intentionally
-        // below today's measured 36.5/52.1/16/39.3 and should be raised as the
-        // real-component interaction suite grows.
+        // R46 P2-09 / R47 P2-08: real-component interaction tests now cover
+        // cleanup, cancel, banners and the report-identity cache. The floor is
+        // raised with ~4 points of headroom below the measured 47.6/69.1/24/51.8
+        // so a small change does not turn CI red while regressions still do.
         "src/components/SoftwarePage.tsx": {
-          statements: 34,
-          branches: 50,
-          functions: 15,
-          lines: 38,
+          statements: 42,
+          branches: 62,
+          functions: 21,
+          lines: 45,
         },
       },
     },

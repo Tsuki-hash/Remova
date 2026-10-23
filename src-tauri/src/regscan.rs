@@ -235,9 +235,10 @@ mod subkey_cache {
     use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
-    /// Reuse window. A batch analyzes its items back to back, so this covers the
-    /// run while staying short enough that a stale list is never long-lived.
-    pub(super) const TTL: Duration = Duration::from_secs(3);
+    /// Reuse window. A batch analyzes its items back to back; a new inventory
+    /// scan and every destructive operation clear the cache explicitly, so a
+    /// longer window only covers the run instead of pinning stale lists forever.
+    pub(super) const TTL: Duration = Duration::from_secs(5 * 60);
     /// Enumerations larger than this are not cached: copying the pathological
     /// keys would cost more memory than re-reading them.
     pub(super) const MAX_CACHED_ENTRIES: usize = 20_000;
@@ -359,10 +360,79 @@ mod subkey_cache {
     }
 }
 
+/// Cache the default (description) value of CLSID keys. A batch checks every
+/// CLSID leaf for every app, so without reuse the same ~20k values are opened
+/// once per app. Values are read-only; a new inventory or destructive operation
+/// clears the cache.
+mod default_cache {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(5 * 60);
+    const MAX_ENTRIES: usize = 25_000;
+
+    struct Entry {
+        value: String,
+        at: Instant,
+    }
+
+    fn state() -> &'static Mutex<HashMap<String, Entry>> {
+        static STATE: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
+        STATE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub(super) fn get(key: &str) -> Option<String> {
+        let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
+        if entries
+            .get(key)
+            .is_some_and(|entry| entry.at.elapsed() >= TTL)
+        {
+            entries.remove(key);
+            return None;
+        }
+        entries.get(key).map(|entry| entry.value.clone())
+    }
+
+    pub(super) fn put(key: &str, value: &str) {
+        let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
+        entries.retain(|_, entry| entry.at.elapsed() < TTL);
+        if !entries.contains_key(key) && entries.len() >= MAX_ENTRIES {
+            // Bounded memory matters more than a perfect hit rate; rebuilding
+            // the index costs one pass, not an unbounded map.
+            entries.clear();
+        }
+        entries.insert(
+            key.to_string(),
+            Entry {
+                value: value.to_string(),
+                at: Instant::now(),
+            },
+        );
+    }
+
+    pub(super) fn clear() {
+        state().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn put_expired(key: &str, value: &str) {
+        let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
+        entries.insert(
+            key.to_string(),
+            Entry {
+                value: value.to_string(),
+                at: Instant::now() - TTL - Duration::from_secs(1),
+            },
+        );
+    }
+}
+
 /// Drop every cached enumeration. Called after a destructive operation so the
 /// next scan reads the registry rather than a list captured before the delete.
 pub fn invalidate_subkey_cache() {
     subkey_cache::clear();
+    default_cache::clear();
 }
 
 /// (hits, misses, stored, expired, skipped_too_large, evicted). Test and
@@ -374,6 +444,7 @@ pub fn registry_cache_counters() -> (u64, u64, u64, u64, u64, u64) {
 #[cfg(test)]
 pub(crate) fn reset_registry_cache_for_test() {
     subkey_cache::clear();
+    default_cache::clear();
     subkey_cache::reset_counters();
 }
 
@@ -725,6 +796,22 @@ pub fn read_binary(key: &str, value_name: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// Cached variant of [`read_string_default`] for scan tasks. Outside a scan, or
+/// after cancellation, the registry is read live (deletion gates rely on it).
+pub fn read_string_default_cached(key: &str) -> Option<String> {
+    if !crate::scan_task::has_task() || crate::scan_task::cancelled() {
+        return read_string_default(key);
+    }
+    if let Some(value) = default_cache::get(key) {
+        return Some(value);
+    }
+    let value = read_string_default(key);
+    if let Some(ref value) = value {
+        default_cache::put(key, value);
+    }
+    value
+}
+
 pub fn read_string_default(key: &str) -> Option<String> {
     #[cfg(not(windows))]
     {
@@ -892,6 +979,20 @@ mod completeness_tests {
         let (_, _, _, _, _, evicted) = super::registry_cache_counters();
         assert!(evicted > 0, "a full cache must reject a new key");
         super::reset_registry_cache_for_test();
+    }
+
+    #[test]
+    fn default_value_cache_reuses_expires_and_invalidates() {
+        super::default_cache::clear();
+        super::default_cache::put("cls-key", "description");
+        assert_eq!(
+            super::default_cache::get("cls-key").as_deref(),
+            Some("description")
+        );
+        super::default_cache::put_expired("cls-old", "old");
+        assert!(super::default_cache::get("cls-old").is_none());
+        super::invalidate_subkey_cache();
+        assert!(super::default_cache::get("cls-key").is_none());
     }
 
     #[test]

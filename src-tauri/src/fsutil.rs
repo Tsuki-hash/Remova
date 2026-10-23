@@ -134,6 +134,16 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
 }
 
 pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
+    copy_file_no_reparse_impl(src, dest, true)
+}
+
+/// Copy into a directory tree the caller already pinned. Used by restore so a
+/// multi-file session does not re-open the whole ancestor chain per file.
+pub fn copy_file_no_reparse_pinned(src: &Path, dest: &Path) -> std::io::Result<u64> {
+    copy_file_no_reparse_impl(src, dest, false)
+}
+
+fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::io::Result<u64> {
     if crate::executor::cleanup_cancelled() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Interrupted,
@@ -168,10 +178,14 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
                 "refusing reparse/directory copy source",
             ));
         }
-        let _parent_pins = create_dirs_pinned(
-            dest.parent()
-                .ok_or_else(|| std::io::Error::other("missing copy parent"))?,
-        )?;
+        let parent = dest
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing copy parent"))?;
+        let _parent_pins = if pin_parent {
+            Some(create_dirs_pinned(parent)?)
+        } else {
+            None
+        };
         if is_reparse_point(dest) {
             return Err(std::io::Error::other(
                 "refusing reparse/directory copy destination",
@@ -181,6 +195,7 @@ pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
     }
     #[cfg(not(windows))]
     {
+        let _ = pin_parent;
         copy_stream_atomic(std::fs::File::open(src)?, dest)
     }
 }

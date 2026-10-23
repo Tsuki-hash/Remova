@@ -210,6 +210,38 @@ fn state_is_stale_with(
     }
 }
 
+/// What a loaded state record means for the process-wide gate.
+#[derive(Debug, PartialEq, Eq)]
+enum HydrateAction {
+    /// No record: no gate.
+    NoGate,
+    /// The record is unreadable/damaged: keep the gate closed.
+    BlockGate,
+    /// A reboot happened since the record was written: clear and unblock.
+    ClearAndUnblock,
+    /// Same boot and keys are present: keep the gate closed with these keys.
+    Pending(Vec<String>),
+}
+
+/// Pure decision shared by the production hydrate path and its tests.
+fn hydrate_action(
+    load: StateLoad,
+    current_boot_id: Option<&str>,
+    current_uptime_ms: Option<u64>,
+) -> HydrateAction {
+    match load {
+        StateLoad::Missing => HydrateAction::NoGate,
+        StateLoad::Corrupt => HydrateAction::BlockGate,
+        StateLoad::Loaded(state) => {
+            match state_disposition(&state, current_boot_id, current_uptime_ms) {
+                StateDisposition::Stale => HydrateAction::ClearAndUnblock,
+                StateDisposition::Corrupt => HydrateAction::BlockGate,
+                StateDisposition::Pending => HydrateAction::Pending(state.app_keys),
+            }
+        }
+    }
+}
+
 #[cfg(not(test))]
 fn corrupt_gate() -> &'static std::sync::atomic::AtomicBool {
     static CORRUPT: OnceLock<std::sync::atomic::AtomicBool> = OnceLock::new();
@@ -222,32 +254,28 @@ fn hydrate_from_disk() -> bool {
     let Some(path) = state_path() else {
         return false;
     };
-    match load_state_from(&path) {
-        StateLoad::Missing => false,
-        StateLoad::Corrupt => {
+    let action = hydrate_action(
+        load_state_from(&path),
+        system_boot_id().as_deref(),
+        Some(uptime_ms()),
+    );
+    match action {
+        HydrateAction::NoGate => false,
+        HydrateAction::BlockGate => {
             // The file exists but its contents cannot be trusted. Keep the
             // gate closed and leave the file in place for diagnosis.
             corrupt_gate().store(true, Ordering::SeqCst);
             eprintln!("reboot-pending state is unreadable; keeping cleanup blocked");
             true
         }
-        StateLoad::Loaded(state) => {
-            match state_disposition(&state, system_boot_id().as_deref(), Some(uptime_ms())) {
-                StateDisposition::Stale => {
-                    let _ = std::fs::remove_file(&path);
-                    false
-                }
-                StateDisposition::Corrupt => {
-                    corrupt_gate().store(true, Ordering::SeqCst);
-                    eprintln!("reboot-pending state has no app keys; keeping cleanup blocked");
-                    true
-                }
-                StateDisposition::Pending => {
-                    let mut set = memory().lock().unwrap_or_else(|e| e.into_inner());
-                    set.extend(state.app_keys);
-                    true
-                }
-            }
+        HydrateAction::ClearAndUnblock => {
+            let _ = std::fs::remove_file(&path);
+            false
+        }
+        HydrateAction::Pending(keys) => {
+            let mut set = memory().lock().unwrap_or_else(|e| e.into_inner());
+            set.extend(keys);
+            true
         }
     }
 }
@@ -323,6 +351,83 @@ pub(crate) fn any_pending() -> bool {
             return true;
         }
         hydrate_from_disk()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // `Corrupt` is only reachable in the production cfg path.
+pub(crate) enum GateStatus {
+    Clear,
+    Pending,
+    Corrupt,
+}
+
+impl GateStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            GateStatus::Clear => "clear",
+            GateStatus::Pending => "pending",
+            GateStatus::Corrupt => "corrupt",
+        }
+    }
+}
+
+/// Report the gate state so the UI can offer a recovery path when the state
+/// file is unreadable (the normal pending gate must stay non-resettable).
+pub(crate) fn gate_status() -> GateStatus {
+    #[cfg(test)]
+    {
+        if TEST_PENDING.with(|pending| pending.borrow().is_empty()) {
+            GateStatus::Clear
+        } else {
+            GateStatus::Pending
+        }
+    }
+    #[cfg(not(test))]
+    {
+        use std::sync::atomic::Ordering;
+        if corrupt_gate().load(Ordering::SeqCst) {
+            return GateStatus::Corrupt;
+        }
+        if any_pending() {
+            GateStatus::Pending
+        } else {
+            GateStatus::Clear
+        }
+    }
+}
+
+/// Recover from an unreadable state file only. A real pending gate (in-memory
+/// keys or a valid record) is never cleared here. The damaged file is renamed,
+/// not deleted, so it can still be inspected.
+pub(crate) fn clear_corrupt_gate() -> bool {
+    #[cfg(not(test))]
+    {
+        use std::sync::atomic::Ordering;
+        if !corrupt_gate().load(Ordering::SeqCst) {
+            return false;
+        }
+        if memory()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .next()
+            .is_some()
+        {
+            return false;
+        }
+        if let Some(path) = state_path() {
+            if path.exists() {
+                let backup = path.with_extension("json.corrupt");
+                let _ = std::fs::rename(&path, &backup);
+            }
+        }
+        corrupt_gate().store(false, Ordering::SeqCst);
+        true
+    }
+    #[cfg(test)]
+    {
+        false
     }
 }
 
@@ -419,6 +524,50 @@ mod tests {
             state_disposition(&empty_keys, Some("aabb"), Some(100)),
             StateDisposition::Corrupt,
             "a writer-produced record always has at least one app key"
+        );
+    }
+
+    #[test]
+    fn gate_status_reports_pending_and_clear() {
+        reset_for_test();
+        assert_eq!(gate_status(), GateStatus::Clear);
+        mark_pending("source\u{0}key\u{0}App");
+        assert_eq!(gate_status(), GateStatus::Pending);
+        reset_for_test();
+        assert_eq!(gate_status(), GateStatus::Clear);
+    }
+
+    #[test]
+    fn hydrate_actions_keep_corrupt_records_blocked_and_release_stale_ones() {
+        assert_eq!(
+            hydrate_action(StateLoad::Missing, None, None),
+            HydrateAction::NoGate
+        );
+        assert_eq!(
+            hydrate_action(StateLoad::Corrupt, None, None),
+            HydrateAction::BlockGate
+        );
+        let live = PendingState {
+            boot_id: "abc".into(),
+            uptime_ms: 10,
+            app_keys: vec!["k".into()],
+        };
+        assert_eq!(
+            hydrate_action(StateLoad::Loaded(live.clone()), Some("abc"), Some(20)),
+            HydrateAction::Pending(vec!["k".into()])
+        );
+        assert_eq!(
+            hydrate_action(StateLoad::Loaded(live), Some("other"), Some(20)),
+            HydrateAction::ClearAndUnblock
+        );
+        let empty = PendingState {
+            boot_id: "abc".into(),
+            uptime_ms: 10,
+            app_keys: vec![],
+        };
+        assert_eq!(
+            hydrate_action(StateLoad::Loaded(empty), Some("abc"), Some(20)),
+            HydrateAction::BlockGate
         );
     }
 

@@ -595,7 +595,7 @@ async fn analyze_associations(
     scan_id: Option<u32>,
 ) -> Result<ScanResult, String> {
     // The client may rewrite any field; analyze only the server-scanned copy.
-    // A refused request must release its reserved scan task (P1-01).
+    // A refused request must release its reserved scan task.
     let app = resolve_analysis_app(app, scan_id, crate::sysops::is_elevated_for_gate())?;
     let server_app_key = apps::app_key(&app);
     let mut result = tauri::async_runtime::spawn_blocking(move || {
@@ -997,14 +997,28 @@ fn system_language_is_zh() -> bool {
     }
 }
 
-/// Rebuild the tray menu when the UI language changes. The tray is created
-/// before the webview loads, so its labels otherwise stay in the OS language
-/// even after the user switches Remova to English.
 #[tauri::command]
 fn cancel_cleanup() {
     executor::cancel_cleanup_operation();
 }
 
+#[tauri::command]
+fn reboot_gate_status() -> String {
+    executor::reboot::gate_status().as_str().into()
+}
+
+#[tauri::command]
+fn clear_corrupt_reboot_gate() -> Result<bool, String> {
+    if executor::reboot::clear_corrupt_gate() {
+        Ok(true)
+    } else {
+        Err("reboot gate is not corrupt".into())
+    }
+}
+
+/// Rebuild the tray menu when the UI language changes. The tray is created
+/// before the webview loads, so its labels otherwise stay in the OS language
+/// even after the user switches Remova to English.
 #[tauri::command]
 fn set_tray_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
     use tauri::menu::{Menu, MenuItem};
@@ -1174,6 +1188,8 @@ pub fn run() {
         // `end_install_monitor`
         // `take_pending_analyze`
         // `cancel_cleanup`
+        // `reboot_gate_status`
+        // `clear_corrupt_reboot_gate`
         // `set_tray_language`
         // `get_ai_config`
         // `save_ai_config`
@@ -1243,6 +1259,8 @@ pub fn run() {
             end_install_monitor,
             take_pending_analyze,
             cancel_cleanup,
+            reboot_gate_status,
+            clear_corrupt_reboot_gate,
             set_tray_language,
             commands::ai_cmd::get_ai_config,
             commands::ai_cmd::save_ai_config,

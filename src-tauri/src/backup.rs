@@ -1289,6 +1289,19 @@ mod acl_tests {
     }
 
     #[test]
+    fn best_effort_acl_walk_never_fails_on_unreadable_or_missing_children() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-best-effort");
+        let root = tmp.path().join("Backup");
+        std::fs::create_dir_all(root.join("session")).unwrap();
+        std::fs::write(root.join("session").join("row.bin"), b"x").unwrap();
+        let mut budget = 100u32;
+        super::secure_tree_best_effort(&root, 0, &mut budget, "S-1-5-18");
+        assert!(budget < 100, "the walk must visit the fixture tree");
+        // A missing tree must not panic or propagate an error.
+        super::secure_tree_best_effort(&tmp.path().join("missing"), 0, &mut budget, "S-1-5-18");
+    }
+
+    #[test]
     fn deep_backup_trees_are_fully_secured() {
         let tmp = crate::test_support::TempDir::new("backup-acl-deep");
         let mut dir = tmp.path().join("Backup");

@@ -145,6 +145,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
         // real cause and the restore continues, so the cause must be shown
         // rather than collapsing to "no detail".
         if (msg.startsWith("PATH restore failed for ")) return `${L.restorePathFailed}: ${msg.slice(24)}`;
+        if (msg.startsWith("restore cancelled before remaining registry imports")) return L.restoreCancelled;
+        if (msg.startsWith("registry import failed ")) return `${L.restoreImportFailed}: ${msg.slice(23)}`;
         if (msg.startsWith("skipped ")) return `${L.restoreSkipped}: ${msg.slice(msg.indexOf(": ") + 2)}`;
         if (msg.startsWith("restore failed for ")) return `${L.restoreIncomplete}: ${msg.slice(19).split(": ")[0]}`;
         return L.restoreNoDetail;

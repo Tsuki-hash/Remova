@@ -15,6 +15,8 @@ const COMMAND_KEYS = [
   "beginAssociationScan",
   "cancelAssociationScan",
   "cancelCleanup",
+  "rebootGateStatus",
+  "clearCorruptRebootGate",
   "setTrayLanguage",
   "associationScanProgress",
   "dryRun",

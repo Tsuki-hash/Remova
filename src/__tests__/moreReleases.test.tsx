@@ -10,6 +10,8 @@ import { requestBackupSession } from "../lib/backupSessionNavigation";
 
 vi.mock("../lib/api", () => ({
   api: { openPath: vi.fn().mockResolvedValue(undefined),
+    rebootGateStatus: vi.fn().mockResolvedValue("clear"),
+    clearCorruptRebootGate: vi.fn().mockResolvedValue(true),
     backupSessions: vi.fn().mockResolvedValue([{ name: "newest", size_kb: 1, created_at: "2", sealed: true }, { name: "requested", size_kb: 1, created_at: "1", sealed: true }]),
     previewRestore: vi.fn(async (name: string) => ({ name, files: 0, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] })),
     restoreSessionByName: vi.fn() },
@@ -42,4 +44,32 @@ it("opens the Releases page from the help section header", async () => {
   await waitFor(() => expect(api.previewRestore).toHaveBeenCalledWith("requested"));
   expect(api.previewRestore).not.toHaveBeenCalledWith("newest");
   expect(api.restoreSessionByName).not.toHaveBeenCalled();
+});
+
+it("offers a recovery action for a corrupt reboot gate", async () => {
+  vi.mocked(api.rebootGateStatus).mockResolvedValueOnce("corrupt");
+  render(
+    <MorePage
+      selected={null}
+      monitoring={false}
+      monitorDiff={null}
+      lastReport={null}
+      closeMode={null}
+      onCloseModeChange={vi.fn()}
+      onIgnorePublisher={vi.fn()}
+      onToggleMonitor={vi.fn()}
+      onMonitorToCleanup={vi.fn()}
+      onDismissMonitor={vi.fn()}
+      onExportReport={vi.fn()}
+      onError={vi.fn()}
+      onCheckUpdate={vi.fn()}
+      onGoSoftware={vi.fn()}
+    />,
+  );
+  const button = await screen.findByRole("button", { name: t().rebootGateCorruptReset });
+  fireEvent.click(button);
+  await waitFor(() => expect(api.clearCorruptRebootGate).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: t().rebootGateCorruptReset })).toBeNull(),
+  );
 });

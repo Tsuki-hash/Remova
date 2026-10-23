@@ -123,6 +123,13 @@ pub fn append(
     let p = history_path();
     let _g = lock_file();
     if let Some(parent) = p.parent() {
+        // The history file lives under the shared ProgramData tree. A local user
+        // can pre-plant a junction there; writing through it from an elevated
+        // Remova would append outside the intended directory.
+        if crate::fsutil::is_reparse_point(parent) || crate::fsutil::is_reparse_point(&p) {
+            eprintln!("cleanup history refused: reparse point in the history path");
+            return false;
+        }
         let _ = fs::create_dir_all(parent);
     }
     // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).

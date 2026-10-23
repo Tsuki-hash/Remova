@@ -256,4 +256,83 @@ describe("SoftwarePage report identity", () => {
     (button as HTMLButtonElement).click();
     expect(onCancelCleanup).toHaveBeenCalledTimes(1);
   });
+
+  it("dismisses the error banner through its real button", () => {
+    const setError = vi.fn();
+    render(<SoftwarePage {...props({ error: "locked file", setError })} />);
+    screen.getByRole("button", { name: "知道了" }).click();
+    expect(setError).toHaveBeenCalledWith(null);
+  });
+
+  it("dismisses the AI risk banner through its real button", () => {
+    const setAiRisk = vi.fn();
+    render(
+      <SoftwarePage
+        {...props({
+          aiRisk: "vendor cache",
+          scan: { app_name: "Demo", app_key: appKey(demo), items: [], degraded: [] },
+          setAiRisk,
+        })}
+      />,
+    );
+    const banner = screen.getByText("vendor cache").closest("div")!;
+    (banner.querySelector("button") as HTMLButtonElement).click();
+    expect(setAiRisk).toHaveBeenCalledWith(null);
+  });
+
+  it("renders the post-uninstall residual notice for scanning, empty and unknown scans", () => {
+    const { rerender } = render(
+      <SoftwarePage {...props({ residualFromUninstall: true, report: null, scanning: true })} />,
+    );
+    expect(screen.getAllByText(/^分析中/).length).toBeGreaterThan(0);
+    rerender(
+      <SoftwarePage
+        {...props({
+          residualFromUninstall: true,
+          report: null,
+          scan: { app_name: "Demo", app_key: appKey(demo), items: [], degraded: [] },
+        })}
+      />,
+    );
+    expect(screen.getByText(/本次复扫未发现关联残留/)).toBeTruthy();
+    rerender(<SoftwarePage {...props({ residualFromUninstall: true, report: null, scan: null })} />);
+    expect(screen.getByText(/剩余关联项尚未核对/)).toBeTruthy();
+  });
+
+  it("expires a cached report identity after 24 hours", () => {
+    vi.useFakeTimers();
+    try {
+      const app = { ...demo, name: "TtlApp", registry_key: "ttl-app" };
+      const rep = { ...report, app_name: app.name, app_key: appKey(app) };
+      vi.setSystemTime(new Date("2026-10-23T00:00:00Z"));
+      const first = render(
+        <SoftwarePage {...props({ apps: [app], filtered: [app], selected: null, report: rep })} />,
+      );
+      first.unmount();
+      vi.setSystemTime(new Date("2026-10-24T01:00:00Z"));
+      render(<SoftwarePage {...props({ apps: [], filtered: [], selected: null, report: rep })} />);
+      expect(screen.queryByText("重新扫描该应用")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("evicts the oldest cached report identity after 64 reports", () => {
+    const first = { ...demo, name: "CacheFirst", registry_key: "cache-first" };
+    const firstReport = { ...report, app_name: first.name, app_key: appKey(first) };
+    const mounted = render(
+      <SoftwarePage {...props({ apps: [first], filtered: [first], selected: null, report: firstReport })} />,
+    );
+    mounted.unmount();
+    for (let i = 0; i < 65; i++) {
+      const app = { ...demo, name: `Cache${i}`, registry_key: `cache-${i}` };
+      const rep = { ...report, app_name: app.name, app_key: appKey(app) };
+      const view = render(
+        <SoftwarePage {...props({ apps: [app], filtered: [app], selected: null, report: rep })} />,
+      );
+      view.unmount();
+    }
+    render(<SoftwarePage {...props({ apps: [], filtered: [], selected: null, report: firstReport })} />);
+    expect(screen.queryByText("重新扫描该应用")).toBeNull();
+  });
 });

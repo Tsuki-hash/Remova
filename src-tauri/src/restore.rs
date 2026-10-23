@@ -103,6 +103,13 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         imports,
     } = validate_session(session)?;
     let mut messages = vec![];
+    // Consecutive files usually share a parent. Reuse its pins instead of
+    // opening the whole ancestor chain again for every file.
+    let mut parent_pins: Option<(
+        PathBuf,
+        Vec<crate::fsutil::DirPin>,
+        crate::fsutil::DirResolvedPin,
+    )> = None;
 
     // Files via path_map.json
     let map_path = session.join("files").join("path_map.json");
@@ -163,46 +170,49 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped restore target without parent: {original}"));
                 continue;
             };
-            let _parent_pins = match crate::fsutil::create_dirs_pinned(parent) {
-                Ok(pins) => pins,
-                Err(e) => {
-                    messages.push(format!("restore failed for {original}: {e}"));
-                    continue;
+            let parent_changed =
+                parent_pins.as_ref().map(|(path, _, _)| path == parent) != Some(true);
+            if parent_changed {
+                let dirs = match crate::fsutil::create_dirs_pinned(parent) {
+                    Ok(pins) => pins,
+                    Err(e) => {
+                        messages.push(format!("restore failed for {original}: {e}"));
+                        continue;
+                    }
+                };
+                match crate::fsutil::pin_dir_resolved(parent) {
+                    Ok(resolved) => {
+                        parent_pins = Some((parent.to_path_buf(), dirs, resolved));
+                    }
+                    Err(e) => {
+                        messages.push(format!("restore failed for {original}: {e}"));
+                        continue;
+                    }
                 }
-            };
-            let pin = match crate::fsutil::pin_dir_resolved(parent) {
-                Ok(pin) => pin,
-                Err(e) => {
-                    messages.push(format!("restore failed for {original}: {e}"));
-                    continue;
-                }
-            };
+            }
+            let pin = &parent_pins.as_ref().expect("parent pins installed").2;
             if !same_dir_path(pin.final_path(), parent) {
-                drop(pin);
                 messages.push(format!("skipped redirected restore target: {original}"));
                 continue;
             }
             if !crate::safety::is_safe_restore_target(Path::new(pin.final_path()))
                 || crate::safety::looks_like_sync_conflict(pin.final_path())
             {
-                drop(pin);
                 messages.push(format!("skipped protected restore target: {original}"));
                 continue;
             }
             // A link planted as the leaf itself must not be written through
             // (the parent pin stops renames, not pre-existing children).
             if crate::fsutil::is_reparse_point(&dest) {
-                drop(pin);
                 messages.push(format!("skipped reparse restore target: {original}"));
                 continue;
             }
             let copied = if src.is_dir() {
                 copy_dir(&src, &dest).map(|_| ())
             } else {
-                crate::fsutil::copy_file_no_reparse(&src, &dest).map(|_| ())
+                // The parent is already pinned above; avoid re-opening it.
+                crate::fsutil::copy_file_no_reparse_pinned(&src, &dest).map(|_| ())
             };
-            // Hold the parent pin until the copy is done.
-            drop(pin);
             if let Err(e) = copied {
                 messages.push(format!("restore failed for {original}: {e}"));
                 continue;

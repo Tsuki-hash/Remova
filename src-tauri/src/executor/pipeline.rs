@@ -64,6 +64,7 @@ fn aborted_report(
         delayed_kb: 0,
         aborted: true,
         reboot_pending,
+        reboot_gate_persisted: true,
         restore_point_ok,
         restore_point_msg,
         errors,
@@ -529,6 +530,7 @@ fn ignore_read_abort(
         delayed_kb: 0,
         aborted: true,
         reboot_pending: false,
+        reboot_gate_persisted: true,
         restore_point_ok: false,
         restore_point_msg: String::new(),
         errors: vec![error],
@@ -567,6 +569,7 @@ pub fn run_full_cleanup(
             delayed_kb: 0,
             aborted: false,
             reboot_pending: false,
+            reboot_gate_persisted: true,
             restore_point_ok: false,
             restore_point_msg: String::new(),
             errors: dry.errors,
@@ -648,11 +651,13 @@ pub fn run_full_cleanup(
     let mut uninstall_ok = false;
     let mut uninstall_message = "skipped".into();
     let mut uninstall_had_command = false;
+    let mut reboot_gate_persisted = true;
     if !opts.skip_official_uninstall {
         let official = run_official_uninstall_locked(app);
         uninstall_ok = official.ok;
         uninstall_message = official.message.clone();
         uninstall_had_command = official.had_command;
+        reboot_gate_persisted = official.reboot_gate_persisted;
         // MSI 1641 means the uninstaller already initiated a reboot. The product
         // was removed, but continuing file/registry deletes while shutdown is
         // pending can leave the cleanup half-done; ask the user to rerun after
@@ -664,7 +669,7 @@ pub fn run_full_cleanup(
             if !official.reboot_gate_persisted {
                 errors.push("reboot gate state could not be persisted".into());
             }
-            return aborted_report(
+            let mut report = aborted_report(
                 app,
                 backup_dir,
                 true,
@@ -674,6 +679,8 @@ pub fn run_full_cleanup(
                 restore_point_msg,
                 errors,
             );
+            report.reboot_gate_persisted = official.reboot_gate_persisted;
+            return report;
         }
     }
     // when a vendor uninstaller existed and failed, do not silently wipe leftovers —
@@ -795,6 +802,7 @@ pub fn run_full_cleanup(
         delayed_kb,
         aborted: false,
         reboot_pending: false,
+        reboot_gate_persisted,
         restore_point_ok,
         restore_point_msg,
         errors: del.errors,

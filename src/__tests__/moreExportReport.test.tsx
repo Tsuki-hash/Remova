@@ -8,7 +8,7 @@ import { MorePage } from "../components/MorePage";
 import { t } from "../i18n";
 import type { FullCleanupReport } from "../types";
 
-vi.mock("../lib/api", () => ({ api: { openPath: vi.fn().mockResolvedValue(undefined) } }));
+vi.mock("../lib/api", () => ({ api: { openPath: vi.fn().mockResolvedValue(undefined), rebootGateStatus: vi.fn().mockResolvedValue("clear") } }));
 afterEach(cleanup);
 
 const report: FullCleanupReport = {

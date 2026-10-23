@@ -63,6 +63,20 @@ it("names the selected backup and reports skipped or failed rows without a succe
   expect(result.current.restoreMsgs.join(" ")).not.toMatch(/skipped|restore failed|denied/);
 });
 
+it("localizes cancelled and failed registry import rows", async () => {
+  native.restoreSessionByName.mockResolvedValue([
+    "restore cancelled before remaining registry imports",
+    "registry import failed HKLM\\X: reg import failed",
+  ]);
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  await act(async () => { await result.current.runRestore(); });
+  expect(result.current.restoreMsgs).toEqual([
+    t().restoreCancelled,
+    `${t().restoreImportFailed}: HKLM\\X: reg import failed`,
+  ]);
+});
+
 it("only announces confirmed restore rows as complete", async () => {
   native.restoreSessionByName.mockResolvedValue(["restored PATH entry tools", "PATH entry already present: present"]);
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
