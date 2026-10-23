@@ -609,7 +609,7 @@ pub fn analyze_associations(
     };
     let exe_stems = install
         .as_ref()
-        .filter(|p| p.is_dir())
+        .filter(|p| is_safe_fs(p) && p.is_dir())
         .map(|p| extract_exe_stems(p, &name_slugs))
         .unwrap_or_default();
 
@@ -631,7 +631,7 @@ pub fn analyze_associations(
     // 1. Install location
     phase!("files");
     if let Some(root) = install.as_ref() {
-        if root.exists() && is_safe_fs(root) {
+        if is_safe_fs(root) && root.exists() {
             let is_dir = root.is_dir();
             items.push(CleanupItem {
                 path: root.to_string_lossy().to_string(),
@@ -1004,9 +1004,23 @@ pub fn analyze_associations(
 fn dedup_items(items: &mut Vec<CleanupItem>) {
     let mut seen = std::collections::HashSet::new();
     items.retain(|it| {
-        let key = it.path.replace('/', "\\").to_lowercase();
-        seen.insert(key)
+        // A path alone is not an identity: the install root and a PATH entry can
+        // share the same string while meaning different actions (delete the
+        // directory vs. scrub the environment entry). Registry paths keep their
+        // literal value names; filesystem paths use the shared Win32 identity.
+        let (kind, path) = match it.kind {
+            ItemKind::Registry => ("registry", it.path.replace('/', "\\").to_lowercase()),
+            ItemKind::File => ("file", path_key_for_dedup(&it.path)),
+            ItemKind::Dir => ("dir", path_key_for_dedup(&it.path)),
+            ItemKind::Path => ("path", path_key_for_dedup(&it.path)),
+        };
+        seen.insert(format!("{kind}\0{path}"))
     });
+}
+
+fn path_key_for_dedup(path: &str) -> String {
+    crate::fsutil::path_key(Path::new(path))
+        .unwrap_or_else(|| path.replace('/', "\\").to_lowercase())
 }
 
 pub(crate) mod fs_scans;
@@ -1060,6 +1074,21 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].reason, "Install location");
         assert_eq!(items[1].path, r"C:\Program Files\Demo Two");
+
+        // The same path with a different action must survive: dropping the PATH
+        // row would silently skip the environment cleanup and its backup.
+        let mut mixed = vec![
+            item(r"C:\Tools\Demo", 90, "Install location"),
+            CleanupItem {
+                kind: ItemKind::Path,
+                score: 60,
+                reason: "PATH entry (User)".into(),
+                ..item(r"C:\Tools\Demo", 60, "PATH entry (User)")
+            },
+        ];
+        dedup_items(&mut mixed);
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(mixed[1].kind, ItemKind::Path);
     }
 
     #[test]

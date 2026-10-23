@@ -17,7 +17,7 @@ import type { Strings } from "../i18n";
 import { appKey } from "../lib/appKey";
 import { toast } from "../lib/toast";
 
-/** Domain slices App passes into the software controller (A-04). */
+/** Domain slices App passes into the software controller. */
 export type SoftwareControllerInput = {
   apps: InstalledApp[];
   filtered: InstalledApp[];
@@ -125,7 +125,7 @@ export type SoftwareControllerInput = {
   L: Strings;
 };
 
-/** Memoized SoftwarePage props (A-04 / P-02) — single controller for React.memo. */
+/** Memoized SoftwarePage props — single controller for React.memo. */
 export function useSoftwareController(input: SoftwareControllerInput): SoftwarePageProps {
   const {
     core,

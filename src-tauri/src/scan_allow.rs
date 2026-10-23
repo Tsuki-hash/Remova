@@ -40,12 +40,32 @@ fn app_maps() -> &'static AppMaps {
     APP_MAPS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Publish the cleanup items of one successful analysis as the only paths a
-/// later uninstall cleanup may delete for that app. The scan identity comes
-/// from the backend, not from the cleanup request.
-pub fn remember_uninstall(app_key: &str, paths: &HashSet<String>) {
+fn item_kind_tag(kind: &crate::scanner::ItemKind) -> &'static str {
+    match kind {
+        crate::scanner::ItemKind::File => "file",
+        crate::scanner::ItemKind::Dir => "dir",
+        crate::scanner::ItemKind::Registry => "registry",
+        crate::scanner::ItemKind::Path => "path",
+    }
+}
+
+fn authorized_item_key(item: &crate::scanner::CleanupItem) -> Option<String> {
+    normalize(&item.path).map(|key| {
+        format!(
+            "{key}\0{}\0{}",
+            item_kind_tag(&item.kind),
+            item.service_bound
+        )
+    })
+}
+
+/// Publish the cleanup items of one successful analysis as the only actions a
+/// later uninstall cleanup may perform for that app. The scan identity, the
+/// item kind and the service-bound flag all come from the backend, not from the
+/// cleanup request.
+pub fn remember_uninstall_items(app_key: &str, items: &[crate::scanner::CleanupItem]) {
     crate::scan_task::publish(|| {
-        let normalized: HashSet<String> = paths.iter().filter_map(|p| normalize(p)).collect();
+        let normalized: HashSet<String> = items.iter().filter_map(authorized_item_key).collect();
         let generation = APP_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut g) = app_maps().lock() {
             g.insert(app_key.to_string(), (generation, normalized));
@@ -69,15 +89,16 @@ pub fn uninstall_scan_recorded(app_key: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// True only for a path the latest analysis of this app returned.
-pub fn was_recent_uninstall(app_key: &str, path: &str) -> bool {
-    let Some(key) = normalize(path) else {
+/// True only for the exact action (path, kind, service-bound flag) the latest
+/// analysis of this app returned.
+pub fn was_recent_uninstall_item(app_key: &str, item: &crate::scanner::CleanupItem) -> bool {
+    let Some(key) = authorized_item_key(item) else {
         return false;
     };
     app_maps()
         .lock()
         .ok()
-        .and_then(|g| g.get(app_key).map(|(_, paths)| paths.contains(&key)))
+        .and_then(|g| g.get(app_key).map(|(_, items)| items.contains(&key)))
         .unwrap_or(false)
 }
 
@@ -280,17 +301,42 @@ mod tests {
         assert!(!was_recent(AllowScope::ToolCache, r"C:\Anything"));
     }
 
+    fn cleanup_item(path: &str) -> crate::scanner::CleanupItem {
+        crate::scanner::CleanupItem {
+            path: path.into(),
+            kind: crate::scanner::ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "fixture".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        }
+    }
+
     #[test]
     fn uninstall_allow_list_is_per_app_and_normalized() {
         let _g = test_lock();
         let app = "HKLM64\0HKLM64\\SOFTWARE\\Demo\0Demo";
-        remember_uninstall(app, &HashSet::from([r"C:\Program Files\Demo".to_string()]));
+        remember_uninstall_items(app, &[cleanup_item(r"C:\Program Files\Demo")]);
         assert!(uninstall_scan_recorded(app));
-        assert!(was_recent_uninstall(app, r"c:/program files/demo/"));
-        assert!(!was_recent_uninstall(app, r"C:\Program Files\Victim"));
-        assert!(!was_recent_uninstall(
+        assert!(was_recent_uninstall_item(
+            app,
+            &cleanup_item(r"c:/program files/demo/")
+        ));
+        assert!(!was_recent_uninstall_item(
+            app,
+            &cleanup_item(r"C:\Program Files\Victim")
+        ));
+        assert!(!was_recent_uninstall_item(
             "HKCU\0HKCU\\SOFTWARE\\Demo\0Demo",
-            r"C:\Program Files\Demo"
+            &cleanup_item(r"C:\Program Files\Demo")
         ));
         assert!(!uninstall_scan_recorded("HKCU\0HKCU\\SOFTWARE\\Demo\0Demo"));
     }
@@ -299,9 +345,25 @@ mod tests {
     fn a_new_analysis_replaces_the_previous_app_allow_list() {
         let _g = test_lock();
         let app = "HKLM64\0HKLM64\\SOFTWARE\\Replace\0Replace";
-        remember_uninstall(app, &HashSet::from([r"C:\Old".to_string()]));
-        remember_uninstall(app, &HashSet::from([r"C:\New".to_string()]));
-        assert!(!was_recent_uninstall(app, r"C:\Old"));
-        assert!(was_recent_uninstall(app, r"C:\New"));
+        remember_uninstall_items(app, &[cleanup_item(r"C:\Old")]);
+        remember_uninstall_items(app, &[cleanup_item(r"C:\New")]);
+        assert!(!was_recent_uninstall_item(app, &cleanup_item(r"C:\Old")));
+        assert!(was_recent_uninstall_item(app, &cleanup_item(r"C:\New")));
+    }
+
+    #[test]
+    fn kind_and_service_bound_are_part_of_the_authorization() {
+        let _g = test_lock();
+        let app = "HKLM64\0HKLM64\\SOFTWARE\\Bound\0Bound";
+        let mut item = cleanup_item(r"C:\Program Files\Bound");
+        item.service_bound = true;
+        remember_uninstall_items(app, &[item.clone()]);
+        assert!(was_recent_uninstall_item(app, &item));
+        let mut forged_kind = item.clone();
+        forged_kind.kind = crate::scanner::ItemKind::Path;
+        assert!(!was_recent_uninstall_item(app, &forged_kind));
+        let mut forged_bound = item.clone();
+        forged_bound.service_bound = false;
+        assert!(!was_recent_uninstall_item(app, &forged_bound));
     }
 }

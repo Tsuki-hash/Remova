@@ -315,7 +315,7 @@ mod base64_light {
 
 #[cfg(test)]
 mod open_path_url_tests {
-    // -01: strict URL whitelist for open_path (no cmd /C start).
+    // Strict URL whitelist for open_path (no cmd /C start).
     #[test]
     fn http_url_whitelist() {
         assert!(super::is_safe_http_url(
@@ -355,7 +355,6 @@ mod cleanup_trust_tests {
     use super::*;
     use crate::policy::CleanupSource;
     use crate::scanner::{CleanupItem, Confidence, ItemKind, RiskLevel};
-    use std::collections::HashSet;
 
     fn item(path: &str) -> CleanupItem {
         CleanupItem {
@@ -399,16 +398,25 @@ mod cleanup_trust_tests {
         let _lock = crate::scan_allow::test_lock();
         let scanned = app("TrustedDemo", "HKLM64", r"C:\Program Files\TrustedDemo");
         let key = apps::app_key(&scanned);
-        scan_allow::remember_uninstall(
-            &key,
-            &HashSet::from([r"C:\Program Files\TrustedDemo".to_string()]),
-        );
+        scan_allow::remember_uninstall_items(&key, &[item(r"C:\Program Files\TrustedDemo")]);
         assert!(authorize_cleanup_items(
             &scanned,
             &[item(r"C:\Program Files\TrustedDemo")],
             CleanupSource::Uninstall
         )
         .is_ok());
+        let mut tampered_kind = item(r"C:\Program Files\TrustedDemo");
+        tampered_kind.kind = ItemKind::Path;
+        assert!(
+            authorize_cleanup_items(&scanned, &[tampered_kind], CleanupSource::Uninstall).is_err(),
+            "the item kind must match the server analysis"
+        );
+        let mut tampered_bound = item(r"C:\Program Files\TrustedDemo");
+        tampered_bound.service_bound = true;
+        assert!(
+            authorize_cleanup_items(&scanned, &[tampered_bound], CleanupSource::Uninstall).is_err(),
+            "the service-bound flag must match the server analysis"
+        );
         assert!(authorize_cleanup_items(
             &scanned,
             &[item(r"D:\Data\Victim")],
@@ -592,7 +600,7 @@ fn authorize_cleanup_items(
         if item.path.trim().is_empty() {
             continue;
         }
-        if !scan_allow::was_recent_uninstall(&key, &item.path) {
+        if !scan_allow::was_recent_uninstall_item(&key, item) {
             return Err(format!(
                 "cleanup item not from the latest analysis: {}",
                 item.path
@@ -632,9 +640,7 @@ async fn analyze_associations(
     if result.app_key.is_empty() {
         result.app_key = server_app_key;
     }
-    let paths: std::collections::HashSet<String> =
-        result.items.iter().map(|item| item.path.clone()).collect();
-    scan_allow::remember_uninstall(&result.app_key, &paths);
+    scan_allow::remember_uninstall_items(&result.app_key, &result.items);
     Ok(result)
 }
 
@@ -885,6 +891,11 @@ async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, St
         scan_task::run_scoped(id, "idle", || {
             scan_task::checkpoint("registry", 0);
             let mut installed = apps::scan_installed_inventory();
+            // HKCU entries are user-writable; an elevated idle pass must not use
+            // their InstallLocation as a filesystem probe target.
+            if crate::sysops::is_elevated_for_gate() {
+                installed.retain(|a| !a.source.to_ascii_uppercase().starts_with("HKCU"));
+            }
             if scan_task::cancelled() {
                 return idle::IdleScanResult {
                     items: Vec::new(),

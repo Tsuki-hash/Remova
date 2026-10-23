@@ -1290,6 +1290,7 @@ mod tests {
 
     #[test]
     fn trusted_app_returns_the_server_copy_and_survives_one_refresh() {
+        let _cache = crate::test_support::cache_test_lock();
         let _g = trust_test_support::guard();
         let scanned = {
             let mut a = sample_app(

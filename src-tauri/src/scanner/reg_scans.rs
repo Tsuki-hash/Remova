@@ -666,7 +666,12 @@ fn muicache_matches(
                 .iter()
                 .any(|slug| super::name_variant_hit(&stem, slug))
         });
-    (path_hit || name_hit) && missing(std::path::Path::new(exe))
+    // A hostile HKCU value name can carry a UNC path. Probing it from the
+    // elevated analyzer would authenticate to SMB (NetNTLM leak), so only local
+    // drive paths may reach the existence check.
+    (path_hit || name_hit)
+        && crate::fsutil::is_local_drive_path(exe)
+        && missing(std::path::Path::new(exe))
 }
 
 pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
@@ -890,6 +895,13 @@ mod tests {
             &slugs,
             "",
             present
+        ));
+        // A hostile HKCU value name must not make the elevated analyzer probe SMB.
+        assert!(!super::muicache_matches(
+            r"\\attacker\share\AcmeTool.exe.FriendlyAppName",
+            &slugs,
+            "",
+            missing
         ));
         assert!(super::muicache_matches(
             r"C:\Tools\Acme-Tool.exe.FriendlyAppName",

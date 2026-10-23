@@ -963,6 +963,7 @@ mod completeness_tests {
 
     #[test]
     fn a_batch_scan_reuses_one_enumeration_instead_of_re_reading_per_app() {
+        let _cache = crate::test_support::cache_test_lock();
         let _guard = crate::test_support::EnvLock::new();
         super::reset_registry_cache_for_test();
         let id = crate::scan_task::begin().unwrap();
@@ -987,6 +988,7 @@ mod completeness_tests {
 
     #[test]
     fn enumeration_is_never_reused_outside_a_scan_task() {
+        let _cache = crate::test_support::cache_test_lock();
         super::reset_registry_cache_for_test();
         // No scan task: the deletion gates read live, so nothing may be served
         // from memory even though a value is already cached.
@@ -1010,6 +1012,7 @@ mod completeness_tests {
 
     #[test]
     fn cache_expiry_and_key_cap_are_enforced() {
+        let _cache = crate::test_support::cache_test_lock();
         let _guard = crate::test_support::EnvLock::new();
         super::reset_registry_cache_for_test();
         super::subkey_cache::put_expired("expired-key");
@@ -1027,6 +1030,7 @@ mod completeness_tests {
 
     #[test]
     fn default_value_cache_reuses_expires_and_invalidates() {
+        let _cache = crate::test_support::cache_test_lock();
         super::default_cache::clear();
         super::default_cache::put("cls-key", Some("description"));
         assert_eq!(
@@ -1051,6 +1055,7 @@ mod completeness_tests {
 
     #[test]
     fn cached_default_value_reads_live_outside_and_after_cancellation() {
+        let _cache = crate::test_support::cache_test_lock();
         super::default_cache::clear();
         let key = r"HKCU\Software\RemovaP309Missing\NoSuchValue";
         super::default_cache::put(key, Some("stale-cached"));
@@ -1075,6 +1080,7 @@ mod completeness_tests {
 
     #[test]
     fn a_destructive_operation_drops_the_cached_enumerations() {
+        let _cache = crate::test_support::cache_test_lock();
         super::reset_registry_cache_for_test();
         let id = crate::scan_task::begin().unwrap();
         crate::scan_task::run(id, || {

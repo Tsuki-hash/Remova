@@ -415,7 +415,7 @@ export default function App() {
 
   const checkup = useCheckupStats(apps, sizeOf);
 
- // -03: chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
+ // Chrome/tool actions live in useAppChrome; AI narrative in useAiScanNarrative.
   const {
     checkupOrphanBusy,
     checkupScanProgress,

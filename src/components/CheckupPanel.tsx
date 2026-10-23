@@ -21,7 +21,7 @@ export function CheckupPanel({
   onOpenOrphans,
 }: {
   stats: CheckupStats;
-  /** -08: orphan scan spinner is independent of the analyze spinner. */
+  /** Orphan scan spinner is independent of the analyze spinner. */
   orphanScanning: boolean;
   scanStatus?: ReactNode;
   orphanCount: number | null;

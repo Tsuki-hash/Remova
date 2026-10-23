@@ -121,7 +121,7 @@ export function ScopedScanPanel({
     const out: Row[] = [];
     for (const group of groupScannedItems(items || [])) {
       out.push({ kind: "header", key: `bucket:${group.bucket}`, bucket: group.bucket, count: group.items.length });
-      for (const item of group.items) out.push({ kind: "item", key: item.path, item });
+      for (const item of group.items) out.push({ kind: "item", key: `${item.kind}:${item.path}`, item });
     }
     return out;
   }, [items]);

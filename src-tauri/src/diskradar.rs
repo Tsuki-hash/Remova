@@ -308,6 +308,10 @@ fn under_radar_roots(path: &str) -> bool {
     if raw.starts_with("\\\\") || raw.contains("\\\\?\\") || raw.contains("\\\\.\\") {
         return false;
     }
+    // Refuse remote/reparse shapes before canonicalize can follow them.
+    if !crate::fsutil::is_local_drive_path(path) {
+        return false;
+    }
     // Canonicalize first so verbatim / 8.3 / substituted shapes resolve to the real root.
     let canon = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     // Non-UTF-8 after canonicalize → refuse (no lossy prefix match).

@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn orphan_allow_list_normalizes_case_and_trailing_slash() {
         let _guard = crate::scan_allow::test_lock();
-        // -02: case / trailing `\` / slash style must not bypass the allow-list.
+        // Case / trailing `\` / slash style must not bypass the allow-list.
         use std::collections::HashSet;
         let mut set = HashSet::new();
         set.insert(r"C:\Program Files\SomeVendor\App".to_string());

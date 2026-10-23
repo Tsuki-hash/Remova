@@ -17,7 +17,7 @@ type AiScanActions = {
 
 /**
  * AI leftover explanations + post-cleanup report narrative.
- * -03: extracted from App.tsx (race guards kept intact).
+ * Extracted from App.tsx (race guards kept intact).
  */
 export function useAiScanNarrative({
   scan,
@@ -134,7 +134,7 @@ export function useAiScanNarrative({
       setAiReportBusy(true);
       try {
         const note = await runAiReportSummary(report);
- // -06: only the newest report summary may write aiReportNote.
+ // Only the newest report summary may write aiReportNote.
         if (seq !== aiReportSeqRef.current) return;
         setAiReportNote(note);
       } catch {

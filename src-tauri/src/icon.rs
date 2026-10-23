@@ -6,14 +6,21 @@ use std::time::UNIX_EPOCH;
 
 const ICON_SIZE: i32 = 32;
 
-fn icon_cache_dir() -> PathBuf {
-    // never fall back to C:\Users\Public (shared writable).
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let temp =
-            std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
-        format!("{temp}\\Remova-{}", std::process::id())
-    });
-    PathBuf::from(local).join("Remova").join("icons")
+fn icon_cache_dir() -> Option<PathBuf> {
+    // Known Folder, not LOCALAPPDATA: a rewritten environment variable must not
+    // make an elevated process probe or write a UNC path. No fallback to
+    // C:\Users\Public (shared writable).
+    #[cfg(windows)]
+    let base = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)?;
+    #[cfg(not(windows))]
+    let base = {
+        let raw = std::env::var_os("LOCALAPPDATA")?;
+        PathBuf::from(raw)
+    };
+    if !crate::fsutil::is_local_drive_path(&base.to_string_lossy()) {
+        return None;
+    }
+    Some(base.join("Remova").join("icons"))
 }
 
 fn fnv1a64(s: &str) -> u64 {
@@ -63,15 +70,18 @@ fn icon_source_extension_ok(path: &str) -> bool {
 }
 
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
-/// Uses `%LOCALAPPDATA%\Remova\icons\{hash}.png` as disk cache (key includes source fingerprint).
+/// Uses the Known Folder LocalAppData `\Remova\icons\{hash}.png` as disk cache
+/// (key includes source fingerprint).
 pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
     let dir = icon_cache_dir();
-    let cache_file = dir.join(cache_key(raw_display_icon));
-    if cache_file.is_file() {
-        if let Ok(bytes) = std::fs::read(&cache_file) {
-            // A torn or planted non-PNG cache file must not be served as an icon.
-            if looks_like_png(&bytes) {
-                return Some(bytes);
+    let cache_file = dir.as_ref().map(|d| d.join(cache_key(raw_display_icon)));
+    if let (Some(_), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
+        if cache_file.is_file() {
+            if let Ok(bytes) = std::fs::read(cache_file) {
+                // A torn or planted non-PNG cache file must not be served as an icon.
+                if looks_like_png(&bytes) {
+                    return Some(bytes);
+                }
             }
         }
     }
@@ -83,11 +93,13 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
         return None;
     }
     let png = extract_from_path(&path, index)?;
-    let _ = std::fs::create_dir_all(&dir);
-    // tmp + rename: a crash mid-write must not leave a torn PNG that would
-    // poison the cache key until the fingerprint changes.
-    let _ = write_cache_png(&cache_file, &png);
-    prune_stale_cache(&dir, &cache_file);
+    if let (Some(dir), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
+        let _ = std::fs::create_dir_all(dir);
+        // tmp + rename: a crash mid-write must not leave a torn PNG that would
+        // poison the cache key until the fingerprint changes.
+        let _ = write_cache_png(cache_file, &png);
+        prune_stale_cache(dir, cache_file);
+    }
     Some(png)
 }
 

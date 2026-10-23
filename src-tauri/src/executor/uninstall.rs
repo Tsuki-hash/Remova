@@ -336,9 +336,11 @@ fn run_official_uninstall_unchecked(
                                 let (initiated, persisted) = record_reboot_exit(code, &scanned);
                                 if ok {
                                     // The vendor uninstaller may have removed
-                                    // services; do not let a pre-uninstall
-                                    // snapshot mark their data as keep-class.
+                                    // services, registry keys and cache folders;
+                                    // do not let pre-uninstall snapshots linger.
                                     crate::scanner::reg_scans::invalidate_service_snapshot();
+                                    crate::regscan::invalidate_subkey_cache();
+                                    crate::scanner::fs_scans::clear_scan_caches();
                                 }
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
                                     format!("uninstaller finished (reboot required): {}", argv[0])

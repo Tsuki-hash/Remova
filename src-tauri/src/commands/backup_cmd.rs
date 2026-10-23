@@ -143,7 +143,7 @@ mod tests {
         }
     }
 
-    // -01: restore_by_name still rejects traversal at the command boundary.
+    // restore_by_name still rejects traversal at the command boundary.
     #[test]
     fn restore_session_by_name_rejects_traversal() {
         assert!(crate::restore::restore_by_name("").is_err());

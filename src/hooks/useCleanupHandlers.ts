@@ -19,7 +19,7 @@ import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, clea
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
 
-/** Grouped cleanup setters (A-4). */
+/** Grouped cleanup setters. */
 export type CleanupFlowSetters = {
   setSelectedPaths?: (paths: Set<string>) => void;
   setScan?: (scan: ScanResult | null) => void;
@@ -99,9 +99,9 @@ export function useCleanupHandlers({
   const backupEnabledRef = useRef(false);
   /**invalidates an in-flight verify probe when a newer cleanup starts. */
   const verifySeqRef = useRef(0);
-  /** -05: only the latest dry-run may write its report. */
+  /** Only the latest dry-run may write its report. */
   const dryRunSeqRef = useRef(0);
-  /** -07: invalidates force-clean's internal analyze when a newer one starts. */
+  /** Invalidates force-clean's internal analyze when a newer one starts. */
   const forceAnalyzeSeqRef = useRef(0);
 
   const forceClean = useCallback(
@@ -113,7 +113,7 @@ export function useCleanupHandlers({
       const aseq = ++forceAnalyzeSeqRef.current;
       try {
         const r = await api.analyze(target);
- // -07: a newer force-clean/analyze started while this one was in flight.
+ // A newer force-clean/analyze started while this one was in flight.
         if (aseq !== forceAnalyzeSeqRef.current) return;
         const items = r.items.filter(defaultSelectable);
         if (!items.length) {
@@ -169,7 +169,7 @@ export function useCleanupHandlers({
 
   const dryRun = useCallback(async () => {
     if (!scan || !selected) return;
- // -05: never overlap dry-run with another busy cleanup/uninstall.
+ // Never overlap dry-run with another busy cleanup/uninstall.
     if (busyRef.current) return;
     busyRef.current = true;
     const items = scan.items.filter((it) => selectedPaths.has(it.path));

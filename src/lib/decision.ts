@@ -338,7 +338,7 @@ export function gateReasonText(message: string, L: GateReasonLabels): string {
   if (m.includes("path missing")) return L.reasonPathMissing;
   if (m.includes("not found in path")) return L.reasonNotInPath;
   if (m.includes("reboot delete")) return L.reasonRebootDelete;
- // -09: common Chinese backend / reason copy (same buckets as the codes above).
+ // Common Chinese backend / reason copy (same buckets as the codes above).
   if (raw.includes("用户数据") || raw.includes("用户资料")) return L.reasonUserData;
   if (raw.includes("共享运行") || raw.includes("共享组件") || raw.includes("共享库")) {
     return L.reasonShared;

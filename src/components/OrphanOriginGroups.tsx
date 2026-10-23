@@ -70,7 +70,7 @@ export function OrphanOriginGroups({
                 const chip = riskChip(it, L);
                 const open = openPath === it.path;
                 return (
-                  <div key={it.path} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
+                  <div key={`${it.kind}:${it.path}`} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <label
                       style={{

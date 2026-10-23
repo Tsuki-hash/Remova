@@ -4,8 +4,8 @@
 // of scope (the README index only lists reports).
 //
 // The README promises "本 README 的索引、版号一览和最新报告入口随新文件同步更新".
-// That promise was broken five times in a row (the index stopped at round 30
-// while rounds 31-36 existed), so the index is now *checked* rather than
+// That promise was broken repeatedly (the index fell behind newer reports),
+// so the index is now *checked* rather than
 // trusted. Matching is on the path relative to docs/reviews/, which is what the
 // README's own links use — a basename alone would let one link cover two files.
 //

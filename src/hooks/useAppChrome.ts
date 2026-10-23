@@ -50,7 +50,7 @@ export function useCheckupStats(apps: InstalledApp[], sizeOf: (a: InstalledApp) 
 
 /**
  * Shell chrome / toolbox actions: ignore lists, orphan scan, install monitor,
- * checkup orphan count, elevate, open-path. -03: extracted from App.tsx.
+ * checkup orphan count, elevate, open-path. Extracted from App.tsx.
  */
 export function useAppChrome({
   L,
@@ -69,7 +69,7 @@ export function useAppChrome({
   residual: AppChromeResidual;
   setCheckupOrphanCount: (v: number | null) => void;
 }) {
-  /** -08: orphan checkup scan has its own spinner (never the analyze spinner). */
+  /** Orphan checkup scan has its own spinner (never the analyze spinner). */
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
   const checkupScan = useAssociationScan();
   const monitorScan = useAssociationScan();
@@ -238,7 +238,7 @@ export function useAppChrome({
     if (checkupBusyRef.current) return;
     checkupBusyRef.current = true;
     setCheckupOrphanCount(null);
- // -08: independent spinner — never touch the analyze `scanning` flag.
+ // Independent spinner — never touch the analyze `scanning` flag.
     void (async () => {
       setCheckupOrphanBusy(true);
       try {

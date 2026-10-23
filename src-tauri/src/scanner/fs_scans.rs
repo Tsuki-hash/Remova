@@ -769,6 +769,7 @@ mod cache_tests {
 
     #[test]
     fn shortcut_list_is_built_once_per_generation() {
+        let _cache = crate::test_support::cache_test_lock();
         scan_cache::clear();
         let mut calls = 0;
         let first = scan_cache::shortcuts(|| {
@@ -800,6 +801,7 @@ mod cache_tests {
     #[cfg(windows)]
     #[test]
     fn temp_roots_include_a_redirected_temp_and_dedupe_trailing_separators() {
+        let _cache = crate::test_support::cache_test_lock();
         let _lock = crate::test_support::EnvLock::new();
         let dir = crate::test_support::TempDir::new("temp-roots");
         let custom = dir.subdir("Redirected");
@@ -833,6 +835,7 @@ mod cache_tests {
 
     #[test]
     fn a_partial_temp_walk_is_reused_briefly_and_retried() {
+        let _cache = crate::test_support::cache_test_lock();
         scan_cache::clear();
         let (first, complete) = scan_cache::temp(|| {
             (

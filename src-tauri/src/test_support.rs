@@ -48,6 +48,16 @@ fn lock_held() -> bool {
     LOCK_HELD.with(|held| held.get())
 }
 
+/// Serialize tests that read or clear process-wide scan caches.
+///
+/// `EnvLock` only orders environment writes; cache tests can clear or expire a
+/// shared cache while another test is between its write and its exact-count
+/// assertion. One lock for all of them keeps filtered runs deterministic.
+pub(crate) fn cache_test_lock() -> MutexGuard<'static, ()> {
+    static CACHE_LOCK: Mutex<()> = Mutex::new(());
+    CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The one lock every test that mutates process-wide state must hold.
 ///
 /// Deliberately a single global lock rather than one per variable: the defect it

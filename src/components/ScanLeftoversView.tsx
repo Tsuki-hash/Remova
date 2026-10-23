@@ -31,7 +31,7 @@ type LeftoverRowProps = {
   onEvidence: (text: string | null) => void;
 };
 
-/** -10: memoized row so virtual-list parent re-renders skip unchanged items. */
+/** Memoized row so virtual-list parent re-renders skip unchanged items. */
 const LeftoverRow = memo(function LeftoverRow({
   it,
   checked,
@@ -420,7 +420,7 @@ export function ScanLeftoversView({
               if (!it) return null;
               return (
                 <div
-                  key={it.path}
+                  key={`${it.kind}:${it.path}`}
                   ref={rowVirtualizer.measureElement}
                   data-index={vr.index}
                   style={{

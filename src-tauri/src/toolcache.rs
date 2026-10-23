@@ -266,10 +266,10 @@ fn is_plausible_cache_root(p: &Path) -> bool {
     if !is_local_drive_shaped(p) {
         return false;
     }
-    // An existing local path must also have no reparse point in its ancestor
-    // chain; a missing path needs no probe (and must not require the drive to
-    // be present just to validate a relocation variable).
-    if p.exists() && !crate::fsutil::is_local_drive_path(&p.to_string_lossy()) {
+    // Classify the drive and its existing prefixes before any `exists` probe:
+    // `exists` on a mapped network drive authenticates to SMB. Missing paths
+    // still validate (the helper returns true at the first missing component).
+    if !crate::fsutil::is_local_drive_path(&p.to_string_lossy()) {
         return false;
     }
     let comps: Vec<_> = p.components().collect();
@@ -298,7 +298,7 @@ fn is_plausible_cache_root(p: &Path) -> bool {
     if LIBRARY_NAMES.contains(&last.as_str()) {
         return false;
     }
-    !crate::fsutil::is_reparse_point(p)
+    true
 }
 
 /// Build the fixed single-owner cache list from explicit bases.

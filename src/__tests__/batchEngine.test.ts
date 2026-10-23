@@ -251,7 +251,7 @@ describe("runBatchCleanup", () => {
     expect(last?.status).toBe("failed");
   });
 
-  it("maps cleanup abort to failed when items were present (S-R4-06)", async () => {
+  it("maps cleanup abort to failed when items were present", async () => {
     analyze.mockResolvedValue(scan("A", [item("C:\\Program Files\\A")]));
     fullCleanup.mockResolvedValue(
       report({ deleted: 0, failed: 0, aborted: true, uninstall_message: "backup failed" }),

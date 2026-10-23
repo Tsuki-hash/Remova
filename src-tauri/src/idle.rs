@@ -87,6 +87,11 @@ fn parse_install_date_days(install_date: &str) -> Option<i64> {
 }
 
 fn dir_mtime_age_days(path: &str) -> Option<i64> {
+    // HKCU InstallLocation is user-controlled; never probe a UNC path from the
+    // elevated idle radar.
+    if !crate::fsutil::is_local_drive_path(path) {
+        return None;
+    }
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
     let age = std::time::SystemTime::now()
@@ -106,7 +111,10 @@ fn size_kb_of(app: &InstalledApp, remaining: &mut u64) -> (i64, bool) {
     if app.estimated_size_kb > 0 {
         return (app.estimated_size_kb, false);
     }
-    if app.install_location.is_empty() || *remaining == 0 {
+    if app.install_location.is_empty()
+        || *remaining == 0
+        || !crate::fsutil::is_local_drive_path(&app.install_location)
+    {
         return (0, true);
     }
     let quota = (*remaining).min(IDLE_SIZE_PER_APP);
@@ -327,6 +335,19 @@ mod tests {
         );
         assert!(remaining < IDLE_SIZE_TOTAL);
         crate::dirsize::reset_walk_budget();
+    }
+
+    #[test]
+    fn non_local_install_locations_are_never_probed() {
+        // A HKCU entry can point at a UNC share; the elevated radar must not
+        // authenticate to SMB while merely ranking candidates.
+        assert!(super::dir_mtime_age_days(r"\\attacker\share\app").is_none());
+        let mut remaining = IDLE_SIZE_TOTAL;
+        let a = app("Remote", "20150101", r"\\attacker\share\app", 0);
+        let (kb, capped) = super::size_kb_of(&a, &mut remaining);
+        assert_eq!(kb, 0);
+        assert!(capped);
+        assert_eq!(remaining, IDLE_SIZE_TOTAL);
     }
 
     #[test]

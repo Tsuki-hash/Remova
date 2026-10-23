@@ -111,6 +111,12 @@ pub fn known_folder(id: &windows::core::GUID) -> Option<std::path::PathBuf> {
         if text.is_empty() {
             return None;
         }
+        // Folder Redirection / roaming profiles can point a Known Folder at a
+        // UNC share. An elevated scan must never touch it: `read_dir`/`metadata`
+        // would authenticate to SMB and leak NetNTLM. Fail closed instead.
+        if !crate::fsutil::is_local_drive_path(&text) {
+            return None;
+        }
         Some(std::path::PathBuf::from(text))
     }
 }
@@ -326,7 +332,12 @@ mod tests {
             resolved.is_some(),
             "LocalAppData must resolve on a worker thread"
         );
-        assert!(resolved.unwrap().is_absolute());
+        let path = resolved.unwrap();
+        assert!(path.is_absolute());
+        assert!(
+            crate::fsutil::is_local_drive_path(&path.to_string_lossy()),
+            "Known Folders must be local so redirects cannot trigger SMB probes"
+        );
     }
 
     #[test]

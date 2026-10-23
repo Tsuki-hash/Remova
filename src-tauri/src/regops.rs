@@ -1888,7 +1888,7 @@ mod tests {
         assert!(add.status.success(), "fixture key write failed");
         let exported = super::export_reg_value(&key, "Path", &dest).unwrap();
         assert!(exported, "test key must exist for the export");
-        let text = std::fs::read_to_string(&dest).unwrap();
+        let text = crate::restore::decode_reg_text(std::fs::read(&dest).unwrap()).unwrap();
         let payload = text
             .split("=hex(1):")
             .nth(1)
@@ -2001,9 +2001,11 @@ mod tests {
             .unwrap();
         assert!(add.status.success());
         assert!(super::export_reg_value(&key, "REG_SZ", &dest).unwrap());
-        assert!(std::fs::read_to_string(&dest)
-            .unwrap()
-            .contains("\"REG_SZ\"=dword:00000001"));
+        assert!(
+            crate::restore::decode_reg_text(std::fs::read(&dest).unwrap())
+                .unwrap()
+                .contains("\"REG_SZ\"=dword:00000001")
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -2288,7 +2290,7 @@ mod tests {
         );
         match r {
             Ok(true) => {
-                let s = std::fs::read_to_string(&dest).unwrap();
+                let s = crate::restore::decode_reg_text(std::fs::read(&dest).unwrap()).unwrap();
                 assert!(s.contains("Windows Registry Editor"));
                 assert!(s.contains("Shell Folders"));
                 assert!(s.contains("\"Desktop\"="));

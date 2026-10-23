@@ -1,4 +1,4 @@
-//! Cleanup / manage policy fa莽ade (A-02).
+//! Cleanup / manage policy façade.
 //! Single semantic gate for dry-run preview and real delete; manage/store/shared re-exported here.
 
 use crate::apps::InstalledApp;
@@ -210,7 +210,7 @@ pub fn is_dangerous_path_entry(entry: &str) -> bool {
         .any(|d| s == *d || s.starts_with(&format!("{d}\\")))
 }
 
-/// Shared leftover gate for dry-run and full delete ( / A-02).
+/// Shared leftover gate for dry-run and full delete.
 /// Order: server-side user_data/shared recompute →client flags →ignore → →safety.
 pub fn gate_cleanup_item(
     app: Option<&InstalledApp>,

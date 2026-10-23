@@ -13,7 +13,7 @@ import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
 
-/** Grouped setters for the analyze/uninstall flow (A-4: fewer flat parameters). */
+/** Grouped setters for the analyze/uninstall flow (fewer flat parameters). */
 export type AnalyzeFlowSetters = {
   setSelected: (a: InstalledApp | null) => void;
   setScanning: (v: boolean) => void;
@@ -68,7 +68,7 @@ export function useAnalyzeFlow({
   const analyzeHoldRef = useRef(0);
   const { run: runScan, cancel: cancelScan, progress: scanProgress } = useAssociationScan();
   const analyzingRef = useRef(false);
-  /** -11: stage idle timers must be cleared on unmount / replacement. */
+  /** Stage idle timers must be cleared on unmount / replacement. */
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearStageTimer = useCallback(() => {
     if (stageTimerRef.current !== null) {

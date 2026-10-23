@@ -101,21 +101,29 @@ impl From<&AiConfig> for AiConfigView {
     }
 }
 
-fn config_path() -> PathBuf {
-    // never fall back to C:\Users\Public (shared writable). Prefer per-user TEMP.
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        let temp =
-            std::env::var("TEMP").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into());
-        format!("{temp}\\Remova-{}", std::process::id())
-    });
-    PathBuf::from(base).join("Remova").join("ai-config.json")
+fn config_path() -> Result<PathBuf, String> {
+    // Known Folder, not LOCALAPPDATA: an elevated process must not read or write
+    // a path an environment variable can point at a network share.
+    #[cfg(windows)]
+    let base = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+        .ok_or_else(|| "ai:config_dir_unavailable".to_string())?;
+    #[cfg(not(windows))]
+    let base = {
+        let raw = std::env::var_os("LOCALAPPDATA")
+            .ok_or_else(|| "ai:config_dir_unavailable".to_string())?;
+        PathBuf::from(raw)
+    };
+    if !crate::fsutil::is_local_drive_path(&base.to_string_lossy()) {
+        return Err("ai:config_dir_unavailable".into());
+    }
+    Ok(base.join("Remova").join("ai-config.json"))
 }
 
 static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn load_config() -> Result<AiConfig, String> {
     let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    load_config_file(&config_path())
+    load_config_file(&config_path()?)
 }
 
 fn load_config_file(p: &std::path::Path) -> Result<AiConfig, String> {
@@ -170,7 +178,7 @@ fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
 }
 
 pub fn update_config(f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, String> {
-    update_config_file(&config_path(), f)
+    update_config_file(&config_path()?, f)
 }
 
 fn update_config_file(

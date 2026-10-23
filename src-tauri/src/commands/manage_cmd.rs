@@ -62,7 +62,7 @@ pub async fn set_task_enabled(name: String, enabled: bool) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
-    // -01: commands-layer boundary coverage for manage write gates.
+    // Commands-layer boundary coverage for manage write gates.
 
     #[test]
     fn set_service_start_disabled_rejects_critical_and_bad_names() {

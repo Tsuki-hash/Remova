@@ -10,7 +10,7 @@ import { appCoreReducer, initialAppCoreState } from "./reducers/appCore";
 
 export type { VerifyRow };
 
-/** App core domain state via shared appCore reducer (single source, A-01). */
+/** App core domain state via shared appCore reducer (single source). */
 export function useAppCoreState() {
   const [state, dispatch] = useReducer(appCoreReducer, undefined, initialAppCoreState);
 

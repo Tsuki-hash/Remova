@@ -30,7 +30,7 @@ export function useShellState() {
   const openCheckup = useCallback(() => dispatch({ type: "checkup/open" }), []);
   const closeCheckup = useCallback(() => dispatch({ type: "checkup/close" }), []);
 
-  /** Real functional updaters (C-01) — not toggle-on-fn. */
+  /** Real functional updaters — not toggle-on-fn. */
   const setTheme = useCallback((t: Theme | ((th: Theme) => Theme)) => {
     const next = typeof t === "function" ? t(stateRef.current.theme) : t;
     if (next !== stateRef.current.theme) {

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{CleanupReport, ItemDetail};
 
-/// Dry-run with the same semantic gates as full delete when `app` is known ( / A-02).
+/// Dry-run with the same semantic gates as full delete when `app` is known.
 pub fn run_cleanup_dry_for_app(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
