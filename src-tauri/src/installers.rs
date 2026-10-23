@@ -71,8 +71,14 @@ fn looks_like_setup_name_lower(lower: &str) -> bool {
 }
 
 fn user_local_appdata() -> Option<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA")?;
-    Some(PathBuf::from(local))
+    #[cfg(windows)]
+    {
+        crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    }
 }
 
 /// `MZ` plus a PE signature — the real test that a downloaded `.exe` is a

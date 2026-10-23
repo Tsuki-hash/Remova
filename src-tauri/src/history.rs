@@ -27,7 +27,37 @@ pub struct HistoryEntry {
 const HISTORY_SOFT_CAP: u64 = 2 * 1024 * 1024;
 const HISTORY_KEEP_LINES: usize = 2000;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_HISTORY_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct TestHistoryDirGuard;
+#[cfg(test)]
+impl Drop for TestHistoryDirGuard {
+    fn drop(&mut self) {
+        TEST_HISTORY_DIR.with(|d| *d.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+fn use_history_dir(dir: &Path) -> TestHistoryDirGuard {
+    TEST_HISTORY_DIR.with(|d| *d.borrow_mut() = Some(dir.to_path_buf()));
+    TestHistoryDirGuard
+}
+
 fn history_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(dir) = TEST_HISTORY_DIR.with(|d| d.borrow().clone()) {
+        return dir.join("Remova").join("history.jsonl");
+    }
+    #[cfg(windows)]
+    if let Some(pd) = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramData)
+    {
+        return pd.join("Remova").join("history.jsonl");
+    }
     let pd = std::env::var_os("PROGRAMDATA").unwrap_or_else(|| "C:\\ProgramData".into());
     PathBuf::from(pd).join("Remova").join("history.jsonl")
 }
@@ -438,10 +468,9 @@ mod tests {
     fn disk_append_load_delete_clear_roundtrip() {
         let tmp = crate::test_support::TempDir::new("hist");
         tmp.subdir("Remova");
-        // CQ-1: the fixture takes the shared process-wide lock, not a private one
-        // that the readers of PROGRAMDATA do not observe, and restores on panic.
-        let _lock = crate::test_support::EnvLock::new();
-        let _env = crate::test_support::EnvVar::set("PROGRAMDATA", tmp.path());
+        // CQ-1: a thread-local test root isolates this fixture without relying
+        // on a process-wide environment override that production no longer reads.
+        let _dir = super::use_history_dir(tmp.path());
         let p = super::history_path();
         assert!(p.starts_with(tmp.path()));
 
@@ -466,8 +495,7 @@ mod tests {
     fn delete_preserves_non_utf8_lines() {
         let tmp = crate::test_support::TempDir::new("hist_nu");
         tmp.subdir("Remova");
-        let _lock = crate::test_support::EnvLock::new();
-        let _env = crate::test_support::EnvVar::set("PROGRAMDATA", tmp.path());
+        let _dir = super::use_history_dir(tmp.path());
         let p = super::history_path();
 
         assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));

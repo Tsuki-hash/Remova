@@ -476,8 +476,8 @@ mod tests {
     #[test]
     fn orphan_roots_ignore_environment_overrides() {
         let _g = crate::test_support::EnvLock::new();
-        std::env::set_var("LOCALAPPDATA", r"D:\");
-        std::env::set_var("ProgramFiles", r"D:\");
+        let _local = crate::test_support::EnvVar::set("LOCALAPPDATA", r"D:\");
+        let _pf = crate::test_support::EnvVar::set("ProgramFiles", r"D:\");
         let roots = super::orphan_roots();
         assert!(!roots.is_empty(), "Known Folder roots must resolve");
         assert!(roots.iter().all(|p| p.is_absolute()));

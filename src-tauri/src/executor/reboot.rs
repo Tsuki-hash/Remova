@@ -64,6 +64,12 @@ fn memory() -> &'static Mutex<HashSet<String>> {
 
 #[cfg(not(test))]
 fn state_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    if let Some(local) =
+        crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+    {
+        return Some(local.join("Remova").join("reboot-pending.json"));
+    }
     let local = std::env::var_os("LOCALAPPDATA")?;
     Some(
         PathBuf::from(local)

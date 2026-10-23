@@ -88,9 +88,17 @@ pub fn build_uninstall_command(
 /// absolute (usually nonexistent) System32 path instead of a PATH lookup.
 fn resolve_uninstall_exe(exe: &str) -> String {
     if uninstall_exe_is_absolute(exe) {
-        exe.to_string()
-    } else {
+        return exe.to_string();
+    }
+    // Only a bare file name may be pinned to System32. A relative path with
+    // separators or `..` must not be joined into an absolute path that escapes
+    // System32; return empty so the caller refuses it.
+    let bare =
+        std::path::Path::new(exe).components().count() == 1 && !exe.contains(['\\', '/', ':']);
+    if bare {
         crate::regops::sys_tool(exe)
+    } else {
+        String::new()
     }
 }
 
@@ -474,6 +482,9 @@ mod tests {
         let unknown = resolve_uninstall_exe("vendor-uninstaller.exe");
         assert!(uninstall_exe_is_absolute(&unknown));
         assert!(unknown.to_ascii_lowercase().contains(r"\system32\"));
+        // A relative path with separators/`..` must not escape System32.
+        assert!(resolve_uninstall_exe(r"..\Users\Public\evil.exe").is_empty());
+        assert!(resolve_uninstall_exe(r"bin\evil.exe").is_empty());
     }
 
     #[test]

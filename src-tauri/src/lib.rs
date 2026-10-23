@@ -772,10 +772,13 @@ async fn elevate_restart(app: tauri::AppHandle, approved: Option<bool>) -> Resul
 
 #[tauri::command]
 fn take_pending_analyze() -> Result<Option<String>, String> {
-    let local = std::env::var_os("LOCALAPPDATA").ok_or("no LOCALAPPDATA")?;
-    let p = std::path::PathBuf::from(local)
-        .join("Remova")
-        .join("pending_analyze.txt");
+    #[cfg(windows)]
+    let local = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+        .ok_or("no LOCALAPPDATA")?;
+    #[cfg(not(windows))]
+    let local =
+        std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("no LOCALAPPDATA")?);
+    let p = local.join("Remova").join("pending_analyze.txt");
     if !p.exists() {
         return Ok(None);
     }

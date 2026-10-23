@@ -661,22 +661,34 @@ pub fn analyze_associations(
         }
     }
 
-    // 2. Named roots
+    // 2. Named roots. Known Folders, not process environment: a rewritten
+    // LOCALAPPDATA/ProgramFiles must not become a confirmed delete root.
     let mut bases: Vec<PathBuf> = vec![];
-    if let Some(v) = std::env::var_os("LOCALAPPDATA") {
-        bases.push(PathBuf::from(v));
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
+            FOLDERID_ProgramFilesX86, FOLDERID_RoamingAppData,
+        };
+        for id in [
+            &FOLDERID_LocalAppData,
+            &FOLDERID_RoamingAppData,
+            &FOLDERID_ProgramData,
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+        ] {
+            if let Some(base) = crate::sysops::known_folder(id) {
+                bases.push(base);
+            }
+        }
     }
-    if let Some(v) = std::env::var_os("APPDATA") {
-        bases.push(PathBuf::from(v));
-    }
-    if let Some(v) = std::env::var_os("PROGRAMDATA") {
-        bases.push(PathBuf::from(v));
-    }
-    if let Some(v) = std::env::var_os("ProgramFiles") {
-        bases.push(PathBuf::from(v));
-    }
-    if let Some(v) = std::env::var_os("ProgramFiles(x86)") {
-        bases.push(PathBuf::from(v));
+    #[cfg(not(windows))]
+    {
+        for key in ["LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "ProgramFiles"] {
+            if let Some(v) = std::env::var_os(key) {
+                bases.push(PathBuf::from(v));
+            }
+        }
     }
 
     let mut seen = std::collections::HashSet::new();

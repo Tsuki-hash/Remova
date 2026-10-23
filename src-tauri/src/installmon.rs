@@ -55,6 +55,10 @@ fn monitor_state_path() -> PathBuf {
     {
         return p;
     }
+    #[cfg(windows)]
+    let base = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramData)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    #[cfg(not(windows))]
     let base = std::env::var("PROGRAMDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData"));
@@ -67,6 +71,7 @@ fn monitor_state_path() -> PathBuf {
 /// there used to produce an empty diff while the UI reported a completed scan.
 /// The rest of the product already walks both (`fs_scans`), which is what proves
 /// this list was incomplete rather than deliberately narrow.
+#[cfg(any(not(windows), test))]
 fn roots_from(get: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     const VARS: &[&str] = &[
         "ProgramFiles",
@@ -83,7 +88,27 @@ fn roots_from(get: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
 }
 
 fn roots() -> Vec<PathBuf> {
-    roots_from(|key| std::env::var(key).ok())
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
+            FOLDERID_ProgramFilesX86, FOLDERID_RoamingAppData,
+        };
+        [
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+            &FOLDERID_LocalAppData,
+            &FOLDERID_RoamingAppData,
+            &FOLDERID_ProgramData,
+        ]
+        .into_iter()
+        .filter_map(crate::sysops::known_folder)
+        .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        roots_from(|key| std::env::var(key).ok())
+    }
 }
 
 /// Every directory Remova itself writes under a snapshot root.
@@ -115,7 +140,17 @@ fn remova_state_roots() -> Vec<PathBuf> {
             }
         }
     };
+    #[cfg(windows)]
+    let program_data =
+        crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramData)
+            .map(|p| p.to_string_lossy().into_owned());
+    #[cfg(windows)]
+    let local_app_data =
+        crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+            .map(|p| p.to_string_lossy().into_owned());
+    #[cfg(not(windows))]
     let program_data = std::env::var("PROGRAMDATA").ok();
+    #[cfg(not(windows))]
     let local_app_data = std::env::var("LOCALAPPDATA").ok();
     // History, ignore list, Safety Vault sessions, monitor snapshot, seals.
     push(program_data.clone(), "Remova");

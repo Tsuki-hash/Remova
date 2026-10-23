@@ -374,15 +374,28 @@ fn lock_manage() -> std::sync::MutexGuard<'static, ()> {
 
 fn startup_folder_paths() -> Vec<String> {
     let mut dirs = Vec::new();
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        dirs.push(format!(
-            r"{appdata}\Microsoft\Windows\Start Menu\Programs\Startup"
-        ));
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{FOLDERID_CommonStartup, FOLDERID_Startup};
+        if let Some(startup) = crate::sysops::known_folder(&FOLDERID_Startup) {
+            dirs.push(startup.to_string_lossy().into_owned());
+        }
+        if let Some(common) = crate::sysops::known_folder(&FOLDERID_CommonStartup) {
+            dirs.push(common.to_string_lossy().into_owned());
+        }
     }
-    if let Ok(pd) = std::env::var("ProgramData") {
-        dirs.push(format!(
-            r"{pd}\Microsoft\Windows\Start Menu\Programs\Startup"
-        ));
+    #[cfg(not(windows))]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            dirs.push(format!(
+                r"{appdata}\Microsoft\Windows\Start Menu\Programs\Startup"
+            ));
+        }
+        if let Ok(pd) = std::env::var("ProgramData") {
+            dirs.push(format!(
+                r"{pd}\Microsoft\Windows\Start Menu\Programs\Startup"
+            ));
+        }
     }
     dirs
 }

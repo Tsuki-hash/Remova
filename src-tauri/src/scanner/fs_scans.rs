@@ -294,14 +294,25 @@ fn push_home_dot_item(path: &Path, name: &str, install_low: &str, items: &mut Ve
 
 /// WebView2 cache dirs named like `app.exe` (SOP: ollama app.exe\EBWebView).
 pub(super) fn scan_webview_masks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
-    let Some(local) = std::env::var_os("LOCALAPPDATA") else {
-        return;
+    #[cfg(windows)]
+    let roots: Vec<PathBuf> = {
+        use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, FOLDERID_RoamingAppData};
+        [&FOLDERID_LocalAppData, &FOLDERID_RoamingAppData]
+            .into_iter()
+            .filter_map(crate::sysops::known_folder)
+            .collect()
     };
-    let roaming = std::env::var_os("APPDATA");
-    let mut roots = vec![PathBuf::from(&local)];
-    if let Some(r) = roaming {
-        roots.push(PathBuf::from(r));
-    }
+    #[cfg(not(windows))]
+    let roots: Vec<PathBuf> = {
+        let mut roots = Vec::new();
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            roots.push(PathBuf::from(local));
+        }
+        if let Some(roaming) = std::env::var_os("APPDATA") {
+            roots.push(PathBuf::from(roaming));
+        }
+        roots
+    };
     for base in roots {
         if crate::scan_task::cancelled() {
             break;
@@ -403,6 +414,10 @@ mod scan_cache {
             }
         }
         let built = Arc::new(build());
+        if crate::scan_task::cancelled() {
+            // A cancelled walk produced a partial list; never publish it.
+            return built;
+        }
         *guard = Some((Instant::now(), Arc::clone(&built)));
         built
     }
@@ -417,17 +432,16 @@ mod scan_cache {
             }
         }
         let built = Arc::new(build());
+        if crate::scan_task::cancelled() {
+            return built;
+        }
         *guard = Some((Instant::now(), Arc::clone(&built)));
         built
     }
 
     pub(super) fn clear() {
-        if let Ok(mut g) = shortcuts_state().lock() {
-            *g = None;
-        }
-        if let Ok(mut g) = temp_state().lock() {
-            *g = None;
-        }
+        *shortcuts_state().lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *temp_state().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -547,6 +561,11 @@ pub(super) fn scan_shortcuts(
         if !hit || !is_safe_fs(&entry.path) {
             continue;
         }
+        // A cleanup may have removed this entry while the batch cache lived.
+        // Do not report a path that no longer exists as a confirmed leftover.
+        if !entry.path.try_exists().unwrap_or(false) {
+            continue;
+        }
         items.push(CleanupItem {
             path: entry.path.to_string_lossy().to_string(),
             kind: ItemKind::File,
@@ -629,6 +648,9 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
             continue;
         }
         if !is_safe_fs(p) {
+            continue;
+        }
+        if !p.try_exists().unwrap_or(false) {
             continue;
         }
         items.push(CleanupItem {

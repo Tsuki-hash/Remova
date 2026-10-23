@@ -64,7 +64,14 @@ fn env_path(key: &str) -> Option<PathBuf> {
 }
 
 fn userprofile() -> Option<PathBuf> {
-    env_path("USERPROFILE")
+    #[cfg(windows)]
+    {
+        crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_Profile)
+    }
+    #[cfg(not(windows))]
+    {
+        env_path("USERPROFILE")
+    }
 }
 
 /// Whether a rule row may be offered as a deletion candidate.
@@ -173,6 +180,9 @@ impl ToolCacheEnv {
                 // A relocated root becomes a delete target, so a value that
                 // points somewhere implausible is dropped rather than trusted.
                 .filter(|p| is_plausible_cache_root(p))
+                // A user-writable relocation variable must not aim at a
+                // machine-wide directory the user cannot modify themselves.
+                .filter(|p| !under_system_root(p))
         };
         Self {
             cargo_home: first_path("CARGO_HOME"),
@@ -189,6 +199,35 @@ impl ToolCacheEnv {
             yarn_global_folder: first_path("YARN_GLOBAL_FOLDER"),
             bun_install_cache: first_path("BUN_INSTALL_CACHE_DIR"),
         }
+    }
+}
+
+/// Whether a relocation variable points into a machine-wide tree. Such a path
+/// is not a user cache the current user could have created, and deleting it with
+/// elevation would cross the privilege boundary.
+fn under_system_root(p: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{
+            FOLDERID_ProgramData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86,
+        };
+        let low = p.to_string_lossy().to_lowercase();
+        [
+            &FOLDERID_ProgramFiles,
+            &FOLDERID_ProgramFilesX86,
+            &FOLDERID_ProgramData,
+        ]
+        .into_iter()
+        .filter_map(crate::sysops::known_folder)
+        .any(|root| {
+            let root = root.to_string_lossy().to_lowercase();
+            low == root || low.starts_with(&(root.trim_end_matches('\\').to_string() + "\\"))
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+        false
     }
 }
 
@@ -384,8 +423,22 @@ fn tool_roots(degraded: &mut Vec<String>) -> Vec<(ToolDomain, PathBuf, &'static 
     // rebuilding them by joining onto `USERPROFILE` is exactly the hardcoding
     // this module asks the tools not to do. The fallback only fires on an
     // account with no AppData variables at all, where nothing is scannable.
+    #[cfg(windows)]
+    let local = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+        .unwrap_or_else(|| up.join("AppData").join("Local"));
+    #[cfg(not(windows))]
     let local = env_path("LOCALAPPDATA").unwrap_or_else(|| up.join("AppData").join("Local"));
+    #[cfg(windows)]
+    let roaming = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_RoamingAppData)
+        .unwrap_or_else(|| up.join("AppData").join("Roaming"));
+    #[cfg(not(windows))]
     let roaming = env_path("APPDATA").unwrap_or_else(|| up.join("AppData").join("Roaming"));
+    #[cfg(windows)]
+    let program_files = crate::sysops::known_folder(
+        &windows::Win32::UI::Shell::FOLDERID_ProgramFilesX86,
+    )
+    .or_else(|| crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramFiles));
+    #[cfg(not(windows))]
     let program_files = env_path("ProgramFiles(x86)").or_else(|| env_path("ProgramFiles"));
     let mut out = tool_roots_from(
         &up,

@@ -18,6 +18,11 @@ pub struct IgnoreList {
 static FILE_LOCK: Mutex<()> = Mutex::new(());
 
 fn ignore_path() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(pd) = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramData)
+    {
+        return pd.join("Remova").join("ignore.json");
+    }
     let base = std::env::var("PROGRAMDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData"));

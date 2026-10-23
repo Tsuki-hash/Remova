@@ -159,9 +159,12 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
             }
             // every write-back target requires a matching out-of-session seal
             // (not only library subpaths) — a tampered path_map must not widen destinations.
-            if !seal
+            // `targets` is sorted and unique, so a binary search keeps this
+            // O(log n) instead of O(n) per entry (5万文件还原曾因此多花数十秒).
+            if seal
                 .targets
-                .contains(&crate::path_seal::normalize_target(original))
+                .binary_search(&crate::path_seal::normalize_target(original))
+                .is_err()
             {
                 messages.push(format!("skipped unsealed restore target: {original}"));
                 continue;
@@ -702,10 +705,11 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
                 "missing"
             } else if !crate::safety::is_safe_restore_target(dest)
                 || crate::safety::looks_like_sync_conflict(&target)
-                || !inputs
+                || inputs
                     .seal
                     .targets
-                    .contains(&crate::path_seal::normalize_target(&target))
+                    .binary_search(&crate::path_seal::normalize_target(&target))
+                    .is_err()
             {
                 "blocked"
             } else if dest.try_exists().unwrap_or(true) {

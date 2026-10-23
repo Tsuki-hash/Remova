@@ -366,13 +366,25 @@ mod subkey_cache {
 /// clears the cache.
 mod default_cache {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const TTL: Duration = Duration::from_secs(5 * 60);
     /// CLSID-rich machines can exceed 20k leaves; keep enough headroom that a
     /// full table is rare, but never grow without bound.
     const MAX_ENTRIES: usize = 40_000;
+    /// Do not sweep a full table more than once a minute: a rejected insert
+    /// must stay O(1) even on a machine with more leaves than the cap.
+    const SWEEP_INTERVAL_SECS: u64 = 60;
+    static LAST_SWEEP: AtomicU64 = AtomicU64::new(0);
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
 
     struct Entry {
         value: String,
@@ -402,7 +414,12 @@ mod default_cache {
         // O(n) retain on each one made the "optimization" quadratic. Sweep only
         // at the cap, and reject new keys if the table is still full.
         if !entries.contains_key(key) && entries.len() >= MAX_ENTRIES {
-            entries.retain(|_, entry| entry.at.elapsed() < TTL);
+            let now = now_secs();
+            let last = LAST_SWEEP.load(Ordering::Relaxed);
+            if now.saturating_sub(last) >= SWEEP_INTERVAL_SECS {
+                entries.retain(|_, entry| entry.at.elapsed() < TTL);
+                LAST_SWEEP.store(now, Ordering::Relaxed);
+            }
             if entries.len() >= MAX_ENTRIES {
                 return;
             }
@@ -418,6 +435,7 @@ mod default_cache {
 
     pub(super) fn clear() {
         state().lock().unwrap_or_else(|e| e.into_inner()).clear();
+        LAST_SWEEP.store(0, Ordering::Relaxed);
     }
 
     #[cfg(test)]
