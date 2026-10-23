@@ -433,11 +433,11 @@ mod cleanup_trust_tests {
     }
 
     #[test]
-    fn user_install_root_is_stripped_from_a_user_analysis() {
-        let mut items = vec![item(r"C:\Program Files\Demo"), item(r"D:\Data\Child")];
-        strip_user_install_root(&mut items, r"C:\Program Files\Demo");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].path, r"D:\Data\Child");
+    fn elevated_hkcu_analysis_and_cleanup_are_refused() {
+        assert!(hkcu_refused_when_elevated("HKCU", true));
+        assert!(hkcu_refused_when_elevated("hkcu", true));
+        assert!(!hkcu_refused_when_elevated("HKLM64", true));
+        assert!(!hkcu_refused_when_elevated("HKCU", false));
     }
 
     #[test]
@@ -489,7 +489,20 @@ fn resolve_cleanup_app(
     if source.is_scoped_scan() {
         return Ok(app);
     }
-    apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".into())
+    let app =
+        apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
+    let elevated = matches!(crate::sysops::is_process_elevated(), Ok(true));
+    if hkcu_refused_when_elevated(&app.source, elevated) {
+        // Name-based associations can still point at machine directories, so
+        // elevated deletion based on a user-writable HKCU record is refused
+        // entirely. The user can run Remova without elevation to clean it.
+        return Err("elevated HKCU cleanup refused".into());
+    }
+    Ok(app)
+}
+
+fn hkcu_refused_when_elevated(source: &str, elevated: bool) -> bool {
+    elevated && source.to_ascii_uppercase().starts_with("HKCU")
 }
 
 /// Every app-scoped cleanup item must come from the latest server analysis of
@@ -521,18 +534,6 @@ fn authorize_cleanup_items(
     Ok(())
 }
 
-/// Remove the exact install-root row from a per-user analysis. HKCU data is
-/// writable by the current user; in an elevated process it must not authorize
-/// deleting an arbitrary machine path. Other server-scanned associations stay.
-fn strip_user_install_root(items: &mut Vec<CleanupItem>, install_location: &str) {
-    if let Some(root) = crate::fsutil::path_key(std::path::Path::new(install_location)) {
-        items.retain(|item| {
-            crate::fsutil::path_key(std::path::Path::new(&item.path)).as_deref()
-                != Some(root.as_str())
-        });
-    }
-}
-
 #[tauri::command]
 async fn analyze_associations(
     app: InstalledApp,
@@ -542,8 +543,11 @@ async fn analyze_associations(
     let app =
         apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
     let server_source = app.source.clone();
-    let server_install_location = app.install_location.clone();
     let server_app_key = apps::app_key(&app);
+    let elevated = matches!(crate::sysops::is_process_elevated(), Ok(true));
+    if hkcu_refused_when_elevated(&server_source, elevated) {
+        return Err("elevated HKCU analysis refused".into());
+    }
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let work = || {
             scanner::analyze_associations(
@@ -564,13 +568,6 @@ async fn analyze_associations(
 
     if result.app_key.is_empty() {
         result.app_key = server_app_key;
-    }
-    // A per-user registry entry is writable by the unprivileged user. Its
-    // install root must not authorize elevated deletion of an arbitrary
-    // machine path; the user can analyze/clean it without elevation.
-    let non_elevated = matches!(crate::sysops::is_process_elevated(), Ok(false));
-    if !non_elevated && server_source.eq_ignore_ascii_case("HKCU") {
-        strip_user_install_root(&mut result.items, &server_install_location);
     }
     let paths: std::collections::HashSet<String> =
         result.items.iter().map(|item| item.path.clone()).collect();

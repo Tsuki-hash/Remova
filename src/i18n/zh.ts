@@ -627,6 +627,7 @@ export const dict = {
     uninstallFail: "官方卸载未成功",
     uninstallNoCmd: "该软件没有可用的卸载命令",
     uninstallElevatedHkcu: "已提权运行：出于安全考虑，不能执行当前用户（HKCU）的卸载命令。请以普通权限重启 Remova 后重试。",
+    elevatedHkcuBlocked: "已提权运行：出于安全考虑，不能分析或清理当前用户（HKCU）应用。请以普通权限重启 Remova 后重试。",
     uninstallCommand: "卸载命令",
     leftoversTitle: "可能的残留",
     leftoversNone: "未发现明显残留",

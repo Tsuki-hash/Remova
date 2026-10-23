@@ -45,6 +45,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "uninstall command not from latest app scan": L.backendScanExpired,
     "uninstall launch failed": L.backendLaunchFailed, "uninstall wait failed": L.backendWaitFailed,
     "elevated HKCU uninstall refused": L.uninstallElevatedHkcu,
+    "elevated HKCU analysis refused": L.elevatedHkcuBlocked,
+    "elevated HKCU cleanup refused": L.elevatedHkcuBlocked,
     "backup session failed": L.backendBackupFailed, "backup failed": L.backendBackupFailed,
     "dry-run: official uninstaller not launched": L.backendDryRun,
     "[dry-run]": L.backendDryRun, "PATH entry removed": L.backendPathRemoved,

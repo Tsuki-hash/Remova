@@ -645,6 +645,7 @@ export const dict: EnDict = {
     uninstallFail: "Official uninstall did not succeed",
     uninstallNoCmd: "No uninstall command for this app",
     uninstallElevatedHkcu: "Remova is running elevated. For safety it will not run a per-user (HKCU) uninstaller as administrator; restart Remova without elevation and retry.",
+    elevatedHkcuBlocked: "Remova is running elevated. For safety it will not analyze or clean a per-user (HKCU) app as administrator; restart Remova without elevation and retry.",
     uninstallCommand: "Uninstall command",
     leftoversTitle: "Possible leftovers",
     leftoversNone: "No obvious leftovers found",
