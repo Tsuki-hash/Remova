@@ -295,7 +295,9 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 continue;
             }
         };
-        let staged = pin.write_all(raw.as_bytes()).and_then(|_| pin.flush());
+        let staged = pin
+            .write_all(&encode_reg_text(&raw))
+            .and_then(|_| pin.flush());
         if let Err(write_err) = staged {
             drop(pin);
             let _ = fs::remove_file(&pinned);
@@ -397,6 +399,18 @@ pub(crate) fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     String::from_utf8(raw).map_err(|e| e.to_string())
 }
 
+/// Encode `.reg` text the way `reg.exe` writes it: UTF-16LE with a BOM.
+/// Without the BOM, `reg import` falls back to the ANSI code page and silently
+/// corrupts non-ASCII key/value names while still reporting success.
+pub(crate) fn encode_reg_text(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + text.len() * 2);
+    out.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in text.encode_utf16() {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    out
+}
+
 fn registry_import_view(text: &str) -> Result<&'static str, String> {
     let views: Vec<_> = text
         .lines()
@@ -427,11 +441,13 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
     let mut current_is_run = false;
     let mut current_has_value = false;
     let mut current_has_delete = false;
+    let mut current_values: Vec<String> = Vec::new();
 
     let flush = |key: &Option<String>,
                  is_run: bool,
                  has_value: bool,
-                 has_delete: bool|
+                 has_delete: bool,
+                 values: &[String]|
      -> Result<(), String> {
         let Some(k) = key else {
             return Ok(());
@@ -444,6 +460,14 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
             if !has_value {
                 return Err(format!("reg import refused (Run key without values): {k}"));
             }
+            return Ok(());
+        }
+        // Value-level restores on keys whose whole-key deletion is protected by
+        // `is_safe_to_delete_registry`. A `value.reg` carries a bare key header,
+        // so validating it like a whole-key export used to abort every session
+        // that contained one MuiCache or firewall value. The value names are
+        // checked against the same rules the delete gate applies.
+        if value_level_restore_allowed(k, values) {
             return Ok(());
         }
         crate::safety::is_safe_to_delete_registry(k).map_err(|e| format!("reg import refused: {e}"))
@@ -464,9 +488,11 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
                 current_is_run,
                 current_has_value,
                 current_has_delete,
+                &current_values,
             )?;
             current_has_value = false;
             current_has_delete = false;
+            current_values.clear();
             let body = t.trim_start_matches('[').trim_end_matches(']').trim();
             if body.is_empty() {
                 return Err("reg import refused (empty key header)".into());
@@ -492,6 +518,9 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
                 current_has_delete = true;
             } else {
                 current_has_value = true;
+                if let Some(name) = reg_value_name(t) {
+                    current_values.push(name);
+                }
             }
         }
     }
@@ -500,6 +529,7 @@ fn reg_content_allowed(raw: &str) -> Result<(), String> {
         current_is_run,
         current_has_value,
         current_has_delete,
+        &current_values,
     )?;
     if !saw_header {
         return Err("reg import refused (missing REG header)".into());
@@ -522,6 +552,40 @@ fn is_reg_value_delete_line(t: &str) -> bool {
         }
     }
     false
+}
+
+/// Value name of a `.reg` write line: `@` for the default value, or the
+/// quoted name. `None` for a line the parser does not recognize as a write.
+fn reg_value_name(t: &str) -> Option<String> {
+    if t.starts_with('@') {
+        return Some("@".into());
+    }
+    let rest = t.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// Value-level restore allowance for keys whose *whole key* must never be
+/// treated as deletable. Mirrors `safety::is_safe_to_delete_registry`: a bare
+/// key header is valid only when the file carries named writes and none of
+/// them is a deletion.
+fn value_level_restore_allowed(key: &str, values: &[String]) -> bool {
+    const MUICACHE: &str =
+        r"HKCU\SOFTWARE\CLASSES\LOCAL SETTINGS\SOFTWARE\MICROSOFT\WINDOWS\SHELL\MUICACHE";
+    const FIREWALL_SUFFIX: &str =
+        r"\SYSTEM\CURRENTCONTROLSET\SERVICES\SHAREDACCESS\PARAMETERS\FIREWALLPOLICY\FIREWALLRULES";
+    if values.is_empty() || values.iter().any(|v| v.trim().is_empty() || v == "@") {
+        return false;
+    }
+    if key.eq_ignore_ascii_case(MUICACHE) {
+        return values
+            .iter()
+            .all(|v| v.trim().to_lowercase().ends_with(".friendlyappname"));
+    }
+    ["HKLM", "HKLM64", "HKLM32"].iter().any(|hive| {
+        let full = format!(r"{hive}{FIREWALL_SUFFIX}");
+        key.eq_ignore_ascii_case(&full)
+    })
 }
 
 /// Map `HKEY_*` headers in `.reg` files onto Remova hive aliases.
@@ -960,6 +1024,31 @@ mod tests {
         std::fs::write(&p, &utf8bom).unwrap();
         assert!(super::validate_reg_bytes(std::fs::read(&p).unwrap()).is_ok());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn reg_text_is_encoded_as_utf16le_with_bom() {
+        let text = "Windows Registry Editor Version 5.00\r\n[HKEY_CURRENT_USER\\Software\\测试]\r\n\"名称\"=\"值\"\r\n";
+        let bytes = super::encode_reg_text(text);
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE]);
+        assert_eq!(super::decode_reg_text(bytes).unwrap(), text);
+    }
+
+    #[test]
+    fn value_level_restores_are_allowed_for_muicache_and_firewall() {
+        let muicache = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache]\r\n\"C:\\\\Apps\\\\Demo\\\\demo.exe.FriendlyAppName\"=\"Demo\"\r\n";
+        assert!(super::reg_content_allowed(muicache).is_ok());
+        // The whole key or a non-FriendlyAppName value is still refused.
+        let bare = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache]\r\n";
+        assert!(super::reg_content_allowed(bare).is_err());
+        let wrong =
+            "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache]\r\n\"C:\\\\x.exe\"=\"x\"\r\n";
+        assert!(super::reg_content_allowed(wrong).is_err());
+
+        let firewall = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules]\r\n\"Demo Rule\"=\"v2.10|Action=Allow\"\r\n";
+        assert!(super::reg_content_allowed(firewall).is_ok());
+        let firewall_bare = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules]\r\n";
+        assert!(super::reg_content_allowed(firewall_bare).is_err());
     }
 
     #[test]

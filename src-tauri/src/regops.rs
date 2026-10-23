@@ -567,7 +567,7 @@ pub fn export_reg_value(
     if let Some(p) = dest.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
-    std::fs::write(dest, reg).map_err(|e| e.to_string())?;
+    std::fs::write(dest, crate::restore::encode_reg_text(&reg)).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
