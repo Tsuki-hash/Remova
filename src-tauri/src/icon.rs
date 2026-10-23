@@ -50,6 +50,18 @@ fn cache_key(raw: &str) -> String {
     format!("{:016x}.png", fnv1a64(&payload))
 }
 
+fn icon_source_extension_ok(path: &str) -> bool {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "exe" | "dll" | "ico" | "cpl" | "scr" | "msi" | "png" | "jpg" | "jpeg" | "bmp"
+    )
+}
+
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
 /// Uses `%LOCALAPPDATA%\Remova\icons\{hash}.png` as disk cache (key includes source fingerprint).
 pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
@@ -64,7 +76,10 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
         }
     }
     let (path, index) = parse_display_icon(raw_display_icon);
-    if path.is_empty() || !crate::fsutil::is_local_drive_path(&path) {
+    if path.is_empty()
+        || !crate::fsutil::is_local_drive_path(&path)
+        || !icon_source_extension_ok(&path)
+    {
         return None;
     }
     let png = extract_from_path(&path, index)?;

@@ -76,6 +76,12 @@ fn copy_dir_before_file(
     pin.guard_empty(true)?;
     let _dest_pins = create_dirs_pinned(dest)?;
     for entry in std::fs::read_dir(src)? {
+        if crate::executor::cleanup_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cleanup cancelled",
+            ));
+        }
         let entry = entry?;
         #[cfg(windows)]
         if pin
@@ -128,6 +134,12 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
 }
 
 pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
+    if crate::executor::cleanup_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "cleanup cancelled",
+        ));
+    }
     if is_reparse_point(src) {
         return Err(std::io::Error::other("refusing to copy reparse point"));
     }

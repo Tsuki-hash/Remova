@@ -101,8 +101,14 @@ fn sid_to_string(sid: windows::Win32::Security::PSID) -> Option<String> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(test)]
 fn apply_private_acl(path: &Path) -> std::io::Result<()> {
+    let sid = current_user_sid_for_acl()?;
+    apply_private_acl_with_sid(path, &sid)
+}
+
+#[cfg(windows)]
+fn apply_private_acl_with_sid(path: &Path, sid: &str) -> std::io::Result<()> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
@@ -111,8 +117,6 @@ fn apply_private_acl(path: &Path) -> std::io::Result<()> {
         PSECURITY_DESCRIPTOR,
     };
 
-    let sid = current_user_sid()
-        .ok_or_else(|| std::io::Error::other("backup current user SID unavailable"))?;
     let user_ace = format!("(A;OICI;FA;;;{sid})");
     let sddl = format!("O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){user_ace}");
     let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
@@ -146,11 +150,23 @@ fn apply_private_acl(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn apply_private_acl(_path: &Path) -> std::io::Result<()> {
+fn apply_private_acl_with_sid(_path: &Path, _sid: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+const SECURE_TREE_BUDGET: u32 = 1_000_000;
+
 fn secure_tree(path: &Path, depth: u8, budget: &mut u32) -> std::io::Result<()> {
+    let sid = current_user_sid_for_acl()?;
+    secure_tree_with_sid(path, depth, budget, &sid)
+}
+
+fn secure_tree_with_sid(
+    path: &Path,
+    depth: u8,
+    budget: &mut u32,
+    sid: &str,
+) -> std::io::Result<()> {
     if *budget == 0 {
         return Err(std::io::Error::other("backup ACL walk budget exhausted"));
     }
@@ -165,36 +181,107 @@ fn secure_tree(path: &Path, depth: u8, budget: &mut u32) -> std::io::Result<()> 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     };
-    apply_private_acl(path)?;
-    if !meta.is_dir() || meta.file_type().is_symlink() {
+    // Check reparse BEFORE writing the DACL. SetFileSecurityW follows a
+    // junction, so securing first would rewrite the ACL of its target (for
+    // example C:\Windows) instead of the backup entry.
+    if crate::fsutil::is_reparse_point(path) {
+        if depth == 0 {
+            return Err(std::io::Error::other("backup ACL root is a reparse point"));
+        }
+        return Ok(());
+    }
+    apply_private_acl_with_sid(path, sid)?;
+    if !meta.is_dir() {
         return Ok(());
     }
     for entry in std::fs::read_dir(path)? {
-        secure_tree(&entry?.path(), depth + 1, budget)?;
+        secure_tree_with_sid(&entry?.path(), depth + 1, budget, sid)?;
     }
     Ok(())
 }
 
-/// Secure new and pre-existing backups once per process. Failed or incomplete
-/// walks are not cached, so a later call can retry after permissions are fixed.
-pub(crate) fn ensure_backup_tree_secured(root: &Path) -> std::io::Result<()> {
-    secure_backup_tree_once(root)
+fn current_user_sid_for_acl() -> std::io::Result<String> {
+    #[cfg(windows)]
+    {
+        current_user_sid()
+            .ok_or_else(|| std::io::Error::other("backup current user SID unavailable"))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(String::new())
+    }
 }
 
-fn secure_backup_tree_once(root: &Path) -> std::io::Result<()> {
+/// Apply the same private DACL to one file outside the backup tree (history).
+/// Best-effort callers may log a failure, but a file created under a shared
+/// ProgramData directory should not stay readable by every local account.
+pub(crate) fn secure_private_path(path: &Path) -> std::io::Result<()> {
+    let sid = current_user_sid_for_acl()?;
+    apply_private_acl_with_sid(path, &sid)
+}
+
+/// Best-effort hardening for listing/preview paths. A session created by
+/// another account, or an unreadable historical entry, must not make every new
+/// backup fail; strict failures apply only to the session we just created.
+fn secure_tree_best_effort(path: &Path, depth: u8, budget: &mut u32, sid: &str) {
+    if *budget == 0 || depth > 64 {
+        return;
+    }
+    *budget -= 1;
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return,
+    };
+    if crate::fsutil::is_reparse_point(path) {
+        return;
+    }
+    if apply_private_acl_with_sid(path, sid).is_err() {
+        return;
+    }
+    if !meta.is_dir() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            secure_tree_best_effort(&entry.path(), depth + 1, budget, sid);
+        }
+    }
+}
+
+/// Secure pre-existing backups without turning another account's unreadable
+/// session into a hard backup failure. The current session is secured strictly
+/// by `create_session`.
+pub(crate) fn ensure_backup_tree_secured(root: &Path) -> std::io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    if crate::fsutil::is_reparse_point(root) {
+        return Err(std::io::Error::other("backup root is a reparse point"));
+    }
+    let sid = current_user_sid_for_acl()?;
+    let mut budget = SECURE_TREE_BUDGET;
+    secure_tree_best_effort(root, 0, &mut budget, &sid);
+    Ok(())
+}
+
+/// Secure the backup root itself once per process. The lock is released before
+/// the walk so concurrent backups do not serialize on filesystem I/O.
+fn secure_root_once(root: &Path) -> std::io::Result<()> {
     static SECURED: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
     > = std::sync::OnceLock::new();
     let seen = SECURED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-    let mut seen = seen
-        .lock()
-        .map_err(|_| std::io::Error::other("backup ACL state poisoned"))?;
-    if seen.contains(root) {
+    if seen.lock().map(|g| g.contains(root)).unwrap_or(false) {
         return Ok(());
     }
-    let mut budget = 200_000u32;
-    secure_tree(root, 0, &mut budget)?;
-    seen.insert(root.to_path_buf());
+    if crate::fsutil::is_reparse_point(root) {
+        return Err(std::io::Error::other("backup root is a reparse point"));
+    }
+    let sid = current_user_sid_for_acl()?;
+    apply_private_acl_with_sid(root, &sid)?;
+    if let Ok(mut g) = seen.lock() {
+        g.insert(root.to_path_buf());
+    }
     Ok(())
 }
 
@@ -218,7 +305,15 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     // Claim the session dir with create_dir — never exists-then-reuse (race).
     let root = backup_root();
     fs::create_dir_all(&root)?;
-    secure_backup_tree_once(&root)?;
+    if crate::fsutil::is_reparse_point(&root) {
+        return Err(std::io::Error::other("backup root is a reparse point"));
+    }
+    // The shared root may pre-date this account and refuse an ACL rewrite. The
+    // session we create below is secured strictly, so a root ACL failure must
+    // not block every new backup; log it and continue.
+    if let Err(e) = secure_root_once(&root) {
+        eprintln!("backup root ACL could not be applied: {e}");
+    }
     let mut claimed = None;
     for n in 0..100u32 {
         let dir = if n == 0 {
@@ -243,7 +338,11 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
     })?;
     let _pins = crate::fsutil::create_dirs_pinned(&dir.join("files"))?;
     let _pins_reg = crate::fsutil::create_dirs_pinned(&dir.join("registry"))?;
-    secure_backup_tree_once(&dir)?;
+    // Strictly secure only the session we just created. Historical sessions
+    // belong to this or another account and are hardened best-effort at list
+    // time; one unreadable old session must not block every new backup.
+    let mut budget = SECURE_TREE_BUDGET;
+    secure_tree(&dir, 0, &mut budget)?;
     Ok(dir)
 }
 
@@ -414,12 +513,15 @@ fn publish_stage(private: &Path, session: &Path) -> Result<(), String> {
     }
     // Moved files keep the private stage's SYSTEM/Administrators-only DACL;
     // grant the invoking owner access so restore can read them.
-    let mut budget = 200_000u32;
+    let mut budget = SECURE_TREE_BUDGET;
     secure_tree(session, 0, &mut budget).map_err(|e| format!("backup ACL securing failed: {e}"))?;
     Ok(())
 }
 
 fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<String>), String> {
+    if crate::executor::cleanup_cancelled() {
+        return Err("cleanup cancelled during backup".into());
+    }
     // One-shot sessions only. Never read and re-sign an existing public map/snapshot.
     if session.join("files/path_map.json").exists()
         || session.join("path.json").exists()
@@ -443,6 +545,9 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     let (mut ok, mut fail) = (0, 0);
     let mut errors = vec![];
     for item in items {
+        if crate::executor::cleanup_cancelled() {
+            return Err("cleanup cancelled during backup".into());
+        }
         match backup_item_with_map(item, private, &mut map) {
             Ok(()) => ok += 1,
             Err(e) => {
@@ -936,6 +1041,40 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_backup_does_not_start_or_publish_any_item() {
+        let tmp = crate::test_support::TempDir::new("backup-cancel");
+        let session = tmp.path().join("session");
+        fs::create_dir_all(session.join("files")).unwrap();
+        fs::create_dir_all(session.join("registry")).unwrap();
+        let source = tmp.path().join("source.bin");
+        fs::write(&source, b"payload").unwrap();
+        let item = CleanupItem {
+            path: source.to_string_lossy().to_string(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "t".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        crate::executor::begin_cleanup_control();
+        crate::executor::cancel_cleanup_operation();
+        let (ok, fail, errors) = backup_items(std::slice::from_ref(&item), &session);
+        assert_eq!(ok, 0);
+        assert!(fail > 0);
+        assert!(errors.iter().any(|e| e.contains("cancelled")), "{errors:?}");
+        assert!(!session.join("files/path_map.json").exists());
+        crate::executor::begin_cleanup_control();
+    }
+
+    #[test]
     fn path_backup_writes_snapshot_not_tree_copy() {
         let _guard = lock_backup_env();
         let _path_guard = crate::regops::path_mock::lock_mock();
@@ -1118,6 +1257,35 @@ mod acl_tests {
         std::fs::create_dir_all(dir.join("files")).unwrap();
         let mut budget = 0u32;
         assert!(secure_tree(&dir, 0, &mut budget).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_child_is_never_followed_by_the_acl_walk() {
+        let tmp = crate::test_support::TempDir::new("backup-acl-junction");
+        let root = tmp.path().join("Backup");
+        let target = tmp.path().join("outside-target");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("keep.bin"), b"must not be resecured").unwrap();
+        let link = root.join("session-link");
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "junction fixture creation failed");
+        assert!(crate::fsutil::is_reparse_point(&link));
+
+        let before = read_dacl(&target);
+        ensure_backup_tree_secured(&root).unwrap();
+        let after = read_dacl(&target);
+        assert_eq!(
+            before, after,
+            "the backup ACL walk must skip a junction instead of rewriting its target"
+        );
+        assert!(target.join("keep.bin").exists());
     }
 
     #[test]

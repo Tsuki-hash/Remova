@@ -221,7 +221,7 @@ pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSu
                 out.push(IgnoreSuggestion {
                     kind: "path".into(),
                     value: root.to_string(),
-                    reason: "共享运行库/安装缓存目录，反复出现在残留中".into(),
+                    reason: "shared_root".into(),
                 });
             }
         }
@@ -235,8 +235,7 @@ pub fn suggest_from_leftovers(publisher: &str, paths: &[String]) -> Vec<IgnoreSu
             out.push(IgnoreSuggestion {
                 kind: "publisher".into(),
                 value: pub_trim.to_string(),
-                reason: "该发布者存在多处共享路径残留，可选择整体忽略（请确认无本软件关键组件）"
-                    .into(),
+                reason: "publisher_shared_paths".into(),
             });
         }
     }

@@ -160,14 +160,15 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
         }
         *budget -= 1;
         let p = ent.path();
-        // Junction/symlink subtrees double-count sizes and may cross volumes.
-        if crate::fsutil::is_reparse_point(&p) {
-            continue;
-        }
         let Ok(meta) = ent.metadata() else {
             capped = true;
             continue;
         };
+        // One metadata read answers both "is this a reparse point?" and the
+        // file size; a separate symlink_metadata call doubled every stat.
+        if crate::dirsize::is_reparse_metadata(&meta) {
+            continue;
+        }
         if meta.is_dir() {
             let (sub, sub_capped) = shallow_size_bytes(&p, max_depth - 1, budget);
             bytes += sub;
@@ -189,7 +190,7 @@ const RADAR_CALL_BUDGET: u64 = 60_000;
 /// full sort of every child.
 const RADAR_ROW_CAP: usize = DISK_RADAR_TOP_N * 4;
 
-fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
+fn child_rows(parent: &PathBuf, budget: &mut u64) -> Vec<DirSizeRow> {
     let mut rows = Vec::new();
     if !crate::scan_task::checkpoint("sizes", 0) {
         return rows;
@@ -200,13 +201,11 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
     let Ok(rd) = std::fs::read_dir(parent) else {
         return rows;
     };
-    // One budget for the whole call, shared by every child walk.
-    let mut budget = RADAR_CALL_BUDGET;
     for ent in rd.flatten() {
         if !crate::scan_task::checkpoint("sizes", rows.len()) {
             return rows;
         }
-        if budget == 0 {
+        if *budget == 0 {
             break;
         }
         let p = ent.path();
@@ -218,7 +217,7 @@ fn child_rows(parent: &PathBuf) -> Vec<DirSizeRow> {
             continue;
         }
         let name = ent.file_name().to_string_lossy().to_string();
-        let (size_kb, capped) = shallow_size_kb(&p, 3, &mut budget);
+        let (size_kb, capped) = shallow_size_kb(&p, 3, budget);
         if size_kb <= 0 {
             continue;
         }
@@ -253,13 +252,15 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
         .to_ascii_uppercase();
     let letter = letter.map(|c| c.to_ascii_uppercase()).unwrap_or(sys);
     let mut out = Vec::new();
+    // One budget for the whole call, shared by every well-known root.
+    let mut budget = RADAR_CALL_BUDGET;
     if letter == sys {
         for root in system_drive_roots() {
             if crate::scan_task::cancelled() {
                 return out;
             }
             if root.exists() {
-                let mut rows = child_rows(&root);
+                let mut rows = child_rows(&root, &mut budget);
                 out.append(&mut rows);
             }
         }
@@ -268,7 +269,7 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
     } else {
         let root = drive_root(letter);
         if root.is_dir() && is_local_fixed_drive(letter) {
-            out = child_rows(&root);
+            out = child_rows(&root, &mut budget);
         }
     }
     out
@@ -350,7 +351,8 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
     if !under_radar_roots(&p.to_string_lossy()) {
         return Err("path outside radar roots".into());
     }
-    Ok(child_rows(&p))
+    let mut budget = RADAR_CALL_BUDGET;
+    Ok(child_rows(&p, &mut budget))
 }
 
 #[cfg(test)]
@@ -401,8 +403,8 @@ mod tests {
             .unwrap();
         assert!(status.success());
         assert_eq!(super::shallow_size_kb(&link, 3, &mut 100), (0, false));
-        assert!(super::child_rows(&link).is_empty());
-        assert_eq!(super::child_rows(&root).len(), 1);
+        assert!(super::child_rows(&link, &mut 1_000).is_empty());
+        assert_eq!(super::child_rows(&root, &mut 1_000).len(), 1);
         assert_eq!(super::shallow_size_kb(&target, 3, &mut 100), (1, false));
         std::fs::remove_dir(&link).unwrap();
         crate::fsutil::remove_tree_no_reparse(&root).unwrap();
@@ -478,6 +480,26 @@ mod tests {
         assert!(super::under_radar_roots(r"C:\Windows\Temp\ok"));
         // Drill-down refuses traversal shapes.
         assert!(list_dir_children(r"C:\Users\a\Documents\..\..\..\Windows\System32").is_err());
+    }
+
+    #[test]
+    fn radar_budget_is_shared_across_roots() {
+        let tmp = crate::test_support::TempDir::new("radar-shared-budget");
+        for root_name in ["root-a", "root-b"] {
+            let root = tmp.path().join(root_name);
+            let child = root.join("child");
+            std::fs::create_dir_all(&child).unwrap();
+            std::fs::write(child.join("payload.bin"), vec![0u8; 4096]).unwrap();
+        }
+        let mut budget = 1u64;
+        let first = super::child_rows(&tmp.path().join("root-a"), &mut budget);
+        assert_eq!(first.len(), 1);
+        assert_eq!(budget, 0);
+        let second = super::child_rows(&tmp.path().join("root-b"), &mut budget);
+        assert!(
+            second.is_empty(),
+            "a second root must not reset the call-wide budget"
+        );
     }
 
     #[test]

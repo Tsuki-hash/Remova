@@ -110,6 +110,7 @@ fn fill_item_sizes_seeded(items: &mut [CleanupItem], seed: Option<u64>) {
                 items,
                 round_quota,
                 sized,
+                pending.len(),
                 ESTIMATE_PROGRESS_STRIDE,
                 &cancel,
             )
@@ -172,6 +173,7 @@ fn walk_rows_serial(
     items: &[CleanupItem],
     quota: u64,
     sized: usize,
+    total: usize,
     progress_stride: usize,
     cancel: &crate::scan_task::CancelWatch,
 ) -> Vec<(usize, RowSize)> {
@@ -182,7 +184,9 @@ fn walk_rows_serial(
         }
         out.push((i, walk_row(&items[i].path, quota, Some(cancel))));
         if (done + 1) % progress_stride == 0 || done + 1 == rows.len() {
-            crate::scan_task::checkpoint("sizing", sized + done + 1);
+            // Rows re-queued by an earlier round are counted in `sized` again;
+            // clamp so the UI can never show more than 100%.
+            crate::scan_task::checkpoint("sizing", (sized + done + 1).min(total));
         }
     }
     out

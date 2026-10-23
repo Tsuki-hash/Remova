@@ -246,7 +246,18 @@ pub(crate) struct ServiceSnapshot {
     pub svc_type: Option<u32>,
 }
 
-pub(crate) fn service_snapshot() -> Vec<ServiceSnapshot> {
+pub(crate) fn service_snapshot() -> std::sync::Arc<Vec<ServiceSnapshot>> {
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(10);
+    let cache = service_cache();
+    if let Ok(guard) = cache.lock() {
+        if let Some((at, snapshot)) = guard.as_ref() {
+            if at.elapsed() < TTL {
+                return std::sync::Arc::clone(snapshot);
+            }
+        }
+    }
     let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
     let mut out = Vec::new();
     for name in crate::regscan::list_subkeys(root) {
@@ -261,7 +272,27 @@ pub(crate) fn service_snapshot() -> Vec<ServiceSnapshot> {
             key_path,
         });
     }
-    out
+    let snapshot = std::sync::Arc::new(out);
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((Instant::now(), std::sync::Arc::clone(&snapshot)));
+    }
+    snapshot
+}
+
+type ServiceCache =
+    std::sync::Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<ServiceSnapshot>>)>>;
+
+fn service_cache() -> &'static ServiceCache {
+    static CACHE: std::sync::OnceLock<ServiceCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Drop the cached service snapshot after a destructive operation so the next
+/// scan observes removed or created services instead of a stale list.
+pub(crate) fn invalidate_service_snapshot() {
+    if let Ok(mut guard) = service_cache().lock() {
+        *guard = None;
+    }
 }
 
 /// Kernel/file-system drivers under Services (Type=1) (per uninstall SOP).
@@ -476,7 +507,7 @@ fn exe_token_end(s: &str) -> Option<usize> {
 /// component-wise on the resolved key, so `C:\App` does not claim `C:\AppData`.
 pub(crate) fn mark_service_bound(items: &mut [CleanupItem]) {
     let snapshot = service_snapshot();
-    mark_service_bound_snapshot(items, &snapshot);
+    mark_service_bound_snapshot(items, snapshot.as_slice());
 }
 
 pub(crate) fn mark_service_bound_snapshot(items: &mut [CleanupItem], snapshot: &[ServiceSnapshot]) {

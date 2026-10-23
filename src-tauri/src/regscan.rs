@@ -209,24 +209,30 @@ pub fn list_subkeys(key: &str) -> Vec<String> {
     if let Some(cached) = subkey_cache_get(key) {
         return cached;
     }
-    let fresh = list_subkeys_uncached(key);
-    subkey_cache_put(key, &fresh);
-    fresh
+    match list_subkeys_uncached(key) {
+        Some(fresh) => {
+            subkey_cache_put(key, &fresh);
+            fresh
+        }
+        // An access failure is not an empty key. Caching it would answer every
+        // later caller with a false empty list for the whole TTL.
+        None => vec![],
+    }
 }
 
 /// One batch scan analyzes app after app, and each analyze re-enumerated the
 /// same Classes/CLSID/Services trees. Those trees do not change while a batch
-/// runs, so an enumeration is reused for a short window.
+/// runs. The cache is process-wide (batch apps run on different blocking
+/// threads, so a thread-local copy was never reused).
 ///
 /// Two properties keep the reuse honest:
 /// - it is only consulted inside a scan task, so the deletion gates (which
 ///   re-verify a live target) always read the registry;
 /// - a destructive operation calls [`invalidate_subkey_cache`], and the entry
-///   expires on its own after [`subkey_cache::TTL`], so a leftover deleted
-///   during a batch cannot be re-offered from a stale list for long.
+///   expires on its own after [`subkey_cache::TTL`].
 mod subkey_cache {
-    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     /// Reuse window. A batch analyzes its items back to back, so this covers the
@@ -253,44 +259,56 @@ mod subkey_cache {
         pub evicted: u64,
     }
 
+    #[derive(Default)]
+    struct State {
+        entries: HashMap<String, Entry>,
+    }
+
     thread_local! {
-        static CACHE: RefCell<HashMap<String, Entry>> = RefCell::new(HashMap::new());
-        static COUNTERS: RefCell<Counters> = RefCell::new(Counters::default());
+        /// Per-thread diagnostics: the entry cache is shared, but hit/miss
+        /// counters must not be polluted by unrelated parallel scans.
+        static COUNTERS: std::cell::RefCell<Counters> =
+            std::cell::RefCell::new(Counters::default());
+    }
+
+    fn state() -> &'static Mutex<State> {
+        static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+        STATE.get_or_init(|| Mutex::new(State::default()))
     }
 
     pub(super) fn get(key: &str) -> Option<Vec<String>> {
-        CACHE.with(|c| {
-            let mut c = c.borrow_mut();
-            let entry = c.get(key)?;
-            if entry.at.elapsed() >= TTL {
-                c.remove(key);
-                COUNTERS.with(|n| n.borrow_mut().expired += 1);
-                return None;
-            }
-            let names = entry.names.clone();
+        let mut state = state().lock().unwrap_or_else(|e| e.into_inner());
+        let expired = state
+            .entries
+            .get(key)
+            .is_some_and(|entry| entry.at.elapsed() >= TTL);
+        if expired {
+            state.entries.remove(key);
+            COUNTERS.with(|n| n.borrow_mut().expired += 1);
+            return None;
+        }
+        let names = state.entries.get(key).map(|entry| entry.names.clone());
+        if names.is_some() {
             COUNTERS.with(|n| n.borrow_mut().hits += 1);
-            Some(names)
-        })
+        }
+        names
     }
 
     pub(super) fn put(key: &str, value: &[String]) {
-        CACHE.with(|c| {
-            let mut c = c.borrow_mut();
-            // Drop expired entries first, so an idle process does not hold them.
-            c.retain(|_, e| e.at.elapsed() < TTL);
-            if !c.contains_key(key) && c.len() >= MAX_CACHED_KEYS {
-                COUNTERS.with(|n| n.borrow_mut().evicted += 1);
-                return;
-            }
-            c.insert(
-                key.to_string(),
-                Entry {
-                    names: value.to_vec(),
-                    at: Instant::now(),
-                },
-            );
-            COUNTERS.with(|n| n.borrow_mut().stored += 1);
-        });
+        let mut state = state().lock().unwrap_or_else(|e| e.into_inner());
+        state.entries.retain(|_, e| e.at.elapsed() < TTL);
+        if !state.entries.contains_key(key) && state.entries.len() >= MAX_CACHED_KEYS {
+            COUNTERS.with(|n| n.borrow_mut().evicted += 1);
+            return;
+        }
+        state.entries.insert(
+            key.to_string(),
+            Entry {
+                names: value.to_vec(),
+                at: Instant::now(),
+            },
+        );
+        COUNTERS.with(|n| n.borrow_mut().stored += 1);
     }
 
     pub(super) fn note_uncacheable() {
@@ -302,12 +320,28 @@ mod subkey_cache {
     }
 
     pub(super) fn clear() {
-        CACHE.with(|c| c.borrow_mut().clear());
+        state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries
+            .clear();
     }
 
     #[cfg(test)]
     pub(super) fn reset_counters() {
         COUNTERS.with(|n| *n.borrow_mut() = Counters::default());
+    }
+
+    #[cfg(test)]
+    pub(super) fn put_expired(key: &str) {
+        let mut state = state().lock().unwrap_or_else(|e| e.into_inner());
+        state.entries.insert(
+            key.to_string(),
+            Entry {
+                names: vec!["expired".into()],
+                at: Instant::now() - TTL - Duration::from_secs(1),
+            },
+        );
     }
 
     pub(super) fn snapshot() -> (u64, u64, u64, u64, u64, u64) {
@@ -353,7 +387,7 @@ fn subkey_cache_get(key: &str) -> Option<Vec<String>> {
 }
 
 fn subkey_cache_put(key: &str, value: &[String]) {
-    if !crate::scan_task::has_task() {
+    if !crate::scan_task::has_task() || crate::scan_task::cancelled() {
         return;
     }
     if value.len() > subkey_cache::MAX_CACHED_ENTRIES {
@@ -363,18 +397,16 @@ fn subkey_cache_put(key: &str, value: &[String]) {
     subkey_cache::put(key, value);
 }
 
-fn list_subkeys_uncached(key: &str) -> Vec<String> {
+fn list_subkeys_uncached(key: &str) -> Option<Vec<String>> {
     subkey_cache::note_miss();
     #[cfg(not(windows))]
     {
         let _ = key;
-        vec![]
+        None
     }
     #[cfg(windows)]
     {
-        let Some((hive, sub, access)) = parse_alias(key) else {
-            return vec![];
-        };
+        let (hive, sub, access) = parse_alias(key)?;
         unsafe {
             let sub_w = to_wide(&sub);
             let mut root = HKEY::default();
@@ -386,7 +418,7 @@ fn list_subkeys_uncached(key: &str) -> Vec<String> {
                 &mut root,
             ) != ERROR_SUCCESS
             {
-                return vec![];
+                return None;
             }
             let mut count = 0u32;
             let mut max_sub = 0u32;
@@ -407,7 +439,9 @@ fn list_subkeys_uncached(key: &str) -> Vec<String> {
             let mut out = vec![];
             for i in 0..count {
                 if crate::scan_task::cancelled() {
-                    break;
+                    let _ = RegCloseKey(root);
+                    // A partial enumeration must never become a cache entry.
+                    return None;
                 }
                 let mut buf = vec![0u16; max_sub as usize + 2];
                 let mut len = buf.len() as u32;
@@ -427,7 +461,7 @@ fn list_subkeys_uncached(key: &str) -> Vec<String> {
                 }
             }
             let _ = RegCloseKey(root);
-            out
+            Some(out)
         }
     }
 }
@@ -840,6 +874,23 @@ mod completeness_tests {
         let (hits, misses, ..) = super::registry_cache_counters();
         assert_eq!(hits, 1, "the out-of-session read must not hit the cache");
         assert_eq!(misses, 2, "the out-of-session read must re-enumerate");
+        super::reset_registry_cache_for_test();
+    }
+
+    #[test]
+    fn cache_expiry_and_key_cap_are_enforced() {
+        let _guard = crate::test_support::EnvLock::new();
+        super::reset_registry_cache_for_test();
+        super::subkey_cache::put_expired("expired-key");
+        assert!(super::subkey_cache::get("expired-key").is_none());
+        let (_, _, _, expired, _, _) = super::registry_cache_counters();
+        assert_eq!(expired, 1);
+
+        for i in 0..=super::subkey_cache::MAX_CACHED_KEYS {
+            super::subkey_cache::put(&format!("key-{i}"), &[format!("value-{i}")]);
+        }
+        let (_, _, _, _, _, evicted) = super::registry_cache_counters();
+        assert!(evicted > 0, "a full cache must reject a new key");
         super::reset_registry_cache_for_test();
     }
 

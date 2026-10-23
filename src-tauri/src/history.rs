@@ -135,7 +135,14 @@ pub fn append(
     use std::io::Write;
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&p) {
         // A failed write is a lost history row — report it, never claim success.
-        return writeln!(f, "{line}").is_ok();
+        let wrote = writeln!(f, "{line}").is_ok();
+        drop(f);
+        if wrote {
+            if let Err(e) = crate::backup::secure_private_path(&p) {
+                eprintln!("cleanup history written but not made private: {e}");
+            }
+        }
+        return wrote;
     }
     false
 }

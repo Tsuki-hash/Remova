@@ -111,6 +111,11 @@ fn size_kb_of(app: &InstalledApp, remaining: &mut u64) -> (i64, bool) {
     }
     let quota = (*remaining).min(IDLE_SIZE_PER_APP);
     *remaining = remaining.saturating_sub(quota);
+    // Idle sizing runs on shared blocking-pool threads. A thread that just
+    // finished an analyze walk has a spent thread-local budget, which used to
+    // make every idle app report 0 KB. Give this independent pass its own
+    // budget; the total `remaining` quota still bounds the whole scan.
+    crate::dirsize::reset_walk_budget();
     // Private cancel flag: estimate-batch cancel must not zero idle sizes.
     match crate::dirsize::walk_size_kb_with_quota(
         std::path::Path::new(&app.install_location),
@@ -300,6 +305,28 @@ mod tests {
             std::fs::remove_file(dir.join(format!("{i:05}.bin"))).unwrap();
         }
         std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn idle_sizing_survives_a_spent_scan_walk_budget() {
+        let dir = crate::test_support::TempDir::new("idle-spent-budget");
+        let root = dir.path().join("IdleApp");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("payload.bin"), vec![0u8; 4096]).unwrap();
+        // Simulate a blocking-pool thread reused after a finished analyze walk.
+        assert!(crate::dirsize::charge_walk_budget(
+            crate::dirsize::SIZE_WALK_ENTRY_BUDGET
+        ));
+        assert!(!crate::dirsize::charge_walk_budget(1));
+        let app = app("IdleApp", "20150101", &root.to_string_lossy(), 0);
+        let mut remaining = IDLE_SIZE_TOTAL;
+        let (kb, _capped) = size_kb_of(&app, &mut remaining);
+        assert!(
+            kb > 0,
+            "idle sizing must reset its own budget instead of reporting 0 KB"
+        );
+        assert!(remaining < IDLE_SIZE_TOTAL);
+        crate::dirsize::reset_walk_budget();
     }
 
     #[test]
