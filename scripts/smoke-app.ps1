@@ -1,9 +1,9 @@
-# Minimal app-binary smoke (T-R7-02 E2E skeleton).
+# Minimal app-binary smoke skeleton.
 #
 # Checks that a release `remova.exe` exists and is non-zero size after
 # `npm run tauri build` (or a prior cargo build --release).
 #
-# This is intentionally NOT a GUI E2E: full UI flows (R1–R15) need a real
+# This is intentionally NOT a GUI E2E: full UI flows need a real
 # desktop driver. Wire Playwright + Tauri WebDriver (tauri-driver / WebdriverIO)
 # here when the test runner is available. Until then this script is the
 # extensible gate: keep assertions binary-level and add step markers below.
@@ -35,6 +35,6 @@ if ($info.Length -le 0) {
 #   [ ] assert window title / main nav is present
 #   [ ] drive software list → analyze → confirm dialog (R-ranges)
 #   [ ] quit and assert no crash dialog
-# See docs/reviews/2026-09-22/…复审与优化路线图.md (T-R7-02).
+# See docs/reviews/2026-09-22/…复审与优化路线图.md.
 
 Write-Host "smoke-app OK: $($info.FullName) ($($info.Length) bytes)" -ForegroundColor Green

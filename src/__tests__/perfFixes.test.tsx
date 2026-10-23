@@ -53,7 +53,7 @@ const task = (over: Partial<ManageItem> = {}): ManageItem => ({
   last_run: "2026-01-01 10:00:00", next_run: "2026-02-01 10:00:00", ...over,
 });
 
-describe("PERF-8 — sort scores each row once", () => {
+describe("sort scores each row once", () => {
   it("calls recommendScore O(n), not O(n log n)", () => {
     const apps = Array.from({ length: 60 }, (_, i) => app(`App ${String(i).padStart(2, "0")}`));
     const { result } = renderHook(() => useAppFilter({
@@ -95,7 +95,7 @@ describe("PERF-8 — sort scores each row once", () => {
   });
 });
 
-describe("PERF-5 — the appKey map is only built when the copilot branch runs", () => {
+describe("the appKey map is only built when the copilot branch runs", () => {
   it("resolves a copilot selection against the latest row objects", () => {
     const apps = [app("Alpha"), app("Beta")];
     const base = { apps, deferredQ: "", category: "all" as const, sortCol: null, sortDesc: false,
@@ -121,7 +121,7 @@ describe("PERF-5 — the appKey map is only built when the copilot branch runs",
   });
 });
 
-describe("PERF-6 — grouped setter bags keep stable identities", () => {
+describe("grouped setter bags keep stable identities", () => {
   const flow = {
     setIgnorePub: vi.fn(), setIgnoreName: vi.fn(), setError: vi.fn(),
     setScan: vi.fn(), setSelected: vi.fn(),
@@ -165,7 +165,7 @@ describe("PERF-6 — grouped setter bags keep stable identities", () => {
   });
 });
 
-describe("PERF-7 — the viewport observer stops reacting to text and to the list itself", () => {
+describe("the viewport observer stops reacting to text and to the list itself", () => {
   const observed: { options: MutationObserverInit; cb: MutationCallback }[] = [];
   class SpyObserver {
     constructor(private readonly cb: MutationCallback) {}
@@ -214,7 +214,7 @@ describe("PERF-7 — the viewport observer stops reacting to text and to the lis
   });
 });
 
-describe("PERF-12 — long manage rows are clipped instead of overlapping", () => {
+describe("long manage rows are clipped instead of overlapping", () => {
   // The page drives @tanstack/react-virtual directly, and jsdom reports zero
   // layout, so give the virtualizer a measurable viewport.
   const realRect = Element.prototype.getBoundingClientRect;

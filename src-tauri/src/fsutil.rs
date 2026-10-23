@@ -2,22 +2,72 @@
 
 use std::path::{Path, PathBuf};
 
-/// Windows reparse point (junction / mount / symlink). Never follow when copying.
-pub fn is_reparse_point(p: &Path) -> bool {
+/// Whether already-loaded metadata describes a reparse point. Callers that just
+/// stat'ed the entry must use this instead of a second `is_reparse_point` call.
+pub fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         // FILE_ATTRIBUTE_REPARSE_POINT = 0x400 — covers junctions, not just symlinks.
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_attributes() & 0x400 != 0)
-            .unwrap_or(false)
+        meta.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
     {
+        meta.file_type().is_symlink()
+    }
+}
+
+/// A hard link lets an unprivileged user point a user-writable path at a
+/// protected file; an elevated writer must refuse it instead of appending.
+pub fn has_multiple_links(p: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, FILE_FLAGS_AND_ATTRIBUTES,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        let Some(path_str) = p.to_str() else {
+            // A path we cannot spell is not one we will write through.
+            return true;
+        };
+        unsafe {
+            let wide = wide_path_for_create_file(path_str);
+            let Ok(handle) = CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                0,
+                FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0),
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(
+                    FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0,
+                ),
+                None,
+            ) else {
+                return false;
+            };
+            let mut info = std::mem::zeroed();
+            let ok = GetFileInformationByHandle(handle, &mut info).is_ok();
+            let _ = CloseHandle(handle);
+            ok && info.nNumberOfLinks > 1
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
         std::fs::symlink_metadata(p)
-            .map(|m| m.file_type().is_symlink())
+            .map(|m| m.nlink() > 1)
             .unwrap_or(false)
     }
+}
+
+/// Windows reparse point (junction / mount / symlink). Never follow when copying.
+pub fn is_reparse_point(p: &Path) -> bool {
+    std::fs::symlink_metadata(p)
+        .map(|m| is_reparse_metadata(&m))
+        .unwrap_or(false)
 }
 
 /// Deterministic candidate order for directory scans.

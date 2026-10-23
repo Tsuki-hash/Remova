@@ -249,7 +249,9 @@ pub(crate) struct ServiceSnapshot {
 pub(crate) fn service_snapshot() -> std::sync::Arc<Vec<ServiceSnapshot>> {
     use std::time::{Duration, Instant};
 
-    const TTL: Duration = Duration::from_secs(10);
+    // Long enough to cover one batch analyze; destructive operations invalidate
+    // it explicitly, so a stale list never survives a real service change.
+    const TTL: Duration = Duration::from_secs(30);
     let cache = service_cache();
     if let Ok(guard) = cache.lock() {
         if let Some((at, snapshot)) = guard.as_ref() {
@@ -273,8 +275,13 @@ pub(crate) fn service_snapshot() -> std::sync::Arc<Vec<ServiceSnapshot>> {
         });
     }
     let snapshot = std::sync::Arc::new(out);
-    if let Ok(mut guard) = cache.lock() {
-        *guard = Some((Instant::now(), std::sync::Arc::clone(&snapshot)));
+    // A cancelled enumeration is partial by definition. Never publish it: the
+    // service_bound keep gate would trust an incomplete list for the next
+    // analyze even though the running services are still there.
+    if !crate::scan_task::cancelled() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), std::sync::Arc::clone(&snapshot)));
+        }
     }
     snapshot
 }
@@ -722,6 +729,25 @@ fn service_image_string(svc_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn service_snapshot_is_not_published_after_cancellation() {
+        super::invalidate_service_snapshot();
+        let id = crate::scan_task::begin().unwrap();
+        let snapshot = crate::scan_task::run(id, || {
+            crate::scan_task::cancel(id).unwrap();
+            super::service_snapshot()
+        })
+        .unwrap_or_else(|_| std::sync::Arc::new(Vec::new()));
+        // The cancelled walk returned partial data but must not have seeded the
+        // cache: the next analyze must still see the real service list.
+        assert!(snapshot.is_empty());
+        assert!(
+            !super::service_snapshot().is_empty(),
+            "a cancelled empty snapshot must not mask the real service list"
+        );
+        super::invalidate_service_snapshot();
+    }
+
     #[test]
     fn cancelled_software_scan_skips_subsequent_registry_reads() {
         let id = crate::scan_task::begin().unwrap();

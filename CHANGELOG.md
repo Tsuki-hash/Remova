@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 修复（发版前终审：扫描与安全门禁）
 
-- **扫描任务槽泄漏（P1）**：分析在 `trusted_app` 失败或提权 HKCU 被拒时释放预占的扫描任务；批量 `analyze` 结束后也取消未消费的预留，避免累计 8 次拒绝后所有扫描返回 `scan:busy` 直到重启。
+- **扫描任务槽泄漏**：分析在 `trusted_app` 失败或提权 HKCU 被拒时释放预占的扫描任务；批量 `analyze` 结束后也取消未消费的预留，避免累计 8 次拒绝后所有扫描返回 `scan:busy` 直到重启。
 - **取消状态隔离**：损坏记录与防火墙清理开始前重置取消标志，不再继承上一次 dry-run/批次的取消状态。
 - **专项清理 allow-list**：scoped 源（孤儿/监控/安装包/工具缓存）即使收到伪造的非孤儿应用也必须命中服务端 allow-list。
 - **安全门禁 fail-closed**：提权检测查询失败按提权处理；官方卸载拒绝相对路径镜像，避免按 CWD/PATH 解析被劫持；历史文件写入前检查 reparse。
@@ -21,11 +21,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **本地化与报告**：后端拒绝消息走本地化映射；清理项过期、应用过期、相对卸载命令均显示中文/英文提示；批量结果携带重启门禁持久化警告。
 - **发布流程**：Release 校验 `test` 与 `package` 两个 job 均成功；未签名豁免仅对精确 `v1.3.2` tag 生效，后续版本需显式仓库变量。
 
+### 修复（发版前终审：稳定性与隐私加固）
+
+- **服务快照**：取消的扫描不再缓存不完整的服务列表；官方卸载成功后主动失效快照；快照 TTL 调整为 30 秒，避免批量分析重复枚举服务。
+- **重复清理项**：安装根与命名根、WebView、跨盘扫描产出的同一路径在进入体积估算前全局去重，报告与备份不再重复处理。
+- **CLSID 性能**：默认值缓存同时记录“无值/非字符串”结果，批量分析不再为每个应用重开全部 CLSID 叶子。
+- **工具缓存根安全**：重定位变量在任何元数据探测前拒绝 UNC/设备/相对路径与父目录穿越，提权进程不会因环境变量访问网络共享。
+- **历史文件**：写入前拒绝硬链接文件，避免低权用户把历史路径指向受保护文件。
+- **AI 隐私**：应用名与发布者在发送前统一脱敏，与路径/原因字段一致。
+- **交互性能**：快捷方式文本每次清单预解码、扫描缓存构建不持锁整段、大小估算复用已读元数据、雷达落盘前先校验根、残留列表统计改为记忆化。
+- **错误与结果提示**：新增 `open_path:unsafe` 本地化；TEMP 部分不可读时在分析结果中标记“TEMP 不完整”。
+
 ### 修复（发版前终审：TEMP 与门禁补强）
 
-- **TEMP 部分结果**：当用户重定向的 TEMP 与默认目录同时扫描、其中一根不可读时，可读根已发现的条目仍会在本次分析中上报；只有完整结果才进入批次缓存，避免瞬时权限问题放大为整批漏检。
+- **TEMP 部分结果**：当用户重定向的 TEMP 与默认目录同时扫描、其中一根不可读时，可读根已发现的条目仍会上报并短期复用，同时在结果中标记“TEMP 不完整”；30 秒后重试，避免瞬时权限问题放大为整批漏检或每应用重走。
 - **TEMP 根去重**：重定向 `TEMP` 带尾部分隔符时不再与 `LocalAppData\Temp` 重复扫描，大小写差异同样合并。
-- **内部编号门禁**：术语门禁覆盖 `CQ/UX/PF/TC/CD/FC-\d+`，并清理源码、脚本、CI 配置中的历史评审编号。
+- **内部编号门禁**：术语门禁扩大到源码、脚本、CI 配置与根配置，并清理其中的历史评审编号。
 - **回归覆盖**：补 AI 四类提示词的中英文断言、TEMP 重定向/失败不缓存、历史目录 junction 拒绝、损坏门禁三态与前端错误映射、ignored 测试理由。
 
 ### 修复（发版前终审遗留项）
@@ -38,8 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 修复（发版前终审：身份隔离与备份）
 
-- **跨 hive 身份隔离（P1）**：同名 HKCU 条目不再与 HKLM 条目合并；`UninstallString`/`QuietUninstallString`/`InstallLocation` 不会从用户可写 hive 采纳到机器级身份。HKCU 提权卸载继续被拒绝，且分析/卸载/清理只使用最近一次服务端扫描记录，不再信任客户端提交的安装根或身份字段。
-- **清理项服务端产源（P1/P2）**：完整清理与预览只接受最近一次服务端分析返回的路径；伪造的清理项在 IPC 边界被拒绝。提权态拒绝 HKCU 应用的分析/清理，避免用户可写记录借名称关联触达管理员目录。
+- **跨 hive 身份隔离**：同名 HKCU 条目不再与 HKLM 条目合并；`UninstallString`/`QuietUninstallString`/`InstallLocation` 不会从用户可写 hive 采纳到机器级身份。HKCU 提权卸载继续被拒绝，且分析/卸载/清理只使用最近一次服务端扫描记录，不再信任客户端提交的安装根或身份字段。
+- **清理项服务端产源**：完整清理与预览只接受最近一次服务端分析返回的路径；伪造的清理项在 IPC 边界被拒绝。提权态拒绝 HKCU 应用的分析/清理，避免用户可写记录借名称关联触达管理员目录。
 - **待重启门禁 fail-closed**：状态文件损坏/不可读时保持阻断；处理锁中毒与 `GetProcAddress` 空指针；新增 `reboot_gate_persisted` 让前端在持久化失败时提示立即重启。1641 前置于官方卸载的全局阻断报告不再把未卸载的应用标为已卸载。
 - **还原纳入破坏性事务**：还原与清理共用事务锁并检查待重启状态；单条注册表导入失败不再丢弃已有结果或中断后续导入，逐条返回失败。
 - **备份 ACL 修复**：ACL 遍历先判断 reparse 再写 DACL，junction 不再导致树外目标被改 ACL；只对新建会话严格加固，历史/跨账户会话采用尽力而为，避免一台多用户机器上所有新备份被永久阻断；备份根 ACL 失败不再阻断新会话；历史文件写入后设置私有 ACL。
@@ -581,7 +592,7 @@ First public release.
 - Shared-runtime selections require explicit confirmation
 - System paths and critical services are blocked from cleanup
 
-<!-- R-R6-08: link definitions live at the bottom of the file (Keep a Changelog). -->
+<!-- Link definitions live at the bottom of the file (Keep a Changelog). -->
 [1.1.1]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.1
 [1.1.0]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Tsuki-hash/Remova/releases/tag/v1.0.0

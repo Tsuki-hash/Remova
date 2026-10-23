@@ -97,6 +97,11 @@ fn pin_history_path(p: &Path) -> Result<Vec<crate::fsutil::DirPin>, String> {
     if crate::fsutil::is_reparse_point(parent) || crate::fsutil::is_reparse_point(p) {
         return Err("reparse point in the history path".into());
     }
+    // A hard link is another way to make this user-writable path name a
+    // protected file; refuse it before an elevated append writes through it.
+    if crate::fsutil::has_multiple_links(p) {
+        return Err("history file has multiple hard links".into());
+    }
     Ok(pins)
 }
 
@@ -538,6 +543,23 @@ mod tests {
             "deleting through a junction must be refused"
         );
         let _ = std::fs::remove_dir(&link);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rewrite_refuses_a_hard_linked_history_file() {
+        let tmp = crate::test_support::TempDir::new("hist-hardlink");
+        tmp.subdir("Remova");
+        let _dir = super::use_history_dir(tmp.path());
+        let target = tmp.path().join("protected.jsonl");
+        std::fs::write(&target, "protected\n").unwrap();
+        let link = super::history_path();
+        std::fs::hard_link(&target, &link).unwrap();
+        assert!(
+            super::clear_all().is_err(),
+            "clearing a hard-linked history file must be refused"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "protected\n");
     }
 
     /// a torn non-UTF-8 row must survive delete rewrites untouched.

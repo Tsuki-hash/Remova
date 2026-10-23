@@ -663,8 +663,9 @@ where
                 capped = true;
                 continue;
             };
-            // `is_symlink()` misses Windows junctions — check reparse attributes.
-            if crate::fsutil::is_reparse_point(&entry.path()) {
+            // `is_symlink()` misses Windows junctions — check the metadata we
+            // already loaded instead of issuing a second stat per entry.
+            if crate::fsutil::is_reparse_metadata(&meta) {
                 continue;
             }
             if meta.is_dir() {

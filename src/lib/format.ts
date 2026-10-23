@@ -165,6 +165,9 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   if (raw.startsWith("open_path:failed")) {
     return L.errOpenPathFailed;
   }
+  if (raw === "open_path:unsafe") {
+    return L.errOpenPathUnsafe;
+  }
   // Known backend diagnostics are localized before the generic context
   // wrapper, so a refusal does not surface as raw English
   // ("deep analysis failed: elevated HKCU analysis refused").

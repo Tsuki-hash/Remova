@@ -63,7 +63,7 @@ const flow: CleanupFlowSetters = {
   setError: noop,
 };
 
-describe("useCleanupHandlers empty selection (FE-N3 / T-R4-07)", () => {
+describe("useCleanupHandlers empty selection", () => {
   beforeEach(() => {
     requestConfirmEx.mockReset();
     fullCleanup.mockReset();

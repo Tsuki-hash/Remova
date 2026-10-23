@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 
 /**
- * the backend's `degraded` payloads are stable codes, not English
+ * The backend's `degraded` payloads are stable codes, not English
  * prose — `unreadable_root:<path>`, `downloads_root_missing`,
  * `userprofile_not_set`, `localappdata_not_set`. Unknown or older-rollout
  * strings fall back to the raw text, so a payload from a newer backend still
@@ -28,6 +28,8 @@ export function degradedText(raw: string): string {
       return L.degradedHomeDotTruncated;
     case "muicache_truncated":
       return L.degradedMuicacheTruncated;
+    case "temp_partial":
+      return L.degradedTempPartial;
     default:
       return raw;
   }

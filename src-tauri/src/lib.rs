@@ -113,7 +113,7 @@ fn cancel_size_estimate() {
     dirsize::request_cancel();
 }
 
-/// -01: strict URL shape for `open_path` (scheme + host, no control/quote/space).
+/// Strict URL shape for `open_path` (scheme + host, no control/quote/space).
 /// plain `http://` only for loopback (local Ollama etc.); remote must be https.
 fn is_safe_http_url(url: &str) -> bool {
     let is_https = url.starts_with("https://");

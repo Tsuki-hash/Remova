@@ -130,6 +130,7 @@ export const dict: EnDict = {
     errOpenPathEmpty: "Path is empty",
     errOpenPathMissing: "Location not found or moved — check the install path",
     errOpenPathFailed: "Could not open File Explorer",
+    errOpenPathUnsafe: "This location is not on a local drive and cannot be opened safely",
     stopEstimate: "Stop estimating",
     estimatingSizes: "Estimating sizes…",
     estimateProgress: (done: number, total: number) => `Estimating ${done}/${total}`,
@@ -392,6 +393,7 @@ export const dict: EnDict = {
     degradedLocalAppDataNotSet: "LOCALAPPDATA is not set; the JetBrains cache root was not scanned",
     degradedHomeDotTruncated: "Home dot-directory scan reached its limit; results may be incomplete",
     degradedMuicacheTruncated: "MuiCache scan reached its limit; results may be incomplete",
+    degradedTempPartial: "Some TEMP folders could not be read; temporary-file results may be incomplete",
     degradedPeBudgetExhausted: (n: number) =>
       `${n} more executable(s) were not checked for being installers (per-scan limit)`,
     scanStage: (stage: string) => ({ preparing: "Preparing scan", files: "Scanning files", registry: "Scanning registry",

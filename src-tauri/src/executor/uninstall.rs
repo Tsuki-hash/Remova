@@ -268,7 +268,7 @@ fn run_official_uninstall_unchecked(
             reboot_gate_persisted: true,
         };
     }
-    // S-RCE: never execute a command the client invented. Resolve the identity
+    // Never execute a command the client invented. Resolve the identity
     // to the server-scanned record and execute *its* command pair, so even a
     // caller that keeps a trusted identity but rewrites the command cannot
     // reach spawn. The recorded source — not the client field — drives the
@@ -334,6 +334,12 @@ fn run_official_uninstall_unchecked(
                                 let code = status.code();
                                 let ok = uninstaller_exit_ok(code);
                                 let (initiated, persisted) = record_reboot_exit(code, &scanned);
+                                if ok {
+                                    // The vendor uninstaller may have removed
+                                    // services; do not let a pre-uninstall
+                                    // snapshot mark their data as keep-class.
+                                    crate::scanner::reg_scans::invalidate_service_snapshot();
+                                }
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
                                     format!("uninstaller finished (reboot required): {}", argv[0])
                                 } else if ok {

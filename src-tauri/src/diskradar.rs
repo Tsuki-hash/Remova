@@ -352,13 +352,17 @@ fn under_radar_roots(path: &str) -> bool {
 
 /// Immediate children of `path` ranked by size (for drill-down).
 pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
-    let p = PathBuf::from(path.trim());
-    if path.trim().is_empty() || !p.is_dir() {
+    // Validate the path before any metadata probe: `is_dir()` on a UNC/device
+    // path would contact the remote side before the allow-list rejects it.
+    if path.trim().is_empty() {
         return Err("not a directory".into());
     }
-    // Only allow drill-down under radar roots (read-only safety).
-    if !under_radar_roots(&p.to_string_lossy()) {
+    if !under_radar_roots(path.trim()) {
         return Err("path outside radar roots".into());
+    }
+    let p = PathBuf::from(path.trim());
+    if !p.is_dir() {
+        return Err("not a directory".into());
     }
     let mut budget = RADAR_CALL_BUDGET;
     Ok(child_rows(&p, &mut budget))

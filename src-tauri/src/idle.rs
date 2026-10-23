@@ -294,7 +294,7 @@ mod tests {
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(old))
             .unwrap();
-        let candidate = app("R23Partial", "20100101", &dir.to_string_lossy(), 0);
+        let candidate = app("PartialSize", "20100101", &dir.to_string_lossy(), 0);
         let ranked = rank_idle_apps(&[candidate]).items;
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0]

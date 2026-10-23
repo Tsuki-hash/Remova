@@ -44,7 +44,7 @@ export default defineConfig({
         branches: 75,
         functions: 85,
         lines: 85,
-        // M-12: this per-file gate used to sit at 90/85/90/90, i.e. above the
+        // This per-file gate used to sit at 90/85/90/90, i.e. above the
         // project-wide floor *and* above what App.tsx actually measures today
         // (100 / 93.5 / 98.18 / 100). The effect was perverse: extracting a
         // coherent block out of a 765-line component moves its statements into a
@@ -60,7 +60,7 @@ export default defineConfig({
           functions: 85,
           lines: 85,
         },
-        // R46 P2-09 / R47 P2-08: real-component interaction tests now cover
+        // Real-component interaction tests now cover
         // cleanup, cancel, banners and the report-identity cache. The floor is
         // raised with ~4 points of headroom below the measured 47.6/69.1/24/51.8
         // so a small change does not turn CI red while regressions still do.

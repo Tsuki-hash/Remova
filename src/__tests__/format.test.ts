@@ -40,6 +40,7 @@ describe("formatError manage codes", () => {
     expect(formatError("系统找不到指定的文件。(os error 2)")).toContain("位置不存在");
     expect(formatError("open_path:empty")).toContain("路径为空");
     expect(formatError("open_path:failed:boom")).toContain("资源管理器");
+    expect(formatError("open_path:unsafe")).toContain("不是本地磁盘");
   });
 
   it("maps protected service", () => {
@@ -57,17 +58,17 @@ describe("formatError manage codes", () => {
   });
 
   it("does not misparse :: outside known IPC code prefixes", () => {
- // PACKAGED location strings use `::` but are not RemovaError IPC.
+    // PACKAGED location strings use `::` but are not RemovaError IPC.
     const packaged = formatError(
       "PACKAGED::HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run::Evil",
     );
     expect(packaged).not.toContain("关键服务");
     expect(packaged).toContain("PACKAGED");
- // Generic `foo: bar :: detail` is not a known code either.
+    // Generic `foo: bar :: detail` is not a known code either.
     const weird = formatError("error: something :: detail");
     expect(weird).not.toContain("关键服务");
     expect(weird).toContain("something");
- // Known prefixes still map.
+    // Known prefixes still map.
     expect(formatError("manage:bad_name::svc")).toBeTruthy();
   });
 

@@ -374,6 +374,9 @@ struct ShortcutEntry {
     path: PathBuf,
     stem: String,
     peek: Vec<u8>,
+    /// Lowercased UTF-16 decode of `peek`, computed once per inventory. The
+    /// old matcher decoded every shortcut again for every app in the batch.
+    text_lc: String,
 }
 
 #[derive(Clone)]
@@ -390,9 +393,12 @@ mod scan_cache {
     use std::time::{Duration, Instant};
 
     const TTL: Duration = Duration::from_secs(5 * 60);
+    /// A partial TEMP listing (one root unreadable) is reused briefly so a
+    /// batch does not re-walk every readable root per app, then retried.
+    const PARTIAL_TTL: Duration = Duration::from_secs(30);
 
     type ShortcutState = Option<(Instant, Arc<Vec<super::ShortcutEntry>>)>;
-    type TempState = Option<(Instant, Arc<Vec<super::TempEntry>>)>;
+    type TempState = Option<(Instant, Arc<Vec<super::TempEntry>>, bool)>;
 
     fn shortcuts_state() -> &'static Mutex<ShortcutState> {
         static STATE: OnceLock<Mutex<ShortcutState>> = OnceLock::new();
@@ -407,10 +413,12 @@ mod scan_cache {
     pub(super) fn shortcuts(
         build: impl FnOnce() -> Vec<super::ShortcutEntry>,
     ) -> Arc<Vec<super::ShortcutEntry>> {
-        let mut guard = shortcuts_state().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((at, entries)) = guard.as_ref() {
-            if at.elapsed() < TTL {
-                return Arc::clone(entries);
+        {
+            let guard = shortcuts_state().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, entries)) = guard.as_ref() {
+                if at.elapsed() < TTL {
+                    return Arc::clone(entries);
+                }
             }
         }
         let built = Arc::new(build());
@@ -418,30 +426,56 @@ mod scan_cache {
             // A cancelled walk produced a partial list; never publish it.
             return built;
         }
-        *guard = Some((Instant::now(), Arc::clone(&built)));
-        built
-    }
-
-    /// `build` returns the rows it collected plus a completeness flag. A
-    /// partial list is still served for this call — readable roots must not be
-    /// hidden because a sibling root failed — but only a complete list is
-    /// cached, so a transient permission error cannot blank TEMP for the batch.
-    pub(super) fn temp(
-        build: impl FnOnce() -> (Vec<super::TempEntry>, bool),
-    ) -> Arc<Vec<super::TempEntry>> {
-        let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
+        // Re-lock only to publish: the previous lock covered the whole walk and
+        // serialized every concurrent analyze behind one directory traversal.
+        let mut guard = shortcuts_state().lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, entries)) = guard.as_ref() {
             if at.elapsed() < TTL {
                 return Arc::clone(entries);
             }
         }
-        let (entries, complete) = build();
-        let built = Arc::new(entries);
-        if !complete || crate::scan_task::cancelled() {
-            return built;
-        }
         *guard = Some((Instant::now(), Arc::clone(&built)));
         built
+    }
+
+    /// `build` returns the rows it collected plus a completeness flag. A
+    /// partial list is served and reused for [`PARTIAL_TTL`] — readable roots
+    /// must not be hidden because a sibling root failed, and a permanently
+    /// unreadable root must not make every app re-walk the cache roots.
+    pub(super) fn temp(
+        build: impl FnOnce() -> (Vec<super::TempEntry>, bool),
+    ) -> (Arc<Vec<super::TempEntry>>, bool) {
+        {
+            let guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, entries, complete)) = guard.as_ref() {
+                let ttl = if *complete { TTL } else { PARTIAL_TTL };
+                if at.elapsed() < ttl {
+                    return (Arc::clone(entries), *complete);
+                }
+            }
+        }
+        let (entries, complete) = build();
+        let built = Arc::new(entries);
+        if crate::scan_task::cancelled() {
+            return (built, complete);
+        }
+        let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, entries, complete)) = guard.as_ref() {
+            let ttl = if *complete { TTL } else { PARTIAL_TTL };
+            if at.elapsed() < ttl {
+                return (Arc::clone(entries), *complete);
+            }
+        }
+        *guard = Some((Instant::now(), Arc::clone(&built), complete));
+        (built, complete)
+    }
+
+    #[cfg(test)]
+    pub(super) fn expire_temp_for_test() {
+        let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, _, _)) = guard.as_mut() {
+            *at = Instant::now() - PARTIAL_TTL - Duration::from_secs(1);
+        }
     }
 
     pub(super) fn clear() {
@@ -519,31 +553,32 @@ fn collect_shortcut_dir(dir: &Path, depth: u32, out: &mut Vec<ShortcutEntry>) {
             })
             .map(|n| peek_buf[..n].to_vec())
             .unwrap_or_default();
+        let text_lc = peek_text_lc(&peek);
         out.push(ShortcutEntry {
             path: p,
             stem,
             peek,
+            text_lc,
         });
     }
 }
 
-fn shortcut_peek_matches(peek: &[u8], install_low: &str) -> bool {
-    if install_low.is_empty() {
-        return false;
-    }
-    let peek_lc = peek.to_ascii_lowercase();
-    if find_bytes(&peek_lc, install_low.as_bytes()) {
-        return true;
-    }
-    // decode UTF-16LE and lowercase — byte-searching a lowercase needle in
+fn peek_text_lc(peek: &[u8]) -> String {
+    // Decode UTF-16LE and lowercase — byte-searching a lowercase needle in
     // raw-case UTF-16 always missed.
     let u16s: Vec<u16> = peek
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
-    String::from_utf16_lossy(&u16s)
-        .to_lowercase()
-        .contains(install_low)
+    String::from_utf16_lossy(&u16s).to_lowercase()
+}
+
+fn shortcut_peek_matches(peek: &[u8], text_lc: &str, install_low: &str) -> bool {
+    if install_low.is_empty() {
+        return false;
+    }
+    let peek_lc = peek.to_ascii_lowercase();
+    find_bytes(&peek_lc, install_low.as_bytes()) || text_lc.contains(install_low)
 }
 
 pub(super) fn scan_shortcuts(
@@ -562,7 +597,7 @@ pub(super) fn scan_shortcuts(
             || exe_stems
                 .iter()
                 .any(|s| normalize_for_match(s) == sn && sn.len() >= 3)
-            || shortcut_peek_matches(&entry.peek, install_low);
+            || shortcut_peek_matches(&entry.peek, &entry.text_lc, install_low);
         if !hit || !is_safe_fs(&entry.path) {
             continue;
         }
@@ -632,10 +667,12 @@ fn temp_roots() -> Vec<PathBuf> {
     roots
 }
 
-pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
+/// Returns `true` when at least one TEMP root could not be read, so the scan
+/// result can surface a degraded marker instead of silently looking complete.
+pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) -> bool {
     let roots = temp_roots();
     if roots.is_empty() {
-        return;
+        return false;
     }
     let slugs: Vec<String> = name_slugs
         .iter()
@@ -643,9 +680,9 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
         .filter(|s| s.len() >= 4)
         .collect();
     if slugs.is_empty() {
-        return;
+        return false;
     }
-    let entries = scan_cache::temp(|| {
+    let (entries, complete) = scan_cache::temp(|| {
         let mut out = Vec::new();
         let mut complete = true;
         for root in &roots {
@@ -723,6 +760,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
             bucket: None,
         });
     }
+    !complete
 }
 
 #[cfg(test)]
@@ -739,6 +777,7 @@ mod cache_tests {
                 path: PathBuf::from(r"C:\Shortcuts\Demo.lnk"),
                 stem: "Demo".into(),
                 peek: b"target".to_vec(),
+                text_lc: "target".into(),
             }]
         });
         let second = scan_cache::shortcuts(|| {
@@ -780,30 +819,22 @@ mod cache_tests {
                 let _env =
                     crate::test_support::EnvVar::set("TEMP", format!("{}\\", temp.display()));
                 let roots = temp_roots();
-                let count = roots
-                    .iter()
-                    .filter(|p| {
-                        p.to_string_lossy()
-                            .trim_end_matches(['\\', '/'])
-                            .eq_ignore_ascii_case(
-                                temp.to_string_lossy().trim_end_matches(['\\', '/']),
-                            )
-                    })
-                    .count();
                 assert_eq!(
-                    count, 1,
-                    "the same root with a trailing separator is one root"
+                    roots.len(),
+                    1,
+                    "TEMP and LocalAppData\\Temp with a trailing separator are one root"
                 );
+                assert!(roots[0]
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&temp.to_string_lossy()));
             }
         }
     }
 
     #[test]
-    fn a_failed_temp_walk_does_not_pin_an_empty_listing() {
+    fn a_partial_temp_walk_is_reused_briefly_and_retried() {
         scan_cache::clear();
-        // A partial walk (one root unreadable) still serves the rows the
-        // readable roots produced, but must not be cached.
-        let first = scan_cache::temp(|| {
+        let (first, complete) = scan_cache::temp(|| {
             (
                 vec![TempEntry {
                     path: PathBuf::from(r"C:\Temp\Demo-partial.tmp"),
@@ -813,8 +844,19 @@ mod cache_tests {
             )
         });
         assert_eq!(first.len(), 1, "readable roots keep their rows");
-        // The next build must run again; a failed walk may not be pinned.
-        let second = scan_cache::temp(|| {
+        assert!(!complete);
+        // Within the short partial TTL the batch reuses the rows instead of
+        // re-walking every readable root for every app.
+        let (second, complete) =
+            scan_cache::temp(|| panic!("a partial walk must be reused briefly"));
+        assert_eq!(second.len(), 1);
+        assert!(
+            !complete,
+            "a cached partial list still reports incompleteness"
+        );
+        // After the TTL the walk is retried and a complete list is cached longer.
+        scan_cache::expire_temp_for_test();
+        let (third, complete) = scan_cache::temp(|| {
             (
                 vec![
                     TempEntry {
@@ -829,26 +871,36 @@ mod cache_tests {
                 true,
             )
         });
-        assert_eq!(second.len(), 2);
-        let third = scan_cache::temp(|| panic!("a complete build must be cached"));
         assert_eq!(third.len(), 2);
+        assert!(complete);
+        let (fourth, complete) = scan_cache::temp(|| panic!("a complete build must be cached"));
+        assert_eq!(fourth.len(), 2);
+        assert!(complete);
         scan_cache::clear();
     }
 
     #[test]
     fn shortcut_peek_matches_ascii_and_utf16() {
-        assert!(!shortcut_peek_matches(b"anything", ""));
+        let ascii = b"C:\\Apps\\Demo\\demo.exe";
+        assert!(!shortcut_peek_matches(b"anything", "", ""));
         assert!(shortcut_peek_matches(
-            b"C:\\Apps\\Demo\\demo.exe",
+            ascii,
+            &peek_text_lc(ascii),
             r"c:\apps\demo"
         ));
         let utf16: Vec<u8> = r"C:\Apps\Demo\demo.exe"
             .encode_utf16()
             .flat_map(|u| u.to_le_bytes())
             .collect();
-        assert!(shortcut_peek_matches(&utf16, r"c:\apps\demo"));
+        assert!(shortcut_peek_matches(
+            &utf16,
+            &peek_text_lc(&utf16),
+            r"c:\apps\demo"
+        ));
+        let other = b"C:\\Apps\\Other\\other.exe";
         assert!(!shortcut_peek_matches(
-            b"C:\\Apps\\Other\\other.exe",
+            other,
+            &peek_text_lc(other),
             r"c:\apps\demo"
         ));
     }

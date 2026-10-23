@@ -267,10 +267,17 @@ export function ScanLeftoversView({
   );
   const displayItems = useMemo(() => onlySelected ? riskItems.filter(item => selectedPaths.has(item.path)) : riskItems,
     [onlySelected, riskItems, selectedPaths]);
-  const selectedCount = scan.items.filter(item => selectedPaths.has(item.path)).length;
-  const hiddenSelected = selectedCount - displayItems.filter(item => selectedPaths.has(item.path)).length;
-  const visibleSelected = displayItems.filter(item => selectedPaths.has(item.path)).length;
-  const allVisibleSelected = displayItems.length > 0 && visibleSelected === displayItems.length;
+  const { selectedCount, hiddenSelected, visibleSelected, allVisibleSelected } = useMemo(() => {
+    const selected = scan.items.filter(item => selectedPaths.has(item.path)).length;
+    const visible = displayItems.filter(item => selectedPaths.has(item.path)).length;
+    return {
+      selectedCount: selected,
+      hiddenSelected: selected - visible,
+      visibleSelected: visible,
+      allVisibleSelected: displayItems.length > 0 && visible === displayItems.length,
+    };
+  }, [scan.items, displayItems, selectedPaths]);
+  const leftoverSummary = useMemo(() => summarizeLeftovers(scan.items), [scan.items]);
   const selectAllRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = visibleSelected > 0 && !allVisibleSelected;
@@ -326,7 +333,7 @@ export function ScanLeftoversView({
   return (
     <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <LeftoverSummaryBar
-        summary={summarizeLeftovers(scan.items)}
+        summary={leftoverSummary}
         scanning={scanning}
         riskFilter={riskFilter}
         onSelectSafe={onSelectSafe}

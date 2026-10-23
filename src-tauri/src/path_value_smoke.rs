@@ -96,7 +96,7 @@ fn path_read_failure_is_error_not_process_fallback() {
     let err = crate::regops::scrub_path_entry(r"C:\Vendor\Tool").unwrap_err();
     assert!(
         err.contains("read Path") || err.contains("path:io"),
-        "S-03: read failure must Err, got {err}"
+        "read failure must Err, got {err}"
     );
     path_mock::clear();
 }

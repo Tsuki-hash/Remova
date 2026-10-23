@@ -843,13 +843,17 @@ fn explain_items_with_completion(
             })
             .collect();
         let payload_json = serde_json::to_string_pretty(&payload).unwrap_or_default();
+        // Product names can themselves contain a path/time-looking token; the
+        // cloud payload is scrubbed as a whole, like every other free-text field.
+        let app = scrub_cloud_text(app_name);
+        let vendor = scrub_cloud_text(publisher);
         let user = if normalize_locale(locale) == "en" {
             format!(
-                "App: {app_name}\nPublisher: {publisher}\nCandidates (sanitized paths):\n{payload_json}\nReturn a JSON array; every object must echo the same path field exactly as sent."
+                "App: {app}\nPublisher: {vendor}\nCandidates (sanitized paths):\n{payload_json}\nReturn a JSON array; every object must echo the same path field exactly as sent."
             )
         } else {
             format!(
-                "软件: {app_name}\n发布者: {publisher}\n候选(脱敏路径):\n{payload_json}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。"
+                "软件: {app}\n发布者: {vendor}\n候选(脱敏路径):\n{payload_json}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。"
             )
         };
 
@@ -952,11 +956,13 @@ advised, and whether the backup can restore it. Keep the tone measured. Do not \
 emit Markdown headings.";
 
 fn risk_user_prompt(input: &RiskBriefInput, locale: &str) -> String {
+    let app = scrub_cloud_text(&input.app_name);
+    let vendor = scrub_cloud_text(&input.publisher);
     if normalize_locale(locale) == "en" {
         format!(
             "App: {} ({})\nAction: {}\nCandidates: {}\nKind counts: {:?}\nHas service: {}\nHas startup item: {}\nSuspected shared component: {}",
-            input.app_name,
-            input.publisher,
+            app,
+            vendor,
             input.action,
             input.item_count,
             input.kind_counts,
@@ -967,8 +973,8 @@ fn risk_user_prompt(input: &RiskBriefInput, locale: &str) -> String {
     } else {
         format!(
             "软件: {} ({})\n动作: {}\n候选项: {}\n类型分布: {:?}\n含服务: {}\n含启动项: {}\n疑似共享组件: {}",
-            input.app_name,
-            input.publisher,
+            app,
+            vendor,
             input.action,
             input.item_count,
             input.kind_counts,
@@ -1040,7 +1046,7 @@ fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput, locale: &str) ->
     if normalize_locale(locale) == "en" {
         return format!(
             "App: {}\nDeleted: {}\nFailed: {}\nSkipped: {}\nAborted: {}\nBackup dir: {}\nRestore point: {}\nFailed samples: {}",
-            input.app_name,
+            scrub_cloud_text(&input.app_name),
             input.deleted,
             input.failed,
             input.skipped,
@@ -1052,7 +1058,7 @@ fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput, locale: &str) ->
     }
     format!(
         "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n备份目录: {}\n还原点: {}\n失败样例: {}",
-        input.app_name,
+        scrub_cloud_text(&input.app_name),
         input.deleted,
         input.failed,
         input.skipped,
@@ -1590,11 +1596,11 @@ mod tests {
         let cfg = AiConfig::default();
         let inputs: Vec<ExplainInput> = (0..25)
             .map(|i| ExplainInput {
-                path: format!(r"C:\Users\a\AppData\Local\Vendor\R23Product{i}"),
+                path: format!(r"C:\Users\a\AppData\Local\Vendor\StableProduct{i}"),
                 kind: "dir".into(),
                 confidence: "confirmed".into(),
                 risk: if i == 0 { "high" } else { "medium" }.into(),
-                reason: "R23 regression".into(),
+                reason: "cache regression".into(),
                 evidence_labels: vec![],
             })
             .collect();
@@ -1672,7 +1678,7 @@ mod tests {
         let inputs: Vec<ExplainInput> = ["a", "b"]
             .iter()
             .map(|name| ExplainInput {
-                path: format!(r"C:\Users\{name}\AppData\Local\Vendor\R23Collision"),
+                path: format!(r"C:\Users\{name}\AppData\Local\Vendor\StableCollision"),
                 kind: "dir".into(),
                 confidence: "confirmed".into(),
                 risk: "medium".into(),
@@ -1760,10 +1766,14 @@ mod tests {
         };
         assert!(risk_user_prompt(&risk, "en").starts_with("App:"));
         assert!(risk_user_prompt(&risk, "zh").starts_with("软件:"));
-        assert!(
-            intent_user_prompt("uninstall Foo", "Foo | Bar", "en").starts_with("User instruction:")
-        );
-        assert!(intent_user_prompt("卸载 Foo", "Foo", "zh").starts_with("用户指令："));
+        assert!(!risk_user_prompt(&risk, "en").contains("软件"));
+        assert!(!risk_user_prompt(&risk, "zh").contains("App:"));
+        let intent_en = intent_user_prompt("uninstall Foo", "Foo | Bar", "en");
+        assert!(intent_en.starts_with("User instruction:"));
+        assert!(!intent_en.contains("用户指令"));
+        let intent_zh = intent_user_prompt("卸载 Foo", "Foo", "zh");
+        assert!(intent_zh.starts_with("用户指令："));
+        assert!(!intent_zh.contains("User instruction"));
     }
 
     #[test]

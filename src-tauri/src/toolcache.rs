@@ -241,8 +241,35 @@ fn under_system_root(p: &Path) -> bool {
 /// deliberately structural rather than a name list: an absolute drive path with
 /// at least three components, so it can be neither a drive root nor a bare
 /// library folder, and not a reparse point that resolves elsewhere.
+/// Lexical `X:\…` shape with no parent traversal. This never touches the path,
+/// so a UNC/device value cannot cause a network probe just by being validated.
+fn is_local_drive_shaped(p: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    let mut comps = p.components();
+    let disk = matches!(
+        comps.next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+    );
+    if !disk || !matches!(comps.next(), Some(Component::RootDir)) {
+        return false;
+    }
+    !p.components().any(|c| matches!(c, Component::ParentDir))
+}
+
 fn is_plausible_cache_root(p: &Path) -> bool {
     if p.as_os_str().is_empty() || p.is_relative() {
+        return false;
+    }
+    // Reject UNC/device/verbatim paths *before* any metadata probe: the
+    // reparse/`exists` checks below would otherwise contact a remote share from
+    // the elevated process (NetNTLM leak) even when the path is never scanned.
+    if !is_local_drive_shaped(p) {
+        return false;
+    }
+    // An existing local path must also have no reparse point in its ancestor
+    // chain; a missing path needs no probe (and must not require the drive to
+    // be present just to validate a relocation variable).
+    if p.exists() && !crate::fsutil::is_local_drive_path(&p.to_string_lossy()) {
         return false;
     }
     let comps: Vec<_> = p.components().collect();
@@ -1360,6 +1387,9 @@ mod tests {
             "relative/cache",
             "",
             "C:/Users/x/Documents",
+            r"\\server\share\cache",
+            r"\\?\C:\cache",
+            r"C:\a\..\b",
         ] {
             assert!(
                 !is_plausible_cache_root(Path::new(bad)),

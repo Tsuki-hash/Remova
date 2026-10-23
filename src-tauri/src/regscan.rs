@@ -250,6 +250,7 @@ mod subkey_cache {
         at: Instant,
     }
 
+    #[cfg(test)]
     #[derive(Default)]
     pub(super) struct Counters {
         pub hits: u64,
@@ -265,9 +266,10 @@ mod subkey_cache {
         entries: HashMap<String, Entry>,
     }
 
+    // Diagnostics are test-only: keeping the thread-local bump on the hot path
+    // charged every real scan for counters only the test suite reads.
+    #[cfg(test)]
     thread_local! {
-        /// Per-thread diagnostics: the entry cache is shared, but hit/miss
-        /// counters must not be polluted by unrelated parallel scans.
         static COUNTERS: std::cell::RefCell<Counters> =
             std::cell::RefCell::new(Counters::default());
     }
@@ -285,10 +287,12 @@ mod subkey_cache {
             .is_some_and(|entry| entry.at.elapsed() >= TTL);
         if expired {
             state.entries.remove(key);
+            #[cfg(test)]
             COUNTERS.with(|n| n.borrow_mut().expired += 1);
             return None;
         }
         let names = state.entries.get(key).map(|entry| entry.names.clone());
+        #[cfg(test)]
         if names.is_some() {
             COUNTERS.with(|n| n.borrow_mut().hits += 1);
         }
@@ -299,6 +303,7 @@ mod subkey_cache {
         let mut state = state().lock().unwrap_or_else(|e| e.into_inner());
         state.entries.retain(|_, e| e.at.elapsed() < TTL);
         if !state.entries.contains_key(key) && state.entries.len() >= MAX_CACHED_KEYS {
+            #[cfg(test)]
             COUNTERS.with(|n| n.borrow_mut().evicted += 1);
             return;
         }
@@ -309,14 +314,17 @@ mod subkey_cache {
                 at: Instant::now(),
             },
         );
+        #[cfg(test)]
         COUNTERS.with(|n| n.borrow_mut().stored += 1);
     }
 
     pub(super) fn note_uncacheable() {
+        #[cfg(test)]
         COUNTERS.with(|n| n.borrow_mut().skipped_too_large += 1);
     }
 
     pub(super) fn note_miss() {
+        #[cfg(test)]
         COUNTERS.with(|n| n.borrow_mut().misses += 1);
     }
 
@@ -345,6 +353,7 @@ mod subkey_cache {
         );
     }
 
+    #[cfg(test)]
     pub(super) fn snapshot() -> (u64, u64, u64, u64, u64, u64) {
         COUNTERS.with(|n| {
             let n = n.borrow();
@@ -387,7 +396,9 @@ mod default_cache {
     }
 
     struct Entry {
-        value: String,
+        /// `None` caches "this key has no usable default value" so a batch does
+        /// not reopen every CLSID leaf for every app.
+        value: Option<String>,
         at: Instant,
     }
 
@@ -396,7 +407,8 @@ mod default_cache {
         STATE.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    pub(super) fn get(key: &str) -> Option<String> {
+    /// Outer `None` = cache miss/expired; `Some(None)` = a cached absence.
+    pub(super) fn get(key: &str) -> Option<Option<String>> {
         let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
         if entries
             .get(key)
@@ -408,7 +420,7 @@ mod default_cache {
         entries.get(key).map(|entry| entry.value.clone())
     }
 
-    pub(super) fn put(key: &str, value: &str) {
+    pub(super) fn put(key: &str, value: Option<&str>) {
         let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
         // Never sweep per insert: the CLSID loop inserts ~20k entries and an
         // O(n) retain on each one made the "optimization" quadratic. Sweep only
@@ -427,7 +439,7 @@ mod default_cache {
         entries.insert(
             key.to_string(),
             Entry {
-                value: value.to_string(),
+                value: value.map(str::to_string),
                 at: Instant::now(),
             },
         );
@@ -439,12 +451,12 @@ mod default_cache {
     }
 
     #[cfg(test)]
-    pub(super) fn put_expired(key: &str, value: &str) {
+    pub(super) fn put_expired(key: &str, value: Option<&str>) {
         let mut entries = state().lock().unwrap_or_else(|e| e.into_inner());
         entries.insert(
             key.to_string(),
             Entry {
-                value: value.to_string(),
+                value: value.map(str::to_string),
                 at: Instant::now() - TTL - Duration::from_secs(1),
             },
         );
@@ -468,6 +480,7 @@ pub fn invalidate_default_value_cache() {
 
 /// (hits, misses, stored, expired, skipped_too_large, evicted). Test and
 /// diagnostic hook: it proves the reuse actually happened.
+#[cfg(test)]
 pub fn registry_cache_counters() -> (u64, u64, u64, u64, u64, u64) {
     subkey_cache::snapshot()
 }
@@ -834,12 +847,12 @@ pub fn read_string_default_cached(key: &str) -> Option<String> {
         return read_string_default(key);
     }
     if let Some(value) = default_cache::get(key) {
-        return Some(value);
+        return value;
     }
     let value = read_string_default(key);
-    if let Some(ref value) = value {
-        default_cache::put(key, value);
-    }
+    // Cache the absence too: most CLSID leaves have no usable default value,
+    // and without this every app re-opened thousands of keys.
+    default_cache::put(key, value.as_deref());
     value
 }
 
@@ -1015,18 +1028,21 @@ mod completeness_tests {
     #[test]
     fn default_value_cache_reuses_expires_and_invalidates() {
         super::default_cache::clear();
-        super::default_cache::put("cls-key", "description");
+        super::default_cache::put("cls-key", Some("description"));
         assert_eq!(
-            super::default_cache::get("cls-key").as_deref(),
+            super::default_cache::get("cls-key").flatten().as_deref(),
             Some("description")
         );
-        super::default_cache::put_expired("cls-old", "old");
+        // Absence is a cacheable result too: most CLSID leaves have no default.
+        super::default_cache::put("cls-missing", None);
+        assert_eq!(super::default_cache::get("cls-missing"), Some(None));
+        super::default_cache::put_expired("cls-old", Some("old"));
         assert!(super::default_cache::get("cls-old").is_none());
         // A cleanup clears subkey enumerations but must keep the CLSID values
         // reusable across the batch.
         super::invalidate_subkey_cache();
         assert_eq!(
-            super::default_cache::get("cls-key").as_deref(),
+            super::default_cache::get("cls-key").flatten().as_deref(),
             Some("description")
         );
         super::invalidate_default_value_cache();
@@ -1037,7 +1053,7 @@ mod completeness_tests {
     fn cached_default_value_reads_live_outside_and_after_cancellation() {
         super::default_cache::clear();
         let key = r"HKCU\Software\RemovaP309Missing\NoSuchValue";
-        super::default_cache::put(key, "stale-cached");
+        super::default_cache::put(key, Some("stale-cached"));
         // Outside any scan task the deletion gate reads the registry; a seeded
         // cache entry must not be replayed.
         assert_eq!(super::read_string_default_cached(key), None);

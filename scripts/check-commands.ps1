@@ -1,6 +1,6 @@
 # Compare Tauri generate_handler! commands against the code-internal inventory
 # (src/lib/api.ts invoke names) and, when present, docs/ARCHITECTURE.md §3.
-# R-R6-04: the gate always runs against api.ts — it never silently SKIPs when docs/ is absent.
+# The gate always runs against api.ts — it never silently SKIPs when docs/ is absent.
 # Usage: pwsh -NoProfile -File scripts/check-commands.ps1 [-Root <repo root>]
 param([string]$Root)
 $ErrorActionPreference = "Stop"

@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # check-workflows-enabled.ps1 — fail when a repo workflow that gates releases is disabled.
 #
-# R-R6-04's sibling: check-commands.ps1 proved that a gate reading a gitignored file
+# Sibling of check-commands.ps1: that gate proved a check reading a gitignored file
 # silently skips on a fresh checkout. This one covers the mirror-image failure — a
 # gate that is *configured* but *switched off*. CI and Release both sat at
 # `disabled_manually` while the README badge showed "no status" and two releases

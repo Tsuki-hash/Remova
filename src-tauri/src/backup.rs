@@ -44,7 +44,7 @@ pub fn backup_root() -> PathBuf {
 /// suites cannot steal each other's backup root.
 ///
 /// This used to be its own `static Mutex`, separate from the one `test_support`
-/// hands out — the exact defect M-03 describes: a guard protects a variable only
+/// hands out — a guard protects a variable only
 /// if every writer takes the *same* lock. `backup.rs`, `restore.rs`,
 /// `pipeline_smoke.rs` and `commands/backup_cmd.rs` all write `REMOVA_BACKUP_DIR`,
 /// so once one took the shared lock while the others took this one the suites

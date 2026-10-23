@@ -16,7 +16,7 @@ concurrency:
 jobs:
   release:
     runs-on: windows-latest
-    # R-R6-06: release builds are slow; fail the job instead of hanging the runner.
+    # Release builds are slow; fail the job instead of hanging the runner.
     # Two SignPath requests require maintainer approval. GitHub's job limit is 6h.
     timeout-minutes: 360
     env:
@@ -37,7 +37,7 @@ jobs:
             throw "Tagged commit $env:GITHUB_SHA is not on main (compare status: $state)."
           }
 
-      # R-R6-07: v1.3.0 and v1.3.1 were published with no Release run at all, because
+      # v1.3.0 and v1.3.1 were published with no Release run at all, because
       # both workflows were disabled remotely and nothing in the pipeline could see it.
       # A tag push is the last moment anyone is looking, so the release refuses to
       # spend a runner until CI has actually passed on this exact commit. A missing

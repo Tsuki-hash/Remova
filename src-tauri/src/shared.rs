@@ -132,7 +132,7 @@ fn segments(s: &str) -> Vec<&str> {
 
 /// Anchored token match: the token (already lowercased) must equal one segment
 /// or a run of adjacent segments. Mirrors the publisher match in
-/// `association.rs`, which the round-37 review pointed at as the model.
+/// `association.rs`, which the earlier review pointed at as the model.
 fn token_hits(haystack: &str, token: &str) -> bool {
     let token = token.trim();
     if token.is_empty() {
@@ -204,7 +204,7 @@ mod tests {
         ));
     }
 
-    /// A token must sit on a segment boundary. These are the names the round-37
+    /// A token must sit on a segment boundary. These are the names the earlier
     /// review measured as false positives under the old `blob.contains` test;
     /// each one was permanently skipped by `gate_cleanup_item` with
     /// "可能是共享组件，默认保留" and could never be cleaned by any round.

@@ -926,10 +926,13 @@ pub fn analyze_associations(
     reg_scans::scan_software_keys(&name_slugs, &mut items);
 
     // 9. Shortcuts + TEMP
+    let mut degraded = Vec::new();
     phase!("shortcuts");
     fs_scans::scan_shortcuts(&name_slugs, &exe_stems, &install_low, &mut items);
     phase!("shortcuts");
-    fs_scans::scan_temp(&name_slugs, &mut items);
+    if fs_scans::scan_temp(&name_slugs, &mut items) {
+        degraded.push("temp_partial".to_string());
+    }
 
     // 10. SOP: PATH entries, shell extensions, drivers, cross-drive roots, WebView2 masks
     phase!("other");
@@ -943,7 +946,6 @@ pub fn analyze_associations(
     phase!("other");
     fs_scans::scan_webview_masks(&name_slugs, &mut items);
     phase!("other");
-    let mut degraded = Vec::new();
     if fs_scans::scan_home_dot_dirs(&name_slugs, &install_low, &mut items) {
         degraded.push("home_dot_truncated".to_string());
     }
@@ -951,6 +953,12 @@ pub fn analyze_associations(
     if reg_scans::scan_muicache(&name_slugs, &install_low, &mut items) {
         degraded.push("muicache_truncated".to_string());
     }
+
+    // Overlapping scanners can name the same path twice: the install root and a
+    // named root, WebView masks and AppData products, cross-drive roots and
+    // named roots. Keep the first row (install roots come first and carry the
+    // stronger evidence) so sizing, backup and the report see one item.
+    dedup_items(&mut items);
 
     for it in &mut items {
         if crate::scan_task::cancelled() {
@@ -990,6 +998,17 @@ pub fn analyze_associations(
     }
 }
 
+/// Drop duplicate paths produced by overlapping scanners, keeping the first row.
+/// Path comparison is case- and separator-insensitive because Windows treats
+/// `C:\Apps\X` and `c:/apps/x` as the same target.
+fn dedup_items(items: &mut Vec<CleanupItem>) {
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|it| {
+        let key = it.path.replace('/', "\\").to_lowercase();
+        seen.insert(key)
+    });
+}
+
 pub(crate) mod fs_scans;
 pub(crate) mod reg_scans;
 
@@ -1012,6 +1031,35 @@ mod tests {
     fn slugify_tokens() {
         let s = slugify("DemoApp Installer");
         assert!(s.iter().any(|x| x.to_lowercase().contains("demoapp")));
+    }
+
+    #[test]
+    fn duplicate_scanner_paths_are_dropped_keeping_the_first() {
+        let item = |path: &str, score: i32, reason: &str| CleanupItem {
+            path: path.into(),
+            kind: ItemKind::Dir,
+            score,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: reason.into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let mut items = vec![
+            item(r"C:\Program Files\Demo", 90, "Install location"),
+            item(r"c:/program files/demo", 40, "Product dir"),
+            item(r"C:\Program Files\Demo Two", 40, "Product dir"),
+        ];
+        dedup_items(&mut items);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].reason, "Install location");
+        assert_eq!(items[1].path, r"C:\Program Files\Demo Two");
     }
 
     #[test]

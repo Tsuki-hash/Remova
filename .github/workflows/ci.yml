@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
-      # R-R6-07: a gate that is configured but switched off is invisible to every
+      # A gate that is configured but switched off is invisible to every
       # other gate. CI and Release both sat at `disabled_manually` for weeks while
       # the README badge read "no status" and two releases shipped with no run.
       # This half of the loop is the only one that can fire: it verifies Release is
