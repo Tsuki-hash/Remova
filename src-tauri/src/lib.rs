@@ -53,7 +53,7 @@ use tauri::{Emitter, Manager};
 
 #[tauri::command]
 async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    // scan_installed_apps already refreshes the uninstall trust table.
+    // scan_installed_apps refreshes the uninstall trust and server app snapshots.
     tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
         .await
         .map_err(|e| e.to_string())
@@ -350,6 +350,109 @@ mod open_path_url_tests {
     }
 }
 
+#[cfg(test)]
+mod cleanup_trust_tests {
+    use super::*;
+    use crate::policy::CleanupSource;
+    use crate::scanner::{CleanupItem, Confidence, ItemKind, RiskLevel};
+    use std::collections::HashSet;
+
+    fn item(path: &str) -> CleanupItem {
+        CleanupItem {
+            path: path.into(),
+            kind: ItemKind::Dir,
+            score: 90,
+            confidence: Confidence::Confirmed,
+            risk: RiskLevel::Low,
+            reason: "fixture".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        }
+    }
+
+    fn app(name: &str, source: &str, install: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.into(),
+            version: "1".into(),
+            publisher: "Vendor".into(),
+            install_location: install.into(),
+            uninstall_string: r"C:\Program Files\Demo\unins000.exe".into(),
+            quiet_uninstall_string: String::new(),
+            source: source.into(),
+            registry_key: format!(
+                r"{source}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{name}"
+            ),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn forged_cleanup_items_are_rejected_even_with_a_valid_app_identity() {
+        let _lock = crate::scan_allow::test_lock();
+        let scanned = app("TrustedDemo", "HKLM64", r"C:\Program Files\TrustedDemo");
+        let key = apps::app_key(&scanned);
+        scan_allow::remember_uninstall(
+            &key,
+            &HashSet::from([r"C:\Program Files\TrustedDemo".to_string()]),
+        );
+        assert!(authorize_cleanup_items(
+            &scanned,
+            &[item(r"C:\Program Files\TrustedDemo")],
+            CleanupSource::Uninstall
+        )
+        .is_ok());
+        assert!(authorize_cleanup_items(
+            &scanned,
+            &[item(r"D:\Data\Victim")],
+            CleanupSource::Uninstall
+        )
+        .is_err());
+        assert!(
+            authorize_cleanup_items(
+                &scanned,
+                &[item(r"C:\Program Files\TrustedDemo")],
+                CleanupSource::Orphan
+            )
+            .is_ok(),
+            "scoped scans carry their own server allow-list"
+        );
+    }
+
+    #[test]
+    fn a_cleanup_without_analysis_is_refused() {
+        let app = app("NeverAnalyzed", "HKLM64", r"C:\Program Files\NeverAnalyzed");
+        assert!(authorize_cleanup_items(&app, &[], CleanupSource::Uninstall).is_err());
+    }
+
+    #[test]
+    fn user_install_root_is_stripped_from_a_user_analysis() {
+        let mut items = vec![item(r"C:\Program Files\Demo"), item(r"D:\Data\Child")];
+        strip_user_install_root(&mut items, r"C:\Program Files\Demo");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, r"D:\Data\Child");
+    }
+
+    #[test]
+    fn cleanup_resolution_uses_the_server_install_root() {
+        let _g = apps::trust_test_support::guard();
+        let scanned = app("ResolvedDemo", "HKLM64", r"C:\Program Files\ResolvedDemo");
+        apps::remember_uninstall_commands(std::slice::from_ref(&scanned));
+        let mut forged = scanned.clone();
+        forged.install_location = r"D:\Data\Victim".into();
+        let resolved =
+            resolve_cleanup_app(forged, CleanupSource::Uninstall).expect("server identity");
+        assert_eq!(resolved.install_location, r"C:\Program Files\ResolvedDemo");
+    }
+}
+
 #[tauri::command]
 fn begin_association_scan() -> Result<u32, String> {
     scan_task::begin()
@@ -365,12 +468,83 @@ fn association_scan_progress(scan_id: u32) -> Option<scan_task::Progress> {
     scan_task::progress(scan_id)
 }
 
+fn cleanup_source_from_arg(source: Option<&str>) -> policy::CleanupSource {
+    match source {
+        Some("orphan") => policy::CleanupSource::Orphan,
+        Some("monitor") => policy::CleanupSource::Monitor,
+        Some("copilot") => policy::CleanupSource::Copilot,
+        Some("installer") => policy::CleanupSource::Installer,
+        Some("toolcache") => policy::CleanupSource::ToolCache,
+        _ => policy::CleanupSource::Uninstall,
+    }
+}
+
+/// App-scoped cleanup must resolve the client's identity to the last
+/// server-side scan. Scoped scans (orphan/monitor/installer/toolcache) carry
+/// their own server allow-lists and use a synthetic app.
+fn resolve_cleanup_app(
+    app: InstalledApp,
+    source: policy::CleanupSource,
+) -> Result<InstalledApp, String> {
+    if source.is_scoped_scan() {
+        return Ok(app);
+    }
+    apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".into())
+}
+
+/// Every app-scoped cleanup item must come from the latest server analysis of
+/// that exact identity. This is the IPC boundary check; `policy` still applies
+/// the path-level safety gates afterwards.
+fn authorize_cleanup_items(
+    app: &InstalledApp,
+    items: &[CleanupItem],
+    source: policy::CleanupSource,
+) -> Result<(), String> {
+    if source.is_scoped_scan() {
+        return Ok(());
+    }
+    let key = apps::app_key(app);
+    if !scan_allow::uninstall_scan_recorded(&key) {
+        return Err("analysis must run before cleanup".into());
+    }
+    for item in items {
+        if item.path.trim().is_empty() {
+            continue;
+        }
+        if !scan_allow::was_recent_uninstall(&key, &item.path) {
+            return Err(format!(
+                "cleanup item not from the latest analysis: {}",
+                item.path
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Remove the exact install-root row from a per-user analysis. HKCU data is
+/// writable by the current user; in an elevated process it must not authorize
+/// deleting an arbitrary machine path. Other server-scanned associations stay.
+fn strip_user_install_root(items: &mut Vec<CleanupItem>, install_location: &str) {
+    if let Some(root) = crate::fsutil::path_key(std::path::Path::new(install_location)) {
+        items.retain(|item| {
+            crate::fsutil::path_key(std::path::Path::new(&item.path)).as_deref()
+                != Some(root.as_str())
+        });
+    }
+}
+
 #[tauri::command]
 async fn analyze_associations(
     app: InstalledApp,
     scan_id: Option<u32>,
 ) -> Result<ScanResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    // The client may rewrite any field; analyze only the server-scanned copy.
+    let app =
+        apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
+    let server_source = app.source.clone();
+    let server_install_location = app.install_location.clone();
+    let server_app_key = apps::app_key(&app);
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
         let work = || {
             scanner::analyze_associations(
                 &app.name,
@@ -386,7 +560,22 @@ async fn analyze_associations(
         }
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    if result.app_key.is_empty() {
+        result.app_key = server_app_key;
+    }
+    // A per-user registry entry is writable by the unprivileged user. Its
+    // install root must not authorize elevated deletion of an arbitrary
+    // machine path; the user can analyze/clean it without elevation.
+    let non_elevated = matches!(crate::sysops::is_process_elevated(), Ok(false));
+    if !non_elevated && server_source.eq_ignore_ascii_case("HKCU") {
+        strip_user_install_root(&mut result.items, &server_install_location);
+    }
+    let paths: std::collections::HashSet<String> =
+        result.items.iter().map(|item| item.path.clone()).collect();
+    scan_allow::remember_uninstall(&result.app_key, &paths);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -395,15 +584,10 @@ async fn run_cleanup_dry_run(
     items: Vec<CleanupItem>,
     cleanup_source: Option<String>,
 ) -> Result<CleanupReport, String> {
+    let source = cleanup_source_from_arg(cleanup_source.as_deref());
+    let app = resolve_cleanup_app(app, source)?;
+    authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let source = match cleanup_source.as_deref() {
-            Some("orphan") => crate::policy::CleanupSource::Orphan,
-            Some("monitor") => crate::policy::CleanupSource::Monitor,
-            Some("copilot") => crate::policy::CleanupSource::Copilot,
-            Some("installer") => crate::policy::CleanupSource::Installer,
-            Some("toolcache") => crate::policy::CleanupSource::ToolCache,
-            _ => crate::policy::CleanupSource::Uninstall,
-        };
         executor::run_cleanup_dry_for_app_source(&app, &items, source)
     })
     .await
@@ -414,6 +598,8 @@ async fn run_cleanup_dry_run(
 async fn run_official_uninstall(
     app: InstalledApp,
 ) -> Result<executor::OfficialUninstallResult, String> {
+    let app =
+        apps::trusted_app(&app).ok_or_else(|| "app is not from the latest scan".to_string())?;
     tauri::async_runtime::spawn_blocking(move || executor::run_official_uninstall(&app))
         .await
         .map_err(|e| e.to_string())
@@ -425,6 +611,9 @@ async fn run_full_cleanup(
     items: Vec<CleanupItem>,
     options: FullCleanupOptions,
 ) -> Result<FullCleanupReport, String> {
+    let source = cleanup_source_from_arg(options.cleanup_source.as_deref());
+    let app = resolve_cleanup_app(app, source)?;
+    authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
         let report = executor::run_full_cleanup(&app, &items, &options);
         if !history::append(
@@ -740,6 +929,50 @@ async fn end_install_monitor(scan_id: Option<u32>) -> Result<installmon::Monitor
     .map_err(|e| e.to_string())?
 }
 
+fn tray_labels(lang: &str) -> (&'static str, &'static str) {
+    if lang.eq_ignore_ascii_case("zh") {
+        ("打开 Remova", "退出 Remova")
+    } else {
+        ("Open Remova", "Quit Remova")
+    }
+}
+
+fn system_language_is_zh() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::GetUserDefaultUILanguage;
+        // LANG_CHINESE = 0x04 in the low 10 bits (primary language id).
+        unsafe { GetUserDefaultUILanguage() & 0x03ff == 0x04 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Rebuild the tray menu when the UI language changes. The tray is created
+/// before the webview loads, so its labels otherwise stay in the OS language
+/// even after the user switches Remova to English.
+#[tauri::command]
+fn cancel_cleanup() {
+    executor::cancel_cleanup_operation();
+}
+
+#[tauri::command]
+fn set_tray_language(app: tauri::AppHandle, lang: String) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem};
+    let (show, quit) = tray_labels(&lang);
+    let show_i =
+        MenuItem::with_id(&app, "show", show, true, None::<&str>).map_err(|e| e.to_string())?;
+    let quit_i =
+        MenuItem::with_id(&app, "quit", quit, true, None::<&str>).map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&app, &[&show_i, &quit_i]).map_err(|e| e.to_string())?;
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // One-shot Safety Vault retention (not on list/read paths).
@@ -764,8 +997,10 @@ pub fn run() {
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
             use tauri::Manager;
 
-            let show_i = MenuItem::with_id(app, "show", "打开 Remova", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "退出 Remova", true, None::<&str>)?;
+            let (show_label, quit_label) =
+                tray_labels(if system_language_is_zh() { "zh" } else { "en" });
+            let show_i = MenuItem::with_id(app, "show", show_label, true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
             // Prefer dedicated 32×32 transparent PNG for the tray (crisp at 16–32 px).
             let icon = match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
@@ -891,6 +1126,8 @@ pub fn run() {
         // `begin_install_monitor`
         // `end_install_monitor`
         // `take_pending_analyze`
+        // `cancel_cleanup`
+        // `set_tray_language`
         // `get_ai_config`
         // `save_ai_config`
         // `ai_risk_brief`
@@ -958,6 +1195,8 @@ pub fn run() {
             begin_install_monitor,
             end_install_monitor,
             take_pending_analyze,
+            cancel_cleanup,
+            set_tray_language,
             commands::ai_cmd::get_ai_config,
             commands::ai_cmd::save_ai_config,
             commands::ai_cmd::ai_risk_brief,

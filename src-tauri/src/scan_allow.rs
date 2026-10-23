@@ -1,7 +1,8 @@
 //! Server-side allow-lists for scoped scans (installer / toolcache).
 //! Same trust model as orphan paths : only paths from the latest scan may be deleted.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,59 @@ static MAPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 fn maps() -> &'static Mutex<HashSet<String>> {
     MAPS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Per-app cleanup authorization from the latest analysis, bounded so a long
+/// session cannot retain every app's paths forever.
+type AppPaths = HashMap<String, (u64, HashSet<String>)>;
+type AppMaps = Mutex<AppPaths>;
+static APP_MAPS: OnceLock<AppMaps> = OnceLock::new();
+static APP_GENERATION: AtomicU64 = AtomicU64::new(0);
+const MAX_ANALYZED_APPS: usize = 64;
+
+fn app_maps() -> &'static AppMaps {
+    APP_MAPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Publish the cleanup items of one successful analysis as the only paths a
+/// later uninstall cleanup may delete for that app. The scan identity comes
+/// from the backend, not from the cleanup request.
+pub fn remember_uninstall(app_key: &str, paths: &HashSet<String>) {
+    crate::scan_task::publish(|| {
+        let normalized: HashSet<String> = paths.iter().filter_map(|p| normalize(p)).collect();
+        let generation = APP_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Ok(mut g) = app_maps().lock() {
+            g.insert(app_key.to_string(), (generation, normalized));
+            if g.len() > MAX_ANALYZED_APPS {
+                let mut keys: Vec<(u64, String)> =
+                    g.iter().map(|(k, (seen, _))| (*seen, k.clone())).collect();
+                keys.sort_unstable();
+                for (_, k) in keys.into_iter().take(g.len() - MAX_ANALYZED_APPS) {
+                    g.remove(&k);
+                }
+            }
+        }
+    });
+}
+
+/// True when an analysis for this exact app identity is still available.
+pub fn uninstall_scan_recorded(app_key: &str) -> bool {
+    app_maps()
+        .lock()
+        .map(|g| g.contains_key(app_key))
+        .unwrap_or(false)
+}
+
+/// True only for a path the latest analysis of this app returned.
+pub fn was_recent_uninstall(app_key: &str, path: &str) -> bool {
+    let Some(key) = normalize(path) else {
+        return false;
+    };
+    app_maps()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(app_key).map(|(_, paths)| paths.contains(&key)))
+        .unwrap_or(false)
 }
 
 /// Comparison key for an allow-list entry.
@@ -224,5 +278,30 @@ mod tests {
         remember(AllowScope::ToolCache, &a);
         assert!(!was_recent(AllowScope::ToolCache, "   "));
         assert!(!was_recent(AllowScope::ToolCache, r"C:\Anything"));
+    }
+
+    #[test]
+    fn uninstall_allow_list_is_per_app_and_normalized() {
+        let _g = test_lock();
+        let app = "HKLM64\0HKLM64\\SOFTWARE\\Demo\0Demo";
+        remember_uninstall(app, &HashSet::from([r"C:\Program Files\Demo".to_string()]));
+        assert!(uninstall_scan_recorded(app));
+        assert!(was_recent_uninstall(app, r"c:/program files/demo/"));
+        assert!(!was_recent_uninstall(app, r"C:\Program Files\Victim"));
+        assert!(!was_recent_uninstall(
+            "HKCU\0HKCU\\SOFTWARE\\Demo\0Demo",
+            r"C:\Program Files\Demo"
+        ));
+        assert!(!uninstall_scan_recorded("HKCU\0HKCU\\SOFTWARE\\Demo\0Demo"));
+    }
+
+    #[test]
+    fn a_new_analysis_replaces_the_previous_app_allow_list() {
+        let _g = test_lock();
+        let app = "HKLM64\0HKLM64\\SOFTWARE\\Replace\0Replace";
+        remember_uninstall(app, &HashSet::from([r"C:\Old".to_string()]));
+        remember_uninstall(app, &HashSet::from([r"C:\New".to_string()]));
+        assert!(!was_recent_uninstall(app, r"C:\Old"));
+        assert!(was_recent_uninstall(app, r"C:\New"));
     }
 }

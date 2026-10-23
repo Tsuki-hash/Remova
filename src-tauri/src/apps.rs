@@ -1,27 +1,43 @@
 //! Enumerate Windows uninstall registry entries (read-only).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Uninstall command fingerprints from the latest server-side app scan (blocks IPC-forged RCE).
 /// Keyed by the stable scan identity, so the record also pins the source
 /// (HKCU vs HKLM) the command was scanned from. A caller that keeps a trusted
 /// command pair but rewrites `source`/`registry_key` no longer matches.
-static UNINSTALL_TRUST: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
-    OnceLock::new();
+static UNINSTALL_TRUST: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
-fn uninstall_trust() -> &'static Mutex<std::collections::HashMap<String, String>> {
-    UNINSTALL_TRUST.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+/// Apps from the latest server scan. Analyze/uninstall/cleanup resolve the
+/// client's identity here and use the server copy, never the client fields.
+static SCANNED_CURRENT: OnceLock<Mutex<HashMap<String, InstalledApp>>> = OnceLock::new();
+/// Recently scanned apps survive one refresh so a post-uninstall analyze can
+/// still resolve the app that just left the inventory. Bounded by generation.
+static SCANNED_RECENT: OnceLock<Mutex<HashMap<String, (u64, InstalledApp)>>> = OnceLock::new();
+static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
+const MAX_RECENT_APPS: usize = 8192;
+
+fn uninstall_trust() -> &'static Mutex<HashMap<String, String>> {
+    UNINSTALL_TRUST.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn trust_key(uninstall: &str, quiet: &str) -> String {
-    format!("{uninstall}\n{quiet}")
+fn scanned_current() -> &'static Mutex<HashMap<String, InstalledApp>> {
+    SCANNED_CURRENT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Remember uninstall command pairs produced by the latest scan.
-/// Build the next map first, then swap — never leave an empty trust window for concurrent uninstall.
-pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
-    let mut next = std::collections::HashMap::new();
+fn scanned_recent() -> &'static Mutex<HashMap<String, (u64, InstalledApp)>> {
+    SCANNED_RECENT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_generation() -> u64 {
+    SCAN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn rebuild_trust(apps: &[InstalledApp]) {
+    let mut next = HashMap::new();
     for a in apps {
         if a.uninstall_string.trim().is_empty() && a.quiet_uninstall_string.trim().is_empty() {
             continue;
@@ -34,6 +50,77 @@ pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
     if let Ok(mut g) = uninstall_trust().lock() {
         *g = next;
     }
+}
+
+fn trust_key(uninstall: &str, quiet: &str) -> String {
+    format!("{uninstall}\n{quiet}")
+}
+
+/// Replace current and recent history. Used by tests and by explicit reset
+/// paths so a fixture cannot inherit an earlier test's scan record.
+fn remember_apps_exact(apps: &[InstalledApp]) {
+    let generation = next_generation();
+    let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
+    let recent: HashMap<_, _> = apps
+        .iter()
+        .map(|a| (app_key(a), (generation, a.clone())))
+        .collect();
+    if let Ok(mut g) = scanned_current().lock() {
+        *g = current;
+    }
+    if let Ok(mut g) = scanned_recent().lock() {
+        *g = recent;
+    }
+}
+
+/// Record one server-side inventory scan. Current is replaced (the app list is
+/// authoritative now); recent is merged so post-uninstall analysis still works
+/// after the inventory refresh removed the app.
+pub fn remember_scan(apps: &[InstalledApp]) {
+    rebuild_trust(apps);
+    let generation = next_generation();
+    let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
+    if let Ok(mut g) = scanned_current().lock() {
+        *g = current;
+    }
+    if let Ok(mut g) = scanned_recent().lock() {
+        for a in apps {
+            g.insert(app_key(a), (generation, a.clone()));
+        }
+        if g.len() > MAX_RECENT_APPS {
+            let mut keys: Vec<(u64, String)> =
+                g.iter().map(|(k, (seen, _))| (*seen, k.clone())).collect();
+            keys.sort_unstable();
+            for (_, k) in keys.into_iter().take(g.len() - MAX_RECENT_APPS) {
+                g.remove(&k);
+            }
+        }
+    }
+}
+
+/// Remember uninstall command pairs produced by the latest scan.
+/// Build the next map first, then swap — never leave an empty trust window for concurrent uninstall.
+/// This reset form is used by tests and explicit fixture setup; the live scan
+/// path uses `remember_scan`.
+pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
+    rebuild_trust(apps);
+    remember_apps_exact(apps);
+}
+
+/// Resolve the client-supplied identity to the last server-scanned record.
+/// A caller may rewrite any field, but only `source + registry_key + name`
+/// identifies the app; all executable/root fields come from the server copy.
+pub fn trusted_app(app: &InstalledApp) -> Option<InstalledApp> {
+    let key = app_key(app);
+    if let Ok(g) = scanned_current().lock() {
+        if let Some(found) = g.get(&key) {
+            return Some(found.clone());
+        }
+    }
+    scanned_recent()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&key).map(|(_, found)| found.clone()))
 }
 
 /// True when this app's uninstall command pair came from the latest scan.
@@ -73,42 +160,66 @@ pub mod trust_test_support {
     use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard};
 
+    struct Saved {
+        trust: HashMap<String, String>,
+        current: HashMap<String, super::InstalledApp>,
+        recent: HashMap<String, (u64, super::InstalledApp)>,
+    }
+
     /// Serializes tests that replace the process-wide trust set. The product
     /// lock cannot be held here (the test itself calls
     /// `remember_uninstall_commands`), so a separate test mutex orders them.
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    pub fn snapshot() -> HashMap<String, String> {
-        super::uninstall_trust()
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+    fn snapshot() -> Saved {
+        Saved {
+            trust: super::uninstall_trust()
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default(),
+            current: super::scanned_current()
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default(),
+            recent: super::scanned_recent()
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default(),
+        }
     }
 
-    pub fn restore(saved: HashMap<String, String>) {
+    fn restore(saved: Saved) {
         if let Ok(mut g) = super::uninstall_trust().lock() {
-            *g = saved;
+            *g = saved.trust;
+        }
+        if let Ok(mut g) = super::scanned_current().lock() {
+            *g = saved.current;
+        }
+        if let Ok(mut g) = super::scanned_recent().lock() {
+            *g = saved.recent;
         }
     }
 
     /// Snapshot + exclusive test lock. Restores on drop, including on panic
     /// (A5): a failed assertion must not leave another test's trust set armed.
     pub struct TrustGuard {
-        saved: HashMap<String, String>,
+        saved: Option<Saved>,
         _lock: MutexGuard<'static, ()>,
     }
 
     pub fn guard() -> TrustGuard {
         let lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         TrustGuard {
-            saved: snapshot(),
+            saved: Some(snapshot()),
             _lock: lock,
         }
     }
 
     impl Drop for TrustGuard {
         fn drop(&mut self) {
-            restore(std::mem::take(&mut self.saved));
+            if let Some(saved) = self.saved.take() {
+                restore(saved);
+            }
         }
     }
 }
@@ -146,7 +257,7 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
     let mut out = scan_installed_inventory();
     let ignore = crate::ignore::load();
     filter_visible_apps(&mut out, &ignore);
-    remember_uninstall_commands(&out);
+    remember_scan(&out);
     out
 }
 
@@ -203,19 +314,38 @@ pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
     out
 }
 
-/// Sort by lowercase name and merge same-product twins (HKLM64/HKLM32/HKCU).
-/// `dedup_by` removes its FIRST argument and keeps the second, so the dropped
-/// twin's fields must be merged INTO the surviving row (was inverted — the
-/// kept row silently lost size/location/quiet-command data).
+/// Sort by lowercase name and merge same-product twins within one hive class.
+///
+/// HKLM64/HKLM32 are the same machine-wide registration and may be merged.
+/// HKCU must never merge into HKLM: its commands and install root are writable
+/// by the unprivileged user, so adopting them would launder user-controlled
+/// executable fields into a machine-wide identity. Keeping
+/// the rows separate also preserves a per-user command when the per-machine
+/// entry has none.
 fn dedup_same_products(out: &mut Vec<InstalledApp>) {
     out.sort_by_key(|a| a.name.to_lowercase());
     out.dedup_by(|a, b| {
-        if !same_product(a, b) {
+        if !same_hive(a, b) || !same_product(a, b) {
             return false;
         }
         merge_app_fields(b, a);
         true
     });
+}
+
+fn hive_class(app: &InstalledApp) -> String {
+    let upper = app.source.trim().to_ascii_uppercase();
+    if upper.starts_with("HKLM") {
+        "HKLM".into()
+    } else if upper.starts_with("HKCU") {
+        "HKCU".into()
+    } else {
+        upper
+    }
+}
+
+fn same_hive(a: &InstalledApp, b: &InstalledApp) -> bool {
+    hive_class(a) == hive_class(b)
 }
 
 /// Uninstall string comparable form: case-insensitive, no quotes/whitespace.
@@ -269,15 +399,19 @@ pub fn same_product(a: &InstalledApp, b: &InstalledApp) -> bool {
 }
 
 /// Fill empty fields on `keep` from `drop` so the surviving row is more complete.
+/// Executable fields and the install root are adopted only within one hive
+/// class; a forged HKCU entry must never rewrite an HKLM identity.
 fn merge_app_fields(keep: &mut InstalledApp, drop: &InstalledApp) {
-    if keep.quiet_uninstall_string.trim().is_empty() {
-        keep.quiet_uninstall_string = drop.quiet_uninstall_string.clone();
-    }
-    if keep.uninstall_string.trim().is_empty() {
-        keep.uninstall_string = drop.uninstall_string.clone();
-    }
-    if keep.install_location.trim().is_empty() {
-        keep.install_location = drop.install_location.clone();
+    if same_hive(keep, drop) {
+        if keep.quiet_uninstall_string.trim().is_empty() {
+            keep.quiet_uninstall_string = drop.quiet_uninstall_string.clone();
+        }
+        if keep.uninstall_string.trim().is_empty() {
+            keep.uninstall_string = drop.uninstall_string.clone();
+        }
+        if keep.install_location.trim().is_empty() {
+            keep.install_location = drop.install_location.clone();
+        }
     }
     if keep.estimated_size_kb <= 0 {
         keep.estimated_size_kb = drop.estimated_size_kb;
@@ -956,6 +1090,21 @@ mod tests {
     }
 
     #[test]
+    fn a_pending_reboot_blocks_broken_record_cleanup_before_any_scan() {
+        crate::executor::reboot::reset_for_test();
+        crate::executor::reboot::mark_pending("source\u{0}key\u{0}App");
+        let err = cleanup_broken_install(
+            "Broken",
+            "key",
+            "{11111111-1111-1111-1111-111111111111}",
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err, crate::executor::reboot::PENDING_MESSAGE);
+        crate::executor::reboot::reset_for_test();
+    }
+
+    #[test]
     fn packed_product_code_matches_windows_installer_layout() {
         assert_eq!(
             packed_product_code("{C35E2C10-133A-BA91-B44E-890B88561421}").unwrap(),
@@ -1087,6 +1236,74 @@ mod tests {
             v[0].install_location,
             r"C:\Program Files (x86)\NetSarang\Xftp 8"
         );
+    }
+
+    #[test]
+    fn cross_hive_entries_keep_their_own_commands_and_install_root() {
+        let hklm = sample_app("CrossHiveDemo", "", r"C:\Program Files\Demo\unins000.exe");
+        let mut hkcu = sample_app(
+            "CrossHiveDemo",
+            r"D:\Data\Victim",
+            r"C:\Program Files\Demo\unins000.exe",
+        );
+        hkcu.source = "HKCU".into();
+        hkcu.registry_key =
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CrossHiveDemo".into();
+        hkcu.quiet_uninstall_string = r"C:\Users\me\AppData\Local\evil.exe".into();
+        let mut v = vec![hklm, hkcu];
+        dedup_same_products(&mut v);
+        assert_eq!(v.len(), 2, "cross-hive rows must never be merged");
+        let machine = v.iter().find(|a| a.source == "HKLM64").unwrap();
+        let user = v.iter().find(|a| a.source == "HKCU").unwrap();
+        assert!(
+            machine.quiet_uninstall_string.is_empty(),
+            "the user-writable quiet command must not be adopted by the HKLM row"
+        );
+        assert!(
+            machine.install_location.is_empty(),
+            "the user-writable install root must not be adopted by the HKLM row"
+        );
+        assert_eq!(
+            user.quiet_uninstall_string,
+            r"C:\Users\me\AppData\Local\evil.exe"
+        );
+        assert_eq!(user.install_location, r"D:\Data\Victim");
+    }
+
+    #[test]
+    fn trusted_app_returns_the_server_copy_and_survives_one_refresh() {
+        let _g = trust_test_support::guard();
+        let scanned = {
+            let mut a = sample_app(
+                "ServerCopy",
+                r"C:\Program Files\ServerCopy",
+                r"server.exe /S",
+            );
+            a.quiet_uninstall_string = r"C:\Program Files\ServerCopy\quiet.exe".into();
+            a
+        };
+        remember_uninstall_commands(std::slice::from_ref(&scanned));
+
+        let mut forged = scanned.clone();
+        forged.install_location = r"D:\Data\Victim".into();
+        forged.uninstall_string = r"C:\Users\me\evil.exe".into();
+        forged.quiet_uninstall_string = r"C:\Users\me\evil.exe".into();
+        let resolved = trusted_app(&forged).expect("the identity was scanned");
+        assert_eq!(resolved.install_location, r"C:\Program Files\ServerCopy");
+        assert_eq!(resolved.uninstall_string, r"server.exe /S");
+        assert_eq!(
+            resolved.quiet_uninstall_string,
+            r"C:\Program Files\ServerCopy\quiet.exe"
+        );
+
+        let mut forged_identity = forged.clone();
+        forged_identity.source = "HKCU".into();
+        assert!(trusted_app(&forged_identity).is_none());
+
+        // A refresh that no longer lists the app must keep the recent record so
+        // the post-uninstall analyze can still resolve it.
+        remember_scan(&[sample_app("OtherApp", "", "other.exe")]);
+        assert!(trusted_app(&scanned).is_some());
     }
 
     #[test]

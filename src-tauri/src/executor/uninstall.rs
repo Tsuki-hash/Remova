@@ -166,12 +166,20 @@ fn uninstaller_reboot_initiated(code: Option<i32>) -> bool {
 
 /// Map one uninstaller exit to the session-wide reboot gate. Kept separate so
 /// the producer link (1641 -> pending) is testable without launching a process.
-fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> bool {
+fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> (bool, bool) {
     let initiated = uninstaller_reboot_initiated(code);
+    let mut persisted = true;
     if initiated {
-        super::reboot::mark_pending(&crate::apps::app_key(app));
+        persisted = super::reboot::mark_pending(&crate::apps::app_key(app));
+        if !persisted {
+            // The in-process gate is active, but a restart would lose it. The
+            // caller receives `reboot_gate_persisted=false` so the UI can warn.
+            eprintln!(
+                "reboot gate could not be persisted; cleanup remains blocked in this process"
+            );
+        }
     }
-    initiated
+    (initiated, persisted)
 }
 
 fn pending_result() -> OfficialUninstallResult {
@@ -180,6 +188,7 @@ fn pending_result() -> OfficialUninstallResult {
         message: super::reboot::PENDING_MESSAGE.into(),
         had_command: true,
         reboot_initiated: false,
+        reboot_gate_persisted: true,
     }
 }
 
@@ -222,13 +231,15 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
             message: "no uninstall string".into(),
             had_command: false,
             reboot_initiated: false,
+            reboot_gate_persisted: true,
         };
     }
-    // S-RCE: never execute a command the client invented — it must match the
-    // latest server-side scan *for this exact identity*. The trust record is
-    // keyed by source + registry key + name, so rewriting `source` (for example
-    // claiming an HKCU entry is HKLM) no longer resolves and is refused here.
-    let Some(scan_source) = crate::apps::trusted_scan_source(app) else {
+    // S-RCE: never execute a command the client invented. Resolve the identity
+    // to the server-scanned record and execute *its* command pair, so even a
+    // caller that keeps a trusted identity but rewrites the command cannot
+    // reach spawn. The recorded source — not the client field — drives the
+    // elevated-HKCU refusal below.
+    let Some(scanned) = crate::apps::trusted_app(app) else {
         // A command exists but we refuse to run it. Reporting `had_command:
         // false` here told the caller there was nothing to run, so cleanup
         // proceeded to delete leftovers of an app that is still installed —
@@ -238,8 +249,10 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
             message: "uninstall command not from latest app scan".into(),
             had_command: true,
             reboot_initiated: false,
+            reboot_gate_persisted: true,
         };
     };
+    let scan_source = scanned.source.clone();
     // Per-user uninstall strings are user-writable. Running one from an
     // elevated Remova would execute an arbitrary user-controlled image as
     // administrator; require a non-elevated launch for HKCU entries. The
@@ -252,9 +265,14 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
             message: "elevated HKCU uninstall refused".into(),
             had_command: true,
             reboot_initiated: false,
+            reboot_gate_persisted: true,
         };
     }
-    let cmd = build_uninstall_command(&app.uninstall_string, &app.quiet_uninstall_string, true);
+    let cmd = build_uninstall_command(
+        &scanned.uninstall_string,
+        &scanned.quiet_uninstall_string,
+        true,
+    );
     match cmd {
         Some(argv) if !argv.is_empty() => {
             let mut parts = argv.iter();
@@ -270,7 +288,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                             Ok(Some(status)) => {
                                 let code = status.code();
                                 let ok = uninstaller_exit_ok(code);
-                                let initiated = record_reboot_exit(code, app);
+                                let (initiated, persisted) = record_reboot_exit(code, &scanned);
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
                                     format!("uninstaller finished (reboot required): {}", argv[0])
                                 } else if ok {
@@ -283,6 +301,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                                     message,
                                     had_command: true,
                                     reboot_initiated: initiated,
+                                    reboot_gate_persisted: persisted,
                                 };
                             }
                             Ok(None) => {
@@ -294,6 +313,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                                         message: format!("uninstaller timed out (5m): {}", argv[0]),
                                         had_command: true,
                                         reboot_initiated: false,
+                                        reboot_gate_persisted: true,
                                     };
                                 }
                                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -304,6 +324,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                                     message: "uninstall wait failed".into(),
                                     had_command: true,
                                     reboot_initiated: false,
+                                    reboot_gate_persisted: true,
                                 };
                             }
                         }
@@ -314,6 +335,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                     message: "uninstall launch failed".into(),
                     had_command: true,
                     reboot_initiated: false,
+                    reboot_gate_persisted: true,
                 },
             }
         }
@@ -331,6 +353,7 @@ fn run_official_uninstall_unchecked(app: &crate::apps::InstalledApp) -> Official
                 message: "unusable uninstall command".into(),
                 had_command: true,
                 reboot_initiated: false,
+                reboot_gate_persisted: true,
             }
         }
     }
@@ -379,7 +402,7 @@ mod tests {
             display_icon: String::new(),
         };
         crate::executor::reboot::reset_for_test();
-        assert!(record_reboot_exit(Some(1641), &app));
+        assert!(record_reboot_exit(Some(1641), &app).0);
         assert!(crate::executor::reboot::is_pending(&crate::apps::app_key(
             &app
         )));
@@ -389,7 +412,7 @@ mod tests {
             name: "OtherFixture".into(),
             ..app.clone()
         };
-        assert!(!record_reboot_exit(Some(3010), &other));
+        assert!(!record_reboot_exit(Some(3010), &other).0);
         assert!(!crate::executor::reboot::is_pending(&crate::apps::app_key(
             &other
         )));
@@ -413,7 +436,7 @@ mod tests {
             display_icon: String::new(),
         };
         crate::executor::reboot::reset_for_test();
-        assert!(record_reboot_exit(Some(1641), &app));
+        assert!(record_reboot_exit(Some(1641), &app).0);
         let mut spawn_calls = 0;
         let blocked = with_no_reboot_pending(
             || {
@@ -426,7 +449,7 @@ mod tests {
         assert_eq!(spawn_calls, 0);
 
         crate::executor::reboot::reset_for_test();
-        assert!(!record_reboot_exit(Some(3010), &app));
+        assert!(!record_reboot_exit(Some(3010), &app).0);
         let allowed = with_no_reboot_pending(
             || {
                 spawn_calls += 1;
@@ -615,6 +638,7 @@ mod tests {
 
     #[test]
     fn official_uninstall_no_string() {
+        let _g = crate::apps::trust_test_support::guard();
         let app = crate::apps::InstalledApp {
             name: "Ghost".into(),
             version: String::new(),
@@ -628,6 +652,7 @@ mod tests {
             install_date: String::new(),
             display_icon: String::new(),
         };
+        crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
         let r = run_official_uninstall(&app);
         assert!(!r.had_command);
         assert!(!r.ok);
