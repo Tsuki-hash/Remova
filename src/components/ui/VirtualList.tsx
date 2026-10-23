@@ -22,7 +22,7 @@ export function VirtualList<T>({
   keyOf: (item: T, index: number) => string;
   renderItem: (item: T, index: number) => ReactNode;
   empty?: ReactNode;
-  /** px or any CSS length, so a panel can shrink with the viewport (UX-13). */
+  /** px or any CSS length, so a panel can shrink with the viewport. */
   height?: number | string;
   estimateSize?: number;
   rowGap?: number;
@@ -30,7 +30,7 @@ export function VirtualList<T>({
   listRole?: boolean;
   /** Accessible name for the scrollable list region. */
   ariaLabel?: string;
-  /** Per-row override, e.g. a visual group header is not a list item (UX-16). */
+  /** Per-row override, e.g. a visual group header is not a list item. */
   rowRole?: (item: T, index: number) => "listitem" | "presentation" | undefined;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -52,7 +52,7 @@ export function VirtualList<T>({
     <div
       ref={scrollRef}
       role={listRole ? "list" : undefined}
-      // UX-12: without a tab stop the only way through a few hundred rows was a
+      // without a tab stop the only way through a few hundred rows was a
       // mouse wheel; a focusable scroll box takes Up/Down/PageUp/PageDown.
       tabIndex={0}
       aria-label={listRole ? ariaLabel : undefined}

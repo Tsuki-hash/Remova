@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// CQ-17: ManageListPage had zero component-level coverage — `appIntegration`
+// ManageListPage had zero component-level coverage — `appIntegration`
 // mocks it away — so the two highest-risk interactions on the page (the
 // elevation gate and stop-service vs disable-service) had no regression net.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";

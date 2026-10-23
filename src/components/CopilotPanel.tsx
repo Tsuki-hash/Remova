@@ -24,7 +24,7 @@ function applyFilter(apps: InstalledApp[], filter: NlIntent["filter"]): Installe
   }
   const after = (filter.installed_after || "").trim();
   if (after) {
-    // CQ-13: a string compare silently dropped every non-ISO registry date
+    // a string compare silently dropped every non-ISO registry date
     // (`2024/01/15`, `20240115`). `parseInstallDate` handles every shape.
     const cutoff = parseInstallDate(after);
     // An unparseable cutoff cannot be satisfied by any row — fail closed rather
@@ -88,7 +88,7 @@ export function ruleParseFilter(apps: InstalledApp[], text: string): {
     cutoff.setDate(cutoff.getDate() - 30);
     const after = dateKey(cutoff);
     installedAfter = after;
-    // CQ-13: hand-rolled slicing only understood `YYYY-MM-DD`, so `2024/01/15`
+    // hand-rolled slicing only understood `YYYY-MM-DD`, so `2024/01/15`
     // produced `"/0"` → NaN and the filter silently matched nothing. `parseInstallDate`
     // already handles every shape the registry emits.
     list = list.filter(a => {

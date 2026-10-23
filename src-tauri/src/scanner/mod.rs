@@ -334,7 +334,7 @@ impl ScopedScanResult {
 /// are owned by the scan's own phases, not by this. Folded in when the scan
 /// finishes.
 ///
-/// UX-2: `degraded` entries are stable codes with an optional `:`-detail suffix
+/// `degraded` entries are stable codes with an optional `:`-detail suffix
 /// (`"unreadable_root:C:\\some\\dir"`), never prose — the backend's English
 /// sentences used to be rendered verbatim into a Chinese UI. The frontend maps
 /// the code to localized copy and falls back to the raw string when downstream

@@ -15,7 +15,7 @@ it.each(["zh", "en"] as const)("localizes association evidence while retaining t
     .toBe(lang === "zh" ? "安装期间新增（可能是缓存或临时文件）" : "Added during install (likely cache/temp)");
   expect(evidenceText({ ...raw, code: "future_native_code" })).toEqual({ ...raw, code: "future_native_code" });
 });
-// CQ-14 / UX-11: the specialty scanners emit `tool_cache_shared` and a domain
+// the specialty scanners emit `tool_cache_shared` and a domain
 // label; a missing map entry leaked the raw English code into the row.
 it.each(["zh", "en"] as const)("localizes specialty-scan evidence codes in %s", lang => {
   setLang(lang);

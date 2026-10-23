@@ -22,7 +22,7 @@ pub fn run_cleanup_dry_for_app_source(
     let mut skipped = 0u32;
     let errors = vec![];
     let mut details = vec![];
-    // CQ-7: the preview must not answer a damaged ignore list with a
+    // the preview must not answer a damaged ignore list with a
     // wider list than the run that follows. `load()` swallows the read error.
     let ignore = match crate::ignore::load_checked() {
         Ok(ignore) => ignore,

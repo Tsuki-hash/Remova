@@ -32,7 +32,7 @@ export default tseslint.config(
     },
   },
   {
-    // REV-QA-15: type-checked rules run on production code; test mocks are
+    // Type-checked rules run on production code; test mocks are
     // intentionally loosely typed and event handlers legitimately async.
     files: ["src/__tests__/**/*.{ts,tsx}"],
     rules: {

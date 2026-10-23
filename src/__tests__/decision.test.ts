@@ -239,7 +239,7 @@ describe("leftoverReasonLine / gateReasonText", () => {
     expect(gateReasonText("sc delete Vendor: ok", L)).toBe(t().backendNativeDeleted);
   });
 
-  it("gateReasonText maps common Chinese backend copy (F-R6-09)", () => {
+  it("gateReasonText maps common Chinese backend copy", () => {
     expect(gateReasonText("用户数据，默认不删", L)).toBe(L.reasonUserData);
     expect(gateReasonText("共享运行库/安装缓存目录", L)).toBe(L.reasonShared);
     expect(gateReasonText("已在忽略列表中，跳过", L)).toBe(L.reasonIgnored);
@@ -337,7 +337,7 @@ describe("buildCleanupRiskBits / formatRiskNote", () => {
     expect(formatRiskNote(["a", "b"], "注意")).toBe("\n\n注意\na\nb");
   });
 
-  // UX-08: the specialty panels list-but-do-not-preselect exactly this category,
+  // the specialty panels list-but-do-not-preselect exactly this category,
   // so the confirm must name it or the user cannot tell it was never vetted.
   it("adds the suspected / shared-root bit the specialty panels rely on", () => {
     expect(buildCleanupRiskBits([item({ confidence: "suspected" })], riskL)).toEqual([riskL.riskBitSuspected]);

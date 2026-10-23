@@ -72,11 +72,11 @@ export type ScopedScanResult = {
   degraded: string[];
 };
 
-/** UX-14: orphan/idle scans used to truncate at their cap with no signal. */
+/** Orphan/idle scans used to truncate at their cap with no signal. */
 export type OrphanScanResult = { items: CleanupItem[]; omitted: number };
 export type IdleScanResult = { items: IdleApp[]; omitted: number };
 
-/** M1: an MSI product whose install directory is gone but whose record remains. */
+/** An MSI product whose install directory is gone but whose record remains. */
 export type BrokenInstall = {
   app: InstalledApp;
   guid: string;
@@ -280,7 +280,7 @@ export type AiExplainInput = {
  * Request body for `ai_risk_brief` — mirrors `ai.rs::RiskBriefInput`
  * (`#[serde(rename_all = "camelCase")]`).
  *
- * CQ-04: this payload used to be `Record<string, unknown>`, the only IPC body in
+ * This payload used to be `Record<string, unknown>`, the only IPC body in
  * the project that bypassed the type system, so a Rust-side field rename only
  * surfaced at runtime (the field silently vanished from the JSON and the model
  * got a prompt with a hole in it). `apiContract.test.ts` now parses both sides

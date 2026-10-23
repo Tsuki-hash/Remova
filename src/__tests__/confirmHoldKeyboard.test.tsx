@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// UX-12: the dangerous confirm is a 600 ms hold, which is silently inert for a
+// the dangerous confirm is a 600 ms hold, which is silently inert for a
 // keyboard user who taps Enter/Space. The keyboard path must work and must say
 // what happened when the hold is released early.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";

@@ -169,7 +169,7 @@ it("shows the space to be freed, a select count, and select-all", async () => {
   // The header reports the space for what is selected. An unmeasured item only
   // counts once it is actually selected — it is not selected yet, so no caveat.
   // The header reports the space for what is selected. The live region settles
-  // after the selection stops changing (UX-15).
+  // after the selection stops changing.
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain(formatSize(2_000_000)),
   );

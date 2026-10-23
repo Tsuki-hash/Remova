@@ -1,4 +1,4 @@
-// Audit helper (REV-FE-14): list i18n keys defined in zh.ts but never
+// Audit helper: list i18n keys defined in zh.ts but never
 // referenced outside src/i18n, optionally prune them from zh.ts + en.ts.
 //
 //   node scripts/find-dead-i18n.mjs          # report only

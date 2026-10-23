@@ -52,7 +52,7 @@ export function groupScannedItems(items: CleanupItem[]): ScannedGroup[] {
       // instead of being treated as zero and floating to the top.
       items: [...list].sort((a, b) => (b.size_kb ?? -1) - (a.size_kb ?? -1) || a.path.localeCompare(b.path)),
     }))
-    // UX-16: "biggest first" must hold between groups too, not only inside
+    // "biggest first" must hold between groups too, not only inside
     // each one. Unknown buckets stay last; ties fall back to the name.
     .sort((a, b) => {
       const max = (g: ScannedGroup) => g.items.reduce((m, it) => Math.max(m, it.size_kb ?? -1), -1);

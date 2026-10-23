@@ -193,11 +193,11 @@ jobs:
       - name: frontend lint
         run: npm run lint
 
-      # R21-QA-04: release path must honor the coverage gate, not bare vitest.
+      # The release path must honor the coverage gate, not bare vitest.
       - name: frontend test + coverage gate
         run: npm run coverage
 
-      # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
+      # The tauri build runs beforeBuildCommand (npm run build) itself.
       - name: build app before signing
         run: npx tauri build --no-bundle --config .release-signing/tauri.release.json -- --locked
 
@@ -308,7 +308,7 @@ jobs:
       - name: frontend dist smoke
         run: npm run smoke:dist
 
-      # R23-QA-06: launch smoke needs WebView2 on the runner, and the release
+      # Launch smoke needs WebView2 on the runner, and the release
       # path honors the same smoke depth as the ci package job.
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh

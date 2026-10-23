@@ -58,7 +58,7 @@ function pickRoots(unique: Map<string, CleanupItem>): [string, CleanupItem][] {
   });
 }
 
-/** UX-1: the same subtotal over EVERY scan-found row, not just the selected ones. */
+/** the same subtotal over EVERY scan-found row, not just the selected ones. */
 export function summarizeScanTotal(items: CleanupItem[]) {
   const unique = new Map<string, CleanupItem>();
   for (const item of items.filter(item => item.kind === "file" || item.kind === "dir")) {

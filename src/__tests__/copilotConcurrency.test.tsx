@@ -39,7 +39,7 @@ it("offers only supported examples while offline", () => {
   expect(screen.getByRole("button", { name: t().smartFilterExample2 })).toBeTruthy();
 });
 
-// CQ-13: `applyFilter` used to compare `install_date` as a raw string, so every
+// `applyFilter` used to compare `install_date` as a raw string, so every
 // registry date that was not already `YYYY-MM-DD` silently matched nothing.
 it("applies the AI date filter across every install-date shape", async () => {
   const apps = [

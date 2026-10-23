@@ -128,7 +128,7 @@ jobs:
   package:
     runs-on: windows-latest
     timeout-minutes: 45
-    # REV-QA-05: never ship artifacts from a red test tree.
+    # Never ship artifacts from a red test tree.
     needs: test
     # Full Tauri bundle is slow — run on main and manual runs, not every PR.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -145,7 +145,7 @@ jobs:
           workspaces: src-tauri
           cache-targets: "false"
       - run: npm ci
-      # R21-QA-09: tauri build runs beforeBuildCommand (npm run build) itself.
+      # The tauri build runs beforeBuildCommand (npm run build) itself.
       - run: npx tauri build
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh

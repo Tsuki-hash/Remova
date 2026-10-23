@@ -1,4 +1,4 @@
-# REV-QA-07 (1.2.2): real launch smoke — start the built exe, verify it stays
+# Real launch smoke — start the built exe, verify it stays
 # alive for a few seconds (WebView2 init + shell), then kill it.
 # Requires: a release build (npm run tauri build) and WebView2 Runtime.
 # Note: the app registers a single-instance plugin — close any running Remova first.

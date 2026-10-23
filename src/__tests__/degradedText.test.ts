@@ -1,4 +1,4 @@
-/** UX-2: stable degraded codes must map to localized text; anything else shows raw. */
+/** stable degraded codes must map to localized text; anything else shows raw. */
 import { describe, expect, it } from "vitest";
 import { degradedText } from "../lib/degradedText";
 import { t } from "../i18n";

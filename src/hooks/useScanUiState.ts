@@ -2,7 +2,7 @@ import { useCallback, useMemo, useReducer } from "react";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import { initialScanUiState, scanUiReducer } from "./reducers/scanUi";
 
-/** Scan/conclusion UI chrome (PF-03) — domain reducer. */
+/** Scan/conclusion UI chrome — domain reducer. */
 export function useScanUiState() {
   const [state, dispatch] = useReducer(scanUiReducer, undefined, initialScanUiState);
 

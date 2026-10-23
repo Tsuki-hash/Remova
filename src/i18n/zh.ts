@@ -51,7 +51,7 @@ export const dict = {
     confirmOk: "确认",
     confirmHoldStart: "按住确认",
     confirmHoldHint: "继续按住…",
-    // UX-12: a keyboard tap of Enter/Space on a hold-to-confirm button used to be
+    // a keyboard tap of Enter/Space on a hold-to-confirm button used to be
     // silently inert. Say out loud what the keyboard path is and when it aborts.
     confirmHoldKeyboard: "键盘操作：按住 Enter 或空格键不要松开即可确认。",
     confirmHoldKeyboardAborted: "已取消：需要持续按住直到进度条走完。",
@@ -360,14 +360,14 @@ export const dict = {
     scanCancelledIncomplete: "扫描已取消，结果不完整。请重新分析后再清理。",
     scanFailedIncomplete: "扫描未完成，请检查错误并重新分析。",
     scanFound: (n: number) => `已发现 ${n} 项`,
-    // UX-05: the shared-root phase cap drops rows; the panel must say so instead
+    // the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
     scanOmitted: (n: number) => `还有 ${n} 项未显示（受单次扫描上限限制）`,
     orphanOmitted: (n: number) => `还有 ${n} 个候选目录未显示（受单次扫描上限限制）`,
-    // UX-09: the size-estimation phase is the longest one for a large cache and
+    // the size-estimation phase is the longest one for a large cache and
     // reports no per-item progress, so show a placeholder rather than a frozen list.
     scanEstimatingItems: "正在分析各项占用…",
-    // UX-07: "genuinely nothing" and "could not read the roots" are different facts.
+    // "genuinely nothing" and "could not read the roots" are different facts.
     scanEmptyNone: "未发现可清理的项目",
     scanDegradedHint: "以下位置无法读取，本次结果可能不完整：",
     degradedUnreadableRoot: (path: string) => `无法读取 ${path}`,
@@ -439,7 +439,7 @@ export const dict = {
     orphanShowAll: (n: number) => `显示全部 ${n} 项`,
     orphanShowLess: "收起列表",
     batchDetail: (deleted: number, failed: number) => `成功 ${deleted} · 失败 ${failed}`,
-    // UX-04: a 7-second toast that only names deleted/failed hides the skipped and
+    // a 7-second toast that only names deleted/failed hides the skipped and
     // reboot-delayed counts, so the headline must state all four outcomes.
     cleanupOutcome: (deleted: number, failed: number, skipped: number, delayed: number) =>
       `成功 ${deleted} · 失败 ${failed} · 跳过 ${skipped} · 待重启 ${delayed}`,
@@ -496,7 +496,7 @@ export const dict = {
     aiExplaining: "解释中…",
     aiDisclaimer: "模型建议，以证据为准",
     aiRiskTitle: "风险说明",
-    // CQ-10: the AI brief used to fail into `catch { // non-blocking }`, so the
+    // the AI brief used to fail into `catch { // non-blocking }`, so the
     // confirm dialog showed no AI line and the user could not tell whether the
     // model had assessed anything. Name the failure instead of implying success.
     aiRiskBriefFailed: "智能风险说明获取失败，本次确认框不含模型结论；请以本地规则与风险标记为准。",
@@ -544,7 +544,7 @@ export const dict = {
     conclusionSourceAi: "智能解读",
     conclusionSpace: (kb: string) => `预计可释放约 ${kb}`,
     planUnknownSize: (n: number) => `另有 ${n} 项体积未能测算`,
-    // UX-1：把扫描发现的总量与"已选"并列展示——最大的一类往往默认不勾，只报已选会被读成"没找到"。
+    // 把扫描发现的总量与"已选"并列展示——最大的一类往往默认不勾，只报已选会被读成"没找到"。
     scanFoundTotal: (sizeText: string) => `扫描发现合计 ~${sizeText}`,
     conclusionCleanSafe: (n: number) => `选中建议项（${n}）`,
     conclusionShowConfirm: (n: number) => `需确认（${n}）`,
@@ -554,7 +554,7 @@ export const dict = {
     riskBitUserData: "用户数据：默认不删，请确认是缓存后再清",
     riskBitUserLibrary: "用户库数据：可能含存档/个人文件",
     riskBitShared: "共享运行库：其它软件可能仍在用",
-    // UX-08: the specialty panels list-but-do-not-preselect exactly this category
+    // the specialty panels list-but-do-not-preselect exactly this category
     // (suspected confidence, or a child of a shared cache root), so the confirm
     // must name it instead of staying silent about the largest unselected group.
     riskBitSuspected: "疑似或共享根子项：默认未勾选，请逐项确认后再清",

@@ -127,7 +127,7 @@ fn size_kb_of(app: &InstalledApp, remaining: &mut u64) -> (i64, bool) {
     }
 }
 
-/// UX-14: the result cap used to be silent; carry the dropped count to the UI.
+/// the result cap used to be silent; carry the dropped count to the UI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IdleScanResult {
     pub items: Vec<IdleApp>,

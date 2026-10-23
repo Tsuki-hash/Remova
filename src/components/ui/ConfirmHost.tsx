@@ -84,7 +84,7 @@ function HoldButton({
 
   return (
     <>
-      {/* UX-12: a keyboard tap of Enter/Space used to be silently inert on a
+      {/* a keyboard tap of Enter/Space used to be silently inert on a
           hold-to-confirm button. Announce the keyboard path up front and say so
           when an early release aborts the hold. */}
       {holdMs > 0 && (

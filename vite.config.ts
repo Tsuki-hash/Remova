@@ -20,7 +20,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "text", "html"],
-      // Logic + App orchestration gate (R23-QA-05). Components are exercised by
+      // Logic + App orchestration gate. Components are exercised by
       // smoke tests; api.ts is thin invoke wrappers whose contract is checked
       // by apiContract.test, not by execution.
       include: [

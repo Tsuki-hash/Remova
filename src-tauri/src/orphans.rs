@@ -151,7 +151,7 @@ fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
     false
 }
 
-/// UX-14: the cap used to be invisible. The UI now says how many candidates
+/// the cap used to be invisible. The UI now says how many candidates
 /// the result limit left out.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OrphanScanResult {
@@ -530,7 +530,7 @@ mod tests {
         assert!(!was_recent_orphan_path(r"C:\Program Files\SomeVendor"));
     }
 
-    /// CQ-03: the orphan allow-list now shares `fsutil::path_key` with the
+    /// the orphan allow-list now shares `fsutil::path_key` with the
     /// red-line checks. This used to be a private copy missing Win32's
     /// per-segment trailing dots and spaces, so a reported `…\App.` stored
     /// `…\app.` and the delete request for `…\App` was refused.
@@ -575,7 +575,7 @@ mod tests {
     /// and ordering through `order_candidates` makes the reported subset — and
     /// the allow-list armed from it — reproducible.
     ///
-    /// CQ-2: the fixture names make the filesystem's enumeration order the
+    /// the fixture names make the filesystem's enumeration order the
     /// *reverse* of the sort order. NTFS compares names case-insensitively on
     /// upper-cased code units, so `_` (0x5F) enumerates after `Z` (0x5A);
     /// `order_candidates` sorts lower-cased strings, where `_` (0x5F) comes

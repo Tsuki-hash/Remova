@@ -56,7 +56,7 @@ export function sourceLabel(source: string, L: { sourceHkcu: string; sourceHklm6
 export type ErrorContext = "analyze" | "cleanup" | "elevate" | "invoke";
 
 /**
- * RemovaError IPC uses `code::message`. Only known domain prefixes qualify (-09)
+ * RemovaError IPC uses `code::message`. Only known domain prefixes qualify,
  * so strings like `PACKAGED::HKLM\...::Evil` or `error: foo::bar` are not misparsed.
  */
 const IPC_CODE_PREFIXES = [
@@ -77,8 +77,8 @@ function isKnownIpcCode(code: string): boolean {
 export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   const L = t();
   const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
- // update:* tokens from the update slot and the update commands — the single
- // token table (installUpdate.updateErrorMessage delegates here).
+  // update:* tokens from the update slot and the update commands — the single
+  // token table (installUpdate.updateErrorMessage delegates here).
   if (raw === "update:busy") return L.taskBusy;
   if (raw === "update:manual_only_type") return L.updateManualOnlyType;
   if (raw === "update:manual_only_env") return L.updateManualOnlyElevated;
@@ -90,7 +90,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   // not collapse into the generic invoke-failed text.
   if (raw === "reboot:gate_not_corrupt") return L.rebootGateNotCorrupt;
   if (raw === "reboot:gate_rename_failed") return L.rebootGateRenameFailed;
- // Backup errors may embed the seal code in a per-item failure message.
+  // Backup errors may embed the seal code in a per-item failure message.
   if (raw.includes("seal:")) {
     if (raw.includes("requires_admin")) return L.errSealAdmin;
     if (raw.includes("seal:legacy_manual_restore_only")) return L.errSealLegacy;
@@ -105,7 +105,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
     if (kind === "not_found") return L.errElevateNotFound;
     return L.errElevateFailed(code);
   }
- // RemovaError IPC: `code::message` — code must be a known domain prefix.
+  // RemovaError IPC: `code::message` — code must be a known domain prefix.
   const ipc = raw.trim().split("::");
   const head = ipc[0];
   if (head !== undefined && ipc.length >= 2 && isKnownIpcCode(head.toLowerCase().trim())) {

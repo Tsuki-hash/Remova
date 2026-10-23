@@ -5,7 +5,7 @@ import { useRequestSeq } from "../hooks/useRequestSeq";
 
 afterEach(cleanup);
 
-// CQ-16: this hook replaces four hand-rolled copies of the same guard. The
+// this hook replaces four hand-rolled copies of the same guard. The
 // contract that matters is that a superseded request can never publish.
 it("lets only the newest request publish and retires every slot on invalidate", () => {
   const { result } = renderHook(() => useRequestSeq());

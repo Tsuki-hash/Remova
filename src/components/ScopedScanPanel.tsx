@@ -41,7 +41,7 @@ type Row =
 const rowKey = (row: Row) => row.key;
 
 /**
- * UX-15: mounts stable and announces only the settled text. Ticking 30 rows
+ * mounts stable and announces only the settled text. Ticking 30 rows
  * used to re-announce the summary 30 times; the timer collapses the burst into
  * one announcement.
  */
@@ -77,16 +77,16 @@ export function ScopedScanPanel({
   const L = t();
   const channel = channelFor(cleanupSource);
   const [items, setItems] = useState<CleanupItem[] | null>(null);
-  /** UX-6: a failed scan must not leave the list saying "measuring" forever. */
+  /** a failed scan must not leave the list saying "measuring" forever. */
   const [scanError, setScanError] = useState<string | null>(null);
   const [omitted, setOmitted] = useState(0);
   const [degraded, setDegraded] = useState<string[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  /** Kept on screen after the toast fades so failures stay actionable (UX-04). */
+  /** Kept on screen after the toast fades so failures stay actionable. */
   const [result, setResult] = useState<FullCleanupReport | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
-  // UX-18: the toast disappears in seconds; the header keeps the finding.
+  // the toast disappears in seconds; the header keeps the finding.
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const submitted = useRef<CleanupItem[]>([]);
   /** Backup choice from the last confirmation — a retry must not silently flip it. */
@@ -96,7 +96,7 @@ export function ScopedScanPanel({
   const summary = useMemo(() => summarizeLeftovers(items || []), [items]);
   // Nested directories are collapsed and unknown sizes counted, so the header can
   // say what will actually be freed instead of only how many rows are checked.
-  const plan = useMemo(() => summarizeCleanupPlan(items || [], selected), [items, selected]);  // UX-1: the same subtotal over every scan-found row. The biggest category is
+  const plan = useMemo(() => summarizeCleanupPlan(items || [], selected), [items, selected]);  // the same subtotal over every scan-found row. The biggest category is
   // often unchecked by default, so "12 MB selected" used to read as "found nothing".
   const found = useMemo(() => summarizeScanTotal(items || []), [items]);
   const summaryText = items
@@ -108,14 +108,14 @@ export function ScopedScanPanel({
         .filter(Boolean)
         .join(" · ")
     : "";
-  // UX-15: the progress bar no longer announces its 250 ms stage updates.
+  // the progress bar no longer announces its 250 ms stage updates.
   // This outer region collapses them into one announcement when a stage settles.
   const liveText =
     busy && progress && (progress.status === "running" || progress.status === "stopping")
       ? L.scanStage(progress.stage)
       : summaryText;
   const announcedSummary = useSettledText(liveText, busy ? 800 : 400);
-  // UX-05: bucket groups, largest measured item first inside each group. Backend
+  // bucket groups, largest measured item first inside each group. Backend
   // insertion order buried a multi-GB browser cache under KB-sized npm dirs.
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -135,7 +135,7 @@ export function ScopedScanPanel({
     setSelected(new Set());
     setOmitted(0);
     setDegraded([]);
-    // UX-7: an explicit rescan retires the previous report and its retry list.
+    // an explicit rescan retires the previous report and its retry list.
     // The internal post-cleanup refresh must keep them on screen.
     if (!quiet) {
       setResult(null);
@@ -155,7 +155,7 @@ export function ScopedScanPanel({
       setDegraded(found.degraded);
       setLastScanCount(found.items.length);
       setSelected(new Set(found.items.filter(defaultSelectable).map((it) => it.path)));
-      // UX-10: a degraded or capped scan must not read as a complete one —
+      // a degraded or capped scan must not read as a complete one —
       // the toast was the only part a screen reader actually announced.
       const partial = found.degraded.length > 0;
       const text = partial ? L.scanCompleteIncomplete(found.items.length) : L.scanComplete(found.items.length);
@@ -240,7 +240,7 @@ export function ScopedScanPanel({
       return cleanupAccomplishedSomething(report);
     } catch (e) {
       const msg = formatError(e, "cleanup");
-      // UX-7: the IPC never ran, so the previous report and its retry button
+      // the IPC never ran, so the previous report and its retry button
       // must not stay on screen as if they described this attempt.
       setResult(null);
       submitted.current = [];
@@ -256,7 +256,7 @@ export function ScopedScanPanel({
     if (!items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
-    // UX-08: only one sentence carries the item count — `riskTierPrefix` states
+    // only one sentence carries the item count — `riskTierPrefix` states
     // the risk level, `cleanupConfirmOptionalBackup` states how many items.
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
@@ -292,7 +292,7 @@ export function ScopedScanPanel({
   /** Bucket headers use the same localized bucket names as the report view. */
   const groupLabel = (bucket: string) => {
     if (!bucket) return L.linkedOther;
-    // UX-8: the installer panel's two groups used to repeat the panel title.
+    // the installer panel's two groups used to repeat the panel title.
     if (cleanupSource === "installer") {
       if (bucket === "updater_cache") return L.scanEvidenceLabel("updater_cache", "");
       if (bucket === "download_pkg") return L.scanEvidenceLabel("installer_package", "");
@@ -302,7 +302,7 @@ export function ScopedScanPanel({
   };
 
   /**
-   * UX-4 / UX-5: the row reason was written for an installed app. In these
+   * the row reason was written for an installed app. In these
    * panels "belongs to the software" or "suspected leftover of the software"
    * names an app that does not exist; say what the category is instead.
    */
@@ -351,7 +351,7 @@ export function ScopedScanPanel({
               setSelected(
                 new Set(
                   items!
-                    // UX-9: "select all" means the same thing here as on the
+                    // "select all" means the same thing here as on the
                     // orphan page — keep-class rows stay unchecked.
                     .filter((it) => bucketItem(it) !== "keep")
                     .map((it) => it.path),
@@ -376,7 +376,7 @@ export function ScopedScanPanel({
           </button>
         </div>
       </div>
-      {/* UX-15: a live region that exists before the scan and announces only
+      {/* a live region that exists before the scan and announces only
           the settled summary; the visible line stays silent. */}
       <div
         role="status"
@@ -403,11 +403,11 @@ export function ScopedScanPanel({
           {plan.unknown > 0 ? ` · ${L.planUnknownSize(plan.unknown)}` : ""}
         </div>
       )}
-      {/* UX-05: an omitted count is the only honest way to show a capped list. */}
+      {/* an omitted count is the only honest way to show a capped list. */}
       {omitted > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>{L.scanOmitted(omitted)}</div>
       )}
-      {/* UX-07: "could not read these roots" is a different fact from "found nothing". */}
+      {/* "could not read these roots" is a different fact from "found nothing". */}
       {degraded.length > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
           <div>{L.scanDegradedHint}</div>
@@ -514,7 +514,7 @@ export function ScopedScanPanel({
             : <div style={css.muted}>{L.scanEmptyNone}</div>
         }
       />
-      {/* UX-04: the toast is gone in seconds; the per-item outcome stays put. */}
+      {/* the toast is gone in seconds; the per-item outcome stays put. */}
       {result && !!result.item_details.length && (
         <CleanupResultDetails
           key={JSON.stringify(result.item_details)}

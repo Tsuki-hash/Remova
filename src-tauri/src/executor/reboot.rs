@@ -428,7 +428,6 @@ fn rename_corrupt_state(path: &Path) -> bool {
 /// the user is looking at stale state, the second means permissions blocked the
 /// repair and retrying the same button is pointless until that is fixed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // `Cleared`/`RenameFailed` are only reachable in the production cfg path.
 pub(crate) enum ClearCorruptGate {
     Cleared,
     NotCorrupt,
@@ -484,6 +483,13 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn clear_corrupt_gate_outcomes_stay_distinct() {
+        assert_ne!(ClearCorruptGate::Cleared, ClearCorruptGate::NotCorrupt);
+        assert_ne!(ClearCorruptGate::NotCorrupt, ClearCorruptGate::RenameFailed);
+        assert_ne!(ClearCorruptGate::Cleared, ClearCorruptGate::RenameFailed);
     }
 
     #[test]

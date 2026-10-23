@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// UX-14: the More page's "export report" card promised the *analysis* report while
+// the More page's "export report" card promised the *analysis* report while
 // it actually exports the cleanup result, and its "New" badge never went away for
 // as long as `lastReport` was retained.
 import { afterEach, expect, it, vi } from "vitest";

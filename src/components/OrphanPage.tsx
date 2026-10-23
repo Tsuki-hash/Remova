@@ -118,7 +118,7 @@ export function OrphanPage({
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
-      // UX-08: the item count appears once — in `cleanupConfirmOptionalBackup`.
+      // the item count appears once — in `cleanupConfirmOptionalBackup`.
       message: `${L.riskTierPrefix(riskTierLabel(maxRiskOf(picked), L))}\n${L.cleanupConfirmOptionalBackup(picked.length, false)}${riskNote}`,
       confirmLabel: L.cleanup,
       danger: true,

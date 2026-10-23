@@ -813,7 +813,7 @@ mod tests {
     /// old read-as-subkey form returned empty for every single one.
     #[cfg(windows)]
     #[test]
-    #[ignore]
+    #[ignore = "environment-dependent: needs real service ImagePath values"]
     fn service_image_string_reads_real_image_paths() {
         let root = r"HKLM64\SYSTEM\CurrentControlSet\Services";
         let services = crate::regscan::list_subkeys(root);

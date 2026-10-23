@@ -372,7 +372,7 @@ export function useCleanupHandlers({
           message = `${message}\n\n${L.aiRiskBriefFailed}`;
         }
       } catch (e) {
- // CQ-10: the AI brief used to fail silently, so a missing model line read as
+ // the AI brief used to fail silently, so a missing model line read as
  // "AI already assessed this". Drop any stale brief and say the brief is absent.
         setAiRisk(null);
         message = `${message}\n\n${L.aiRiskBriefFailed}`;

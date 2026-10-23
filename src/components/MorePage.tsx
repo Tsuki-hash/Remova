@@ -103,7 +103,7 @@ export function MorePage({
   const openTool = tools.openTool;
   const panelRef = useRef<HTMLDivElement>(null);
   const hasMonitorDiff = Boolean(monitorDiff);
-  // UX-14: `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
+  // `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
   // retained, so "new" stopped meaning anything. Show it once per session, on the
   // first report that arrives.
   const seenReport = useRef(false);
@@ -173,7 +173,7 @@ export function MorePage({
       title: L.installerTitle,
       desc: L.installerHint,
       icon: "installers",
-      // UX-20: a second click on the highlighted card now closes the panel,
+      // a second click on the highlighted card now closes the panel,
       // like the AI card — not a silent no-op.
       action: () => tools.toggleTool("installers"),
     },

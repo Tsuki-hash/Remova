@@ -36,7 +36,7 @@ desktop.ini
 # Local demo pages (never track)
 flow-compare.html
 
-# Public tree: core app + unit tests (REV-QA-01). Issue templates stay local.
+# Public tree: core app + unit tests. Issue templates stay local.
 #
 # src-tauri/src/path_value_smoke.rs and pipeline_smoke.rs used to be ignored here too,
 # but lib.rs declares both under `#[cfg(test)] mod`. A fresh clone therefore could not

@@ -422,11 +422,12 @@ mod scan_cache {
         built
     }
 
-    /// `build` returns `None` when at least one root could not be read. That
-    /// result is served for this call but never cached: a transient permission
-    /// error must not hide TEMP leftovers for the whole batch.
+    /// `build` returns the rows it collected plus a completeness flag. A
+    /// partial list is still served for this call — readable roots must not be
+    /// hidden because a sibling root failed — but only a complete list is
+    /// cached, so a transient permission error cannot blank TEMP for the batch.
     pub(super) fn temp(
-        build: impl FnOnce() -> Option<Vec<super::TempEntry>>,
+        build: impl FnOnce() -> (Vec<super::TempEntry>, bool),
     ) -> Arc<Vec<super::TempEntry>> {
         let mut guard = temp_state().lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, entries)) = guard.as_ref() {
@@ -434,11 +435,9 @@ mod scan_cache {
                 return Arc::clone(entries);
             }
         }
-        let built = match build() {
-            Some(entries) => Arc::new(entries),
-            None => return Arc::new(Vec::new()),
-        };
-        if crate::scan_task::cancelled() {
+        let (entries, complete) = build();
+        let built = Arc::new(entries);
+        if !complete || crate::scan_task::cancelled() {
             return built;
         }
         *guard = Some((Instant::now(), Arc::clone(&built)));
@@ -621,7 +620,15 @@ fn temp_roots() -> Vec<PathBuf> {
         }
     }
     let mut seen = std::collections::HashSet::new();
-    roots.retain(|p| p.is_dir() && seen.insert(p.to_string_lossy().to_lowercase()));
+    roots.retain(|p| {
+        // Normalize a trailing separator before dedupe: `TEMP=…\Temp\` and the
+        // Known Folder root are the same directory and must be walked once.
+        let key = p
+            .to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase();
+        p.is_dir() && seen.insert(key)
+    });
     roots
 }
 
@@ -664,7 +671,7 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
                 break;
             }
         }
-        complete.then_some(out)
+        (out, complete)
     });
     for entry in entries.iter() {
         if crate::scan_task::cancelled() {
@@ -751,23 +758,80 @@ mod cache_tests {
         scan_cache::clear();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn temp_roots_include_a_redirected_temp_and_dedupe_trailing_separators() {
+        let _lock = crate::test_support::EnvLock::new();
+        let dir = crate::test_support::TempDir::new("temp-roots");
+        let custom = dir.subdir("Redirected");
+        {
+            let _env = crate::test_support::EnvVar::set("TEMP", custom.clone());
+            let roots = temp_roots();
+            assert!(
+                roots.iter().any(|p| p == &custom),
+                "a redirected TEMP root must be scanned"
+            );
+        }
+        if let Some(local) =
+            crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
+        {
+            let temp = local.join("Temp");
+            if temp.is_dir() {
+                let _env =
+                    crate::test_support::EnvVar::set("TEMP", format!("{}\\", temp.display()));
+                let roots = temp_roots();
+                let count = roots
+                    .iter()
+                    .filter(|p| {
+                        p.to_string_lossy()
+                            .trim_end_matches(['\\', '/'])
+                            .eq_ignore_ascii_case(
+                                temp.to_string_lossy().trim_end_matches(['\\', '/']),
+                            )
+                    })
+                    .count();
+                assert_eq!(
+                    count, 1,
+                    "the same root with a trailing separator is one root"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_failed_temp_walk_does_not_pin_an_empty_listing() {
         scan_cache::clear();
-        // The builder reports an unreadable root with `None`.
-        let first = scan_cache::temp(|| None);
-        assert!(first.is_empty());
-        // The next build succeeds and must be published; a cached empty list
-        // from the failed walk would have hidden TEMP for the whole batch.
-        let second = scan_cache::temp(|| {
-            Some(vec![TempEntry {
-                path: PathBuf::from(r"C:\Temp\Demo-cache.tmp"),
-                is_dir: false,
-            }])
+        // A partial walk (one root unreadable) still serves the rows the
+        // readable roots produced, but must not be cached.
+        let first = scan_cache::temp(|| {
+            (
+                vec![TempEntry {
+                    path: PathBuf::from(r"C:\Temp\Demo-partial.tmp"),
+                    is_dir: false,
+                }],
+                false,
+            )
         });
-        assert_eq!(second.len(), 1);
-        let third = scan_cache::temp(|| panic!("a successful build must be cached"));
-        assert_eq!(third.len(), 1);
+        assert_eq!(first.len(), 1, "readable roots keep their rows");
+        // The next build must run again; a failed walk may not be pinned.
+        let second = scan_cache::temp(|| {
+            (
+                vec![
+                    TempEntry {
+                        path: PathBuf::from(r"C:\Temp\Demo-a.tmp"),
+                        is_dir: false,
+                    },
+                    TempEntry {
+                        path: PathBuf::from(r"C:\Temp\Demo-b.tmp"),
+                        is_dir: false,
+                    },
+                ],
+                true,
+            )
+        });
+        assert_eq!(second.len(), 2);
+        let third = scan_cache::temp(|| panic!("a complete build must be cached"));
+        assert_eq!(third.len(), 2);
         scan_cache::clear();
     }
 

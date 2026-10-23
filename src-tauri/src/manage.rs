@@ -1177,7 +1177,7 @@ mod tests {
     /// asserts when this machine has folder startup flags recorded.
     #[cfg(windows)]
     #[test]
-    #[ignore]
+    #[ignore = "environment-dependent: needs Explorer StartupApproved values"]
     fn startup_folder_approved_values_are_full_file_names() {
         let key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
         let (_, vals) = crate::regscan::snapshot_names(key).expect("read StartupFolder names");

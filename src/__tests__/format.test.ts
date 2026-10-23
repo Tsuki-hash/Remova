@@ -56,7 +56,7 @@ describe("formatError manage codes", () => {
     expect(formatError("backup:failed::disk full")).toBeTruthy();
   });
 
-  it("does not misparse :: outside known IPC code prefixes (F-R6-09)", () => {
+  it("does not misparse :: outside known IPC code prefixes", () => {
  // PACKAGED location strings use `::` but are not RemovaError IPC.
     const packaged = formatError(
       "PACKAGED::HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run::Evil",
@@ -76,6 +76,17 @@ describe("formatError manage codes", () => {
     expect(formatError("safety:protected::")).not.toContain("服务");
     expect(formatError("safety:protected::C:\\Users\\me\\Documents")).toContain("Documents");
     expect(formatError("safety:protected::C:\\Users\\me\\Documents")).not.toContain("关键服务");
+  });
+});
+
+describe("formatError reboot gate repair", () => {
+  it("keeps not-corrupt and rename-failed distinct and localized", () => {
+    const notCorrupt = formatError("reboot:gate_not_corrupt");
+    const renameFailed = formatError("reboot:gate_rename_failed");
+    expect(notCorrupt).not.toBe(renameFailed);
+    expect(notCorrupt).toContain("并未损坏");
+    expect(renameFailed).toContain("权限");
+    expect(renameFailed).not.toContain("reboot:gate_rename_failed");
   });
 });
 

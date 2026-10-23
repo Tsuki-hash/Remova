@@ -44,7 +44,7 @@ import {
 } from "react";
 import { useSoftwareController } from "./hooks/useSoftwareController";
 
-/** PF-08: code-split heavy nav pages. */
+/** code-split heavy nav pages. */
 const SoftwarePage = lazy(() =>
   import("./components/SoftwarePage").then((m) => ({ default: m.SoftwarePage })),
 );

@@ -243,7 +243,7 @@ mod tests {
         ));
     }
 
-    /// CQ-03: this allow-list now shares `fsutil::path_key` with the red-line
+    /// this allow-list now shares `fsutil::path_key` with the red-line
     /// checks, so the two halves of the gate must agree on the shapes Win32
     /// collapses. Before the delegation a reported `…\npm-cache.` stored the key
     /// `…\npm-cache.`, and the delete request for `…\npm-cache` was refused — the

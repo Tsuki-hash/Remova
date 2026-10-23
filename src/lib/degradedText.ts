@@ -1,7 +1,7 @@
 import { t } from "../i18n";
 
 /**
- * UX-2: the backend's `degraded` payloads are stable codes, not English
+ * the backend's `degraded` payloads are stable codes, not English
  * prose — `unreadable_root:<path>`, `downloads_root_missing`,
  * `userprofile_not_set`, `localappdata_not_set`. Unknown or older-rollout
  * strings fall back to the raw text, so a payload from a newer backend still

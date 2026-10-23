@@ -32,11 +32,11 @@ import { CopilotPanel } from "./CopilotPanel";
 import { SoftwareListTable } from "./SoftwareListTable";
 import { BatchActionBar } from "./BatchActionBar";
 
-/// Report identity -> the InstalledApp it was opened for. Module-level so the
-/// mapping survives navigating away from the software page and back, which is
-/// exactly when a report outlives its app's presence in the refreshed list.
-/// Bounded and time-limited: a long session cannot retain every report's app,
-/// and a stale snapshot cannot answer for a much newer report.
+/** Report identity -> the InstalledApp it was opened for. Module-level so the
+ * mapping survives navigating away from the software page and back, which is
+ * exactly when a report outlives its app's presence in the refreshed list.
+ * Bounded and time-limited: a long session cannot retain every report's app,
+ * and a stale snapshot cannot answer for a much newer report. */
 const REPORT_APP_CACHE_MAX = 64;
 const REPORT_APP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const reportAppCache = new Map<string, { app: InstalledApp; at: number }>();

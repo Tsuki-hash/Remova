@@ -154,7 +154,7 @@ function parseBackendOnlyFromPs1(): string[] {
 }
 
 /**
- * CQ-04: `ai_risk_brief` / `ai_summarize_report` used to take
+ * `ai_risk_brief` / `ai_summarize_report` used to take
  * `Record<string, unknown>` — the only IPC payload in the project that bypassed
  * the type system, so a Rust-side field rename surfaced only at runtime as a
  * silently missing JSON key. These two checks parse both sides and fail on drift.
@@ -189,7 +189,7 @@ function tsTypeFields(typeName: string): string[] {
   return fields.sort();
 }
 
-describe("AI request payload contract (CQ-04)", () => {
+describe("AI request payload contract", () => {
   it.each([
     ["RiskBriefRequest", "RiskBriefInput"],
     ["ReportBriefRequest", "ReportBriefInput"],

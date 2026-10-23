@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// UX-13: the specialty scan panel's presentation layer had zero coverage — the
+// the specialty scan panel's presentation layer had zero coverage — the
 // four pre-existing cases only exercised feedback severity / refresh targets /
 // openPath / cancel state. Everything below renders the panel against payloads
 // copied from the Rust scanners (`toolcache.rs::push_item`, `installers.rs::
@@ -121,7 +121,7 @@ it("reports the freed space for the selection and counts what it could not measu
     sharedChild("C:\\cache\\npm-child", "dev", null),
   ])));
   await screen.findByText("C:\\cache\\uv");
-  // UX-15: the summary is announced from a live region that settles after the
+  // the summary is announced from a live region that settles after the
   // selection stops changing.
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain(
@@ -154,7 +154,7 @@ it("groups rows by bucket and puts the largest measured item first in each group
   // An unmeasured row sinks to the bottom of its group instead of reading as 0 KB.
   expect(at("dev-unknown")).toBeGreaterThan(at("dev-tiny"));
   // One header per bucket, labelled with the localized bucket name. Headers are
-  // presentation, not list items, so they are not announced as rows (UX-16).
+  // presentation, not list items, so they are not announced as rows.
   const devHeader = backendText("dev", "scan");
   const headers = [...container.querySelectorAll('[role="presentation"]')];
   expect(headers.filter(el => el.textContent?.includes(devHeader)).length).toBe(1);
@@ -172,7 +172,7 @@ it("shows an estimating placeholder instead of an empty list while the scan runs
   expect(screen.queryByText(t().scanEstimatingItems)).toBeNull();
 });
 
-// UX-6: the empty state only branched on `items === null`, so a failed or
+// the empty state only branched on `items === null`, so a failed or
 // cancelled scan left the list saying "measuring item sizes" forever while the
 // progress bar above said the scan did not complete.
 it("replaces the estimating placeholder with an error when the scan fails", async () => {
@@ -190,7 +190,7 @@ it("says a scan was cancelled instead of leaving the estimating placeholder", as
   expect(screen.getAllByText(L.scanCancelledIncomplete).length).toBeGreaterThan(0);
 });
 
-// UX-7: a cleanup IPC that never started used to leave the previous report and
+// a cleanup IPC that never started used to leave the previous report and
 // its still-clickable retry button on screen as if they described this attempt.
 it("clears the previous report when a cleanup cannot even be submitted", async () => {
   const L = t();
@@ -217,7 +217,7 @@ it("clears the previous report when a cleanup cannot even be submitted", async (
 
 it("distinguishes 'nothing found' from 'could not read the roots'", async () => {
   const L = t();
-  // UX-2: the backend now sends stable codes, not raw English prose.
+  // the backend now sends stable codes, not raw English prose.
   const degraded = ["unreadable_root:C:\\Users\\u\\AppData\\Local\\npm-cache", "downloads_root_missing"];
   panel(() => Promise.resolve(result([], { degraded })));
   await screen.findByText(L.scanDegradedHint);
@@ -382,7 +382,7 @@ it("names the suspected / shared-root category in the cleanup confirmation", asy
   expect(message).not.toContain(`${L.riskTierPrefix(L.riskTierLow)} ${1}`);
 });
 
-// UX-4: the updater rows sit under a panel that says "not app leftovers", yet
+// the updater rows sit under a panel that says "not app leftovers", yet
 // their reason line claimed "possible leftover of the software".
 it("does not call an updater cache a suspected app leftover", async () => {
   const L = t();
@@ -392,7 +392,7 @@ it("does not call an updater cache a suspected app leftover", async () => {
   expect(screen.queryByText(L.reasonSuspect, { exact: false })).toBeNull();
 });
 
-// UX-5: "linked to this app's install/config" names an app the panel invented.
+// "linked to this app's install/config" names an app the panel invented.
 it("describes a confirmed tool cache by its bucket, not as app-linked", async () => {
   const L = t();
   panel(() => Promise.resolve(result([toolCache("C:\\Users\\u\\AppData\\Local\\uv\\cache", "dev", 1_024)])));
@@ -403,7 +403,7 @@ it("describes a confirmed tool cache by its bucket, not as app-linked", async ()
   expect(screen.queryByText(L.reasonBelongs, { exact: false })).toBeNull();
 });
 
-// UX-8: both installer groups used to carry the panel title as their header.
+// both installer groups used to carry the panel title as their header.
 it("gives the two installer groups distinguishable headers", async () => {
   const L = t();
   const { container } = installerPanel(() => Promise.resolve(result([
@@ -416,7 +416,7 @@ it("gives the two installer groups distinguishable headers", async () => {
   expect(headers.some(h => h.includes(L.scanEvidenceLabel("installer_package", "")))).toBe(true);
 });
 
-// UX-9: "select all" must not select the keep class (user library here).
+// "select all" must not select the keep class (user library here).
 it("select-all leaves keep-class rows unchecked", async () => {
   const L = t();
   const highRisk = { ...updaterDir("C:\\ProgramData\\Acme\\Downloads", 2_048), risk: "high" as const };
@@ -429,7 +429,7 @@ it("select-all leaves keep-class rows unchecked", async () => {
   expect(screen.getByRole("button", { name: new RegExp(L.cleanup) }).textContent).toContain("1");
 });
 
-// UX-16: "biggest first" also holds between groups.
+// "biggest first" also holds between groups.
 it("orders bucket groups by their largest item", async () => {
   const tinyA = toolCache("C:\\cache\\a-tiny", "browser", 1_024);
   const hugeB = toolCache("C:\\cache\\b-huge", "dev", 4_194_304);
@@ -439,7 +439,7 @@ it("orders bucket groups by their largest item", async () => {
   expect(headers[0]).toContain(backendText("dev", "scan"));
 });
 
-// UX-18: the toast expires; the finding stays in the header.
+// the toast expires; the finding stays in the header.
 it("keeps the last scan count after the toast is gone", async () => {
   const L = t();
   panel(() => Promise.resolve(result([toolCache("C:\\cache\\uv", "dev", 1_024)])));
@@ -447,7 +447,7 @@ it("keeps the last scan count after the toast is gone", async () => {
   expect(screen.getByText(`${L.orphanJustScanned} · 1`)).toBeTruthy();
 });
 
-// UX-10: a degraded scan must not announce a complete result.
+// a degraded scan must not announce a complete result.
 it("does not claim a complete scan when a root was unreadable", async () => {
   const L = t();
   panel(() => Promise.resolve(result([], { degraded: ["downloads_root_missing"] })));

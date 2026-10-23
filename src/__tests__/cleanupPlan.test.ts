@@ -19,7 +19,7 @@ it("keeps zero size distinct from missing or invalid sizes and flags user/shared
   expect(plan).toMatchObject({ count: 5, knownKb: 3, unknown: 2, review: 2 });
 });
 
-// UX-1: the panel header shows what the scan found in total, because the biggest
+// the panel header shows what the scan found in total, because the biggest
 // category is usually unchecked by default and "12 MB selected" read as "nothing".
 it("scan total is independent of the selection and collapses nested dirs", () => {
   const items = [item("C:/Tool", "dir", 100), item("c:\\tool\\child", "file", 40),
@@ -28,7 +28,7 @@ it("scan total is independent of the selection and collapses nested dirs", () =>
   expect(summarizeScanTotal([])).toEqual({ knownKb: 0, unknown: 0 });
 });
 
-// CQ-11: `count` used exact strings while `knownKb` used a normalized key, so
+// `count` used exact strings while `knownKb` used a normalized key, so
 // one header could report two rows and one row's bytes for the same path.
 it("counts and totals the same path with one identity", () => {
   const items = [

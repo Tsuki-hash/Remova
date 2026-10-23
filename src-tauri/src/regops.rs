@@ -1711,7 +1711,7 @@ mod tests {
         assert_eq!(a, super::normalize_path_entry(r"C:\Python3\"));
     }
 
-    /// CQ-03: `path_contains_entry` now shares `fsutil::path_key` with the
+    /// `path_contains_entry` now shares `fsutil::path_key` with the
     /// allow-lists and the red lines. A PATH value carrying Win32's trailing
     /// dot/space decoration must still be recognized as the entry the scanner
     /// reported, or the verify step reports a scrub that actually succeeded.
@@ -2346,7 +2346,7 @@ mod tests {
     /// `cargo test -- --ignored` since stock machines may have no user Path.
     #[cfg(windows)]
     #[test]
-    #[ignore]
+    #[ignore = "environment-dependent: needs a real user PATH value"]
     fn read_reg_path_value_reads_real_user_environment() {
         assert!(!super::path_mock::active());
         // Must not fall back to the process env or error out on a healthy box.

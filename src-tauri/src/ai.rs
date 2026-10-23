@@ -858,7 +858,7 @@ fn explain_items_with_completion(
         let parsed: Vec<ExplainOutput> =
             serde_json::from_str(&cleaned).map_err(|e| format!("ai json parse failed::{e}"))?;
 
-        // Match back by the exact strings SENT to the model ( + ):
+        // Match back by the exact strings sent to the model:
         // the prompt asks the model to echo the sanitized path, and `sanitize_path`
         // is NOT idempotent — re-sanitizing the echo lost every multi-segment
         // AppData path. Never rely on array index alone; identical sanitized paths
@@ -951,25 +951,8 @@ English: what was deleted, what to do about failures, whether a restart is \
 advised, and whether the backup can restore it. Keep the tone measured. Do not \
 emit Markdown headings.";
 
-pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Result<String, String> {
-    // publisher is part of the prompt — without it two products from
-    // different vendors with the same shape share a 7-day cache entry.
-    let key = fnv1a64(&format!(
-        "risk|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        input.app_name,
-        input.publisher,
-        input.action,
-        input.item_count,
-        input.has_service,
-        input.has_run_key,
-        input.has_shared_hint,
-        serde_json::to_string(&input.kind_counts).unwrap_or_default(),
-        normalize_locale(locale)
-    ));
-    if let Some(c) = cache_get(key) {
-        return Ok(c);
-    }
-    let user = if normalize_locale(locale) == "en" {
+fn risk_user_prompt(input: &RiskBriefInput, locale: &str) -> String {
+    if normalize_locale(locale) == "en" {
         format!(
             "App: {} ({})\nAction: {}\nCandidates: {}\nKind counts: {:?}\nHas service: {}\nHas startup item: {}\nSuspected shared component: {}",
             input.app_name,
@@ -993,7 +976,28 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Resul
             input.has_run_key,
             input.has_shared_hint
         )
-    };
+    }
+}
+
+pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Result<String, String> {
+    // publisher is part of the prompt — without it two products from
+    // different vendors with the same shape share a 7-day cache entry.
+    let key = fnv1a64(&format!(
+        "risk|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        input.app_name,
+        input.publisher,
+        input.action,
+        input.item_count,
+        input.has_service,
+        input.has_run_key,
+        input.has_shared_hint,
+        serde_json::to_string(&input.kind_counts).unwrap_or_default(),
+        normalize_locale(locale)
+    ));
+    if let Some(c) = cache_get(key) {
+        return Ok(c);
+    }
+    let user = risk_user_prompt(input, locale);
     let text = chat_completion(
         cfg,
         localized_system(locale, RISK_SYSTEM, RISK_SYSTEM_EN),
@@ -1132,6 +1136,16 @@ fields: name_like (keyword), publisher, size_gt_kb (integer), installed_after \
 separately. Output exactly one JSON object with no explanation. Fields: action, \
 filter, include_leftovers, note. Write note in one English sentence.";
 
+fn intent_user_prompt(instruction: &str, names: &str, locale: &str) -> String {
+    if normalize_locale(locale) == "en" {
+        format!(
+            "User instruction: {instruction}\nInstalled app samples (for matching only): {names}"
+        )
+    } else {
+        format!("用户指令：{instruction}\n本机已装软件样例（仅供参考匹配）：{names}")
+    }
+}
+
 pub fn parse_nl_intent(
     cfg: &AiConfig,
     user_text: &str,
@@ -1152,19 +1166,7 @@ pub fn parse_nl_intent(
             }
         })
         .collect();
-    let user = if normalize_locale(locale) == "en" {
-        format!(
-            "User instruction: {}\nInstalled app samples (for matching only): {}",
-            scrubbed_text,
-            names.join(" | ")
-        )
-    } else {
-        format!(
-            "用户指令：{}\n本机已装软件样例（仅供参考匹配）：{}",
-            scrubbed_text,
-            names.join(" | ")
-        )
-    };
+    let user = intent_user_prompt(&scrubbed_text, &names.join(" | "), locale);
     let text = chat_completion(
         cfg,
         localized_system(locale, INTENT_SYSTEM, INTENT_SYSTEM_EN),
@@ -1745,6 +1747,23 @@ mod tests {
         assert!(seen.starts_with("App:"));
         assert!(seen.contains("Candidates"));
         assert!(!seen.contains("候选"));
+
+        let risk = RiskBriefInput {
+            app_name: "Vendor".into(),
+            publisher: "Acme".into(),
+            action: "cleanup".into(),
+            item_count: 3,
+            kind_counts: HashMap::from([("dir".to_string(), 3usize)]),
+            has_service: false,
+            has_run_key: false,
+            has_shared_hint: false,
+        };
+        assert!(risk_user_prompt(&risk, "en").starts_with("App:"));
+        assert!(risk_user_prompt(&risk, "zh").starts_with("软件:"));
+        assert!(
+            intent_user_prompt("uninstall Foo", "Foo | Bar", "en").starts_with("User instruction:")
+        );
+        assert!(intent_user_prompt("卸载 Foo", "Foo", "zh").starts_with("用户指令："));
     }
 
     #[test]

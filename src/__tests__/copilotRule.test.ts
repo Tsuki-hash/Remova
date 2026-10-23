@@ -45,7 +45,7 @@ describe("ruleParseFilter", () => {
         expect(() => ruleParseFilter(apps, query)).toThrow();
     } finally { vi.useRealTimers(); }
   });
-  // CQ-13: the offline filter used to slice `install_date` positionally, so only
+  // the offline filter used to slice `install_date` positionally, so only
   // `YYYY-MM-DD` parsed. `2024/01/15` produced "/0" → NaN → the whole filter
   // silently matched nothing, and the registry's own `YYYYMMDD` was rejected.
   it("accepts every install-date shape the registry emits", () => {

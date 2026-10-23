@@ -110,7 +110,7 @@ fn resecure_history(p: &Path) {
 
 /// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
 /// one line at a time through a ring buffer — memory is O(keep), never O(file)
-/// (; also removes the old unbounded whole-file read on oversize).
+/// (also removes the old unbounded whole-file read on oversize).
 /// Caller must hold [`FILE_LOCK`].
 fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
     let file = fs::File::open(p)?;
@@ -491,7 +491,7 @@ mod tests {
     fn disk_append_load_delete_clear_roundtrip() {
         let tmp = crate::test_support::TempDir::new("hist");
         tmp.subdir("Remova");
-        // CQ-1: a thread-local test root isolates this fixture without relying
+        // a thread-local test root isolates this fixture without relying
         // on a process-wide environment override that production no longer reads.
         let _dir = super::use_history_dir(tmp.path());
         let p = super::history_path();
@@ -511,6 +511,33 @@ mod tests {
 
         super::clear_all().unwrap();
         assert!(super::load(10).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rewrite_refuses_a_junction_in_the_history_path() {
+        let tmp = crate::test_support::TempDir::new("hist-junction");
+        let target = tmp.subdir("target");
+        let link = tmp.path().join("Remova");
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "junction fixture creation failed");
+        assert!(crate::fsutil::is_reparse_point(&link));
+
+        let _dir = super::use_history_dir(tmp.path());
+        assert!(
+            super::clear_all().is_err(),
+            "clearing through a junction must be refused"
+        );
+        assert!(
+            super::delete_by_ids(&["H0000000000000000-0".into()]).is_err(),
+            "deleting through a junction must be refused"
+        );
+        let _ = std::fs::remove_dir(&link);
     }
 
     /// a torn non-UTF-8 row must survive delete rewrites untouched.

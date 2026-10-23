@@ -138,7 +138,7 @@ function ResultGroup({
         {L.retryFailedItems} ({failed.length})
       </button>
     )}
-    {/* UX-12: the scroll box is reachable by keyboard so a long failure list can
+    {/* the scroll box is reachable by keyboard so a long failure list can
         be paged with the arrow keys instead of only by mouse wheel. */}
     <div tabIndex={0} role="group" aria-label={`${label} · ${items.length}`}
       style={{ maxHeight: "min(320px, 45vh)", overflow: "auto" }}>
@@ -201,7 +201,7 @@ function ResultGroup({
 
 /**
  * Grouped per-item cleanup outcome. Rendered inline by the software report panel
- * and, since UX-04, by the scoped specialty panels — the toast is gone after a
+ * and, by the scoped specialty panels — the toast is gone after a
  * few seconds but a user who cleared 20 caches with 3 failures still needs to
  * know *which* 3, why, and what to do about them.
  */

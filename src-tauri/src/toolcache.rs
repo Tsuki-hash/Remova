@@ -656,7 +656,7 @@ fn scan_shared_cache_children(
         children.push(path);
     }
     let children = crate::fsutil::order_candidates(children);
-    // CQ-8: `omitted` is rows, not children. A JetBrains child expands into its
+    // `omitted` is rows, not children. A JetBrains child expands into its
     // cache subdirectories, so a dropped child can hide more than one row.
     let dropped = children.len().saturating_sub(TOOL_CACHE_CHILD_CAP);
     if dropped > 0 {
@@ -1216,7 +1216,7 @@ mod tests {
         assert!(!paths.iter().any(|p| p.ends_with("tool-071-cache")));
     }
 
-    /// CQ-8: `omitted` is measured in rows. Three dropped JetBrains homes, each
+    /// `omitted` is measured in rows. Three dropped JetBrains homes, each
     /// expanding into two cache rows, hide six rows — not three children.
     #[test]
     fn dropped_jetbrains_children_are_counted_as_expanded_rows() {

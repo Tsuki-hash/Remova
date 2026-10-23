@@ -754,7 +754,7 @@ mod tests {
         );
     }
 
-    /// CQ-2: the over-cap Downloads fixture used to write exactly
+    /// the over-cap Downloads fixture used to write exactly
     /// `INSTALLER_PHASE_CAP` definite packages, so `definite_total - cap` was 0
     /// and deleting the `omitted` accumulation left the whole suite green. This
     /// fixture writes more definite packages than the cap and no ambiguous files
@@ -987,7 +987,7 @@ mod tests {
     /// `skipped: path missing` — a row the user can do nothing about. The nested
     /// leaf must be dropped, and dropped candidates must not be authorized.
     ///
-    /// CQ-2: the fixture crosses the phase cap — exactly `cap` real candidates
+    /// the fixture crosses the phase cap — exactly `cap` real candidates
     /// survive the de-nesting, and the five nested leaves sort into the first
     /// six pre-drop positions. If `drop_nested` ran after the truncation, those
     /// five dead leaves would consume cap slots: only 55 rows would be

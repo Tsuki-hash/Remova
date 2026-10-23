@@ -2,7 +2,7 @@
 import { api } from "./api";
 import type { CleanupReport, FullCleanupReport, ReportBriefRequest } from "../types";
 
-/** Typed against `ai.rs::ReportBriefInput` (see CQ-04). */
+/** Typed against `ai.rs::ReportBriefInput`. */
 export function buildReportAiRequest(report: FullCleanupReport | CleanupReport): ReportBriefRequest {
   const details = "item_details" in report ? report.item_details || [] : [];
   const topFailed = details
