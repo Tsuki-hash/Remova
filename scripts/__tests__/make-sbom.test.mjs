@@ -31,21 +31,20 @@ test("package lock keeps production dependencies only", () => {
 });
 
 test("sbom is deterministic and drops the application crate", () => {
-  const components = [
-    { productName: "Remova", productVersion: "1.4.0" },
-    {
-      cargo: [
-        { name: "remova", version: "1.4.0" },
-        { name: "zip", version: "4.6.1" },
-      ],
-      npm: [
-        { name: "react", version: "19.2.0" },
-        { name: "zip", version: "4.6.1" },
-      ],
-    },
-  ];
-  const a = buildSbom(...components);
-  const b = buildSbom(...components);
+  const input = {
+    productName: "Remova",
+    productVersion: "1.4.0",
+    cargo: [
+      { name: "remova", version: "1.4.0" },
+      { name: "zip", version: "4.6.1" },
+    ],
+    npm: [
+      { name: "react", version: "19.2.0" },
+      { name: "zip", version: "4.6.1" },
+    ],
+  };
+  const a = buildSbom(input);
+  const b = buildSbom(input);
   assert.deepEqual(a, b);
   assert.equal(a.specVersion, "1.5");
   assert.deepEqual(
