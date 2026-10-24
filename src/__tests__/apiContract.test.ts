@@ -165,9 +165,9 @@ function camel(snake: string): string {
   return snake.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 }
 
-/** Field names of a struct in `src-tauri/src/ai.rs`, as serde serializes them. */
+/** Field names of a struct in `src-tauri/src/ai/mod.rs`, as serde serializes them. */
 function rustAiStructFields(structName: string): string[] {
-  const src = readFileSync(new URL("../../src-tauri/src/ai.rs", import.meta.url), "utf8");
+  const src = readFileSync(new URL("../../src-tauri/src/ai/mod.rs", import.meta.url), "utf8");
   const start = src.indexOf(`pub struct ${structName} {`);
   expect(start, `ai.rs: struct ${structName} not found`).toBeGreaterThan(-1);
   const end = src.indexOf("\n}", start);
