@@ -37,6 +37,8 @@ cargo clippy --all-targets -- -D warnings
 # Microbenchmarks for hot pure guards (dev-only; CI compiles them via
 # clippy --all-targets but never runs them).
 cargo bench
+# CycloneDX SBOM from Cargo.lock + production npm deps (also attached to releases).
+node scripts/make-sbom.mjs
 # Targeted race fixture: requires Developer Mode or symlink privilege.
 # CI and release run it explicitly; do not run every ignored system test.
 cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored

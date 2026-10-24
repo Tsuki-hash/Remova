@@ -372,6 +372,9 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/make-checksums.ps1
 
+      - name: generate dependency sbom
+        run: node scripts/make-sbom.mjs
+
       - name: create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.4.1
         with:
@@ -387,6 +390,7 @@ jobs:
             ${{ steps.signing-config.outputs.updater-enabled == 'true' && 'src-tauri/target/release/bundle/msi/*.sig' || '' }}
             ${{ steps.signing-config.outputs.updater-enabled == 'true' && 'src-tauri/target/release/bundle/latest.json' || '' }}
             src-tauri/target/release/bundle/SHA256SUMS.txt
+            src-tauri/target/release/bundle/SBOM.cdx.json
           body_path: .release-notes/${{ github.ref_name }}.md
           generate_release_notes: false
           # a renamed/moved bundle must fail the job, not publish an asset-less Release.
