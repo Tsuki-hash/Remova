@@ -202,7 +202,12 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                     }
                 }
             }
-            let pin = &parent_pins.as_ref().expect("parent pins installed").2;
+            let Some((_, _, pin)) = parent_pins.as_ref() else {
+                messages.push(format!(
+                    "skipped restore target without parent pins: {original}"
+                ));
+                continue;
+            };
             if !same_dir_path(pin.final_path(), parent) {
                 messages.push(format!("skipped redirected restore target: {original}"));
                 continue;
