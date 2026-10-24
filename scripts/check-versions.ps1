@@ -29,7 +29,7 @@ if ($cargoLockRaw -notmatch '(?ms)^\[\[package\]\]\s*\r?\nname = "remova"\s*\r?\
 $cargoLock = $Matches[1]
 
 # package-lock.json carries the version twice and is a fourth source of truth.
-# It was left at 1.3.1 while everything else moved to 1.3.2, and this gate did
+# It was left at 1.3.1 while everything else moved to 1.4.0, and this gate did
 # not look at it — so the drift this gate exists to catch happened silently, and
 # `npm install` would rewrite the lock and make builds non-reproducible.
 # Read through node rather than ConvertFrom-Json, which cannot deserialize a

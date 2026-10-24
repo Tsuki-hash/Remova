@@ -83,7 +83,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 前往 **[Releases](https://github.com/Tsuki-hash/Remova/releases)** 下载最新版本：
 
-> 1.3.1 未配置应用内更新公钥；升级到 1.3.2 时请以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
+> 1.3.1 未配置应用内更新公钥；升级到 1.4.0 时请以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
 >
 > 发布模式：未配置 updater 密钥时，Release 走「未签名 / 手动更新」模式，只发布 NSIS / MSI / 便携包与 `SHA256SUMS.txt`，不生成 `latest.json` 与 `.sig`；三项密钥齐全时才生成并校验更新签名资产。
 

@@ -27,7 +27,7 @@ export default defineConfig({
         "src/lib/**",
         "src/hooks/**",
         "src/App.tsx",
-        // 1.3.2 destructive panels: lock these paths to the coverage gate so
+        // 1.4.0 destructive panels: lock these paths to the coverage gate so
         // new cleanup/report actions cannot regress without a test.
         "src/components/BrokenInstallsPanel.tsx",
         "src/components/FirewallRulesPanel.tsx",

@@ -44,7 +44,7 @@ test("accepts explanatory comments and ordinary test string literals", () => {
 test("rejects review tags in release-facing Markdown", () => {
   fixture((root) => {
     const file = join(root, "CHANGELOG.md");
-    writeFileSync(file, "## 1.3.2\n\n- Fixed the round 30 regression.\n");
+    writeFileSync(file, "## 1.4.0\n\n- Fixed the round 30 regression.\n");
     const result = check(root);
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /CHANGELOG\.md:3:/);

@@ -80,7 +80,7 @@ describe("safe online update", () => {
   });
 
   it("does not install a newly published version that the user has not confirmed", async () => {
-    vi.mocked(check).mockResolvedValue({ ...update, version: "1.3.2" } as unknown as Awaited<ReturnType<typeof check>>);
+    vi.mocked(check).mockResolvedValue({ ...update, version: "1.4.0" } as unknown as Awaited<ReturnType<typeof check>>);
     await expect(installUpdate(info, { current: false }, () => false, vi.fn())).rejects.toThrow("update:version_changed");
     expect(update.download).not.toHaveBeenCalled();
     expect(update.install).not.toHaveBeenCalled();

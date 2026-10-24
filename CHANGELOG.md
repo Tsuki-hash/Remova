@@ -4,11 +4,11 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.3.2] - 2026-10-23
+## [1.4.0] - 2026-10-23
 
 本次发布汇总自 v1.3.1 以来的安全、正确性与可用性改进，并新增深度卸载、安装包与缓存扫描能力。
 
-> 发布说明：1.3.1 未配置应用内更新公钥，升级到 1.3.2 请从 Release 页面手动下载；若安装包未提供 Authenticode 签名，请使用同页 `SHA256SUMS.txt` 校验。
+> 发布说明：1.3.1 未配置应用内更新公钥，升级到 1.4.0 请从 Release 页面手动下载；若安装包未提供 Authenticode 签名，请使用同页 `SHA256SUMS.txt` 校验。
 
 ### 新增
 
@@ -107,7 +107,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 发布与工程
 
-- CI 与 Release 工作流恢复启用并双向校验：CI 检查 Release 未被禁用，标签发布校验对应提交的 CI 通过；未签名豁免仅对精确 `v1.3.2` 生效，后续版本需显式 `ALLOW_UNSIGNED_RELEASE=true`。
+- CI 与 Release 工作流恢复启用并双向校验：CI 检查 Release 未被禁用，标签发布校验对应提交的 CI 通过；未签名豁免仅对精确 `v1.4.0` 生效，后续版本需显式 `ALLOW_UNSIGNED_RELEASE=true`。
 - Release 校验 `test` 与 `package` 两个 job 均成功；发布资产包含 `SHA256SUMS.txt`；CI 与 Release 的第三方 actions 固定到完整提交 SHA。
 - 修复全新克隆无法编译测试树的问题：两个测试辅助文件纳入版本控制。
 - 修复 `AtomicU32::fetch_update` 在较新工具链上的废弃警告（`-D warnings` 下为错误），改用 `compare_exchange`。
