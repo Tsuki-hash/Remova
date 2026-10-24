@@ -16,6 +16,12 @@ if (-not $exe) {
 
 $proc = Start-Process -FilePath $exe -PassThru
 try {
+  # Startup baseline: report (do not gate on) the time until the first window
+  # is idle — the UI-ready signal for a Win32 message loop.
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try { $null = $proc.WaitForInputIdle(8000) } catch {}
+  $sw.Stop()
+  Write-Host ("startup: input idle after {0} ms" -f [int]$sw.ElapsedMilliseconds)
   Start-Sleep -Seconds 8
   if ($proc.HasExited) {
     Write-Error "smoke-launch FAILED: process exited within 8s (code $($proc.ExitCode))"
