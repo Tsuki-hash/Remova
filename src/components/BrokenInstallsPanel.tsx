@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
+import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import type { BrokenInstall } from "../types";
@@ -98,19 +99,8 @@ export function BrokenInstallsPanel({
       // per-user installs, so the backend refuses a non-elevated removal whole.
       // Match the raw refusal — formatError would already localize it away.
       const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-      if (raw.toLowerCase().includes("administrator privileges")) {
-        const { ok } = await requestConfirmEx({
-          title: L.elevateAskTitle,
-          message: L.brokenInstallsNeedAdmin,
-          confirmLabel: L.elevateAskOk,
-        });
-        if (ok) {
-          try {
-            await api.elevateRestart();
-          } catch (err) {
-            toast.error(formatError(err, "elevate"));
-          }
-        }
+      if (needsAdminRights(raw)) {
+        await offerElevatedRestart(L.brokenInstallsNeedAdmin);
       } else {
         toast.error(L.brokenInstallsRemoveFailed(backendErrorText(formatError(e))));
       }

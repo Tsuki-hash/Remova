@@ -286,7 +286,8 @@ export const dict = {
     firewallDeleteOk: "所选防火墙规则已删除",
     firewallDeletePartial: (n: number) => `部分规则删除失败（${n} 条），备份已保留`,
     firewallDeleteFailed: (msg: string) => `删除防火墙规则失败：${msg}`,
-    firewallNeedAdmin: "删除防火墙规则需要管理员权限，请以管理员身份重启 Remova",
+    firewallNeedAdmin:
+      "删除所选防火墙规则需要管理员权限。Remova 将以管理员身份重启（窗口会短暂关闭后重开），重启后请重新勾选并删除。",
     lockDiagnose: "查看占用进程",
     lockDiagnoseEmpty: "没有找到占用该路径的进程",
     lockDiagnoseFailed: (msg: string) => `无法查询占用进程：${msg}`,

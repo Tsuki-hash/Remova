@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
+import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import type { FirewallRule } from "../types";
@@ -75,11 +76,12 @@ export function FirewallRulesPanel({
       }
       await scan();
     } catch (e) {
-      const msg = backendErrorText(formatError(e));
-      if (msg.toLowerCase().includes("administrator privileges")) {
-        toast.error(L.firewallNeedAdmin);
+      // Detect the raw refusal — formatError would already localize it away.
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      if (needsAdminRights(raw)) {
+        await offerElevatedRestart(L.firewallNeedAdmin);
       } else {
-        toast.error(L.firewallDeleteFailed(msg));
+        toast.error(L.firewallDeleteFailed(backendErrorText(formatError(e))));
       }
     } finally {
       setBusy(false);
@@ -94,6 +96,19 @@ export function FirewallRulesPanel({
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void scan()}>
             {L.manageReload}
+          </button>
+          <button
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={busy || (rows?.length ?? 0) === 0}
+            onClick={() =>
+              setSelected((prev) =>
+                prev.size === rows?.length
+                  ? new Set()
+                  : new Set((rows ?? []).map((r) => r.value_name)),
+              )
+            }
+          >
+            {L.orphanSelectAll}
           </button>
           <button
             style={{ ...css.btnGhost, height: 30, color: "var(--danger-text)" }}

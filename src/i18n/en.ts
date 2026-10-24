@@ -287,7 +287,8 @@ export const dict: EnDict = {
     firewallDeleteOk: "Selected firewall rules removed",
     firewallDeletePartial: (n: number) => `${n} rule(s) could not be removed; the backup is kept`,
     firewallDeleteFailed: (msg: string) => `Could not delete firewall rules: ${msg}`,
-    firewallNeedAdmin: "Deleting firewall rules requires administrator rights; restart Remova elevated",
+    firewallNeedAdmin:
+      "Deleting the selected firewall rules needs administrator rights. Remova will restart elevated (the window briefly closes and reopens); select and delete them again afterwards.",
     lockDiagnose: "Show locking processes",
     lockDiagnoseEmpty: "No process is holding this path",
     lockDiagnoseFailed: (msg: string) => `Could not query locking processes: ${msg}`,
