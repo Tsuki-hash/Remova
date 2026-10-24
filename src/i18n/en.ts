@@ -269,6 +269,8 @@ export const dict: EnDict = {
     brokenInstallsRemoveOk: "Install record removed",
     brokenInstallsRemovePartial: (n: number) => `${n} record key(s) could not be removed; the backup is kept`,
     brokenInstallsRemoveFailed: (msg: string) => `Could not remove the record: ${msg}`,
+    brokenInstallsNeedAdmin:
+      "Removing this broken record needs administrator rights: its MSI installer data lives in machine-wide registry. Remova will restart elevated (the window briefly closes and reopens); run the removal again afterwards.",
     firewallTitle: "Orphan firewall rules",
     firewallHint: "Rules whose program file no longer exists (read-only scan, unselected by default)",
     firewallEmpty: "No orphan firewall rules found",

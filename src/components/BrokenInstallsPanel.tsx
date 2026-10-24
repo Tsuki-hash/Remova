@@ -94,7 +94,26 @@ export function BrokenInstallsPanel({
       }
       await scan();
     } catch (e) {
-      toast.error(L.brokenInstallsRemoveFailed(formatError(e)));
+      // Broken MSI records keep packed installer data under HKLM even for
+      // per-user installs, so the backend refuses a non-elevated removal whole.
+      // Match the raw refusal — formatError would already localize it away.
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      if (raw.toLowerCase().includes("administrator privileges")) {
+        const { ok } = await requestConfirmEx({
+          title: L.elevateAskTitle,
+          message: L.brokenInstallsNeedAdmin,
+          confirmLabel: L.elevateAskOk,
+        });
+        if (ok) {
+          try {
+            await api.elevateRestart();
+          } catch (err) {
+            toast.error(formatError(err, "elevate"));
+          }
+        }
+      } else {
+        toast.error(L.brokenInstallsRemoveFailed(backendErrorText(formatError(e))));
+      }
     } finally {
       setRunning(null);
       setBusy(false);

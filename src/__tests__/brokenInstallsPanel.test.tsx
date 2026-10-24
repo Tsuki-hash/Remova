@@ -28,14 +28,17 @@ const row: BrokenInstall = {
 const brokenInstalls = vi.fn();
 const officialUninstall = vi.fn();
 const cleanupBrokenInstall = vi.fn();
+const elevateRestart = vi.fn();
+const requestConfirmEx = vi.hoisted(() => vi.fn(async () => ({ ok: true, checked: false })));
 vi.mock("../lib/api", () => ({
   api: {
     brokenInstalls: (...a: unknown[]) => brokenInstalls(...a),
     officialUninstall: (...a: unknown[]) => officialUninstall(...a),
     cleanupBrokenInstall: (...a: unknown[]) => cleanupBrokenInstall(...a),
+    elevateRestart: (...a: unknown[]) => elevateRestart(...a),
   },
 }));
-vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })) }));
+vi.mock("../lib/confirm", () => ({ requestConfirmEx }));
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -95,4 +98,51 @@ it("removes a broken record only after confirmation and reports the backup", asy
   );
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   await waitFor(() => expect(brokenInstalls).toHaveBeenCalledTimes(2));
+});
+
+it("offers an elevated restart when removal is refused for admin rights", async () => {
+  const { toast } = await import("../lib/toast");
+  brokenInstalls.mockResolvedValue([row]);
+  cleanupBrokenInstall.mockRejectedValue(
+    "administrator privileges are required for machine-wide records",
+  );
+  panel();
+  await screen.findByText("Broken App");
+  fireEvent.click(screen.getByRole("button", { name: t().brokenInstallsRemove }));
+  await waitFor(() => expect(cleanupBrokenInstall).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(2));
+  expect(requestConfirmEx).toHaveBeenLastCalledWith(
+    expect.objectContaining({ message: t().brokenInstallsNeedAdmin }),
+  );
+  await waitFor(() => expect(elevateRestart).toHaveBeenCalledTimes(1));
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("keeps standard privileges when the elevation prompt is declined", async () => {
+  requestConfirmEx
+    .mockResolvedValueOnce({ ok: true, checked: false })
+    .mockResolvedValueOnce({ ok: false, checked: false });
+  brokenInstalls.mockResolvedValue([row]);
+  cleanupBrokenInstall.mockRejectedValue(
+    "administrator privileges are required for machine-wide records",
+  );
+  panel();
+  await screen.findByText("Broken App");
+  fireEvent.click(screen.getByRole("button", { name: t().brokenInstallsRemove }));
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(2));
+  expect(elevateRestart).not.toHaveBeenCalled();
+});
+
+it("reports other removal failures without the elevation prompt", async () => {
+  const { toast } = await import("../lib/toast");
+  brokenInstalls.mockResolvedValue([row]);
+  cleanupBrokenInstall.mockRejectedValue("boom");
+  panel();
+  await screen.findByText("Broken App");
+  fireEvent.click(screen.getByRole("button", { name: t().brokenInstallsRemove }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(toast.error).toHaveBeenCalledWith(
+    t().brokenInstallsRemoveFailed("操作失败：boom"),
+  );
+  expect(elevateRestart).not.toHaveBeenCalled();
 });

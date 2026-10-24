@@ -269,6 +269,8 @@ export const dict = {
     brokenInstallsRemoveOk: "安装记录已删除",
     brokenInstallsRemovePartial: (n: number) => `记录删除部分失败（${n} 项），备份已保留`,
     brokenInstallsRemoveFailed: (msg: string) => `删除记录失败：${msg}`,
+    brokenInstallsNeedAdmin:
+      "删除该损坏记录需要管理员权限：MSI 安装数据位于机器级注册表。Remova 将以管理员身份重启（窗口会短暂关闭后重开），重启后请再次执行删除。",
     firewallTitle: "孤儿网络规则",
     firewallHint: "程序文件已不存在的防火墙规则（只读扫描，默认不选）",
     firewallEmpty: "没有发现孤立的防火墙规则",
