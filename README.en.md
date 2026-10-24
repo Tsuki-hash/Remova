@@ -113,6 +113,8 @@ npm run coverage
 # Backend
 cd src-tauri
 cargo test --workspace
+# Microbenchmarks for hot pure guards (optional, local only)
+cargo bench
 
 # Dev app
 npx tauri dev

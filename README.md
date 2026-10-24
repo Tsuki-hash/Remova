@@ -120,6 +120,8 @@ npm run coverage
 # 后端
 cd src-tauri
 cargo test --workspace
+# 热点纯函数微基准（可选，仅本地）
+cargo bench
 
 # 开发运行
 npx tauri dev

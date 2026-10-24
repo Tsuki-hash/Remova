@@ -4,7 +4,7 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.4.0] - 2026-10-23
+## [1.4.0] - 2026-10-24
 
 本次发布汇总自 v1.3.1 以来的安全、正确性与可用性改进，并新增深度卸载、安装包与缓存扫描能力。
 
@@ -116,6 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 新增跨 hive、授权清单、门禁 fail-closed、备份 junction、取消、损坏记录/防火墙/还原门禁、TEMP 重定向、CLSID 默认值、AI 语言模板等回归测试。
 - 覆盖率门禁覆盖逻辑层；文档索引、命令表、源码编号与版本五源对齐接入 CI。
 - 架构文档、用户指南与贡献文档同步；新增一条扫描规则的完整触点清单。
+- 还原流程在父目录钉扎不可用时跳过该目标并记录原因，与其余还原失败路径同为 fail-closed，移除非测试代码中的断言依赖。
+- 最大三个模块的内联测试拆分为同级 `tests.rs` 文件（模块路径不变），主文件体积下降约四成；新增热点纯函数微基准（`cargo bench`，仅本地运行，CI 只编译不执行）。
 
 ## [1.3.1] - 2026-10-10
 
