@@ -85,6 +85,16 @@ describe("1.4.1 backend error strings", () => {
     expect(
       backendErrorText("migration is not in the cutover state (current: finished)"),
     ).toBe(t().backendMigrateState);
+    expect(backendErrorText("backup failed; npm packages kept: seal boom")).toBe(
+      t().backendNpmBackupFailed,
+    );
+    expect(
+      backendErrorText("package is no longer listed by the fresh scan: rimraf"),
+    ).toBe(t().backendNpmStale("rimraf"));
+    expect(backendErrorText("npm global folder not found")).toBe(t().backendNpmNoRoot);
+    expect(
+      backendErrorText("not an admitted npm global package: ghost"),
+    ).toBe(t().backendNpmNotAdmitted("ghost"));
     // Unknown strings keep the verbatim passthrough contract.
     expect(backendErrorText("some future backend string")).toBe("some future backend string");
   });

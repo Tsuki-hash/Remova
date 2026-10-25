@@ -76,6 +76,14 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     return L.backendNotRegenerable(raw.slice("not a regenerable layout: ".length));
   }
   if (raw.startsWith("migration is not in the cutover state")) return L.backendMigrateState;
+  if (raw.startsWith("backup failed; npm packages kept: ")) return L.backendNpmBackupFailed;
+  if (raw.startsWith("package is no longer listed by the fresh scan: ")) {
+    return L.backendNpmStale(raw.slice("package is no longer listed by the fresh scan: ".length));
+  }
+  if (raw === "npm global folder not found") return L.backendNpmNoRoot;
+  if (raw.startsWith("not an admitted npm global package: ")) {
+    return L.backendNpmNotAdmitted(raw.slice("not an admitted npm global package: ".length));
+  }
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");
