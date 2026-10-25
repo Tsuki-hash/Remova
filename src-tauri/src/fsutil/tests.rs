@@ -864,3 +864,55 @@ fn drive_type_cache_serves_hits_within_ttl_and_refreshes_after_it() {
     assert_eq!(refreshed, 3);
     assert_eq!(calls.get(), 2, "an expired root must be re-queried");
 }
+
+#[cfg(windows)]
+#[test]
+fn prefix_probe_cache_serves_hits_and_never_caches_errors() {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use crate::fsutil::PathProbe;
+
+    let mut cache = HashMap::new();
+    let t0 = Instant::now();
+    // A Cell keeps the counter readable between calls: each probe call gets
+    // its own closure (FnOnce), capturing the counter by shared reference.
+    let calls = std::cell::Cell::new(0u32);
+    let query = |_: &str| -> Option<PathProbe> {
+        calls.set(calls.get() + 1);
+        Some(PathProbe::Safe)
+    };
+
+    let first = super::drive_cache::cached_probe(&mut cache, r"C:\Data", t0, query);
+    assert_eq!(first, PathProbe::Safe);
+    // Same prefix, any casing: served from the cache.
+    let hit = super::drive_cache::cached_probe(
+        &mut cache,
+        r"c:\data",
+        t0 + Duration::from_secs(10),
+        query,
+    );
+    assert_eq!(hit, PathProbe::Safe);
+    assert_eq!(
+        calls.get(),
+        1,
+        "a cached prefix must not re-query within the TTL"
+    );
+
+    // Transient errors are never cached: each call re-queries.
+    let flaky = |_: &str| -> Option<PathProbe> { None };
+    let err = super::drive_cache::cached_probe(&mut cache, r"C:\Flaky", t0, flaky);
+    assert_eq!(err, PathProbe::Error);
+    let err2 = super::drive_cache::cached_probe(&mut cache, r"C:\Flaky", t0, flaky);
+    assert_eq!(err2, PathProbe::Error);
+
+    // After the TTL the topology is re-measured.
+    let refreshed = super::drive_cache::cached_probe(
+        &mut cache,
+        r"C:\Data",
+        t0 + Duration::from_secs(31),
+        query,
+    );
+    assert_eq!(refreshed, PathProbe::Safe);
+    assert_eq!(calls.get(), 2, "an expired prefix must be re-queried");
+}

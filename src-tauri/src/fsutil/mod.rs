@@ -971,6 +971,12 @@ mod drive_cache {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::GetLastError;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
+    };
+
     const TTL: Duration = Duration::from_secs(30);
 
     thread_local! {
@@ -1010,6 +1016,60 @@ mod drive_cache {
             })
         })
     }
+
+    // Prefix-probe cache: same batch-reuse rationale as the drive type — a
+    // batch scan probes the same directory prefixes thousands of times, and
+    // each miss was a `GetFileAttributesW`. Only stable topology outcomes
+    // (Safe/Reparse/Missing) are cached; `Error` is transient by nature and
+    // always re-queried. 30s TTL bounds a reparse-point created mid-batch.
+    // These probes gate read-side classification, never the delete path.
+    thread_local! {
+        static PROBE_CACHE: RefCell<HashMap<String, (super::PathProbe, Instant)>> =
+            RefCell::new(HashMap::new());
+    }
+
+    /// Testable core of the probe cache. `None` from the query means a
+    /// transient error: not cached.
+    pub(super) fn cached_probe<F: FnOnce(&str) -> Option<super::PathProbe>>(
+        cache: &mut HashMap<String, (super::PathProbe, Instant)>,
+        prefix: &str,
+        now: Instant,
+        query: F,
+    ) -> super::PathProbe {
+        let key = prefix.to_lowercase();
+        if let Some(&(probe, stamped)) = cache.get(&key) {
+            if now.duration_since(stamped) < TTL {
+                return probe;
+            }
+        }
+        let Some(probe) = query(&key) else {
+            return super::PathProbe::Error;
+        };
+        cache.insert(key, (probe, now));
+        probe
+    }
+
+    pub(super) fn probe(prefix: &str) -> super::PathProbe {
+        PROBE_CACHE.with(|c| {
+            let mut map = c.borrow_mut();
+            cached_probe(&mut map, prefix, Instant::now(), |key| {
+                let wide = super::to_wide(key);
+                let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+                if attrs != INVALID_FILE_ATTRIBUTES {
+                    if attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                        Some(super::PathProbe::Reparse)
+                    } else {
+                        Some(super::PathProbe::Safe)
+                    }
+                } else {
+                    match unsafe { GetLastError().0 } {
+                        2 | 3 => Some(super::PathProbe::Missing),
+                        _ => None,
+                    }
+                }
+            })
+        })
+    }
 }
 
 /// True only for an absolute path on a local volume with no reparse point in
@@ -1021,12 +1081,6 @@ mod drive_cache {
 pub fn is_local_drive_path(raw: &str) -> bool {
     #[cfg(windows)]
     {
-        use windows::core::PCWSTR;
-        use windows::Win32::Foundation::GetLastError;
-        use windows::Win32::Storage::FileSystem::{
-            GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
-        };
-
         const DRIVE_REMOVABLE: u32 = 2;
         const DRIVE_FIXED: u32 = 3;
         const DRIVE_REMOTE: u32 = 4;
@@ -1043,22 +1097,7 @@ pub fn is_local_drive_path(raw: &str) -> bool {
                         DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK | DRIVE_CDROM
                     )
             },
-            |prefix| {
-                let wide = to_wide(prefix);
-                let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
-                if attrs != INVALID_FILE_ATTRIBUTES {
-                    if attrs & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
-                        PathProbe::Reparse
-                    } else {
-                        PathProbe::Safe
-                    }
-                } else {
-                    match unsafe { GetLastError().0 } {
-                        2 | 3 => PathProbe::Missing,
-                        _ => PathProbe::Error,
-                    }
-                }
-            },
+            drive_cache::probe,
         )
     }
     #[cfg(not(windows))]
