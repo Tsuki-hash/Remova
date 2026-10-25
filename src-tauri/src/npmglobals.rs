@@ -321,6 +321,13 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn shims_are_removed_only_when_the_package_declares_a_command() {
+        // Backup goes through the seal store; tests redirect it to a fixture
+        // root — a clean runner has no real key (same as the other test here).
+        let _store = crate::path_seal::TestStore::new(
+            crate::test_support::TempDir::new("npm-bin-seals")
+                .path()
+                .join("seals"),
+        );
         let tmp = crate::test_support::TempDir::new("npm-bin");
         let (_prefix, nm) = seed(tmp.path());
         // A package WITHOUT a bin field: npm creates no shim, so the removal
