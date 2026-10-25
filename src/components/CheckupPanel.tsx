@@ -66,10 +66,10 @@ export function CheckupPanel({
           maxHeight: "calc(100dvh - 32px)",
           overflow: "auto",
           overflowWrap: "anywhere",
-          background: "var(--surface)",
+          background: "var(--surface-elevated)",
           border: "1px solid var(--border)",
           borderRadius: 14,
-          boxShadow: "var(--shadow)",
+          boxShadow: "var(--shadow-float)",
           padding: 16,
           fontSize: 13,
         }}

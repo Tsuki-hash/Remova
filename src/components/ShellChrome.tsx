@@ -142,7 +142,14 @@ export function ShellFooter({
             onKeyDown={(e) => {
               if (e.key === "Escape") e.stopPropagation();
             }}
-            style={{ background: "var(--surface)", color: "var(--fg)", padding: 24, borderRadius: 12 }}>
+            style={{
+              background: "var(--surface-elevated)",
+              color: "var(--fg)",
+              padding: 24,
+              borderRadius: 12,
+              border: "1px solid var(--border)",
+              boxShadow: "var(--shadow-float)",
+            }}>
             {/* Screen readers get the stepped announcement (hidden); the
                 visible line keeps the exact raw percent — no doubled %. */}
             <span aria-live="polite" style={visuallyHidden}>

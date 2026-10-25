@@ -151,10 +151,10 @@ export function AppDetailPanel({
                   top: 40,
                   zIndex: 20,
                   minWidth: 148,
-                  background: "var(--surface)",
+                  background: "var(--surface-elevated)",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
-                  boxShadow: "0 8px 24px rgba(0,0,0,.16)",
+                  boxShadow: "var(--shadow-float)",
                   padding: 4,
                 }}
               >

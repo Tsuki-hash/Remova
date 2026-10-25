@@ -72,10 +72,10 @@ export function CloseChoiceHost() {
         style={{
           outline: "none",
           width: "min(420px, calc(100vw - 32px))",
-          background: "var(--surface)",
+          background: "var(--surface-elevated)",
           border: "1px solid var(--border)",
           borderRadius: 14,
-          boxShadow: "0 16px 48px rgba(0,0,0,.18)",
+          boxShadow: "var(--shadow-float)",
           padding: "24px",
           display: "flex",
           flexDirection: "column",

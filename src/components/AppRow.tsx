@@ -147,10 +147,10 @@ function RowMenu({
               left: pos.left,
               zIndex: 10000,
               minWidth: pos.minWidth,
-              background: "var(--surface)",
+              background: "var(--surface-elevated)",
               border: "1px solid var(--border)",
               borderRadius: 10,
-              boxShadow: "var(--shadow)",
+              boxShadow: "var(--shadow-float)",
               padding: 4,
             }}
           >

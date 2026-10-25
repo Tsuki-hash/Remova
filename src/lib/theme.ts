@@ -77,6 +77,10 @@ export function applyTheme(pref: ThemePreference) {
     root.style.setProperty("--row-hover", "#2A2A2A");
     root.style.setProperty("--row-selected", "rgba(96,165,250,.12)");
     root.style.setProperty("--shadow", "none");
+    // Floating layers only (dialogs, menus, overlays): one elevation step above
+    // the flat panels, heavier in dark where the canvas is already near-black.
+    root.style.setProperty("--shadow-float", "0 16px 48px rgba(0,0,0,.55)");
+    root.style.setProperty("--surface-elevated", "#242424");
     root.style.setProperty("--mono", "'Cascadia Code', 'SF Mono', Consolas, 'Courier New', monospace");
   } else {
  // Neutral gray canvas + white panels (docs §2 / §11)
@@ -102,6 +106,8 @@ export function applyTheme(pref: ThemePreference) {
     root.style.setProperty("--row-hover", "#F6F6F6");
     root.style.setProperty("--row-selected", "rgba(37,99,235,.08)");
     root.style.setProperty("--shadow", "none");
+    root.style.setProperty("--shadow-float", "0 16px 48px rgba(0,0,0,.18)");
+    root.style.setProperty("--surface-elevated", "#FFFFFF");
     root.style.setProperty("--mono", "'Cascadia Code', 'SF Mono', Consolas, 'Courier New', monospace");
   }
   try {

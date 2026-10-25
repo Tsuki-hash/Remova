@@ -94,6 +94,8 @@ describe("theme preference", () => {
     applyTheme("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.style.getPropertyValue("--bg")).toBe("#171717");
+    expect(document.documentElement.style.getPropertyValue("--shadow-float")).toContain("rgba(0,0,0,.55)");
+    expect(document.documentElement.style.getPropertyValue("--surface-elevated")).toBe("#242424");
     expect(localStorage.getItem("remova_theme_v3")).toBe("dark");
     expect(loadThemePreference()).toBe("dark");
   });
