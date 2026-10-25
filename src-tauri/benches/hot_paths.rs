@@ -3,7 +3,10 @@
 //! via clippy --all-targets but does not run them.
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use remova_lib::fsutil::is_local_drive_path;
+use remova_lib::regenclean::is_deletable_layout;
 use remova_lib::safety::is_safe_to_delete_registry;
+use remova_lib::triage::{classify, roots_from_env};
+use std::path::Path;
 
 fn bench_hot_paths(c: &mut Criterion) {
     let mut group = c.benchmark_group("hot_paths");
@@ -38,5 +41,36 @@ fn bench_hot_paths(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_hot_paths);
+fn bench_space_guards(c: &mut Criterion) {
+    let mut group = c.benchmark_group("space_guards");
+    group.throughput(criterion::Throughput::Elements(1));
+
+    // Triage classification: runs once per enumerated directory in the
+    // disk-overview scan. Anchored roots are resolved once per scan.
+    let roots = roots_from_env();
+    group.bench_function("triage_classify/regenerable", |b| {
+        b.iter(|| classify(black_box(Path::new(r"C:\Windows\Temp")), black_box(&roots)))
+    });
+    group.bench_function("triage_classify/program_body", |b| {
+        b.iter(|| {
+            classify(
+                black_box(Path::new(r"C:\Program Files\Vendor\App")),
+                black_box(&roots),
+            )
+        })
+    });
+
+    // Regenerable admission: exact-match against the fixed layout table.
+    let layouts = remova_lib::regenclean::fixed_layouts(&remova_lib::triage::roots_from_env());
+    group.bench_function("is_deletable_layout/hit", |b| {
+        b.iter(|| is_deletable_layout(black_box(r"C:\Windows\Temp "), black_box(&layouts)))
+    });
+    group.bench_function("is_deletable_layout/miss", |b| {
+        b.iter(|| is_deletable_layout(black_box(r"C:\Windows\Temp2"), black_box(&layouts)))
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_hot_paths, bench_space_guards);
 criterion_main!(benches);

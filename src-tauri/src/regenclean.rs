@@ -54,7 +54,7 @@ pub struct RegenerableCleanupReport {
 
 /// The exact regenerable layouts. Nothing outside this table is ever
 /// deletable through this module.
-fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'static str)> {
+pub fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'static str)> {
     let win = &roots.windows;
     vec![
         (
@@ -93,7 +93,10 @@ fn servicing_busy() -> bool {
 }
 
 /// Pure admission check: only exact fixed layouts pass, case-insensitively.
-fn is_deletable_layout(path: &str, layouts: &[(PathBuf, &'static str)]) -> Option<&'static str> {
+pub fn is_deletable_layout(
+    path: &str,
+    layouts: &[(PathBuf, &'static str)],
+) -> Option<&'static str> {
     let p = path
         .trim()
         .to_lowercase()
