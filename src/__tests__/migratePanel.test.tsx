@@ -38,7 +38,9 @@ function type(src = "C:\\src", dst = "D:\\dst") {
 }
 
 it("renders plan rejections in the user's language", async () => {
-  vi.mocked(api.migrateStatus).mockResolvedValue("idle");
+  // Mount consumes the first (idle); the post-copy refreshState consumes
+  // the standing "copied" answer, mirroring the real backend.
+  vi.mocked(api.migrateStatus).mockResolvedValueOnce("idle").mockResolvedValue("copied");
   vi.mocked(api.migratePlan).mockResolvedValue({
     source: "C:\\src",
     target: "D:\\dst",
@@ -81,6 +83,37 @@ it("gates destructive phases on the derived state and confirms cutover", async (
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalled());
   await waitFor(() => expect(api.migrateCutover).toHaveBeenCalled());
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
+});
+
+it("the primary path starts from idle: plan ok enables the copy button", async () => {
+  // Regression: the copy gate once required state === "copied", which locked
+  // a first-run user out of the very first copy.
+  // Mount consumes the first (idle); the post-copy refreshState consumes
+  // the standing "copied" answer, mirroring the real backend.
+  vi.mocked(api.migrateStatus).mockResolvedValueOnce("idle").mockResolvedValue("copied");
+  vi.mocked(api.migratePlan).mockResolvedValue({
+    source: "C:\\src", target: "D:\\dst", ok: true,
+    rejections: [], source_kb: 10, file_count: 2, target_free_kb: 10_000_000,
+  });
+  vi.mocked(api.migrateCopy).mockResolvedValue({
+    files: 2, source_kb: 10, files_capped: false, reparse_skipped: [],
+  });
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  fireEvent.click(await screen.findByRole("button", { name: L.migratePlanBtn }));
+  await waitFor(() => {
+    const copy = screen.getByRole("button", { name: L.migrateCopyBtn });
+    if (copy.hasAttribute("disabled")) throw new Error("copy must be enabled after a feasible plan");
+  });
+  fireEvent.click(screen.getByRole("button", { name: L.migrateCopyBtn }));
+  await waitFor(() => expect(api.migrateCopy).toHaveBeenCalledWith("C:\\src", "D:\\dst"));
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  // After the copy lands the derived state is "copied": cutover unlocks.
+  await waitFor(() => {
+    const cutover = screen.getByRole("button", { name: L.migrateCutover });
+    if (cutover.hasAttribute("disabled")) throw new Error("cutover must unlock");
+  });
 });
 
 it("reports an automatic rollback as an error with the server reason", async () => {

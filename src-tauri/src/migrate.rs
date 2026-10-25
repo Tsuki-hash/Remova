@@ -497,20 +497,44 @@ fn make_junction(link: &Path, target: &Path) -> Result<(), String> {
 /// Write-through probe: a byte written through the junction must be readable
 /// at the junction target, then be cleaned up again.
 fn write_through_probe(junction: &Path, target: &Path) -> Result<(), String> {
-    let name = "remova_probe.tmp";
+    // The probe file lands inside the user's directory: the name must be
+    // unique so an existing file can never be overwritten (and then deleted)
+    // by the probe. Timestamp + pid + attempt gives that, with a pre-check.
     let payload = b"remova junction probe";
-    std::fs::write(junction.join(name), payload).map_err(|e| format!("probe write: {e}"))?;
-    let result = std::fs::read(target.join(name))
-        .map_err(|e| format!("probe read at target: {e}"))
-        .and_then(|got| {
-            if got == payload {
-                Ok(())
-            } else {
-                Err("probe content mismatch".into())
-            }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut name = String::new();
+    for attempt in 0..8u32 {
+        let candidate = format!(
+            "remova_probe_{nanos}_{}_{}.tmp",
+            std::process::id(),
+            attempt
+        );
+        if !junction.join(&candidate).exists() {
+            name = candidate;
+            break;
+        }
+    }
+    if name.is_empty() {
+        return Err("probe could not find a free file name".into());
+    }
+    let result = std::fs::write(junction.join(&name), payload)
+        .map_err(|e| format!("probe write: {e}"))
+        .and_then(|()| {
+            std::fs::read(target.join(&name))
+                .map_err(|e| format!("probe read at target: {e}"))
+                .and_then(|got| {
+                    if got == payload {
+                        Ok(())
+                    } else {
+                        Err("probe content mismatch".into())
+                    }
+                })
         });
-    let _ = std::fs::remove_file(target.join(name));
-    let _ = std::fs::remove_file(junction.join(name));
+    let _ = std::fs::remove_file(target.join(&name));
+    let _ = std::fs::remove_file(junction.join(&name));
     result
 }
 
@@ -967,6 +991,27 @@ mod tests {
         assert!(src.join("a.txt").exists());
         std::fs::remove_file(tgt.join("stray.txt")).unwrap();
         assert!(copy_phase(&src.to_string_lossy(), &tgt.to_string_lossy()).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_probe_never_touches_an_existing_probe_named_file() {
+        let tmp = crate::test_support::TempDir::new("migr-probe");
+        let target = tmp.path().join("tgt");
+        std::fs::create_dir_all(&target).unwrap();
+        // A stale file with the historic probe name must survive a cutover.
+        // It lives in the source so the copy diff stays green and the file
+        // travels to the target like any other content.
+        let src = seed_source(tmp.path());
+        std::fs::write(src.join("remova_probe.tmp"), b"user data").unwrap();
+        copy_phase(&src.to_string_lossy(), &target.to_string_lossy()).unwrap();
+        let cut = cutover(&src.to_string_lossy(), &target.to_string_lossy());
+        assert!(cut.ok, "{cut:?}");
+        assert_eq!(
+            std::fs::read(target.join("remova_probe.tmp")).unwrap(),
+            b"user data",
+            "the probe must not overwrite or delete an existing file"
+        );
     }
 
     #[cfg(windows)]

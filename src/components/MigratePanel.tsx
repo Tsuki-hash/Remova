@@ -193,7 +193,7 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
           {L.migratePlanBtn}
         </button>
         <button type="button" style={{ ...css.btnGhost, height: 30 }}
-          disabled={busy || !plan?.ok || state !== "copied"} onClick={() => void runCopy()}>
+          disabled={busy || !plan?.ok || (state !== "idle" && state !== "copied")} onClick={() => void runCopy()}>
           {L.migrateCopyBtn}
         </button>
         <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "copied"} onClick={() => void runCutover()}>
