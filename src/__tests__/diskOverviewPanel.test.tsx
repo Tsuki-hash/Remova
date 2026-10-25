@@ -11,6 +11,7 @@ vi.mock("../lib/api", () => ({
   api: {
     listLocalDrives: vi.fn(),
     junctionLedger: vi.fn(),
+    spaceTriage: vi.fn(),
     analyzeComponentStore: vi.fn(),
   },
 }));
@@ -31,6 +32,25 @@ function mockLoads() {
     ],
     omitted: 3,
     degraded_roots: ["F:\\Gone"],
+  });
+  vi.mocked(api.spaceTriage).mockResolvedValue({
+    entries: [
+      {
+        path: "C:\\Windows\\SoftwareDistribution\\Download",
+        class: "delete_regenerable",
+        reason: "win_update_download",
+        size_kb: 812_500,
+        size_capped: false,
+      },
+      {
+        path: "C:\\hiberfil.sys",
+        class: "show_only",
+        reason: "system_swap_file",
+        size_kb: 6_553_600,
+        size_capped: false,
+      },
+    ],
+    omitted: 0,
   });
 }
 
@@ -58,6 +78,17 @@ it("runs the DISM analysis on demand and reports the verdict", async () => {
   await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
   expect(api.analyzeComponentStore).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes);
+});
+
+it("renders the triage rows with class labels and sizes", async () => {
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(await screen.findByText("C:\\Windows\\SoftwareDistribution\\Download")).toBeTruthy();
+  expect(screen.getByText(L.triageClassDelete)).toBeTruthy();
+  expect(screen.getByText(L.triageClassShowOnly)).toBeTruthy();
+  // Size ordering is decided server-side; the panel renders what it receives.
+  expect(screen.getByText("C:\\hiberfil.sys")).toBeTruthy();
 });
 
 it("shows the read-only scope note so nothing here reads as actionable cleanup", async () => {

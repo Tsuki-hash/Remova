@@ -36,6 +36,7 @@ pub mod shared;
 pub mod storeapps;
 pub mod sysops;
 pub mod toolcache;
+pub mod triage;
 pub mod winsxs;
 
 // End-to-end smokes (temp dirs / path mock only) — kept in the module tree so
@@ -861,6 +862,14 @@ async fn analyze_component_store() -> Result<winsxs::ComponentStoreAnalysis, Str
         .map_err(|e| e.to_string())?
 }
 
+/// Space triage for the disk overview (read-only, judgement table).
+#[tauri::command]
+async fn scan_space_triage() -> Result<triage::TriageScanResult, String> {
+    tauri::async_runtime::spawn_blocking(triage::scan_space_triage)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Delete rule values after a fresh orphan scan and a registry backup.
 #[tauri::command]
 async fn delete_firewall_rules(
@@ -1227,6 +1236,7 @@ pub fn run() {
         // `delete_firewall_rules`
         // `scan_junction_ledger`
         // `analyze_component_store`
+        // `scan_space_triage`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1300,6 +1310,7 @@ pub fn run() {
             delete_firewall_rules,
             scan_junction_ledger,
             analyze_component_store,
+            scan_space_triage,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

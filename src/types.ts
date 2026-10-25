@@ -126,6 +126,22 @@ export type ComponentStoreAnalysis = {
   actual_size_bytes: number | null;
 };
 
+/** Disk-space overview: judgement-table triage (read-only). */
+export type TriageClass =
+  | "delete_regenerable"
+  | "via_dism"
+  | "migrate_candidate"
+  | "leave"
+  | "show_only";
+export type TriageEntry = {
+  path: string;
+  class: TriageClass;
+  reason: string;
+  size_kb: number | null;
+  size_capped: boolean;
+};
+export type TriageScanResult = { entries: TriageEntry[]; omitted: number };
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

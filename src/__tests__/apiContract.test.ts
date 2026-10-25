@@ -31,6 +31,7 @@ const COMMAND_KEYS = [
   "deleteFirewallRules",
   "junctionLedger",
   "analyzeComponentStore",
+  "spaceTriage",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",

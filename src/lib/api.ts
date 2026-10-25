@@ -12,6 +12,7 @@ import type {
   FirewallScanResult,
   JunctionScanResult,
   ComponentStoreAnalysis,
+  TriageScanResult,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -130,6 +131,8 @@ export const api = {
   junctionLedger: () => invoke<JunctionScanResult>("scan_junction_ledger"),
   /** Disk-space overview: WinSxS analysis via DISM (read-only, elevated). */
   analyzeComponentStore: () => invoke<ComponentStoreAnalysis>("analyze_component_store"),
+  /** Disk-space overview: judgement-table triage of anchored roots (read-only). */
+  spaceTriage: () => invoke<TriageScanResult>("scan_space_triage"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

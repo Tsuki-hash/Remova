@@ -1,14 +1,49 @@
 import { useEffect, useState } from "react";
 import { api, type DriveInfo } from "../lib/api";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
-import type { ComponentStoreAnalysis, JunctionScanResult } from "../types";
+import type {
+  ComponentStoreAnalysis,
+  JunctionScanResult,
+  TriageClass,
+  TriageEntry,
+  TriageScanResult,
+} from "../types";
 
 const DEAD_LINKS_SHOWN = 50;
+
+const TRIAGE_CLASS_LABEL: Record<TriageClass, { label: string; tone: string }> = {
+  delete_regenerable: { label: "triageClassDelete", tone: "var(--warn-ink)" },
+  via_dism: { label: "triageClassViaDism", tone: "var(--warn-ink)" },
+  migrate_candidate: { label: "triageClassMigrate", tone: "var(--accent-text)" },
+  leave: { label: "triageClassLeave", tone: "var(--muted)" },
+  show_only: { label: "triageClassShowOnly", tone: "var(--muted)" },
+};
+
+function triageReasonText(L: ReturnType<typeof t>, reason: string): string {
+  const map: Record<string, string> = {
+    win_update_download: L.triageReasonWinUpdateDownload,
+    cbs_temp: L.triageReasonCbsTemp,
+    win_temp: L.triageReasonWinTemp,
+    crash_dumps: L.triageReasonCrashDumps,
+    winsxs_dism_only: L.triageReasonWinsxs,
+    installer_source_cache: L.triageReasonInstallerCache,
+    system_tree: L.triageReasonSystemTree,
+    wer_reports: L.triageReasonWer,
+    program_body: L.triageReasonProgramBody,
+    programdata_app: L.triageReasonProgramdataApp,
+    user_temp: L.triageReasonUserTemp,
+    shader_cache: L.triageReasonShaderCache,
+    app_data: L.triageReasonAppData,
+    user_data: L.triageReasonUserData,
+    system_swap_file: L.triageReasonSwapFile,
+  };
+  return map[reason] ?? reason;
+}
 
 function gb(n: number): string {
   return `${n.toFixed(1)} GB`;
@@ -24,6 +59,7 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
   const L = t();
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [junction, setJunction] = useState<JunctionScanResult | null>(null);
+  const [triage, setTriage] = useState<TriageScanResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dismBusy, setDismBusy] = useState(false);
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
@@ -33,10 +69,15 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
     setLoadError(null);
     void (async () => {
       try {
-        const [d, j] = await Promise.all([api.listLocalDrives(), api.junctionLedger()]);
+        const [d, j, tr] = await Promise.all([
+          api.listLocalDrives(),
+          api.junctionLedger(),
+          api.spaceTriage(),
+        ]);
         if (!alive) return;
         setDrives(d);
         setJunction(j);
+        setTriage(tr);
       } catch (e) {
         if (alive) setLoadError(formatError(e));
       }
@@ -131,6 +172,53 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
           {junction.omitted > 0 && (
             <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
               {L.scanOmitted(junction.omitted)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {triage && triage.entries.length > 0 && (
+        <div style={{ marginTop: 10 }} aria-label={L.triageTitle}>
+          <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
+          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
+          <div
+            style={{
+              maxHeight: 220,
+              overflow: "auto",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            {triage.entries.map((e: TriageEntry) => {
+              const meta = TRIAGE_CLASS_LABEL[e.class];
+              const label = L[meta.label as keyof typeof L] as string;
+              return (
+                <div
+                  key={e.path}
+                  title={triageReasonText(L, e.reason)}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    padding: "4px 8px",
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 12,
+                    alignItems: "center",
+                  }}
+                >
+                  <span className="ell" style={{ flex: 1, minWidth: 0 }}>
+                    {e.path}
+                  </span>
+                  <span style={{ color: meta.tone, whiteSpace: "nowrap" }}>{label}</span>
+                  <span style={{ ...css.mono, whiteSpace: "nowrap" }}>
+                    {e.size_kb !== null ? formatSize(e.size_kb) : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {triage.omitted > 0 && (
+            <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
+              {L.scanOmitted(triage.omitted)}
             </div>
           )}
         </div>
