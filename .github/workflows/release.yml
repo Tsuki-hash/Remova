@@ -126,8 +126,10 @@ jobs:
           $existing = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" 2>&1
           if ($LASTEXITCODE -eq 0) {
             if (-not (($existing | Out-String | ConvertFrom-Json).draft)) { throw 'This tag already has a published release.' }
-          } elseif (($existing | Out-String) -notmatch 'HTTP 404') {
-            throw 'Could not determine existing release state.'
+          } elseif (($existing | Out-String) -notmatch '404') {
+            # gh renders a not-found either as "gh: ... (HTTP 404)" or as the
+            # JSON body alone ('"status":"404"'); both must count as "no release".
+            throw "Could not determine existing release state: $($existing | Out-String)"
           }
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
