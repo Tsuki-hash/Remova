@@ -134,3 +134,10 @@ tests, `copy_dir_refuses_file_swapped_to_symlink_after_enumeration` and
 and Release; the rest are manual (see the Commands block for what each one
 mutates). A skipped test is not acceptance evidence — say so in the PR rather
 than letting the default suite imply coverage it does not have.
+
+## Build reproducibility (measured)
+
+Two `cargo clean && cargo build --release` runs on the same machine, source tree and toolchain produce **byte-different** `remova.exe` binaries (measured 2026-10-25: three clean builds, three distinct SHA256 digests; the MSVC-linked image embeds nondeterministic data, typically the PDB GUID and linker records). Consequences:
+
+- `SHA256SUMS.txt` on a Release page verifies **download integrity against that release's artifacts**; it does not claim cross-build reproducibility.
+- If reproducible releases are ever needed, deterministic linking on MSVC or a toolchain switch must be evaluated and measured first — do not document reproducible builds until then.

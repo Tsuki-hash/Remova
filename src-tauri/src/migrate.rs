@@ -478,6 +478,9 @@ pub fn copy_phase(source: &str, target: &str) -> Result<MigrationCopyReport, Str
 }
 
 fn make_junction(link: &Path, target: &Path) -> Result<(), String> {
+    // std quotes each arg for cmd.exe, so spaces and cmd metacharacters inside
+    // the paths stay literal (the args array never re-parses through a shell).
+    // Real-machine confirmation of odd path shapes lives in ACCEPTANCE H8.
     let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
         .args(["/c", "mklink", "/J"])
         .arg(link)
