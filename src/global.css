@@ -1,4 +1,14 @@
 
+  /* Motion tokens (M3): two tiers plus the press micro-feedback.
+     --dur-float has no consumer yet — this product keeps overlays instant;
+     it exists so a future overlay transition cannot invent a third tier. */
+  :root {
+    --dur-fast: 120ms;
+    --dur-float: 200ms;
+    --dur-press: 50ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  }
+
   * { box-sizing: border-box; }
   html, body, #root { height: 100%; }
   body {
@@ -12,7 +22,7 @@
   }
   button, input, select, textarea { font-family: inherit; }
   input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
-  button { transition: background .12s, border-color .12s, box-shadow .12s, filter .12s, transform .05s; }
+  button { transition: background var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard), filter var(--dur-fast) var(--ease-standard), transform var(--dur-press) linear; }
   textarea { color: var(--fg); }
   .remova-navigation button:hover:not([aria-current='page']) { background: var(--row-hover); }
   .remova-navigation button[aria-current="page"]::before {
