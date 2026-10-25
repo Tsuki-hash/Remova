@@ -16,6 +16,7 @@ import type {
   RegenerableScanResult,
   RegenerableCleanupReport,
   CliGlobalScanResult,
+  NpmCleanupReport,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -143,6 +144,9 @@ export const api = {
     invoke<RegenerableCleanupReport>("delete_regenerable_layouts", { paths }),
   /** Global CLI package inventory, npm/pnpm/yarn (read-only). */
   cliGlobals: () => invoke<CliGlobalScanResult>("scan_cli_globals"),
+  /** Remove npm global packages (server re-admits; Safety Vault backup first). */
+  removeNpmGlobals: (packages: { name: string }[]) =>
+    invoke<NpmCleanupReport>("remove_npm_globals", { packages }),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

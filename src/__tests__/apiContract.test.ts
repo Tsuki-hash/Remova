@@ -35,6 +35,7 @@ const COMMAND_KEYS = [
   "regenerableLayouts",
   "deleteRegenerableLayouts",
   "cliGlobals",
+  "removeNpmGlobals",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",

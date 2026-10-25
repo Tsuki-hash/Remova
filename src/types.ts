@@ -173,6 +173,11 @@ export type CliGlobalScanResult = {
   omitted: number;
   notes: string[];
 };
+export type NpmCleanupReport = {
+  removed: string[];
+  failed: string[];
+  backup_dir: string;
+};
 
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };

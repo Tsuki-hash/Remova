@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 新增
 
-- 新增「全局 CLI 包」只读清单：列出 npm / pnpm / yarn 的全局包（pnpm 列命令 shim、不猜测版本），支持一键打开对应全局目录；全局目录缺失或不可读时如实标注；本版本不提供删除。
+- 新增「全局 CLI 包」清单（npm / pnpm / yarn 只读）：npm 全局包支持在确认后删除——严格准入（仅确认的全局 node_modules 下的普通包目录，拒绝符号链接/junction/路径穿越/裸 scope）、删除前整包与命令 shim 导出到安全备份、备份失败不删、服务端新扫描复核；pnpm 与 yarn 保持只读（链接布局评估后再开放）。
 - 「C 盘空间体检」面板新增可再生缓存清理：仅限固定布局（Windows 更新下载缓存、系统/用户临时目录、崩溃转储、WER 报告、着色器缓存），默认不勾选，确认时明示不创建备份（内容会自动重建）；只删内容、目录本身保留，被占用文件如实跳过并逐项记账释放量；系统组件服务（servicing）进行中时 CbsTemp 暂不可清理。
 
 ### 改进

@@ -23,6 +23,7 @@ pub mod installmon;
 pub mod junction;
 pub mod locks;
 pub mod manage;
+pub mod npmglobals;
 pub mod orphans;
 pub mod path_seal;
 pub mod policy;
@@ -888,6 +889,16 @@ async fn scan_cli_globals() -> Result<cliglobals::CliGlobalScanResult, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Remove npm global packages (Safety Vault backup first; admission strict).
+#[tauri::command]
+async fn remove_npm_globals(
+    packages: Vec<npmglobals::NpmPackageRef>,
+) -> Result<npmglobals::NpmCleanupReport, String> {
+    tauri::async_runtime::spawn_blocking(move || npmglobals::remove_npm_globals(&packages))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Delete the contents of regenerable layouts (no backup: invariant 7; the
 /// server re-admits every path through a fresh scan first).
 #[tauri::command]
@@ -1269,6 +1280,7 @@ pub fn run() {
         // `scan_regenerable_layouts`
         // `delete_regenerable_layouts`
         // `scan_cli_globals`
+        // `remove_npm_globals`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1346,6 +1358,7 @@ pub fn run() {
             scan_regenerable_layouts,
             delete_regenerable_layouts,
             scan_cli_globals,
+            remove_npm_globals,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,
