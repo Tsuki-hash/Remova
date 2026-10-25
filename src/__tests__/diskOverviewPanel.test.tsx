@@ -2,16 +2,27 @@
 // Read-only disk-space overview: volume shape, junction ledger with dead
 // links, and the on-demand DISM component-store analysis.
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { DiskOverviewPanel } from "../components/DiskOverviewPanel";
 import { api } from "../lib/api";
+import { requestConfirmEx } from "../lib/confirm";
+import { toast } from "../lib/toast";
 import { t } from "../i18n";
+
+vi.mock("../lib/confirm", () => ({
+  requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })),
+}));
+vi.mock("../lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 
 vi.mock("../lib/api", () => ({
   api: {
     listLocalDrives: vi.fn(),
     junctionLedger: vi.fn(),
     spaceTriage: vi.fn(),
+    regenerableLayouts: vi.fn(),
+    deleteRegenerableLayouts: vi.fn(),
     analyzeComponentStore: vi.fn(),
   },
 }));
@@ -51,6 +62,32 @@ function mockLoads() {
       },
     ],
     omitted: 0,
+  });
+  vi.mocked(api.regenerableLayouts).mockResolvedValue({
+    items: [
+      {
+        path: "C:\\Windows\\Temp",
+        reason: "win_temp",
+        size_kb: 1_200,
+        size_capped: false,
+        deletable: true,
+        block_reason: null,
+      },
+      {
+        path: "C:\\Windows\\CbsTemp",
+        reason: "cbs_temp",
+        size_kb: 3_400,
+        size_capped: false,
+        deletable: false,
+        block_reason: "servicing_busy",
+      },
+    ],
+    omitted: 0,
+  });
+  vi.mocked(api.deleteRegenerableLayouts).mockResolvedValue({
+    cleaned: ["C:\\Windows\\Temp"],
+    skipped: [],
+    reclaimed_kb: 1_200,
   });
 }
 
@@ -95,4 +132,24 @@ it("shows the read-only scope note so nothing here reads as actionable cleanup",
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   expect(await screen.findByText(t().diskOverviewScopeNote)).toBeTruthy();
+});
+
+it("offers regenerable cleanup with a no-backup confirm and reports the result", async () => {
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  // The blocked layout is visibly disabled with its reason.
+  expect(await screen.findByText(/servicing 进行中/)).toBeTruthy();
+  const row = screen.getByText("C:\\Windows\\Temp").closest("label")!;
+  fireEvent.click(within(row).getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: L.regenClean }));
+  // The confirm restates the no-backup contract before anything runs.
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(1));
+  const opts = vi.mocked(requestConfirmEx).mock.calls[0]![0];
+  expect(opts.message).toContain("不创建备份");
+  await waitFor(() =>
+    expect(api.deleteRegenerableLayouts).toHaveBeenCalledWith(["C:\\Windows\\Temp"]),
+  );
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  expect(vi.mocked(toast.success).mock.calls[0]![0]).toContain(L.regenDone(1, "1.17 MB").slice(0, 6));
 });

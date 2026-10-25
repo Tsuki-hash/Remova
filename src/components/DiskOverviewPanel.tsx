@@ -5,10 +5,12 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
+import { requestConfirmEx } from "../lib/confirm";
 import { CloseGlyph } from "./ui/Glyph";
 import type {
   ComponentStoreAnalysis,
   JunctionScanResult,
+  RegenerableScanResult,
   TriageClass,
   TriageEntry,
   TriageScanResult,
@@ -60,24 +62,32 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [junction, setJunction] = useState<JunctionScanResult | null>(null);
   const [triage, setTriage] = useState<TriageScanResult | null>(null);
+  const [regen, setRegen] = useState<RegenerableScanResult | null>(null);
+  const [regenSel, setRegenSel] = useState<Set<string>>(new Set());
+  const [regenBusy, setRegenBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dismBusy, setDismBusy] = useState(false);
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
+
+  const reload = async () => {
+    const [d, j, tr, rg] = await Promise.all([
+      api.listLocalDrives(),
+      api.junctionLedger(),
+      api.spaceTriage(),
+      api.regenerableLayouts(),
+    ]);
+    setDrives(d);
+    setJunction(j);
+    setTriage(tr);
+    setRegen(rg);
+  };
 
   useEffect(() => {
     let alive = true;
     setLoadError(null);
     void (async () => {
       try {
-        const [d, j, tr] = await Promise.all([
-          api.listLocalDrives(),
-          api.junctionLedger(),
-          api.spaceTriage(),
-        ]);
-        if (!alive) return;
-        setDrives(d);
-        setJunction(j);
-        setTriage(tr);
+        if (alive) await reload();
       } catch (e) {
         if (alive) setLoadError(formatError(e));
       }
@@ -101,6 +111,53 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
       }
     } finally {
       setDismBusy(false);
+    }
+  };
+
+  const toggleRegen = (path: string) => {
+    setRegenSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const deletableItems = regen?.items.filter((i) => i.deletable) ?? [];
+  const allSelected = deletableItems.length > 0 && deletableItems.every((i) => regenSel.has(i.path));
+
+  const cleanRegen = async () => {
+    const chosen = [...regenSel];
+    if (!chosen.length || regenBusy) return;
+    const totalKb =
+      regen?.items.filter((i) => regenSel.has(i.path)).reduce((s, i) => s + i.size_kb, 0) ?? 0;
+    const { ok } = await requestConfirmEx({
+      title: L.regenTitle,
+      message: L.regenCleanConfirm(chosen.length, formatSize(totalKb)),
+      confirmLabel: L.regenClean,
+      danger: true,
+    });
+    if (!ok) return;
+    setRegenBusy(true);
+    try {
+      const report = await api.deleteRegenerableLayouts(chosen);
+      if (report.skipped.length) {
+        toast.error(L.regenSkipped(report.skipped.length), {
+          detail: report.skipped.map((s) => `${s.path}: ${s.message}`).join("\n"),
+        });
+      }
+      if (report.cleaned.length) {
+        toast.success(L.regenDone(report.cleaned.length, formatSize(report.reclaimed_kb)));
+      }
+      setRegenSel(new Set());
+      await reload();
+    } catch (e) {
+      toast.error(formatError(e));
+    } finally {
+      setRegenBusy(false);
     }
   };
 
@@ -221,6 +278,58 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
               {L.scanOmitted(triage.omitted)}
             </div>
           )}
+        </div>
+      )}
+
+      {regen && regen.items.length > 0 && (
+        <div style={{ marginTop: 10 }} aria-label={L.regenTitle}>
+          <div style={{ fontWeight: 600 }}>{L.regenTitle}</div>
+          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.regenHint}</div>
+          {regen.items.map((it) => (
+            <label
+              key={it.path}
+              style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px", fontSize: 12 }}
+            >
+              <input
+                type="checkbox"
+                checked={regenSel.has(it.path)}
+                disabled={!it.deletable}
+                onChange={() => toggleRegen(it.path)}
+              />
+              <span
+                className="ell"
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  color: it.deletable ? "var(--fg)" : "var(--muted)",
+                }}
+                title={it.path}
+              >
+                {it.path}
+                {it.block_reason === "servicing_busy" ? ` — ${L.regenBlockServicing}` : ""}
+              </span>
+              <span style={{ ...css.mono, whiteSpace: "nowrap" }}>{formatSize(it.size_kb)}</span>
+            </label>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button
+              type="button"
+              style={{ ...css.btnGhost, height: 30 }}
+              onClick={() =>
+                setRegenSel(allSelected ? new Set() : new Set(deletableItems.map((i) => i.path)))
+              }
+            >
+              {L.regenSelectAll}
+            </button>
+            <button
+              type="button"
+              style={{ ...css.btnGhost, height: 30 }}
+              disabled={regenBusy || regenSel.size === 0}
+              onClick={() => void cleanRegen()}
+            >
+              {regenBusy ? L.regenCleaning : L.regenClean}
+            </button>
+          </div>
         </div>
       )}
 

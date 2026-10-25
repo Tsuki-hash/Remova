@@ -13,6 +13,8 @@ import type {
   JunctionScanResult,
   ComponentStoreAnalysis,
   TriageScanResult,
+  RegenerableScanResult,
+  RegenerableCleanupReport,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -133,6 +135,11 @@ export const api = {
   analyzeComponentStore: () => invoke<ComponentStoreAnalysis>("analyze_component_store"),
   /** Disk-space overview: judgement-table triage of anchored roots (read-only). */
   spaceTriage: () => invoke<TriageScanResult>("scan_space_triage"),
+  /** Disk-space overview: regenerable layouts (read-only, fixed set). */
+  regenerableLayouts: () => invoke<RegenerableScanResult>("scan_regenerable_layouts"),
+  /** Delete the contents of regenerable layouts (server re-admits each path). */
+  deleteRegenerableLayouts: (paths: string[]) =>
+    invoke<RegenerableCleanupReport>("delete_regenerable_layouts", { paths }),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

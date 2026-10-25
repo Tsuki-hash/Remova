@@ -25,6 +25,7 @@ pub mod manage;
 pub mod orphans;
 pub mod path_seal;
 pub mod policy;
+pub mod regenclean;
 pub mod regops;
 pub mod regscan;
 pub mod restore;
@@ -870,6 +871,25 @@ async fn scan_space_triage() -> Result<triage::TriageScanResult, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Regenerable-layout scan (read-only, fixed layouts only).
+#[tauri::command]
+async fn scan_regenerable_layouts() -> Result<regenclean::RegenerableScanResult, String> {
+    tauri::async_runtime::spawn_blocking(regenclean::scan_regenerable)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Delete the contents of regenerable layouts (no backup: invariant 7; the
+/// server re-admits every path through a fresh scan first).
+#[tauri::command]
+async fn delete_regenerable_layouts(
+    paths: Vec<String>,
+) -> Result<regenclean::RegenerableCleanupReport, String> {
+    tauri::async_runtime::spawn_blocking(move || regenclean::delete_regenerable(&paths))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Delete rule values after a fresh orphan scan and a registry backup.
 #[tauri::command]
 async fn delete_firewall_rules(
@@ -1237,6 +1257,8 @@ pub fn run() {
         // `scan_junction_ledger`
         // `analyze_component_store`
         // `scan_space_triage`
+        // `scan_regenerable_layouts`
+        // `delete_regenerable_layouts`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1311,6 +1333,8 @@ pub fn run() {
             scan_junction_ledger,
             analyze_component_store,
             scan_space_triage,
+            scan_regenerable_layouts,
+            delete_regenerable_layouts,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

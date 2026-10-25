@@ -155,6 +155,16 @@ export const dict: EnDict = {
     triageReasonAppData: "App data: migration candidate (later version)",
     triageReasonUserData: "User data directory: migration candidate (later version)",
     triageReasonSwapFile: "Page/hibernation file: shown for size only, never touched",
+    regenTitle: "Regenerable cache cleanup",
+    regenHint: "Only fixed layouts the system/apps rebuild automatically: no backup (regenerable exemption), the directory itself is kept, locked files are skipped honestly; run elevated for system-level layouts",
+    regenSelectAll: "Select all",
+    regenClean: "Clean selected",
+    regenCleaning: "Cleaning…",
+    regenCleanConfirm: (n: number, size: string) =>
+      `This deletes the contents of ${n} regenerable layouts (about ${size}). No backup is created — this content rebuilds itself; the directories are kept. Run elevated for system-level layouts; failures are listed honestly. Continue?`,
+    regenDone: (n: number, size: string) => `Cleaned ${n} layouts, freed about ${size}`,
+    regenSkipped: (n: number) => `${n} skipped (locked or access denied)`,
+    regenBlockServicing: "servicing in progress, not cleanable right now",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,

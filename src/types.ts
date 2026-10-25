@@ -142,6 +142,23 @@ export type TriageEntry = {
 };
 export type TriageScanResult = { entries: TriageEntry[]; omitted: number };
 
+/** Disk-space overview: regenerable-layout cleanup (invariant 7, no backup). */
+export type RegenerableItem = {
+  path: string;
+  reason: string;
+  size_kb: number;
+  size_capped: boolean;
+  deletable: boolean;
+  block_reason: string | null;
+};
+export type RegenerableScanResult = { items: RegenerableItem[]; omitted: number };
+export type RegenerableSkipped = { path: string; message: string };
+export type RegenerableCleanupReport = {
+  cleaned: string[];
+  skipped: RegenerableSkipped[];
+  reclaimed_kb: number;
+};
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

@@ -32,6 +32,8 @@ const COMMAND_KEYS = [
   "junctionLedger",
   "analyzeComponentStore",
   "spaceTriage",
+  "regenerableLayouts",
+  "deleteRegenerableLayouts",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",
