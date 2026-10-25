@@ -9,20 +9,47 @@
 
 export type Theme = "light" | "dark";
 
-export type NavId = "software" | "startup" | "services" | "tasks" | "orphans" | "more";
+/** The stored preference; "system" resolves against the OS theme at apply time. */
+export type ThemePreference = "light" | "dark" | "system";
 
-export function loadTheme(): Theme {
-  const v2 = localStorage.getItem("remova_theme_v2");
-  if (v2 === "light" || v2 === "dark") return v2;
+const V2_KEY = "remova_theme_v2";
+const V3_KEY = "remova_theme_v3";
+const LEGACY_KEY = "remova_theme";
+
+export function loadThemePreference(): ThemePreference {
+  try {
+    const v3 = localStorage.getItem(V3_KEY);
+    if (v3 === "light" || v3 === "dark" || v3 === "system") return v3;
+    // v2 was written by the old two-state toggle: it is an explicit choice, not a default.
+    const v2 = localStorage.getItem(V2_KEY);
+    if (v2 === "light" || v2 === "dark") return v2;
+  } catch {
+    // Storage disabled — boot on a readable theme instead of throwing during startup.
+    return "light";
+  }
+  return "system";
+}
+
+function systemTheme(): Theme {
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
   return "light";
 }
+
+export function resolveTheme(pref: ThemePreference): Theme {
+  return pref === "system" ? systemTheme() : pref;
+}
+
+export type NavId = "software" | "startup" | "services" | "tasks" | "orphans" | "more";
 
 /** Always open on the software list (main uninstall path); do not restore last tab. */
 export function loadNav(): NavId {
   return "software";
 }
 
-export function applyTheme(theme: Theme) {
+export function applyTheme(pref: ThemePreference) {
+  const theme = resolveTheme(pref);
   const root = document.documentElement;
   root.dataset.theme = theme;
   if (theme === "dark") {
@@ -77,6 +104,11 @@ export function applyTheme(theme: Theme) {
     root.style.setProperty("--shadow", "none");
     root.style.setProperty("--mono", "'Cascadia Code', 'SF Mono', Consolas, 'Courier New', monospace");
   }
-  localStorage.setItem("remova_theme_v2", theme);
-  localStorage.removeItem("remova_theme");
+  try {
+    localStorage.setItem(V3_KEY, pref);
+    localStorage.removeItem(V2_KEY);
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // Storage unavailable — the tokens above still apply for this session.
+  }
 }

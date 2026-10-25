@@ -4,6 +4,12 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.1]
+
+### 改进
+
+- 主题新增「跟随系统」：默认跟随 Windows 深浅色设置并实时切换，也可显式选择浅色或深色；此前保存过主题偏好的用户保持原选择不变。
+
 ## [1.4.0] - 2026-10-24
 
 本次发布汇总自 v1.3.1 以来的安全、正确性与可用性改进，并新增深度卸载、安装包与缓存扫描能力。

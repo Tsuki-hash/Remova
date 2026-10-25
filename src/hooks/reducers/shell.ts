@@ -1,12 +1,12 @@
 import type { CloseMode } from "../../lib/closeMode";
-import type { NavId, Theme } from "../../lib/theme";
+import type { NavId, ThemePreference } from "../../lib/theme";
 import type { UninstallStage } from "../../components/UninstallStageBar";
 import type { UpdateInfo } from "../../lib/updateCheck";
 import { loadCloseMode } from "../../lib/closeMode";
-import { loadNav, loadTheme } from "../../lib/theme";
+import { loadNav, loadThemePreference } from "../../lib/theme";
 
 export type ShellState = {
-  theme: Theme;
+  theme: ThemePreference;
   nav: NavId;
   langVer: number;
   closeMode: CloseMode | null;
@@ -18,8 +18,7 @@ export type ShellState = {
 };
 
 export type ShellAction =
-  | { type: "theme/toggle" }
-  | { type: "theme/set"; theme: Theme }
+  | { type: "theme/set"; theme: ThemePreference }
   | { type: "lang/bump" }
   | { type: "lang/set"; value: number }
   | { type: "nav/set"; nav: NavId }
@@ -34,7 +33,7 @@ export type ShellAction =
 
 export function initialShellState(): ShellState {
   return {
-    theme: loadTheme(),
+    theme: loadThemePreference(),
     nav: loadNav(),
     langVer: 0,
     closeMode: loadCloseMode(),
@@ -48,8 +47,6 @@ export function initialShellState(): ShellState {
 
 export function shellReducer(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
-    case "theme/toggle":
-      return { ...state, theme: state.theme === "dark" ? "light" : "dark" };
     case "theme/set":
       return { ...state, theme: action.theme };
     case "lang/bump":

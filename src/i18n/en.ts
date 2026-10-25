@@ -103,7 +103,10 @@ export const dict: EnDict = {
     versionNoRelease: "No published release yet",
     versionNetwork: "Cannot reach GitHub. Check your network or proxy and try again.",
     versionRateLimited: "GitHub API rate limited. Try again later.",
-    themeToggle: "Dark/Light",
+    themeGroup: "Theme",
+    themeLight: "Light",
+    themeDark: "Dark",
+    themeSystem: "System",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,

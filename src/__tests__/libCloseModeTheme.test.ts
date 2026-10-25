@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // close-choice store + theme application (previously ~0% covered).
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearCloseMode,
   consumeQuitIntent,
@@ -13,7 +13,7 @@ import {
   settleCloseChoice,
   subscribeCloseChoice,
 } from "../lib/closeMode";
-import { applyTheme, loadNav, loadTheme } from "../lib/theme";
+import { applyTheme, loadNav, loadThemePreference, resolveTheme } from "../lib/theme";
 
 beforeEach(() => {
   localStorage.clear();
@@ -69,26 +69,60 @@ describe("closeMode", () => {
   });
 });
 
-describe("theme", () => {
-  it("defaults to light when nothing stored", () => {
-    expect(loadTheme()).toBe("light");
+describe("theme preference", () => {
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: undefined });
+  });
+
+  it("defaults to system for new users and resolves light without matchMedia", () => {
+    expect(loadThemePreference()).toBe("system");
+    expect(resolveTheme("system")).toBe("light");
+  });
+
+  it("resolves and applies the system theme", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({ matches: true }) as MediaQueryList,
+    });
+    expect(resolveTheme("system")).toBe("dark");
+    applyTheme("system");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("remova_theme_v3")).toBe("system");
   });
 
   it("applies dark tokens to the root and persists", () => {
     applyTheme("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.style.getPropertyValue("--bg")).toBe("#171717");
-    expect(localStorage.getItem("remova_theme_v2")).toBe("dark");
-    expect(loadTheme()).toBe("dark");
+    expect(localStorage.getItem("remova_theme_v3")).toBe("dark");
+    expect(loadThemePreference()).toBe("dark");
   });
 
-  it("applies light tokens and migrates off the legacy key", () => {
-    localStorage.setItem("remova_theme", "dark");
+  it("treats a v2 value as an explicit choice and migrates off legacy keys", () => {
+    localStorage.setItem("remova_theme_v2", "dark");
+    expect(loadThemePreference()).toBe("dark");
     applyTheme("light");
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(document.documentElement.style.getPropertyValue("--bg")).toBe("#F6F6F6");
-    expect(localStorage.getItem("remova_theme_v2")).toBe("light");
+    expect(localStorage.getItem("remova_theme_v3")).toBe("light");
+    expect(localStorage.getItem("remova_theme_v2")).toBeNull();
     expect(localStorage.getItem("remova_theme")).toBeNull();
+  });
+
+  it("still applies tokens and boots light when storage is disabled", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    expect(loadThemePreference()).toBe("light");
+    applyTheme("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    vi.restoreAllMocks();
   });
 
   it("always boots on the software nav", () => {

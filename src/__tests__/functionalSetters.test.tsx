@@ -62,12 +62,11 @@ describe("FE-P0a functional setters", () => {
 
   it("shell setTheme/setLangVer/setShowDetail apply real updaters (C-01)", () => {
     const { result } = renderHook(() => useShellState());
-    const startTheme = result.current.theme;
-    const flipped = startTheme === "dark" ? "light" : "dark";
+    expect(result.current.theme).toBe("system");
+    act(() => result.current.setTheme("dark"));
+    expect(result.current.theme).toBe("dark");
     act(() => result.current.setTheme((t) => (t === "dark" ? "light" : "dark")));
-    expect(result.current.theme).toBe(flipped);
-    act(() => result.current.setTheme(flipped));
-    expect(result.current.theme).toBe(flipped);
+    expect(result.current.theme).toBe("light");
 
     act(() => result.current.setLangVer((v) => v + 5));
     expect(result.current.langVer).toBe(5);

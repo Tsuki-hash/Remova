@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer, useRef } from "react";
 import type { CloseMode } from "../lib/closeMode";
-import type { NavId, Theme } from "../lib/theme";
+import type { NavId, ThemePreference } from "../lib/theme";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import type { UpdateInfo } from "../lib/updateCheck";
 import { saveCloseMode } from "../lib/closeMode";
@@ -13,7 +13,6 @@ export function useShellState() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const toggleTheme = useCallback(() => dispatch({ type: "theme/toggle" }), []);
   const toggleLang = useCallback(() => {
     setLang(currentLang() === "zh" ? "en" : "zh");
     dispatch({ type: "lang/bump" });
@@ -31,7 +30,7 @@ export function useShellState() {
   const closeCheckup = useCallback(() => dispatch({ type: "checkup/close" }), []);
 
   /** Real functional updaters — not toggle-on-fn. */
-  const setTheme = useCallback((t: Theme | ((th: Theme) => Theme)) => {
+  const setTheme = useCallback((t: ThemePreference | ((th: ThemePreference) => ThemePreference)) => {
     const next = typeof t === "function" ? t(stateRef.current.theme) : t;
     if (next !== stateRef.current.theme) {
       dispatch({ type: "theme/set", theme: next });
@@ -68,7 +67,6 @@ export function useShellState() {
 
   const actions = useMemo(
     () => ({
-      toggleTheme,
       toggleLang,
       goNav,
       persistCloseMode,
@@ -76,7 +74,7 @@ export function useShellState() {
       openCheckup,
       closeCheckup,
     }),
-    [toggleTheme, toggleLang, goNav, persistCloseMode, toggleDetail, openCheckup, closeCheckup],
+    [toggleLang, goNav, persistCloseMode, toggleDetail, openCheckup, closeCheckup],
   );
 
   return useMemo(

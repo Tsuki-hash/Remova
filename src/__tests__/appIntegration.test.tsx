@@ -285,7 +285,7 @@ describe("App orchestration", () => {
     await mount();
     expect(i18n.currentLang()).toBe("en");
     const before = document.documentElement.dataset.theme;
-    fireEvent.click(screen.getByRole("button", { name: i18n.t().themeToggle }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().themeDark }));
     expect(document.documentElement.dataset.theme).not.toBe(before);
     expect(load).toHaveBeenCalledTimes(1);
     expect(i18n.currentLang()).toBe("en");
@@ -633,10 +633,10 @@ describe("App orchestration", () => {
     const keys = ["listIgnoreApp", "listIgnorePublisher", "listAnalyze", "listForceClean",
       "listStartUninstall", "onCleanup", "onDryRun", "toggleMulti"] as const;
     const beforeIds = Object.fromEntries(keys.map(k => [k, before[k]]));
-    fireEvent.click(screen.getByRole("button", { name: i18n.t().themeToggle }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().themeDark }));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
     for (const k of keys) {
-      expect(software()[k], `theme toggle changed software().${k}`).toBe(beforeIds[k]);
+      expect(software()[k], `theme switch changed software().${k}`).toBe(beforeIds[k]);
     }
     // Control: the language switch rebuilds every copy object, so the page *must*
     // get new identities. Without this the assertions above could pass vacuously.

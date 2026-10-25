@@ -21,6 +21,7 @@ import { useAnalyzeFlow } from "./hooks/useAnalyzeFlow";
 import { ScanProgressBar } from "./components/ScanProgressBar";
 import { useAppBoot, checkUpdateNow } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
+import { useSystemThemeFollow } from "./hooks/useSystemThemeFollow";
 import { useShellState } from "./hooks/useShellState";
 import { useListFilterChrome } from "./hooks/useListFilterChrome";
 import { useResidualState } from "./hooks/useResidualState";
@@ -99,6 +100,7 @@ export default function App() {
   const shell = useShellState();
   const {
     theme,
+    setTheme,
     nav,
     langVer,
     setLangVer,
@@ -492,6 +494,7 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+  useSystemThemeFollow(theme);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -762,9 +765,45 @@ export default function App() {
         }
         actions={
           <>
-            <button style={css.btnSm} onClick={shellActions.toggleTheme}>
-              {L.themeToggle}
-            </button>
+            <div
+              role="group"
+              aria-label={L.themeGroup}
+              style={{
+                display: "inline-flex",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                overflow: "hidden",
+                background: "var(--surface)",
+              }}
+            >
+              {([
+                { id: "light", label: L.themeLight },
+                { id: "dark", label: L.themeDark },
+                { id: "system", label: L.themeSystem },
+              ] as const).map((opt) => {
+                const active = theme === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setTheme(opt.id)}
+                    style={{
+                      border: "none",
+                      borderRight: opt.id === "system" ? "none" : "1px solid var(--border)",
+                      background: active ? "var(--accent-soft)" : "transparent",
+                      color: active ? "var(--accent)" : "var(--fg)",
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      fontWeight: active ? 650 : 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
             <button style={css.btnSm} onClick={shellActions.toggleLang}>
               {L.langToggle}
             </button>
