@@ -107,7 +107,11 @@ it.each(["zh", "en"] as const)("offers backup restoration only for a completed b
     expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` }) !== null)
       .toBe(!!report.backup_dir && !report.aborted && !report.dry_run);
     expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration);
-    if (!report.backup_dir && !report.dry_run) expect(screen.getByText(t().noBackupThisRun)).toBeTruthy();
+    if (!report.backup_dir && !report.dry_run) {
+      // The no-backup state must be a warn-grade note, not a muted footnote.
+      const note = screen.getByRole("note");
+      expect(note.textContent).toBe(t().noBackupThisRun);
+    }
     view.unmount();
   }
 });

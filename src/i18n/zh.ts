@@ -710,7 +710,7 @@ export const dict = {
       : "本次不创建安全备份；无法通过安全仓还原本次清理。",
     cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
       `将清理 ${n} 项${official ? "并调用官方卸载器" : ""}。默认不创建备份；如需可在下方勾选「清理前创建安全备份」。确认？`,
-    noBackupThisRun: "本次清理未创建安全备份（备份为可选项）",
+    noBackupThisRun: "本次清理未创建备份：误删无法通过「还原备份」恢复（备份为可选项）",
     restorePointSkipped: "本次未创建还原点",
     reportDelayedNote: (n: number) => `另有 ${n} 项已调度重启后删除`,
     confirmCommonFilesHint:

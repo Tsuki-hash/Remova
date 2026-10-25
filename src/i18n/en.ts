@@ -730,7 +730,7 @@ export const dict: EnDict = {
       : "No safety backup will be created. This cleanup cannot be restored through the Safety Vault.",
     cleanupConfirmOptionalBackup: (n: number, official: boolean) =>
       `Will clean ${n} item(s)${official ? " with the official uninstaller" : ""}. No backup by default; check “Create a safety backup before cleanup” below if needed. Continue?`,
-    noBackupThisRun: "No safety backup was created for this cleanup (backup is optional)",
+    noBackupThisRun: "No backup was created for this cleanup: mistakes cannot be restored via Restore backup (backup is optional)",
     restorePointSkipped: "No restore point was created this run",
     reportDelayedNote: (n: number) => `${n} item(s) scheduled for delete on reboot`,
     confirmCommonFilesHint:

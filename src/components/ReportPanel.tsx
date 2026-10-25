@@ -119,7 +119,19 @@ export function ReportPanel({
             <Deco ch="✓" /> {L.safetyVaultBanner}
           </div>
         ) : !report.dry_run && !report.backup_dir ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+          <div
+            role="note"
+            style={{
+              marginTop: 8,
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--warn-ink)",
+              color: "var(--warn-ink)",
+              fontSize: 12,
+              fontWeight: 600,
+              width: "fit-content",
+            }}
+          >
             {L.noBackupThisRun}
           </div>
         ) : null)}
