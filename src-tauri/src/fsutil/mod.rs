@@ -958,6 +958,60 @@ fn is_local_drive_path_with(
     true
 }
 
+/// Per-thread drive-type cache for `is_local_drive_path` (M1 hot-path item).
+///
+/// Batch scans classify thousands of candidate paths on the same handful of
+/// drive roots, and each classification used to pay a `GetDriveTypeW` syscall.
+/// A drive's shape rarely changes; 30s of staleness bounds USB hot-plug within
+/// one scan run, mirroring the service-snapshot batch reuse. Thread-local so
+/// scan workers never contend on it.
+#[cfg(windows)]
+mod drive_cache {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(30);
+
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, (u32, Instant)>> =
+            RefCell::new(HashMap::new());
+    }
+
+    /// Cache core, separated so the TTL is testable with a fake clock and a
+    /// counting query instead of the real syscall.
+    pub(super) fn get<F: FnMut(&str) -> u32>(
+        cache: &mut HashMap<String, (u32, Instant)>,
+        root: &str,
+        now: Instant,
+        mut query: F,
+    ) -> u32 {
+        let key = root.to_lowercase();
+        if let Some(&(ty, stamped)) = cache.get(&key) {
+            if now.duration_since(stamped) < TTL {
+                return ty;
+            }
+        }
+        let ty = query(&key);
+        cache.insert(key, (ty, now));
+        ty
+    }
+
+    pub(super) fn drive_type(root: &str) -> u32 {
+        CACHE.with(|c| {
+            let mut map = c.borrow_mut();
+            get(&mut map, root, Instant::now(), |key| {
+                let wide = super::to_wide(key);
+                unsafe {
+                    windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(
+                        wide.as_ptr(),
+                    ))
+                }
+            })
+        })
+    }
+}
+
 /// True only for an absolute path on a local volume with no reparse point in
 /// its existing prefix chain. Registry-controlled read probes (icons, sizes,
 /// Explorer) must not touch UNC/device/verbatim shares or mapped drives,
@@ -970,8 +1024,7 @@ pub fn is_local_drive_path(raw: &str) -> bool {
         use windows::core::PCWSTR;
         use windows::Win32::Foundation::GetLastError;
         use windows::Win32::Storage::FileSystem::{
-            GetDriveTypeW, GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT,
-            INVALID_FILE_ATTRIBUTES,
+            GetFileAttributesW, FILE_ATTRIBUTE_REPARSE_POINT, INVALID_FILE_ATTRIBUTES,
         };
 
         const DRIVE_REMOVABLE: u32 = 2;
@@ -983,8 +1036,7 @@ pub fn is_local_drive_path(raw: &str) -> bool {
         is_local_drive_path_with(
             raw,
             |root| {
-                let wide = to_wide(root);
-                let drive_type = unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) };
+                let drive_type = drive_cache::drive_type(root);
                 drive_type != DRIVE_REMOTE
                     && matches!(
                         drive_type,

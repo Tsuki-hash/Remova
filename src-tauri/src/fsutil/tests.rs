@@ -827,3 +827,40 @@ fn pin_dir_resolved_resolves_junction_redirect() {
     drop(pin2);
     fs::remove_dir_all(&base).unwrap();
 }
+
+#[cfg(windows)]
+#[test]
+fn drive_type_cache_serves_hits_within_ttl_and_refreshes_after_it() {
+    use std::cell::Cell;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    let mut cache = HashMap::new();
+    let t0 = Instant::now();
+    // A Cell keeps the counter readable between calls: the query closure
+    // captures it by shared reference, so asserts never fight the borrow.
+    let calls = Cell::new(0u32);
+    let query = |_: &str| {
+        calls.set(calls.get() + 1);
+        3 // DRIVE_FIXED
+    };
+
+    let first = super::drive_cache::get(&mut cache, "C:\\", t0, query);
+    assert_eq!(first, 3);
+    assert_eq!(calls.get(), 1);
+
+    // Within the TTL the query is not re-issued — same root, any casing.
+    let hit = super::drive_cache::get(&mut cache, "c:\\", t0 + Duration::from_secs(10), query);
+    assert_eq!(hit, 3);
+    assert_eq!(
+        calls.get(),
+        1,
+        "a cached root must not re-query within the TTL"
+    );
+
+    // After the TTL the drive shape is re-measured.
+    let refreshed =
+        super::drive_cache::get(&mut cache, "C:\\", t0 + Duration::from_secs(31), query);
+    assert_eq!(refreshed, 3);
+    assert_eq!(calls.get(), 2, "an expired root must be re-queried");
+}
