@@ -816,6 +816,7 @@ fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
         let root = program_data_root();
         let dir = root.join("migrations");
         if std::fs::create_dir_all(&dir).is_err() {
+            eprintln!("migration ledger: could not create {}", dir.display());
             return;
         }
         let line = format!(
@@ -835,6 +836,8 @@ fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
             .open(dir.join("ledger.jsonl"))
         {
             let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+        } else {
+            eprintln!("migration ledger: append failed for phase {phase}");
         }
     }
 }

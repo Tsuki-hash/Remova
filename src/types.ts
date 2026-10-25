@@ -227,7 +227,6 @@ export type ConsentOrphan = {
 export type TraceScanResult = {
   consent_orphans: ConsentOrphan[];
   omitted: number;
-  degraded: string[];
 };
 
 /** M4: portable-app candidates (read-only). */

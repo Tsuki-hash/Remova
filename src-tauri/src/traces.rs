@@ -37,8 +37,6 @@ pub struct TraceScanResult {
     pub consent_orphans: Vec<ConsentOrphan>,
     #[serde(default)]
     pub omitted: u32,
-    #[serde(default)]
-    pub degraded: Vec<String>,
 }
 
 /// Pure orphan test, shared with the (future, gated) delete path.

@@ -56,7 +56,10 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    void refreshState(source, target);
+    // Debounce: every keystroke used to fire a status IPC (each one a
+    // spawn_blocking + filesystem probe).
+    const timer = setTimeout(() => void refreshState(source, target), 300);
+    return () => clearTimeout(timer);
   }, [source, target, refreshState]);
 
   const withBusy = async (work: () => Promise<void>) => {

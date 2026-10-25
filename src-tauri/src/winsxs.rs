@@ -5,7 +5,6 @@
 //! invocation forces `/English` and parsing matches the stable English labels.
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentStoreAnalysis {
@@ -81,10 +80,6 @@ pub fn analyze_component_store() -> Result<ComponentStoreAnalysis, String> {
     }
     Ok(parse_dism_analyze(&String::from_utf8_lossy(&output.stdout)))
 }
-
-/// DISM's analysis can take a minute on a cold servicing store; callers show
-/// a busy state, and the spawn is expected to be long.
-pub const DISM_ANALYZE_HINT: Duration = Duration::from_secs(300);
 
 #[cfg(test)]
 mod tests {
