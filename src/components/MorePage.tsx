@@ -38,6 +38,7 @@ export function MorePage({
   onExportReport,
   onError,
   onCheckUpdate,
+  onReopenOnboarding,
   onGoSoftware,
   onLastReport,
   onAiEnabledChange,
@@ -57,6 +58,7 @@ export function MorePage({
   onExportReport: () => void;
   onError: (msg: string) => void;
   onCheckUpdate: () => void;
+  onReopenOnboarding?: () => void;
   onGoSoftware: () => void;
   onLastReport?: (r: FullCleanupReport) => void;
   onAiEnabledChange?: (enabled: boolean) => void;
@@ -233,6 +235,13 @@ export function MorePage({
       desc: L.versionCheckHint,
       icon: "update",
       action: onCheckUpdate,
+    },
+    {
+      id: "onboarding",
+      title: L.onboardingReopen,
+      desc: L.onboardingReopenHint,
+      icon: "report",
+      action: () => onReopenOnboarding?.(),
     },
   ];
 

@@ -5,6 +5,8 @@ import { loadLang, currentLang, t } from "./i18n";
 import { cssStyles as css } from "./styles";
 import { formatError } from "./lib/format";
 import { applyTheme } from "./lib/theme";
+import { OnboardingCard } from "./components/OnboardingCard";
+import { useOnboarding } from "./hooks/useOnboarding";
 import { navSubtitle, navTitle } from "./lib/appNav";
 import { Shell } from "./components/Shell";
 import { ConfirmHost } from "./components/ui/ConfirmHost";
@@ -97,6 +99,7 @@ export default function App() {
 
   const { q, setQ, sortCol, setSortCol, sortDesc, setSortDesc, category, setCategoryState } =
     useListFilterChrome();
+  const onboarding = useOnboarding();
   const shell = useShellState();
   const {
     theme,
@@ -815,6 +818,9 @@ export default function App() {
             <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
           </div>
         )}
+        {nav === "software" && onboarding.open && (
+          <OnboardingCard onClose={onboarding.dismiss} />
+        )}
         {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
           <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
         <ScanProgressBar progress={monitorScanProgress} onCancel={cancelMonitorScan} title={L.monitorInstall}
@@ -862,6 +868,7 @@ export default function App() {
               }}
               onError={core.setError}
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
+              onReopenOnboarding={onboarding.reopen}
               onGoSoftware={() => goNav("software")}
               onLastReport={(r) => coreSetReport(r)}
               onAiEnabledChange={setAiEnabled}

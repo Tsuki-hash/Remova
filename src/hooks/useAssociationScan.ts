@@ -5,6 +5,8 @@ import type { InstalledApp } from "../types";
 
 export type ScanProgressState = AssociationScanProgress & {
   status: "running" | "stopping" | "cancelled" | "failed" | "complete";
+  /** Monotonic elapsed time, frozen at the terminal state. */
+  elapsedMs: number;
 };
 type Job = { id?: number; cancelled: boolean; timer?: ReturnType<typeof setTimeout>; cancelRequest?: Promise<void> };
 export const scanCancelled = (error: unknown) =>
@@ -40,14 +42,17 @@ export function useAssociationScan() {
     if (active.current) void stop(active.current).catch(() => {});
     const job: Job = { cancelled: false };
     active.current = job;
-    setProgress({ status: "running", stage: "preparing", found: 0 });
+    const startedAt = performance.now();
+    setProgress({ status: "running", stage: "preparing", found: 0, elapsedMs: 0 });
     try {
       job.id = await api.beginAssociationScan();
       if (job.cancelled || active.current !== job) throw new Error("scan:cancelled");
       const poll = async () => {
         try {
           const p = await api.associationScanProgress(job.id!);
-          if (p && active.current === job && !job.cancelled && !job.cancelRequest) setProgress({ ...p, status: "running" });
+          if (p && active.current === job && !job.cancelled && !job.cancelRequest) {
+            setProgress({ ...p, status: "running", elapsedMs: performance.now() - startedAt });
+          }
         } catch { /* Progress is advisory; the scan result carries execution errors. */ }
         if (active.current === job && !job.cancelled) job.timer = setTimeout(() => void poll(), 250);
       };
@@ -55,12 +60,21 @@ export function useAssociationScan() {
       const result = await work(job.id);
       await job.cancelRequest?.catch(() => {});
       if (job.cancelled || active.current !== job) throw new Error("scan:cancelled");
-      setProgress({ status: "complete", stage: "finalizing", found: count(result) });
+      setProgress({
+        status: "complete",
+        stage: "finalizing",
+        found: count(result),
+        elapsedMs: performance.now() - startedAt,
+      });
       return result;
     } catch (error) {
       const cancelled = job.cancelled || active.current !== job || scanCancelled(error);
       if (active.current === job) {
-        setProgress(p => p && { ...p, status: cancelled ? "cancelled" : "failed" });
+        setProgress(p => p && {
+          ...p,
+          status: cancelled ? "cancelled" : "failed",
+          elapsedMs: performance.now() - startedAt,
+        });
       }
       if (cancelled) throw new Error("scan:cancelled", { cause: error });
       throw error;

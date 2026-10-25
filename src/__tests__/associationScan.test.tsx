@@ -72,13 +72,13 @@ describe("association scan cancellation", () => {
   it("labels cancellation as incomplete in both languages and never shows a percent", () => {
     for (const lang of ["zh", "en"] as const) {
       setLang(lang);
-      render(<ScanProgressBar progress={{ status: "cancelled", stage: "files", found: 0 }} onCancel={async () => {}} />);
+      render(<ScanProgressBar progress={{ status: "cancelled", stage: "files", found: 0, elapsedMs: 1200 }} onCancel={async () => {}} />);
       expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
       expect(screen.queryByRole("progressbar")).toBeNull();
       cleanup();
     }
     setLang("zh");
-    render(<ScanProgressBar progress={{ status: "running", stage: "files", found: 3 }} onCancel={async () => {}} />);
+    render(<ScanProgressBar progress={{ status: "running", stage: "files", found: 3, elapsedMs: 800 }} onCancel={async () => {}} />);
     expect(screen.getByRole("progressbar").getAttribute("value")).toBeNull();
     expect(screen.getByText(t().scanFound(3))).toBeTruthy();
   });
@@ -95,7 +95,17 @@ describe("association scan cancellation", () => {
     const rejection = expect(old).rejects.toThrow("scan:cancelled");
     await act(async () => { await result.current.run(app); });
     await act(async () => { oldProgress({ stage: "files", found: 99 }); oldResult(complete); await rejection; });
-    expect(result.current.progress).toEqual({ status: "complete", stage: "finalizing", found: 0 });
+    expect(result.current.progress).toEqual({ status: "complete", stage: "finalizing", found: 0, elapsedMs: expect.any(Number) });
     expect(native.cancelAssociationScan).toHaveBeenCalledWith(43);
+  });
+  it("freezes elapsed time at the terminal state and renders it in the bar", async () => {
+    native.beginAssociationScan.mockResolvedValueOnce(81);
+    const view = renderHook(useAssociationScan);
+    await act(async () => { await view.result.current.runItems(async () => ["x"]); });
+    const p = view.result.current.progress!;
+    expect(p.status).toBe("complete");
+    expect(p.elapsedMs).toBeGreaterThanOrEqual(0);
+    render(<ScanProgressBar progress={{ ...p, status: "cancelled", found: 3, elapsedMs: 65_400 }} onCancel={async () => {}} />);
+    expect(screen.getByText(t().scanElapsed("1m05s"))).toBeTruthy();
   });
 });

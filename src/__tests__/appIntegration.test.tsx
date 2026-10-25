@@ -145,6 +145,9 @@ async function analyzeDemo() {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  // The first-run safety card has its own tests; keep the integration suite
+  // focused on the features it asserts.
+  localStorage.setItem("remova_onboarded_v1", "seen");
   i18n.setLang("zh");
   for (const key of Object.keys(pages) as (keyof typeof pages)[]) pages[key] = undefined;
   native.drag = undefined;

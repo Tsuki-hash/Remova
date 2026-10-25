@@ -107,6 +107,14 @@ export const dict: EnDict = {
     themeLight: "Light",
     themeDark: "Dark",
     themeSystem: "System",
+    onboardingTitle: "Before you start: three safety principles",
+    onboardingIntro: "Every Remova cleanup follows the principles below; revisit them any time under More → Help.",
+    onboardingPoint1: "Check before acting: “Review the cleanup plan” is a dry run — nothing is uninstalled or deleted.",
+    onboardingPoint2: "Recoverable by default: with “Create backup” checked, a safety backup is written first and can be restored under More → Restore backup; backups can fail on permissions or disk space, and a failed backup aborts the cleanup.",
+    onboardingPoint3: "High risk is never preselected: shared components, service-bound directories and user data start unchecked and ask for confirmation item by item.",
+    onboardingDismiss: "Got it",
+    onboardingReopen: "Safety notes",
+    onboardingReopenHint: "Show the three safety principles again",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,
@@ -383,6 +391,7 @@ export const dict: EnDict = {
     scanCancelledIncomplete: "Scan cancelled. Results are incomplete. Analyze again before cleanup.",
     scanFailedIncomplete: "Scan incomplete. Check the error and analyze again.",
     scanFound: (n: number) => `${n} items found`,
+    scanElapsed: (text: string) => `${text} elapsed`,
     // the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
     scanOmitted: (n: number) => `${n} more item(s) not shown (per-scan limit)`,

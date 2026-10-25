@@ -19,7 +19,8 @@ export type ToolId =
   | "diskradar"
   | "toolcache"
   | "broken"
-  | "firewall";
+  | "firewall"
+  | "onboarding";
 
 export type ToolItem = {
   id: ToolId;

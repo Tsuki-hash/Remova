@@ -95,6 +95,14 @@ export const dict = {
     themeLight: "浅色",
     themeDark: "深色",
     themeSystem: "跟随系统",
+    onboardingTitle: "开始之前：三条安全原则",
+    onboardingIntro: "Remova 的每次清理都遵循以下原则，之后可随时在「更多 → 帮助」重新查看。",
+    onboardingPoint1: "先检查再执行：「检查清理计划」只做试运行，不卸载、不删除。",
+    onboardingPoint2: "默认可恢复：勾选「创建备份」后，清理前先写入安全备份，可在「更多 → 还原备份」恢复；备份可能因权限或磁盘空间失败，失败时本次清理中止。",
+    onboardingPoint3: "高风险不预选：共享组件、服务绑定目录与用户数据默认不勾选，删除前逐项确认。",
+    onboardingDismiss: "知道了",
+    onboardingReopen: "安全说明",
+    onboardingReopenHint: "重新查看三条安全原则",
     closeMode: "关闭窗口时",
     closeModeTray: "最小化到托盘",
     closeModeQuit: "退出程序",
@@ -367,6 +375,7 @@ export const dict = {
     scanCancelledIncomplete: "扫描已取消，结果不完整。请重新分析后再清理。",
     scanFailedIncomplete: "扫描未完成，请检查错误并重新分析。",
     scanFound: (n: number) => `已发现 ${n} 项`,
+    scanElapsed: (text: string) => `已用时 ${text}`,
     // the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
     scanOmitted: (n: number) => `还有 ${n} 项未显示（受单次扫描上限限制）`,
