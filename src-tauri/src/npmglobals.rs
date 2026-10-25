@@ -74,20 +74,21 @@ fn bin_shims(node_modules: &Path, pkg_name: &str) -> Vec<PathBuf> {
     let bin = v.get("bin");
     let mut stems: Vec<String> = Vec::new();
     match bin {
-        // `"bin": "cli.js"` means the command is the package's own name —
-        // the string is a path, not a stem.
-        Some(serde_json::Value::String(_)) => {}
+        // `"bin": "cli.js"`: single-command package — npm names the command
+        // after the package itself (the string is the target path).
+        Some(serde_json::Value::String(_)) => {
+            let short = pkg_name.rsplit(['/', '\\']).next().unwrap_or(pkg_name);
+            stems.push(short.to_string());
+        }
         Some(serde_json::Value::Object(map)) => {
             for key in map.keys() {
                 stems.push(key.clone());
             }
         }
-        _ => {}
-    }
-    if stems.is_empty() {
-        // Common convention: a single-command package named after itself.
-        let short = pkg_name.rsplit(['/', '\\']).next().unwrap_or(pkg_name);
-        stems.push(short.to_string());
+        // No bin field: npm creates no shims for this package, so there is
+        // nothing to remove — guessing a stem could claim another package's
+        // shim (Safety Vault would restore it, but not deleting is better).
+        _ => return Vec::new(),
     }
     let bin_dir = node_modules.join(".bin");
     let mut out = Vec::new();
@@ -315,6 +316,51 @@ mod tests {
             path_map.contains("rimrafp"),
             "package must be in the map: {path_map}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shims_are_removed_only_when_the_package_declares_a_command() {
+        let tmp = crate::test_support::TempDir::new("npm-bin");
+        let (_prefix, nm) = seed(tmp.path());
+        // A package WITHOUT a bin field: npm creates no shim, so the removal
+        // must not claim a same-named file in .bin.
+        let dir = nm.join("quietpkg");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"name":"quietpkg","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(nm.join(".bin").join("quietpkg.cmd"), b"x").unwrap();
+
+        let report = remove_with(
+            tmp.path(),
+            &nm,
+            &[NpmPackageRef {
+                name: "quietpkg".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(report.removed, ["quietpkg"]);
+        assert!(
+            nm.join(".bin").join("quietpkg.cmd").exists(),
+            "a same-named shim of unknown origin must survive"
+        );
+
+        // A single-command package ("bin": "cli.js") IS named after itself.
+        write_pkg(&nm, "loudpkg", "1.0.0", "loud.js");
+        std::fs::write(nm.join(".bin").join("loudpkg.cmd"), b"x").unwrap();
+        let report2 = remove_with(
+            tmp.path(),
+            &nm,
+            &[NpmPackageRef {
+                name: "loudpkg".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(report2.removed, ["loudpkg"]);
+        assert!(!nm.join(".bin").join("loudpkg.cmd").exists());
     }
 
     #[cfg(windows)]

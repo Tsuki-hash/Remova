@@ -182,6 +182,18 @@ fn delete_with(
         if let Ok(read) = std::fs::read_dir(path) {
             for entry in read.flatten() {
                 let child = entry.path();
+                // A link inside a regenerable layout points elsewhere; without
+                // a backup the removal would lose the link (never its target).
+                // Skip it and say so instead of silently dropping it.
+                if crate::fsutil::is_reparse_point(&child) {
+                    failure.get_or_insert_with(|| {
+                        format!(
+                            "{}: link not followed, kept",
+                            entry.file_name().to_string_lossy()
+                        )
+                    });
+                    continue;
+                }
                 let res = if child.is_dir() {
                     std::fs::remove_dir_all(&child)
                 } else {
@@ -293,6 +305,42 @@ mod tests {
         assert!(layout.is_dir(), "the layout directory itself is kept");
         assert!(!layout.join("a.bin").exists());
         assert!(!layout.join("sub").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_link_inside_the_layout_is_kept_and_reported() {
+        let tmp = crate::test_support::TempDir::new("regenclean-link");
+        let layout = tmp.path().join("Temp");
+        std::fs::create_dir_all(&layout).unwrap();
+        std::fs::write(layout.join("a.bin"), b"x").unwrap();
+        // A junction child pointing elsewhere: the cleanup must keep it.
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(layout.join("alias"))
+            .arg(&elsewhere)
+            .status()
+            .unwrap();
+        assert!(status.success(), "junction fixture failed");
+
+        let layouts = vec![(layout.clone(), "win_temp")];
+        let report =
+            delete_with(&layouts, false, &[layout.to_string_lossy().into_owned()]).unwrap();
+        assert!(report
+            .skipped
+            .iter()
+            .any(|s| s.message.contains("link not followed")));
+        assert!(layout.join("alias").exists(), "the link must survive");
+        assert!(
+            elsewhere.join("keep.txt").exists() || elsewhere.is_dir(),
+            "target untouched"
+        );
+        assert!(
+            !layout.join("a.bin").exists(),
+            "plain contents still removed"
+        );
     }
 
     #[test]

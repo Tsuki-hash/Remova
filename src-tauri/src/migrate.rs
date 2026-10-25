@@ -631,6 +631,12 @@ pub fn finish(
     if !confirmed {
         return Err("finish deletes the backup and needs explicit confirmation".into());
     }
+    // Destructive (drops the .bak): same exclusive lock as cutover so finish,
+    // rollback and cleanup cannot interleave on the same session.
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::executor::begin_cleanup_control();
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
     let mut bak_name = source_path.as_os_str().to_os_string();
@@ -695,6 +701,12 @@ pub fn finish(
 /// Undo a completed cutover: remove the junction (only a reparse point
 /// pointing at the target qualifies) and rename the backup back.
 pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
+    // Exclusive like cutover/finish: removing the junction and renaming the
+    // backup back must not interleave with another destructive entry.
+    let _guard = crate::executor::CLEANUP_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::executor::begin_cleanup_control();
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
     let mut bak_name = source_path.as_os_str().to_os_string();
