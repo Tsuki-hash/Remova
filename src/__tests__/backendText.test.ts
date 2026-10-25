@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { setLang, t } from "../i18n";
 import { backendErrorText, backendText } from "../lib/backendText";
 afterEach(() => setLang("zh"));
@@ -73,4 +73,19 @@ it.each(["zh", "en"] as const)("every specialty-scan bucket and reason localizes
   for (const r of reasons) {
     expect(backendText(r, "scan"), r).not.toBe(L.backendDetailUnavailable);
   }
+});
+
+describe("1.4.1 backend error strings", () => {
+  it("localizes the migration and regenerable error strings", () => {
+    expect(backendErrorText("migrate:cancelled")).toBe(t().migrateCancelled);
+    expect(backendErrorText("cleanup cancelled during backup")).toBe(t().backendCleanupCancelledBackup);
+    expect(backendErrorText("not a regenerable layout: C:/Windows/Temp")).toBe(
+      t().backendNotRegenerable("C:/Windows/Temp"),
+    );
+    expect(
+      backendErrorText("migration is not in the cutover state (current: finished)"),
+    ).toBe(t().backendMigrateState);
+    // Unknown strings keep the verbatim passthrough contract.
+    expect(backendErrorText("some future backend string")).toBe("some future backend string");
+  });
 });

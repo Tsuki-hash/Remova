@@ -67,8 +67,13 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 ### More tools
 - Orphans page, startup / services / scheduled tasks; broken MSI records and orphan firewall rules  
 - Installer & updater caches, specialty caches, disk radar, idle-app radar; results state “N more not shown” and which locations could not be read  
+- **C: drive space overview**: volume shape, junction ledger (with dead-link marking), triage view (regenerable / DISM-only / migration candidate / leave) and a read-only WinSxS component-store analysis  
+- **Regenerable cache cleanup**: fixed layouts only (update downloads, temp dirs, crash dumps…), no backup by design; contents removed, directories kept, locked files reported honestly  
+- **Directory migration (junction)**: move a folder to another drive — plan → copy (per-file diff) → cutover (auto-rollback) → finish (confirm to drop the backup); rollback available at every step  
+- **Global CLI packages**: read-only npm / pnpm / yarn inventory; npm packages can be removed after confirmation (exported to the safety backup first)  
+- **System traces & portable apps**: read-only report of orphaned ConsentStore entries and portable-app candidates  
 - History timeline, CSV export, install monitor  
-- Dark / light theme, Chinese / English
+- Dark / light / follow-system theme, Chinese / English
 
 ---
 
