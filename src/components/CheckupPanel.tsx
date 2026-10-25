@@ -46,6 +46,7 @@ export function CheckupPanel({
     <div
       style={{
         position: "fixed",
+        animation: "remova-fade-in var(--dur-float) var(--ease-standard)",
         inset: 0,
         zIndex: 8500,
         background: "rgba(0,0,0,.35)",

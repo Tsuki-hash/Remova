@@ -137,7 +137,7 @@ export function ShellFooter({
     <>
       {progress && (
         <div role="dialog" aria-modal="true" aria-label={L.versionInstall}
-          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center" }}>
+          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", animation: "remova-fade-in var(--dur-float) var(--ease-standard)" }}>
           <div ref={overlayRef} tabIndex={-1}
             onKeyDown={(e) => {
               if (e.key === "Escape") e.stopPropagation();

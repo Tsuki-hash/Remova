@@ -275,6 +275,7 @@ export function ConfirmHost() {
     <div
       style={{
         position: "fixed",
+        animation: "remova-fade-in var(--dur-float) var(--ease-standard)",
         inset: 0,
         zIndex: 1000,
         background: "rgba(15,23,42,.42)",
