@@ -18,13 +18,29 @@ import type {
 
 const DEAD_LINKS_SHOWN = 50;
 
-const TRIAGE_CLASS_LABEL: Record<TriageClass, { label: string; tone: string }> = {
-  delete_regenerable: { label: "triageClassDelete", tone: "var(--warn-ink)" },
-  via_dism: { label: "triageClassViaDism", tone: "var(--warn-ink)" },
-  migrate_candidate: { label: "triageClassMigrate", tone: "var(--accent-text)" },
-  leave: { label: "triageClassLeave", tone: "var(--muted)" },
-  show_only: { label: "triageClassShowOnly", tone: "var(--muted)" },
+const TRIAGE_CLASS_TONE: Record<TriageClass, string> = {
+  delete_regenerable: "var(--warn-ink)",
+  via_dism: "var(--warn-ink)",
+  migrate_candidate: "var(--accent-text)",
+  leave: "var(--muted)",
+  show_only: "var(--muted)",
 };
+
+/** Explicit per-class label lookup — no dynamic key indexing on the strings. */
+function triageClassLabel(L: ReturnType<typeof t>, cls: TriageClass): string {
+  switch (cls) {
+    case "delete_regenerable":
+      return L.triageClassDelete;
+    case "via_dism":
+      return L.triageClassViaDism;
+    case "migrate_candidate":
+      return L.triageClassMigrate;
+    case "leave":
+      return L.triageClassLeave;
+    case "show_only":
+      return L.triageClassShowOnly;
+  }
+}
 
 function triageReasonText(L: ReturnType<typeof t>, reason: string): string {
   const map: Record<string, string> = {
@@ -247,8 +263,8 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
             }}
           >
             {triage.entries.map((e: TriageEntry) => {
-              const meta = TRIAGE_CLASS_LABEL[e.class];
-              const label = L[meta.label as keyof typeof L] as string;
+              const label = triageClassLabel(L, e.class);
+              const tone = TRIAGE_CLASS_TONE[e.class];
               return (
                 <div
                   key={e.path}
@@ -265,7 +281,7 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
                   <span className="ell" style={{ flex: 1, minWidth: 0 }}>
                     {e.path}
                   </span>
-                  <span style={{ color: meta.tone, whiteSpace: "nowrap" }}>{label}</span>
+                  <span style={{ color: tone, whiteSpace: "nowrap" }}>{label}</span>
                   <span style={{ ...css.mono, whiteSpace: "nowrap" }}>
                     {e.size_kb !== null ? formatSize(e.size_kb) : "—"}
                   </span>
