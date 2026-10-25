@@ -92,6 +92,50 @@ fn servicing_busy() -> bool {
     false
 }
 
+/// Short-lived cache for the *busy* verdict only, used by the read-only
+/// panel scan: a batch of display refreshes should not spawn tasklist each
+/// time. Fail-closed by construction — caching a "busy" verdict can only
+/// keep CbsTemp blocked longer (safe), never release it early; an "idle"
+/// verdict is never cached, so the delete path always re-checks live.
+fn servicing_busy_cached() -> bool {
+    use std::cell::RefCell;
+    use std::time::Instant;
+
+    thread_local! {
+        static BUSY_UNTIL: RefCell<Option<Instant>> = const { RefCell::new(None) };
+    }
+
+    BUSY_UNTIL.with(|c| {
+        let mut slot = c.borrow_mut();
+        cached_busy_core(&mut slot, Instant::now(), servicing_busy)
+    })
+}
+
+/// Testable core of the busy-verdict cache: a cached "busy" wins until its
+/// deadline; an "idle" verdict is never remembered.
+fn cached_busy_core(
+    cache: &mut Option<std::time::Instant>,
+    now: std::time::Instant,
+    live: impl FnOnce() -> bool,
+) -> bool {
+    use std::time::Duration;
+
+    const BUSY_TTL: Duration = Duration::from_secs(15);
+
+    if let Some(until) = *cache {
+        if now < until {
+            return true;
+        }
+    }
+    if live() {
+        *cache = Some(now + BUSY_TTL);
+        true
+    } else {
+        *cache = None;
+        false
+    }
+}
+
 /// Pure admission check: only exact fixed layouts pass, case-insensitively.
 pub fn is_deletable_layout(
     path: &str,
@@ -227,7 +271,8 @@ fn delete_with(
 pub fn scan_regenerable() -> RegenerableScanResult {
     scan_with(
         &fixed_layouts(&crate::triage::roots_from_env()),
-        servicing_busy(),
+        // Display tier: cached busy verdict is fine (fail-closed direction).
+        servicing_busy_cached(),
     )
 }
 
@@ -344,6 +389,36 @@ mod tests {
             !layout.join("a.bin").exists(),
             "plain contents still removed"
         );
+    }
+
+    #[test]
+    fn busy_verdict_cache_is_fail_closed_and_forgets_idle() {
+        use std::time::{Duration, Instant};
+
+        let t0 = Instant::now();
+        let mut cache = None;
+        // Idle is not remembered: the next call re-queries.
+        assert!(!cached_busy_core(&mut cache, t0, || false));
+        assert!(cache.is_none());
+        // A busy verdict is cached: live() is not even consulted.
+        assert!(cached_busy_core(&mut cache, t0, || true));
+        let mut live_called = false;
+        assert!(cached_busy_core(
+            &mut cache,
+            t0 + Duration::from_secs(5),
+            || {
+                live_called = true;
+                false
+            }
+        ));
+        assert!(!live_called, "a cached busy verdict must win until its TTL");
+        // Past the deadline the verdict is re-measured.
+        assert!(!cached_busy_core(
+            &mut cache,
+            t0 + Duration::from_secs(31),
+            || false
+        ));
+        assert!(cache.is_none());
     }
 
     #[test]
