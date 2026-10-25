@@ -10,6 +10,7 @@ import type {
   BrokenInstall,
   FirewallCleanupReport,
   FirewallScanResult,
+  JunctionScanResult,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -124,6 +125,8 @@ export const api = {
     invoke<BrokenCleanupReport>("cleanup_broken_install", { appName, registryKey, guid }),
   /** M3: orphan firewall rules (read-only). */
   firewallOrphans: () => invoke<FirewallScanResult>("scan_firewall_orphans"),
+  /** Disk-space overview: junction ledger under known roots (read-only). */
+  junctionLedger: () => invoke<JunctionScanResult>("scan_junction_ledger"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

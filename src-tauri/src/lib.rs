@@ -19,6 +19,7 @@ pub mod idle;
 pub mod ignore;
 pub mod installers;
 pub mod installmon;
+pub mod junction;
 pub mod locks;
 pub mod manage;
 pub mod orphans;
@@ -840,6 +841,14 @@ async fn scan_firewall_orphans() -> Result<firewall::FirewallScanResult, String>
         .map_err(|e| e.to_string())
 }
 
+/// Directory reparse points under the known roots (read-only ledger).
+#[tauri::command]
+async fn scan_junction_ledger() -> Result<junction::JunctionScanResult, String> {
+    tauri::async_runtime::spawn_blocking(junction::scan_junction_ledger)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Delete rule values after a fresh orphan scan and a registry backup.
 #[tauri::command]
 async fn delete_firewall_rules(
@@ -1204,6 +1213,7 @@ pub fn run() {
         // `cleanup_broken_install`
         // `scan_firewall_orphans`
         // `delete_firewall_rules`
+        // `scan_junction_ledger`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1275,6 +1285,7 @@ pub fn run() {
             cleanup_broken_install,
             scan_firewall_orphans,
             delete_firewall_rules,
+            scan_junction_ledger,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

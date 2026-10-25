@@ -107,6 +107,18 @@ export type FirewallCleanupReport = {
   backup_dir: string;
 };
 
+/** Disk-space overview: one directory reparse point (the link, not its target). */
+export type JunctionEntry = {
+  path: string;
+  target: string | null;
+  reachable: boolean;
+};
+export type JunctionScanResult = {
+  entries: JunctionEntry[];
+  omitted: number;
+  degraded_roots: string[];
+};
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

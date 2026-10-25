@@ -29,6 +29,7 @@ const COMMAND_KEYS = [
   "cleanupBrokenInstall",
   "firewallOrphans",
   "deleteFirewallRules",
+  "junctionLedger",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",
