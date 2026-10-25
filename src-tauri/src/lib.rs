@@ -36,6 +36,7 @@ pub mod shared;
 pub mod storeapps;
 pub mod sysops;
 pub mod toolcache;
+pub mod winsxs;
 
 // End-to-end smokes (temp dirs / path mock only) — kept in the module tree so
 // `cargo test` actually compiles and runs them.
@@ -849,6 +850,17 @@ async fn scan_junction_ledger() -> Result<junction::JunctionScanResult, String> 
         .map_err(|e| e.to_string())
 }
 
+/// WinSxS component-store analysis via DISM (read-only, elevated).
+#[tauri::command]
+async fn analyze_component_store() -> Result<winsxs::ComponentStoreAnalysis, String> {
+    if !is_elevated()? {
+        return Err("administrator privileges are required to analyze the component store".into());
+    }
+    tauri::async_runtime::spawn_blocking(winsxs::analyze_component_store)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Delete rule values after a fresh orphan scan and a registry backup.
 #[tauri::command]
 async fn delete_firewall_rules(
@@ -1214,6 +1226,7 @@ pub fn run() {
         // `scan_firewall_orphans`
         // `delete_firewall_rules`
         // `scan_junction_ledger`
+        // `analyze_component_store`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1286,6 +1299,7 @@ pub fn run() {
             scan_firewall_orphans,
             delete_firewall_rules,
             scan_junction_ledger,
+            analyze_component_store,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

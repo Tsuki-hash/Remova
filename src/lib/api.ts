@@ -11,6 +11,7 @@ import type {
   FirewallCleanupReport,
   FirewallScanResult,
   JunctionScanResult,
+  ComponentStoreAnalysis,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -127,6 +128,8 @@ export const api = {
   firewallOrphans: () => invoke<FirewallScanResult>("scan_firewall_orphans"),
   /** Disk-space overview: junction ledger under known roots (read-only). */
   junctionLedger: () => invoke<JunctionScanResult>("scan_junction_ledger"),
+  /** Disk-space overview: WinSxS analysis via DISM (read-only, elevated). */
+  analyzeComponentStore: () => invoke<ComponentStoreAnalysis>("analyze_component_store"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

@@ -119,6 +119,13 @@ export type JunctionScanResult = {
   degraded_roots: string[];
 };
 
+/** Disk-space overview: DISM component-store analysis (read-only). */
+export type ComponentStoreAnalysis = {
+  cleanup_recommended: boolean;
+  explorer_size_bytes: number | null;
+  actual_size_bytes: number | null;
+};
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

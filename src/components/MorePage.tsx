@@ -18,6 +18,7 @@ import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
+import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
@@ -204,6 +205,13 @@ export function MorePage({
   ];
 
   const space: ToolItem[] = [
+    {
+      id: "diskoverview",
+      title: L.diskOverviewTitle,
+      desc: L.diskOverviewHint,
+      icon: "disk",
+      action: () => tools.setOpenTool("diskoverview"),
+    },
     {
       id: "diskradar",
       title: L.diskRadarTitle,
@@ -395,6 +403,9 @@ export function MorePage({
       )}
       {openTool === "firewall" && (
         <FirewallRulesPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
+      )}
+      {openTool === "diskoverview" && (
+        <DiskOverviewPanel onClose={() => tools.setOpenTool(null)} />
       )}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />

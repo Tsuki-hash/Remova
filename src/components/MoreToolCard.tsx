@@ -20,7 +20,8 @@ export type ToolId =
   | "toolcache"
   | "broken"
   | "firewall"
-  | "onboarding";
+  | "onboarding"
+  | "diskoverview";
 
 export type ToolItem = {
   id: ToolId;
