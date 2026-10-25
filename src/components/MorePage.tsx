@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
@@ -17,7 +17,8 @@ import { toast } from "../lib/toast";
 import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
-import { ToolCard, type ToolItem } from "./MoreToolCard";
+import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
+import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
 import { useMoreRestore } from "../hooks/useMoreRestore";
@@ -69,6 +70,15 @@ export function MorePage({
   const hist = useMoreHistory(onError);
   const rest = useMoreRestore(onError);
   const [rebootGate, setRebootGate] = useState<string>("clear");
+  const [filter, setFilter] = useState("");
+  const [recent, setRecent] = useState<string[]>(loadRecentTools);
+  const recordUse = useCallback((id: ToolId) => {
+    setRecent((prev) => {
+      const next = [id, ...prev.filter((x) => x !== id)].slice(0, 3);
+      saveRecentTools(next);
+      return next;
+    });
+  }, []);
   useEffect(() => {
     let alive = true;
     void api
@@ -162,13 +172,13 @@ export function MorePage({
     },
   ];
 
-  const advanced: ToolItem[] = [
+  const installHealth: ToolItem[] = [
     {
-      id: "idle",
-      title: L.idleTitle,
-      desc: L.idleHint,
-      icon: "idle",
-      action: () => tools.setOpenTool("idle"),
+      id: "broken",
+      title: L.brokenInstallsTitle,
+      desc: L.brokenInstallsHint,
+      icon: "report",
+      action: () => tools.toggleTool("broken"),
     },
     {
       id: "installers",
@@ -179,6 +189,21 @@ export function MorePage({
       // like the AI card — not a silent no-op.
       action: () => tools.toggleTool("installers"),
     },
+    {
+      id: "monitor",
+      disabled: monitorSnapshotBusy,
+      title: monitoring ? L.monitorStop : L.monitorInstall,
+      desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
+      icon: "monitor" as const,
+      action: () => {
+        void onToggleMonitor();
+        tools.setOpenTool("monitor");
+      },
+      badge: monitoring ? L.badgeRunning : undefined,
+    },
+  ];
+
+  const space: ToolItem[] = [
     {
       id: "diskradar",
       title: L.diskRadarTitle,
@@ -194,30 +219,21 @@ export function MorePage({
       action: () => tools.toggleTool("toolcache"),
     },
     {
-      id: "broken",
-      title: L.brokenInstallsTitle,
-      desc: L.brokenInstallsHint,
-      icon: "report",
-      action: () => tools.toggleTool("broken"),
+      id: "idle",
+      title: L.idleTitle,
+      desc: L.idleHint,
+      icon: "idle",
+      action: () => tools.setOpenTool("idle"),
     },
+  ];
+
+  const traces: ToolItem[] = [
     {
       id: "firewall",
       title: L.firewallTitle,
       desc: L.firewallHint,
       icon: "services",
       action: () => tools.toggleTool("firewall"),
-    },
-    {
-      id: "monitor",
-      disabled: monitorSnapshotBusy,
-      title: monitoring ? L.monitorStop : L.monitorInstall,
-      desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
-      icon: "monitor" as const,
-      action: () => {
-        void onToggleMonitor();
-        tools.setOpenTool("monitor");
-      },
-      badge: monitoring ? L.badgeRunning : undefined,
     },
   ];
 
@@ -244,6 +260,37 @@ export function MorePage({
       action: () => onReopenOnboarding?.(),
     },
   ];
+
+  // Recent-tool tracking wraps every action; filtering hides non-matching
+  // cards and the sections that become empty.
+  const track = (items: ToolItem[]) =>
+    items.map((it) => ({
+      ...it,
+      action: () => {
+        recordUse(it.id);
+        it.action();
+      },
+    }));
+  const q = filter.trim().toLowerCase();
+  const match = (it: ToolItem) =>
+    !q || it.title.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q);
+  const trackedCommon = track(common).filter(match);
+  const trackedInstallHealth = track(installHealth).filter(match);
+  const trackedSpace = track(space).filter(match);
+  const trackedTraces = track(traces).filter(match);
+  const trackedHelp = track(help).filter(match);
+  const totalCards =
+    common.length + installHealth.length + space.length + traces.length + help.length;
+  const allTracked = [
+    ...track(common),
+    ...track(installHealth),
+    ...track(space),
+    ...track(traces),
+    ...track(help),
+  ];
+  const recentCards = (!q ? recent : [])
+    .map((id) => allTracked.find((c) => c.id === id))
+    .filter((c): c is ToolItem => Boolean(c));
 
   return (
     <div
@@ -367,59 +414,93 @@ export function MorePage({
         />
       )}
       </div>
-      <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
-        {common.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} />
-        ))}
-      </Section>
-
-      <Section title={L.moreSectionAdvanced} hint={L.moreSectionAdvancedHint}>
-        {advanced.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} />
-        ))}
-        {rebootGate === "corrupt" && (
-          <div
-            style={{ ...css.card, borderColor: "var(--warn-ink)", marginTop: 10 }}
-            role="region"
-            aria-label={L.rebootGateCorruptTitle}
-          >
-            <strong>{L.rebootGateCorruptTitle}</strong>
-            <p style={css.muted}>{L.rebootGateCorruptHint}</p>
-            <button
-              type="button"
-              style={{ ...css.btnGhost, height: 30 }}
-              onClick={() => void resetRebootGate()}
+      {totalCards > 8 && (
+        <input
+          aria-label={L.moreFilterTools}
+          placeholder={L.moreFilterTools}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ ...css.input, height: 32, marginBottom: 4, minWidth: 180 }}
+        />
+      )}
+      {recentCards.length > 0 && (
+        <Section title={L.moreSectionRecent}>
+          {recentCards.map((c) => (
+            <ToolCard key={`recent-${c.id}`} item={c} active={openTool === c.id} />
+          ))}
+        </Section>
+      )}
+      {trackedCommon.length > 0 && (
+        <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
+          {trackedCommon.map((c) => (
+            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </Section>
+      )}
+      {(trackedInstallHealth.length > 0 || (!q && rebootGate === "corrupt")) && (
+        <Section title={L.moreSectionInstallHealth} hint={L.moreSectionInstallHealthHint}>
+          {trackedInstallHealth.map((c) => (
+            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+          ))}
+          {rebootGate === "corrupt" && (
+            <div
+              style={{ ...css.card, borderColor: "var(--warn-ink)", marginTop: 10 }}
+              role="region"
+              aria-label={L.rebootGateCorruptTitle}
             >
-              {L.rebootGateCorruptReset}
+              <strong>{L.rebootGateCorruptTitle}</strong>
+              <p style={css.muted}>{L.rebootGateCorruptHint}</p>
+              <button
+                type="button"
+                style={{ ...css.btnGhost, height: 30 }}
+                onClick={() => void resetRebootGate()}
+              >
+                {L.rebootGateCorruptReset}
+              </button>
+            </div>
+          )}
+        </Section>
+      )}
+      {trackedSpace.length > 0 && (
+        <Section title={L.moreSectionSpace} hint={L.moreSectionSpaceHint}>
+          {trackedSpace.map((c) => (
+            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </Section>
+      )}
+      {trackedTraces.length > 0 && (
+        <Section title={L.moreSectionTraces} hint={L.moreSectionTracesHint}>
+          {trackedTraces.map((c) => (
+            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </Section>
+      )}
+      {trackedHelp.length > 0 && (
+        <Section
+          title={L.moreSectionHelp}
+          hint={L.moreSectionHelpHint}
+          extra={
+            <button
+              style={{ ...css.btnGhost, height: 26, fontSize: 12 }}
+              title={L.openReleases}
+              onClick={() => {
+                void import("../lib/updateCheck")
+                  .then(({ RELEASES_URL }) => api.openPath(RELEASES_URL))
+                  .catch((e) => {
+                    console.error("[update] open releases failed", e);
+                    toast.error(formatError(e));
+                  });
+              }}
+            >
+              {L.openReleases}
             </button>
-          </div>
-        )}
-      </Section>
-
-      <Section
-        title={L.moreSectionHelp}
-        hint={L.moreSectionHelpHint}
-        extra={
-          <button
-            style={{ ...css.btnGhost, height: 26, fontSize: 12 }}
-            title={L.openReleases}
-            onClick={() => {
-              void import("../lib/updateCheck")
-                .then(({ RELEASES_URL }) => api.openPath(RELEASES_URL))
-                .catch((e) => {
-                  console.error("[update] open releases failed", e);
-                  toast.error(formatError(e));
-                });
-            }}
-          >
-            {L.openReleases}
-          </button>
-        }
-      >
-        {help.map((c) => (
-          <ToolCard key={c.id} item={c} active={openTool === c.id} />
-        ))}
-      </Section>
+          }
+        >
+          {trackedHelp.map((c) => (
+            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+          ))}
+        </Section>
+      )}
 
       <Section title={L.closeMode} hint={L.closeModeHint}>
         <div style={{ gridColumn: "1 / -1" }}>
