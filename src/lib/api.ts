@@ -17,6 +17,12 @@ import type {
   RegenerableCleanupReport,
   CliGlobalScanResult,
   NpmCleanupReport,
+  MigrationPlan,
+  MigrationCopyReport,
+  MigrationCutoverReport,
+  MigrationFinishReport,
+  MigrationRollbackReport,
+  MigrationState,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -147,6 +153,20 @@ export const api = {
   /** Remove npm global packages (server re-admits; Safety Vault backup first). */
   removeNpmGlobals: (packages: { name: string }[]) =>
     invoke<NpmCleanupReport>("remove_npm_globals", { packages }),
+  /** Junction migration (M6.3): plan / copy / cutover / finish / rollback. */
+  migratePlan: (source: string, target: string) =>
+    invoke<MigrationPlan>("migrate_plan", { source, target }),
+  migrateCopy: (source: string, target: string) =>
+    invoke<MigrationCopyReport>("migrate_copy", { source, target }),
+  migrateCutover: (source: string, target: string) =>
+    invoke<MigrationCutoverReport>("migrate_cutover", { source, target }),
+  migrateFinish: (source: string, target: string, confirmed: boolean) =>
+    invoke<MigrationFinishReport>("migrate_finish", { source, target, confirmed }),
+  migrateRollback: (source: string, target: string) =>
+    invoke<MigrationRollbackReport>("migrate_rollback", { source, target }),
+  migrateStatus: (source: string, target: string) =>
+    invoke<MigrationState>("migrate_status", { source, target }),
+  cancelMigrateCopy: () => invoke<void>("cancel_migrate_copy"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

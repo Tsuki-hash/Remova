@@ -20,6 +20,7 @@ import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { CliGlobalsPanel } from "./CliGlobalsPanel";
+import { MigratePanel } from "./MigratePanel";
 import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
@@ -221,6 +222,13 @@ export function MorePage({
       action: () => tools.setOpenTool("cliglobals"),
     },
     {
+      id: "migrate",
+      title: L.migrateTitle,
+      desc: L.migrateHint,
+      icon: "disk",
+      action: () => tools.setOpenTool("migrate"),
+    },
+    {
       id: "diskradar",
       title: L.diskRadarTitle,
       desc: L.diskRadarHint,
@@ -418,6 +426,7 @@ export function MorePage({
       {openTool === "cliglobals" && (
         <CliGlobalsPanel onClose={() => tools.setOpenTool(null)} />
       )}
+      {openTool === "migrate" && <MigratePanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}

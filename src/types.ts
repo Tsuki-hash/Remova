@@ -179,6 +179,45 @@ export type NpmCleanupReport = {
   backup_dir: string;
 };
 
+/** M6.3: junction directory migration (four gated phases). */
+export type MigrationPlan = {
+  source: string;
+  target: string;
+  ok: boolean;
+  rejections: string[];
+  source_kb: number;
+  file_count: number;
+  target_free_kb: number;
+};
+export type MigrationCopyReport = {
+  files: number;
+  source_kb: number;
+  files_capped: boolean;
+  reparse_skipped: string[];
+};
+export type MigrationCutoverReport = {
+  ok: boolean;
+  junction: string;
+  backup: string;
+  rolled_back: boolean;
+  error: string | null;
+};
+export type MigrationFinishReport = {
+  removed_bak: boolean;
+  missing_in_target: string[];
+};
+export type MigrationRollbackReport = {
+  ok: boolean;
+  message: string | null;
+};
+export type MigrationState =
+  | "absent"
+  | "idle"
+  | "copied"
+  | "cutover"
+  | "finished"
+  | "inconsistent";
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

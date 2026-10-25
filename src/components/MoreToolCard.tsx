@@ -22,7 +22,8 @@ export type ToolId =
   | "firewall"
   | "onboarding"
   | "diskoverview"
-  | "cliglobals";
+  | "cliglobals"
+  | "migrate";
 
 export type ToolItem = {
   id: ToolId;

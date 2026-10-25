@@ -23,6 +23,7 @@ pub mod installmon;
 pub mod junction;
 pub mod locks;
 pub mod manage;
+pub mod migrate;
 pub mod npmglobals;
 pub mod orphans;
 pub mod path_seal;
@@ -889,6 +890,79 @@ async fn scan_cli_globals() -> Result<cliglobals::CliGlobalScanResult, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Junction migration: admission and sizes (read-only).
+#[tauri::command]
+async fn migrate_plan(source: String, target: String) -> Result<migrate::MigrationPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(migrate::plan(&source, &target)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Junction migration phase 2: copy + per-file diff (non-destructive).
+#[tauri::command]
+async fn migrate_copy(
+    source: String,
+    target: String,
+) -> Result<migrate::MigrationCopyReport, String> {
+    tauri::async_runtime::spawn_blocking(move || migrate::copy_phase(&source, &target))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Junction migration phase 3: rename + junction + probe (transaction lock).
+#[tauri::command]
+async fn migrate_cutover(
+    source: String,
+    target: String,
+) -> Result<migrate::MigrationCutoverReport, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(migrate::cutover(&source, &target)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Junction migration phase 4: verify the backup, then drop it (confirmed).
+#[tauri::command]
+async fn migrate_finish(
+    source: String,
+    target: String,
+    confirmed: bool,
+) -> Result<migrate::MigrationFinishReport, String> {
+    tauri::async_runtime::spawn_blocking(move || migrate::finish(&source, &target, confirmed))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Undo a cutover: remove the junction, rename the backup back.
+#[tauri::command]
+async fn migrate_rollback(
+    source: String,
+    target: String,
+) -> Result<migrate::MigrationRollbackReport, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(migrate::rollback(&source, &target)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Where the migration stands, derived from the filesystem.
+#[tauri::command]
+async fn migrate_status(source: String, target: String) -> Result<migrate::MigrationState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(migrate::state_of(
+            std::path::Path::new(source.trim()),
+            std::path::Path::new(target.trim()),
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Request cancellation of an in-flight migration copy pass.
+#[tauri::command]
+async fn cancel_migrate_copy() -> Result<(), String> {
+    migrate::request_copy_cancel();
+    Ok(())
+}
+
 /// Remove npm global packages (Safety Vault backup first; admission strict).
 #[tauri::command]
 async fn remove_npm_globals(
@@ -1281,6 +1355,13 @@ pub fn run() {
         // `delete_regenerable_layouts`
         // `scan_cli_globals`
         // `remove_npm_globals`
+        // `migrate_plan`
+        // `migrate_copy`
+        // `migrate_cutover`
+        // `migrate_finish`
+        // `migrate_rollback`
+        // `migrate_status`
+        // `cancel_migrate_copy`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1359,6 +1440,13 @@ pub fn run() {
             delete_regenerable_layouts,
             scan_cli_globals,
             remove_npm_globals,
+            migrate_plan,
+            migrate_copy,
+            migrate_cutover,
+            migrate_finish,
+            migrate_rollback,
+            migrate_status,
+            cancel_migrate_copy,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,
