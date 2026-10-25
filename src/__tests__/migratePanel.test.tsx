@@ -55,7 +55,7 @@ it("renders plan rejections in the user's language", async () => {
   });
   render(<MigratePanel onClose={vi.fn()} />);
   type();
-  fireEvent.click(await screen.findByRole("button", { name: t().migratePlanBtn }));
+  fireEvent.click(await screen.findByRole("button", { name: t().migrateStart }));
   await waitFor(() => expect(api.migratePlan).toHaveBeenCalled());
   const L = t();
   await waitFor(() =>
@@ -66,7 +66,10 @@ it("renders plan rejections in the user's language", async () => {
 });
 
 it("gates destructive phases on the derived state and confirms cutover", async () => {
-  vi.mocked(api.migrateStatus).mockResolvedValue("copied");
+  // Mount sees "copied"; the post-cutover refreshState sees "cutover".
+  vi.mocked(api.migrateStatus)
+    .mockResolvedValueOnce("copied")
+    .mockResolvedValue("cutover");
   vi.mocked(api.migrateCutover).mockResolvedValue({
     ok: true,
     junction: "C:\\src",
@@ -77,16 +80,28 @@ it("gates destructive phases on the derived state and confirms cutover", async (
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
   type();
-  // The status probe is debounced (300 ms) — poll instead of a sync query.
-  await screen.findByText(L.migrateCurrentState(L.migrateStateCopied), {}, { timeout: 3000 });
+  // The status probe is debounced (300 ms) — poll for the stepper's current
+  // step (copy done -> cutover is next) instead of a sync query.
+  await waitFor(() => {
+    const step = screen.getByRole("list", { name: L.migrateTitle }).querySelector('[aria-current="step"]');
+    if (!step || !step.textContent?.includes(L.stepCutover)) {
+      throw new Error("cutover step must become current after the copy");
+    }
+  }, { timeout: 3000 });
   const cutover = screen.getByRole("button", { name: L.migrateCutover });
   expect(cutover).toHaveProperty("disabled", false);
-  const finish = screen.getByRole("button", { name: L.migrateFinish });
-  expect(finish).toHaveProperty("disabled", true);
+  // In the copied state the finish is not offered at all (single CTA).
+  expect(screen.queryByRole("button", { name: L.migrateFinish })).toBeNull();
   fireEvent.click(cutover);
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalled());
   await waitFor(() => expect(api.migrateCutover).toHaveBeenCalled());
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  // After the cutover the single CTA becomes the finish; rollback appears.
+  await waitFor(() => {
+    const finish = screen.getByRole("button", { name: L.migrateFinish });
+    if (finish.hasAttribute("disabled")) throw new Error("finish must unlock after the cutover");
+  });
+  expect(screen.getByRole("button", { name: L.migrateRollback })).toBeTruthy();
 });
 
 it("the primary path starts from idle: plan ok enables the copy button", async () => {
@@ -105,12 +120,9 @@ it("the primary path starts from idle: plan ok enables the copy button", async (
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
   type();
-  fireEvent.click(await screen.findByRole("button", { name: L.migratePlanBtn }));
-  await waitFor(() => {
-    const copy = screen.getByRole("button", { name: L.migrateCopyBtn });
-    if (copy.hasAttribute("disabled")) throw new Error("copy must be enabled after a feasible plan");
-  });
-  fireEvent.click(screen.getByRole("button", { name: L.migrateCopyBtn }));
+  fireEvent.click(await screen.findByRole("button", { name: L.migrateStart }));
+  // The wizard flows straight into the copy; wait for it to complete.
+  await waitFor(() => expect(api.migrateCopy).toHaveBeenCalled());
   await waitFor(() => expect(api.migrateCopy).toHaveBeenCalledWith("C:\\src", "D:\\dst"));
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   // After the copy lands the derived state is "copied": cutover unlocks.

@@ -73,13 +73,14 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const runPlan = () =>
+  // The primary CTA chains plan -> copy automatically: a refused plan stops
+  // at the planning step with its reasons; a green plan flows straight into
+  // the copy and stops at "copied" for the (dangerous) cutover confirmation.
+  const startMigration = () =>
     withBusy(async () => {
-      setPlan(await api.migratePlan(source, target));
-    });
-
-  const runCopy = () =>
-    withBusy(async () => {
+      const plan = await api.migratePlan(source, target);
+      setPlan(plan);
+      if (!plan.ok) return;
       try {
         const r = await api.migrateCopy(source, target);
         toast.success(
@@ -156,14 +157,6 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
       await refreshState(source, target);
     });
 
-  const stateLabel: Record<MigrationState, string> = {
-    absent: L.migrateStateAbsent,
-    idle: L.migrateStateIdle,
-    copied: L.migrateStateCopied,
-    cutover: L.migrateStateCutover,
-    finished: L.migrateStateFinished,
-    inconsistent: L.migrateStateInconsistent,
-  };
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.migrateTitle}>
@@ -186,31 +179,70 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
           placeholder="D:\\Moved\\SomeApp" />
       </label>
 
-      {state && state !== "absent" && state !== "idle" && (
-        <div role="status" style={{ margin: "6px 0" }}>
-          {L.migrateCurrentState(stateLabel[state])}
-        </div>
-      )}
+      {(() => {
+        const steps = [L.stepPlan, L.stepCopy, L.stepCutover, L.stepFinish];
+        // The current step is the action the user takes NEXT: after a copy
+        // the cutover is next; after a cutover the finish is next.
+        const idx = state === "cutover" ? 3 : state === "copied" ? 2 : state === "finished" ? 4 : 0;
+        return (
+          <ol aria-label={L.migrateTitle} style={{ display: "flex", gap: 6, flexWrap: "wrap", listStyle: "none", margin: "8px 0", padding: 0 }}>
+            {steps.map((label, i) => {
+              const done = i < idx;
+              const current = i === idx;
+              return (
+                <li
+                  key={label}
+                  aria-current={current ? "step" : undefined}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    padding: "3px 10px",
+                    borderRadius: 999,
+                    border: current ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    color: done ? "var(--ok-ink)" : current ? "var(--accent-text)" : "var(--muted)",
+                    fontWeight: current ? 650 : 500,
+                    background: current ? "var(--accent-soft)" : "transparent",
+                  }}
+                >
+                  {done ? "\u2713 " : ""}{i + 1}. {label}
+                </li>
+              );
+            })}
+          </ol>
+        );
+      })()}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || !source.trim() || !target.trim()} onClick={() => void runPlan()}>
-          {L.migratePlanBtn}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+        <button
+          type="button"
+          style={{ ...css.btn, height: 34, opacity: busy ? 0.6 : 1 }}
+          disabled={busy || !source.trim() || !target.trim() || state === "finished"}
+          onClick={() => {
+            if (state === "copied") void withBusy(runCutover);
+            else if (state === "cutover") void withBusy(runFinish);
+            else void startMigration();
+          }}
+        >
+          {busy
+            ? L.migrateWorking
+            : state === "copied"
+              ? L.migrateCutover
+              : state === "cutover"
+                ? L.migrateFinish
+                : L.migrateStart}
         </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }}
-          disabled={busy || !plan?.ok || (state !== "idle" && state !== "copied")} onClick={() => void runCopy()}>
-          {L.migrateCopyBtn}
-        </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "copied"} onClick={() => void runCutover()}>
-          {L.migrateCutover}
-        </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={() => void runFinish()}>
-          {L.migrateFinish}
-        </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={() => void runRollback()}>
-          {L.migrateRollback}
-        </button>
+        {state === "cutover" && (
+          <button type="button" style={{ ...css.btnGhost, height: 34 }} disabled={busy} onClick={() => void withBusy(runRollback)}>
+            {L.migrateRollback}
+          </button>
+        )}
+        {state === "cutover" && (
+          <span style={{ ...css.muted, fontSize: 12 }}>{L.migrateFinishLater}</span>
+        )}
         {busy && state === "copied" && (
-          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={() => void cancelCopy()}>
+          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={() => void withBusy(cancelCopy)}>
             {L.cancelScan}
           </button>
         )}
