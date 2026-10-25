@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
@@ -86,7 +87,7 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
           r.reparse_skipped.length ? { detail: L.migrateCopySkipped(r.reparse_skipped.length) } : undefined,
         );
       } catch (e) {
-        toast.error(formatError(e));
+        toast.error(backendErrorText(formatError(e)));
       }
       await refreshState(source, target);
     });
@@ -135,7 +136,7 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
           });
         }
       } catch (e) {
-        toast.error(formatError(e));
+        toast.error(backendErrorText(formatError(e)));
       }
       await refreshState(source, target);
     });
@@ -150,7 +151,7 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
           toast.error(L.migrateRollbackFailed, { detail: r.message ?? undefined });
         }
       } catch (e) {
-        toast.error(formatError(e));
+        toast.error(backendErrorText(formatError(e)));
       }
       await refreshState(source, target);
     });

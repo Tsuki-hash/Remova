@@ -29,6 +29,9 @@ vi.mock("../lib/toast", () => ({
 
 afterEach(() => {
   cleanup();
+  // mockReset (not clearAllMocks): mockResolvedValueOnce queues and mock
+  // implementations survive clearAllMocks and would leak across tests.
+  vi.mocked(api.migrateStatus).mockReset();
   vi.clearAllMocks();
 });
 
@@ -74,7 +77,8 @@ it("gates destructive phases on the derived state and confirms cutover", async (
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
   type();
-  await waitFor(() => expect(screen.getByText(L.migrateCurrentState(L.migrateStateCopied))).toBeTruthy());
+  // The status probe is debounced (300 ms) — poll instead of a sync query.
+  await screen.findByText(L.migrateCurrentState(L.migrateStateCopied), {}, { timeout: 3000 });
   const cutover = screen.getByRole("button", { name: L.migrateCutover });
   expect(cutover).toHaveProperty("disabled", false);
   const finish = screen.getByRole("button", { name: L.migrateFinish });

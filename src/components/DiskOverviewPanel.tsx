@@ -3,6 +3,7 @@ import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendErrorText } from "../lib/backendText";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
@@ -171,7 +172,7 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
       setRegenSel(new Set());
       await reload();
     } catch (e) {
-      toast.error(formatError(e));
+      toast.error(backendErrorText(formatError(e)));
     } finally {
       setRegenBusy(false);
     }

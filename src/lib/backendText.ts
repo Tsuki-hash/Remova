@@ -70,6 +70,12 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     );
   }
   if (raw === "cleanup cancelled") return L.batchCancelled;
+  if (raw === "cleanup cancelled during backup") return L.backendCleanupCancelledBackup;
+  if (raw === "migrate:cancelled") return L.migrateCancelled;
+  if (raw.startsWith("not a regenerable layout: ")) {
+    return L.backendNotRegenerable(raw.slice("not a regenerable layout: ".length));
+  }
+  if (raw.startsWith("migration is not in the cutover state")) return L.backendMigrateState;
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");

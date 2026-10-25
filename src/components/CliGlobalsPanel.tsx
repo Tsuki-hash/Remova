@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
@@ -57,7 +58,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
     try {
       await api.openPath(rootOf(item));
     } catch (e) {
-      toast.error(formatError(e));
+      toast.error(backendErrorText(formatError(e)));
     }
   };
 
@@ -100,7 +101,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       }
       await reload();
     } catch (e) {
-      toast.error(formatError(e));
+      toast.error(backendErrorText(formatError(e)));
     } finally {
       setBusy(false);
     }
