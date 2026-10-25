@@ -131,6 +131,9 @@ jobs:
             # JSON body alone ('"status":"404"'); both must count as "no release".
             throw "Could not determine existing release state: $($existing | Out-String)"
           }
+          # The pwsh shell wrapper exits with $LASTEXITCODE; a not-found probe
+          # must not leak gh's exit 1 into a step failure after the checks pass.
+          exit 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
