@@ -2,7 +2,7 @@
 
 ## 1.4.1 (in development)
 
-- **Status**: planning the next cycle — stability follow-up from 1.4.0 feedback, usability and UI refinements of existing features, and a bounded set of new capabilities. Scope and the final version number are decided at scope freeze: if new capabilities ship beyond patch semantics, the version becomes 1.5.0 per the X.Y.0 feature-release convention.
+- **Status**: code complete — the 1.4.1 cycle ships theme follow-system, a first-run safety card, scan elapsed time, a regrouped toolbox, a read-only C: drive overview (junction ledger, triage, DISM WinSxS analysis), regenerable-cache cleanup, an npm/pnpm/yarn global-package inventory with an npm removal gate, read-only system-trace and portable-app reports, and gated junction directory migration with rollback. Version is frozen at 1.4.1 (maintainer decision). Real-machine acceptance is the remaining gate before tagging; signing must be decided before any tag is pushed.
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
 - **Signing**: the unsigned-release exception was scoped to the exact `v1.4.0` tag. Any later release needs either the `ALLOW_UNSIGNED_RELEASE=true` repository variable or configured signing (SignPath variables are reserved in the workflow). This decision must be made before tagging.
 - **Updater**: in-app updates stay disabled. The upstream `tauri-plugin-updater` still depends on a `zip` version with open advisories, so update assets are not produced; upgrades remain manual downloads verified via `SHA256SUMS.txt`.
