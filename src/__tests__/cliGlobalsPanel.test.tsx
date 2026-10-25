@@ -8,7 +8,10 @@ import { toast } from "../lib/toast";
 import { t } from "../i18n";
 
 vi.mock("../lib/api", () => ({
-  api: { cliGlobals: vi.fn(), openPath: vi.fn() },
+  api: { cliGlobals: vi.fn(), openPath: vi.fn(), removeNpmGlobals: vi.fn() },
+}));
+vi.mock("../lib/confirm", () => ({
+  requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })),
 }));
 vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -53,4 +56,32 @@ it("surfaces load errors as an alert", async () => {
   render(<CliGlobalsPanel onClose={vi.fn()} />);
   await waitFor(() => expect(toast.error).not.toHaveBeenCalled());
   expect(screen.getByRole("alert").textContent).toContain("boom");
+});
+
+it("removes selected npm packages after a no-override confirm and reports", async () => {
+  const L = t();
+  vi.mocked(api.cliGlobals)
+    .mockResolvedValueOnce({
+      items: [
+        { manager: "npm", name: "rimraf", version: "6.0.0", path: "C:\\npm\\node_modules\\rimraf", size_kb: 500, size_capped: false },
+        { manager: "pnpm", name: "cowsay", version: null, path: "C:\\pnpm\\cowsay.cmd", size_kb: 0, size_capped: false },
+      ],
+      omitted: 0,
+      notes: [],
+    })
+    .mockResolvedValue({ items: [], omitted: 0, notes: [] });
+  vi.mocked(api.removeNpmGlobals).mockResolvedValue({
+    removed: ["rimraf"],
+    failed: [],
+    backup_dir: "C:\\ProgramData\\Remova\\Backup\\npm-globals_1",
+  });
+  render(<CliGlobalsPanel onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "rimraf" }));
+  fireEvent.click(screen.getByRole("button", { name: L.cliRemove }));
+  await waitFor(() =>
+    expect(api.removeNpmGlobals).toHaveBeenCalledWith([{ name: "rimraf" }]),
+  );
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  // pnpm rows never get a checkbox: only npm is gated.
+  expect(screen.queryByRole("checkbox", { name: "cowsay" })).toBeNull();
 });

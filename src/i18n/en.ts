@@ -172,6 +172,14 @@ export const dict: EnDict = {
     cliShimNote: "commands (pnpm globals are shims; versions are not guessed)",
     cliOpenRoot: (m: string) => `Open ${m} global folder`,
     cliNote: "The inventory is read-only. Per-manager deletion arrives one manager at a time after its layout and backup story are evaluated (npm first).",
+    cliRemove: "Remove selected (npm)",
+    cliRemoving: "Removing…",
+    cliRemoveTitle: "Remove npm global packages",
+    cliRemoveConfirm: (n: number) =>
+      `This removes ${n} npm global packages and their command shims. Each package is exported to the safety backup first (restorable under More → Restore backup); run elevated when needed. Continue?`,
+    cliRemoveDone: (n: number) => `Removed ${n} npm global packages`,
+    cliRemoveFailed: (n: number) => `${n} packages failed to remove`,
+    cliRemoveNote: "Only npm offers removal; pnpm / yarn follow once their link layouts are evaluated.",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
+import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
 import type { CliGlobalItem, CliGlobalScanResult } from "../types";
@@ -30,13 +31,19 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
   const L = t();
   const [result, setResult] = useState<CliGlobalScanResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    setSel(new Set());
+    setResult(await api.cliGlobals());
+  };
 
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const r = await api.cliGlobals();
-        if (alive) setResult(r);
+        await reload();
       } catch (e) {
         if (alive) setLoadError(formatError(e));
       }
@@ -51,6 +58,51 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       await api.openPath(rootOf(item));
     } catch (e) {
       toast.error(formatError(e));
+    }
+  };
+
+  const toggle = (name: string) => {
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  };
+
+  const npmRows = result?.items.filter((i) => i.manager === "npm") ?? [];
+
+  const removeSelected = async () => {
+    const names = [...sel];
+    if (!names.length || busy) return;
+    const { ok } = await requestConfirmEx({
+      title: L.cliRemoveTitle,
+      message: L.cliRemoveConfirm(names.length),
+      confirmLabel: L.cliRemove,
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const report = await api.removeNpmGlobals(names.map((name) => ({ name })));
+      if (report.failed.length) {
+        toast.error(L.cliRemoveFailed(report.failed.length), {
+          detail: report.failed.join("\n"),
+        });
+      }
+      if (report.removed.length) {
+        toast.success(L.cliRemoveDone(report.removed.length), {
+          detail: `${L.restorePreviewTitle}: ${report.backup_dir.split(/[\\/]/).filter(Boolean).at(-1)}`,
+        });
+      }
+      await reload();
+    } catch (e) {
+      toast.error(formatError(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -119,8 +171,17 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
                     padding: "3px 8px",
                     borderBottom: "1px solid var(--border)",
                     fontSize: 12,
+                    alignItems: "center",
                   }}
                 >
+                  {m === "npm" && (
+                    <input
+                      type="checkbox"
+                      aria-label={r.name}
+                      checked={sel.has(r.name)}
+                      onChange={() => toggle(r.name)}
+                    />
+                  )}
                   <span className="ell" style={{ flex: 1, minWidth: 0 }}>
                     {r.name}
                   </span>
@@ -134,6 +195,20 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
           </div>
         );
       })}
+
+      {npmRows.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button
+            type="button"
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={busy || sel.size === 0}
+            onClick={() => void removeSelected()}
+          >
+            {busy ? L.cliRemoving : L.cliRemove}
+          </button>
+          <span style={{ ...css.muted, fontSize: 12, alignSelf: "center" }}>{L.cliRemoveNote}</span>
+        </div>
+      )}
 
       <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.cliNote}</div>
     </section>
