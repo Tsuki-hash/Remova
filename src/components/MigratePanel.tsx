@@ -189,24 +189,24 @@ export function MigratePanel({ onClose }: { onClose: () => void }) {
       )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || !source.trim() || !target.trim()} onClick={runPlan}>
+        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || !source.trim() || !target.trim()} onClick={() => void runPlan()}>
           {L.migratePlanBtn}
         </button>
         <button type="button" style={{ ...css.btnGhost, height: 30 }}
-          disabled={busy || !plan?.ok || state !== "copied"} onClick={runCopy}>
+          disabled={busy || !plan?.ok || state !== "copied"} onClick={() => void runCopy()}>
           {L.migrateCopyBtn}
         </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "copied"} onClick={runCutover}>
+        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "copied"} onClick={() => void runCutover()}>
           {L.migrateCutover}
         </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={runFinish}>
+        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={() => void runFinish()}>
           {L.migrateFinish}
         </button>
-        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={runRollback}>
+        <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={busy || state !== "cutover"} onClick={() => void runRollback()}>
           {L.migrateRollback}
         </button>
         {busy && state === "copied" && (
-          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={cancelCopy}>
+          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={() => void cancelCopy()}>
             {L.cancelScan}
           </button>
         )}

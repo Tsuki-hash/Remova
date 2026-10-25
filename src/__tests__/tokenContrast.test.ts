@@ -23,11 +23,11 @@ function tokensOf(branch: "dark" | "light"): Tokens {
 
 function luminance(hex: string): number {
   const v = hex.replace("#", "");
-  const rgb = [0, 2, 4].map((i) => {
+  const chan = (i: number) => {
     const c = parseInt(v.slice(i, i + 2) ?? "00", 16) / 255;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * rgb[0]! + 0.7152 * rgb[1]! + 0.0722 * rgb[2]!;
+  };
+  return 0.2126 * chan(0) + 0.7152 * chan(2) + 0.0722 * chan(4);
 }
 
 function contrast(a: string, b: string): number {

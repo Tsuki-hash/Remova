@@ -73,10 +73,10 @@ it("gates destructive phases on the derived state and confirms cutover", async (
   const L = t();
   type();
   await waitFor(() => expect(screen.getByText(L.migrateCurrentState(L.migrateStateCopied))).toBeTruthy());
-  const cutover = screen.getByRole("button", { name: L.migrateCutover }) as HTMLButtonElement;
-  expect(cutover.disabled).toBe(false);
-  const finish = screen.getByRole("button", { name: L.migrateFinish }) as HTMLButtonElement;
-  expect(finish.disabled).toBe(true);
+  const cutover = screen.getByRole("button", { name: L.migrateCutover });
+  expect(cutover).toHaveProperty("disabled", false);
+  const finish = screen.getByRole("button", { name: L.migrateFinish });
+  expect(finish).toHaveProperty("disabled", true);
   fireEvent.click(cutover);
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalled());
   await waitFor(() => expect(api.migrateCutover).toHaveBeenCalled());
@@ -95,8 +95,8 @@ it("reports an automatic rollback as an error with the server reason", async () 
   render(<MigratePanel onClose={vi.fn()} />);
   type();
   await waitFor(() => {
-    const cutover = screen.getByRole("button", { name: t().migrateCutover }) as HTMLButtonElement;
-    if (cutover.disabled) throw new Error("not ready");
+    const cutover = screen.getByRole("button", { name: t().migrateCutover });
+    if (cutover.hasAttribute("disabled")) throw new Error("not ready");
   });
   fireEvent.click(screen.getByRole("button", { name: t().migrateCutover }));
   await waitFor(() => expect(toast.error).toHaveBeenCalled());
