@@ -15,6 +15,7 @@ import type {
   TriageScanResult,
   RegenerableScanResult,
   RegenerableCleanupReport,
+  CliGlobalScanResult,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -140,6 +141,8 @@ export const api = {
   /** Delete the contents of regenerable layouts (server re-admits each path). */
   deleteRegenerableLayouts: (paths: string[]) =>
     invoke<RegenerableCleanupReport>("delete_regenerable_layouts", { paths }),
+  /** Global CLI package inventory, npm/pnpm/yarn (read-only). */
+  cliGlobals: () => invoke<CliGlobalScanResult>("scan_cli_globals"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

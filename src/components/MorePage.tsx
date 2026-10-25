@@ -19,6 +19,7 @@ import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
+import { CliGlobalsPanel } from "./CliGlobalsPanel";
 import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
@@ -211,6 +212,13 @@ export function MorePage({
       desc: L.diskOverviewHint,
       icon: "disk",
       action: () => tools.setOpenTool("diskoverview"),
+    },
+    {
+      id: "cliglobals",
+      title: L.cliTitle,
+      desc: L.cliHint,
+      icon: "toolcache",
+      action: () => tools.setOpenTool("cliglobals"),
     },
     {
       id: "diskradar",
@@ -406,6 +414,9 @@ export function MorePage({
       )}
       {openTool === "diskoverview" && (
         <DiskOverviewPanel onClose={() => tools.setOpenTool(null)} />
+      )}
+      {openTool === "cliglobals" && (
+        <CliGlobalsPanel onClose={() => tools.setOpenTool(null)} />
       )}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />

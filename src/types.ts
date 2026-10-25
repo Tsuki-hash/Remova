@@ -159,6 +159,21 @@ export type RegenerableCleanupReport = {
   reclaimed_kb: number;
 };
 
+/** M4: global CLI package inventory (read-only; npm/pnpm/yarn). */
+export type CliGlobalItem = {
+  manager: string;
+  name: string;
+  version: string | null;
+  path: string;
+  size_kb: number;
+  size_capped: boolean;
+};
+export type CliGlobalScanResult = {
+  items: CliGlobalItem[];
+  omitted: number;
+  notes: string[];
+};
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

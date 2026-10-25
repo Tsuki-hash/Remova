@@ -34,6 +34,7 @@ const COMMAND_KEYS = [
   "spaceTriage",
   "regenerableLayouts",
   "deleteRegenerableLayouts",
+  "cliGlobals",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",

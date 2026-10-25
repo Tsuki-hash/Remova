@@ -4,6 +4,7 @@ pub mod ai;
 pub mod apps;
 pub mod association;
 pub mod backup;
+pub mod cliglobals;
 pub mod commands;
 pub mod constants;
 pub mod deep_reg;
@@ -879,6 +880,14 @@ async fn scan_regenerable_layouts() -> Result<regenclean::RegenerableScanResult,
         .map_err(|e| e.to_string())
 }
 
+/// Global CLI package inventory, npm/pnpm/yarn (read-only).
+#[tauri::command]
+async fn scan_cli_globals() -> Result<cliglobals::CliGlobalScanResult, String> {
+    tauri::async_runtime::spawn_blocking(cliglobals::scan_cli_globals)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Delete the contents of regenerable layouts (no backup: invariant 7; the
 /// server re-admits every path through a fresh scan first).
 #[tauri::command]
@@ -1259,6 +1268,7 @@ pub fn run() {
         // `scan_space_triage`
         // `scan_regenerable_layouts`
         // `delete_regenerable_layouts`
+        // `scan_cli_globals`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1335,6 +1345,7 @@ pub fn run() {
             scan_space_triage,
             scan_regenerable_layouts,
             delete_regenerable_layouts,
+            scan_cli_globals,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

@@ -165,6 +165,13 @@ export const dict: EnDict = {
     regenDone: (n: number, size: string) => `Cleaned ${n} layouts, freed about ${size}`,
     regenSkipped: (n: number) => `${n} skipped (locked or access denied)`,
     regenBlockServicing: "servicing in progress, not cleanable right now",
+    cliTitle: "Global CLI packages",
+    cliHint: "Read-only inventory of npm / pnpm / yarn globals; nothing is deleted in this version",
+    cliEmpty: "No global CLI packages found",
+    cliNoRoot: (m: string) => `${m}: global folder not found or unreadable`,
+    cliShimNote: "commands (pnpm globals are shims; versions are not guessed)",
+    cliOpenRoot: (m: string) => `Open ${m} global folder`,
+    cliNote: "The inventory is read-only. Per-manager deletion arrives one manager at a time after its layout and backup story are evaluated (npm first).",
     langToggle: "中文",
     batchConfirm: (n: number, official?: boolean) =>
       `Analyze ${n} selected apps and clean CONFIRMED items (high risk skipped)${official ? ", with official uninstaller" : ""}. Backup is an optional checkbox (unchecked by default; applies to the whole batch). Continue?`,
