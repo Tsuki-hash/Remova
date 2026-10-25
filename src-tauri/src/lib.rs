@@ -28,6 +28,7 @@ pub mod npmglobals;
 pub mod orphans;
 pub mod path_seal;
 pub mod policy;
+pub mod portable;
 pub mod regenclean;
 pub mod regops;
 pub mod regscan;
@@ -40,6 +41,7 @@ pub mod shared;
 pub mod storeapps;
 pub mod sysops;
 pub mod toolcache;
+pub mod traces;
 pub mod triage;
 pub mod winsxs;
 
@@ -956,6 +958,22 @@ async fn migrate_status(source: String, target: String) -> Result<migrate::Migra
     .map_err(|e| e.to_string())?
 }
 
+/// Orphaned ConsentStore NonPackaged entries (read-only, evaluation-gated).
+#[tauri::command]
+async fn scan_consent_orphans() -> Result<traces::TraceScanResult, String> {
+    tauri::async_runtime::spawn_blocking(traces::scan_consent_orphans)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Portable-app candidates from firewall rules x install records (read-only).
+#[tauri::command]
+async fn scan_portable_candidates() -> Result<portable::PortableScanResult, String> {
+    tauri::async_runtime::spawn_blocking(portable::scan_portable_candidates)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Request cancellation of an in-flight migration copy pass.
 #[tauri::command]
 async fn cancel_migrate_copy() -> Result<(), String> {
@@ -1362,6 +1380,8 @@ pub fn run() {
         // `migrate_rollback`
         // `migrate_status`
         // `cancel_migrate_copy`
+        // `scan_consent_orphans`
+        // `scan_portable_candidates`
         // `diagnose_locked_path`
         // `end_locking_process`
         // `deep_registry_check`
@@ -1447,6 +1467,8 @@ pub fn run() {
             migrate_rollback,
             migrate_status,
             cancel_migrate_copy,
+            scan_consent_orphans,
+            scan_portable_candidates,
             diagnose_locked_path,
             end_locking_process,
             deep_registry_check,

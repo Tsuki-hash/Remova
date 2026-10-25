@@ -83,6 +83,12 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
     })
 }
 
+/// Public parse wrapper for the portable-candidate cross-reference; the
+/// fields beyond `App=` are display-only there.
+pub fn parse_rule_public(value_name: &str, raw: &str) -> Option<FirewallRule> {
+    parse_rule(value_name, raw)
+}
+
 /// Rules whose `App=` executable no longer exists. `try_exists` errors (ACL,
 /// offline path) are treated as "still unknown" and never offered.
 pub fn scan_orphan_firewall_rules() -> FirewallScanResult {

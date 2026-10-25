@@ -21,6 +21,7 @@ import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { CliGlobalsPanel } from "./CliGlobalsPanel";
 import { MigratePanel } from "./MigratePanel";
+import { TracesPanel } from "./TracesPanel";
 import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
@@ -259,6 +260,13 @@ export function MorePage({
       icon: "services",
       action: () => tools.toggleTool("firewall"),
     },
+    {
+      id: "traces",
+      title: L.tracesTitle,
+      desc: L.tracesHint,
+      icon: "report",
+      action: () => tools.setOpenTool("traces"),
+    },
   ];
 
   const help: ToolItem[] = [
@@ -427,6 +435,7 @@ export function MorePage({
         <CliGlobalsPanel onClose={() => tools.setOpenTool(null)} />
       )}
       {openTool === "migrate" && <MigratePanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "traces" && <TracesPanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}

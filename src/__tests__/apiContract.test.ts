@@ -43,6 +43,8 @@ const COMMAND_KEYS = [
   "migrateRollback",
   "migrateStatus",
   "cancelMigrateCopy",
+  "consentOrphans",
+  "portableCandidates",
   "diagnoseLockedPath",
   "endLockingProcess",
   "deepRegistryCheck",

@@ -218,6 +218,28 @@ export type MigrationState =
   | "finished"
   | "inconsistent";
 
+/** M4: system traces — ConsentStore orphan (read-only this cycle). */
+export type ConsentOrphan = {
+  capability: string;
+  key: string;
+  exe_path: string;
+};
+export type TraceScanResult = {
+  consent_orphans: ConsentOrphan[];
+  omitted: number;
+  degraded: string[];
+};
+
+/** M4: portable-app candidates (read-only). */
+export type PortableCandidate = {
+  exe_path: string;
+  rule_name: string;
+};
+export type PortableScanResult = {
+  candidates: PortableCandidate[];
+  omitted: number;
+};
+
 /** M4: processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 

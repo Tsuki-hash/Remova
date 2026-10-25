@@ -23,7 +23,8 @@ export type ToolId =
   | "onboarding"
   | "diskoverview"
   | "cliglobals"
-  | "migrate";
+  | "migrate"
+  | "traces";
 
 export type ToolItem = {
   id: ToolId;

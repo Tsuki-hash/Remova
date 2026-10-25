@@ -23,6 +23,8 @@ import type {
   MigrationFinishReport,
   MigrationRollbackReport,
   MigrationState,
+  TraceScanResult,
+  PortableScanResult,
   CleanupItem,
   CleanupReport,
   DirSizeRow,
@@ -166,6 +168,10 @@ export const api = {
     invoke<MigrationRollbackReport>("migrate_rollback", { source, target }),
   migrateStatus: (source: string, target: string) =>
     invoke<MigrationState>("migrate_status", { source, target }),
+  /** M4: orphaned ConsentStore entries (read-only, evaluation-gated). */
+  consentOrphans: () => invoke<TraceScanResult>("scan_consent_orphans"),
+  /** M4: portable-app candidates (read-only cross-reference). */
+  portableCandidates: () => invoke<PortableScanResult>("scan_portable_candidates"),
   cancelMigrateCopy: () => invoke<void>("cancel_migrate_copy"),
   /** M3: export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
