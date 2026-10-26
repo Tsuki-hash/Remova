@@ -31,10 +31,20 @@ vi.mock("../lib/toast", () => ({
 afterEach(() => {
   cleanup();
   // mockReset (not clearAllMocks): mockResolvedValueOnce queues and mock
-  // implementations survive clearAllMocks and would leak across tests. In
-  // vitest 5 mockReset restores the factory default implementation, so every
-  // mock returns to its declared behaviour for the next test.
-  vi.mocked(api.migrateStatus).mockReset();
+  // implementations survive clearAllMocks and would leak across tests — e.g.
+  // a never-settling migrateCopy promise would hang a later test. mockReset
+  // restores every mock to its factory default implementation.
+  for (const mock of [
+    api.migratePlan,
+    api.migrateCopy,
+    api.migrateCutover,
+    api.migrateFinish,
+    api.migrateRollback,
+    api.migrateStatus,
+    api.cancelMigrateCopy,
+  ]) {
+    vi.mocked(mock).mockReset();
+  }
   vi.mocked(requestConfirmEx).mockReset();
   vi.clearAllMocks();
 });

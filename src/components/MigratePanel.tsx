@@ -163,7 +163,11 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       if (r.ok) {
         toast.success(L.migrateRollbackDone);
       } else {
-        toast.error(L.migrateRollbackFailed, { detail: r.message ?? undefined });
+        // The same string is localized for the finish path; the rollback
+        // report deserves the same treatment.
+        toast.error(L.migrateRollbackFailed, {
+          detail: r.message ? backendErrorText(r.message) : undefined,
+        });
       }
     } catch (e) {
       toast.error(backendErrorText(formatError(e)));
@@ -231,7 +235,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6, justifyContent: "flex-end" }}>
         <button
           type="button"
-          style={{ ...css.btn, height: 34, opacity: busy ? 0.6 : 1 }}
+          style={{ ...css.btn, height: 34, opacity: busy ? 0.5 : 1 }}
           disabled={busy || !source.trim() || !target.trim() || state === "finished"}
           onClick={() => {
             if (state === "copied") void withBusy(runCutover);
