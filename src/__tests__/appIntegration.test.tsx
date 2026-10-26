@@ -174,6 +174,16 @@ beforeEach(() => {
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); });
 
 describe("App orchestration", () => {
+  it("reopens the safety card on More instead of only setting hidden state", async () => {
+    await mount();
+    await nav("more");
+    expect(screen.queryByText(i18n.t().onboardingTitle)).toBeNull();
+    act(() => more().onReopenOnboarding?.());
+    expect(screen.getByText(i18n.t().onboardingTitle)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().onboardingDismiss }));
+    expect(screen.queryByText(i18n.t().onboardingTitle)).toBeNull();
+  });
+
   it("clears old report notes and rejects verification belonging to another report", async () => {
     saveRescanAfterUninstall(false);
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });

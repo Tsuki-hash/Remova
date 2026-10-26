@@ -42,6 +42,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   Suspense,
   lazy,
 } from "react";
@@ -99,7 +100,11 @@ export default function App() {
 
   const { q, setQ, sortCol, setSortCol, sortDesc, setSortDesc, category, setCategoryState } =
     useListFilterChrome();
-  const onboarding = useOnboarding();
+  const {
+    open: onboardingOpen,
+    dismiss: dismissOnboarding,
+    reopen: reopenOnboarding,
+  } = useOnboarding();
   const shell = useShellState();
   const {
     theme,
@@ -128,6 +133,21 @@ export default function App() {
   useEffect(() => {
     if (requestedBackup) goNav("more");
   }, [requestedBackup, goNav]);
+
+  // The safety card lives outside a single page: reopening it from More must
+  // show it there rather than only setting hidden state. Scroll it into view on
+  // every reopen (even when it was already open) so the click has feedback.
+  const [safetyReopenTick, setSafetyReopenTick] = useState(0);
+  const reopenSafety = useCallback(() => {
+    reopenOnboarding();
+    setSafetyReopenTick((n) => n + 1);
+  }, [reopenOnboarding]);
+  const safetyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (onboardingOpen) {
+      safetyRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    }
+  }, [onboardingOpen, safetyReopenTick]);
 
  // stable action bags for the software controller — the whole `core`/`shell` objects
  // change identity on every unrelated state update and would defeat SoftwarePage's memo.
@@ -818,8 +838,10 @@ export default function App() {
             <ErrorBanner error={error} onDismiss={() => core.setError(null)} />
           </div>
         )}
-        {nav === "software" && onboarding.open && (
-          <OnboardingCard onClose={onboarding.dismiss} />
+        {onboardingOpen && (
+          <div ref={safetyRef}>
+            <OnboardingCard onClose={dismissOnboarding} />
+          </div>
         )}
         {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
           <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
@@ -868,7 +890,7 @@ export default function App() {
               }}
               onError={core.setError}
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
-              onReopenOnboarding={onboarding.reopen}
+              onReopenOnboarding={reopenSafety}
               onGoSoftware={() => goNav("software")}
               onLastReport={(r) => coreSetReport(r)}
               onAiEnabledChange={setAiEnabled}
