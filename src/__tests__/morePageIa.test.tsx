@@ -53,11 +53,30 @@ it("groups the toolbox into the new sections and offers a search", async () => {
   expect(screen.getByText(L.moreSectionSpace)).toBeTruthy();
   expect(screen.getByText(L.moreSectionTraces)).toBeTruthy();
   expect(screen.getByText(L.moreSectionHelp)).toBeTruthy();
-  expect(screen.queryByText("进阶")).toBeNull();
   // The trace section carries the firewall card.
   expect(screen.getByText(L.firewallTitle)).toBeTruthy();
-  // The old "recently used" section is gone for good.
-  expect(screen.queryByText("最近使用")).toBeNull();
+  // The toolbox renders exactly the five fixed sections (plus the close-mode
+  // helper). This pin is structural, not a string match: sections that were
+  // removed ("进阶", "最近使用") must stay gone whatever wording a revival
+  // would use, so every rendered section title must come from the known set.
+  const knownTitles: string[] = [
+    L.moreSectionCommon,
+    L.moreSectionInstallHealth,
+    L.moreSectionSpace,
+    L.moreSectionTraces,
+    L.moreSectionHelp,
+    L.closeMode,
+  ];
+  const sectionTitles = Array.from(
+    document.querySelectorAll("section.remova-tool-section > header > span:first-child"),
+  ).map((el) => el.textContent);
+  expect(sectionTitles.filter((title) => !knownTitles.includes(title ?? ""))).toEqual([]);
+  for (const fixed of knownTitles.slice(0, 5)) {
+    expect(
+      sectionTitles.filter((title) => title === fixed),
+      `${fixed} must render exactly once`,
+    ).toHaveLength(1);
+  }
 });
 
 it("searching hides non-matching cards, reports the count and can be cleared", async () => {

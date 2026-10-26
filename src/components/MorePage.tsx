@@ -222,9 +222,11 @@ export function MorePage({
       title: L.migrateTitle,
       desc: L.migrateHint,
       icon: "disk",
+      // toggleTool, not setOpenTool: a second click on the open card closes
+      // the panel instead of silently keeping a stale form.
       action: () => {
         setMigrateSeed("");
-        tools.setOpenTool("migrate");
+        tools.toggleTool("migrate");
       },
     },
     {
