@@ -74,6 +74,11 @@ export const cssStyles = {
     whiteSpace: "nowrap" as const,
     transition: "background .12s, color .12s, border-color .12s",
   },
+  // Destructive actions come in two tiers: a solid danger fill is the
+  // panel-level primary CTA ("remove selected", "clear history"); a ghost
+  // button with a danger ink is a row-level secondary action ("delete this
+  // record"). Keep new buttons in this split instead of a third look, and
+  // keep the disabled dimming at 0.5 like the other tool panels.
   btnDanger: {
     height: 34,
     padding: "0 14px",

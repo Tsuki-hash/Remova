@@ -151,7 +151,7 @@ export function HistoryPanel({
                 </div>
               </div>
               <button
-                style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger)" }}
+                style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger-text)" }}
                 onClick={() => onDelete(u.h.id)}
               >
                 {L.deleteHistory}

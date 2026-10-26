@@ -154,21 +154,14 @@ export function BrokenInstallsPanel({
                 </div>
               </div>
               <button
-                style={{ ...css.btn, height: 28, fontSize: 12, opacity: busy ? 0.6 : 1 }}
+                style={{ ...css.btn, height: 28, fontSize: 12, opacity: busy ? 0.5 : 1 }}
                 disabled={busy}
                 onClick={() => void rerun(row)}
               >
                 {running === row.guid ? L.brokenInstallsRunning : L.brokenInstallsRerun}
               </button>
               <button
-                style={{
-                  ...css.btn,
-                  height: 28,
-                  fontSize: 12,
-                  background: "var(--danger-text)",
-                  color: "var(--surface)",
-                  opacity: busy ? 0.6 : 1,
-                }}
+                style={{ ...css.btnDanger, height: 28, fontSize: 12, opacity: busy ? 0.5 : 1 }}
                 disabled={busy}
                 onClick={() => void remove(row)}
               >
