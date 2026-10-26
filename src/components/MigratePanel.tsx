@@ -39,9 +39,9 @@ function rejectionText(L: ReturnType<typeof t>, code: string): string {
  * offered whenever the cutover is in place. Only-move: the source tree
  * survives as `<source>.bak` until Finish verifies it away.
  */
-export function MigratePanel({ onClose }: { onClose: () => void }) {
+export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => void; initialSource?: string }) {
   const L = t();
-  const [source, setSource] = useState("");
+  const [source, setSource] = useState(initialSource);
   const [target, setTarget] = useState("");
   const [plan, setPlan] = useState<MigrationPlan | null>(null);
   const [state, setState] = useState<MigrationState | null>(null);

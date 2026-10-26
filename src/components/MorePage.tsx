@@ -75,6 +75,9 @@ export function MorePage({
   const rest = useMoreRestore(onError);
   const [rebootGate, setRebootGate] = useState<string>("clear");
   const [filter, setFilter] = useState("");
+  // A triage row can hand its path straight to the migration tool; opening
+  // the card directly starts from a clean form instead.
+  const [migrateSeed, setMigrateSeed] = useState("");
   const [recent, setRecent] = useState<string[]>(loadRecentTools);
   const recordUse = useCallback((id: ToolId) => {
     setRecent((prev) => {
@@ -227,7 +230,10 @@ export function MorePage({
       title: L.migrateTitle,
       desc: L.migrateHint,
       icon: "disk",
-      action: () => tools.setOpenTool("migrate"),
+      action: () => {
+        setMigrateSeed("");
+        tools.setOpenTool("migrate");
+      },
     },
     {
       id: "diskradar",
@@ -429,12 +435,20 @@ export function MorePage({
         <FirewallRulesPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
       {openTool === "diskoverview" && (
-        <DiskOverviewPanel onClose={() => tools.setOpenTool(null)} />
+        <DiskOverviewPanel
+          onClose={() => tools.setOpenTool(null)}
+          onMigrate={(path) => {
+            setMigrateSeed(path);
+            tools.setOpenTool("migrate");
+          }}
+        />
       )}
       {openTool === "cliglobals" && (
         <CliGlobalsPanel onClose={() => tools.setOpenTool(null)} />
       )}
-      {openTool === "migrate" && <MigratePanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "migrate" && (
+        <MigratePanel onClose={() => tools.setOpenTool(null)} initialSource={migrateSeed} />
+      )}
       {openTool === "traces" && <TracesPanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />

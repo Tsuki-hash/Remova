@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// Read-only disk-space overview: volume shape, junction ledger with dead
-// links, and the on-demand DISM component-store analysis.
+// Disk-space overview: volume shape, junction ledger with dead links,
+// triage actions, regenerable cleanup, and on-demand DISM analysis.
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DiskOverviewPanel } from "../components/DiskOverviewPanel";
 import { api } from "../lib/api";
 import { requestConfirmEx } from "../lib/confirm";
@@ -24,6 +24,7 @@ vi.mock("../lib/api", () => ({
     regenerableLayouts: vi.fn(),
     deleteRegenerableLayouts: vi.fn(),
     analyzeComponentStore: vi.fn(),
+    openPath: vi.fn(),
   },
 }));
 
@@ -58,6 +59,20 @@ function mockLoads() {
         class: "show_only",
         reason: "system_swap_file",
         size_kb: 6_553_600,
+        size_capped: false,
+      },
+      {
+        path: "C:\\Windows\\Temp",
+        class: "delete_regenerable",
+        reason: "win_temp",
+        size_kb: 1_200,
+        size_capped: false,
+      },
+      {
+        path: "C:\\Program Files\\Lenovo",
+        class: "migrate_candidate",
+        reason: "program_body",
+        size_kb: 3_800_000,
         size_capped: false,
       },
     ],
@@ -122,7 +137,7 @@ it("renders the triage rows with class labels and sizes", async () => {
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
   expect(await screen.findByText("C:\\Windows\\SoftwareDistribution\\Download")).toBeTruthy();
-  expect(screen.getByText(L.triageClassDelete)).toBeTruthy();
+  expect(screen.getAllByText(L.triageClassDelete).length).toBeGreaterThan(0);
   expect(screen.getByText(L.triageClassShowOnly)).toBeTruthy();
   // Size ordering is decided server-side; the panel renders what it receives.
   expect(screen.getByText("C:\\hiberfil.sys")).toBeTruthy();
@@ -140,8 +155,8 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
   const L = t();
   // The blocked layout is visibly disabled with its reason.
   expect(await screen.findByText(/servicing 进行中/)).toBeTruthy();
-  const row = screen.getByText("C:\\Windows\\Temp").closest("label")!;
-  fireEvent.click(within(row).getByRole("checkbox"));
+  // Scope by the checkbox name: the triage row carries the same path.
+  fireEvent.click(screen.getByRole("checkbox", { name: /C:\\Windows\\Temp/ }));
   fireEvent.click(screen.getByRole("button", { name: L.regenClean }));
   // The confirm restates the no-backup contract before anything runs.
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(1));
@@ -152,4 +167,44 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
   );
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   expect(vi.mocked(toast.success).mock.calls[0]![0]).toContain(L.regenDone(1, "1.17 MB").slice(0, 6));
+});
+
+it("acts from the triage rows: clean a regenerable layout and hand a migration candidate over", async () => {
+  mockLoads();
+  const onMigrate = vi.fn();
+  render(<DiskOverviewPanel onClose={vi.fn()} onMigrate={onMigrate} />);
+  const L = t();
+  // Cleaning from the row runs the same guarded confirm + delete path.
+  fireEvent.click(
+    await screen.findByRole("button", { name: `${L.triageActionClean}: C:\\Windows\\Temp` }),
+  );
+  await waitFor(() =>
+    expect(api.deleteRegenerableLayouts).toHaveBeenCalledWith(["C:\\Windows\\Temp"]),
+  );
+  // Migration candidates are handed to the migration tool with the path.
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `${L.triageActionMigrate}: C:\\Program Files\\Lenovo`,
+    }),
+  );
+  expect(onMigrate).toHaveBeenCalledWith("C:\\Program Files\\Lenovo");
+});
+
+it("opens the parent folder of a dead junction and the folder of a triage row", async () => {
+  mockLoads();
+  vi.mocked(api.openPath).mockResolvedValue(undefined);
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  fireEvent.click(
+    await screen.findByRole("button", { name: `${L.openLocation}: c:\\Program Files\\Docker` }),
+  );
+  await waitFor(() => expect(api.openPath).toHaveBeenCalledWith("c:\\Program Files"));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: `${L.openLocation}: C:\\Windows\\SoftwareDistribution\\Download`,
+    }),
+  );
+  await waitFor(() =>
+    expect(api.openPath).toHaveBeenCalledWith("C:\\Windows\\SoftwareDistribution\\Download"),
+  );
 });

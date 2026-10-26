@@ -68,13 +68,27 @@ function gb(n: number): string {
   return `${n.toFixed(1)} GB`;
 }
 
+/** Parent folder of a path — dead junctions can only be shown from there. */
+function parentPath(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  return cut > 0 ? trimmed.slice(0, cut) : trimmed;
+}
+
 /**
  * Read-only disk-space overview: system volume shape, the junction ledger
  * (dead links called out — they also explain "why is this folder huge or
- * empty"), and an on-demand DISM component-store analysis. Nothing here
- * deletes, moves, or cleans.
+ * empty"), and an on-demand DISM component-store analysis. Cleaning lives in
+ * the regenerable section; migration candidates hand off to the migration
+ * tool instead of pretending to move anything here.
  */
-export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
+export function DiskOverviewPanel({
+  onClose,
+  onMigrate,
+}: {
+  onClose: () => void;
+  onMigrate?: (path: string) => void;
+}) {
   const L = t();
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [junction, setJunction] = useState<JunctionScanResult | null>(null);
@@ -143,14 +157,18 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
     });
   };
 
+  const reveal = (path: string) => {
+    void api.openPath(path).catch((e) => toast.error(formatError(e)));
+  };
+
   const deletableItems = regen?.items.filter((i) => i.deletable) ?? [];
   const allSelected = deletableItems.length > 0 && deletableItems.every((i) => regenSel.has(i.path));
 
-  const cleanRegen = async () => {
-    const chosen = [...regenSel];
+  const cleanRegen = async (chosenPaths?: string[]) => {
+    const chosen = chosenPaths ?? [...regenSel];
     if (!chosen.length || regenBusy) return;
     const totalKb =
-      regen?.items.filter((i) => regenSel.has(i.path)).reduce((s, i) => s + i.size_kb, 0) ?? 0;
+      regen?.items.filter((i) => chosen.includes(i.path)).reduce((s, i) => s + i.size_kb, 0) ?? 0;
     const { ok } = await requestConfirmEx({
       title: L.regenTitle,
       message: L.regenCleanConfirm(chosen.length, formatSize(totalKb)),
@@ -234,8 +252,25 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
               }}
             >
               {dead.slice(0, DEAD_LINKS_SHOWN).map((e) => (
-                <div key={e.path} className="ell" style={{ color: "var(--warn-ink)" }}>
-                  {L.diskOverviewDeadLink(e.path, e.target ?? "?")}
+                <div
+                  key={e.path}
+                  style={{ display: "flex", gap: 8, alignItems: "center" }}
+                >
+                  <span
+                    className="ell"
+                    style={{ flex: 1, minWidth: 0, color: "var(--warn-ink)" }}
+                    title={L.diskOverviewDeadLink(e.path, e.target ?? "?")}
+                  >
+                    {L.diskOverviewDeadLink(e.path, e.target ?? "?")}
+                  </span>
+                  <button
+                    type="button"
+                    style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                    aria-label={`${L.openLocation}: ${e.path}`}
+                    onClick={() => reveal(parentPath(e.path))}
+                  >
+                    {L.openLocation}
+                  </button>
                 </div>
               ))}
               {dead.length > DEAD_LINKS_SHOWN && (
@@ -266,6 +301,11 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
             {triage.entries.map((e: TriageEntry) => {
               const label = triageClassLabel(L, e.class);
               const tone = TRIAGE_CLASS_TONE[e.class];
+              const match = regen?.items.find(
+                (i) => i.path.toLowerCase() === e.path.toLowerCase(),
+              );
+              const cleanable =
+                e.class === "delete_regenerable" && match?.deletable ? match : null;
               return (
                 <div
                   key={e.path}
@@ -286,6 +326,35 @@ export function DiskOverviewPanel({ onClose }: { onClose: () => void }) {
                   <span style={{ ...css.mono, whiteSpace: "nowrap" }}>
                     {e.size_kb !== null ? formatSize(e.size_kb) : "—"}
                   </span>
+                  {cleanable && (
+                    <button
+                      type="button"
+                      style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                      aria-label={`${L.triageActionClean}: ${e.path}`}
+                      disabled={regenBusy}
+                      onClick={() => void cleanRegen([cleanable.path])}
+                    >
+                      {L.triageActionClean}
+                    </button>
+                  )}
+                  {e.class === "migrate_candidate" && onMigrate && (
+                    <button
+                      type="button"
+                      style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                      aria-label={`${L.triageActionMigrate}: ${e.path}`}
+                      onClick={() => onMigrate(e.path)}
+                    >
+                      {L.triageActionMigrate}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                    aria-label={`${L.openLocation}: ${e.path}`}
+                    onClick={() => reveal(e.path)}
+                  >
+                    {L.openLocation}
+                  </button>
                 </div>
               );
             })}

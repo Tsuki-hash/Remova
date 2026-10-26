@@ -151,3 +151,14 @@ it("reports an automatic rollback as an error with the server reason", async () 
   await waitFor(() => expect(toast.error).toHaveBeenCalled());
   expect(vi.mocked(toast.error).mock.calls[0]![0]).toBe(t().migrateRolledBack);
 });
+
+it("prefills the source handed over by the disk overview triage", () => {
+  vi.mocked(api.migrateStatus).mockResolvedValue("idle");
+  render(
+    <MigratePanel onClose={vi.fn()} initialSource={"C:\\Program Files\\Lenovo"} />,
+  );
+  expect(screen.getByLabelText(t().migrateSource)).toHaveProperty(
+    "value",
+    "C:\\Program Files\\Lenovo",
+  );
+});
