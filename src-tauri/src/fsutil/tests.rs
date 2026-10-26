@@ -916,3 +916,77 @@ fn prefix_probe_cache_serves_hits_and_never_caches_errors() {
     assert_eq!(refreshed, PathProbe::Safe);
     assert_eq!(calls.get(), 2, "an expired prefix must be re-queried");
 }
+
+#[test]
+fn dir_has_payload_proves_shallow_shells_empty() {
+    let root = unique_tmp("dhp_shallow");
+    fs::create_dir_all(root.path().join("nested")).unwrap();
+    assert!(!dir_has_payload(root.path(), 512, 4));
+
+    fs::write(root.path().join("nested").join("data.bin"), b"x").unwrap();
+    assert!(dir_has_payload(root.path(), 512, 4));
+}
+
+#[test]
+fn dir_has_payload_counts_a_zero_byte_file_as_no_payload() {
+    let root = unique_tmp("dhp_zero");
+    fs::write(root.path().join("empty.log"), b"").unwrap();
+    assert!(!dir_has_payload(root.path(), 512, 4));
+}
+
+#[test]
+fn dir_has_payload_finds_payload_exactly_at_the_depth_cap() {
+    let root = unique_tmp("dhp_cap");
+    let deep = root.path().join("a").join("b").join("c");
+    fs::create_dir_all(&deep).unwrap();
+    fs::write(deep.join("data.bin"), b"x").unwrap();
+    assert!(dir_has_payload(root.path(), 512, 4));
+}
+
+#[test]
+fn dir_has_payload_stays_conservative_when_depth_runs_out() {
+    let root = unique_tmp("dhp_deep");
+    // Payload sits one level beyond the cap: the probe never reads it, so it
+    // must keep the row instead of claiming a proven-empty shell.
+    let beyond = root
+        .path()
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("d")
+        .join("e");
+    fs::create_dir_all(&beyond).unwrap();
+    fs::write(beyond.join("data.bin"), b"x").unwrap();
+    assert!(dir_has_payload(root.path(), 512, 2));
+}
+
+#[test]
+fn dir_has_payload_stays_conservative_when_entries_are_truncated() {
+    let root = unique_tmp("dhp_trunc");
+    // max_entries = 1 but the first directory holds two entries; the second
+    // one may hide payload, so the answer must not be a proven empty.
+    let dir = root.path().join("wide");
+    fs::create_dir_all(dir.join("child1")).unwrap();
+    fs::write(dir.join("sibling.txt"), b"").unwrap();
+    assert!(dir_has_payload(root.path(), 1, 4));
+}
+
+#[test]
+fn dir_has_payload_treats_a_missing_root_as_unreadable() {
+    let root = unique_tmp("dhp_missing");
+    let ghost = root.path().join("does-not-exist");
+    assert!(dir_has_payload(&ghost, 512, 4));
+}
+
+#[test]
+#[cfg(windows)]
+fn dir_has_payload_ignores_a_junction_child_when_proving_emptiness() {
+    let root = unique_tmp("dhp_reparse");
+    let elsewhere = unique_tmp("dhp_reparse_target");
+    fs::write(elsewhere.path().join("data.bin"), b"x").unwrap();
+    let link = root.path().join("linked");
+    fixture_junction(&link, elsewhere.path());
+    // The only child is a reparse point: it is a link, not this directory's
+    // payload, and following it would defeat the bounded probe.
+    assert!(!dir_has_payload(root.path(), 512, 4));
+}

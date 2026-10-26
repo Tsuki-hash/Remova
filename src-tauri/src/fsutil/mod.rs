@@ -1188,10 +1188,6 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
     String::from_utf16_lossy(&u16s)
 }
 
-/// M2 (SOP §8-22): remove empty ancestor shells left after deleting an app
-/// directory (e.g. `Program Files\Vendor`). Only directories that are empty,
-/// below one of the known roots, not reparse points, and whose name matches a
-/// product/publisher token are removed; the root itself is never touched.
 /// Whether a candidate directory holds any payload worth cleaning.
 ///
 /// Registry-driven cache scanners select directories by *name* (e.g. any
@@ -1201,10 +1197,11 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
 /// only when it contains a regular file, directly or in a descendant subtree —
 /// empty subdirectories are still an empty shell.
 ///
-/// Bounded: `max_entries` caps entries visited per directory level and
-/// `max_depth` caps descent, so a pathological tree cannot stall a scan. The
-/// answer is conservative in the safe direction: an unreadable level answers
-/// `true` (keep the row) rather than silently discarding a real cache.
+/// Bounded: `max_entries` caps entries visited per directory and `max_depth`
+/// caps descent, so a pathological tree cannot stall a scan. The answer is
+/// conservative in the safe direction: an unreadable level, a truncated level,
+/// and queued subtrees beyond the depth cap all answer `true` (keep the row)
+/// rather than silently discarding a real cache.
 pub fn dir_has_payload(root: &Path, max_entries: usize, max_depth: usize) -> bool {
     let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
     for _ in 0..=max_depth {
@@ -1234,15 +1231,20 @@ pub fn dir_has_payload(root: &Path, max_entries: usize, max_depth: usize) -> boo
             }
         }
         if next.is_empty() {
+            // Every queued subtree was read and held no file.
             return false;
         }
         level = next;
     }
-    // Depth cap reached without finding a file; shallow empty shells are the
-    // common case, so answer "empty" only when nothing was queued.
-    false
+    // Depth cap reached with subtrees still unexplored: assume there may be
+    // payload below rather than silently discarding a real cache.
+    true
 }
 
+/// M2 (SOP §8-22): remove empty ancestor shells left after deleting an app
+/// directory (e.g. `Program Files\Vendor`). Only directories that are empty,
+/// below one of the known roots, not reparse points, and whose name matches a
+/// product/publisher token are removed; the root itself is never touched.
 pub fn prune_empty_ancestors(path: &Path, tokens: &[String]) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     for env in [

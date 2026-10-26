@@ -47,7 +47,7 @@ pub const INSTALLER_PHASE_CAP: usize = 60;
 /// Bounds for the "does this cache directory actually hold anything" probe.
 /// Cache scanners select by name, and name-matched shells (an updater after a
 /// successful update) are common; the probe stops descending after this many
-/// levels and stops examining after this many entries per level.
+/// levels and stops examining after this many entries of any one directory.
 pub const EMPTY_PROBE_ENTRIES: usize = 512;
 pub const EMPTY_PROBE_DEPTH: usize = 4;
 
