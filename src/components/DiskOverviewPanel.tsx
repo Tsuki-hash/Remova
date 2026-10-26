@@ -406,7 +406,8 @@ export function DiskOverviewPanel({
               <div
                 style={{
                   maxHeight: 360,
-                  overflow: "auto",
+                  overflowY: "auto",
+                  overflowX: "hidden",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
                 }}
@@ -425,8 +426,9 @@ export function DiskOverviewPanel({
                       key={row.path}
                       title={triageReasonText(L, row.reason)}
                       style={{
-                        display: "flex",
-                        gap: 8,
+                        display: "grid",
+                        gridTemplateColumns: "18px minmax(0, 1fr) 120px 72px 84px",
+                        columnGap: 8,
                         padding: "5px 8px",
                         borderBottom: "1px solid var(--border)",
                         fontSize: 12,
@@ -440,15 +442,14 @@ export function DiskOverviewPanel({
                           checked={regenSel.has(row.regen.path)}
                           disabled={!row.regen.deletable}
                           onChange={() => toggleRegen(row.regen!.path)}
-                          style={{ flexShrink: 0 }}
+                          style={{ margin: 0, justifySelf: "center" }}
                         />
                       ) : (
-                        <span aria-hidden style={{ width: 13, flexShrink: 0 }} />
+                        <span aria-hidden />
                       )}
                       <span
                         className="ell"
                         style={{
-                          flex: 1,
                           minWidth: 0,
                           color: row.regen && !row.regen.deletable ? "var(--muted)" : "var(--fg)",
                         }}
@@ -460,43 +461,51 @@ export function DiskOverviewPanel({
                       <span
                         style={{
                           ...css.mono,
-                          width: 68,
                           textAlign: "right",
                           whiteSpace: "nowrap",
                         }}
                       >
                         {sizeKb !== null ? formatSize(sizeKb) : "—"}
                       </span>
-                      {cleanable && (
-                        <button
-                          type="button"
-                          style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                          aria-label={`${L.triageActionClean}: ${row.path}`}
-                          disabled={regenBusy}
-                          onClick={() => void cleanRegen([cleanable.path])}
-                        >
-                          {L.triageActionClean}
-                        </button>
-                      )}
-                      {row.cls === "migrate_candidate" && onMigrate && (
-                        <button
-                          type="button"
-                          style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                          aria-label={`${L.triageActionMigrate}: ${row.path}`}
-                          onClick={() => onMigrate(row.path)}
-                        >
-                          {L.triageActionMigrate}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        style={iconBtn}
-                        aria-label={`${L.openLocation}: ${row.path}`}
-                        title={L.openLocation}
-                        onClick={() => reveal(row.path)}
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 6,
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                        }}
                       >
-                        <ToolGlyph name="folder" />
-                      </button>
+                        {cleanable && (
+                          <button
+                            type="button"
+                            style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                            aria-label={`${L.triageActionClean}: ${row.path}`}
+                            disabled={regenBusy}
+                            onClick={() => void cleanRegen([cleanable.path])}
+                          >
+                            {L.triageActionClean}
+                          </button>
+                        )}
+                        {row.cls === "migrate_candidate" && onMigrate && (
+                          <button
+                            type="button"
+                            style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                            aria-label={`${L.triageActionMigrate}: ${row.path}`}
+                            onClick={() => onMigrate(row.path)}
+                          >
+                            {L.triageActionMigrate}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          style={iconBtn}
+                          aria-label={`${L.openLocation}: ${row.path}`}
+                          title={L.openLocation}
+                          onClick={() => reveal(row.path)}
+                        >
+                          <ToolGlyph name="folder" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
