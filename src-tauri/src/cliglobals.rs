@@ -101,6 +101,7 @@ fn yarnrc_global_folder() -> Option<PathBuf> {
 
 fn yarnrc_global_folder_at(path: &Path) -> Option<PathBuf> {
     let raw = std::fs::read_to_string(path).ok()?;
+    let mut found: Option<PathBuf> = None;
     for line in raw.lines() {
         let line = line.trim().trim_start_matches('\u{feff}');
         if line.is_empty() || line.starts_with('#') {
@@ -114,16 +115,19 @@ fn yarnrc_global_folder_at(path: &Path) -> Option<PathBuf> {
         }
         let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
         if value.is_empty() {
-            return None;
+            continue;
         }
-        return Some(PathBuf::from(expand_env_vars(value)));
+        found = Some(PathBuf::from(expand_env_vars(value)));
     }
-    None
+    found
 }
 
 /// Read one key from the user's `~/.npmrc`, with `%VAR%` / `${VAR}` expansion.
+/// npm applies ini last-wins semantics, so a repeated key resolves to its last
+/// value; a valueless line is skipped rather than ending the search.
 fn npmrc_value_at(path: &Path, key: &str) -> Option<PathBuf> {
     let raw = std::fs::read_to_string(path).ok()?;
+    let mut found: Option<PathBuf> = None;
     for line in raw.lines() {
         let line = line.trim().trim_start_matches('\u{feff}');
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
@@ -137,11 +141,11 @@ fn npmrc_value_at(path: &Path, key: &str) -> Option<PathBuf> {
         }
         let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
         if value.is_empty() {
-            return None;
+            continue;
         }
-        return Some(PathBuf::from(expand_env_vars(value)));
+        found = Some(PathBuf::from(expand_env_vars(value)));
     }
-    None
+    found
 }
 
 /// npmrc values may use either Windows (`%APPDATA%`) or npm (`${HOME}`)
@@ -431,6 +435,50 @@ mod tests {
         assert_eq!(
             npmrc_value_at(&npmrc, "prefix"),
             Some(PathBuf::from(r"D:\nodejs-global"))
+        );
+    }
+
+    /// npm applies ini last-wins semantics: `npm config get prefix` on a file
+    /// with repeated keys answers the last value, so the resolver must too.
+    #[test]
+    fn npmrc_repeated_keys_resolve_to_the_last_value() {
+        let tmp = crate::test_support::TempDir::new("cli-npmrc-dup");
+        let npmrc = tmp.path().join(".npmrc");
+        std::fs::write(
+            &npmrc,
+            "prefix=D:\\first\\one\nprefix=\nprefix=D:\\second\\two\n",
+        )
+        .unwrap();
+        assert_eq!(
+            npmrc_value_at(&npmrc, "prefix"),
+            Some(PathBuf::from(r"D:\second\two"))
+        );
+    }
+
+    #[test]
+    fn npmrc_valueless_lines_are_skipped_not_terminal() {
+        let tmp = crate::test_support::TempDir::new("cli-npmrc-empty");
+        let npmrc = tmp.path().join(".npmrc");
+        std::fs::write(&npmrc, "prefix=\nother=x\nprefix=\"D:\\real\"\n").unwrap();
+        assert_eq!(
+            npmrc_value_at(&npmrc, "prefix"),
+            Some(PathBuf::from(r"D:\real"))
+        );
+        assert_eq!(npmrc_value_at(&npmrc, "missing"), None);
+    }
+
+    #[test]
+    fn yarnrc_repeated_keys_resolve_to_the_last_value() {
+        let tmp = crate::test_support::TempDir::new("cli-yarnrc-dup");
+        let rc = tmp.path().join(".yarnrc");
+        std::fs::write(
+            &rc,
+            "global-folder \"D:\\first\"\nglobal-folder \"D:\\second\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            yarnrc_global_folder_at(&rc),
+            Some(PathBuf::from(r"D:\second"))
         );
     }
 
