@@ -30,6 +30,22 @@ vi.mock("../lib/api", () => ({
 
 afterEach(() => {
   cleanup();
+  // mockReset (not clearAllMocks): standing implementations and once queues
+  // survive clearAllMocks — a mockRejected left by a retry test would push
+  // every later test into the error state. Every test here sets the mocks it
+  // needs (usually via mockLoads), so resetting to bare fns is safe.
+  for (const mock of [
+    api.listLocalDrives,
+    api.junctionLedger,
+    api.spaceTriage,
+    api.regenerableLayouts,
+    api.deleteRegenerableLayouts,
+    api.analyzeComponentStore,
+    api.openPath,
+  ]) {
+    vi.mocked(mock).mockReset();
+  }
+  vi.mocked(requestConfirmEx).mockReset();
   vi.clearAllMocks();
 });
 

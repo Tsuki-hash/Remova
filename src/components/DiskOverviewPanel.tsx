@@ -159,13 +159,20 @@ export function DiskOverviewPanel({
   // The retry button owns the loadError lifecycle the same way the initial
   // load does: success clears the stale banner, a repeated failure replaces
   // its text — a bare void reload() would leak an unhandled rejection and
-  // keep reporting an error that no longer exists.
+  // keep reporting an error that no longer exists. One retry in flight at a
+  // time: two concurrent loads could land out of order and leave a loaded
+  // list under a stale error banner.
+  const [retryBusy, setRetryBusy] = useState(false);
   const retryLoad = async () => {
+    if (retryBusy) return;
+    setRetryBusy(true);
     try {
       await reload();
       setLoadError(null);
     } catch (e) {
       setLoadError(formatError(e));
+    } finally {
+      setRetryBusy(false);
     }
   };
 
@@ -454,7 +461,12 @@ export function DiskOverviewPanel({
               // retry the alert above cannot.
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <p style={{ ...css.muted, margin: 0 }}>{L.diskOverviewLoadFailed}</p>
-                <button type="button" style={{ ...css.btnGhost, height: 28 }} onClick={() => void retryLoad()}>
+                <button
+                  type="button"
+                  style={{ ...css.btnGhost, height: 28, opacity: retryBusy ? 0.5 : 1 }}
+                  disabled={retryBusy}
+                  onClick={() => void retryLoad()}
+                >
                   {L.retry}
                 </button>
               </div>

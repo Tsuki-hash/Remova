@@ -127,9 +127,13 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     if (r.ok) {
       toast.success(L.migrateCutoverDone);
     } else if (r.rolled_back) {
-      toast.error(L.migrateRolledBack, { detail: r.error ?? undefined });
+      toast.error(L.migrateRolledBack, {
+        detail: r.error ? backendErrorText(r.error) : undefined,
+      });
     } else {
-      toast.error(L.migrateCutoverFailed, { detail: r.error ?? undefined });
+      toast.error(L.migrateCutoverFailed, {
+        detail: r.error ? backendErrorText(r.error) : undefined,
+      });
     }
     await refreshState(source, target);
   };
