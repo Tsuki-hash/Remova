@@ -8,6 +8,7 @@ import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import { CloseGlyph } from "./ui/Glyph";
+import { ToolGlyph } from "./ToolIcons";
 import type {
   ComponentStoreAnalysis,
   JunctionScanResult,
@@ -19,10 +20,13 @@ import type {
 
 const DEAD_LINKS_SHOWN = 50;
 
+// Class names are status text, not links: only the delete/DISM classes keep a
+// warning tint. Migration candidates used the accent color and read as
+// clickable links even though they were static.
 const TRIAGE_CLASS_TONE: Record<TriageClass, string> = {
   delete_regenerable: "var(--warn-ink)",
   via_dism: "var(--warn-ink)",
-  migrate_candidate: "var(--accent-text)",
+  migrate_candidate: "var(--muted)",
   leave: "var(--muted)",
   show_only: "var(--muted)",
 };
@@ -75,6 +79,17 @@ function parentPath(path: string): string {
   return cut > 0 ? trimmed.slice(0, cut) : trimmed;
 }
 
+type OverviewTab = "overview" | "cleanup" | "components";
+
+/** One row of the merged action list: triage classification + its delete gate. */
+type CleanupRow = {
+  path: string;
+  cls: TriageClass;
+  reason: string;
+  sizeKb: number | null;
+  regen: RegenerableScanResult["items"][number] | null;
+};
+
 /**
  * Read-only disk-space overview: system volume shape, the junction ledger
  * (dead links called out — they also explain "why is this folder huge or
@@ -90,6 +105,7 @@ export function DiskOverviewPanel({
   onMigrate?: (path: string) => void;
 }) {
   const L = t();
+  const [tab, setTab] = useState<OverviewTab>("overview");
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [junction, setJunction] = useState<JunctionScanResult | null>(null);
   const [triage, setTriage] = useState<TriageScanResult | null>(null);
@@ -164,6 +180,34 @@ export function DiskOverviewPanel({
   const deletableItems = regen?.items.filter((i) => i.deletable) ?? [];
   const allSelected = deletableItems.length > 0 && deletableItems.every((i) => regenSel.has(i.path));
 
+  // The triage list and the regenerable list described the same layouts twice.
+  // Merge them: every triage row carries its delete gate; any regenerate
+  // layout the triage scan did not list is appended so nothing disappears.
+  const triageEntries = triage?.entries ?? [];
+  const rows: CleanupRow[] = [
+    ...triageEntries.map((e: TriageEntry) => ({
+      path: e.path,
+      cls: e.class,
+      reason: e.reason,
+      sizeKb: e.size_kb,
+      regen:
+        regen?.items.find((i) => i.path.toLowerCase() === e.path.toLowerCase()) ?? null,
+    })),
+    ...(regen?.items ?? [])
+      .filter(
+        (i) => !triageEntries.some((e) => e.path.toLowerCase() === i.path.toLowerCase()),
+      )
+      .map((i): CleanupRow => ({
+        path: i.path,
+        cls: "delete_regenerable",
+        reason: i.reason,
+        sizeKb: i.size_kb,
+        regen: i,
+      })),
+  ];
+  const migrateCount = rows.filter((r) => r.cls === "migrate_candidate").length;
+  const actionableCount = deletableItems.length + migrateCount;
+
   const cleanRegen = async (chosenPaths?: string[]) => {
     const chosen = chosenPaths ?? [...regenSel];
     if (!chosen.length || regenBusy) return;
@@ -198,6 +242,21 @@ export function DiskOverviewPanel({
 
   const system = drives?.find((d) => d.is_system);
   const dead = junction?.entries.filter((e) => !e.reachable) ?? [];
+  const tabs: { id: OverviewTab; label: string }[] = [
+    { id: "overview", label: L.diskOverviewTabOverview },
+    { id: "cleanup", label: L.diskOverviewTabCleanup },
+    { id: "components", label: L.diskOverviewTabComponents },
+  ];
+  const iconBtn = {
+    ...css.btnGhost,
+    width: 26,
+    height: 24,
+    padding: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  } as const;
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.diskOverviewTitle}>
@@ -219,229 +278,287 @@ export function DiskOverviewPanel({
         </div>
       )}
 
-      {system && (
-        <div style={css.muted}>
-          {L.diskOverviewSystemVolume(
-            system.letter,
-            gb(system.total_gb - system.free_gb),
-            gb(system.total_gb),
-            gb(system.free_gb),
-          )}
-        </div>
-      )}
-
-      {junction && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {L.diskOverviewJunctionSummary(junction.entries.length, dead.length)}
-          </div>
-          {junction.degraded_roots.length > 0 && (
-            <div style={{ ...css.muted, fontSize: 12 }}>
-              {L.diskOverviewDegraded(junction.degraded_roots.join("、"))}
-            </div>
-          )}
-          {dead.length > 0 && (
-            <div
-              role="note"
+      <div
+        role="tablist"
+        aria-label={L.diskOverviewTitle}
+        style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 10 }}
+      >
+        {tabs.map((item) => {
+          const active = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(item.id)}
               style={{
-                marginTop: 6,
-                border: "1px solid var(--warn-ink)",
-                borderRadius: 8,
+                border: "none",
+                borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+                background: "transparent",
+                color: active ? "var(--accent-text)" : "var(--muted)",
                 padding: "6px 10px",
-                fontSize: 12,
+                fontSize: 12.5,
+                fontWeight: active ? 650 : 500,
+                cursor: "pointer",
               }}
             >
-              {dead.slice(0, DEAD_LINKS_SHOWN).map((e) => (
-                <div
-                  key={e.path}
-                  style={{ display: "flex", gap: 8, alignItems: "center" }}
-                >
-                  <span
-                    className="ell"
-                    style={{ flex: 1, minWidth: 0, color: "var(--warn-ink)" }}
-                    title={L.diskOverviewDeadLink(e.path, e.target ?? "?")}
-                  >
-                    {L.diskOverviewDeadLink(e.path, e.target ?? "?")}
-                  </span>
-                  <button
-                    type="button"
-                    style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                    aria-label={`${L.openLocation}: ${e.path}`}
-                    onClick={() => reveal(parentPath(e.path))}
-                  >
-                    {L.openLocation}
-                  </button>
-                </div>
-              ))}
-              {dead.length > DEAD_LINKS_SHOWN && (
-                <div style={css.muted}>{L.diskOverviewOmitted(dead.length - DEAD_LINKS_SHOWN)}</div>
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "overview" && (
+        <div role="tabpanel" aria-label={L.diskOverviewTabOverview}>
+          {system && (
+            <div style={css.muted}>
+              {L.diskOverviewSystemVolume(
+                system.letter,
+                gb(system.total_gb - system.free_gb),
+                gb(system.total_gb),
+                gb(system.free_gb),
               )}
             </div>
           )}
-          {junction.omitted > 0 && (
-            <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
-              {L.scanOmitted(junction.omitted)}
-            </div>
-          )}
-        </div>
-      )}
 
-      {triage && triage.entries.length > 0 && (
-        <div style={{ marginTop: 10 }} aria-label={L.triageTitle}>
-          <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
-          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
-          <div
-            style={{
-              maxHeight: 220,
-              overflow: "auto",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-            }}
-          >
-            {triage.entries.map((e: TriageEntry) => {
-              const label = triageClassLabel(L, e.class);
-              const tone = TRIAGE_CLASS_TONE[e.class];
-              const match = regen?.items.find(
-                (i) => i.path.toLowerCase() === e.path.toLowerCase(),
-              );
-              const cleanable =
-                e.class === "delete_regenerable" && match?.deletable ? match : null;
-              return (
+          {junction && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                {L.diskOverviewJunctionSummary(junction.entries.length, dead.length)}
+              </div>
+              {junction.degraded_roots.length > 0 && (
+                <div style={{ ...css.muted, fontSize: 12 }}>
+                  {L.diskOverviewDegraded(junction.degraded_roots.join("、"))}
+                </div>
+              )}
+              {dead.length > 0 && (
                 <div
-                  key={e.path}
-                  title={triageReasonText(L, e.reason)}
+                  role="note"
                   style={{
-                    display: "flex",
-                    gap: 8,
-                    padding: "4px 8px",
-                    borderBottom: "1px solid var(--border)",
+                    marginTop: 6,
+                    border: "1px solid var(--warn-ink)",
+                    borderRadius: 8,
+                    padding: "6px 10px",
                     fontSize: 12,
-                    alignItems: "center",
                   }}
                 >
-                  <span className="ell" style={{ flex: 1, minWidth: 0 }}>
-                    {e.path}
-                  </span>
-                  <span style={{ color: tone, whiteSpace: "nowrap" }}>{label}</span>
-                  <span style={{ ...css.mono, whiteSpace: "nowrap" }}>
-                    {e.size_kb !== null ? formatSize(e.size_kb) : "—"}
-                  </span>
-                  {cleanable && (
-                    <button
-                      type="button"
-                      style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                      aria-label={`${L.triageActionClean}: ${e.path}`}
-                      disabled={regenBusy}
-                      onClick={() => void cleanRegen([cleanable.path])}
+                  {dead.slice(0, DEAD_LINKS_SHOWN).map((e) => (
+                    <div
+                      key={e.path}
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
                     >
-                      {L.triageActionClean}
-                    </button>
+                      <span
+                        className="ell"
+                        style={{ flex: 1, minWidth: 0, color: "var(--warn-ink)" }}
+                        title={L.diskOverviewDeadLink(e.path, e.target ?? "?")}
+                      >
+                        {L.diskOverviewDeadLink(e.path, e.target ?? "?")}
+                      </span>
+                      <button
+                        type="button"
+                        style={iconBtn}
+                        aria-label={`${L.openLocation}: ${e.path}`}
+                        title={L.openLocation}
+                        onClick={() => reveal(parentPath(e.path))}
+                      >
+                        <ToolGlyph name="folder" />
+                      </button>
+                    </div>
+                  ))}
+                  {dead.length > DEAD_LINKS_SHOWN && (
+                    <div style={css.muted}>{L.diskOverviewOmitted(dead.length - DEAD_LINKS_SHOWN)}</div>
                   )}
-                  {e.class === "migrate_candidate" && onMigrate && (
-                    <button
-                      type="button"
-                      style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                      aria-label={`${L.triageActionMigrate}: ${e.path}`}
-                      onClick={() => onMigrate(e.path)}
-                    >
-                      {L.triageActionMigrate}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
-                    aria-label={`${L.openLocation}: ${e.path}`}
-                    onClick={() => reveal(e.path)}
-                  >
-                    {L.openLocation}
-                  </button>
                 </div>
-              );
-            })}
-          </div>
-          {triage.omitted > 0 && (
-            <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
-              {L.scanOmitted(triage.omitted)}
+              )}
+              {junction.omitted > 0 && (
+                <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
+                  {L.scanOmitted(junction.omitted)}
+                </div>
+              )}
             </div>
+          )}
+
+          {actionableCount > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <button
+                type="button"
+                style={{ ...css.btnGhost, height: 30 }}
+                onClick={() => setTab("cleanup")}
+              >
+                {L.diskOverviewOpenActions(actionableCount)}
+              </button>
+            </div>
+          )}
+
+          <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.diskOverviewScopeNote}</div>
+        </div>
+      )}
+
+      {tab === "cleanup" && (
+        <div role="tabpanel" aria-label={L.diskOverviewTabCleanup}>
+          <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
+          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
+          {rows.length === 0 ? (
+            <p style={css.muted}>{L.diskOverviewEmpty}</p>
+          ) : (
+            <>
+              <div
+                style={{
+                  maxHeight: 360,
+                  overflow: "auto",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                }}
+              >
+                {rows.map((row) => {
+                  const label = triageClassLabel(L, row.cls);
+                  const tone = TRIAGE_CLASS_TONE[row.cls];
+                  const cleanable =
+                    row.cls === "delete_regenerable" && row.regen?.deletable
+                      ? row.regen
+                      : null;
+                  const blocked = row.regen?.block_reason === "servicing_busy";
+                  const sizeKb = row.regen?.size_kb ?? row.sizeKb;
+                  return (
+                    <div
+                      key={row.path}
+                      title={triageReasonText(L, row.reason)}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        padding: "5px 8px",
+                        borderBottom: "1px solid var(--border)",
+                        fontSize: 12,
+                        alignItems: "center",
+                      }}
+                    >
+                      {row.regen ? (
+                        <input
+                          type="checkbox"
+                          aria-label={row.path}
+                          checked={regenSel.has(row.regen.path)}
+                          disabled={!row.regen.deletable}
+                          onChange={() => toggleRegen(row.regen!.path)}
+                          style={{ flexShrink: 0 }}
+                        />
+                      ) : (
+                        <span aria-hidden style={{ width: 13, flexShrink: 0 }} />
+                      )}
+                      <span
+                        className="ell"
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          color: row.regen && !row.regen.deletable ? "var(--muted)" : "var(--fg)",
+                        }}
+                      >
+                        {row.path}
+                        {blocked && <span style={css.muted}> — {L.regenBlockServicing}</span>}
+                      </span>
+                      <span style={{ color: tone, whiteSpace: "nowrap", fontSize: 11.5 }}>{label}</span>
+                      <span
+                        style={{
+                          ...css.mono,
+                          width: 68,
+                          textAlign: "right",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {sizeKb !== null ? formatSize(sizeKb) : "—"}
+                      </span>
+                      {cleanable && (
+                        <button
+                          type="button"
+                          style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                          aria-label={`${L.triageActionClean}: ${row.path}`}
+                          disabled={regenBusy}
+                          onClick={() => void cleanRegen([cleanable.path])}
+                        >
+                          {L.triageActionClean}
+                        </button>
+                      )}
+                      {row.cls === "migrate_candidate" && onMigrate && (
+                        <button
+                          type="button"
+                          style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                          aria-label={`${L.triageActionMigrate}: ${row.path}`}
+                          onClick={() => onMigrate(row.path)}
+                        >
+                          {L.triageActionMigrate}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        style={iconBtn}
+                        aria-label={`${L.openLocation}: ${row.path}`}
+                        title={L.openLocation}
+                        onClick={() => reveal(row.path)}
+                      >
+                        <ToolGlyph name="folder" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {triage && triage.omitted > 0 && (
+                <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
+                  {L.scanOmitted(triage.omitted)}
+                </div>
+              )}
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ ...css.muted, fontSize: 12, cursor: "pointer" }}>
+                  {L.diskOverviewCleanupRules}
+                </summary>
+                <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>{L.regenHint}</div>
+              </details>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  type="button"
+                  style={{ ...css.btnGhost, height: 30 }}
+                  onClick={() =>
+                    setRegenSel(allSelected ? new Set() : new Set(deletableItems.map((i) => i.path)))
+                  }
+                >
+                  {L.regenSelectAll}
+                </button>
+                <button
+                  type="button"
+                  style={{ ...css.btnGhost, height: 30 }}
+                  disabled={regenBusy || regenSel.size === 0}
+                  onClick={() => void cleanRegen()}
+                >
+                  {regenBusy ? L.regenCleaning : L.regenClean}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {regen && regen.items.length > 0 && (
-        <div style={{ marginTop: 10 }} aria-label={L.regenTitle}>
-          <div style={{ fontWeight: 600 }}>{L.regenTitle}</div>
-          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.regenHint}</div>
-          {regen.items.map((it) => (
-            <label
-              key={it.path}
-              style={{ display: "flex", gap: 8, alignItems: "center", padding: "2px 4px", fontSize: 12 }}
-            >
-              <input
-                type="checkbox"
-                checked={regenSel.has(it.path)}
-                disabled={!it.deletable}
-                onChange={() => toggleRegen(it.path)}
-              />
-              <span
-                className="ell"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  color: it.deletable ? "var(--fg)" : "var(--muted)",
-                }}
-                title={it.path}
-              >
-                {it.path}
-                {it.block_reason === "servicing_busy" ? ` — ${L.regenBlockServicing}` : ""}
-              </span>
-              <span style={{ ...css.mono, whiteSpace: "nowrap" }}>{formatSize(it.size_kb)}</span>
-            </label>
-          ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <button
-              type="button"
-              style={{ ...css.btnGhost, height: 30 }}
-              onClick={() =>
-                setRegenSel(allSelected ? new Set() : new Set(deletableItems.map((i) => i.path)))
-              }
-            >
-              {L.regenSelectAll}
-            </button>
-            <button
-              type="button"
-              style={{ ...css.btnGhost, height: 30 }}
-              disabled={regenBusy || regenSel.size === 0}
-              onClick={() => void cleanRegen()}
-            >
-              {regenBusy ? L.regenCleaning : L.regenClean}
-            </button>
-          </div>
+      {tab === "components" && (
+        <div role="tabpanel" aria-label={L.diskOverviewTabComponents}>
+          <div style={{ fontWeight: 600 }}>{L.diskOverviewWinSxs}</div>
+          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.diskOverviewWinSxsHint}</div>
+          {dism && (
+            <div role="status" style={{ marginBottom: 6 }}>
+              {L.diskOverviewWinSxsResult(
+                dism.actual_size_bytes !== null ? gb(dism.actual_size_bytes / 1024 ** 3) : "?",
+                dism.explorer_size_bytes !== null ? gb(dism.explorer_size_bytes / 1024 ** 3) : "?",
+                dism.cleanup_recommended ? L.diskOverviewRecommendedYes : L.diskOverviewRecommendedNo,
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            style={{ ...css.btnGhost, height: 30 }}
+            disabled={dismBusy}
+            onClick={() => void runDism()}
+          >
+            {dismBusy ? L.diskOverviewAnalyzing : L.diskOverviewAnalyze}
+          </button>
         </div>
       )}
-
-      <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
-        <div style={{ fontWeight: 600 }}>{L.diskOverviewWinSxs}</div>
-        <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.diskOverviewWinSxsHint}</div>
-        {dism && (
-          <div role="status" style={{ marginBottom: 6 }}>
-            {L.diskOverviewWinSxsResult(
-              dism.actual_size_bytes !== null ? gb(dism.actual_size_bytes / 1024 ** 3) : "?",
-              dism.explorer_size_bytes !== null ? gb(dism.explorer_size_bytes / 1024 ** 3) : "?",
-              dism.cleanup_recommended ? L.diskOverviewRecommendedYes : L.diskOverviewRecommendedNo,
-            )}
-          </div>
-        )}
-        <button
-          type="button"
-          style={{ ...css.btnGhost, height: 30 }}
-          disabled={dismBusy}
-          onClick={() => void runDism()}
-        >
-          {dismBusy ? L.diskOverviewAnalyzing : L.diskOverviewAnalyze}
-        </button>
-      </div>
-
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.diskOverviewScopeNote}</div>
     </section>
   );
 }

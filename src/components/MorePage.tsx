@@ -18,6 +18,7 @@ import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
+import { ToolGlyph } from "./ToolIcons";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { CliGlobalsPanel } from "./CliGlobalsPanel";
 import { MigratePanel } from "./MigratePanel";
@@ -329,6 +330,12 @@ export function MorePage({
   const recentCards = (!q ? recent : [])
     .map((id) => allTracked.find((c) => c.id === id))
     .filter((c): c is ToolItem => Boolean(c));
+  const matchedCount =
+    trackedCommon.length +
+    trackedInstallHealth.length +
+    trackedSpace.length +
+    trackedTraces.length +
+    trackedHelp.length;
 
   return (
     <div
@@ -469,13 +476,87 @@ export function MorePage({
       )}
       </div>
       {totalCards > 8 && (
-        <input
-          aria-label={L.moreFilterTools}
-          placeholder={L.moreFilterTools}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          style={{ ...css.input, height: 32, marginBottom: 4, minWidth: 180 }}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{L.moreSearchLabel}</span>
+          <div
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+              width: "min(100%, 380px)",
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: 11,
+                display: "inline-flex",
+                color: "var(--muted)",
+                pointerEvents: "none",
+              }}
+            >
+              <ToolGlyph name="monitor" />
+            </span>
+            <input
+              type="text"
+              aria-label={L.moreSearchTools}
+              placeholder={L.moreSearchToolsHint}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setFilter("");
+              }}
+              style={{
+                ...css.input,
+                width: "100%",
+                minWidth: 0,
+                height: 38,
+                paddingLeft: 36,
+                paddingRight: filter ? 34 : 12,
+              }}
+            />
+            {filter && (
+              <button
+                type="button"
+                aria-label={L.moreSearchClear}
+                title={L.moreSearchClear}
+                onClick={() => setFilter("")}
+                style={{
+                  position: "absolute",
+                  right: 6,
+                  width: 24,
+                  height: 24,
+                  border: "none",
+                  borderRadius: 6,
+                  background: "transparent",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {q && (
+            <span role="status" style={{ ...css.muted, fontSize: 12 }}>
+              {L.moreSearchResults(matchedCount)}
+            </span>
+          )}
+        </div>
+      )}
+      {q && matchedCount === 0 && (
+        <div style={{ ...css.muted, fontSize: 12.5, marginBottom: 16 }}>{L.moreSearchEmpty}</div>
       )}
       {recentCards.length > 0 && (
         <Section title={L.moreSectionRecent}>

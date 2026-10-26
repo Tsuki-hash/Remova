@@ -43,10 +43,13 @@ function mountMore() {
   return render(<MorePage {...props} />);
 }
 
-it("groups the toolbox into the new sections and offers a filter", async () => {
+it("groups the toolbox into the new sections and offers a search", async () => {
   mountMore();
   const L = t();
-  expect(screen.getByPlaceholderText(L.moreFilterTools)).toBeTruthy();
+  // The search is labelled and explains itself with example keywords.
+  expect(screen.getByText(L.moreSearchLabel)).toBeTruthy();
+  expect(screen.getByLabelText(L.moreSearchTools)).toBeTruthy();
+  expect(screen.getByPlaceholderText(L.moreSearchToolsHint)).toBeTruthy();
   expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
   expect(screen.getByText(L.moreSectionInstallHealth)).toBeTruthy();
   expect(screen.getByText(L.moreSectionSpace)).toBeTruthy();
@@ -58,16 +61,35 @@ it("groups the toolbox into the new sections and offers a filter", async () => {
   expect(screen.queryByText(L.moreSectionRecent)).toBeNull();
 });
 
-it("filtering hides non-matching cards and the sections left empty", async () => {
+it("searching hides non-matching cards, reports the count and can be cleared", async () => {
   mountMore();
   const L = t();
-  fireEvent.change(screen.getByPlaceholderText(L.moreFilterTools), {
-    target: { value: L.firewallTitle },
-  });
+  const search = screen.getByLabelText(L.moreSearchTools);
+  fireEvent.change(search, { target: { value: L.firewallTitle } });
   expect(screen.getByText(L.firewallTitle)).toBeTruthy();
   expect(screen.queryByText(L.idleTitle)).toBeNull();
   expect(screen.queryByText(L.moreSectionSpace)).toBeNull();
   expect(screen.queryByText(L.moreSectionCommon)).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe(L.moreSearchResults(1));
+  // Clearing brings every section back.
+  fireEvent.click(screen.getByRole("button", { name: L.moreSearchClear }));
+  expect(screen.getByText(L.moreSectionSpace)).toBeTruthy();
+  expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("shows an explicit empty state when nothing matches", async () => {
+  mountMore();
+  const L = t();
+  fireEvent.change(screen.getByLabelText(L.moreSearchTools), {
+    target: { value: "no-such-tool-xyz" },
+  });
+  expect(screen.getByText(L.moreSearchEmpty)).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe(L.moreSearchResults(0));
+  // Escape clears the query as well.
+  fireEvent.keyDown(screen.getByLabelText(L.moreSearchTools), { key: "Escape" });
+  expect(screen.queryByText(L.moreSearchEmpty)).toBeNull();
+  expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
 });
 
 it("records prop-only tools in the recently-used section, newest first", async () => {

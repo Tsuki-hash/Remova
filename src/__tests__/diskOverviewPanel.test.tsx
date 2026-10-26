@@ -126,7 +126,8 @@ it("runs the DISM analysis on demand and reports the verdict", async () => {
   });
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
-  fireEvent.click(await screen.findByRole("button", { name: L.diskOverviewAnalyze }));
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabComponents }));
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
   await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
   expect(api.analyzeComponentStore).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes);
@@ -136,6 +137,7 @@ it("renders the triage rows with class labels and sizes", async () => {
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
   expect(await screen.findByText("C:\\Windows\\SoftwareDistribution\\Download")).toBeTruthy();
   expect(screen.getAllByText(L.triageClassDelete).length).toBeGreaterThan(0);
   expect(screen.getByText(L.triageClassShowOnly)).toBeTruthy();
@@ -143,7 +145,29 @@ it("renders the triage rows with class labels and sizes", async () => {
   expect(screen.getByText("C:\\hiberfil.sys")).toBeTruthy();
 });
 
-it("shows the read-only scope note so nothing here reads as actionable cleanup", async () => {
+it("splits the panel into tabs and renders class names as muted status text", async () => {
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(
+    (await screen.findByRole("tab", { name: L.diskOverviewTabOverview })).getAttribute(
+      "aria-selected",
+    ),
+  ).toBe("true");
+  // The overview offers a single hand-off to the actionable list.
+  fireEvent.click(await screen.findByRole("button", { name: L.diskOverviewOpenActions(2) }));
+  expect(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  // Status labels carry the muted tone, never the accent link color.
+  const migrateLabels = screen.getAllByText(L.triageClassMigrate);
+  expect(migrateLabels[0]!.style.color).toBe("var(--muted)");
+  expect(screen.queryByRole("button", { name: L.diskOverviewAnalyze })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabComponents }));
+  expect(screen.getByRole("button", { name: L.diskOverviewAnalyze })).toBeTruthy();
+});
+
+it("keeps the scope note on the overview", async () => {
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   expect(await screen.findByText(t().diskOverviewScopeNote)).toBeTruthy();
@@ -153,6 +177,7 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
   // The blocked layout is visibly disabled with its reason.
   expect(await screen.findByText(/servicing 进行中/)).toBeTruthy();
   // Scope by the checkbox name: the triage row carries the same path.
@@ -174,6 +199,7 @@ it("acts from the triage rows: clean a regenerable layout and hand a migration c
   const onMigrate = vi.fn();
   render(<DiskOverviewPanel onClose={vi.fn()} onMigrate={onMigrate} />);
   const L = t();
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
   // Cleaning from the row runs the same guarded confirm + delete path.
   fireEvent.click(
     await screen.findByRole("button", { name: `${L.triageActionClean}: C:\\Windows\\Temp` }),
@@ -190,7 +216,7 @@ it("acts from the triage rows: clean a regenerable layout and hand a migration c
   expect(onMigrate).toHaveBeenCalledWith("C:\\Program Files\\Lenovo");
 });
 
-it("opens the parent folder of a dead junction and the folder of a triage row", async () => {
+it("opens the parent folder of a dead junction and the folder of an action row", async () => {
   mockLoads();
   vi.mocked(api.openPath).mockResolvedValue(undefined);
   render(<DiskOverviewPanel onClose={vi.fn()} />);
@@ -199,6 +225,7 @@ it("opens the parent folder of a dead junction and the folder of a triage row", 
     await screen.findByRole("button", { name: `${L.openLocation}: c:\\Program Files\\Docker` }),
   );
   await waitFor(() => expect(api.openPath).toHaveBeenCalledWith("c:\\Program Files"));
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
   fireEvent.click(
     screen.getByRole("button", {
       name: `${L.openLocation}: C:\\Windows\\SoftwareDistribution\\Download`,
