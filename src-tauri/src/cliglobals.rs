@@ -46,17 +46,134 @@ pub struct CliRoots {
 
 pub fn roots_from_env() -> CliRoots {
     let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
-    let npm_prefix =
-        var("npm_config_prefix").or_else(|| var("APPDATA").map(|appdata| appdata.join("npm")));
-    let pnpm_home =
-        var("PNPM_HOME").or_else(|| var("LOCALAPPDATA").map(|local| local.join("pnpm")));
+    // Every root is resolved per machine: env override → the user's npmrc →
+    // the manager's documented default. No absolute path is baked in.
+    let npmrc = npmrc_path();
+    let npm_prefix = npm_prefix_from(
+        var("npm_config_prefix"),
+        npmrc.as_deref().and_then(|p| npmrc_value_at(p, "prefix")),
+        var("APPDATA"),
+    );
+    let pnpm_home = var("PNPM_HOME")
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| {
+            npmrc
+                .as_deref()
+                .and_then(|p| npmrc_value_at(p, "global-bin-dir"))
+        })
+        .or_else(|| var("LOCALAPPDATA").map(|local| local.join("pnpm")));
     let yarn_global = var("YARN_GLOBAL_FOLDER")
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(yarnrc_global_folder)
         .or_else(|| var("LOCALAPPDATA").map(|local| local.join(r"Yarn\Data\global")));
     CliRoots {
         npm_prefix,
         pnpm_home,
         yarn_global,
     }
+}
+
+/// npm's documented Windows default when neither env nor npmrc overrides it.
+fn npm_prefix_from(
+    env_prefix: Option<PathBuf>,
+    npmrc_prefix: Option<PathBuf>,
+    appdata: Option<PathBuf>,
+) -> Option<PathBuf> {
+    env_prefix
+        .filter(|p| !p.as_os_str().is_empty())
+        .or(npmrc_prefix)
+        .or_else(|| appdata.map(|appdata| appdata.join("npm")))
+}
+
+fn npmrc_path() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|home| PathBuf::from(home).join(".npmrc"))
+}
+
+/// Yarn classic stores its global folder in `~/.yarnrc` as `global-folder "…"`.
+fn yarnrc_global_folder() -> Option<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)?;
+    yarnrc_global_folder_at(&home.join(".yarnrc"))
+}
+
+fn yarnrc_global_folder_at(path: &Path) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    for line in raw.lines() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        if key != "global-folder" {
+            continue;
+        }
+        let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+        if value.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(expand_env_vars(value)));
+    }
+    None
+}
+
+/// Read one key from the user's `~/.npmrc`, with `%VAR%` / `${VAR}` expansion.
+fn npmrc_value_at(path: &Path, key: &str) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    for line in raw.lines() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let Some((candidate, value)) = line.split_once('=') else {
+            continue;
+        };
+        if !candidate.trim().eq_ignore_ascii_case(key) {
+            continue;
+        }
+        let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+        if value.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(expand_env_vars(value)));
+    }
+    None
+}
+
+/// npmrc values may use either Windows (`%APPDATA%`) or npm (`${HOME}`)
+/// variable syntax. Unknown variables stay literal.
+fn expand_env_vars(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i..].starts_with("${") {
+            if let Some(end) = raw[i + 2..].find('}') {
+                let name = &raw[i + 2..i + 2 + end];
+                if let Some(v) = std::env::var_os(name) {
+                    out.push_str(&v.to_string_lossy());
+                    i += 2 + end + 1;
+                    continue;
+                }
+            }
+        } else if raw[i..].starts_with('%') {
+            if let Some(end) = raw[i + 1..].find('%') {
+                let name = &raw[i + 1..i + 1 + end];
+                if let Some(v) = std::env::var_os(name) {
+                    out.push_str(&v.to_string_lossy());
+                    i += 1 + end + 1;
+                    continue;
+                }
+            }
+        }
+        let ch = raw[i..].chars().next().expect("char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// Read `"version"` out of a package.json without failing the listing.
@@ -88,17 +205,19 @@ fn push_pkg(
     });
 }
 
-/// Enumerate one npm/yarn-style global `node_modules` tree.
+/// Enumerate one npm/yarn-style global `node_modules` tree. `Ok(found)` keeps
+/// "readable but empty" distinct from a read failure.
 fn scan_node_modules_tree(
     root: &Path,
     manager: &str,
     out: &mut Vec<CliGlobalItem>,
     omitted: &mut u32,
-) -> bool {
+) -> Result<bool, ()> {
     let node_modules = root.join("node_modules");
-    let Ok(read) = std::fs::read_dir(&node_modules) else {
-        return false;
-    };
+    if !node_modules.exists() {
+        return Ok(false);
+    }
+    let read = std::fs::read_dir(&node_modules).map_err(|_| ())?;
     let mut found = false;
     for entry in read.flatten() {
         let path = entry.path();
@@ -130,15 +249,17 @@ fn scan_node_modules_tree(
             push_pkg(out, omitted, manager, name, &path);
         }
     }
-    found
+    Ok(found)
 }
 
 /// pnpm's global store is link-based; the shims in PNPM_HOME are the provable
 /// inventory. Sizes/versions stay unknown rather than guessed.
-fn scan_pnpm_shims(home: &Path, out: &mut Vec<CliGlobalItem>, omitted: &mut u32) -> bool {
-    let Ok(read) = std::fs::read_dir(home) else {
-        return false;
-    };
+fn scan_pnpm_shims(
+    home: &Path,
+    out: &mut Vec<CliGlobalItem>,
+    omitted: &mut u32,
+) -> Result<bool, ()> {
+    let read = std::fs::read_dir(home).map_err(|_| ())?;
     let mut found = false;
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -161,7 +282,7 @@ fn scan_pnpm_shims(home: &Path, out: &mut Vec<CliGlobalItem>, omitted: &mut u32)
             }
         }
     }
-    found
+    Ok(found)
 }
 
 /// Core scan over injected roots.
@@ -170,21 +291,27 @@ pub fn scan_with(roots: &CliRoots) -> CliGlobalScanResult {
     let mut omitted = 0u32;
     let mut notes = Vec::new();
     if let Some(npm) = &roots.npm_prefix {
-        if !scan_node_modules_tree(npm, "npm", &mut items, &mut omitted) {
+        if !npm.is_dir() {
+            notes.push("npm".into());
+        } else if scan_node_modules_tree(npm, "npm", &mut items, &mut omitted).is_err() {
             notes.push("npm".into());
         }
     } else {
         notes.push("npm".into());
     }
     if let Some(pnpm) = &roots.pnpm_home {
-        if !scan_pnpm_shims(pnpm, &mut items, &mut omitted) {
+        if !pnpm.is_dir() {
+            notes.push("pnpm".into());
+        } else if scan_pnpm_shims(pnpm, &mut items, &mut omitted).is_err() {
             notes.push("pnpm".into());
         }
     } else {
         notes.push("pnpm".into());
     }
     if let Some(yarn) = &roots.yarn_global {
-        if !scan_node_modules_tree(yarn, "yarn", &mut items, &mut omitted) {
+        if !yarn.is_dir() {
+            notes.push("yarn".into());
+        } else if scan_node_modules_tree(yarn, "yarn", &mut items, &mut omitted).is_err() {
             notes.push("yarn".into());
         }
     } else {
@@ -264,5 +391,125 @@ mod tests {
         let out = scan_with(&CliRoots::default());
         assert!(out.items.is_empty());
         assert_eq!(out.notes, ["npm", "pnpm", "yarn"]);
+    }
+
+    #[test]
+    fn readable_roots_without_packages_are_not_reported_as_missing() {
+        let tmp = crate::test_support::TempDir::new("cli-empty");
+        let npm = tmp.path().join("npm-prefix");
+        let pnpm = tmp.path().join("pnpm");
+        let yarn = tmp.path().join("yarn-global");
+        for root in [&npm, &pnpm, &yarn] {
+            std::fs::create_dir_all(root).unwrap();
+        }
+        let out = scan_with(&CliRoots {
+            npm_prefix: Some(npm),
+            pnpm_home: Some(pnpm),
+            yarn_global: Some(yarn),
+        });
+        assert!(out.items.is_empty());
+        assert!(
+            out.notes.is_empty(),
+            "empty but readable roots are not errors: {:?}",
+            out.notes
+        );
+    }
+
+    #[test]
+    fn npmrc_prefix_reads_a_custom_global_root() {
+        let tmp = crate::test_support::TempDir::new("cli-npmrc");
+        let npmrc = tmp.path().join(".npmrc");
+        std::fs::write(
+            &npmrc,
+            "cache=D:\\npm-cache\nPREFIX = \"D:\\nodejs-global\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            npmrc_value_at(&npmrc, "prefix"),
+            Some(PathBuf::from(r"D:\nodejs-global"))
+        );
+    }
+
+    #[test]
+    fn npmrc_prefix_supports_the_common_comment_shapes() {
+        let tmp = crate::test_support::TempDir::new("cli-npmrc-comments");
+        let npmrc = tmp.path().join(".npmrc");
+        std::fs::write(&npmrc, "# comment\n; another\nprefix='D:\\nodejs-global'\n").unwrap();
+        assert_eq!(
+            npmrc_value_at(&npmrc, "prefix"),
+            Some(PathBuf::from(r"D:\nodejs-global"))
+        );
+    }
+
+    #[test]
+    fn npmrc_global_bin_dir_feeds_the_pnpm_root() {
+        let tmp = crate::test_support::TempDir::new("cli-npmrc-pnpm");
+        let npmrc = tmp.path().join(".npmrc");
+        std::fs::write(&npmrc, "global-bin-dir=D:\\pnpm-bin\n").unwrap();
+        assert_eq!(
+            npmrc_value_at(&npmrc, "global-bin-dir"),
+            Some(PathBuf::from(r"D:\pnpm-bin"))
+        );
+    }
+
+    #[test]
+    fn yarnrc_global_folder_is_honored() {
+        let tmp = crate::test_support::TempDir::new("cli-yarnrc");
+        let rc = tmp.path().join(".yarnrc");
+        std::fs::write(
+            &rc,
+            "# yarn config\nnetwork-timeout 100000\nglobal-folder \"D:\\yarn-global\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            yarnrc_global_folder_at(&rc),
+            Some(PathBuf::from(r"D:\yarn-global"))
+        );
+    }
+
+    #[test]
+    fn npm_prefix_resolves_per_machine_not_from_a_constant() {
+        let env = PathBuf::from(r"C:\env-prefix");
+        let npmrc = PathBuf::from(r"D:\custom-prefix");
+        let appdata = PathBuf::from(r"C:\Users\someone\AppData\Roaming");
+        // Env wins; then the user's npmrc; then npm's documented default.
+        assert_eq!(
+            npm_prefix_from(
+                Some(env.clone()),
+                Some(npmrc.clone()),
+                Some(appdata.clone())
+            ),
+            Some(env)
+        );
+        assert_eq!(
+            npm_prefix_from(None, Some(npmrc.clone()), Some(appdata.clone())),
+            Some(npmrc)
+        );
+        assert_eq!(
+            npm_prefix_from(None, None, Some(appdata.clone())),
+            Some(appdata.join("npm"))
+        );
+        assert_eq!(npm_prefix_from(None, None, None), None);
+        // An empty env value must not mask the npmrc/default fallback.
+        assert_eq!(
+            npm_prefix_from(
+                Some(PathBuf::new()),
+                Some(PathBuf::from(r"D:\rc-prefix")),
+                None
+            ),
+            Some(PathBuf::from(r"D:\rc-prefix"))
+        );
+    }
+
+    #[test]
+    fn npmrc_prefix_keeps_unknown_env_tokens_literal() {
+        assert_eq!(
+            expand_env_vars(r"%REMOva_TEST_NOT_SET%\npm"),
+            r"%REMOva_TEST_NOT_SET%\npm"
+        );
+        assert_eq!(
+            expand_env_vars(r"${REMOva_TEST_NOT_SET}/npm"),
+            r"${REMOva_TEST_NOT_SET}/npm"
+        );
     }
 }
