@@ -7,7 +7,7 @@ import { DiskOverviewPanel } from "../components/DiskOverviewPanel";
 import { api } from "../lib/api";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 
 vi.mock("../lib/confirm", () => ({
   requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })),
@@ -196,17 +196,17 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
   fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
-  // The blocked layout is visibly disabled with its reason.
-  expect(await screen.findByText(/servicing 进行中/)).toBeTruthy();
+  // The blocked layout is visibly disabled with its reason. The row renders
+  // the reason after a dash prefix, so match the key's text rather than the
+  // whole line.
+  expect(await screen.findByText(new RegExp(L.regenBlockServicing))).toBeTruthy();
   // Scope by the checkbox name: the triage row carries the same path.
   fireEvent.click(screen.getByRole("checkbox", { name: /C:\\Windows\\Temp/ }));
   fireEvent.click(screen.getByRole("button", { name: L.regenClean }));
   // The confirm restates the no-backup contract before anything runs.
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(1));
   const opts = vi.mocked(requestConfirmEx).mock.calls[0]![0];
-  expect(opts.message).toContain("不创建备份");
-  // The scope is contents-only; the folder itself is kept.
-  expect(opts.message).toContain("不删除文件夹");
+  expect(opts.message).toBe(L.regenCleanConfirm(1, formatSize(1200)));
   await waitFor(() =>
     expect(api.deleteRegenerableLayouts).toHaveBeenCalledWith(["C:\\Windows\\Temp"]),
   );

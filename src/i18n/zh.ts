@@ -126,6 +126,8 @@ export const dict = {
     diskOverviewTabComponents: "组件存储",
     diskOverviewOpenActions: (n: number) => `查看可处理项（${n}）`,
     diskOverviewEmpty: "没有可清理或可迁移的目录",
+    diskOverviewLoadFailed: "数据没有加载出来",
+    retry: "重试",
     diskOverviewCleanupRules: "可再生清理规则",
     triageTitle: "处置清单",
     triageHint: "可清理项已置顶；勾选可再生缓存可批量清理；迁移候选可交给目录迁移工具",
@@ -154,6 +156,7 @@ export const dict = {
     regenTitle: "可再生缓存清理",
     regenHint: "仅限删除后系统/应用会自动重建的固定布局：不创建备份（可再生类豁免），目录本身保留，被占用文件如实跳过；系统级布局建议以管理员身份运行",
     regenSelectAll: "全选",
+    regenClearSelection: "清除选择",
     regenClean: "清理所选",
     regenCleaning: "正在清理…",
     regenCleanConfirm: (n: number, size: string) =>
@@ -204,6 +207,9 @@ export const dict = {
     migrateRollbackDone: "已回滚：junction 移除，源目录恢复原名",
     migrateRollbackFailed: "回滚失败",
     migrateCancelled: "迁移已取消",
+    migrateCancelCopy: "取消复制",
+    migrateStateInconsistent:
+      "迁移状态不一致：源目录、备份与目标的组合不属于任何已知阶段，请人工检查后再操作。",
     backendCleanupCancelledBackup: "备份期间操作被取消，未做任何修改",
     backendNotRegenerable: (p: string) => `不是可再生的固定布局，已拒绝：${p}`,
     backendMigrateState: "迁移不在可收尾的状态（请重新打开面板查看当前阶段）",

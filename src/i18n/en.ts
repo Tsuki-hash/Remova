@@ -138,6 +138,8 @@ export const dict: EnDict = {
     diskOverviewTabComponents: "Component store",
     diskOverviewOpenActions: (n: number) => `View actionable items (${n})`,
     diskOverviewEmpty: "Nothing to clean up or migrate",
+    diskOverviewLoadFailed: "The data did not load",
+    retry: "Retry",
     diskOverviewCleanupRules: "Regenerable cleanup rules",
     triageTitle: "Action list",
     triageHint: "Cleanable items are pinned to the top; select regenerable caches to clean them together; migration candidates hand off to the migration tool",
@@ -166,6 +168,7 @@ export const dict: EnDict = {
     regenTitle: "Regenerable cache cleanup",
     regenHint: "Only fixed layouts the system/apps rebuild automatically: no backup (regenerable exemption), the directory itself is kept, locked files are skipped honestly; run elevated for system-level layouts",
     regenSelectAll: "Select all",
+    regenClearSelection: "Clear selection",
     regenClean: "Clean selected",
     regenCleaning: "Cleaning…",
     regenCleanConfirm: (n: number, size: string) =>
@@ -216,6 +219,9 @@ export const dict: EnDict = {
     migrateRollbackDone: "Rolled back: junction removed, source restored",
     migrateRollbackFailed: "Rollback failed",
     migrateCancelled: "Migration cancelled",
+    migrateCancelCopy: "Cancel copy",
+    migrateStateInconsistent:
+      "Inconsistent migration state: the source, backup and target do not match any known phase. Inspect them manually before acting.",
     backendCleanupCancelledBackup: "The operation was cancelled during backup; nothing was changed",
     backendNotRegenerable: (p: string) => `Not a regenerable fixed layout; refused: ${p}`,
     backendMigrateState: "The migration is not in a state that can be finished (reopen the panel to see the current phase)",

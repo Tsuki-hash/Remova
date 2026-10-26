@@ -297,6 +297,20 @@ export function DiskOverviewPanel({
       <div
         role="tablist"
         aria-label={L.diskOverviewTitle}
+        onKeyDown={(e) => {
+          // WAI-ARIA tabs: arrow keys move between tabs, Home/End jump.
+          const order: OverviewTab[] = ["overview", "cleanup", "components"];
+          const at = order.indexOf(tab);
+          let next: OverviewTab | null = null;
+          if (e.key === "ArrowRight") next = order[(at + 1) % order.length] ?? null;
+          else if (e.key === "ArrowLeft") next = order[(at + order.length - 1) % order.length] ?? null;
+          else if (e.key === "Home") next = order[0] ?? null;
+          else if (e.key === "End") next = order[order.length - 1] ?? null;
+          if (next && next !== tab) {
+            e.preventDefault();
+            setTab(next);
+          }
+        }}
         style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 10 }}
       >
         {tabs.map((item) => {
@@ -304,9 +318,12 @@ export function DiskOverviewPanel({
           return (
             <button
               key={item.id}
+              id={`disk-overview-tab-${item.id}`}
               type="button"
               role="tab"
               aria-selected={active}
+              aria-controls={`disk-overview-panel-${item.id}`}
+              tabIndex={active ? 0 : -1}
               onClick={() => setTab(item.id)}
               style={{
                 border: "none",
@@ -326,7 +343,7 @@ export function DiskOverviewPanel({
       </div>
 
       {tab === "overview" && (
-        <div role="tabpanel" aria-label={L.diskOverviewTabOverview}>
+        <div id="disk-overview-panel-overview" role="tabpanel" aria-labelledby="disk-overview-tab-overview" aria-label={L.diskOverviewTabOverview}>
           {system && (
             <div style={css.muted}>
               {L.diskOverviewSystemVolume(
@@ -345,7 +362,7 @@ export function DiskOverviewPanel({
               </div>
               {junction.degraded_roots.length > 0 && (
                 <div style={{ ...css.muted, fontSize: 12 }}>
-                  {L.diskOverviewDegraded(junction.degraded_roots.join("、"))}
+                  {L.diskOverviewDegraded(junction.degraded_roots.join(", "))}
                 </div>
               )}
               {dead.length > 0 && (
@@ -412,11 +429,22 @@ export function DiskOverviewPanel({
       )}
 
       {tab === "cleanup" && (
-        <div role="tabpanel" aria-label={L.diskOverviewTabCleanup}>
+        <div id="disk-overview-panel-cleanup" role="tabpanel" aria-labelledby="disk-overview-tab-cleanup" aria-label={L.diskOverviewTabCleanup}>
           <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
           <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
           {rows.length === 0 ? (
-            <p style={css.muted}>{L.diskOverviewEmpty}</p>
+            loadError ? (
+              // An errored load must not read as "nothing to clean": offer the
+              // retry the alert above cannot.
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <p style={{ ...css.muted, margin: 0 }}>{L.diskOverviewLoadFailed}</p>
+                <button type="button" style={{ ...css.btnGhost, height: 28 }} onClick={() => void reload()}>
+                  {L.retry}
+                </button>
+              </div>
+            ) : (
+              <p style={css.muted}>{L.diskOverviewEmpty}</p>
+            )
           ) : (
             <>
               <div
@@ -543,11 +571,12 @@ export function DiskOverviewPanel({
                 <button
                   type="button"
                   style={{ ...css.btnGhost, height: 30 }}
+                  aria-pressed={allSelected}
                   onClick={() =>
                     setRegenSel(allSelected ? new Set() : new Set(deletableItems.map((i) => i.path)))
                   }
                 >
-                  {L.regenSelectAll}
+                  {allSelected ? L.regenClearSelection : L.regenSelectAll}
                 </button>
                 <button
                   type="button"
@@ -570,7 +599,7 @@ export function DiskOverviewPanel({
       )}
 
       {tab === "components" && (
-        <div role="tabpanel" aria-label={L.diskOverviewTabComponents}>
+        <div id="disk-overview-panel-components" role="tabpanel" aria-labelledby="disk-overview-tab-components" aria-label={L.diskOverviewTabComponents}>
           <div style={{ fontWeight: 600 }}>{L.diskOverviewWinSxs}</div>
           <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.diskOverviewWinSxsHint}</div>
           {dism && (
