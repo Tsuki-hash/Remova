@@ -664,6 +664,11 @@ pub fn finish(
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     crate::executor::begin_cleanup_control();
+    // Fails closed like every other destructive entry: with a pending reboot
+    // (1641) the machine must not delete anything.
+    if crate::executor::reboot::any_pending() {
+        return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
+    }
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
     let mut bak_name = source_path.as_os_str().to_os_string();
@@ -734,6 +739,14 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     crate::executor::begin_cleanup_control();
+    // Fails closed like every other destructive entry: with a pending reboot
+    // (1641) the machine must not move or delete anything.
+    if crate::executor::reboot::any_pending() {
+        return MigrationRollbackReport {
+            ok: false,
+            message: Some(crate::executor::reboot::PENDING_MESSAGE.to_string()),
+        };
+    }
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
     let mut bak_name = source_path.as_os_str().to_os_string();
@@ -1035,5 +1048,22 @@ mod tests {
         // contract is (relative path, byte count), so restore first.
         drop(rollback(&src.to_string_lossy(), &tgt.to_string_lossy()));
         assert!(src.join("db.sqlite").exists());
+    }
+
+    /// With a pending reboot (1641) every destructive entry fails closed —
+    /// finish and rollback are no exceptions to that pairing.
+    #[test]
+    fn a_pending_reboot_blocks_finish_and_rollback() {
+        crate::executor::reboot::reset_for_test();
+        crate::executor::reboot::mark_pending("source\u{0}key\u{0}App");
+        let err = finish(r"C:\no-such-app", r"D:\no-such-target", true).unwrap_err();
+        assert_eq!(err, crate::executor::reboot::PENDING_MESSAGE);
+        let rolled = rollback(r"C:\no-such-app", r"D:\no-such-target");
+        assert!(!rolled.ok);
+        assert_eq!(
+            rolled.message.as_deref(),
+            Some(crate::executor::reboot::PENDING_MESSAGE)
+        );
+        crate::executor::reboot::reset_for_test();
     }
 }
