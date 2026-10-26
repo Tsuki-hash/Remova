@@ -6,6 +6,7 @@
 //! milestones — this module only explains what the user is looking at.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const ENTRY_CAP: usize = 120;
@@ -143,8 +144,20 @@ pub fn classify(path: &Path, roots: &TriageRoots) -> Option<(TriageClass, &'stat
     None
 }
 
-fn push_entry(out: &mut Vec<TriageEntry>, path: &Path, roots: &TriageRoots) {
+fn push_entry(
+    out: &mut Vec<TriageEntry>,
+    seen: &mut HashSet<String>,
+    path: &Path,
+    roots: &TriageRoots,
+) {
     if out.len() >= ENTRY_CAP {
+        return;
+    }
+    // The fixed layout list and the anchor enumeration describe overlapping
+    // directories (Package Cache, Temp, CrashDumps, D3DSCache appear in both),
+    // so every path is listed once. Windows paths are case-insensitive.
+    let key = path.to_string_lossy().to_lowercase();
+    if !seen.insert(key) {
         return;
     }
     let Some((class, reason)) = classify(path, roots) else {
@@ -191,6 +204,7 @@ pub fn scan_space_triage() -> TriageScanResult {
         roots.local_app_data.join("D3DSCache"),
     ];
     let mut omitted: u32 = 0;
+    let mut seen: HashSet<String> = HashSet::new();
     for path in fixed {
         if path.as_os_str().is_empty() {
             continue;
@@ -199,7 +213,7 @@ pub fn scan_space_triage() -> TriageScanResult {
             if entries.len() >= ENTRY_CAP {
                 omitted += 1;
             } else {
-                push_entry(&mut entries, &path, &roots);
+                push_entry(&mut entries, &mut seen, &path, &roots);
             }
         }
     }
@@ -211,7 +225,7 @@ pub fn scan_space_triage() -> TriageScanResult {
             if entries.len() >= ENTRY_CAP {
                 omitted += 1;
             } else if p.try_exists().unwrap_or(false) {
-                push_entry(&mut entries, &p, &roots);
+                push_entry(&mut entries, &mut seen, &p, &roots);
             }
         }
     }
@@ -239,7 +253,7 @@ pub fn scan_space_triage() -> TriageScanResult {
             let p = e.path();
             // Only directories classify here; files under profile roots (ntuser.dat…) stay out.
             if e.metadata().map(|m| m.is_dir()).unwrap_or(false) {
-                push_entry(&mut entries, &p, &roots);
+                push_entry(&mut entries, &mut seen, &p, &roots);
             }
         }
     }
@@ -348,5 +362,17 @@ mod tests {
         assert_eq!(classify(Path::new(r"C:\Games"), &r), None);
         // A file (not dir) under the profile: ntuser.dat must not classify.
         assert_eq!(classify(Path::new(r"C:\U\a\ntuser.dat"), &r), None);
+    }
+
+    /// The fixed layout list and the anchor enumeration overlap (Package
+    /// Cache, Temp, CrashDumps, D3DSCache): each path is triaged once.
+    #[test]
+    fn a_triage_path_is_listed_once_regardless_of_case() {
+        let r = roots();
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        push_entry(&mut out, &mut seen, Path::new(r"C:\PD\Package Cache"), &r);
+        push_entry(&mut out, &mut seen, Path::new(r"c:\pd\PACKAGE CACHE"), &r);
+        assert_eq!(out.len(), 1, "an overlapping directory must appear once");
     }
 }
