@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -46,13 +46,24 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   const [plan, setPlan] = useState<MigrationPlan | null>(null);
   const [state, setState] = useState<MigrationState | null>(null);
   const [busy, setBusy] = useState(false);
+  // True only while a migrateCopy IPC is actually in flight. The copy is the
+  // one phase the backend can abort (COPY_CANCEL), so the cancel button keys
+  // off it instead of the derived wizard state, which does not change until
+  // the copy settles.
+  const [copying, setCopying] = useState(false);
+  // Monotonic id for status probes: the probe runs on the blocking pool shared
+  // with every scan, so a slow answer for an older path pair can arrive after
+  // a newer one and must never overwrite its state.
+  const statusGen = useRef(0);
 
   const refreshState = useCallback(async (src: string, dst: string) => {
     if (!src.trim() || !dst.trim()) return;
+    const gen = ++statusGen.current;
     try {
-      setState(await api.migrateStatus(src, dst));
+      const next = await api.migrateStatus(src, dst);
+      if (gen === statusGen.current) setState(next);
     } catch {
-      setState(null);
+      if (gen === statusGen.current) setState(null);
     }
   }, []);
 
@@ -73,89 +84,92 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     }
   };
 
-  // The primary CTA chains plan -> copy automatically: a refused plan stops
-  // at the planning step with its reasons; a green plan flows straight into
-  // the copy and stops at "copied" for the (dangerous) cutover confirmation.
-  const startMigration = () =>
-    withBusy(async () => {
-      const plan = await api.migratePlan(source, target);
-      setPlan(plan);
-      if (!plan.ok) return;
-      try {
-        const r = await api.migrateCopy(source, target);
-        toast.success(
-          L.migrateCopyDone(r.files, formatSize(r.source_kb)),
-          r.reparse_skipped.length ? { detail: L.migrateCopySkipped(r.reparse_skipped.length) } : undefined,
-        );
-      } catch (e) {
-        toast.error(backendErrorText(formatError(e)));
-      }
-      await refreshState(source, target);
-    });
+  // The four phase actions are plain async functions; the call sites below are
+  // their single withBusy wrapper.
+  const startMigration = async () => {
+    const plan = await api.migratePlan(source, target);
+    setPlan(plan);
+    if (!plan.ok) return;
+    setCopying(true);
+    try {
+      const r = await api.migrateCopy(source, target);
+      toast.success(
+        L.migrateCopyDone(r.files, formatSize(r.source_kb)),
+        r.reparse_skipped.length ? { detail: L.migrateCopySkipped(r.reparse_skipped.length) } : undefined,
+      );
+    } catch (e) {
+      // A cancel is the user's own choice, not a failure. Check the raw error:
+      // formatError would already localize it, hiding the token.
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      if (raw === "migrate:cancelled") toast.info(L.migrateCancelled);
+      else toast.error(backendErrorText(formatError(e)));
+    } finally {
+      setCopying(false);
+    }
+    await refreshState(source, target);
+  };
 
-  const cancelCopy = () =>
-    withBusy(async () => {
-      await api.cancelMigrateCopy();
-    });
+  const cancelCopy = () => {
+    // Not gated by busy: the button exists precisely to interrupt the busy
+    // copy, so the click must reach the backend even while busy is true.
+    void api.cancelMigrateCopy().catch(() => {});
+  };
 
-  const runCutover = () =>
-    withBusy(async () => {
-      const { ok } = await requestConfirmEx({
-        title: L.migrateCutoverTitle,
-        message: L.migrateCutoverConfirm,
-        confirmLabel: L.migrateCutover,
-        danger: true,
-      });
-      if (!ok) return;
-      const r = await api.migrateCutover(source, target);
-      if (r.ok) {
-        toast.success(L.migrateCutoverDone);
-      } else if (r.rolled_back) {
-        toast.error(L.migrateRolledBack, { detail: r.error ?? undefined });
+  const runCutover = async () => {
+    const { ok } = await requestConfirmEx({
+      title: L.migrateCutoverTitle,
+      message: L.migrateCutoverConfirm,
+      confirmLabel: L.migrateCutover,
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await api.migrateCutover(source, target);
+    if (r.ok) {
+      toast.success(L.migrateCutoverDone);
+    } else if (r.rolled_back) {
+      toast.error(L.migrateRolledBack, { detail: r.error ?? undefined });
+    } else {
+      toast.error(L.migrateCutoverFailed, { detail: r.error ?? undefined });
+    }
+    await refreshState(source, target);
+  };
+
+  const runFinish = async () => {
+    const { ok } = await requestConfirmEx({
+      title: L.migrateFinishTitle,
+      message: L.migrateFinishConfirm,
+      confirmLabel: L.migrateFinish,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await api.migrateFinish(source, target, true);
+      if (r.removed_bak) {
+        toast.success(L.migrateFinishDone);
       } else {
-        toast.error(L.migrateCutoverFailed, { detail: r.error ?? undefined });
+        toast.error(L.migrateFinishRefused, {
+          detail: r.missing_in_target.slice(0, 10).join("\n"),
+        });
       }
-      await refreshState(source, target);
-    });
+    } catch (e) {
+      toast.error(backendErrorText(formatError(e)));
+    }
+    await refreshState(source, target);
+  };
 
-  const runFinish = () =>
-    withBusy(async () => {
-      const { ok } = await requestConfirmEx({
-        title: L.migrateFinishTitle,
-        message: L.migrateFinishConfirm,
-        confirmLabel: L.migrateFinish,
-        danger: true,
-      });
-      if (!ok) return;
-      try {
-        const r = await api.migrateFinish(source, target, true);
-        if (r.removed_bak) {
-          toast.success(L.migrateFinishDone);
-        } else {
-          toast.error(L.migrateFinishRefused, {
-            detail: r.missing_in_target.slice(0, 10).join("\n"),
-          });
-        }
-      } catch (e) {
-        toast.error(backendErrorText(formatError(e)));
+  const runRollback = async () => {
+    try {
+      const r = await api.migrateRollback(source, target);
+      if (r.ok) {
+        toast.success(L.migrateRollbackDone);
+      } else {
+        toast.error(L.migrateRollbackFailed, { detail: r.message ?? undefined });
       }
-      await refreshState(source, target);
-    });
-
-  const runRollback = () =>
-    withBusy(async () => {
-      try {
-        const r = await api.migrateRollback(source, target);
-        if (r.ok) {
-          toast.success(L.migrateRollbackDone);
-        } else {
-          toast.error(L.migrateRollbackFailed, { detail: r.message ?? undefined });
-        }
-      } catch (e) {
-        toast.error(backendErrorText(formatError(e)));
-      }
-      await refreshState(source, target);
-    });
+    } catch (e) {
+      toast.error(backendErrorText(formatError(e)));
+    }
+    await refreshState(source, target);
+  };
 
 
   return (
@@ -222,7 +236,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           onClick={() => {
             if (state === "copied") void withBusy(runCutover);
             else if (state === "cutover") void withBusy(runFinish);
-            else void startMigration();
+            else void withBusy(startMigration);
           }}
         >
           {busy
@@ -241,12 +255,18 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         {state === "cutover" && (
           <span style={{ ...css.muted, fontSize: 12 }}>{L.migrateFinishLater}</span>
         )}
-        {busy && state === "copied" && (
-          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={() => void withBusy(cancelCopy)}>
-            {L.cancelScan}
+        {copying && (
+          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={cancelCopy}>
+            {L.migrateCancelCopy}
           </button>
         )}
       </div>
+
+      {state === "inconsistent" && (
+        <div role="alert" style={{ color: "var(--danger-text)", fontSize: 12, marginTop: 6 }}>
+          {L.migrateStateInconsistent}
+        </div>
+      )}
 
       {plan && (
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
