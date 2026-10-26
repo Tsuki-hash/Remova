@@ -255,3 +255,50 @@ it("opens the parent folder of a dead junction and the folder of an action row",
     expect(api.openPath).toHaveBeenCalledWith("C:\\Windows\\SoftwareDistribution\\Download"),
   );
 });
+
+it("retry clears the error banner on success and replaces it on failure", async () => {
+  // First load fails; the retry succeeds and must not keep reporting the old
+  // failure (the alert is panel-level and would otherwise never go away).
+  vi.mocked(api.listLocalDrives).mockRejectedValueOnce(new Error("drive listing failed"));
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain(
+    "drive listing failed",
+  );
+  // With the error state up, the cleanup tab must not read as an empty list.
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
+  fireEvent.click(screen.getByRole("button", { name: L.retry }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(await screen.findByText(L.triageTitle)).toBeTruthy();
+});
+
+it("retry replaces the banner text when it fails again", async () => {
+  vi.mocked(api.listLocalDrives)
+    .mockRejectedValueOnce(new Error("first failure"))
+    .mockRejectedValue(new Error("second failure"));
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain("first failure");
+  // The retry button lives in the cleanup tab's failed state.
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
+  fireEvent.click(screen.getByRole("button", { name: L.retry }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert").textContent).toContain("second failure"),
+  );
+});
+
+it("moves focus to the newly activated tab with the arrow keys", async () => {
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  await screen.findByText(L.diskOverviewScopeNote);
+  const overviewTab = screen.getByRole("tab", { name: L.diskOverviewTabOverview });
+  const cleanupTab = screen.getByRole("tab", { name: L.diskOverviewTabCleanup });
+  expect(document.activeElement).not.toBe(cleanupTab);
+  fireEvent.keyDown(overviewTab, { key: "ArrowRight" });
+  expect(cleanupTab.getAttribute("aria-selected")).toBe("true");
+  // WAI-ARIA tabs: the selection and the focus must move together, or the
+  // reader keeps announcing the abandoned tab.
+  expect(document.activeElement).toBe(cleanupTab);
+});

@@ -156,6 +156,19 @@ export function DiskOverviewPanel({
     };
   }, []);
 
+  // The retry button owns the loadError lifecycle the same way the initial
+  // load does: success clears the stale banner, a repeated failure replaces
+  // its text — a bare void reload() would leak an unhandled rejection and
+  // keep reporting an error that no longer exists.
+  const retryLoad = async () => {
+    try {
+      await reload();
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(formatError(e));
+    }
+  };
+
   const runDism = async () => {
     if (dismBusy) return;
     setDismBusy(true);
@@ -309,6 +322,9 @@ export function DiskOverviewPanel({
           if (next && next !== tab) {
             e.preventDefault();
             setTab(next);
+            // WAI-ARIA tabs: the arrow keys move focus together with the
+            // selection, or the reader keeps announcing the abandoned tab.
+            document.getElementById(`disk-overview-tab-${next}`)?.focus();
           }
         }}
         style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 10 }}
@@ -438,7 +454,7 @@ export function DiskOverviewPanel({
               // retry the alert above cannot.
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <p style={{ ...css.muted, margin: 0 }}>{L.diskOverviewLoadFailed}</p>
-                <button type="button" style={{ ...css.btnGhost, height: 28 }} onClick={() => void reload()}>
+                <button type="button" style={{ ...css.btnGhost, height: 28 }} onClick={() => void retryLoad()}>
                   {L.retry}
                 </button>
               </div>
@@ -614,7 +630,7 @@ export function DiskOverviewPanel({
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
             <button
               type="button"
-              style={{ ...css.btn, height: 32, opacity: dismBusy ? 0.6 : 1 }}
+              style={{ ...css.btn, height: 32, opacity: dismBusy ? 0.5 : 1 }}
               disabled={dismBusy}
               onClick={() => void runDism()}
             >
