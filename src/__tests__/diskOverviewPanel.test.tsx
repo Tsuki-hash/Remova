@@ -227,7 +227,7 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
     expect(api.deleteRegenerableLayouts).toHaveBeenCalledWith(["C:\\Windows\\Temp"]),
   );
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
-  expect(vi.mocked(toast.success).mock.calls[0]![0]).toContain(L.regenDone(1, "1.17 MB").slice(0, 6));
+  expect(vi.mocked(toast.success).mock.calls[0]![0]).toBe(L.regenDone(1, formatSize(1200)));
 });
 
 it("acts from the triage rows: clean a regenerable layout and hand a migration candidate over", async () => {
@@ -317,4 +317,22 @@ it("moves focus to the newly activated tab with the arrow keys", async () => {
   // WAI-ARIA tabs: the selection and the focus must move together, or the
   // reader keeps announcing the abandoned tab.
   expect(document.activeElement).toBe(cleanupTab);
+});
+
+it("disables the retry button while a retry is in flight", async () => {
+  // First load fails to surface the retry; the retry itself hangs, so the
+  // in-flight guard must keep the button disabled instead of allowing a
+  // second concurrent load.
+  vi.mocked(api.listLocalDrives).mockRejectedValueOnce(new Error("first failure"));
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain("first failure");
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
+  const retry = screen.getByRole("button", { name: L.retry });
+  expect(retry.hasAttribute("disabled")).toBe(false);
+  vi.mocked(api.listLocalDrives).mockReturnValue(new Promise(() => {}));
+  fireEvent.click(retry);
+  await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(true));
+  // A pending promise never settles and afterEach's mockReset drops it, so
+  // no setState fires after unmount.
 });
