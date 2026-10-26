@@ -290,31 +290,24 @@ pub fn scan_with(roots: &CliRoots) -> CliGlobalScanResult {
     let mut items = Vec::new();
     let mut omitted = 0u32;
     let mut notes = Vec::new();
-    if let Some(npm) = &roots.npm_prefix {
-        if !npm.is_dir() {
-            notes.push("npm".into());
-        } else if scan_node_modules_tree(npm, "npm", &mut items, &mut omitted).is_err() {
-            notes.push("npm".into());
-        }
-    } else {
+    // A manager is reported once when its root is missing, unreadable, or the
+    // scan fails — all three are "not scanned" with the same user-facing note.
+    let npm_ok = roots.npm_prefix.as_deref().is_some_and(|npm| {
+        npm.is_dir() && scan_node_modules_tree(npm, "npm", &mut items, &mut omitted).is_ok()
+    });
+    if !npm_ok {
         notes.push("npm".into());
     }
-    if let Some(pnpm) = &roots.pnpm_home {
-        if !pnpm.is_dir() {
-            notes.push("pnpm".into());
-        } else if scan_pnpm_shims(pnpm, &mut items, &mut omitted).is_err() {
-            notes.push("pnpm".into());
-        }
-    } else {
+    let pnpm_ok = roots.pnpm_home.as_deref().is_some_and(|pnpm| {
+        pnpm.is_dir() && scan_pnpm_shims(pnpm, &mut items, &mut omitted).is_ok()
+    });
+    if !pnpm_ok {
         notes.push("pnpm".into());
     }
-    if let Some(yarn) = &roots.yarn_global {
-        if !yarn.is_dir() {
-            notes.push("yarn".into());
-        } else if scan_node_modules_tree(yarn, "yarn", &mut items, &mut omitted).is_err() {
-            notes.push("yarn".into());
-        }
-    } else {
+    let yarn_ok = roots.yarn_global.as_deref().is_some_and(|yarn| {
+        yarn.is_dir() && scan_node_modules_tree(yarn, "yarn", &mut items, &mut omitted).is_ok()
+    });
+    if !yarn_ok {
         notes.push("yarn".into());
     }
     items.sort_by_key(|i| (i.manager.clone(), i.name.to_lowercase()));
