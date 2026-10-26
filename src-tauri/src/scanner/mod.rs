@@ -373,6 +373,10 @@ pub const DEGRADED_USERPROFILE_NOT_SET: &str = "userprofile_not_set";
 pub const DEGRADED_LOCALAPPDATA_NOT_SET: &str = "localappdata_not_set";
 /// Suffixed with `:<count>`: ambiguous executables the PE budget never reached.
 pub const DEGRADED_PE_BUDGET_EXHAUSTED: &str = "pe_budget_exhausted";
+/// Suffixed with `:<count>`: name-matched cache directories that turned out to
+/// be empty shells (e.g. an updater that applied its update and left nothing
+/// behind). Reported so "fewer rows than last time" stays explainable.
+pub const DEGRADED_EMPTY_SHELLS_SKIPPED: &str = "empty_shells_skipped";
 
 pub fn normalize_for_match(s: &str) -> String {
     // Unicode alphanumeric (not just ASCII) — CJK product/folder names must

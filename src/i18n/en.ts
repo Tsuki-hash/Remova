@@ -563,6 +563,8 @@ export const dict: EnDict = {
     degradedTempPartial: "Some TEMP folders could not be read; temporary-file results may be incomplete",
     degradedPeBudgetExhausted: (n: number) =>
       `${n} more executable(s) were not checked for being installers (per-scan limit)`,
+    degradedEmptyShellsSkipped: (n: number) =>
+      `${n} empty folders were skipped (the folder still exists but holds nothing to clean)`,
     scanStage: (stage: string) => ({ preparing: "Preparing scan", files: "Scanning files", registry: "Scanning registry",
       services: "Scanning services", tasks: "Scanning scheduled tasks", shortcuts: "Scanning shortcuts and temporary files",
       other: "Scanning PATH and other linked items", caches: "Scanning update caches", sizes: "Estimating size", sizing: "Measuring item sizes", finalizing: "Checking scan results" } as Record<string, string>)[stage] ?? "Preparing scan",

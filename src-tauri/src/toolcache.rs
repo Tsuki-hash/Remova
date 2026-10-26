@@ -28,7 +28,9 @@
 //! listed-and-ignored. The mode is a typed field precisely so that this decision
 //! cannot be flipped by renaming a label.
 
-use crate::constants::{SPECIALTY_RESULT_CAP, TOOL_CACHE_CHILD_CAP};
+use crate::constants::{
+    EMPTY_PROBE_DEPTH, EMPTY_PROBE_ENTRIES, SPECIALTY_RESULT_CAP, TOOL_CACHE_CHILD_CAP,
+};
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
     fill_item_buckets, fill_item_sizes, CleanupItem, Confidence, Evidence, ItemKind, RiskLevel,
@@ -642,25 +644,28 @@ const JETBRAINS_SAFE_SUBDIRS: &[&str] = &["caches", "compile-server", "log", "tm
 /// all — holds unrelated tools' data, so its children stay `Suspected` /
 /// `Medium`: a child that merely happens to contain a `caches` or `tmp`
 /// subdirectory must not become a preselected delete target.
+/// Returns the number of children that were listed but turned out to be empty
+/// shells, so the caller can report them honestly.
 fn scan_shared_cache_children(
     root: &Path,
     jetbrains_home: bool,
     out: &mut Vec<CleanupItem>,
     scanned: &mut HashSet<String>,
     report: &mut ScanGaps,
-) {
+) -> usize {
+    let mut empty_shells = 0usize;
     let Ok(rd) = std::fs::read_dir(root) else {
         // A root that exists but cannot be read is not an empty root: saying
         // nothing would read as "this machine has no tool caches here".
         report.degrade(crate::scanner::unreadable_root_code(root));
-        return;
+        return 0;
     };
     // Collect first, then order and truncate: a `take(n)` during enumeration
     // would drop a different subset depending on filesystem order.
     let mut children: Vec<PathBuf> = Vec::new();
     for entry in rd.flatten() {
         if !crate::scan_task::checkpoint("files", children.len()) {
-            return;
+            return empty_shells;
         }
         let path = entry.path();
         // PERF-C: one buffered metadata read answers both the directory and the
@@ -697,7 +702,7 @@ fn scan_shared_cache_children(
     }
     for path in children.into_iter().take(TOOL_CACHE_CHILD_CAP) {
         if !crate::scan_task::checkpoint("files", out.len()) {
-            return;
+            return empty_shells;
         }
         let name = path
             .file_name()
@@ -717,29 +722,37 @@ fn scan_shared_cache_children(
             Vec::new()
         };
         if safe.is_empty() {
-            push_item(out, scanned, path, ToolDomain::Dev, &name, false);
+            if !push_item(out, scanned, path, ToolDomain::Dev, &name, false) {
+                empty_shells += 1;
+            }
         } else {
             for sub in safe {
                 if crate::scan_task::cancelled() {
-                    return;
+                    return empty_shells;
                 }
                 let leaf = sub
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                push_item(
+                if !push_item(
                     out,
                     scanned,
                     sub,
                     ToolDomain::Dev,
                     &format!("{name}\\{leaf}"),
                     true,
-                );
+                ) {
+                    empty_shells += 1;
+                }
             }
         }
     }
+    empty_shells
 }
 
+/// Returns false when the row was dropped instead of reported (empty shell,
+/// non-UTF-8 path, or an already-listed duplicate) so callers can count the
+/// empty-shell cases.
 fn push_item(
     out: &mut Vec<CleanupItem>,
     scanned: &mut HashSet<String>,
@@ -749,15 +762,22 @@ fn push_item(
     // Whole directory is disposable and owned by one tool. When false the item
     // is a child of a shared cache root: reported, but never preselected.
     confirmed: bool,
-) {
+) -> bool {
     // Non-UTF-8 never becomes a delete candidate (fail-closed).
     let Some(p) = crate::fsutil::path_utf8(&path) else {
-        return;
+        return false;
     };
+    // A cache directory holding nothing is a name-matching shell: the tool
+    // cleaned itself up, or never cached here. Reporting it gives rows the user
+    // cannot act on, so it is skipped (and counted by the caller, which knows
+    // how many candidates went in).
+    if !crate::fsutil::dir_has_payload(&path, EMPTY_PROBE_ENTRIES, EMPTY_PROBE_DEPTH) {
+        return false;
+    }
     // A fixed root and a shared-root child can resolve to the same directory
     // (redirected XDG/Yarn bases). Keep one row so backup/delete run once.
     if !scanned.insert(p.clone()) {
-        return;
+        return false;
     }
     let (risk, score) = if confirmed {
         (RiskLevel::Low, SCORE_CONFIRMED)
@@ -798,6 +818,7 @@ fn push_item(
         size_capped: false,
         bucket: Some(domain.as_str().into()),
     });
+    true
 }
 
 /// Scan specialty tool caches. Results feed the toolcache allow-list.
@@ -813,6 +834,7 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
     if !crate::scan_task::checkpoint("files", 0) {
         return Ok(ScopedScanResult::empty());
     }
+    let mut empty_shells = 0usize;
     let roots = tool_roots(&mut report.degraded);
     for (domain, path, label, mode) in roots {
         if !crate::scan_task::checkpoint("files", out.len()) {
@@ -822,7 +844,11 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
             // Recognised but never offered — see `RuleMode::KeepOnly`.
             continue;
         }
-        push_item(&mut out, &mut scanned, path, domain, label, true);
+        let existed = path.exists();
+        if !push_item(&mut out, &mut scanned, path, domain, label, true) && existed {
+            // The root was there but held nothing: a name-matching shell.
+            empty_shells += 1;
+        }
     }
     // Each shared root bounds itself, so neither crowds the other out.
     for root in shared_cache_roots(&mut report.degraded) {
@@ -834,7 +860,14 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
         let jetbrains_home = root
             .file_name()
             .is_some_and(|n| n.eq_ignore_ascii_case("JetBrains"));
-        scan_shared_cache_children(&root, jetbrains_home, &mut out, &mut scanned, &mut report);
+        empty_shells +=
+            scan_shared_cache_children(&root, jetbrains_home, &mut out, &mut scanned, &mut report);
+    }
+    if empty_shells > 0 {
+        report.degraded.push(format!(
+            "{}{empty_shells}",
+            crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
+        ));
     }
     // Bound the whole scan, not just the fixed-root phase, and keep the
     // allow-list in step with what is actually reported. Before this the
@@ -875,6 +908,13 @@ mod tests {
     /// A fixture root that removes itself on drop, including on panic. The
     /// hand-rolled `remove_dir_all` at the end of each test body used to be skipped
     /// by every failing assertion.
+    /// Fixtures must hold a real file: the scan drops name-matched directories
+    /// that contain nothing (a tool that already cleaned itself up).
+    fn seed_file(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).expect("create dir");
+        std::fs::write(dir.join("payload.bin"), b"cache").expect("write payload");
+    }
+
     fn unique_temp(tag: &str) -> crate::test_support::TempDir {
         crate::test_support::TempDir::new(&format!("toolcache-{tag}"))
     }
@@ -1134,7 +1174,7 @@ mod tests {
         let root = unique_temp("shared");
         let cache = root.join(".cache");
         for child in ["codex-runtimes", "opencode", "huggingface"] {
-            std::fs::create_dir_all(cache.join(child).join("inner")).expect("create child");
+            seed_file(&cache.join(child).join("inner"));
         }
         std::fs::write(cache.join("loose-file"), b"fixture").expect("create loose file");
 
@@ -1168,13 +1208,13 @@ mod tests {
         let jb = root.join("JetBrains");
         let ide = jb.join("PyCharm2025.1");
         for sub in JETBRAINS_SAFE_SUBDIRS {
-            std::fs::create_dir_all(ide.join(sub)).expect("create safe subdir");
+            seed_file(&ide.join(sub));
         }
         for sub in ["options", "plugins", "extensions"] {
-            std::fs::create_dir_all(ide.join(sub)).expect("create config subdir");
+            seed_file(&ide.join(sub));
         }
         // A downloaded dist, not an IDE home — no safe subdirs to find.
-        std::fs::create_dir_all(jb.join("JetBrainsClientDist")).expect("create dist");
+        seed_file(&jb.join("JetBrainsClientDist"));
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
@@ -1202,15 +1242,38 @@ mod tests {
         }
     }
 
+    /// Name-matched directories holding nothing are shells, not caches: they
+    /// are skipped and counted so the panel shows only actionable rows.
+    #[test]
+    fn empty_cache_shells_are_skipped_and_counted() {
+        let root = unique_temp("shells");
+        let shared = root.join(".cache");
+        seed_file(&shared.join("real-cache"));
+        std::fs::create_dir_all(shared.join("shell-cache")).expect("create shell");
+        // A shell containing only an empty subdirectory is still a shell.
+        std::fs::create_dir_all(shared.join("nested-shell").join("inner"))
+            .expect("create nested shell");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        let shells = scan_shared_cache_children(&shared, false, &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(out.len(), 1, "only the cache with payload is reported");
+        assert!(out[0].path.ends_with("real-cache"));
+        assert_eq!(shells, 2, "both empty shells are counted");
+        assert_eq!(scanned.len(), 1, "skipped shells are not authorized");
+    }
+
     #[test]
     fn shared_cache_children_are_ordered_and_bounded() {
         let root = unique_temp("ordered");
         // Created in an order that no filesystem is obliged to preserve, and
         // past the child cap so truncation has to pick deterministically.
         for i in 0..(TOOL_CACHE_CHILD_CAP + 12) {
-            std::fs::create_dir(root.join(format!("tool-{i:03}-cache"))).expect("create child");
+            seed_file(&root.join(format!("tool-{i:03}-cache")));
         }
-        std::fs::create_dir(root.join("aaa-first")).expect("create first");
+        seed_file(&root.join("aaa-first"));
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
@@ -1341,8 +1404,8 @@ mod tests {
         let root = unique_temp("leak");
         let shared = root.join(".cache");
         let tool = shared.join("some-tool");
-        std::fs::create_dir_all(tool.join("caches")).expect("create caches");
-        std::fs::create_dir_all(tool.join("tmp")).expect("create tmp");
+        seed_file(&tool.join("caches"));
+        seed_file(&tool.join("tmp"));
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
@@ -1360,7 +1423,7 @@ mod tests {
         // flag is what gates it and not the directory shape.
         let jb = root.join("JetBrains");
         let ide = jb.join("IdeaIC2025.2");
-        std::fs::create_dir_all(ide.join("caches")).expect("create jb caches");
+        seed_file(&ide.join("caches"));
         let mut jb_out = Vec::new();
         let mut jb_scanned = HashSet::new();
         let mut jb_gaps = ScanGaps::default();

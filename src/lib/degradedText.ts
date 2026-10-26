@@ -13,6 +13,10 @@ export function degradedText(raw: string): string {
     const path = raw.slice("unreadable_root:".length);
     return L.degradedUnreadableRoot(path || "?");
   }
+  if (raw.startsWith("empty_shells_skipped:")) {
+    const n = Number.parseInt(raw.slice("empty_shells_skipped:".length), 10);
+    return L.degradedEmptyShellsSkipped(Number.isFinite(n) ? n : 0);
+  }
   if (raw.startsWith("pe_budget_exhausted:")) {
     const n = Number.parseInt(raw.slice("pe_budget_exhausted:".length), 10);
     return L.degradedPeBudgetExhausted(Number.isFinite(n) ? n : 0);

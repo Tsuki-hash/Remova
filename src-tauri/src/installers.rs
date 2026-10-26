@@ -1,7 +1,10 @@
 //! Installer / updater-cache scan (进阶) — packages and update blobs, not app leftover dirs.
 //! Distinct from orphan leftovers: objects are installers and updater caches.
 
-use crate::constants::{INSTALLER_PHASE_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES, UPDATER_CACHE_LEAVES};
+use crate::constants::{
+    EMPTY_PROBE_DEPTH, EMPTY_PROBE_ENTRIES, INSTALLER_PHASE_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES,
+    UPDATER_CACHE_LEAVES,
+};
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
     fill_item_buckets, fill_item_sizes, CleanupItem, Confidence, Evidence, ItemKind, RiskLevel,
@@ -471,6 +474,25 @@ fn scan_updater_dirs_from(
     // nested must not consume a slot the cap could have given a real candidate.
     let candidates = crate::fsutil::order_candidates(candidates);
     let candidates = drop_nested(candidates);
+    // A name match is not a cache: an updater that already applied its update
+    // leaves an empty `*-updater` shell behind. Reporting those rows fills the
+    // panel with 0 KB entries the user cannot act on, so they are dropped and
+    // counted instead of silently vanishing.
+    let before = candidates.len();
+    let candidates: Vec<PathBuf> = candidates
+        .into_iter()
+        .filter(|cand| {
+            crate::scan_task::checkpoint("caches", out.len())
+                && crate::fsutil::dir_has_payload(cand, EMPTY_PROBE_ENTRIES, EMPTY_PROBE_DEPTH)
+        })
+        .collect();
+    let empty_shells = before.saturating_sub(candidates.len());
+    if empty_shells > 0 {
+        report.degraded.push(format!(
+            "{}{empty_shells}",
+            crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
+        ));
+    }
     report.omit(candidates.len().saturating_sub(INSTALLER_PHASE_CAP));
     for cand in candidates.into_iter().take(INSTALLER_PHASE_CAP) {
         if !crate::scan_task::checkpoint("caches", out.len()) {
@@ -802,6 +824,58 @@ mod tests {
         );
     }
 
+    /// An updater that applied its update leaves an empty `*-updater` shell.
+    /// Those rows are 0 KB and cannot be acted on, so they are dropped and
+    /// counted — never silently missing from the list.
+    #[test]
+    fn empty_updater_shells_are_skipped_and_counted() {
+        let root = crate::test_support::TempDir::new("remova-updater-empty");
+        // Two updaters with real payload, three empty shells.
+        for name in ["has-cache-updater", "also-has-updater"] {
+            seed_file(&root.join(name));
+        }
+        for name in ["shell-a-updater", "shell-b-updater", "shell-c-updater"] {
+            std::fs::create_dir(root.join(name)).expect("create shell");
+        }
+        // A shell whose only content is an empty subdirectory is still a shell.
+        let nested_shell = root.join("nested-shell-updater");
+        std::fs::create_dir_all(nested_shell.join("updates")).expect("create nested shell");
+
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_updater_dirs_from(&root, &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(out.len(), 2, "only directories with payload are reported");
+        for it in &out {
+            assert!(
+                !it.path.contains("shell"),
+                "empty shell reported: {}",
+                it.path
+            );
+        }
+        assert_eq!(
+            gaps.degraded,
+            vec![format!(
+                "{}4",
+                crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
+            )],
+            "four skipped shells must be reported as one counted code"
+        );
+        assert_eq!(
+            scanned.len(),
+            out.len(),
+            "skipped shells are not authorized"
+        );
+    }
+
+    /// Fixtures must contain a real file: the scan now drops name-matched
+    /// directories that hold nothing (updater shells after a successful update).
+    fn seed_file(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).expect("create dir");
+        std::fs::write(dir.join("payload.bin"), b"cache").expect("write payload");
+    }
+
     /// The proven regression: a machine with more first-level entries than the
     /// old `take(200)` silently lost updater directories that sorted past it.
     #[test]
@@ -812,7 +886,7 @@ mod tests {
         for i in 0..214 {
             std::fs::create_dir(root.join(format!("filler-{i:03}"))).expect("create filler");
         }
-        std::fs::create_dir(root.join("vxe-drive-updater")).expect("create target");
+        seed_file(&root.join("vxe-drive-updater"));
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
@@ -846,8 +920,8 @@ mod tests {
         let root = crate::test_support::TempDir::new("remova-reparse");
         // The shape that matters: a leaf directory that is reachable both
         // directly and through an alias.
-        std::fs::create_dir_all(root.join("Vendor").join("packages")).expect("create leaf");
-        std::fs::create_dir_all(root.join("plain-updater")).expect("create updater");
+        seed_file(&root.join("Vendor").join("packages"));
+        seed_file(&root.join("plain-updater"));
 
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
@@ -911,7 +985,7 @@ mod tests {
             "installcache",
             "squirreltemp",
         ] {
-            std::fs::create_dir_all(vendor.join(leaf)).expect("create cache leaf");
+            seed_file(&vendor.join(leaf));
         }
         std::fs::create_dir(root.join("ordinary-directory")).expect("create ordinary fixture");
         std::fs::write(root.join("token-monitor-updater.txt"), b"not a directory")
@@ -1006,21 +1080,22 @@ mod tests {
         // the recognized cache leaves. It sorts first, so its leaves land at the
         // very front of the pre-drop candidate list.
         let updater = root.join("aaa-updater");
+        // The parent itself must hold payload, or it is an empty shell.
+        seed_file(&updater);
         for leaf in UPDATER_CACHE_LEAVES {
-            std::fs::create_dir_all(updater.join(leaf)).expect("create cache leaf");
+            seed_file(&updater.join(leaf));
         }
         // A vendor directory that is not an updater dir keeps its leaves: there
         // is no parent row to fold them into.
         let vendor = root.join("Application Data");
         for leaf in UPDATER_CACHE_LEAVES {
-            std::fs::create_dir_all(vendor.join(leaf)).expect("create cache leaf");
+            seed_file(&vendor.join(leaf));
         }
         // One-candidate vendors, enough that the de-nested set lands exactly on
         // the cap: 1 updater parent + 5 standalone leaves + fillers == cap.
         let filler_count = INSTALLER_PHASE_CAP - 1 - UPDATER_CACHE_LEAVES.len();
         for i in 0..filler_count {
-            std::fs::create_dir_all(root.join(format!("filler-{i:03}")).join("updates"))
-                .expect("create filler cache leaf");
+            seed_file(&root.join(format!("filler-{i:03}")).join("updates"));
         }
 
         let mut out = Vec::new();

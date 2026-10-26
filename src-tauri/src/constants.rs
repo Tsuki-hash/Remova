@@ -44,6 +44,13 @@ pub const TOOL_CACHE_CHILD_CAP: usize = 60;
 /// not a total.
 pub const INSTALLER_PHASE_CAP: usize = 60;
 
+/// Bounds for the "does this cache directory actually hold anything" probe.
+/// Cache scanners select by name, and name-matched shells (an updater after a
+/// successful update) are common; the probe stops descending after this many
+/// levels and stops examining after this many entries per level.
+pub const EMPTY_PROBE_ENTRIES: usize = 512;
+pub const EMPTY_PROBE_DEPTH: usize = 4;
+
 /// Leaf directory names that mark an updater cache inside a product directory.
 pub const UPDATER_CACHE_LEAVES: &[&str] = &[
     "updater",

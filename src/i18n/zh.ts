@@ -546,6 +546,7 @@ export const dict = {
     degradedMuicacheTruncated: "MuiCache 扫描达到上限，结果可能不完整",
     degradedTempPartial: "部分 TEMP 目录无法读取，临时文件结果可能不完整",
     degradedPeBudgetExhausted: (n: number) => `另有 ${n} 个可执行文件未做安装包校验（受单次扫描上限限制）`,
+    degradedEmptyShellsSkipped: (n: number) => `已跳过 ${n} 个空目录（目录还在，但里面没有内容可清理）`,
     scanStage: (stage: string) => ({ preparing: "准备扫描", files: "扫描文件", registry: "扫描注册表",
       services: "扫描服务", tasks: "扫描计划任务", shortcuts: "扫描快捷方式与临时文件",
       other: "扫描 PATH 与其他关联项", caches: "扫描更新缓存", sizes: "估算占用", sizing: "估算各项占用", finalizing: "核对扫描结果" } as Record<string, string>)[stage] ?? "准备扫描",

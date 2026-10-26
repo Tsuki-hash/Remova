@@ -1192,6 +1192,57 @@ pub fn wstring_from_reg_data(data: &[u8]) -> String {
 /// directory (e.g. `Program Files\Vendor`). Only directories that are empty,
 /// below one of the known roots, not reparse points, and whose name matches a
 /// product/publisher token are removed; the root itself is never touched.
+/// Whether a candidate directory holds any payload worth cleaning.
+///
+/// Registry-driven cache scanners select directories by *name* (e.g. any
+/// `*-updater` under LocalAppData). An updater leaves its directory behind as an
+/// empty shell once it has applied its update, so a name match alone reports
+/// dozens of 0 KB rows the user cannot act on. A directory counts as non-empty
+/// only when it contains a regular file, directly or in a descendant subtree —
+/// empty subdirectories are still an empty shell.
+///
+/// Bounded: `max_entries` caps entries visited per directory level and
+/// `max_depth` caps descent, so a pathological tree cannot stall a scan. The
+/// answer is conservative in the safe direction: an unreadable level answers
+/// `true` (keep the row) rather than silently discarding a real cache.
+pub fn dir_has_payload(root: &Path, max_entries: usize, max_depth: usize) -> bool {
+    let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
+    for _ in 0..=max_depth {
+        let mut next: Vec<PathBuf> = Vec::new();
+        for dir in level {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                // Unreadable: do not claim emptiness we cannot prove.
+                return true;
+            };
+            for (seen, entry) in rd.flatten().enumerate() {
+                if seen >= max_entries {
+                    // Truncated level: assume there may be payload below.
+                    return true;
+                }
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                // A reparse child is a link, not payload of this directory.
+                if is_reparse_metadata(&meta) {
+                    continue;
+                }
+                if meta.is_dir() {
+                    next.push(entry.path());
+                } else if meta.is_file() && meta.len() > 0 {
+                    return true;
+                }
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        level = next;
+    }
+    // Depth cap reached without finding a file; shallow empty shells are the
+    // common case, so answer "empty" only when nothing was queued.
+    false
+}
+
 pub fn prune_empty_ancestors(path: &Path, tokens: &[String]) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     for env in [
