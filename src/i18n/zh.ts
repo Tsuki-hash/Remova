@@ -128,7 +128,7 @@ export const dict = {
     diskOverviewEmpty: "没有可清理或可迁移的目录",
     diskOverviewCleanupRules: "可再生清理规则",
     triageTitle: "处置清单",
-    triageHint: "勾选可再生缓存可批量清理；迁移候选可交给目录迁移工具；悬停查看依据",
+    triageHint: "可清理项已置顶；勾选可再生缓存可批量清理；迁移候选可交给目录迁移工具",
     triageActionClean: "清理…",
     triageActionMigrate: "迁移…",
     triageClassDelete: "可再生·待清理",
@@ -157,7 +157,7 @@ export const dict = {
     regenClean: "清理所选",
     regenCleaning: "正在清理…",
     regenCleanConfirm: (n: number, size: string) =>
-      `将删除 ${n} 个可再生布局的内容（约 ${size}）。不创建备份——这类内容会自动重建；目录本身保留。系统级布局建议以管理员身份运行，失败项会如实列出。继续？`,
+      `将清空 ${n} 个可再生目录里的内容（约 ${size}），目录本身保留、不删除文件夹。不创建备份——这类内容会自动重建；系统级布局建议以管理员身份运行，失败项会如实列出。继续？`,
     regenDone: (n: number, size: string) => `已清理 ${n} 项，释放约 ${size}`,
     regenSkipped: (n: number) => `${n} 项被跳过（被占用或权限不足）`,
     regenBlockServicing: "servicing 进行中，暂不可清理",

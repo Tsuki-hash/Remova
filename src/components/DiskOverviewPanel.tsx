@@ -90,6 +90,18 @@ type CleanupRow = {
   regen: RegenerableScanResult["items"][number] | null;
 };
 
+/** Cleanable first, then blocked deletes, migration candidates, the rest. */
+function cleanupRank(row: CleanupRow): number {
+  if (row.cls === "delete_regenerable") return row.regen?.deletable ? 0 : 1;
+  if (row.cls === "migrate_candidate") return 2;
+  if (row.cls === "via_dism") return 3;
+  return 4;
+}
+
+function cleanupSizeKb(row: CleanupRow): number {
+  return row.regen?.size_kb ?? row.sizeKb ?? 0;
+}
+
 /**
  * Read-only disk-space overview: system volume shape, the junction ledger
  * (dead links called out — they also explain "why is this folder huge or
@@ -207,6 +219,10 @@ export function DiskOverviewPanel({
   ];
   const migrateCount = rows.filter((r) => r.cls === "migrate_candidate").length;
   const actionableCount = deletableItems.length + migrateCount;
+  // Server order is size-only; the user needs the checkable rows first.
+  rows.sort(
+    (a, b) => cleanupRank(a) - cleanupRank(b) || cleanupSizeKb(b) - cleanupSizeKb(a),
+  );
 
   const cleanRegen = async (chosenPaths?: string[]) => {
     const chosen = chosenPaths ?? [...regenSel];
@@ -404,6 +420,7 @@ export function DiskOverviewPanel({
           ) : (
             <>
               <div
+                role="list"
                 style={{
                   maxHeight: 360,
                   overflowY: "auto",
@@ -424,6 +441,7 @@ export function DiskOverviewPanel({
                   return (
                     <div
                       key={row.path}
+                      role="listitem"
                       title={triageReasonText(L, row.reason)}
                       style={{
                         display: "grid",

@@ -140,7 +140,7 @@ export const dict: EnDict = {
     diskOverviewEmpty: "Nothing to clean up or migrate",
     diskOverviewCleanupRules: "Regenerable cleanup rules",
     triageTitle: "Action list",
-    triageHint: "Select regenerable caches to clean them together; migration candidates hand off to the migration tool; hover for the reason",
+    triageHint: "Cleanable items are pinned to the top; select regenerable caches to clean them together; migration candidates hand off to the migration tool",
     triageActionClean: "Clean…",
     triageActionMigrate: "Migrate…",
     triageClassDelete: "Regenerable",
@@ -169,7 +169,7 @@ export const dict: EnDict = {
     regenClean: "Clean selected",
     regenCleaning: "Cleaning…",
     regenCleanConfirm: (n: number, size: string) =>
-      `This deletes the contents of ${n} regenerable layouts (about ${size}). No backup is created — this content rebuilds itself; the directories are kept. Run elevated for system-level layouts; failures are listed honestly. Continue?`,
+      `This clears the contents of ${n} regenerable directories (about ${size}); the folders themselves are kept. No backup is created — this content rebuilds itself. Run elevated for system-level layouts; failures are listed honestly. Continue?`,
     regenDone: (n: number, size: string) => `Cleaned ${n} layouts, freed about ${size}`,
     regenSkipped: (n: number) => `${n} skipped (locked or access denied)`,
     regenBlockServicing: "servicing in progress, not cleanable right now",

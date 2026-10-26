@@ -173,6 +173,24 @@ it("keeps the scope note on the overview", async () => {
   expect(await screen.findByText(t().diskOverviewScopeNote)).toBeTruthy();
 });
 
+it("pins cleanable rows to the top of the action list", async () => {
+  mockLoads();
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
+  const items = await screen.findAllByRole("listitem");
+  const text = items.map((i) => i.textContent ?? "");
+  // The one deletable layout leads, even though the server sorted by size.
+  expect(text[0]).toContain("C:\\Windows\\Temp");
+  // Blocked deletes still precede migration candidates.
+  const blocked = text.findIndex((x) => x.includes("C:\\Windows\\CbsTemp"));
+  const migrate = text.findIndex((x) => x.includes("C:\\Program Files\\Lenovo"));
+  expect(blocked).toBeGreaterThan(0);
+  expect(blocked).toBeLessThan(migrate);
+  // Leave/display-only rows sink to the bottom.
+  expect(text[text.length - 1]).toContain("C:\\hiberfil.sys");
+});
+
 it("offers regenerable cleanup with a no-backup confirm and reports the result", async () => {
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);
@@ -187,6 +205,8 @@ it("offers regenerable cleanup with a no-backup confirm and reports the result",
   await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledTimes(1));
   const opts = vi.mocked(requestConfirmEx).mock.calls[0]![0];
   expect(opts.message).toContain("不创建备份");
+  // The scope is contents-only; the folder itself is kept.
+  expect(opts.message).toContain("不删除文件夹");
   await waitFor(() =>
     expect(api.deleteRegenerableLayouts).toHaveBeenCalledWith(["C:\\Windows\\Temp"]),
   );
