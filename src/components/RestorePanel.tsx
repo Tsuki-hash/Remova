@@ -59,7 +59,14 @@ export function RestorePanel({
         <span style={css.muted}>{L.safetyVaultHint}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
-            style={{ ...css.btn, height: 32, opacity: busy || !pick ? 0.5 : 1 }}
+            style={{
+              ...css.btn,
+              height: 32,
+              opacity:
+                busy || loading || !!loadError || !pick || previewLoading || !!previewError || !selectedPreview
+                  ? 0.5
+                  : 1,
+            }}
             disabled={busy || loading || !!loadError || !pick || previewLoading || !!previewError || !selectedPreview}
             onClick={onRun}
           >

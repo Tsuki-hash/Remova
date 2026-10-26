@@ -167,7 +167,7 @@ export function MorePage({
       title: L.appWhitelist,
       desc: L.appWhitelistHint,
       icon: "whitelist",
-      action: () => tools.setOpenTool("ignore"),
+      action: () => tools.toggleTool("ignore"),
     },
   ];
 
@@ -208,14 +208,14 @@ export function MorePage({
       title: L.diskOverviewTitle,
       desc: L.diskOverviewHint,
       icon: "disk",
-      action: () => tools.setOpenTool("diskoverview"),
+      action: () => tools.toggleTool("diskoverview"),
     },
     {
       id: "cliglobals",
       title: L.cliTitle,
       desc: L.cliHint,
       icon: "toolcache",
-      action: () => tools.setOpenTool("cliglobals"),
+      action: () => tools.toggleTool("cliglobals"),
     },
     {
       id: "migrate",
@@ -234,7 +234,7 @@ export function MorePage({
       title: L.diskRadarTitle,
       desc: L.diskRadarHint,
       icon: "disk",
-      action: () => tools.setOpenTool("diskradar"),
+      action: () => tools.toggleTool("diskradar"),
     },
     {
       id: "toolcache",
@@ -248,7 +248,7 @@ export function MorePage({
       title: L.idleTitle,
       desc: L.idleHint,
       icon: "idle",
-      action: () => tools.setOpenTool("idle"),
+      action: () => tools.toggleTool("idle"),
     },
   ];
 
@@ -265,7 +265,7 @@ export function MorePage({
       title: L.tracesTitle,
       desc: L.tracesHint,
       icon: "report",
-      action: () => tools.setOpenTool("traces"),
+      action: () => tools.toggleTool("traces"),
     },
   ];
 

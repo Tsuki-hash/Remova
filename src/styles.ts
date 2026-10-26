@@ -78,7 +78,9 @@ export const cssStyles = {
   // panel-level primary CTA ("remove selected", "clear history"); a ghost
   // button with a danger ink is a row-level secondary action ("delete this
   // record"). Keep new buttons in this split instead of a third look, and
-  // keep the disabled dimming at 0.5 like the other tool panels.
+  // keep the disabled dimming at 0.5 like the other tool panels. Several
+  // pre-existing solid-danger buttons still hand-write this look over
+  // css.btn; they should converge here after 1.4.1.
   btnDanger: {
     height: 34,
     padding: "0 14px",
@@ -90,6 +92,7 @@ export const cssStyles = {
     fontSize: 12,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
+    transition: "filter .12s, transform .05s",
   },
   card: {
     background: "var(--surface)",
