@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-// More-page information architecture: five groups, a filter when the toolbox
-// grows past eight cards, and a persisted "recently used" section.
+// More-page information architecture: five groups and a labelled search.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
 import { t } from "../i18n";
-import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -58,7 +56,8 @@ it("groups the toolbox into the new sections and offers a search", async () => {
   expect(screen.queryByText("进阶")).toBeNull();
   // The trace section carries the firewall card.
   expect(screen.getByText(L.firewallTitle)).toBeTruthy();
-  expect(screen.queryByText(L.moreSectionRecent)).toBeNull();
+  // The old "recently used" section is gone for good.
+  expect(screen.queryByText("最近使用")).toBeNull();
 });
 
 it("searching hides non-matching cards, reports the count and can be cleared", async () => {
@@ -90,27 +89,4 @@ it("shows an explicit empty state when nothing matches", async () => {
   fireEvent.keyDown(screen.getByLabelText(L.moreSearchTools), { key: "Escape" });
   expect(screen.queryByText(L.moreSearchEmpty)).toBeNull();
   expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
-});
-
-it("records prop-only tools in the recently-used section, newest first", async () => {
-  mountMore();
-  const L = t();
-  // Both of these cards run prop-only actions, so no panel api is touched.
-  fireEvent.click(screen.getByText(L.onboardingReopen));
-  fireEvent.click(screen.getByText(L.versionCheck));
-  expect(screen.getByText(L.moreSectionRecent)).toBeTruthy();
-  const recent = screen.getAllByText(L.onboardingReopen);
-  expect(recent.length).toBe(2); // pinned copy plus the help-section card
-  expect(loadRecentTools()).toEqual(["releases", "onboarding"]);
-  // The persisted order survives a remount.
-  cleanup();
-  mountMore();
-  expect(screen.getByText(L.moreSectionRecent)).toBeTruthy();
-});
-
-it("recent storage caps at three entries", () => {
-  saveRecentTools(["a", "b", "c", "d"]);
-  expect(loadRecentTools()).toEqual(["a", "b", "c"]);
-  saveRecentTools([]);
-  expect(loadRecentTools()).toEqual([]);
 });

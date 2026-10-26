@@ -99,6 +99,52 @@ pub struct LatestReleaseInfo {
     pub download_url: Option<String>,
 }
 
+/// Extract the release tag from a `…/releases/tag/<tag>` redirect target.
+fn tag_from_release_location(location: &str) -> Option<String> {
+    const MARKER: &str = "/releases/tag/";
+    let start = location.find(MARKER)? + MARKER.len();
+    let rest = &location[start..];
+    let end = rest.find(['?', '#']).unwrap_or(rest.len());
+    let tag = rest[..end].trim_end_matches('/');
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
+}
+
+/// Build the release info the redirect fallback can prove: version + page.
+/// The asset list is not available without the API, so no download URL is
+/// invented; callers fall back to the release page.
+fn release_info_from_tag(raw_tag: &str) -> Option<LatestReleaseInfo> {
+    let tag = raw_tag.trim().strip_prefix('v').unwrap_or(raw_tag.trim());
+    if tag.is_empty() {
+        return None;
+    }
+    Some(LatestReleaseInfo {
+        version: tag.to_string(),
+        url: crate::constants::GITHUB_RELEASES_PAGE.to_string(),
+        download_url: None,
+    })
+}
+
+/// No-API fallback: `releases/latest` redirects to the tag even when the
+/// unauthenticated API quota is exhausted.
+fn fallback_latest_release() -> Option<LatestReleaseInfo> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirects(0)
+        .build();
+    let resp = agent
+        .get(crate::constants::GITHUB_LATEST_RELEASE_PAGE)
+        .set("User-Agent", "Remova")
+        .call()
+        .ok()?;
+    let location = resp.header("Location")?;
+    let raw_tag = tag_from_release_location(location)?;
+    release_info_from_tag(&raw_tag)
+}
+
 /// Fetch GitHub latest release from the Rust side (avoids WebView CORS / CSP issues).
 #[tauri::command]
 pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> {
@@ -116,8 +162,12 @@ pub async fn check_github_latest() -> Result<Option<LatestReleaseInfo>, String> 
             // 404 = the repository has no published release yet — a normal
             // state, not a failure; the frontend reports it as info.
             Err(ureq::Error::Status(404, _)) => return Ok(None),
-            Err(ureq::Error::Status(403, _)) => {
-                return Err("update:rate_limited".to_string());
+            // Unauthenticated API quota exhausted (403) or secondary limit (429):
+            // the HTML redirect needs no API quota and still yields the tag.
+            Err(ureq::Error::Status(code, _)) if code == 403 || code == 429 => {
+                return fallback_latest_release()
+                    .map(Some)
+                    .ok_or_else(|| "update:rate_limited".to_string());
             }
             // Timeouts, DNS/TLS resets and other transport errors.
             Err(_) => return Err("update:network".to_string()),
@@ -167,6 +217,41 @@ mod tests {
 
     fn asset(name: &str, link: &str) -> serde_json::Value {
         serde_json::json!({ "name": name, "browser_download_url": link })
+    }
+
+    #[test]
+    fn fallback_parses_tag_from_redirect_locations() {
+        assert_eq!(
+            tag_from_release_location("https://github.com/Tsuki-hash/Remova/releases/tag/v1.4.0")
+                .as_deref(),
+            Some("v1.4.0")
+        );
+        assert_eq!(
+            tag_from_release_location("/Tsuki-hash/Remova/releases/tag/v1.4.0/").as_deref(),
+            Some("v1.4.0")
+        );
+        assert_eq!(
+            tag_from_release_location("https://github.com/x/y/releases/tag/v1.4.0?x=1").as_deref(),
+            Some("v1.4.0")
+        );
+        assert_eq!(
+            tag_from_release_location("https://github.com/x/y/releases"),
+            None
+        );
+    }
+
+    #[test]
+    fn fallback_release_info_strips_exactly_one_v() {
+        let info = release_info_from_tag("v1.4.0").expect("tag");
+        assert_eq!(info.version, "1.4.0");
+        assert_eq!(info.url, crate::constants::GITHUB_RELEASES_PAGE);
+        assert!(info.download_url.is_none());
+        assert_eq!(release_info_from_tag("").map(|i| i.version), None);
+        // Only one leading `v` is stripped, matching the API path.
+        assert_eq!(
+            release_info_from_tag("vv1.4.0").map(|i| i.version),
+            Some("v1.4.0".to_string())
+        );
     }
 
     #[test]

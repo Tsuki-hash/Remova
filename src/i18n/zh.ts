@@ -407,7 +407,6 @@ export const dict = {
     moreSectionSpaceHint: "磁盘占用、空闲目录与工具缓存",
     moreSectionTraces: "系统痕迹",
     moreSectionTracesHint: "系统级痕迹：只读扫描与交叉对照，不会改动系统",
-    moreSectionRecent: "最近使用",
     moreSearchLabel: "在工具箱中搜索",
     moreSearchTools: "搜索工具",
     moreSearchToolsHint: "备份、迁移、CLI、缓存…",

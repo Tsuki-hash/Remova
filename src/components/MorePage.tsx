@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
@@ -17,13 +17,12 @@ import { toast } from "../lib/toast";
 import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { FullCleanupReport, InstalledApp } from "../types";
-import { ToolCard, type ToolId, type ToolItem } from "./MoreToolCard";
+import { ToolCard, type ToolItem } from "./MoreToolCard";
 import { ToolGlyph } from "./ToolIcons";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { CliGlobalsPanel } from "./CliGlobalsPanel";
 import { MigratePanel } from "./MigratePanel";
 import { TracesPanel } from "./TracesPanel";
-import { loadRecentTools, saveRecentTools } from "../lib/recentTools";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
 import { useMoreRestore } from "../hooks/useMoreRestore";
@@ -79,14 +78,6 @@ export function MorePage({
   // A triage row can hand its path straight to the migration tool; opening
   // the card directly starts from a clean form instead.
   const [migrateSeed, setMigrateSeed] = useState("");
-  const [recent, setRecent] = useState<string[]>(loadRecentTools);
-  const recordUse = useCallback((id: ToolId) => {
-    setRecent((prev) => {
-      const next = [id, ...prev.filter((x) => x !== id)].slice(0, 3);
-      saveRecentTools(next);
-      return next;
-    });
-  }, []);
   useEffect(() => {
     let alive = true;
     void api
@@ -300,36 +291,17 @@ export function MorePage({
     },
   ];
 
-  // Recent-tool tracking wraps every action; filtering hides non-matching
-  // cards and the sections that become empty.
-  const track = (items: ToolItem[]) =>
-    items.map((it) => ({
-      ...it,
-      action: () => {
-        recordUse(it.id);
-        it.action();
-      },
-    }));
+  // Filtering hides non-matching cards and the sections that become empty.
   const q = filter.trim().toLowerCase();
   const match = (it: ToolItem) =>
     !q || it.title.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q);
-  const trackedCommon = track(common).filter(match);
-  const trackedInstallHealth = track(installHealth).filter(match);
-  const trackedSpace = track(space).filter(match);
-  const trackedTraces = track(traces).filter(match);
-  const trackedHelp = track(help).filter(match);
+  const trackedCommon = common.filter(match);
+  const trackedInstallHealth = installHealth.filter(match);
+  const trackedSpace = space.filter(match);
+  const trackedTraces = traces.filter(match);
+  const trackedHelp = help.filter(match);
   const totalCards =
     common.length + installHealth.length + space.length + traces.length + help.length;
-  const allTracked = [
-    ...track(common),
-    ...track(installHealth),
-    ...track(space),
-    ...track(traces),
-    ...track(help),
-  ];
-  const recentCards = (!q ? recent : [])
-    .map((id) => allTracked.find((c) => c.id === id))
-    .filter((c): c is ToolItem => Boolean(c));
   const matchedCount =
     trackedCommon.length +
     trackedInstallHealth.length +
@@ -557,13 +529,6 @@ export function MorePage({
       )}
       {q && matchedCount === 0 && (
         <div style={{ ...css.muted, fontSize: 12.5, marginBottom: 16 }}>{L.moreSearchEmpty}</div>
-      )}
-      {recentCards.length > 0 && (
-        <Section title={L.moreSectionRecent}>
-          {recentCards.map((c) => (
-            <ToolCard key={`recent-${c.id}`} item={c} active={openTool === c.id} />
-          ))}
-        </Section>
       )}
       {trackedCommon.length > 0 && (
         <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>

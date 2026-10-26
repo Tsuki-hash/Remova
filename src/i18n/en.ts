@@ -407,7 +407,6 @@ export const dict: EnDict = {
     moreSectionSpaceHint: "Disk usage, idle directories, tool caches",
     moreSectionTraces: "System traces",
     moreSectionTracesHint: "System-level traces: read-only scans and cross-references; nothing changes the system",
-    moreSectionRecent: "Recently used",
     moreSearchLabel: "Search the toolbox",
     moreSearchTools: "Search tools",
     moreSearchToolsHint: "Backup, migrate, CLI, cache…",
