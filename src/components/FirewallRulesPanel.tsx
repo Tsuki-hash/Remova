@@ -111,7 +111,13 @@ export function FirewallRulesPanel({
             {L.orphanSelectAll}
           </button>
           <button
-            style={{ ...css.btnGhost, height: 30, color: "var(--danger-text)" }}
+            style={{
+              ...css.btn,
+              height: 30,
+              background: "var(--danger-text)",
+              color: "var(--surface)",
+              opacity: busy || selected.size === 0 ? 0.5 : 1,
+            }}
             disabled={busy || selected.size === 0}
             onClick={() => void removeSelected()}
           >

@@ -214,7 +214,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         );
       })()}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6, justifyContent: "flex-end" }}>
         <button
           type="button"
           style={{ ...css.btn, height: 34, opacity: busy ? 0.6 : 1 }}

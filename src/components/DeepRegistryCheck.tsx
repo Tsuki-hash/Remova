@@ -33,14 +33,16 @@ export function DeepRegistryCheck({ appName }: { appName: string }) {
 
   return (
     <div style={{ marginTop: 10, fontSize: 12 }}>
-      <button
-        style={{ ...css.btnGhost, height: 30 }}
-        disabled={busy}
-        onClick={() => void run()}
-      >
-        {busy ? L.deepRegistryChecking : L.deepRegistryCheck}
-      </button>
-      <span style={{ ...css.muted, marginLeft: 8 }}>{L.deepRegistryReadOnly}</span>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+        <span style={{ ...css.muted }}>{L.deepRegistryReadOnly}</span>
+        <button
+          style={{ ...css.btn, height: 30 }}
+          disabled={busy}
+          onClick={() => void run()}
+        >
+          {busy ? L.deepRegistryChecking : L.deepRegistryCheck}
+        </button>
+      </div>
       {error && (
         <div role="alert" style={{ marginTop: 6, color: "var(--danger-text)" }}>
           {L.deepRegistryFailed(error)}

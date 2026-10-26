@@ -82,7 +82,13 @@ export function HistoryPanel({
           onChange={(e) => setHistQ(e.target.value)}
         />
         <button
-          style={{ ...css.btnGhost, height: 30, color: "var(--danger)" }}
+          style={{
+            ...css.btn,
+            height: 30,
+            background: "var(--danger-text)",
+            color: "var(--surface)",
+            opacity: loading || !!loadError || history.length === 0 ? 0.5 : 1,
+          }}
           disabled={loading || !!loadError || history.length === 0}
           onClick={onClearAll}
         >

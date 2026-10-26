@@ -317,13 +317,13 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
           </span>
         </label>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button style={css.btn} disabled={!loaded || busy} onClick={() => void save()}>
-            {busy ? "…" : L.aiSave}
-          </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
           <span style={css.muted}>
             {cfg.provider} · {cfg.model || "—"}
           </span>
+          <button style={css.btn} disabled={!loaded || busy} onClick={() => void save()}>
+            {busy ? "…" : L.aiSave}
+          </button>
         </div>
       </fieldset>
     </div>

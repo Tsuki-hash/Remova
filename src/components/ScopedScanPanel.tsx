@@ -337,7 +337,13 @@ export function ScopedScanPanel({
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
-            style={{ ...css.btn, height: 30, opacity: busy || selected.size === 0 ? 0.5 : 1 }}
+            style={{
+              ...css.btn,
+              height: 30,
+              background: "var(--danger-text)",
+              color: "var(--surface)",
+              opacity: busy || selected.size === 0 ? 0.5 : 1,
+            }}
             disabled={busy || selected.size === 0}
             onClick={() => void cleanSelected()}
           >

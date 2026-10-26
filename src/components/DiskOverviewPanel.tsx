@@ -396,10 +396,10 @@ export function DiskOverviewPanel({
           )}
 
           {actionableCount > 0 && (
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
-                style={{ ...css.btnGhost, height: 30 }}
+                style={{ ...css.btn, height: 32, fontSize: 12.5 }}
                 onClick={() => setTab("cleanup")}
               >
                 {L.diskOverviewOpenActions(actionableCount)}
@@ -496,7 +496,7 @@ export function DiskOverviewPanel({
                         {cleanable && (
                           <button
                             type="button"
-                            style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0 }}
+                            style={{ ...css.btnGhost, height: 24, padding: "0 8px", fontSize: 11, flexShrink: 0, color: "var(--danger-text)" }}
                             aria-label={`${L.triageActionClean}: ${row.path}`}
                             disabled={regenBusy}
                             onClick={() => void cleanRegen([cleanable.path])}
@@ -539,7 +539,7 @@ export function DiskOverviewPanel({
                 </summary>
                 <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>{L.regenHint}</div>
               </details>
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
                 <button
                   type="button"
                   style={{ ...css.btnGhost, height: 30 }}
@@ -551,7 +551,13 @@ export function DiskOverviewPanel({
                 </button>
                 <button
                   type="button"
-                  style={{ ...css.btnGhost, height: 30 }}
+                  style={{
+                    ...css.btn,
+                    height: 30,
+                    background: "var(--danger-text)",
+                    color: "var(--surface)",
+                    opacity: regenBusy || regenSel.size === 0 ? 0.5 : 1,
+                  }}
                   disabled={regenBusy || regenSel.size === 0}
                   onClick={() => void cleanRegen()}
                 >
@@ -576,14 +582,16 @@ export function DiskOverviewPanel({
               )}
             </div>
           )}
-          <button
-            type="button"
-            style={{ ...css.btnGhost, height: 30 }}
-            disabled={dismBusy}
-            onClick={() => void runDism()}
-          >
-            {dismBusy ? L.diskOverviewAnalyzing : L.diskOverviewAnalyze}
-          </button>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+            <button
+              type="button"
+              style={{ ...css.btn, height: 32, opacity: dismBusy ? 0.6 : 1 }}
+              disabled={dismBusy}
+              onClick={() => void runDism()}
+            >
+              {dismBusy ? L.diskOverviewAnalyzing : L.diskOverviewAnalyze}
+            </button>
+          </div>
         </div>
       )}
     </section>

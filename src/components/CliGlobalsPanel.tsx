@@ -198,16 +198,23 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       })}
 
       {npmRows.length > 0 && (
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+          <span style={{ ...css.muted, fontSize: 12, flex: 1 }}>{L.cliRemoveNote}</span>
           <button
             type="button"
-            style={{ ...css.btnGhost, height: 30 }}
+            style={{
+              ...css.btn,
+              height: 30,
+              flexShrink: 0,
+              background: "var(--danger-text)",
+              color: "var(--surface)",
+              opacity: busy || sel.size === 0 ? 0.5 : 1,
+            }}
             disabled={busy || sel.size === 0}
             onClick={() => void removeSelected()}
           >
             {busy ? L.cliRemoving : L.cliRemove}
           </button>
-          <span style={{ ...css.muted, fontSize: 12, alignSelf: "center" }}>{L.cliRemoveNote}</span>
         </div>
       )}
 

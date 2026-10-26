@@ -40,13 +40,15 @@ export function OnboardingCard({ onClose }: { onClose: () => void }) {
         <li>{L.onboardingPoint2}</li>
         <li>{L.onboardingPoint3}</li>
       </ul>
-      <button
-        type="button"
-        style={{ ...css.btnGhost, height: 30, marginTop: 10 }}
-        onClick={onClose}
-      >
-        {L.onboardingDismiss}
-      </button>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+        <button
+          type="button"
+          style={{ ...css.btn, height: 32, fontSize: 12.5 }}
+          onClick={onClose}
+        >
+          {L.onboardingDismiss}
+        </button>
+      </div>
     </section>
   );
 }
