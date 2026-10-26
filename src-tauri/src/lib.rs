@@ -233,6 +233,11 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     if path.is_empty() {
         return Err("open_path:empty".into());
     }
+    // Windows Settings deep link: exact literal only — no caller-controlled
+    // protocol string reaches ShellExecuteW.
+    if path == "ms-settings:privacy" {
+        return open_url_shell(path);
+    }
     // HTTP(S): ShellExecuteW + strict URL shape (-01 — no `cmd /C start` injection surface).
     if path.starts_with("http://") || path.starts_with("https://") {
         if !is_safe_http_url(path) {
