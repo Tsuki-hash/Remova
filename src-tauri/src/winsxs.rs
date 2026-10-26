@@ -61,13 +61,17 @@ pub fn parse_dism_size(value: &str) -> Option<u64> {
 
 /// Run the read-only analysis. Requires elevation; the caller checks.
 pub fn analyze_component_store() -> Result<ComponentStoreAnalysis, String> {
-    let output = std::process::Command::new(crate::regops::sys_tool("dism.exe"))
-        .args([
-            "/Online",
-            "/Cleanup-Image",
-            "/AnalyzeComponentStore",
-            "/English",
-        ])
+    let mut cmd = std::process::Command::new(crate::regops::sys_tool("dism.exe"));
+    cmd.args([
+        "/Online",
+        "/Cleanup-Image",
+        "/AnalyzeComponentStore",
+        "/English",
+    ]);
+    // The analysis takes a while and runs from the panel; keep its console
+    // window out of the user's face.
+    crate::regops::hide_console(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to launch dism.exe: {e}"))?;
     if !output.status.success() {

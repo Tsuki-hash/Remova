@@ -79,9 +79,12 @@ pub fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'stat
 /// process gate plus honest reporting is the bounded v1 contract.
 fn servicing_busy() -> bool {
     for image in ["TiWorker.exe", "dism.exe"] {
-        let out = std::process::Command::new(crate::regops::sys_tool("tasklist.exe"))
-            .args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"])
-            .output();
+        let mut cmd = std::process::Command::new(crate::regops::sys_tool("tasklist.exe"));
+        cmd.args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"]);
+        // The disk-overview scan runs on panel open; without this the console
+        // window flashes every time the user clicks the card.
+        crate::regops::hide_console(&mut cmd);
+        let out = cmd.output();
         let Ok(out) = out else { return true };
         let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
         // tasklist prints "INFO: no tasks are running..." when the filter misses.
