@@ -32,7 +32,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | Capability | What you get |
 |---|---|
 | **Decision UI** | Detail drawer before uninstall: size, links, health, official / deep / force modes |
-| **Deep-uninstall loop** | The confirm states the flow; a phase bar (detect → vendor uninstall → rescan → analyze → report); post-clean report and re-check |
+| **Deep-uninstall loop** | The confirm states the flow; a phase bar (detect → official uninstall → rescan → analyze → report); post-clean report and re-check |
 | **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches, home dot-directories, MuiCache** |
 | **Plain language** | Why each leftover belongs (or why it is kept); Safe · Review · Keep buckets |
 | **Orphan evidence** | Expandable evidence on orphan leftovers: no uninstall record / contains exes / config files / install root / recent modification |
