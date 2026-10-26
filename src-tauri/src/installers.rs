@@ -489,7 +489,7 @@ fn scan_updater_dirs_from(
     let empty_shells = before.saturating_sub(candidates.len());
     if empty_shells > 0 {
         report.degraded.push(format!(
-            "{}{empty_shells}",
+            "{}:{empty_shells}",
             crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
         ));
     }
@@ -857,7 +857,7 @@ mod tests {
         assert_eq!(
             gaps.degraded,
             vec![format!(
-                "{}4",
+                "{}:4",
                 crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
             )],
             "four skipped shells must be reported as one counted code"

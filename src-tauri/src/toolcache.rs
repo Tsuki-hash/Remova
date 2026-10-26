@@ -722,7 +722,9 @@ fn scan_shared_cache_children(
             Vec::new()
         };
         if safe.is_empty() {
-            if !push_item(out, scanned, path, ToolDomain::Dev, &name, false) {
+            if push_item(out, scanned, path, ToolDomain::Dev, &name, false)
+                == PushOutcome::EmptyShell
+            {
                 empty_shells += 1;
             }
         } else {
@@ -734,14 +736,15 @@ fn scan_shared_cache_children(
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                if !push_item(
+                if push_item(
                     out,
                     scanned,
                     sub,
                     ToolDomain::Dev,
                     &format!("{name}\\{leaf}"),
                     true,
-                ) {
+                ) == PushOutcome::EmptyShell
+                {
                     empty_shells += 1;
                 }
             }
@@ -750,9 +753,19 @@ fn scan_shared_cache_children(
     empty_shells
 }
 
-/// Returns false when the row was dropped instead of reported (empty shell,
-/// non-UTF-8 path, or an already-listed duplicate) so callers can count the
-/// empty-shell cases.
+/// Why a candidate row did or did not make it into the report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PushOutcome {
+    Reported,
+    /// Proven by the bounded probe to hold no file: a name-matching shell.
+    /// The only outcome that counts toward the "skipped N empty directories"
+    /// degraded note.
+    EmptyShell,
+    /// Non-UTF-8 path (fail-closed) or an already-listed duplicate — dropped
+    /// for a reason the empty-directory note would misdescribe.
+    Dropped,
+}
+
 fn push_item(
     out: &mut Vec<CleanupItem>,
     scanned: &mut HashSet<String>,
@@ -762,22 +775,22 @@ fn push_item(
     // Whole directory is disposable and owned by one tool. When false the item
     // is a child of a shared cache root: reported, but never preselected.
     confirmed: bool,
-) -> bool {
+) -> PushOutcome {
     // Non-UTF-8 never becomes a delete candidate (fail-closed).
     let Some(p) = crate::fsutil::path_utf8(&path) else {
-        return false;
+        return PushOutcome::Dropped;
     };
     // A cache directory holding nothing is a name-matching shell: the tool
     // cleaned itself up, or never cached here. Reporting it gives rows the user
     // cannot act on, so it is skipped (and counted by the caller, which knows
     // how many candidates went in).
     if !crate::fsutil::dir_has_payload(&path, EMPTY_PROBE_ENTRIES, EMPTY_PROBE_DEPTH) {
-        return false;
+        return PushOutcome::EmptyShell;
     }
     // A fixed root and a shared-root child can resolve to the same directory
     // (redirected XDG/Yarn bases). Keep one row so backup/delete run once.
     if !scanned.insert(p.clone()) {
-        return false;
+        return PushOutcome::Dropped;
     }
     let (risk, score) = if confirmed {
         (RiskLevel::Low, SCORE_CONFIRMED)
@@ -818,7 +831,7 @@ fn push_item(
         size_capped: false,
         bucket: Some(domain.as_str().into()),
     });
-    true
+    PushOutcome::Reported
 }
 
 /// Scan specialty tool caches. Results feed the toolcache allow-list.
@@ -845,7 +858,10 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
             continue;
         }
         let existed = path.exists();
-        if !push_item(&mut out, &mut scanned, path, domain, label, true) && existed {
+        if existed
+            && push_item(&mut out, &mut scanned, path, domain, label, true)
+                == PushOutcome::EmptyShell
+        {
             // The root was there but held nothing: a name-matching shell.
             empty_shells += 1;
         }
@@ -865,7 +881,7 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
     }
     if empty_shells > 0 {
         report.degraded.push(format!(
-            "{}{empty_shells}",
+            "{}:{empty_shells}",
             crate::scanner::DEGRADED_EMPTY_SHELLS_SKIPPED
         ));
     }
@@ -1492,7 +1508,7 @@ mod tests {
         let mut out = Vec::new();
         let mut scanned = HashSet::new();
         let p = PathBuf::from(r"C:\Users\x\AppData\Local\Yarn\berry\cache");
-        push_item(
+        let first = push_item(
             &mut out,
             &mut scanned,
             p.clone(),
@@ -1500,8 +1516,11 @@ mod tests {
             "Yarn",
             true,
         );
-        push_item(&mut out, &mut scanned, p, ToolDomain::Dev, "Yarn", true);
+        let second = push_item(&mut out, &mut scanned, p, ToolDomain::Dev, "Yarn", true);
         assert_eq!(out.len(), 1, "a redirected root must not be listed twice");
+        assert_eq!(first, PushOutcome::Reported);
+        // A duplicate is not an empty shell: the directory is already listed.
+        assert_eq!(second, PushOutcome::Dropped);
     }
 
     #[test]

@@ -21,9 +21,17 @@ describe("degradedText", () => {
     expect(degradedText("userprofile_not_set")).toBe(L.degradedProfileNotSet);
     expect(degradedText("localappdata_not_set")).toBe(L.degradedLocalAppDataNotSet);
     expect(degradedText("pe_budget_exhausted:37")).toBe(L.degradedPeBudgetExhausted(37));
+    expect(degradedText("empty_shells_skipped:3")).toBe(L.degradedEmptyShellsSkipped(3));
     expect(degradedText("home_dot_truncated")).toBe(L.degradedHomeDotTruncated);
     expect(degradedText("muicache_truncated")).toBe(L.degradedMuicacheTruncated);
     expect(degradedText("temp_partial")).toBe(L.degradedTempPartial);
+  });
+
+  // The backend sends `<code>:<count>`; a suffix that is not a number must
+  // fall back to 0 instead of NaN in either counted code.
+  it("falls back to 0 for a non-numeric count suffix", () => {
+    expect(degradedText("pe_budget_exhausted:later")).toBe(L.degradedPeBudgetExhausted(0));
+    expect(degradedText("empty_shells_skipped:x")).toBe(L.degradedEmptyShellsSkipped(0));
   });
 
   it("passes unrecognized codes through unchanged (older/newer backend tolerance)", () => {
