@@ -45,6 +45,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | **用户数据红线** | Documents / Downloads / 同步冲突目录默认不勾，避免误删你的文件 |
 | **删除保险箱** | 清理前**可选**备份（确认框默认不勾）；会话保留 7 天；报告与历史可打开已有备份 |
 | **可验证** | 清理后复核 checklist（路径 / 注册表 / PATH 是否真的清掉） |
+| **孤儿残留** | 一级页面专列：无安装记录的残留，按来源分组 |
 | **系统项语义** | 启动项=已启用/已禁用；服务拆分运行状态与启动类型（停止 ≠ 禁用）；计划任务展示上次/下次运行 |
 | **智能能力（可选）** | 智能筛选 / 模型设置 / 残留解释——只建议，不替代你确认 |
 
@@ -88,7 +89,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 前往 **[Releases](https://github.com/Tsuki-hash/Remova/releases)** 下载最新版本：
 
-> 1.3.1 未配置应用内更新公钥；升级到 1.4.0 时请以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
+> 应用内更新未启用（未配置 updater 公钥）；升级一律以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
 >
 > 发布模式：未配置 updater 密钥时，Release 走「未签名 / 手动更新」模式，只发布 NSIS / MSI / 便携包与 `SHA256SUMS.txt`，不生成 `latest.json` 与 `.sig`；三项密钥齐全时才生成并校验更新签名资产。
 

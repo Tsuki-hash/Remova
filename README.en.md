@@ -32,13 +32,16 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | Capability | What you get |
 |---|---|
 | **Decision UI** | Detail drawer before uninstall: size, links, health, official / deep / force modes |
+| **Deep-uninstall loop** | The confirm states the flow; a phase bar (detect → vendor uninstall → rescan → analyze → report); post-clean report and re-check |
 | **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches, home dot-directories, MuiCache** |
 | **Plain language** | Why each leftover belongs (or why it is kept); Safe · Review · Keep buckets |
+| **Orphan evidence** | Expandable evidence on orphan leftovers: no uninstall record / contains exes / config files / install root / recent modification |
+| **Deep-uninstall extras** | Broken MSI records, orphan firewall rules, lock diagnosis (end a process under the app's install dir after confirmation), report totals and post-clean rescan/deep registry check |
 | **User-data red line** | Documents / Downloads / sync-conflict folders are never auto-selected |
 | **Safety Vault** | **Optional** backup before clean (unchecked by default); 7-day retention; open existing backups from report/history |
 | **Verified clean** | Post-clean checklist (paths / registry / PATH) |
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin |
-| **Deep-uninstall extras** | Broken MSI records, orphan firewall rules, lock diagnosis (end a process under the app's install dir after confirmation), report totals and post-clean rescan/deep registry check |
+| **System-item semantics** | Startup items = enabled/disabled; services split running state from start type (stopped ≠ disabled); scheduled tasks show last/next run |
 | AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
 
 > Brand: calm, professional, reversible — not a “PC manager”.
@@ -71,7 +74,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 - **Regenerable cache cleanup**: fixed layouts only (update downloads, temp dirs, crash dumps…), no backup by design; contents removed, directories kept, locked files reported honestly  
 - **Directory migration (junction)**: move a folder to another drive — plan → copy (per-file diff) → cutover (auto-rollback) → finish (confirm to drop the backup); rollback available at every step  
 - **Global CLI packages**: read-only npm / pnpm / yarn inventory; npm packages can be removed after confirmation (exported to the safety backup first)  
-- **System traces & portable apps**: read-only report of orphaned ConsentStore entries and portable-app candidates  
+- **System traces & portable apps**: read-only report of orphaned ConsentStore entries and portable-app candidates (anything that did not pass the safety assessment is never landed in a cleanup)  
 - History timeline, CSV export, install monitor  
 - Dark / light / follow-system theme, Chinese / English
 
@@ -81,7 +84,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
-> 1.3.1 was shipped without an in-app updater public key. Upgrade to 1.4.0 by downloading it from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. When an updater public key is configured, the Release also provides `latest.json` and `.sig` (the updater manifest and its signature); without one they are not generated, and the MSI install is not wired into auto-update — download updates manually.
+> In-app updates are not enabled (no updater public key is configured); always upgrade by downloading the new version from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. When an updater public key is configured, the Release also provides `latest.json` and `.sig` (the updater manifest and its signature); without one they are not generated, and the MSI install is not wired into auto-update — download updates manually.
 >
 > Release modes: with no updater keys configured, the Release runs in unsigned/manual mode and publishes only the NSIS / MSI / portable artifacts plus `SHA256SUMS.txt`; no `latest.json` or `.sig` are produced. Updater signature assets are generated and verified only when all three updater settings are present.
 
