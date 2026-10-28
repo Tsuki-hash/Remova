@@ -52,10 +52,10 @@ export function DiskRadarPanel({
     setBusy(true);
     try {
       if (parent) {
-        // The drill-down result carries what the list leaves out (omitted
-        // children, a cut parent scan). The top view is a top-N ranking: rows
-        // dropped by its cutoff are not reported, and incompleteness shows only
-        // through the per-row floor markers.
+        // The drill-down result carries what the list leaves out (rows dropped
+        // by the row cap, plus whether the parent scan was cut short). The top
+        // view is a top-N ranking: rows dropped by its cutoff are not reported,
+        // and incompleteness shows through the per-row floor markers.
         const result = await runReadOnly(
           id => api.listDirChildren(parent, id),
           r => (r?.rows.length ?? 0),

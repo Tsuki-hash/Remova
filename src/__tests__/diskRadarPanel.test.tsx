@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
+import { ScanProgressBar } from "../components/ScanProgressBar";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 
@@ -116,8 +117,10 @@ describe("DiskRadarPanel", () => {
     mockDrives();
     vi.mocked(api.listTopDirSizes).mockResolvedValue([
       {
-        path: "C:\\Users",
-        name: "Users",
+        // A root whose path contains a space: the id must stay free of
+        // whitespace or the IDREF splits and the description is lost.
+        path: "C:\\Program Files",
+        name: "Program Files",
         size_kb: 44_000_000,
         parent: "C:\\",
         capped: true,
@@ -201,6 +204,25 @@ describe("DiskRadarPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: L.detailShow }));
     expect(await screen.findByText(L.diskRadarEmptyFolder)).toBeTruthy();
     expect(screen.queryByText(L.radarEmpty)).toBeNull();
+  });
+
+  it("uses the radar wording for the progress counter and the default elsewhere", async () => {
+    const L = t();
+    const running = {
+      status: "running" as const,
+      stage: "sizes",
+      found: 4096,
+      elapsedMs: 1200,
+    };
+    const { unmount } = render(
+      <ScanProgressBar progress={running} onCancel={async () => {}} foundLabel={L.scanFoundRadar} />,
+    );
+    expect(screen.getByText(L.scanFoundRadar(4096))).toBeTruthy();
+    expect(screen.queryByText(L.scanFound(4096))).toBeNull();
+    unmount();
+    // Without the prop the shared wording stays untouched.
+    render(<ScanProgressBar progress={running} onCancel={async () => {}} />);
+    expect(screen.getByText(L.scanFound(4096))).toBeTruthy();
   });
 
   it("reports a load failure through onError instead of an empty list", async () => {

@@ -371,9 +371,9 @@ export type DirSizeRow = {
 /** Drill-down result: the ranked children plus what the list does not show. */
 export type DirChildrenResult = {
   rows: DirSizeRow[];
-  /** rows the caller will not see: children never walked plus rows dropped by
-   * the row cap. A level cut by the queue cap is reported through `capped`
-   * instead (its exact count is unknown). */
+  /** rows the caller will not see: rows dropped by the row cap. A child that
+   * was never measured appears as a 0-byte floor row instead, and a level cut
+   * by the queue cap is reported through `capped` (its count is unknown). */
   omitted?: number;
   /** the listing is not the whole story: the parent scan was cut short, or a
    * child could not be measured in full (its number is a floor) */
