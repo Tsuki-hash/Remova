@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Disk radar: a budget-capped row must present itself as an honest floor
-// ("stopped after N entries"), not as a total.
+// Disk radar: a budget-capped row must present itself as an honest floor,
+// a root aggregate must be labelled as a total, and a missing entry count must
+// not be rendered as a definite zero.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
@@ -80,6 +81,55 @@ describe("DiskRadarPanel", () => {
       (element?.textContent ?? "").includes(L.diskSizeApprox(formatSize(19_490_000))),
     );
     expect(approx.length).toBeGreaterThan(0);
+  });
+
+  it("does not invent a zero entry count when the backend sends none", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      {
+        path: "C:\\Windows",
+        name: "Windows",
+        size_kb: 5_000,
+        parent: "C:\\",
+        capped: true,
+      },
+    ]);
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    const rows = await screen.findAllByText((_content, element) =>
+      (element?.textContent ?? "").includes(L.diskRadarFloor(formatSize(5_000))),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    // The unknown-count wording must not claim a count at all.
+    expect(rows[0]!.textContent).not.toContain("0 项");
+  });
+
+  it("labels a root aggregate row as a total", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      {
+        path: "C:\\Users",
+        name: "Users",
+        size_kb: 44_000_000,
+        parent: "C:\\",
+        capped: true,
+        scanned: 900_000,
+        aggregate: true,
+      },
+      {
+        path: "C:\\Users\\Aaron",
+        name: "Aaron",
+        size_kb: 40_000_000,
+        parent: "C:\\Users",
+        capped: false,
+      },
+    ]);
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    const badge = await screen.findByTitle(L.diskRadarAggregateHint);
+    expect(badge.textContent).toBe(L.diskRadarAggregate);
+    // One badge only: the child row is a single directory, not a total.
+    expect(screen.getAllByTitle(L.diskRadarAggregateHint)).toHaveLength(1);
   });
 
   it("reports a load failure through onError instead of an empty list", async () => {

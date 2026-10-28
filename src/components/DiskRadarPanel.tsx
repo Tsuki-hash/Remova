@@ -159,15 +159,45 @@ export function DiskRadarPanel({
             }}
           >
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontWeight: 600 }}>{r.name}</div>
-              <div style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                <span className="ell" style={{ fontWeight: 600 }}>
+                  {r.name}
+                </span>
+                {r.aggregate && (
+                  <span
+                    title={L.diskRadarAggregateHint}
+                    style={{
+                      flexShrink: 0,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      padding: "1px 6px",
+                      borderRadius: 999,
+                      border: "1px solid var(--border)",
+                      color: "var(--muted)",
+                    }}
+                  >
+                    {L.diskRadarAggregate}
+                  </span>
+                )}
+              </div>
+              <div
+                title={r.path}
+                style={{
+                  ...css.muted,
+                  fontFamily: "var(--mono)",
+                  fontSize: 11.5,
+                  // Long Windows paths must wrap instead of pushing the two
+                  // action buttons out of the row.
+                  overflowWrap: "anywhere",
+                }}
+              >
                 {r.capped
-                  ? L.diskRadarFloor(r.size_kb > 0 ? formatSize(r.size_kb) : "0 KB", r.scanned ?? 0)
+                  ? L.diskRadarFloor(r.size_kb > 0 ? formatSize(r.size_kb) : "0 KB", r.scanned)
                   : L.diskSizeApprox(formatSize(Math.max(0, r.size_kb)))} · {r.path}
               </div>
             </div>
             <button
-              style={{ ...css.btnGhost, height: 26, padding: "0 8px" }}
+              style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
               disabled={busy}
               onClick={() => {
                 void load(r.path, drive, [...crumbs, r]);
@@ -176,7 +206,7 @@ export function DiskRadarPanel({
               {L.detailShow}
             </button>
             <button
-              style={{ ...css.btnGhost, height: 26, padding: "0 8px" }}
+              style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
               onClick={() => void api.openPath(r.path).catch((e) => onError(formatError(e)))}
             >
               {L.openLocation}

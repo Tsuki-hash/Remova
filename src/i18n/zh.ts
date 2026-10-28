@@ -786,8 +786,12 @@ export const dict = {
     copilotOfflineUnsupported: "离线筛选支持名称、发布者、大小和最近30天安装；启动项与残留需另外扫描。",
     idleScanning: "正在分析闲置候选…",
     radarScanning: "正在统计磁盘占用…",
-    diskRadarFloor: (size: string, scanned: number) =>
-      `≥ ${size}（扫描 ${scanned} 项后截止，实际占用更大）`,
+    diskRadarFloor: (size: string, scanned?: number) =>
+      scanned !== undefined && scanned > 0
+        ? `≥ ${size}（已检查 ${scanned} 项，未完整测量）`
+        : `≥ ${size}（未完整测量）`,
+    diskRadarAggregate: "根合计",
+    diskRadarAggregateHint: "该行是此根目录的合计，包含其下所有子目录",
     radarEmpty: "当前盘面没有可列出的目录",
     filterOnlyOn: "仅启用",
     filterHideMs: "隐藏 Microsoft/系统",

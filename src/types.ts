@@ -363,6 +363,8 @@ export type DirSizeRow = {
   capped?: boolean;
   /** entries actually inspected; with `capped`, the floor was taken here */
   scanned?: number;
+  /** a listed root's own total rather than one child directory */
+  aggregate?: boolean;
 };
 
 export type HistoryEntry = {

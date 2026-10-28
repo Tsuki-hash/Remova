@@ -15,10 +15,15 @@ pub struct DirSizeRow {
     /// Entry/depth budget ran out during the walk — size is a floor, not a total.
     #[serde(default)]
     pub capped: bool,
-    /// Entries actually inspected for this row; with `capped`, the UI shows
-    /// the floor was taken after this many entries.
+    /// Entries actually inspected for this row; with `capped`, the floor was
+    /// taken after this many entries.
     #[serde(default)]
     pub scanned: u64,
+    /// True for a listed root's own total ("where did the drive go at this
+    /// root"), false for a single child directory. Same shape, different scope:
+    /// the UI labels the difference.
+    #[serde(default)]
+    pub aggregate: bool,
 }
 
 /// One local fixed drive available to the radar.
@@ -127,9 +132,11 @@ pub fn list_local_drives() -> Vec<DriveInfo> {
 }
 
 /// Bounded size walk for radar rows — deep trees (Users/Windows) must not stall the UI.
-/// Returns (size_kb, capped) — `capped` marks walks that hit the entry
-/// budget or depth cap, so callers can present a floor instead of a total
-/// (the same honesty the other size walkers report).
+/// Returns `(bytes, capped)`: `capped` marks walks that hit the entry budget,
+/// a depth cap, an unreadable level or a cancelled scan, so callers present a
+/// floor instead of a total. A reparse child is a link, not storage — its bytes
+/// are counted where they physically live — so skipping it does not make the
+/// walk incomplete.
 fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i64, bool) {
     if crate::scan_task::cancelled() {
         return (0, true);
@@ -169,9 +176,9 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
             continue;
         }
         if meta.is_dir() {
-            let (sub, sub_capped) = shallow_size_bytes(&p, max_depth - 1, budget);
-            bytes += sub;
-            capped |= sub_capped;
+            let (bytes_below, below_capped) = shallow_size_bytes(&p, max_depth - 1, budget);
+            bytes += bytes_below;
+            capped |= below_capped;
         } else if meta.is_file() {
             bytes += meta.len() as i64;
         }
@@ -180,27 +187,73 @@ fn shallow_size_bytes(root: &std::path::Path, max_depth: u32, budget: &mut u64) 
 }
 
 /// Total entries one radar call may inspect across every root. Measured on a
-/// real machine: one user profile alone holds ~320k files, and a file-heavy
-/// tree burns a small budget within a few hundred steps — the 60k budget this
+/// real machine: one user profile holds ~320k files and a small budget is spent
+/// within a few hundred steps inside a single cache tree. The 60k budget this
 /// constant once had left every user directory as a near-useless floor
-/// (`C:\Users\Aaron ≥ 1.78 GB` against a real 44 GB). One million entries
-/// covers typical trees at the walk depth and costs seconds, not minutes.
-const RADAR_CALL_BUDGET: u64 = 1_000_000;
+/// (`C:\Users\Aaron >= 1.78 GB` against a real 44 GB); two million covers a
+/// file-heavy profile plus every system root at the depth below.
+const RADAR_CALL_BUDGET: u64 = 2_000_000;
 
-/// Directory levels walked below each listed row (`Users\Aaron` descends four
-/// levels, reaching `AppData\Local\Google\Chrome`). Depth beyond the budget
-/// still ends the walk honestly via `capped`.
-const RADAR_CHILD_DEPTH: u32 = 4;
+/// Limits that keep one radar call predictable.
+struct RadarLimits {
+    /// Directory levels below a listed row whose contents are read. Eight
+    /// levels reach the files inside
+    /// `Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Cache`,
+    /// which is where a browser keeps most of its bytes; a deeper tree ends as
+    /// a marked floor. The slice budget, not this cap, bounds the work.
+    max_depth: u32,
+    /// Rows retained per listed root; the final list is ranked and truncated
+    /// again, so retention only has to be wide enough for the real cutoff.
+    row_cap: usize,
+    /// Direct child directories queued for one root. A wider level is cut and
+    /// the aggregate becomes a floor, so a pathological directory cannot grow
+    /// the queue without bound.
+    queue_cap: usize,
+}
+
+/// Wide levels are cut instead of queued without limit.
+const RADAR_QUEUE_CAP: usize = 4096;
+
+/// Top view: each system root keeps twice the final cutoff so the combined
+/// ranking still sees every candidate.
+const RADAR_VISIT_LIMITS: RadarLimits = RadarLimits {
+    max_depth: 8,
+    row_cap: DISK_RADAR_TOP_N * 2,
+    queue_cap: RADAR_QUEUE_CAP,
+};
+
+/// Drill-down: one parent lists at most the final cutoff, like the top view.
+const RADAR_DRILL_LIMITS: RadarLimits = RadarLimits {
+    max_depth: 8,
+    row_cap: DISK_RADAR_TOP_N,
+    queue_cap: RADAR_QUEUE_CAP,
+};
+
+fn kb(bytes: i64) -> i64 {
+    if bytes <= 0 {
+        0
+    } else {
+        (bytes + 1023) / 1024
+    }
+}
+
+/// Rank by size and keep at most `cap` rows. The path tie-break makes the order
+/// deterministic; a capped row ranks by its floor, and its marker says the real
+/// size may be larger.
+fn rank_rows(rows: &mut Vec<DirSizeRow>, cap: usize) {
+    rows.sort_by(|a, b| b.size_kb.cmp(&a.size_kb).then_with(|| a.path.cmp(&b.path)));
+    rows.truncate(cap);
+}
 
 /// One bounded walk over `root` that yields an aggregate row for the root
 /// itself plus rows for its direct child directories. One traversal serves
 /// both: every byte found below a child is attributed to that child's row and
 /// summed into the root aggregate; files directly under the root only count
-/// toward the aggregate. Every number stays a floor when the entry budget or
-/// the depth cap ends the walk (`capped`).
+/// toward the aggregate. Every number is a floor (`capped`) when the entry
+/// budget, the depth cap, the queue cap or an unreadable entry ends the walk.
 fn root_walk(
     root: &std::path::Path,
-    max_depth: u32,
+    limits: &RadarLimits,
     budget: &mut u64,
 ) -> (DirSizeRow, Vec<DirSizeRow>) {
     let name = root
@@ -217,8 +270,10 @@ fn root_walk(
             .unwrap_or_default(),
         capped: false,
         scanned: 0,
+        aggregate: true,
     };
-    if !crate::scan_task::checkpoint("sizes", 0) || crate::fsutil::is_reparse_point(root) {
+    if !crate::scan_task::checkpoint("sizes", 0) {
+        aggregate.capped = true;
         return (aggregate, Vec::new());
     }
     let Ok(rd) = std::fs::read_dir(root) else {
@@ -226,73 +281,128 @@ fn root_walk(
         aggregate.capped = true;
         return (aggregate, Vec::new());
     };
-    // A cheap first pass classifies the level directly under the root: files
-    // sum into the aggregate, child directories are queued for the walk.
+    // First pass classifies the level directly under the root: files sum into
+    // the aggregate, child directories are queued for the walk below.
     let mut child_dirs: Vec<PathBuf> = Vec::new();
-    let mut agg_bytes: i64 = 0;
-    for ent in rd.flatten() {
+    let mut root_bytes: i64 = 0;
+    let mut child_bytes_total: i64 = 0;
+    for ent in rd {
         if crate::scan_task::cancelled() || *budget == 0 {
             aggregate.capped = true;
             break;
         }
+        let Ok(ent) = ent else {
+            // A level we could not enumerate is a floor, not a total.
+            aggregate.capped = true;
+            continue;
+        };
         *budget -= 1;
         aggregate.scanned += 1;
         let Ok(meta) = ent.metadata() else {
+            aggregate.capped = true;
             continue;
         };
+        // A reparse child is a pointer to storage elsewhere (often another
+        // drive); counting it here would double-count. Explorer's own size
+        // column skips them too, so a skipped junction is the correct total.
         if crate::fsutil::is_reparse_metadata(&meta) {
             continue;
         }
         if meta.is_dir() {
+            if child_dirs.len() >= limits.queue_cap {
+                aggregate.capped = true;
+                break;
+            }
             child_dirs.push(ent.path());
         } else if meta.is_file() {
-            agg_bytes += meta.len() as i64;
+            root_bytes += meta.len() as i64;
         }
     }
+    // Deterministic order: budget shares must not depend on read_dir order.
+    child_dirs.sort_by_key(|p| p.to_string_lossy().to_lowercase());
     // Dynamic slices: a child may use up to an even share of what is left, so
-    // an early, huge subtree cannot starve its siblings — unused share flows
+    // an early huge subtree cannot starve its siblings — an unused share flows
     // back to the pool for the remaining children.
-    let mut children = Vec::new();
+    let mut children: Vec<(DirSizeRow, i64)> = Vec::new();
     let mut remaining = child_dirs.len();
     for child in child_dirs {
-        if crate::scan_task::cancelled() {
-            aggregate.capped = true;
-            break;
-        }
-        if *budget == 0 {
+        if crate::scan_task::cancelled() || *budget == 0 {
             aggregate.capped = true;
             break;
         }
         remaining = remaining.saturating_sub(1);
         let mut slice = (*budget / (remaining as u64 + 1)).max(1).min(*budget);
         let before = slice;
-        let (bytes, capped) = shallow_size_bytes(&child, max_depth, &mut slice);
+        let (bytes, capped) = shallow_size_bytes(&child, limits.max_depth, &mut slice);
         let used = before - slice;
         *budget -= used;
         aggregate.scanned += used;
-        agg_bytes += bytes;
-        aggregate.capped |= capped;
+        child_bytes_total += bytes;
+        if capped {
+            aggregate.capped = true;
+        }
         let row = DirSizeRow {
             path: child.to_string_lossy().into_owned(),
             name: child
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            size_kb: if bytes <= 0 { 0 } else { (bytes + 1023) / 1024 },
+            size_kb: kb(bytes),
             parent: root.to_string_lossy().into_owned(),
             capped,
             scanned: used,
+            aggregate: false,
         };
         if row.size_kb > 0 {
-            children.push(row);
+            children.push((row, bytes));
+        }
+        // Keep the working set bounded while producing rows.
+        if children.len() >= limits.row_cap.saturating_mul(2) {
+            children.sort_by_key(|(r, _)| std::cmp::Reverse(r.size_kb));
+            children.truncate(limits.row_cap);
         }
     }
-    aggregate.size_kb = if agg_bytes <= 0 {
-        0
-    } else {
-        (agg_bytes + 1023) / 1024
-    };
-    (aggregate, children)
+    // Leftover budget: refine the largest capped rows instead of letting a
+    // floor stand when the pool still has entries to give. The better of the
+    // two walks wins, so a refinement can only raise accuracy. Only capped
+    // rows share the pool — a completed row has nothing left to measure.
+    if *budget > 0 {
+        children.sort_by_key(|(r, _)| std::cmp::Reverse(r.size_kb));
+        let capped_rows: Vec<usize> = children
+            .iter()
+            .enumerate()
+            .filter(|(_, (row, _))| row.capped)
+            .map(|(i, _)| i)
+            .collect();
+        for (k, &i) in capped_rows.iter().enumerate() {
+            if *budget == 0 {
+                break;
+            }
+            let left = (capped_rows.len() - k) as u64;
+            let mut slice = (*budget / left.max(1)).max(1).min(*budget);
+            let before = slice;
+            let path = PathBuf::from(&children[i].0.path);
+            let (bytes, capped) = shallow_size_bytes(&path, limits.max_depth, &mut slice);
+            let used = before - slice;
+            *budget -= used;
+            aggregate.scanned += used;
+            if bytes > children[i].1 {
+                child_bytes_total += bytes - children[i].1;
+                children[i].1 = bytes;
+                children[i].0.size_kb = kb(bytes);
+                children[i].0.scanned = used;
+            }
+            children[i].0.capped = capped || used == 0;
+            if children[i].0.capped {
+                aggregate.capped = true;
+            }
+        }
+    }
+    children.sort_by_key(|(r, _)| std::cmp::Reverse(r.size_kb));
+    children.truncate(limits.row_cap);
+    let rows: Vec<DirSizeRow> = children.into_iter().map(|(r, _)| r).collect();
+    aggregate.size_kb = kb(root_bytes + child_bytes_total);
+    (aggregate, rows)
 }
 
 /// Top directories: system drive well-known roots, or one local drive's `X:\` children.
@@ -326,25 +436,25 @@ pub fn top_dir_sizes_for_drive(letter: Option<char>) -> Vec<DirSizeRow> {
             let share = budget / (remaining.max(1) as u64);
             remaining = remaining.saturating_sub(1);
             let mut root_budget = share;
-            let (aggregate, rows) = root_walk(&root, RADAR_CHILD_DEPTH, &mut root_budget);
+            let (aggregate, rows) = root_walk(&root, &RADAR_VISIT_LIMITS, &mut root_budget);
             budget = budget.saturating_sub(share.saturating_sub(root_budget));
-            if aggregate.size_kb > 0 {
+            // A capped zero-size root is an unreadable root: keep the row so
+            // the UI can say the total is unknown instead of hiding the root.
+            if aggregate.size_kb > 0 || aggregate.capped {
                 out.push(aggregate);
             }
             out.extend(rows);
         }
-        out.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
-        out.truncate(DISK_RADAR_TOP_N * 2);
+        rank_rows(&mut out, DISK_RADAR_TOP_N * 2);
     } else {
         let root = drive_root(letter);
         if root.is_dir() && is_local_fixed_drive(letter) {
-            let (aggregate, rows) = root_walk(&root, RADAR_CHILD_DEPTH, &mut budget);
-            if aggregate.size_kb > 0 {
+            let (aggregate, rows) = root_walk(&root, &RADAR_VISIT_LIMITS, &mut budget);
+            if aggregate.size_kb > 0 || aggregate.capped {
                 out.push(aggregate);
             }
             out.extend(rows);
-            out.sort_by_key(|a| std::cmp::Reverse(a.size_kb));
-            out.truncate(DISK_RADAR_TOP_N);
+            rank_rows(&mut out, DISK_RADAR_TOP_N);
         }
     }
     out
@@ -420,9 +530,10 @@ fn under_radar_roots(path: &str) -> bool {
     is_local_fixed_drive(letter) && norm.starts_with(&format!("{letter_up}:\\"))
 }
 
-/// Immediate children of `path` ranked by size (for drill-down). The same
-/// dynamic-slice walk as the top view: a huge first sibling cannot starve the
-/// rest of the listing.
+/// Immediate children of `path`, ranked by size and capped like the top view
+/// (for drill-down). The same dynamic-slice walk as the top view: a huge first
+/// sibling cannot starve the rest of the listing, and the list is always in
+/// descending size order rather than filesystem enumeration order.
 pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
     // Validate the path before any metadata probe: `is_dir()` on a UNC/device
     // path would contact the remote side before the allow-list rejects it.
@@ -437,7 +548,8 @@ pub fn list_dir_children(path: &str) -> Result<Vec<DirSizeRow>, String> {
         return Err("not a directory".into());
     }
     let mut budget = RADAR_CALL_BUDGET;
-    let (_, rows) = root_walk(&p, RADAR_CHILD_DEPTH, &mut budget);
+    let (_, mut rows) = root_walk(&p, &RADAR_DRILL_LIMITS, &mut budget);
+    rank_rows(&mut rows, DISK_RADAR_TOP_N);
     Ok(rows)
 }
 
@@ -491,8 +603,17 @@ mod tests {
         assert_eq!(super::shallow_size_bytes(&link, 3, &mut 100), (0, false));
         // A junction root yields nothing; a real root lists the real child but
         // never the junction.
-        assert!(super::root_walk(&link, 4, &mut 1_000).1.is_empty());
-        assert_eq!(super::root_walk(&root, 4, &mut 1_000).1.len(), 1);
+        assert!(
+            super::root_walk(&link, &super::RADAR_DRILL_LIMITS, &mut 1_000)
+                .1
+                .is_empty()
+        );
+        assert_eq!(
+            super::root_walk(&root, &super::RADAR_DRILL_LIMITS, &mut 1_000)
+                .1
+                .len(),
+            1
+        );
         assert_eq!(super::shallow_size_bytes(&target, 3, &mut 100), (4, false));
         std::fs::remove_dir(&link).unwrap();
         crate::fsutil::remove_tree_no_reparse(&root).unwrap();
@@ -580,10 +701,18 @@ mod tests {
             std::fs::write(child.join("payload.bin"), vec![0u8; 4096]).unwrap();
         }
         let mut budget = 3u64;
-        let (aggregate, first) = super::root_walk(&tmp.path().join("root-a"), 4, &mut budget);
+        let (aggregate, first) = super::root_walk(
+            &tmp.path().join("root-a"),
+            &super::RADAR_VISIT_LIMITS,
+            &mut budget,
+        );
         assert_eq!(first.len(), 1);
         assert!(aggregate.size_kb > 0);
-        let (second_agg, second) = super::root_walk(&tmp.path().join("root-b"), 4, &mut budget);
+        let (second_agg, second) = super::root_walk(
+            &tmp.path().join("root-b"),
+            &super::RADAR_VISIT_LIMITS,
+            &mut budget,
+        );
         assert!(
             second.is_empty(),
             "a second root must not reset the call-wide budget"
@@ -603,7 +732,7 @@ mod tests {
         std::fs::create_dir_all(root.join("empty")).unwrap();
         std::fs::write(root.join("root-file.cfg"), vec![0u8; 100]).unwrap();
         let mut budget = 1_000u64;
-        let (aggregate, rows) = super::root_walk(&root, 4, &mut budget);
+        let (aggregate, rows) = super::root_walk(&root, &super::RADAR_VISIT_LIMITS, &mut budget);
         // 4096 + 4096 + 100 bytes = 8292 -> 9 KB, rounded once for the whole
         // aggregate; the empty child is not listed, files at the root level
         // count toward the aggregate only.
@@ -638,7 +767,7 @@ mod tests {
         std::fs::create_dir_all(&small).unwrap();
         std::fs::write(small.join("payload.bin"), vec![0u8; 4096]).unwrap();
         let mut budget = 12u64;
-        let (aggregate, rows) = super::root_walk(&root, 4, &mut budget);
+        let (aggregate, rows) = super::root_walk(&root, &super::RADAR_VISIT_LIMITS, &mut budget);
         assert_eq!(rows.len(), 2, "the late sibling must not be starved away");
         let big_row = rows.iter().find(|r| r.name == "aaa-big").unwrap();
         let small_row = rows.iter().find(|r| r.name == "zzz-small").unwrap();
@@ -650,6 +779,122 @@ mod tests {
         // completed its single entry.
         assert_eq!(big_row.scanned, 5);
         assert_eq!(small_row.scanned, 1);
+    }
+
+    /// The depth cap is measured in levels whose contents are read: a file in
+    /// the browser cache seven levels below the listed row must be counted, and
+    /// the same tree under a shallow cap must say so instead of guessing.
+    #[test]
+    fn radar_depth_counts_a_browser_cache_file_and_marks_a_shallower_cut() {
+        let tmp = crate::test_support::TempDir::new("radar-depth");
+        let row = tmp.path().join("Aaron");
+        let deep = row
+            .join("AppData")
+            .join("Local")
+            .join("Google")
+            .join("Chrome")
+            .join("User Data")
+            .join("Default")
+            .join("Cache");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("data.bin"), vec![0u8; 4096]).unwrap();
+
+        let mut budget = 1_000u64;
+        let (bytes, capped) =
+            super::shallow_size_bytes(&row, super::RADAR_VISIT_LIMITS.max_depth, &mut budget);
+        assert_eq!(bytes, 4096, "the cache file must be counted");
+        assert!(!capped);
+
+        let mut shallow_budget = 1_000u64;
+        let (shallow_bytes, shallow_capped) =
+            super::shallow_size_bytes(&row, 3, &mut shallow_budget);
+        assert_eq!(shallow_bytes, 0, "a shallow cap cannot see that file");
+        assert!(shallow_capped, "and it must say the number is a floor");
+    }
+
+    /// An unreadable root is a floor with a visible row, not silence.
+    #[test]
+    fn root_walk_reports_an_unreadable_root_as_a_floor() {
+        let tmp = crate::test_support::TempDir::new("radar-unreadable");
+        let file = tmp.path().join("not-a-directory");
+        std::fs::write(&file, b"x").unwrap();
+        let mut budget = 100u64;
+        let (aggregate, rows) = super::root_walk(&file, &super::RADAR_DRILL_LIMITS, &mut budget);
+        assert!(rows.is_empty());
+        assert!(aggregate.capped, "an unreadable root is not a zero total");
+        assert!(aggregate.aggregate);
+        assert_eq!(aggregate.size_kb, 0);
+    }
+
+    /// Capped rows rank by their floor, the list is deterministic, and the cap
+    /// is enforced — the drill-down contract the top view already had.
+    #[test]
+    fn rank_rows_orders_by_size_and_truncates() {
+        let row = |name: &str, size_kb: i64| DirSizeRow {
+            path: format!(r"C:\{name}"),
+            name: name.to_string(),
+            size_kb,
+            parent: r"C:\".to_string(),
+            capped: false,
+            scanned: 0,
+            aggregate: false,
+        };
+        let mut rows = vec![row("b", 10), row("a", 10), row("big", 900), row("small", 1)];
+        super::rank_rows(&mut rows, 3);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["big", "a", "b"], "size desc, then path asc");
+    }
+
+    /// A pathologically wide level is cut and the aggregate becomes a floor
+    /// instead of queueing without bound.
+    #[test]
+    fn root_walk_cuts_a_wide_level_and_marks_the_aggregate_capped() {
+        let tmp = crate::test_support::TempDir::new("radar-queue-cap");
+        let root = tmp.path().join("Wide");
+        for i in 0..6 {
+            let child = root.join(format!("c{i}"));
+            std::fs::create_dir_all(&child).unwrap();
+            std::fs::write(child.join("payload.bin"), vec![0u8; 4096]).unwrap();
+        }
+        let limits = super::RadarLimits {
+            max_depth: 2,
+            row_cap: 4,
+            queue_cap: 3,
+        };
+        let mut budget = 1_000u64;
+        let (aggregate, rows) = super::root_walk(&root, &limits, &mut budget);
+        assert!(aggregate.capped, "a cut level is a floor");
+        assert_eq!(rows.len(), 3, "only the queued children are walked");
+        assert!(rows.iter().all(|r| !r.aggregate));
+    }
+
+    /// The leftover pool goes to the capped rows, so a floor can improve after
+    /// the first pass instead of standing at the first slice's value.
+    #[test]
+    fn root_walk_refines_a_capped_row_with_leftover_budget() {
+        let tmp = crate::test_support::TempDir::new("radar-refine");
+        let root = tmp.path().join("Users");
+        let big = root.join("aaa-big");
+        std::fs::create_dir_all(&big).unwrap();
+        for i in 0..10 {
+            std::fs::write(big.join(format!("f{i}.bin")), vec![0u8; 4096]).unwrap();
+        }
+        // Two tiny siblings make the first slice small while leaving pool
+        // entries unused — exactly the case the refinement pass exists for.
+        for name in ["mmm-one", "zzz-two"] {
+            let child = root.join(name);
+            std::fs::create_dir_all(&child).unwrap();
+            std::fs::write(child.join("payload.bin"), vec![0u8; 4096]).unwrap();
+        }
+        let mut budget = 12u64;
+        let (_, rows) = super::root_walk(&root, &super::RADAR_VISIT_LIMITS, &mut budget);
+        assert_eq!(rows.len(), 3);
+        let big_row = rows.iter().find(|r| r.name == "aaa-big").unwrap();
+        // First pass measured 3 of its files; the refinement's larger slice
+        // measured 4, so the floor moved from 12 KB to 16 KB.
+        assert_eq!(big_row.size_kb, 16, "the refined floor is larger");
+        assert!(big_row.capped, "ten files still do not fit the budget");
+        assert_eq!(budget, 0, "the pool was spent refining");
     }
 
     #[test]

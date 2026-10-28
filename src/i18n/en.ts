@@ -805,8 +805,12 @@ export const dict: EnDict = {
     copilotOfflineUnsupported: "Offline filters support names, publishers, sizes and installs in the last 30 days. Startup items and leftovers need a separate scan.",
     idleScanning: "Scanning idle candidates…",
     radarScanning: "Measuring disk usage…",
-    diskRadarFloor: (size: string, scanned: number) =>
-      `≥ ${size} (stopped after ${scanned} entries — real usage is larger)`,
+    diskRadarFloor: (size: string, scanned?: number) =>
+      scanned !== undefined && scanned > 0
+        ? `≥ ${size} (checked ${scanned} entries; not fully measured)`
+        : `≥ ${size} (not fully measured)`,
+    diskRadarAggregate: "Root total",
+    diskRadarAggregateHint: "This row totals the whole root, including every subdirectory below it",
     radarEmpty: "Nothing to list on this drive",
     filterOnlyOn: "Enabled only",
     filterHideMs: "Hide Microsoft/system",
