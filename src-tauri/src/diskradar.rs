@@ -272,10 +272,11 @@ fn walk_subtree(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i6
     }
 }
 
-/// Entries one radar call may inspect in total. Measured on this machine: a
-/// 300k-entry pass of read_dir + metadata costs roughly ten seconds of wall
-/// clock (debug build, warm cache), which is what a panel that opens by
-/// scanning can ask for; everything beyond that ends as a marked floor.
+/// Entries one radar call may inspect in total. A 300k-entry pass of read_dir
+/// plus metadata measured 8–18 s on the maintainer machine (debug build, warm
+/// cache; antivirus and slow disks make it worse), which is the most a panel
+/// that opens by scanning may ask for; everything beyond that ends as a marked
+/// floor.
 const RADAR_CALL_BUDGET: u64 = 300_000;
 
 /// Directory levels below a listed row whose contents are read. Nine levels
