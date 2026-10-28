@@ -118,6 +118,9 @@ export function DiskRadarPanel({
 
   const current = drives.find((d) => d.letter === drive);
   const listEmpty = (rows ?? []).length === 0;
+  // free_gb/total_gb are decimal GB (the backend divides bytes by 1e9); the
+  // row sizes are 1024-based, so convert through bytes to speak one unit.
+  const capacityKb = (gb: number) => Math.round((gb * 1e9) / 1024);
 
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
@@ -138,7 +141,7 @@ export function DiskRadarPanel({
               }}
               disabled={busy}
               aria-pressed={drive === d.letter}
-              title={`${formatSize(Math.round(d.free_gb * 1024 * 1024))} / ${formatSize(Math.round(d.total_gb * 1024 * 1024))}`}
+              title={`${formatSize(capacityKb(d.free_gb))} / ${formatSize(capacityKb(d.total_gb))}`}
               onClick={() => void switchDrive(d.letter)}
             >
               {d.letter}:
@@ -146,8 +149,8 @@ export function DiskRadarPanel({
           ))}
           {current && (
             <span style={{ ...css.muted, fontFamily: "var(--mono)", fontSize: 11.5 }}>
-              {formatSize(Math.round(current.free_gb * 1024 * 1024))} /{" "}
-              {formatSize(Math.round(current.total_gb * 1024 * 1024))}
+              {formatSize(capacityKb(current.free_gb))} /{" "}
+              {formatSize(capacityKb(current.total_gb))}
             </span>
           )}
           {crumbs.length > 0 && (
@@ -166,7 +169,12 @@ export function DiskRadarPanel({
           <button
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy}
-            onClick={() => void load(undefined, drive)}
+            onClick={() => {
+              // Refresh re-scans what the user is looking at: the current
+              // parent in a drill-down, the drive root on the top view.
+              const parent = crumbs[crumbs.length - 1];
+              void load(parent?.path, drive, crumbs);
+            }}
             title={busy ? L.radarScanning : undefined}
           >
             {L.manageReload}
@@ -183,6 +191,11 @@ export function DiskRadarPanel({
         failedLabel={L.diskRadarFailed}
         foundLabel={L.scanFoundRadar}
       />
+      {!crumbs.length && current?.is_system && (
+        <div style={{ ...css.muted, fontSize: 12, marginBottom: 6 }}>
+          {L.diskRadarRootsHint}
+        </div>
+      )}
       <VirtualList
         items={rows ?? []}
         height={320}

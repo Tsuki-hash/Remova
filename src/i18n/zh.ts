@@ -795,6 +795,7 @@ export const dict = {
         : `≥ ${size}（未完整测量）`,
     diskRadarAggregate: "根合计",
     diskRadarPartial: "此目录未完整测量：部分子目录未列出或体积为下限，可在资源管理器中查看全部内容",
+    diskRadarRootsHint: "系统盘总览仅统计 Users、Program Files、Program Files (x86)、ProgramData、Windows 五个已知根；其余顶层目录未计入",
     diskRadarCancelled: "已取消；列表保留上次结果",
     diskRadarCancelledEmpty: "扫描已取消，尚无结果",
     diskRadarFailed: "磁盘统计未完成，请重试刷新",

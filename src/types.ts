@@ -359,8 +359,10 @@ export type DirSizeRow = {
   name: string;
   size_kb: number;
   parent: string;
-  /** the walk was cut short (budget, depth cap, queue cap, unreadable level or
-   * cancellation) — size is a floor, not a total */
+  /** the walk was cut short (budget, depth cap, queue cap, unreadable level) —
+   * size is a floor, not a total. A cancelled scan also marks rows this way
+   * internally, but a cancelled call rejects before any row reaches the
+   * caller, so `capped` only arrives on successful returns. */
   capped?: boolean;
   /** entries actually inspected; with `capped`, the floor was taken here */
   scanned?: number;
@@ -371,9 +373,10 @@ export type DirSizeRow = {
 /** Drill-down result: the ranked children plus what the list does not show. */
 export type DirChildrenResult = {
   rows: DirSizeRow[];
-  /** rows the caller will not see: rows dropped by the row cap. A child that
-   * was never measured appears as a 0-byte floor row instead, and a level cut
-   * by the queue cap is reported through `capped` (its count is unknown). */
+  /** rows the caller will not see: rows dropped by the row cap, including
+   * 0-byte floor rows that no longer fit once measured rows filled it. A
+   * floor row that does fit appears as a 0-byte row; a level cut by the
+   * queue cap is reported through `capped` (its count is unknown). */
   omitted?: number;
   /** the listing is not the whole story: the parent scan was cut short, or a
    * child could not be measured in full (its number is a floor) */

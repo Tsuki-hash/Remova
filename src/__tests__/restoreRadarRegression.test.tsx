@@ -68,6 +68,24 @@ it("names the failed radar scan without pointing at an analyze button", async ()
   expect(screen.queryByText(L.scanFailedIncomplete)).toBeNull();
 });
 
+it("refreshes the drilled-down parent instead of jumping back to the top", async () => {
+  native.listDirChildren.mockResolvedValue({ rows: [{ path: "A/child", name: "A child", size_kb: 1, capped: false }], omitted: 0, capped: false });
+  render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+  const topFloor = (await screen.findAllByText((_c, el) =>
+    (el?.textContent ?? "").includes(t().diskRadarFloor(formatSize(1), 12345))))[0]!;
+  expect(topFloor).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
+  await screen.findByText("A child");
+  // A refresh while inside a drill-down must re-scan the open folder —
+  // jumping back to the top view would throw away the user's place and the
+  // partial-list notes with it.
+  fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
+  await waitFor(() => expect(native.listDirChildren).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("A child")).toBeTruthy();
+  expect(screen.getByRole("button", { name: t().navBack })).toBeTruthy();
+  expect(native.listTopDirSizes).toHaveBeenCalledTimes(1);
+});
+
 it("keeps the visible list when a refresh is cancelled", async () => {
   // First load succeeds; the refresh hangs; cancelling it must not wipe the
   // rows the user is reading.

@@ -813,6 +813,7 @@ export const dict: EnDict = {
         : `≥ ${size} (not fully measured)`,
     diskRadarAggregate: "Root total",
     diskRadarPartial: "This directory is not fully measured: some subdirectories are missing or sized as floors — open it in Explorer for the full contents",
+    diskRadarRootsHint: "The system-drive overview covers five known roots only — Users, Program Files, Program Files (x86), ProgramData, Windows; other top-level folders are not counted",
     diskRadarCancelled: "Cancelled; the list keeps the previous result",
     diskRadarCancelledEmpty: "Scan cancelled; no results yet",
     diskRadarFailed: "Disk stats did not finish; reload to try again",

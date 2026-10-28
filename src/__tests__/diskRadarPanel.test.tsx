@@ -17,6 +17,9 @@ vi.mock("../lib/api", () => ({
     openPath: vi.fn(),
   },
 }));
+const hookState = vi.hoisted(() => ({
+  progress: null as { status: string; stage: string; found: number; elapsedMs: number } | null,
+}));
 vi.mock("../hooks/useAssociationScan", () => ({
   useAssociationScan: () => ({
     run: vi.fn(),
@@ -28,12 +31,13 @@ vi.mock("../hooks/useAssociationScan", () => ({
       _count?: (result: unknown) => number,
     ) => fn(1),
     cancel: vi.fn(),
-    progress: null,
+    progress: hookState.progress,
   }),
   scanCancelled: () => false,
 }));
 
 afterEach(() => {
+  hookState.progress = null;
   cleanup();
   for (const mock of [
     api.listLocalDrives,
@@ -224,6 +228,65 @@ describe("DiskRadarPanel", () => {
     // Without the prop the shared wording stays untouched.
     render(<ScanProgressBar progress={running} onCancel={async () => {}} />);
     expect(screen.getByText(L.scanFound(4096))).toBeTruthy();
+  });
+
+  it("wires the radar counter wording through the panel, not just the bar", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockImplementation(
+      () => new Promise(() => { /* the scan runs until the test ends */ }),
+    );
+    // The panel must pass its own label down: removing the prop would
+    // otherwise silently fall back to the cleanup scan's "items found".
+    hookState.progress = { status: "running", stage: "sizes", found: 4096, elapsedMs: 1200 };
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    expect(await screen.findByText(L.scanFoundRadar(4096))).toBeTruthy();
+    expect(screen.queryByText(L.scanFound(4096))).toBeNull();
+  });
+
+  it("shows a zero entry count when the walk proved zero entries", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      { path: "C:\\Empty", name: "Empty", size_kb: 0, parent: "C:\\", capped: true, scanned: 0 },
+    ]);
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    // scanned 0 is a real observation, not a missing count: the floor must
+    // say "checked 0 entries" instead of hiding the count.
+    const rows = await screen.findAllByText((_c, el) =>
+      (el?.textContent ?? "").includes(L.diskRadarFloor("0 KB", 0)));
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it("tells the system-drive overview that only five known roots are counted", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      { path: "C:\\Users", name: "Users", size_kb: 100, parent: "C:\\", capped: false },
+    ]);
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    // The five known roots leave a gap against the drive's used space; the
+    // panel must say so instead of letting the totals read as "everything".
+    expect(await screen.findByText(L.diskRadarRootsHint)).toBeTruthy();
+    // Drilling into a folder leaves the five-roots scope behind.
+    vi.mocked(api.listDirChildren).mockResolvedValue({ rows: [], omitted: 0, capped: false });
+    fireEvent.click(screen.getByRole("button", { name: L.detailShow }));
+    await screen.findByText(L.diskRadarEmptyFolder);
+    expect(screen.queryByText(L.diskRadarRootsHint)).toBeNull();
+  });
+
+  it("shows drive capacity in the same 1024-based units as the rows", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([]);
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    await screen.findByText(L.radarEmpty);
+    // free_gb/total_gb are decimal GB while rows are 1024-based; the capacity
+    // must go through bytes so both speak one unit.
+    const expected = `${formatSize(Math.round((58.3 * 1e9) / 1024))} / ${formatSize(
+      Math.round((214.75 * 1e9) / 1024),
+    )}`;
+    expect(screen.getByTitle(expected)).toBeTruthy();
   });
 
   it("reports a load failure through onError instead of an empty list", async () => {
