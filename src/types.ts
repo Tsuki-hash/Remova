@@ -359,12 +359,21 @@ export type DirSizeRow = {
   name: string;
   size_kb: number;
   parent: string;
-  /** entry/depth budget ran out — size is a floor, not a total */
+  /** entry/depth/queue budget ran out — size is a floor, not a total */
   capped?: boolean;
   /** entries actually inspected; with `capped`, the floor was taken here */
   scanned?: number;
   /** a listed root's own total rather than one child directory */
   aggregate?: boolean;
+};
+
+/** Drill-down result: the ranked children plus what the list does not show. */
+export type DirChildrenResult = {
+  rows: DirSizeRow[];
+  /** child directories the walk never reached or the row cap dropped */
+  omitted?: number;
+  /** the parent's own scan was cut short (budget, queue cap, unreadable level) */
+  capped?: boolean;
 };
 
 export type HistoryEntry = {

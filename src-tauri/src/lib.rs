@@ -1132,7 +1132,7 @@ async fn list_top_dir_sizes(
 async fn list_dir_children(
     path: String,
     scan_id: Option<u32>,
-) -> Result<Vec<diskradar::DirSizeRow>, String> {
+) -> Result<diskradar::DirChildrenResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "disk", || diskradar::list_dir_children(&path))

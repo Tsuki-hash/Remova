@@ -3,7 +3,7 @@
 // a root aggregate must be labelled as a total, and a missing entry count must
 // not be rendered as a definite zero.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -20,7 +20,12 @@ vi.mock("../hooks/useAssociationScan", () => ({
   useAssociationScan: () => ({
     run: vi.fn(),
     runItems: (fn: (id: number) => Promise<unknown>) => fn(1),
-    runReadOnly: vi.fn(),
+    // The radar reads the raw result (the drill-down carries omitted/capped),
+    // so the mock must run the work like the real hook does.
+    runReadOnly: (
+      fn: (id: number) => Promise<unknown>,
+      _count?: (result: unknown) => number,
+    ) => fn(1),
     cancel: vi.fn(),
     progress: null,
   }),
@@ -126,10 +131,35 @@ describe("DiskRadarPanel", () => {
     ]);
     render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
     const L = t();
-    const badge = await screen.findByTitle(L.diskRadarAggregateHint);
-    expect(badge.textContent).toBe(L.diskRadarAggregate);
+    // The explanation is real text, not a title: keyboard and screen-reader
+    // users reach it through aria-describedby on the badge around it.
+    const described = await screen.findByText(L.diskRadarAggregateHint);
+    const badge = described.parentElement!;
+    expect(badge.getAttribute("aria-describedby")).toBe(described.id);
+    expect(badge.textContent).toContain(L.diskRadarAggregate);
     // One badge only: the child row is a single directory, not a total.
-    expect(screen.getAllByTitle(L.diskRadarAggregateHint)).toHaveLength(1);
+    expect(screen.getAllByText(L.diskRadarAggregateHint)).toHaveLength(1);
+  });
+
+  it("tells the user when a drill-down list is partial", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      { path: "C:\\Users", name: "Users", size_kb: 100, parent: "C:\\", capped: false },
+    ]);
+    vi.mocked(api.listDirChildren).mockResolvedValue({
+      rows: [
+        { path: "C:\\Users\\A", name: "A", size_kb: 10, parent: "C:\\Users", capped: false },
+      ],
+      omitted: 5,
+      capped: true,
+    });
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    fireEvent.click(await screen.findByRole("button", { name: L.detailShow }));
+    // A list that leaves rows out must say so; the user cannot otherwise tell
+    // a complete listing from a capped one.
+    expect(await screen.findByText(L.scanOmitted(5))).toBeTruthy();
+    expect(screen.getByText(L.diskRadarPartial)).toBeTruthy();
   });
 
   it("reports a load failure through onError instead of an empty list", async () => {

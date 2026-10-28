@@ -810,6 +810,8 @@ export const dict: EnDict = {
         ? `≥ ${size} (checked ${scanned} entries; not fully measured)`
         : `≥ ${size} (not fully measured)`,
     diskRadarAggregate: "Root total",
+    diskRadarPartial: "This directory is not fully measured: some subdirectories are missing or sized as floors — open it in Explorer for the full contents",
+    diskRadarCancelled: "Cancelled; the list keeps the previous result",
     diskRadarAggregateHint: "This row totals the whole root, including every subdirectory below it",
     radarEmpty: "Nothing to list on this drive",
     filterOnlyOn: "Enabled only",

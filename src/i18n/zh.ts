@@ -791,6 +791,8 @@ export const dict = {
         ? `≥ ${size}（已检查 ${scanned} 项，未完整测量）`
         : `≥ ${size}（未完整测量）`,
     diskRadarAggregate: "根合计",
+    diskRadarPartial: "此目录未完整测量：部分子目录未列出或体积为下限，可在资源管理器中查看全部内容",
+    diskRadarCancelled: "已取消；列表保留上次结果",
     diskRadarAggregateHint: "该行是此根目录的合计，包含其下所有子目录",
     radarEmpty: "当前盘面没有可列出的目录",
     filterOnlyOn: "仅启用",

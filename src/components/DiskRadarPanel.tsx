@@ -10,6 +10,22 @@ import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import { ScanProgressBar } from "./ScanProgressBar";
 
+/** Off-screen text for the aggregate badge's description; never painted. */
+const visuallyHidden = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+} as const;
+
+/** What the current list does not show (drill-down only). */
+type PartialInfo = { omitted: number; capped: boolean };
+
 /** Disk usage radar — read-only. Open path / drill down; never deletes. */
 export function DiskRadarPanel({
   onClose,
@@ -20,13 +36,14 @@ export function DiskRadarPanel({
 }) {
   const L = t();
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
+  const [partial, setPartial] = useState<PartialInfo | null>(null);
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [drive, setDrive] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
   const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const busyRef = useRef(false);
-  const { runItems, cancel, progress } = useAssociationScan();
+  const { runReadOnly, cancel, progress } = useAssociationScan();
 
   const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = []) => {
     if (busyRef.current) return;
@@ -34,18 +51,37 @@ export function DiskRadarPanel({
     const seq = nextRequest();
     setBusy(true);
     try {
-      const list = await runItems(id => parent
-        ? api.listDirChildren(parent, id)
-        : api.listTopDirSizes(letter, id));
-      if (isCurrentRequest(seq)) {
-        setRows(list);
-        setCrumbs(nextCrumbs);
-        if (letter !== undefined) setDrive(letter);
+      if (parent) {
+        // The drill-down result carries what the list leaves out (omitted
+        // children, a cut parent scan); the top view says it through the
+        // per-row floor markers instead.
+        const result = await runReadOnly(
+          id => api.listDirChildren(parent, id),
+          r => (r?.rows.length ?? 0),
+        );
+        if (isCurrentRequest(seq)) {
+          setRows(result?.rows ?? []);
+          setPartial({ omitted: result?.omitted ?? 0, capped: result?.capped ?? false });
+          setCrumbs(nextCrumbs);
+          setDrive(drive);
+        }
+      } else {
+        const list = await runReadOnly(
+          id => api.listTopDirSizes(letter, id),
+          r => r.length,
+        );
+        if (isCurrentRequest(seq)) {
+          setRows(list);
+          setPartial(null);
+          setCrumbs(nextCrumbs);
+          if (letter !== undefined) setDrive(letter);
+        }
       }
     } catch (e) {
       if (isCurrentRequest(seq)) {
-        if (scanCancelled(e)) setRows(null);
-        else onError(formatError(e));
+        // A cancel must not throw away what the user was already looking at;
+        // the progress bar says the scan was stopped.
+        if (!scanCancelled(e)) onError(formatError(e));
       }
     } finally {
       if (isCurrentRequest(seq)) {
@@ -79,6 +115,7 @@ export function DiskRadarPanel({
   };
 
   const current = drives.find((d) => d.letter === drive);
+  const listEmpty = (rows ?? []).length === 0;
 
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
@@ -137,14 +174,18 @@ export function DiskRadarPanel({
           </button>
         </div>
       </div>
-      <ScanProgressBar progress={progress} onCancel={cancel} />
+      <ScanProgressBar progress={progress} onCancel={cancel} cancelledLabel={L.diskRadarCancelled} />
       <VirtualList
         items={rows ?? []}
         height={320}
         estimateSize={72}
         listRole
         ariaLabel={L.diskRadarTitle}
-        empty={rows === null ? undefined : <div style={css.muted}>{L.radarEmpty}</div>}
+        empty={
+          rows === null ? undefined : (
+            <div style={css.muted}>{partial?.capped ? L.diskRadarPartial : L.radarEmpty}</div>
+          )
+        }
         keyOf={(r) => r.path}
         renderItem={(r) => (
           <div
@@ -165,7 +206,7 @@ export function DiskRadarPanel({
                 </span>
                 {r.aggregate && (
                   <span
-                    title={L.diskRadarAggregateHint}
+                    aria-describedby={`radar-agg-${r.path}`}
                     style={{
                       flexShrink: 0,
                       fontSize: 10.5,
@@ -177,6 +218,9 @@ export function DiskRadarPanel({
                     }}
                   >
                     {L.diskRadarAggregate}
+                    <span id={`radar-agg-${r.path}`} style={visuallyHidden}>
+                      {L.diskRadarAggregateHint}
+                    </span>
                   </span>
                 )}
               </div>
@@ -214,6 +258,12 @@ export function DiskRadarPanel({
           </div>
         )}
       />
+      {!listEmpty && (partial?.omitted ?? 0) > 0 && (
+        <div style={{ ...css.muted, fontSize: 12, marginTop: 6 }}>{L.scanOmitted(partial!.omitted)}</div>
+      )}
+      {!listEmpty && partial?.capped && (
+        <div style={{ ...css.muted, fontSize: 12, marginTop: 2 }}>{L.diskRadarPartial}</div>
+      )}
     </div>
   );
 }

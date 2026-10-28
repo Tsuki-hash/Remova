@@ -35,7 +35,11 @@ it.each(["disk", "idle"] as const)("rejects a late successful %s result after ca
   await waitFor(() => expect(scan).toHaveBeenCalledOnce());
   fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
   await act(async () => { finish([]); });
-  expect(screen.getByRole("status").textContent).toBe(t().scanCancelledIncomplete);
+  // The radar is read-only and has no cleanup to re-run, so it says what
+  // actually happened instead of borrowing the cleanup wording.
+  expect(screen.getByRole("status").textContent).toBe(
+    mode === "disk" ? t().diskRadarCancelled : t().scanCancelledIncomplete,
+  );
   expect(onError).not.toHaveBeenCalled();
   expect(native.cancelAssociationScan).toHaveBeenCalledWith(201);
   expect(screen.queryByText(mode === "disk" ? t().radarEmpty : t().idleEmpty)).toBeNull();
@@ -116,7 +120,7 @@ it("rejects old sibling rows while loading and commits navigation only with the 
     { path: "A", name: "A", size_kb: 1, capped: true },
     { path: "B", name: "B", size_kb: 1, capped: false },
   ]);
-  let resolveChild!: (value: unknown[]) => void;
+  let resolveChild!: (value: { rows: unknown[]; omitted: number; capped: boolean }) => void;
   native.listDirChildren.mockImplementationOnce(() => new Promise(resolve => { resolveChild = resolve; }));
   render(<DiskRadarPanel onClose={() => {}} onError={vi.fn()} />);
   await screen.findByText(/≥ 1 KB（/);
@@ -127,7 +131,7 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   expect(native.listDirChildren).toHaveBeenCalledWith("A", 201);
   expect((drill[1] as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole("button", { name: t().navBack })).toBeNull();
-  await act(async () => { resolveChild([{ path: "A/child", name: "A child", size_kb: 10, capped: false }]); });
+  await act(async () => { resolveChild({ rows: [{ path: "A/child", name: "A child", size_kb: 10, capped: false }], omitted: 0, capped: false }); });
   expect(screen.getByText("A child")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
@@ -136,7 +140,7 @@ it("rejects old sibling rows while loading and commits navigation only with the 
 });
 
 it("keeps the current parent after a failed drill and disables back while pending", async () => {
-  native.listDirChildren.mockResolvedValueOnce([{ path: "A/child", name: "A child", size_kb: 1, capped: false }]);
+  native.listDirChildren.mockResolvedValueOnce({ rows: [{ path: "A/child", name: "A child", size_kb: 1, capped: false }], omitted: 0, capped: false });
   const error = vi.fn();
   render(<DiskRadarPanel onClose={() => {}} onError={error} />);
   await screen.findByText(/≥ 1 KB（/);
