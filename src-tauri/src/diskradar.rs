@@ -140,6 +140,10 @@ pub fn list_local_drives() -> Vec<DriveInfo> {
 struct Walk {
     /// (levels below this directory that may still be read, its entries)
     stack: Vec<(u32, std::fs::ReadDir)>,
+    /// An entry read while the last slice ran out. The next slice charges and
+    /// processes it, so nothing is dropped and the walk can still observe the
+    /// end of its level when that entry was the last one.
+    pending: Option<(u32, std::fs::DirEntry)>,
     bytes: i64,
     inspected: u64,
     finished: bool,
@@ -147,7 +151,7 @@ struct Walk {
 }
 
 enum WalkStart {
-    Walk(Walk),
+    Walk(Box<Walk>),
     /// A junction/symlink: a pointer to storage counted where it lives.
     Reparse,
     /// Exists but cannot be enumerated: a floor, not a zero total.
@@ -156,7 +160,7 @@ enum WalkStart {
 
 /// Per-child state in `root_walk`.
 enum ChildWalk {
-    Walk(Walk),
+    Walk(Box<Walk>),
     /// A reparse child: not this root's storage, not a row.
     Reparse,
     /// Never opened because the budget ran out or the scan was cancelled
@@ -174,13 +178,14 @@ fn start_walk(root: &std::path::Path, max_depth: u32) -> WalkStart {
         return WalkStart::Reparse;
     }
     match std::fs::read_dir(root) {
-        Ok(rd) => WalkStart::Walk(Walk {
+        Ok(rd) => WalkStart::Walk(Box::new(Walk {
             stack: vec![(max_depth, rd)],
+            pending: None,
             bytes: 0,
             inspected: 0,
             finished: false,
             capped: false,
-        }),
+        })),
         Err(_) => WalkStart::Unreadable,
     }
 }
@@ -194,59 +199,103 @@ impl Walk {
     /// marking it here would leave a finished directory labelled as a floor.
     /// `finished` (the stack emptied) is the only proof of a total; a paused or
     /// cut walk is a floor through `is_floor`.
+    /// Consume up to `budget` entries, resuming where the last call stopped.
+    ///
+    /// `capped` is a *permanent* cut: a cancelled scan, a depth level that was
+    /// not descended, or an entry that could not be read. A spent slice is only
+    /// a pause — the water-filling loop hands the walk another slice later, so
+    /// marking it here would leave a finished directory labelled as a floor.
+    /// When a slice runs out, one last read is made without charging the pool:
+    /// an exhausted iterator finishes the walk honestly, and a real entry is
+    /// cached for the next slice instead of being dropped (otherwise a
+    /// directory whose last entry lands exactly on the boundary could never be
+    /// proven complete). `finished` — the stack emptied — is the only proof of
+    /// a total; anything else is a floor through `is_floor`.
     fn advance(&mut self, budget: &mut u64, progress: &mut WalkProgress) {
         loop {
-            let Some(top) = self.stack.len().checked_sub(1) else {
-                self.finished = true;
-                return;
-            };
-            if crate::scan_task::cancelled() {
-                self.capped = true;
-                return;
-            }
-            if *budget == 0 {
-                // Paused, not cut: the caller may resume this walk.
-                return;
-            }
-            let depth_left = self.stack[top].0;
-            let item = self.stack[top].1.next();
-            match item {
+            let (depth_left, item) = match self.pending.take() {
+                // Already charged when it was read.
+                Some((depth, ent)) => (depth, Ok::<std::fs::DirEntry, std::io::Error>(ent)),
                 None => {
-                    self.stack.pop();
-                }
-                Some(Err(_)) => {
-                    *budget -= 1;
-                    self.inspected += 1;
-                    progress.tick();
-                    self.capped = true;
-                }
-                Some(Ok(ent)) => {
-                    *budget -= 1;
-                    self.inspected += 1;
-                    progress.tick();
-                    let Ok(meta) = ent.metadata() else {
-                        self.capped = true;
-                        continue;
+                    let Some(top) = self.stack.len().checked_sub(1) else {
+                        self.finished = true;
+                        return;
                     };
-                    if crate::fsutil::is_reparse_metadata(&meta) {
-                        continue;
+                    if crate::scan_task::cancelled() {
+                        self.capped = true;
+                        return;
                     }
-                    if meta.is_dir() {
-                        // Files of this level are counted; a directory one
-                        // level deeper is where the walk stops, matching the
-                        // old recursion (the level below stays unmeasured).
-                        if depth_left <= 1 {
+                    if *budget == 0 {
+                        // One free look for the end of the level: an exhausted
+                        // iterator finishes the walk honestly, and a real entry
+                        // is cached for the next slice instead of being lost.
+                        match self.stack[top].1.next() {
+                            None => {
+                                self.stack.pop();
+                                continue;
+                            }
+                            Some(Err(_)) => {
+                                self.capped = true;
+                                return;
+                            }
+                            Some(Ok(ent)) => {
+                                let depth = self.stack[top].0;
+                                // Charged by the slice that resumes this walk.
+                                self.pending = Some((depth, ent));
+                                return;
+                            }
+                        }
+                    }
+                    let depth = self.stack[top].0;
+                    match self.stack[top].1.next() {
+                        None => {
+                            self.stack.pop();
+                            continue;
+                        }
+                        Some(Err(_)) => {
+                            *budget -= 1;
+                            self.inspected += 1;
+                            progress.tick();
                             self.capped = true;
                             continue;
                         }
-                        match std::fs::read_dir(ent.path()) {
-                            Ok(sub) => self.stack.push((depth_left - 1, sub)),
-                            Err(_) => self.capped = true,
+                        Some(Ok(ent)) => {
+                            *budget -= 1;
+                            self.inspected += 1;
+                            progress.tick();
+                            (depth, Ok(ent))
                         }
-                    } else if meta.is_file() {
-                        self.bytes += meta.len() as i64;
                     }
                 }
+            };
+            let item = match item {
+                Ok(ent) => ent,
+                Err(_) => {
+                    self.capped = true;
+                    continue;
+                }
+            };
+            let Ok(meta) = item.metadata() else {
+                self.capped = true;
+                continue;
+            };
+            if crate::fsutil::is_reparse_metadata(&meta) {
+                continue;
+            }
+            if meta.is_dir() {
+                // Files of this level are counted; a directory one level deeper
+                // is where the walk stops, matching the old recursion (the
+                // level below stays unmeasured).
+                if depth_left <= 1 {
+                    self.capped = true;
+                    continue;
+                }
+                match std::fs::read_dir(item.path()) {
+                    Ok(sub) => self.stack.push((depth_left - 1, sub)),
+                    Err(_) => self.capped = true,
+                }
+            } else if meta.is_file() {
+                self.bytes += meta.len() as i64;
             }
         }
     }
@@ -279,16 +328,19 @@ fn walk_subtree(root: &std::path::Path, max_depth: u32, budget: &mut u64) -> (i6
 /// floor.
 const RADAR_CALL_BUDGET: u64 = 300_000;
 
-/// Directory levels below a listed row whose contents are read. Nine levels
-/// reach the files inside
+/// Directory levels descended below a listed row. Nine levels reach the files
+/// inside
 /// `Users\<user>\AppData\Local\Google\Chrome\User Data\Default\Cache\Cache_Data`,
-/// which is where Chrome and Edge keep their cache bytes (a browser cache
-/// nested deeper still ends as a marked floor).
+/// which is where Chrome and Edge keep their cache bytes; the entries of a
+/// level-nine directory are still enumerated (files one level deeper are
+/// counted), while descending further is not and ends as a marked floor.
 const RADAR_MAX_DEPTH: u32 = 9;
 
-/// Direct child directories queued for one root. A wider level is cut and the
-/// aggregate becomes a floor, so a pathological directory cannot grow the
-/// queue without bound.
+/// Direct child directories queued for one root. A wider level is cut (the
+/// kept subset is the alphabetically first names, so it does not depend on
+/// read_dir order) and the aggregate becomes a floor; enumeration itself is
+/// bounded by the entry budget, and only the cut subset opens directory
+/// handles.
 const RADAR_QUEUE_CAP: usize = 4096;
 
 /// How often a walk reports progress. The panel polls "found" every 250ms; a
@@ -297,7 +349,10 @@ const RADAR_REPORT_EVERY: u64 = 4096;
 
 /// Limits that keep one radar call predictable.
 struct RadarLimits {
-    /// Directory levels below a listed row whose contents are read.
+    /// Directory levels descended below a listed row. Nine levels reach the
+    /// files inside a real browser cache; the entries of a level-nine
+    /// directory are still enumerated (files one level deeper are counted),
+    /// while descending further is not and ends as a marked floor.
     max_depth: u32,
     /// Rows kept per listed root; the final list is ranked again.
     row_cap: usize,
@@ -446,7 +501,9 @@ fn root_walk(
     // Deterministic order in two senses: the budget is shared in name order,
     // and a level wider than the queue cap keeps the alphabetically smallest
     // names instead of whichever read_dir happened to return first.
-    child_dirs.sort_by_key(|p| p.to_string_lossy().to_lowercase());
+    // Cached key: a wide level would otherwise re-lowercase every path on
+    // every comparison (fsutil::order_candidates uses the same shape).
+    child_dirs.sort_by_cached_key(|p| p.to_string_lossy().to_lowercase());
     if child_dirs.len() > limits.queue_cap {
         child_dirs.truncate(limits.queue_cap);
         aggregate.capped = true;
@@ -461,17 +518,18 @@ fn root_walk(
                 return (child, ChildWalk::Unmeasured);
             }
             match start_walk(&child, limits.max_depth) {
-                WalkStart::Walk(walk) => (child, ChildWalk::Walk(walk)),
+                WalkStart::Walk(walk) => (child, ChildWalk::Walk(Box::new(*walk))),
                 WalkStart::Reparse => (child, ChildWalk::Reparse),
                 WalkStart::Unreadable => (
                     child,
-                    ChildWalk::Walk(Walk {
+                    ChildWalk::Walk(Box::new(Walk {
                         stack: Vec::new(),
+                        pending: None,
                         bytes: 0,
                         inspected: 0,
                         finished: true,
                         capped: true,
-                    }),
+                    })),
                 ),
             }
         })
