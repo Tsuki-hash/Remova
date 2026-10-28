@@ -12,9 +12,11 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, "0")}s`;
 }
 
-export function ScanProgressBar({ progress, onCancel, title, cancelledLabel, failedLabel }: {
+export function ScanProgressBar({ progress, onCancel, title, cancelledLabel, failedLabel, foundLabel }: {
   progress: ScanProgressState | null; onCancel: () => Promise<void>;
   title?: string; cancelledLabel?: string; failedLabel?: string;
+  /** What the counter counts; defaults to the scan-wide "items found". */
+  foundLabel?: (n: number) => string;
 }) {
   if (!progress || progress.status === "complete") return null;
   const L = t();
@@ -28,7 +30,7 @@ export function ScanProgressBar({ progress, onCancel, title, cancelledLabel, fai
       <span role={running ? undefined : "status"}>{progress.status === "cancelled" ? cancelledLabel ?? L.scanCancelledIncomplete
         : progress.status === "failed" ? failedLabel ?? L.scanFailedIncomplete
         : progress.status === "stopping" ? L.scanStopping : L.scanStage(progress.stage)}</span>
-      {running && <span style={css.muted}>{L.scanFound(progress.found)}</span>}
+      {running && <span style={css.muted}>{(foundLabel ?? L.scanFound)(progress.found)}</span>}
       {/* elapsed stays visible in terminal states so a cancelled or degraded
           scan still reports how long it actually ran. */}
       <span style={css.muted}>{elapsed}</span>

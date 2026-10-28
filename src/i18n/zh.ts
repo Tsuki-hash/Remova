@@ -787,12 +787,18 @@ export const dict = {
     idleScanning: "正在分析闲置候选…",
     radarScanning: "正在统计磁盘占用…",
     diskRadarFloor: (size: string, scanned?: number) =>
-      scanned !== undefined && scanned > 0
+      // A count that is present is shown as-is (even 0: "checked 0 entries" is
+      // the truthful reading of an unreadable root); only a missing count is
+      // omitted instead of being invented as zero.
+      scanned !== undefined
         ? `≥ ${size}（已检查 ${scanned} 项，未完整测量）`
         : `≥ ${size}（未完整测量）`,
     diskRadarAggregate: "根合计",
     diskRadarPartial: "此目录未完整测量：部分子目录未列出或体积为下限，可在资源管理器中查看全部内容",
     diskRadarCancelled: "已取消；列表保留上次结果",
+    diskRadarCancelledEmpty: "扫描已取消，尚无结果",
+    diskRadarEmptyFolder: "此目录下没有可列出的子目录",
+    scanFoundRadar: (n: number) => `已检查 ${n} 项`,
     diskRadarAggregateHint: "该行是此根目录的合计，包含其下所有子目录",
     radarEmpty: "当前盘面没有可列出的目录",
     filterOnlyOn: "仅启用",

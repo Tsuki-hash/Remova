@@ -359,7 +359,8 @@ export type DirSizeRow = {
   name: string;
   size_kb: number;
   parent: string;
-  /** entry/depth/queue budget ran out — size is a floor, not a total */
+  /** the walk was cut short (budget, depth cap, queue cap, unreadable level or
+   * cancellation) — size is a floor, not a total */
   capped?: boolean;
   /** entries actually inspected; with `capped`, the floor was taken here */
   scanned?: number;
@@ -370,9 +371,12 @@ export type DirSizeRow = {
 /** Drill-down result: the ranked children plus what the list does not show. */
 export type DirChildrenResult = {
   rows: DirSizeRow[];
-  /** child directories the walk never reached or the row cap dropped */
+  /** rows the caller will not see: children never walked plus rows dropped by
+   * the row cap. A level cut by the queue cap is reported through `capped`
+   * instead (its exact count is unknown). */
   omitted?: number;
-  /** the parent's own scan was cut short (budget, queue cap, unreadable level) */
+  /** the listing is not the whole story: the parent scan was cut short, or a
+   * child could not be measured in full (its number is a floor) */
   capped?: boolean;
 };
 

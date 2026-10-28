@@ -53,8 +53,9 @@ export function DiskRadarPanel({
     try {
       if (parent) {
         // The drill-down result carries what the list leaves out (omitted
-        // children, a cut parent scan); the top view says it through the
-        // per-row floor markers instead.
+        // children, a cut parent scan). The top view is a top-N ranking: rows
+        // dropped by its cutoff are not reported, and incompleteness shows only
+        // through the per-row floor markers.
         const result = await runReadOnly(
           id => api.listDirChildren(parent, id),
           r => (r?.rows.length ?? 0),
@@ -63,7 +64,6 @@ export function DiskRadarPanel({
           setRows(result?.rows ?? []);
           setPartial({ omitted: result?.omitted ?? 0, capped: result?.capped ?? false });
           setCrumbs(nextCrumbs);
-          setDrive(drive);
         }
       } else {
         const list = await runReadOnly(
@@ -174,7 +174,12 @@ export function DiskRadarPanel({
           </button>
         </div>
       </div>
-      <ScanProgressBar progress={progress} onCancel={cancel} cancelledLabel={L.diskRadarCancelled} />
+      <ScanProgressBar
+        progress={progress}
+        onCancel={cancel}
+        cancelledLabel={rows === null ? L.diskRadarCancelledEmpty : L.diskRadarCancelled}
+        foundLabel={L.scanFoundRadar}
+      />
       <VirtualList
         items={rows ?? []}
         height={320}
@@ -183,11 +188,17 @@ export function DiskRadarPanel({
         ariaLabel={L.diskRadarTitle}
         empty={
           rows === null ? undefined : (
-            <div style={css.muted}>{partial?.capped ? L.diskRadarPartial : L.radarEmpty}</div>
+            <div style={css.muted}>
+              {partial?.capped
+                ? L.diskRadarPartial
+                : crumbs.length > 0
+                  ? L.diskRadarEmptyFolder
+                  : L.radarEmpty}
+            </div>
           )
         }
         keyOf={(r) => r.path}
-        renderItem={(r) => (
+        renderItem={(r, index) => (
           <div
             style={{
               display: "flex",
@@ -206,7 +217,10 @@ export function DiskRadarPanel({
                 </span>
                 {r.aggregate && (
                   <span
-                    aria-describedby={`radar-agg-${r.path}`}
+                    // The id must not contain whitespace: "C:\Program Files"
+                    // would split the IDREF and lose the description.
+                    aria-describedby={`radar-agg-${index}`}
+                    title={L.diskRadarAggregateHint}
                     style={{
                       flexShrink: 0,
                       fontSize: 10.5,
@@ -218,7 +232,7 @@ export function DiskRadarPanel({
                     }}
                   >
                     {L.diskRadarAggregate}
-                    <span id={`radar-agg-${r.path}`} style={visuallyHidden}>
+                    <span id={`radar-agg-${index}`} style={visuallyHidden}>
                       {L.diskRadarAggregateHint}
                     </span>
                   </span>

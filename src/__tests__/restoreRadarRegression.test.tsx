@@ -38,11 +38,29 @@ it.each(["disk", "idle"] as const)("rejects a late successful %s result after ca
   // The radar is read-only and has no cleanup to re-run, so it says what
   // actually happened instead of borrowing the cleanup wording.
   expect(screen.getByRole("status").textContent).toBe(
-    mode === "disk" ? t().diskRadarCancelled : t().scanCancelledIncomplete,
+    // First load: there is no previous result to keep, so the radar
+    // says so instead of promising one.
+    mode === "disk" ? t().diskRadarCancelledEmpty : t().scanCancelledIncomplete,
   );
   expect(onError).not.toHaveBeenCalled();
   expect(native.cancelAssociationScan).toHaveBeenCalledWith(201);
   expect(screen.queryByText(mode === "disk" ? t().radarEmpty : t().idleEmpty)).toBeNull();
+});
+
+it("keeps the visible list when a refresh is cancelled", async () => {
+  // First load succeeds; the refresh hangs; cancelling it must not wipe the
+  // rows the user is reading.
+  render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+  expect(await screen.findByText("root")).toBeTruthy();
+  let finish!: (rows: unknown[]) => void;
+  native.listTopDirSizes.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
+  await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("button", { name: t().cancelScan }));
+  await act(async () => { finish([]); });
+  // The previous row survives, and the note says the list was kept.
+  expect(screen.getByText("root")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe(t().diskRadarCancelled);
 });
 
 it("keeps restore failures beyond the twentieth row in a bounded scroll area", () => {

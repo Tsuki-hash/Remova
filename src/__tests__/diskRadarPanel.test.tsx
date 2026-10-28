@@ -105,8 +105,11 @@ describe("DiskRadarPanel", () => {
       (element?.textContent ?? "").includes(L.diskRadarFloor(formatSize(5_000))),
     );
     expect(rows.length).toBeGreaterThan(0);
-    // The unknown-count wording must not claim a count at all.
-    expect(rows[0]!.textContent).not.toContain("0 项");
+    // The unknown-count wording must not claim a count at all. Compare against
+    // the i18n text (not a Chinese literal) so the pin survives a language
+    // switch and fails when the implementation starts printing "0".
+    const counted = L.diskRadarFloor(formatSize(5_000), 0);
+    expect(rows[0]!.textContent).not.toContain(counted);
   });
 
   it("labels a root aggregate row as a total", async () => {
@@ -136,6 +139,11 @@ describe("DiskRadarPanel", () => {
     const described = await screen.findByText(L.diskRadarAggregateHint);
     const badge = described.parentElement!;
     expect(badge.getAttribute("aria-describedby")).toBe(described.id);
+    // The id must survive an IDREF split: paths contain spaces
+    // ("C:\\Program Files") and a space would break the association.
+    expect(described.id).not.toMatch(/\s/);
+    // Hover keeps the explanation for pointer users.
+    expect(badge.getAttribute("title")).toBe(L.diskRadarAggregateHint);
     expect(badge.textContent).toContain(L.diskRadarAggregate);
     // One badge only: the child row is a single directory, not a total.
     expect(screen.getAllByText(L.diskRadarAggregateHint)).toHaveLength(1);
@@ -160,6 +168,39 @@ describe("DiskRadarPanel", () => {
     // a complete listing from a capped one.
     expect(await screen.findByText(L.scanOmitted(5))).toBeTruthy();
     expect(screen.getByText(L.diskRadarPartial)).toBeTruthy();
+  });
+
+  it("says a capped drill-down is incomplete instead of calling it empty", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      { path: "C:\\Users", name: "Users", size_kb: 100, parent: "C:\\", capped: false },
+    ]);
+    vi.mocked(api.listDirChildren).mockResolvedValue({
+      rows: [],
+      omitted: 3,
+      capped: true,
+    });
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    fireEvent.click(await screen.findByRole("button", { name: L.detailShow }));
+    // An empty list that was cut short must not read as "nothing here".
+    expect(await screen.findByText(L.diskRadarPartial)).toBeTruthy();
+    expect(screen.queryByText(L.radarEmpty)).toBeNull();
+    // The count is hidden on an empty list; the note above carries the news.
+    expect(screen.queryByText(L.scanOmitted(3))).toBeNull();
+  });
+
+  it("labels a drilled-down empty folder as such, not as an empty drive", async () => {
+    mockDrives();
+    vi.mocked(api.listTopDirSizes).mockResolvedValue([
+      { path: "C:\\Users", name: "Users", size_kb: 100, parent: "C:\\", capped: false },
+    ]);
+    vi.mocked(api.listDirChildren).mockResolvedValue({ rows: [], omitted: 0, capped: false });
+    render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+    const L = t();
+    fireEvent.click(await screen.findByRole("button", { name: L.detailShow }));
+    expect(await screen.findByText(L.diskRadarEmptyFolder)).toBeTruthy();
+    expect(screen.queryByText(L.radarEmpty)).toBeNull();
   });
 
   it("reports a load failure through onError instead of an empty list", async () => {

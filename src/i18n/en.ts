@@ -806,12 +806,17 @@ export const dict: EnDict = {
     idleScanning: "Scanning idle candidates…",
     radarScanning: "Measuring disk usage…",
     diskRadarFloor: (size: string, scanned?: number) =>
-      scanned !== undefined && scanned > 0
+      // Present counts are shown verbatim, including 0 (an unreadable root);
+      // only a missing count is omitted rather than invented as zero.
+      scanned !== undefined
         ? `≥ ${size} (checked ${scanned} entries; not fully measured)`
         : `≥ ${size} (not fully measured)`,
     diskRadarAggregate: "Root total",
     diskRadarPartial: "This directory is not fully measured: some subdirectories are missing or sized as floors — open it in Explorer for the full contents",
     diskRadarCancelled: "Cancelled; the list keeps the previous result",
+    diskRadarCancelledEmpty: "Scan cancelled; no results yet",
+    diskRadarEmptyFolder: "No subdirectories to list in this folder",
+    scanFoundRadar: (n: number) => `${n} entries checked`,
     diskRadarAggregateHint: "This row totals the whole root, including every subdirectory below it",
     radarEmpty: "Nothing to list on this drive",
     filterOnlyOn: "Enabled only",
