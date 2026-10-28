@@ -762,6 +762,13 @@ fn is_drive_root_shape(norm: &str) -> bool {
     b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
+/// A drive root is browsable when it is the system drive or a local fixed
+/// disk; CD-ROM / removable / network drives are out of scope. Pure so the
+/// decision is testable without depending on the machine's drives.
+fn drive_browsable(letter: char, sys: &str, local_fixed: bool) -> bool {
+    letter.to_ascii_uppercase().to_string() == sys || local_fixed
+}
+
 /// True when `path` is browsable by the radar for its drive (read-only).
 fn under_radar_roots(path: &str) -> bool {
     let raw = path.replace('/', "\\");
@@ -799,7 +806,7 @@ fn under_radar_roots(path: &str) -> bool {
     let sys = system_drive_letter();
     if is_drive_root_shape(&norm) {
         // Drive root: system drive always; others only when local fixed.
-        return letter_up == sys || is_local_fixed_drive(letter);
+        return drive_browsable(letter, &sys, is_local_fixed_drive(letter));
     }
     if letter_up == sys {
         for leaf in [
@@ -1290,6 +1297,25 @@ mod tests {
         }
     }
 
+    /// The browsable-drive rule is a pure decision: the system drive always,
+    /// other drives only when local fixed — a CD-ROM or removable drive is
+    /// refused without probing the machine's actual drives.
+    #[test]
+    fn drive_browsable_accepts_system_and_fixed_only() {
+        let sys = system_drive_letter();
+        assert!(super::drive_browsable(
+            sys.chars().next().unwrap(),
+            &sys,
+            false
+        ));
+        assert!(super::drive_browsable('d', &sys, true));
+        assert!(
+            !super::drive_browsable('E', &sys, false),
+            "CD-ROM / removable is out of scope"
+        );
+        assert!(!super::drive_browsable('e', &sys, false));
+    }
+
     /// `..` must never pass the radar roots check (string prefix or canonicalize).
     #[test]
     fn drilldown_rejects_traversal_outside_roots() {
@@ -1580,6 +1606,18 @@ mod tests {
             rows.iter().any(|r| r.aggregate),
             "the root totals are part of the list"
         );
+        // Every root that exists on this machine keeps its own total row —
+        // none may be pushed out of the list by another root's children.
+        for root in super::system_drive_roots() {
+            if !root.exists() {
+                continue;
+            }
+            let name = root.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                rows.iter().any(|r| r.aggregate && r.name == name),
+                "the total for {name} must be in the list"
+            );
+        }
         assert!(
             rows.iter().any(|r| r.size_kb > 0),
             "at least one row measured real bytes"
