@@ -69,7 +69,8 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 ### More tools
 - Orphans page, startup / services / scheduled tasks; broken MSI records and orphan firewall rules  
-- Installer & updater caches, specialty caches, disk radar, idle-app radar; results state “N more not shown” and which locations could not be read  
+- Installer & updater caches, specialty caches, and the idle-app radar note “N more not shown” on their main lists (cache cleanup also lists the locations it could not read)  
+- **Disk radar**: a read-only view of what takes the space; the overview pins each root's total ahead of size-ranked children (24 rows on the system drive, 12 elsewhere and when drilling down), unfinished directories show a `>=` floor with the entries checked, drill-down lists note “N more not shown”, and the system-drive overview states it covers the five known roots only  
 - **C: drive space checkup**: overview (volume shape and junction ledger with dead links), cleanup & migration (action list with cleanable rows pinned and selectable, migration candidates handed off), and component store (read-only WinSxS DISM analysis)
 - **Regenerable cache cleanup**: fixed layouts only (update downloads, temp dirs, crash dumps…), no backup by design; contents removed, directories kept, locked files reported honestly  
 - **Directory migration (junction)**: move a folder to another drive — plan → copy (per-file diff) → cutover (auto-rollback) → finish (confirm to drop the backup); rollback available at every step  
