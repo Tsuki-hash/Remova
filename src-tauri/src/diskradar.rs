@@ -154,6 +154,17 @@ enum WalkStart {
     Unreadable,
 }
 
+/// Per-child state in `root_walk`.
+enum ChildWalk {
+    Walk(Walk),
+    /// A reparse child: not this root's storage, not a row.
+    Reparse,
+    /// Never opened because the budget ran out or the scan was cancelled
+    /// while classifying. Listed as a 0-byte floor instead of paying a stat
+    /// and a directory handle that no walk will ever use.
+    Unmeasured,
+}
+
 fn start_walk(root: &std::path::Path, max_depth: u32) -> WalkStart {
     // The parent already classified this entry with its own metadata read; the
     // extra `symlink_metadata` here is a deliberate re-check for the window
@@ -175,17 +186,26 @@ fn start_walk(root: &std::path::Path, max_depth: u32) -> WalkStart {
 }
 
 impl Walk {
-    /// Consume up to `budget` entries, resuming from where the last call
-    /// stopped. `finished` means every directory in the subtree was read;
-    /// otherwise `capped` says the number is a floor.
+    /// Consume up to `budget` entries, resuming where the last call stopped.
+    ///
+    /// `capped` is a *permanent* cut: a cancelled scan, a depth level that was
+    /// not descended, or an entry that could not be read. A spent slice is only
+    /// a pause — the water-filling loop hands the walk another slice later, so
+    /// marking it here would leave a finished directory labelled as a floor.
+    /// `finished` (the stack emptied) is the only proof of a total; a paused or
+    /// cut walk is a floor through `is_floor`.
     fn advance(&mut self, budget: &mut u64, progress: &mut WalkProgress) {
         loop {
             let Some(top) = self.stack.len().checked_sub(1) else {
                 self.finished = true;
                 return;
             };
-            if crate::scan_task::cancelled() || *budget == 0 {
+            if crate::scan_task::cancelled() {
                 self.capped = true;
+                return;
+            }
+            if *budget == 0 {
+                // Paused, not cut: the caller may resume this walk.
                 return;
             }
             let depth_left = self.stack[top].0;
@@ -212,8 +232,10 @@ impl Walk {
                         continue;
                     }
                     if meta.is_dir() {
-                        if depth_left == 0 {
-                            // Content below the depth cap stays unmeasured.
+                        // Files of this level are counted; a directory one
+                        // level deeper is where the walk stops, matching the
+                        // old recursion (the level below stays unmeasured).
+                        if depth_left <= 1 {
                             self.capped = true;
                             continue;
                         }
@@ -349,10 +371,10 @@ fn rank_rows(rows: &mut Vec<DirSizeRow>, cap: usize) {
 /// unused share flows to the largest ones. The walk therefore stops because the
 /// budget is gone, not because the first child happened to be first.
 ///
-/// `omitted` counts rows the caller will not see: children queued but never
-/// walked plus rows dropped by the row cap. A level cut by `queue_cap` (the
-/// directory had more direct children than the cap) and unreadable levels are
-/// reported through `capped` instead — their exact count is not known.
+/// `omitted` counts rows the caller will not see: rows dropped by the row cap.
+/// A child that was never measured is listed as a 0-byte floor row instead, and
+/// a level cut by `queue_cap` is reported through `capped` — its exact count is
+/// not known.
 fn root_walk(
     root: &std::path::Path,
     limits: &RadarLimits,
@@ -415,32 +437,42 @@ fn root_walk(
             continue;
         }
         if meta.is_dir() {
-            if child_dirs.len() >= limits.queue_cap {
-                aggregate.capped = true;
-                break;
-            }
             child_dirs.push(ent.path());
         } else if meta.is_file() {
             root_bytes += meta.len() as i64;
         }
     }
-    // Deterministic order: budget shares must not depend on read_dir order.
+    // Deterministic order in two senses: the budget is shared in name order,
+    // and a level wider than the queue cap keeps the alphabetically smallest
+    // names instead of whichever read_dir happened to return first.
     child_dirs.sort_by_key(|p| p.to_string_lossy().to_lowercase());
-    let mut walks: Vec<(PathBuf, Option<Walk>)> = child_dirs
-        .iter()
-        .map(|child| match start_walk(child, limits.max_depth) {
-            WalkStart::Walk(walk) => (child.clone(), Some(walk)),
-            WalkStart::Reparse => (child.clone(), None),
-            WalkStart::Unreadable => (
-                child.clone(),
-                Some(Walk {
-                    stack: Vec::new(),
-                    bytes: 0,
-                    inspected: 0,
-                    finished: true,
-                    capped: true,
-                }),
-            ),
+    if child_dirs.len() > limits.queue_cap {
+        child_dirs.truncate(limits.queue_cap);
+        aggregate.capped = true;
+    }
+    let defer = crate::scan_task::cancelled() || *budget == 0;
+    let mut walks: Vec<(PathBuf, ChildWalk)> = child_dirs
+        .into_iter()
+        .map(|child| {
+            if defer {
+                // No pool to spend: report the child as unmeasured rather than
+                // opening up to `queue_cap` directories that nothing will read.
+                return (child, ChildWalk::Unmeasured);
+            }
+            match start_walk(&child, limits.max_depth) {
+                WalkStart::Walk(walk) => (child, ChildWalk::Walk(walk)),
+                WalkStart::Reparse => (child, ChildWalk::Reparse),
+                WalkStart::Unreadable => (
+                    child,
+                    ChildWalk::Walk(Walk {
+                        stack: Vec::new(),
+                        bytes: 0,
+                        inspected: 0,
+                        finished: true,
+                        capped: true,
+                    }),
+                ),
+            }
         })
         .collect();
     // Water filling: equal shares for every unfinished child, repeated until the
@@ -449,7 +481,7 @@ fn root_walk(
         let active: Vec<usize> = walks
             .iter()
             .enumerate()
-            .filter(|(_, (_, walk))| walk.as_ref().is_some_and(|w| !w.finished))
+            .filter(|(_, (_, child))| matches!(child, ChildWalk::Walk(w) if !w.finished))
             .map(|(i, _)| i)
             .collect();
         if active.is_empty() || *budget == 0 {
@@ -461,7 +493,7 @@ fn root_walk(
             if *budget == 0 {
                 break;
             }
-            let Some(walk) = walks[i].1.as_mut() else {
+            let ChildWalk::Walk(walk) = &mut walks[i].1 else {
                 continue;
             };
             let mut slice = share.min(*budget);
@@ -477,34 +509,41 @@ fn root_walk(
     }
     let mut children: Vec<DirSizeRow> = Vec::new();
     let mut child_bytes_total: i64 = 0;
-    for (path, walk) in walks {
-        match walk {
-            None => {
+    for (path, child) in walks {
+        let (bytes, inspected, floor) = match child {
+            ChildWalk::Reparse => {
                 // Reparse child: not part of this root's storage, not a row.
+                continue;
             }
-            Some(w) => {
-                child_bytes_total += w.bytes;
+            ChildWalk::Unmeasured => {
+                // Nothing was measured: a floor with no bytes.
+                aggregate.capped = true;
+                (0, 0, true)
+            }
+            ChildWalk::Walk(w) => {
                 if w.is_floor() {
                     aggregate.capped = true;
                 }
-                let row = DirSizeRow {
-                    path: path.to_string_lossy().into_owned(),
-                    name: path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                    size_kb: kb(w.bytes),
-                    parent: root.to_string_lossy().into_owned(),
-                    capped: w.is_floor(),
-                    scanned: w.inspected,
-                    aggregate: false,
-                };
-                // An unreadable or unmeasured child is a floor worth showing; a
-                // proven-empty one is not a row the user can act on.
-                if row.size_kb > 0 || row.capped {
-                    children.push(row);
-                }
+                (w.bytes, w.inspected, w.is_floor())
             }
+        };
+        child_bytes_total += bytes;
+        let row = DirSizeRow {
+            path: path.to_string_lossy().into_owned(),
+            name: path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            size_kb: kb(bytes),
+            parent: root.to_string_lossy().into_owned(),
+            capped: floor,
+            scanned: inspected,
+            aggregate: false,
+        };
+        // An unreadable or unmeasured child is a floor worth showing; a
+        // proven-empty one is not a row the user can act on.
+        if row.size_kb > 0 || row.capped {
+            children.push(row);
         }
     }
     // Rank the measured rows, then keep every unmeasured floor that still fits:
@@ -548,11 +587,11 @@ fn top_dir_sizes_with_budget(letter: Option<char>, budget_cap: u64) -> Vec<DirSi
         .unwrap_or('C')
         .to_ascii_uppercase();
     let letter = letter.map(|c| c.to_ascii_uppercase()).unwrap_or(sys);
-    let mut out: Vec<DirSizeRow> = Vec::new();
-    // Rows kept outside the size ranking: an unreadable (or unmeasured) root is
-    // a diagnostic the user must see even though its 0 KB would sort it out of
-    // any cutoff.
-    let mut diagnostics: Vec<DirSizeRow> = Vec::new();
+    // One row per listed root, kept apart from the ranked child rows: a root
+    // total is the anchor of the view and must not be pushed out of the list by
+    // another root's children.
+    let mut totals: Vec<DirSizeRow> = Vec::new();
+    let mut rows: Vec<DirSizeRow> = Vec::new();
     let mut progress = WalkProgress::new();
     // One budget for the whole call, shared by every root.
     let mut budget = budget_cap;
@@ -564,42 +603,46 @@ fn top_dir_sizes_with_budget(letter: Option<char>, budget_cap: u64) -> Vec<DirSi
         let mut remaining = roots.len();
         for root in roots {
             if crate::scan_task::cancelled() {
-                return out;
+                return rows;
             }
             // Give every remaining root a fair share; an unused share returns
             // to the pool instead of letting the first root consume it all.
+            // (Within a root the children are water-filled, see `root_walk`.)
             let share = budget / (remaining.max(1) as u64);
             remaining = remaining.saturating_sub(1);
             let mut root_budget = share;
-            let (aggregate, rows, _) =
+            let (aggregate, child_rows, _) =
                 root_walk(&root, &RADAR_VISIT_LIMITS, &mut root_budget, &mut progress);
             budget = budget.saturating_sub(share.saturating_sub(root_budget));
-            if aggregate.size_kb > 0 {
-                out.push(aggregate);
-            } else if aggregate.capped {
-                diagnostics.push(aggregate);
+            // A capped zero-size root is an unreadable root: keep the row so
+            // the UI can say the total is unknown instead of hiding the root.
+            if aggregate.size_kb > 0 || aggregate.capped {
+                totals.push(aggregate);
             }
-            out.extend(rows);
+            rows.extend(child_rows);
         }
-        rank_rows(&mut out, DISK_RADAR_TOP_N * 2);
+        rank_rows(&mut rows, DISK_RADAR_TOP_N * 2);
     } else {
         let root = drive_root(letter);
         if root.is_dir() && is_local_fixed_drive(letter) {
-            let (aggregate, rows, _) =
+            let (aggregate, child_rows, _) =
                 root_walk(&root, &RADAR_VISIT_LIMITS, &mut budget, &mut progress);
-            if aggregate.size_kb > 0 {
-                out.push(aggregate);
-            } else if aggregate.capped {
-                diagnostics.push(aggregate);
+            if aggregate.size_kb > 0 || aggregate.capped {
+                totals.push(aggregate);
             }
-            out.extend(rows);
-            rank_rows(&mut out, DISK_RADAR_TOP_N);
+            rows.extend(child_rows);
+            rank_rows(&mut rows, DISK_RADAR_TOP_N);
         }
     }
-    // Diagnostics are appended after the cutoff: a root we could not measure is
-    // exactly what the user needs to know, and its 0 KB would never rank in.
-    out.extend(diagnostics);
-    out
+    assemble_top(totals, rows)
+}
+
+/// Root totals come first and never compete with child rows for the cutoff; the
+/// ranked children follow. Both parts are bounded (one row per listed root, plus
+/// the child cap), so the list stays small.
+fn assemble_top(mut totals: Vec<DirSizeRow>, mut rows: Vec<DirSizeRow>) -> Vec<DirSizeRow> {
+    totals.append(&mut rows);
+    totals
 }
 
 /// Back-compat default (system drive).
@@ -674,9 +717,10 @@ fn under_radar_roots(path: &str) -> bool {
 
 /// Drill-down result: the ranked children plus what the list does not show.
 ///
-/// `omitted` counts rows the caller will not see: children never walked plus
-/// rows dropped by the row cap. A level cut by the queue cap is not counted
-/// here (the remaining count is unknown) — it shows up as `capped`.
+/// `omitted` counts rows the caller will not see: rows dropped by the row cap.
+/// A child that was never measured appears as a 0-byte floor row; a level cut
+/// by the queue cap is not counted here (the remaining count is unknown) — it
+/// shows up as `capped`.
 ///
 /// `capped` means the listing is not the whole story: the parent scan was cut
 /// short, or a child could not be measured in full. Either way the UI must say
@@ -1123,7 +1167,10 @@ mod tests {
     fn list_dir_children_rejects_blank_and_outside_paths() {
         assert!(list_dir_children("").is_err());
         assert!(list_dir_children("   ").is_err());
-        assert!(list_dir_children(r"C:\Games\Steam").is_err());
+        // A path outside the radar roots on THIS machine's system drive: the
+        // allow-list, not a missing directory, must be what refuses it.
+        let outside = format!(r"{}:\Games\Steam", system_drive_letter());
+        assert!(list_dir_children(&outside).is_err());
     }
 
     #[test]
@@ -1138,9 +1185,15 @@ mod tests {
         // UNC / device prefixes never allowed.
         assert!(!super::under_radar_roots(r"\\server\share\file"));
         assert!(!super::under_radar_roots(r"\\?\C:\x"));
-        // Non-system local fixed drives are browsable (letter-dependent).
-        let d_ok = super::is_local_fixed_drive('D');
-        assert_eq!(super::under_radar_roots(r"D:\Games\Steam"), d_ok);
+        // A non-system local fixed drive is browsable; on a single-drive
+        // machine there is nothing to assert, so the sub-check is skipped
+        // instead of hard-coding D:.
+        let other = (b'A'..=b'Z')
+            .map(|c| c as char)
+            .find(|c| c.to_ascii_uppercase().to_string() != sys && super::is_local_fixed_drive(*c));
+        if let Some(letter) = other {
+            assert!(super::under_radar_roots(&format!(r"{letter}:\Games\Steam")));
+        }
     }
 
     /// `..` must never pass the radar roots check (string prefix or canonicalize).
@@ -1157,6 +1210,207 @@ mod tests {
         assert!(super::under_radar_roots(&trav("keep")));
         // Drill-down refuses traversal shapes.
         assert!(list_dir_children(&trav(r"..\..\..\Windows\System32")).is_err());
+    }
+
+    /// A slice that runs out is a pause, not a cut: once the water-filling loop
+    /// hands the walk another slice and it finishes, the row must stop being a
+    /// floor. This was the regression that labelled finished directories as
+    /// "not fully measured".
+    #[test]
+    fn a_walk_finishing_in_a_later_round_is_not_a_floor() {
+        let root = fixture("cut-then-finish");
+        let top = root.path().join("Users");
+        seed(&top.join("aaa-big"), 5, 4096);
+        seed(&top.join("zzz-small"), 1, 4096);
+        let mut budget = 12u64;
+        let (aggregate, rows, _) =
+            super::root_walk(&top, &RADAR_VISIT_LIMITS, &mut budget, &mut progress());
+        let big = rows.iter().find(|r| r.name == "aaa-big").unwrap();
+        assert_eq!(big.size_kb, 20, "five files across the two slices");
+        assert!(!big.capped, "finished means a total, not a floor");
+        assert!(!aggregate.capped, "the root total is complete too");
+    }
+
+    /// Three files with five entries of pool: the walk finishes exactly when the
+    /// second slice runs out, and must not be left marked as a floor.
+    #[test]
+    fn an_exact_slice_boundary_is_not_a_floor() {
+        let root = fixture("exact-slice");
+        let top = root.path().join("Users");
+        seed(&top.join("only"), 3, 4096);
+        let mut budget = 5u64;
+        let (_, rows, _) =
+            super::root_walk(&top, &RADAR_VISIT_LIMITS, &mut budget, &mut progress());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].size_kb, 12);
+        assert!(!rows[0].capped, "all three files were read");
+    }
+
+    /// When the pool is already gone at classification time, the children are
+    /// reported as unmeasured floors without opening a single directory.
+    #[test]
+    fn children_are_not_opened_when_the_pool_is_already_spent() {
+        let root = fixture("deferred");
+        let top = root.path().join("Users");
+        seed(&top.join("child"), 1, 4096);
+        // Exactly enough for the one classification entry, none for the child.
+        let mut budget = 1u64;
+        let (aggregate, rows, _) =
+            super::root_walk(&top, &RADAR_VISIT_LIMITS, &mut budget, &mut progress());
+        assert!(aggregate.capped, "an unmeasured root total is a floor");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].size_kb, 0);
+        assert!(rows[0].capped, "the unmeasured child is a visible floor");
+        assert_eq!(rows[0].scanned, 0);
+    }
+
+    /// A level wider than the queue cap keeps the alphabetically first names,
+    /// so the kept subset does not depend on read_dir order.
+    #[test]
+    fn a_cut_level_keeps_the_same_names_on_every_machine() {
+        let root = fixture("queue-order");
+        let top = root.path().join("Wide");
+        for name in ["f", "a", "d", "b", "c", "e"] {
+            seed(&top.join(name), 1, 1024);
+        }
+        let limits = RadarLimits {
+            max_depth: 2,
+            row_cap: 8,
+            queue_cap: 3,
+        };
+        let mut budget = 1_000u64;
+        let (aggregate, rows, _) = super::root_walk(&top, &limits, &mut budget, &mut progress());
+        assert!(aggregate.capped);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"], "the smallest names survive the cut");
+    }
+
+    /// Root totals are emitted ahead of the ranked children, so a crowded
+    /// ranking cannot hide the row that anchors the view.
+    #[test]
+    fn root_totals_survive_the_child_cutoff() {
+        let total = |name: &str, size_kb: i64| DirSizeRow {
+            path: format!(r"C:\{name}"),
+            name: name.to_string(),
+            size_kb,
+            parent: r"C:\".to_string(),
+            capped: size_kb == 0,
+            scanned: 0,
+            aggregate: true,
+        };
+        let child = |name: &str, size_kb: i64| DirSizeRow {
+            path: format!(r"C:\Users\{name}"),
+            name: name.to_string(),
+            size_kb,
+            parent: r"C:\Users".to_string(),
+            capped: false,
+            scanned: 0,
+            aggregate: false,
+        };
+        let totals = vec![total("Users", 0), total("Windows", 500)];
+        let mut ranked: Vec<DirSizeRow> = (0..30)
+            .map(|i| child(&format!("c{i:02}"), 900 - i))
+            .collect();
+        super::rank_rows(&mut ranked, 24);
+        let out = super::assemble_top(totals, ranked);
+        assert_eq!(out.len(), 26, "two totals plus the 24 ranked children");
+        assert_eq!(out[0].name, "Users");
+        assert!(
+            out[0].capped,
+            "the unreadable root keeps its 0-byte floor row"
+        );
+        assert_eq!(out[1].name, "Windows");
+        assert!(out[2..].iter().all(|r| !r.aggregate));
+    }
+
+    /// A 0-byte floor row occupies a reserved slot only when one is free: with
+    /// every slot taken by measured rows it is dropped and counted as omitted.
+    #[test]
+    fn floor_rows_use_leftover_slots_and_are_counted_when_dropped() {
+        let root = fixture("floor-slots");
+        let top = root.path().join("Users");
+        seed(&top.join("m1"), 1, 4096);
+        seed(&top.join("m2"), 1, 4096);
+        // A directory holding only a subdirectory stays a 0-byte floor when the
+        // depth budget cannot descend.
+        std::fs::create_dir_all(top.join("f1").join("deeper")).unwrap();
+        std::fs::create_dir_all(top.join("f2").join("deeper")).unwrap();
+        let tight = RadarLimits {
+            max_depth: 1,
+            row_cap: 2,
+            queue_cap: 16,
+        };
+        let mut budget = 1_000u64;
+        let (_, rows, omitted) = super::root_walk(&top, &tight, &mut budget, &mut progress());
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.size_kb > 0));
+        assert_eq!(omitted, 2, "both floors were dropped and counted");
+
+        let roomy = RadarLimits {
+            max_depth: 1,
+            row_cap: 3,
+            queue_cap: 16,
+        };
+        let mut budget = 1_000u64;
+        let (_, rows, omitted) = super::root_walk(&top, &roomy, &mut budget, &mut progress());
+        assert_eq!(rows.len(), 3, "one floor fits the free slot");
+        assert_eq!(rows.iter().filter(|r| r.size_kb == 0).count(), 1);
+        assert_eq!(omitted, 1);
+    }
+
+    /// The depth cap matches the old recursion: files nine levels below the
+    /// listed row are counted, a directory at level ten is only marked.
+    #[test]
+    fn depth_counts_files_up_to_level_nine() {
+        let nine = fixture("depth-nine");
+        let mut at_nine = nine.path().to_path_buf();
+        for i in 1..=8 {
+            at_nine = at_nine.join(format!("l{i}"));
+        }
+        seed(&at_nine, 1, 4096);
+        let mut budget = 1_000u64;
+        assert_eq!(
+            super::walk_subtree(nine.path(), RADAR_MAX_DEPTH, &mut budget),
+            (4096, false)
+        );
+
+        let ten = fixture("depth-ten");
+        let mut at_ten = ten.path().to_path_buf();
+        for i in 1..=9 {
+            at_ten = at_ten.join(format!("l{i}"));
+        }
+        seed(&at_ten, 1, 4096);
+        let mut budget = 1_000u64;
+        let (bytes, capped) = super::walk_subtree(ten.path(), RADAR_MAX_DEPTH, &mut budget);
+        assert_eq!(bytes, 0, "level ten is not read");
+        assert!(capped, "and the row says so");
+    }
+
+    /// Cancelling stops the walk before it reads another entry, and the walk
+    /// reports itself as unfinished (not as an unreadable directory).
+    #[test]
+    fn a_cancelled_walk_stops_before_reading_entries() {
+        let root = fixture("cancel-advance");
+        seed(root.path(), 3, 4096);
+        let id = crate::scan_task::begin().unwrap();
+        // `run` turns a cancelled task into Err by design, so the walk state is
+        // captured out of the closure instead of asserted on its return value.
+        let mut captured = None;
+        let _ = crate::scan_task::run(id, || {
+            let WalkStart::Walk(mut walk) = super::start_walk(root.path(), 2) else {
+                panic!("fixture must be readable");
+            };
+            crate::scan_task::cancel(id).unwrap();
+            let mut budget = 10u64;
+            let mut p = super::WalkProgress::new();
+            walk.advance(&mut budget, &mut p);
+            captured = Some((budget, walk.inspected, walk.finished, walk.capped));
+        });
+        let (budget, inspected, finished, capped) = captured.expect("walk ran");
+        assert_eq!(budget, 10, "no entry was charged");
+        assert_eq!(inspected, 0, "no entry was read");
+        assert!(!finished, "a cancelled walk never claims to be complete");
+        assert!(capped, "and it is reported as a floor");
     }
 
     #[test]
