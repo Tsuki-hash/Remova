@@ -74,7 +74,9 @@ export function DiskRadarPanel({
           setRows(list);
           setPartial(null);
           setCrumbs(nextCrumbs);
-          if (letter !== undefined) setDrive(letter);
+          // An empty letter means "system drive": resolve it so the selected
+          // state and the capacity summary are correct after any load.
+          setDrive(letter || drives.find((d) => d.is_system)?.letter || drives[0]?.letter || "");
         }
       }
     } catch (e) {
@@ -178,6 +180,7 @@ export function DiskRadarPanel({
         progress={progress}
         onCancel={cancel}
         cancelledLabel={rows === null ? L.diskRadarCancelledEmpty : L.diskRadarCancelled}
+        failedLabel={L.diskRadarFailed}
         foundLabel={L.scanFoundRadar}
       />
       <VirtualList
@@ -218,9 +221,10 @@ export function DiskRadarPanel({
                 {r.aggregate && (
                   <span
                     // The id must not contain whitespace: "C:\Program Files"
-                    // would split the IDREF and lose the description.
+                    // would split the IDREF and lose the description. The
+                    // explanation lives outside the badge so the accessible
+                    // name stays the visible label.
                     aria-describedby={`radar-agg-${index}`}
-                    title={L.diskRadarAggregateHint}
                     style={{
                       flexShrink: 0,
                       fontSize: 10.5,
@@ -232,9 +236,11 @@ export function DiskRadarPanel({
                     }}
                   >
                     {L.diskRadarAggregate}
-                    <span id={`radar-agg-${index}`} style={visuallyHidden}>
-                      {L.diskRadarAggregateHint}
-                    </span>
+                  </span>
+                )}
+                {r.aggregate && (
+                  <span id={`radar-agg-${index}`} style={visuallyHidden}>
+                    {L.diskRadarAggregateHint}
                   </span>
                 )}
               </div>

@@ -815,6 +815,7 @@ export const dict: EnDict = {
     diskRadarPartial: "This directory is not fully measured: some subdirectories are missing or sized as floors — open it in Explorer for the full contents",
     diskRadarCancelled: "Cancelled; the list keeps the previous result",
     diskRadarCancelledEmpty: "Scan cancelled; no results yet",
+    diskRadarFailed: "Disk stats did not finish; reload to try again",
     diskRadarEmptyFolder: "No subdirectories to list in this folder",
     scanFoundRadar: (n: number) => `${n} entries checked`,
     diskRadarAggregateHint: "This row totals the whole root, including every subdirectory below it",

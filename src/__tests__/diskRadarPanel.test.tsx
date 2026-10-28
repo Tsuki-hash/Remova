@@ -119,7 +119,7 @@ describe("DiskRadarPanel", () => {
       {
         // A root whose path contains a space: the id must stay free of
         // whitespace or the IDREF splits and the description is lost.
-        path: "C:\\Program Files",
+        path: "C:\\Program Files (x86)",
         name: "Program Files",
         size_kb: 44_000_000,
         parent: "C:\\",
@@ -140,14 +140,15 @@ describe("DiskRadarPanel", () => {
     // The explanation is real text, not a title: keyboard and screen-reader
     // users reach it through aria-describedby on the badge around it.
     const described = await screen.findByText(L.diskRadarAggregateHint);
-    const badge = described.parentElement!;
+    // The explanation is a sibling span; the badge references it by
+    // aria-describedby (index-based id, no whitespace even for
+    // "C:\\Program Files (x86)").
+    const badge = document.querySelector(`[aria-describedby="${described.id}"]`)!;
     expect(badge.getAttribute("aria-describedby")).toBe(described.id);
-    // The id must survive an IDREF split: paths contain spaces
-    // ("C:\\Program Files") and a space would break the association.
     expect(described.id).not.toMatch(/\s/);
-    // Hover keeps the explanation for pointer users.
-    expect(badge.getAttribute("title")).toBe(L.diskRadarAggregateHint);
-    expect(badge.textContent).toContain(L.diskRadarAggregate);
+    // The accessible name is the visible label; the description is external.
+    expect(badge.textContent).toBe(L.diskRadarAggregate);
+    expect(badge.getAttribute("title")).toBeNull();
     // One badge only: the child row is a single directory, not a total.
     expect(screen.getAllByText(L.diskRadarAggregateHint)).toHaveLength(1);
   });

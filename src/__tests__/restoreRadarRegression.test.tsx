@@ -5,7 +5,7 @@ import { useMoreRestore } from "../hooks/useMoreRestore";
 import { RestorePanel } from "../components/RestorePanel";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
 import { IdleRadarPanel } from "../components/IdleRadarPanel";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 
@@ -45,6 +45,27 @@ it.each(["disk", "idle"] as const)("rejects a late successful %s result after ca
   expect(onError).not.toHaveBeenCalled();
   expect(native.cancelAssociationScan).toHaveBeenCalledWith(201);
   expect(screen.queryByText(mode === "disk" ? t().radarEmpty : t().idleEmpty)).toBeNull();
+});
+
+it("shows the radar wording for the progress counter", async () => {
+  let finish!: (rows: unknown[]) => void;
+  native.listTopDirSizes.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+  await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalled());
+  // The radar counts entries checked, not "items found".
+  expect(screen.getByText(t().scanFoundRadar(0))).toBeTruthy();
+  expect(screen.queryByText(t().scanFound(0))).toBeNull();
+  await act(async () => { finish([{ path: "root", name: "root", size_kb: 1, capped: true, scanned: 12345 }]); });
+});
+
+it("names the failed radar scan without pointing at an analyze button", async () => {
+  native.listTopDirSizes.mockRejectedValueOnce(new Error("boom"));
+  render(<DiskRadarPanel onClose={vi.fn()} onError={vi.fn()} />);
+  const L = t();
+  // The radar has a reload button, not an analyze button, so the failure note
+  // must not borrow the cleanup scan's "analyze again" phrasing.
+  expect(await screen.findByText(L.diskRadarFailed)).toBeTruthy();
+  expect(screen.queryByText(L.scanFailedIncomplete)).toBeNull();
 });
 
 it("keeps the visible list when a refresh is cancelled", async () => {
@@ -124,7 +145,8 @@ it("shows capped sizes as one floor marker and catches open failures", async () 
   native.openPath.mockRejectedValueOnce(new Error("failed"));
   const onError = vi.fn();
   render(<DiskRadarPanel onClose={() => {}} onError={onError} />);
-  const size = await screen.findByText(/≥ 1 KB（/);
+  const size = (await screen.findAllByText((_c, el) =>
+      (el?.textContent ?? "").includes(t().diskRadarFloor(formatSize(1), 12345))))[0]!;
   // The floor states how far the bounded walk got — the count is part of the
   // honesty contract, not decoration.
   expect(size.textContent).toContain("12345");
@@ -135,13 +157,15 @@ it("shows capped sizes as one floor marker and catches open failures", async () 
 
 it("rejects old sibling rows while loading and commits navigation only with the response", async () => {
   native.listTopDirSizes.mockResolvedValue([
-    { path: "A", name: "A", size_kb: 1, capped: true },
+    { path: "A", name: "A", size_kb: 1, capped: true, scanned: 12345 },
     { path: "B", name: "B", size_kb: 1, capped: false },
   ]);
   let resolveChild!: (value: { rows: unknown[]; omitted: number; capped: boolean }) => void;
   native.listDirChildren.mockImplementationOnce(() => new Promise(resolve => { resolveChild = resolve; }));
   render(<DiskRadarPanel onClose={() => {}} onError={vi.fn()} />);
-  await screen.findByText(/≥ 1 KB（/);
+  const topFloors = await screen.findAllByText((_c, el) =>
+    (el?.textContent ?? "").includes(t().diskRadarFloor(formatSize(1), 12345)));
+  expect(topFloors.length).toBeGreaterThan(0);
   const drill = screen.getAllByRole("button", { name: t().detailShow });
   fireEvent.click(drill[0]!);
   fireEvent.click(drill[1]!);
@@ -154,14 +178,18 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
   expect(native.listDirChildren).toHaveBeenCalledTimes(1);
-  expect(await screen.findByText(/≥ 1 KB（/)).toBeTruthy();
+  const floors = await screen.findAllByText((_c, el) =>
+    (el?.textContent ?? "").includes(t().diskRadarFloor(formatSize(1), 12345)));
+  expect(floors.length).toBeGreaterThan(0);
 });
 
 it("keeps the current parent after a failed drill and disables back while pending", async () => {
   native.listDirChildren.mockResolvedValueOnce({ rows: [{ path: "A/child", name: "A child", size_kb: 1, capped: false }], omitted: 0, capped: false });
   const error = vi.fn();
   render(<DiskRadarPanel onClose={() => {}} onError={error} />);
-  await screen.findByText(/≥ 1 KB（/);
+  const topFloor = (await screen.findAllByText((_c, el) =>
+    (el?.textContent ?? "").includes(t().diskRadarFloor(formatSize(1), 12345))))[0]!;
+  expect(topFloor).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
   await screen.findByText("A child");
   let reject!: (error: Error) => void;
