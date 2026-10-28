@@ -21,7 +21,7 @@ beforeEach(() => {
   native.backupSessions.mockResolvedValue([{ name: "older-backup", size_kb: 1, created_at: "", sealed: true }]);
   native.previewRestore.mockImplementation(async (name: string) => ({ name, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] }));
   native.listLocalDrives.mockResolvedValue([{ letter: "C", is_system: true, total_gb: 1, free_gb: 1 }]);
-  native.listTopDirSizes.mockResolvedValue([{ path: "root", name: "root", size_kb: 1, capped: true }]);
+  native.listTopDirSizes.mockResolvedValue([{ path: "root", name: "root", size_kb: 1, capped: true, scanned: 12345 }]);
   native.openPath.mockResolvedValue(undefined);
 });
 
@@ -102,7 +102,10 @@ it("shows capped sizes as one floor marker and catches open failures", async () 
   native.openPath.mockRejectedValueOnce(new Error("failed"));
   const onError = vi.fn();
   render(<DiskRadarPanel onClose={() => {}} onError={onError} />);
-  const size = await screen.findByText(/>= 1 KB/);
+  const size = await screen.findByText(/≥ 1 KB（/);
+  // The floor states how far the bounded walk got — the count is part of the
+  // honesty contract, not decoration.
+  expect(size.textContent).toContain("12345");
   expect(size.textContent).not.toMatch(/约|~/);
   fireEvent.click(screen.getByRole("button", { name: t().openLocation }));
   await waitFor(() => expect(onError).toHaveBeenCalledOnce());
@@ -116,7 +119,7 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   let resolveChild!: (value: unknown[]) => void;
   native.listDirChildren.mockImplementationOnce(() => new Promise(resolve => { resolveChild = resolve; }));
   render(<DiskRadarPanel onClose={() => {}} onError={vi.fn()} />);
-  await screen.findByText(/>= 1 KB/);
+  await screen.findByText(/≥ 1 KB（/);
   const drill = screen.getAllByRole("button", { name: t().detailShow });
   fireEvent.click(drill[0]!);
   fireEvent.click(drill[1]!);
@@ -129,14 +132,14 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
   expect(native.listDirChildren).toHaveBeenCalledTimes(1);
-  expect(await screen.findByText(/>= 1 KB/)).toBeTruthy();
+  expect(await screen.findByText(/≥ 1 KB（/)).toBeTruthy();
 });
 
 it("keeps the current parent after a failed drill and disables back while pending", async () => {
   native.listDirChildren.mockResolvedValueOnce([{ path: "A/child", name: "A child", size_kb: 1, capped: false }]);
   const error = vi.fn();
   render(<DiskRadarPanel onClose={() => {}} onError={error} />);
-  await screen.findByText(/>= 1 KB/);
+  await screen.findByText(/≥ 1 KB（/);
   fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
   await screen.findByText("A child");
   let reject!: (error: Error) => void;

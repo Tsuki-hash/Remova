@@ -361,6 +361,8 @@ export type DirSizeRow = {
   parent: string;
   /** entry/depth budget ran out — size is a floor, not a total */
   capped?: boolean;
+  /** entries actually inspected; with `capped`, the floor was taken here */
+  scanned?: number;
 };
 
 export type HistoryEntry = {
