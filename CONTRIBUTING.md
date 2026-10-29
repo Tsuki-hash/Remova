@@ -4,7 +4,7 @@
 
 | Tool | Version |
 |---|---|
-| Rust | ≥ 1.77 |
+| Rust | ≥ 1.77.2 |
 | Node.js | 22 (CI uses 22) |
 | PowerShell | **7 (`pwsh`)** — `check-versions`, `check-commands`, `smoke:*`, `package-portable` are `.ps1` scripts and Windows PowerShell 5.1's `powershell.exe` is not a substitute |
 | Windows | 10/11 (backend is Windows-only) |

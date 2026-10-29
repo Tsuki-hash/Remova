@@ -87,7 +87,7 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 
 > In-app updates are not enabled (no updater public key is configured); always upgrade by downloading the new version from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. When an updater public key is configured, the Release also provides `latest.json` and `.sig` (the updater manifest and its signature); without one they are not generated, and the MSI install is not wired into auto-update — download updates manually.
 >
-> Release modes: with no updater keys configured, the Release runs in unsigned/manual mode and publishes only the NSIS / MSI / portable artifacts plus `SHA256SUMS.txt`; no `latest.json` or `.sig` are produced. Updater signature assets are generated and verified only when all three updater settings are present.
+> Release modes: with no updater keys configured, the Release runs in unsigned/manual mode and publishes only the NSIS / MSI / portable artifacts plus `SHA256SUMS.txt`; no `latest.json` or `.sig` are produced. Updater signature assets are generated and verified only when all three updater settings are present. Every release also ships `SBOM.cdx.json`, a CycloneDX 1.5 software bill of materials covering the binary's Rust dependencies and the bundled npm production dependencies, so the release's contents can be audited.
 
 | Artifact | Notes |
 |---|---|
@@ -166,7 +166,8 @@ Remova/
 ├── src/                 # React frontend
 ├── src-tauri/           # Rust backend & packaging
 ├── scripts/             # Build helpers
-├── .github/workflows/   # CI / Release
+├── .github/             # CI / Release / signing docs
+├── SECURITY.md          # Security policy & private vulnerability reporting
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── README.md            # 中文

@@ -92,7 +92,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 > 应用内更新未启用（未配置 updater 公钥）；升级一律以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
 >
-> 发布模式：未配置 updater 密钥时，Release 走「未签名 / 手动更新」模式，只发布 NSIS / MSI / 便携包与 `SHA256SUMS.txt`，不生成 `latest.json` 与 `.sig`；三项密钥齐全时才生成并校验更新签名资产。
+> 发布模式：未配置 updater 密钥时，Release 走「未签名 / 手动更新」模式，只发布 NSIS / MSI / 便携包与 `SHA256SUMS.txt`，不生成 `latest.json` 与 `.sig`；三项密钥齐全时才生成并校验更新签名资产。每次发布都附带 `SBOM.cdx.json`（CycloneDX 1.5 软件物料清单，覆盖二进制的 Rust 依赖与随包的 npm 生产依赖），可用于核对发布成分。
 
 | 安装包 | 说明 |
 |---|---|
@@ -174,9 +174,10 @@ Remova/
 ├── scripts/             # 构建 / 辅助脚本
 ├── .github/
 │   ├── workflows/       # CI / Release
-│   ├── ISSUE_TEMPLATE/  # Issue 表单
 │   ├── signpath/        # SignPath 签名工件配置
-│   └── RELEASE_SIGNING.md
+│   ├── RELEASE_SIGNING.md
+│   └── signpath/        # SignPath 签名工件配置
+├── SECURITY.md          # 安全策略与漏洞私下报告渠道
 ├── index.html           # Vite 入口 HTML
 ├── package.json         # 前端依赖与脚本（版本号唯一源）
 ├── package-lock.json    # 锁定依赖树
