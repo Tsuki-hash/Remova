@@ -175,8 +175,7 @@ Remova/
 ├── .github/
 │   ├── workflows/       # CI / Release
 │   ├── signpath/        # SignPath 签名工件配置
-│   ├── RELEASE_SIGNING.md
-│   └── signpath/        # SignPath 签名工件配置
+│   └── RELEASE_SIGNING.md
 ├── SECURITY.md          # 安全策略与漏洞私下报告渠道
 ├── index.html           # Vite 入口 HTML
 ├── package.json         # 前端依赖与脚本（版本号唯一源）

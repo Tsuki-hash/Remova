@@ -158,6 +158,23 @@ fn ancestors_have_reparse(p: &Path) -> bool {
     p.ancestors().skip(1).any(is_reparse)
 }
 
+/// Free kilobytes on the volume that would hold `target`. The target usually
+/// does not exist yet at planning time, and the free-space query fails on a
+/// missing directory — walk up to the nearest existing ancestor (worst case
+/// the drive root) so a not-yet-created target still gets a real answer.
+fn free_kb_for_target(target: &Path) -> Option<i64> {
+    let mut probe = target.to_path_buf();
+    loop {
+        if probe.exists() {
+            return free_kb_of(&probe);
+        }
+        match probe.parent() {
+            Some(parent) if parent != probe => probe = parent.to_path_buf(),
+            _ => return None,
+        }
+    }
+}
+
 /// Byte-for-byte comparison of two files, streaming in 64 KiB chunks. This is
 /// the copy gate: a same-length file with different content must never be
 /// mistaken for a completed copy.
@@ -500,7 +517,7 @@ fn tree_has_hardlinks(root: &Path) -> Option<bool> {
 pub fn plan(source: &str, target: &str) -> MigrationPlan {
     let source = PathBuf::from(source.trim());
     let target = PathBuf::from(target.trim());
-    plan_with_free(&source, &target, free_kb_of(&target))
+    plan_with_free(&source, &target, free_kb_for_target(&target))
 }
 
 /// plan() with the free-space answer injected: the capacity rule is testable
@@ -1410,6 +1427,22 @@ mod tests {
             "{:?}",
             tight.rejections
         );
+        // The real plan() answers for a not-yet-created target through its
+        // nearest existing ancestor: the normal planning flow (type a path
+        // the copy will create) still gets a capacity check, not "unknown".
+        #[cfg(windows)]
+        {
+            let fresh_target = tmp.path().join("deep").join("new-target");
+            let planned = plan(&src.to_string_lossy(), &fresh_target.to_string_lossy());
+            assert!(
+                !planned
+                    .rejections
+                    .contains(&"target_space_unknown".to_string()),
+                "{:?}",
+                planned.rejections
+            );
+            assert!(planned.free_space_known);
+        }
     }
 
     /// The copy runs the same server-side admission: an IPC caller cannot aim
