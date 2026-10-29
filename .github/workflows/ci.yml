@@ -50,6 +50,10 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: lockfile completeness (cargo fetch --locked)
+        run: cargo fetch --locked
+        working-directory: src-tauri
+
       - name: cargo fmt
         run: cargo fmt --check
         working-directory: src-tauri
@@ -173,6 +177,14 @@ jobs:
           } else {
             $dl = "$env:RUNNER_TEMP\webview2.exe"
             Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $dl
+            # The fwlink target is not pinned, so the downloaded binary has to
+            # prove itself before anything executes it: a valid Authenticode
+            # signature from Microsoft, or the job fails here.
+            $sig = Get-AuthenticodeSignature -FilePath $dl
+            if ($sig.Status -ne 'Valid') { throw "WebView2 installer signature: $($sig.Status)" }
+            if ($null -eq $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {
+              throw "WebView2 installer signer is not Microsoft: $($sig.SignerCertificate.Subject)"
+            }
             $p = Start-Process -FilePath $dl -Args "/silent /install" -PassThru -Wait
             # 0 = installed, 3010 = installed (reboot pending); anything else fails the job
             if ($p.ExitCode -notin 0, 3010) {

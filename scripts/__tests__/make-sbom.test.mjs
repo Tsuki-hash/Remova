@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildSbom, parseCargoLock, parsePackageLock } from "../make-sbom.mjs";
+import { buildSbom, parseCargoLock, parsePackageLock, reachableCargoNames } from "../make-sbom.mjs";
 
 test("parses cargo lock packages", () => {
   const cargo = ['[package]', 'name = "remova"', 'version = "1.4.0"', "", "[[package]]", 'name = "serde"', 'version = "1.0.219"'].join("\n");
@@ -71,4 +71,26 @@ test("generates an sbom from the repository lockfiles", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("cargo reachability follows the workspace graph, not the whole lockfile", () => {
+  const metadata = {
+    packages: [
+      { id: 1, name: "remova", dependencies: [{ name: "tauri", kind: null }] },
+      { id: 2, name: "tauri", dependencies: [{ name: "zip", kind: null }, { name: "trybuild", kind: "dev" }] },
+      { id: 3, name: "zip", dependencies: [] },
+      // Not reachable from any workspace member: a dev-only crate and an
+      // unrelated tool's dependency that merely share the lockfile.
+      { id: 4, name: "trybuild", dependencies: [] },
+      { id: 5, name: "lockfile-only-crate", dependencies: [] },
+      { id: 6, name: "other-tool", dependencies: [{ name: "lockfile-only-crate", kind: "normal" }] },
+    ],
+    workspace_members: [1],
+  };
+  const seen = reachableCargoNames(metadata);
+  assert.ok(seen.has("remova"));
+  assert.ok(seen.has("tauri"));
+  assert.ok(seen.has("zip"));
+  assert.ok(!seen.has("trybuild"), "dev dependencies do not ship");
+  assert.ok(!seen.has("lockfile-only-crate"), "unreachable lockfile entries do not ship");
 });

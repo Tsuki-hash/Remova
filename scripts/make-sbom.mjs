@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// Generate a CycloneDX 1.5 SBOM for the shipped application from the two
-// lockfiles: src-tauri/Cargo.lock (everything the binary links) and
-// package-lock.json (production npm dependencies only — dev tooling never
-// reaches the bundle). Deterministic: components are sorted and the serial
+// Generate a CycloneDX 1.5 SBOM for the shipped application: the Rust side
+// covers only the crates actually reachable from the workspace members'
+// dependency graphs (per `cargo metadata`, so lockfile-only dev/test crates
+// of unrelated workspace tooling are not reported as shipped components), and
+// the npm side covers production dependencies only — dev tooling never
+// reaches the bundle. Deterministic: components are sorted and the serial
 // number is a stable SHA-256 over the component list, so the same tree
 // always produces the same SBOM bytes.
 // Usage: node scripts/make-sbom.mjs [--out <path>]
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -29,6 +32,38 @@ export function parseCargoLock(text) {
     }
   }
   return out;
+}
+
+/**
+ * Names reachable from the workspace members' normal dependency graphs, per a
+ * `cargo metadata --format-version 1` document. Build-dependencies (proc
+ * macros and codegen helpers) do not ship bytes in the binary and are
+ * excluded, like dev-dependencies.
+ */
+export function reachableCargoNames(metadata) {
+  const depsOfName = new Map();
+  for (const pkg of metadata.packages ?? []) {
+    if (!depsOfName.has(pkg.name)) depsOfName.set(pkg.name, new Set());
+    for (const dep of pkg.dependencies ?? []) {
+      if (dep.kind && dep.kind !== "normal") continue;
+      depsOfName.get(pkg.name).add(dep.name);
+    }
+  }
+  const byId = new Map((metadata.packages ?? []).map((p) => [p.id, p.name]));
+  const memberNames = (metadata.workspace_members ?? [])
+    .map((id) => byId.get(id))
+    .filter((name) => name);
+  const seen = new Set();
+  const queue = [...memberNames];
+  while (queue.length) {
+    const name = queue.pop();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    for (const dep of depsOfName.get(name) ?? []) {
+      if (!seen.has(dep)) queue.push(dep);
+    }
+  }
+  return seen;
 }
 
 /** Production packages of a package-lock.json (v3 "packages" map), {name, version}. */
@@ -78,10 +113,20 @@ async function main() {
     readFile(path.join(root, "package-lock.json"), "utf8"),
     readFile(path.join(root, "package.json"), "utf8"),
   ]);
+  // The full lockfile lists every crate ever resolved in this tree; the SBOM
+  // reports the graph the shipped binary actually links.
+  const metadata = JSON.parse(
+    execFileSync("cargo", ["metadata", "--format-version", "1"], {
+      cwd: path.join(root, "src-tauri"),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }),
+  );
+  const reachable = reachableCargoNames(metadata);
   const sbom = buildSbom({
     productName: "Remova",
     productVersion: JSON.parse(pkg).version,
-    cargo: parseCargoLock(cargoText),
+    cargo: parseCargoLock(cargoText).filter((c) => reachable.has(c.name)),
     npm: parsePackageLock(JSON.parse(lockText)),
   });
   await mkdir(path.dirname(out), { recursive: true });
