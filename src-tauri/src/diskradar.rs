@@ -223,14 +223,6 @@ impl Walk {
     /// not descended, or an entry that could not be read. A spent slice is only
     /// a pause — the water-filling loop hands the walk another slice later, so
     /// marking it here would leave a finished directory labelled as a floor.
-    /// `finished` (the stack emptied) is the only proof of a total; a paused or
-    /// cut walk is a floor through `is_floor`.
-    /// Consume up to `budget` entries, resuming where the last call stopped.
-    ///
-    /// `capped` is a *permanent* cut: a cancelled scan, a depth level that was
-    /// not descended, or an entry that could not be read. A spent slice is only
-    /// a pause — the water-filling loop hands the walk another slice later, so
-    /// marking it here would leave a finished directory labelled as a floor.
     /// When a slice runs out, one last read is made without charging the pool:
     /// an exhausted iterator finishes the walk honestly, and a real entry is
     /// cached for the next slice instead of being dropped (otherwise a
@@ -240,8 +232,19 @@ impl Walk {
     fn advance(&mut self, budget: &mut u64, progress: &mut WalkProgress) {
         loop {
             let (depth_left, item) = match self.pending.take() {
-                // Already charged when it was read.
-                Some((depth, ent)) => (depth, Ok::<std::fs::DirEntry, std::io::Error>(ent)),
+                Some((depth, ent)) => {
+                    // The free end-of-level probe read this entry without a
+                    // slice; the slice that consumes it pays for it, so the
+                    // pool and the entry count stay exact.
+                    if *budget == 0 {
+                        self.pending = Some((depth, ent));
+                        return;
+                    }
+                    *budget -= 1;
+                    self.inspected += 1;
+                    progress.tick();
+                    (depth, Ok::<std::fs::DirEntry, std::io::Error>(ent))
+                }
                 None => {
                     let Some(top) = self.stack.len().checked_sub(1) else {
                         self.finished = true;
@@ -1388,6 +1391,38 @@ mod tests {
         assert!(rows[0].capped, "the unmeasured child is a visible floor");
         assert_eq!(rows[0].scanned, 0);
         assert_eq!(super::walks_opened(), 0, "no directory handle was opened");
+    }
+
+    /// The entry the end-of-level probe cached is charged by the slice that
+    /// consumes it: the pool and the entry count stay exact across a pause, so
+    /// a resume cannot hand out a free entry or under-report `scanned`.
+    #[test]
+    fn a_paused_walk_charges_the_entry_it_cached() {
+        let root = fixture("pending-charge");
+        seed(root.path(), 4, 4096);
+        let WalkStart::Walk(mut walk) = super::start_walk(root.path(), 2) else {
+            panic!("fixture must be readable");
+        };
+        // Two entries, then the slice runs out: the probe caches the third.
+        let mut p = super::WalkProgress::new();
+        let mut first = 2u64;
+        walk.advance(&mut first, &mut p);
+        assert_eq!(first, 0, "the slice was spent");
+        assert!(walk.pending.is_some(), "the probe cached the next entry");
+        assert!(!walk.finished);
+        // The resuming slice pays for the cached entry before reading on.
+        let mut second = 4u64;
+        walk.advance(&mut second, &mut p);
+        assert!(walk.finished, "four files fit two plus four entries");
+        assert_eq!(
+            walk.inspected, 4,
+            "every file is counted exactly once, cached entry included"
+        );
+        assert_eq!(
+            second, 2,
+            "the cached entry and the one after it were charged"
+        );
+        assert_eq!(walk.bytes, 4 * 4096);
     }
 
     /// A pool that cannot feed every queued child one entry opens no child at
