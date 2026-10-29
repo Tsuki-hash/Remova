@@ -186,8 +186,12 @@ export type MigrationPlan = {
   ok: boolean;
   rejections: string[];
   source_kb: number;
+  /** the size estimate hit the walk cap: a lower bound, not a confirmed figure */
+  source_kb_capped: boolean;
   file_count: number;
   target_free_kb: number;
+  /** false when the free-space query failed; the backend refuses the plan then */
+  free_space_known: boolean;
 };
 export type MigrationCopyReport = {
   files: number;

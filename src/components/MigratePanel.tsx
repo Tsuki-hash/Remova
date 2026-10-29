@@ -25,7 +25,12 @@ const REJECTION_TEXT: Record<string, string> = {
   source_too_many_files: "migrateRejTooMany",
   source_unreadable: "migrateRejSourceUnreadable",
   source_hardlinks: "migrateRejHardlinks",
+  source_not_local_fixed: "migrateRejSourceDrive",
+  source_ancestor_reparse: "migrateRejAncestorReparse",
+  target_ancestor_reparse: "migrateRejAncestorReparse",
+  target_protected_tree: "migrateRejTargetProtected",
   target_not_enough_space: "migrateRejNoSpace",
+  target_space_unknown: "migrateRejSpaceUnknown",
 };
 
 function rejectionText(L: ReturnType<typeof t>, code: string): string {
@@ -123,17 +128,24 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       danger: true,
     });
     if (!ok) return;
-    const r = await api.migrateCutover(source, target);
-    if (r.ok) {
-      toast.success(L.migrateCutoverDone);
-    } else if (r.rolled_back) {
-      toast.error(L.migrateRolledBack, {
-        detail: r.error ? backendErrorText(r.error) : undefined,
-      });
-    } else {
-      toast.error(L.migrateCutoverFailed, {
-        detail: r.error ? backendErrorText(r.error) : undefined,
-      });
+    try {
+      const r = await api.migrateCutover(source, target);
+      if (r.ok) {
+        toast.success(L.migrateCutoverDone);
+      } else if (r.rolled_back) {
+        toast.error(L.migrateRolledBack, {
+          detail: r.error ? backendErrorText(r.error) : undefined,
+        });
+      } else {
+        toast.error(L.migrateCutoverFailed, {
+          detail: r.error ? backendErrorText(r.error) : undefined,
+        });
+      }
+    } catch (e) {
+      // An IPC-level rejection (worker died, command unavailable) must say so
+      // and still leave the panel on a fresh state, or the user is stuck on a
+      // stale step with no way forward.
+      toast.error(backendErrorText(formatError(e)));
     }
     await refreshState(source, target);
   };
@@ -281,6 +293,9 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           {plan.ok ? (
             <div role="status">
               {L.migratePlanOk(formatSize(plan.source_kb), String(plan.file_count), formatSize(plan.target_free_kb))}
+              {plan.source_kb_capped && (
+                <div style={{ ...css.muted, fontSize: 12, marginTop: 2 }}>{L.migratePlanEstimate}</div>
+              )}
             </div>
           ) : (
             <div role="alert" style={{ color: "var(--danger-text)" }}>

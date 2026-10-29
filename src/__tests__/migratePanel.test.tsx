@@ -64,8 +64,10 @@ it("renders plan rejections in the user's language", async () => {
     ok: false,
     rejections: ["source_squirrel_updater", "made_up_code"],
     source_kb: 0,
+    source_kb_capped: false,
     file_count: 0,
     target_free_kb: 0,
+    free_space_known: true,
   });
   render(<MigratePanel onClose={vi.fn()} />);
   type();
@@ -77,6 +79,47 @@ it("renders plan rejections in the user's language", async () => {
   );
   // Unknown codes fall back to the raw code instead of disappearing.
   expect(screen.getByText("made_up_code")).toBeTruthy();
+});
+
+it("marks a capped size estimate as an estimate, never a confirmed figure", async () => {
+  vi.mocked(api.migrateStatus).mockResolvedValue("idle");
+  vi.mocked(api.migratePlan).mockResolvedValue({
+    source: "C:\\src", target: "D:\\dst", ok: true, rejections: [],
+    source_kb: 10, source_kb_capped: true, file_count: 2,
+    target_free_kb: 10_000_000, free_space_known: true,
+  });
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  fireEvent.click(await screen.findByRole("button", { name: L.migrateStart }));
+  await waitFor(() => expect(api.migratePlan).toHaveBeenCalled());
+  expect(await screen.findByText(L.migratePlanEstimate)).toBeTruthy();
+  // The feasibility line itself is still shown; the estimate rides below it.
+  expect(screen.getByRole("status").textContent).toContain(L.migratePlanEstimate);
+});
+
+it("reports a cutover IPC rejection and refreshes the state afterwards", async () => {
+  vi.mocked(api.migrateStatus)
+    .mockResolvedValueOnce("copied")
+    .mockResolvedValue("cutover");
+  vi.mocked(api.migrateCutover).mockRejectedValue(new Error("worker died"));
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  await waitFor(() => {
+    const step = screen.getByRole("list", { name: L.migrateTitle }).querySelector('[aria-current="step"]');
+    if (!step || !step.textContent?.includes(L.stepCutover)) {
+      throw new Error("cutover step must become current");
+    }
+  }, { timeout: 3000 });
+  fireEvent.click(screen.getByRole("button", { name: L.migrateCutover }));
+  await waitFor(() => expect(api.migrateCutover).toHaveBeenCalled());
+  // The rejection reaches the user as an error toast instead of an
+  // unhandled promise, and the status probe runs afterwards so the panel
+  // is not stuck on a stale step.
+  await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBeTruthy();
+  await waitFor(() => expect(api.migrateStatus).toHaveBeenCalledTimes(2));
 });
 
 it("gates destructive phases on the derived state and confirms cutover", async () => {
@@ -126,7 +169,7 @@ it("the primary path starts from idle: plan ok enables the copy button", async (
   vi.mocked(api.migrateStatus).mockResolvedValueOnce("idle").mockResolvedValue("copied");
   vi.mocked(api.migratePlan).mockResolvedValue({
     source: "C:\\src", target: "D:\\dst", ok: true,
-    rejections: [], source_kb: 10, file_count: 2, target_free_kb: 10_000_000,
+    rejections: [], source_kb: 10, source_kb_capped: false, file_count: 2, target_free_kb: 10_000_000, free_space_known: true,
   });
   vi.mocked(api.migrateCopy).mockResolvedValue({
     files: 2, source_kb: 10, files_capped: false, reparse_skipped: [],
@@ -244,7 +287,7 @@ it("offers a working cancel while the copy runs and reports it as cancelled", as
   vi.mocked(api.migrateStatus).mockResolvedValue("idle");
   vi.mocked(api.migratePlan).mockResolvedValue({
     source: "C:\\src", target: "D:\\dst", ok: true,
-    rejections: [], source_kb: 10, file_count: 2, target_free_kb: 10_000_000,
+    rejections: [], source_kb: 10, source_kb_capped: false, file_count: 2, target_free_kb: 10_000_000, free_space_known: true,
   });
   let release!: () => void;
   vi.mocked(api.migrateCopy).mockImplementation(

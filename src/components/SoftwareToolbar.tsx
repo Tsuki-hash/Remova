@@ -58,7 +58,10 @@ export function SoftwareToolbar({
     <div
       style={{
         display: "flex",
-        flexWrap: "nowrap",
+        // Wrap instead of overflowing: at the smallest window (960px) with the
+        // detail pane open, or at high zoom, the fixed-width controls must
+        // stay reachable rather than push past the list column.
+        flexWrap: "wrap",
         gap: 10,
         alignItems: "center",
         marginBottom: 10,
