@@ -565,6 +565,12 @@ export const dict: EnDict = {
     // "genuinely nothing" and "could not read the roots" are different facts.
     scanEmptyNone: "No cleanable items found",
     scanDegradedHint: "These locations could not be read, so this result may be incomplete:",
+    degradedLegacyPayload: "The backend returned the legacy result shape without completeness evidence; this result is treated as incomplete.",
+    scanCompletenessPartial: "The scan did not complete; this result cannot prove that nothing was missed.",
+    scanCompletenessCancelled: "The scan was cancelled; this result covers only what was scanned.",
+    scanCompletenessFailed: "The scan failed; this result cannot prove that nothing was missed.",
+    scanCompletenessUnknown: "The backend supplied no completeness evidence; this result must not be treated as exhaustive.",
+    scanCompletenessRoots: (n: number) => `${n} scan scope(s) completed`,
     degradedUnreadableRoot: (path: string) => `Could not read ${path}`,
     degradedDownloadsRootMissing: "The Downloads folder could not be located; it was not scanned",
     degradedProfileNotSet: "USERPROFILE is not set; the shared cache root under it was not scanned",

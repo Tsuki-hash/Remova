@@ -17,7 +17,7 @@ vi.mock("../lib/api", () => ({ api: native }));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  native.consentOrphans.mockResolvedValue({ consent_orphans: [], omitted: 0 });
+  native.consentOrphans.mockResolvedValue({ consent_orphans: [], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   native.portableCandidates.mockResolvedValue({ candidates: [], omitted: 0 });
   native.openPath.mockResolvedValue(undefined);
 });
@@ -49,6 +49,7 @@ describe("TracesPanel", () => {
         { capability: "microphone", key: "HKLM\\...\\NonPackaged", exe_path: "C:\\Gone\\gone.exe" },
       ],
       omitted: 0,
+      completeness: { status: "complete", roots_scanned: 1, failed_roots: [] },
     });
     native.portableCandidates.mockResolvedValue({
       candidates: [{ exe_path: "D:\\Portable\\tool.exe", rule_name: "Tool rule" }],

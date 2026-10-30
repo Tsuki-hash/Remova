@@ -7,7 +7,8 @@ import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
-import type { CliGlobalItem, CliGlobalScanResult } from "../types";
+import type { CliGlobalItem, CliGlobalScanResult, ScanCompleteness } from "../types";
+import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 
 const MANAGERS = ["npm", "pnpm", "yarn"] as const;
 
@@ -32,12 +33,21 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
   const L = t();
   const [result, setResult] = useState<CliGlobalScanResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [completeness, setCompleteness] = useState<ScanCompleteness>({
+    status: "unknown",
+    roots_scanned: 0,
+    failed_roots: ["not_scanned"],
+  });
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   const reload = async () => {
     setSel(new Set());
-    setResult(await api.cliGlobals());
+    const next = await api.cliGlobals();
+    setCompleteness(
+      next.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
+    );
+    setResult(next);
   };
 
   useEffect(() => {
@@ -134,8 +144,11 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       )}
 
       {result && result.items.length === 0 && (
-        <p style={css.muted}>{L.cliEmpty}</p>
+        <p style={css.muted}>
+          {completeness.status === "complete" ? L.cliEmpty : L.scanEmptyNone}
+        </p>
       )}
+      <ScanCompletenessNotice completeness={completeness} />
 
       {result?.notes.map((m) => (
         <div key={m} style={{ ...css.muted, fontSize: 12 }}>

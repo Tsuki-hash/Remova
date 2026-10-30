@@ -100,7 +100,9 @@ it.each(["installer", "toolcache"] as const)("discards cancelled %s refresh targ
   expect(statusText).toContain(t().scanCancelledIncomplete);
   expect(screen.getByRole("button", { name: new RegExp(t().cleanup) }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText(t().scanComplete(0))).toBeNull();
-  expect(toast.success).toHaveBeenCalledTimes(1);
+  // A bare-array payload is legacy-incomplete: neither scan may toast the
+  // success line (the first scan already announced the partial wording).
+  expect(toast.success).toHaveBeenCalledTimes(0);
   expect(onError).not.toHaveBeenCalled();
 });
 

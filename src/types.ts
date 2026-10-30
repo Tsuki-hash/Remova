@@ -72,8 +72,20 @@ export type ScopedScanResult = {
   degraded: string[];
 };
 
+/** Shared completeness contract for bounded read-only scans. */
+export type ScanStatus = "complete" | "partial" | "cancelled" | "failed" | "unknown";
+export type ScanCompleteness = {
+  status: ScanStatus;
+  roots_scanned: number;
+  failed_roots: string[];
+};
+
 /** Orphan/idle scans used to truncate at their cap with no signal. */
-export type OrphanScanResult = { items: CleanupItem[]; omitted: number };
+export type OrphanScanResult = {
+  items: CleanupItem[];
+  omitted: number;
+  completeness: ScanCompleteness;
+};
 export type IdleScanResult = { items: IdleApp[]; omitted: number };
 
 /** An MSI product whose install directory is gone but whose record remains. */
@@ -100,7 +112,7 @@ export type FirewallRule = {
   protocol: string;
   reason: string;
 };
-export type FirewallScanResult = { rules: FirewallRule[]; omitted: number };
+export type FirewallScanResult = { rules: FirewallRule[]; omitted: number; completeness: ScanCompleteness };
 export type FirewallCleanupReport = {
   removed: string[];
   failed: string[];
@@ -172,6 +184,7 @@ export type CliGlobalScanResult = {
   items: CliGlobalItem[];
   omitted: number;
   notes: string[];
+  completeness: ScanCompleteness;
 };
 export type NpmCleanupReport = {
   removed: string[];
@@ -231,6 +244,7 @@ export type ConsentOrphan = {
 export type TraceScanResult = {
   consent_orphans: ConsentOrphan[];
   omitted: number;
+  completeness: ScanCompleteness;
 };
 
 /** M4: portable-app candidates (read-only). */

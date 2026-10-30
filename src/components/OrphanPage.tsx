@@ -24,6 +24,7 @@ import {
   formatRiskNote,
 } from "../lib/decision";
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
+import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { loadRestorePointPref } from "../lib/restorePointPref";
 import { summarizeCleanupPlan } from "../lib/cleanupPlan";
 import { normalizeOrphanScan } from "../lib/scopedScan";
@@ -44,6 +45,11 @@ export function OrphanPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const [omitted, setOmitted] = useState(0);
+  const [completeness, setCompleteness] = useState<import("../types").ScanCompleteness>({
+    status: "unknown",
+    roots_scanned: 0,
+    failed_roots: ["not_scanned"],
+  });
   const { runReadOnly, cancel, progress } = useAssociationScan();
   const { next: nextScanRound, isCurrent: isCurrentScanRound, invalidate: invalidateScanRound } = useRequestSeq();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -67,6 +73,7 @@ export function OrphanPage({
     setSelected(new Set());
     setLastScanCount(null);
     setOmitted(0);
+    setCompleteness({ status: "unknown", roots_scanned: 0, failed_roots: ["not_scanned"] });
  // One channel for the whole run — no sticky pile-up.
     if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
@@ -74,14 +81,20 @@ export function OrphanPage({
         (id: number) => api.orphanScan(id),
         (r) => normalizeOrphanScan(r).items.length,
       );
-      const { items: list, omitted: leftOut } = normalizeOrphanScan(raw);
+      const { items: list, omitted: leftOut, completeness } = normalizeOrphanScan(raw);
+      setCompleteness(completeness);
       setOmitted(leftOut);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       const s = summarizeLeftovers(list);
       setLastScanCount(list.length);
-      if (!quiet && list.length === 0) toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
-      else if (!quiet)
+      // "Nothing found" is only a fact when the scan itself was complete; a
+      // partial/cancelled/failed scan gets its own notice, not a clean verdict.
+      if (!quiet && list.length === 0 && completeness.status === "complete") {
+        toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
+      } else if (!quiet && list.length === 0) {
+        toast.info(L.scanCompletenessPartial, { channel: ORPHAN_CHANNEL });
+      } else if (!quiet)
         toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
           channel: ORPHAN_CHANNEL,
           ttl: 3000,
@@ -196,7 +209,9 @@ export function OrphanPage({
           <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.navOrphans}</strong>
           <span style={css.muted}>{L.orphanPageHint}</span>
           {!busy && lastScanCount !== null && <span style={css.muted}>
-            {lastScanCount === 0 ? L.orphanScanEmpty : `${L.orphanJustScanned} · ${lastScanCount}`}
+            {lastScanCount === 0 && completeness.status === "complete"
+              ? L.orphanScanEmpty
+              : `${L.orphanJustScanned} · ${lastScanCount}`}
           </span>}
           <button
             style={{ ...css.btn, marginLeft: "auto", height: 36 }}
@@ -207,6 +222,7 @@ export function OrphanPage({
           </button>
         </div>
         <ScanProgressBar progress={progress} onCancel={cancel} />
+        <ScanCompletenessNotice completeness={completeness} />
         {omitted > 0 && (
           <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
             {/* regression fix: the cap is applied before the shape probe, so the dropped
@@ -263,7 +279,11 @@ export function OrphanPage({
           )}
           <div ref={scrollRef} style={{ ...css.scroll, padding: 12 }}>
             {items.length === 0 ? (
-              <div style={css.muted}>{L.orphanScanEmpty}</div>
+              <div style={css.muted}>
+                {completeness.status === "complete"
+                  ? L.orphanScanEmpty
+                  : L.scanEmptyNone}
+              </div>
             ) : (
               <OrphanOriginGroups
                 groups={groups}

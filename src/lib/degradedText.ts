@@ -22,6 +22,8 @@ export function degradedText(raw: string): string {
     return L.degradedPeBudgetExhausted(Number.isFinite(n) ? n : 0);
   }
   switch (raw) {
+    case "legacy_payload":
+      return L.degradedLegacyPayload;
     case "downloads_root_missing":
       return L.degradedDownloadsRootMissing;
     case "userprofile_not_set":

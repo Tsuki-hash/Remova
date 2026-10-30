@@ -549,6 +549,12 @@ export const dict = {
     // "genuinely nothing" and "could not read the roots" are different facts.
     scanEmptyNone: "未发现可清理的项目",
     scanDegradedHint: "以下位置无法读取，本次结果可能不完整：",
+    degradedLegacyPayload: "后端返回的是旧版结果格式，缺少完整性证据；本次结果按不完整处理",
+    scanCompletenessPartial: "扫描未完整完成，下面的结果不能证明没有遗漏。",
+    scanCompletenessCancelled: "扫描已取消，下面的结果只是已扫描部分。",
+    scanCompletenessFailed: "扫描失败，下面的结果不能证明没有遗漏。",
+    scanCompletenessUnknown: "后端未提供扫描完整性证据，下面的结果不能视为完整。",
+    scanCompletenessRoots: (n: number) => `已完成扫描 ${n} 个范围`,
     degradedUnreadableRoot: (path: string) => `无法读取 ${path}`,
     degradedDownloadsRootMissing: "找不到“下载”文件夹，未扫描该目录",
     degradedProfileNotSet: "USERPROFILE 环境变量未设置，未扫描其下的共享缓存根",

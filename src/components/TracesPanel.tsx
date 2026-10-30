@@ -5,7 +5,8 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
-import type { PortableScanResult, TraceScanResult } from "../types";
+import type { PortableScanResult, ScanCompleteness, TraceScanResult } from "../types";
+import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 
 /**
  * Read-only system-trace and portable-candidate report. Both scans are
@@ -17,6 +18,11 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
   const L = t();
   const [traces, setTraces] = useState<TraceScanResult | null>(null);
   const [portable, setPortable] = useState<PortableScanResult | null>(null);
+  const [completeness, setCompleteness] = useState<ScanCompleteness>({
+    status: "unknown",
+    roots_scanned: 0,
+    failed_roots: ["not_scanned"],
+  });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -30,6 +36,9 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       ]);
       setTraces(tr);
       setPortable(pb);
+      setCompleteness(
+        tr.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
+      );
     } catch (e) {
       setLoadError(formatError(e));
     } finally {
@@ -89,6 +98,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
       {loading && !loadError && <p style={css.muted}>{L.loadingGeneric}</p>}
+      {!loading && <ScanCompletenessNotice completeness={completeness} />}
 
       {traces && (
         <>
@@ -106,7 +116,9 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
           </div>
           <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.tracesConsentHint}</div>
           {traces.consent_orphans.length === 0 ? (
-            <p style={css.muted}>{L.tracesConsentEmpty}</p>
+            <p style={css.muted}>
+              {completeness.status === "complete" ? L.tracesConsentEmpty : L.scanEmptyNone}
+            </p>
           ) : (
             <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 180, overflow: "auto" }}>
               {traces.consent_orphans.map((o) => (

@@ -13,9 +13,10 @@ describe("normalizeScopedScan", () => {
     expect(normalizeScopedScan(raw)).toEqual(raw);
   });
   // The backend fields land in a separate change; a bare array must not crash the
-  // panel, and must not be reported as "complete" when it might not be.
+  // panel, and must not be reported as "complete" when it might not be — it is
+  // flagged degraded so the panel shows the incomplete-notice instead.
   it("tolerates a bare item array while the backend rollout is in flight", () => {
-    expect(normalizeScopedScan([item("a")])).toEqual({ items: [item("a")], omitted: 0, degraded: [] });
+    expect(normalizeScopedScan([item("a")])).toEqual({ items: [item("a")], omitted: 0, degraded: ["legacy_payload"] });
     expect(normalizeScopedScan(null)).toEqual({ items: [], omitted: 0, degraded: [] });
     expect(normalizeScopedScan(undefined)).toEqual({ items: [], omitted: 0, degraded: [] });
   });

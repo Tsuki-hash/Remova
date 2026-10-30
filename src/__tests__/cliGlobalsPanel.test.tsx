@@ -31,6 +31,7 @@ it("groups the inventory by manager and opens the root folder", async () => {
     ],
     omitted: 0,
     notes: ["yarn"],
+    completeness: { status: "complete", roots_scanned: 2, failed_roots: [] },
   });
   render(<CliGlobalsPanel onClose={vi.fn()} />);
   const L = t();
@@ -45,10 +46,18 @@ it("groups the inventory by manager and opens the root folder", async () => {
 });
 
 it("shows the empty state and the read-only note", async () => {
-  vi.mocked(api.cliGlobals).mockResolvedValue({ items: [], omitted: 0, notes: ["npm", "pnpm", "yarn"] });
+  vi.mocked(api.cliGlobals).mockResolvedValue({ items: [], omitted: 0, notes: ["npm", "pnpm", "yarn"], completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } });
   render(<CliGlobalsPanel onClose={vi.fn()} />);
   expect(await screen.findByText(t().cliEmpty)).toBeTruthy();
   expect(screen.getByText(t().cliNote)).toBeTruthy();
+  expect(screen.queryByText(t().scanCompletenessPartial)).toBeNull();
+});
+
+it("a partial CLI scan shows the incomplete notice instead of a clean empty state", async () => {
+  vi.mocked(api.cliGlobals).mockResolvedValue({ items: [], omitted: 0, notes: ["npm", "pnpm", "yarn"], completeness: { status: "partial", roots_scanned: 0, failed_roots: ["npm", "pnpm", "yarn"] } });
+  render(<CliGlobalsPanel onClose={vi.fn()} />);
+  expect(await screen.findByText(t().scanCompletenessPartial)).toBeTruthy();
+  expect(screen.queryByText(t().cliEmpty)).toBeNull();
 });
 
 it("surfaces load errors as an alert", async () => {
@@ -68,8 +77,9 @@ it("removes selected npm packages after a no-override confirm and reports", asyn
       ],
       omitted: 0,
       notes: [],
+      completeness: { status: "complete", roots_scanned: 2, failed_roots: [] },
     })
-    .mockResolvedValue({ items: [], omitted: 0, notes: [] });
+    .mockResolvedValue({ items: [], omitted: 0, notes: [], completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } });
   vi.mocked(api.removeNpmGlobals).mockResolvedValue({
     removed: ["rimraf"],
     failed: [],

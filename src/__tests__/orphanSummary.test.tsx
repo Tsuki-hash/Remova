@@ -12,10 +12,13 @@ import type { CleanupItem } from "../types";
 
 vi.mock("../lib/api", () => ({ api: {
   beginAssociationScan: vi.fn(async () => 100), cancelAssociationScan: vi.fn(async () => {}),
-  associationScanProgress: vi.fn(async () => null), orphanScan: vi.fn(async () => [{
-  path: "fixture-dir", kind: "dir", score: 90, confidence: "confirmed", risk: "low",
-  reason: "fixture", evidence: [], shared: false, user_data: false, size_kb: 0,
-}]) } }));
+  associationScanProgress: vi.fn(async () => null), orphanScan: vi.fn(async () => ({
+  items: [{
+    path: "fixture-dir", kind: "dir", score: 90, confidence: "confirmed", risk: "low",
+    reason: "fixture", evidence: [], shared: false, user_data: false, size_kb: 0,
+  }], omitted: 0,
+  completeness: { status: "complete", roots_scanned: 4, failed_roots: [] },
+})) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); setLang("zh"); });
 
@@ -41,9 +44,35 @@ it("restarts the automatic scan after StrictMode effect cleanup and keeps its cu
   await waitFor(() => expect(api.orphanScan).toHaveBeenCalledOnce());
   expect(screen.getByRole("button", { name: t().orphanScan }).hasAttribute("disabled")).toBe(true);
   expect(toast.info).not.toHaveBeenCalledWith(t().scanCancelledIncomplete, expect.anything());
-  await act(async () => { finish([]); });
+  await act(async () => {
+    finish({ items: [], omitted: 0, completeness: { status: "complete", roots_scanned: 4, failed_roots: [] } });
+  });
   expect(await screen.findAllByText(t().orphanScanEmpty)).not.toHaveLength(0);
   expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("an incomplete empty orphan scan must not read as a clean verdict", async () => {
+  // A cancelled scan returning nothing is not "no leftovers": the notice says
+  // so, the empty line is downgraded, and no "clean" toast fires.
+  vi.mocked(api.orphanScan).mockResolvedValueOnce({
+    items: [], omitted: 0,
+    completeness: { status: "cancelled", roots_scanned: 2, failed_roots: [] },
+  });
+  render(<OrphanPage onLastReport={vi.fn()} />);
+  expect(await screen.findByText(t().scanCompletenessCancelled)).toBeTruthy();
+  expect(screen.getByText(t().scanCompletenessRoots(2))).toBeTruthy();
+  expect(screen.queryByText(t().orphanScanEmpty)).toBeNull();
+  expect(toast.info).not.toHaveBeenCalledWith(t().orphanScanEmpty, expect.anything());
+});
+
+it("a partial scan names the roots it could not read", async () => {
+  vi.mocked(api.orphanScan).mockResolvedValueOnce({
+    items: [], omitted: 0,
+    completeness: { status: "partial", roots_scanned: 3, failed_roots: ["C:\\ProgramData\\Locked"] },
+  });
+  render(<OrphanPage onLastReport={vi.fn()} />);
+  expect(await screen.findByText(t().scanCompletenessPartial)).toBeTruthy();
+  expect(screen.getByText("C:\\ProgramData\\Locked")).toBeTruthy();
 });
 
 it("keeps orphan statistics read-only and its existing selection action working", async () => {

@@ -41,7 +41,7 @@ beforeEach(() => {
 const panel = () => render(<FirewallRulesPanel onClose={vi.fn()} onError={vi.fn()} />);
 
 it("lists an orphan rule with its missing program and keeps it unselected", async () => {
-  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0 });
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   panel();
   await screen.findByText(rule.rule_name);
   const L = t();
@@ -54,9 +54,10 @@ it("lists an orphan rule with its missing program and keeps it unselected", asyn
 });
 
 it("deletes only selected rules after confirmation and rescans", async () => {
-  firewallOrphans.mockResolvedValueOnce({ rules: [rule], omitted: 0 }).mockResolvedValueOnce({
+  firewallOrphans.mockResolvedValueOnce({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } }).mockResolvedValueOnce({
     rules: [],
     omitted: 0,
+    completeness: { status: "complete", roots_scanned: 1, failed_roots: [] },
   });
   deleteFirewallRules.mockResolvedValue({
     removed: [rule.value_name],
@@ -74,7 +75,7 @@ it("deletes only selected rules after confirmation and rescans", async () => {
 
 it("selects all rules at once, clears on a second click, and deletes the batch", async () => {
   const second = { ...rule, value_name: "Vendor-Share-In-2", rule_name: "Vendor File Share 2" };
-  firewallOrphans.mockResolvedValueOnce({ rules: [rule, second], omitted: 0 });
+  firewallOrphans.mockResolvedValueOnce({ rules: [rule, second], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   deleteFirewallRules.mockResolvedValue({ removed: [], failed: [], backup_dir: "sess" });
   panel();
   await screen.findByText(rule.rule_name);
@@ -93,7 +94,7 @@ it("selects all rules at once, clears on a second click, and deletes the batch",
 
 it("clears the selection when the select-all toggle is clicked again", async () => {
   const second = { ...rule, value_name: "Vendor-Share-In-2", rule_name: "Vendor File Share 2" };
-  firewallOrphans.mockResolvedValue({ rules: [rule, second], omitted: 0 });
+  firewallOrphans.mockResolvedValue({ rules: [rule, second], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   panel();
   await screen.findByText(rule.rule_name);
   fireEvent.click(screen.getByRole("button", { name: t().orphanSelectAll }));
@@ -105,7 +106,7 @@ it("clears the selection when the select-all toggle is clicked again", async () 
 
 it("offers an elevated restart when deletion is refused for admin rights", async () => {
   const { toast } = await import("../lib/toast");
-  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0 });
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   deleteFirewallRules.mockRejectedValue(
     "administrator privileges are required to delete firewall rules",
   );

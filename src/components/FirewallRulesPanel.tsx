@@ -8,7 +8,8 @@ import { backendErrorText } from "../lib/backendText";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
-import type { FirewallRule } from "../types";
+import type { FirewallRule, ScanCompleteness } from "../types";
+import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 
 /**
  * M3 (SOP §8-1): firewall rules whose program file no longer exists. The scan
@@ -25,6 +26,11 @@ export function FirewallRulesPanel({
   const L = t();
   const [rows, setRows] = useState<FirewallRule[] | null>(null);
   const [omitted, setOmitted] = useState(0);
+  const [completeness, setCompleteness] = useState<ScanCompleteness>({
+    status: "unknown",
+    roots_scanned: 0,
+    failed_roots: ["not_scanned"],
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
@@ -34,6 +40,7 @@ export function FirewallRulesPanel({
       const result = await api.firewallOrphans();
       setRows(result.rules);
       setOmitted(result.omitted);
+      setCompleteness(result.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] });
       setSelected(new Set());
     } catch (e) {
       onError(formatError(e));
@@ -128,10 +135,13 @@ export function FirewallRulesPanel({
           </button>
         </div>
       </div>
+      <ScanCompletenessNotice completeness={completeness} />
       {rows === null ? (
         <div style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
       ) : rows.length === 0 ? (
-        <div style={{ ...css.muted, padding: "10px 0" }}>{L.firewallEmpty}</div>
+        <div style={{ ...css.muted, padding: "10px 0" }}>
+          {completeness.status === "complete" ? L.firewallEmpty : L.scanEmptyNone}
+        </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
           {rows.map((row) => (
