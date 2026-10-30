@@ -30,6 +30,8 @@ pub struct FirewallScanResult {
     pub rules: Vec<FirewallRule>,
     #[serde(default)]
     pub omitted: u32,
+    #[serde(default)]
+    pub completeness: crate::scan_contract::ScanCompleteness,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,10 +95,40 @@ pub fn parse_rule_public(value_name: &str, raw: &str) -> Option<FirewallRule> {
 /// offline path) are treated as "still unknown" and never offered.
 pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
     let mut rules = Vec::new();
-    for (value_name, raw) in crate::regscan::list_values(FIREWALL_RULES_KEY) {
+    let mut completeness = crate::scan_contract::ScanCompleteness::complete();
+    let values = match crate::regscan::snapshot_names(FIREWALL_RULES_KEY) {
+        Ok((_, values)) => values,
+        Err(e) if e == "scan:cancelled" => {
+            completeness = crate::scan_contract::ScanCompleteness::cancelled(0);
+            return FirewallScanResult {
+                rules,
+                omitted: 0,
+                completeness,
+            };
+        }
+        Err(_) => {
+            completeness =
+                crate::scan_contract::ScanCompleteness::failed(FIREWALL_RULES_KEY.into());
+            return FirewallScanResult {
+                rules,
+                omitted: 0,
+                completeness,
+            };
+        }
+    };
+    completeness.roots_scanned = 1;
+    for value_name in values {
         if crate::scan_task::cancelled() {
+            completeness.status = crate::scan_contract::ScanStatus::Cancelled;
             break;
         }
+        let Some(raw) = crate::regscan::read_string(FIREWALL_RULES_KEY, &value_name) else {
+            // A value disappearing or becoming unreadable mid-snapshot means
+            // the rule list is partial; do not treat it as a clean absence.
+            completeness.status = crate::scan_contract::ScanStatus::Partial;
+            completeness.failed_roots.push(FIREWALL_RULES_KEY.into());
+            continue;
+        };
         let Some(rule) = parse_rule(&value_name, &raw) else {
             continue;
         };
@@ -113,13 +145,16 @@ pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
             rules.push(rule);
         }
     }
-    finalize_rules(rules)
+    finalize_rules(rules, completeness)
 }
 
 /// Sort before capping: registry enumeration order must not decide which 200
 /// rules are shown, otherwise a fresh delete re-scan can disagree with the
 /// list the user selected from.
-fn finalize_rules(mut rules: Vec<FirewallRule>) -> FirewallScanResult {
+fn finalize_rules(
+    mut rules: Vec<FirewallRule>,
+    completeness: crate::scan_contract::ScanCompleteness,
+) -> FirewallScanResult {
     rules.sort_by(|a, b| {
         a.rule_name
             .to_lowercase()
@@ -128,7 +163,11 @@ fn finalize_rules(mut rules: Vec<FirewallRule>) -> FirewallScanResult {
     });
     let omitted = rules.len().saturating_sub(RESULT_CAP) as u32;
     rules.truncate(RESULT_CAP);
-    FirewallScanResult { rules, omitted }
+    FirewallScanResult {
+        rules,
+        omitted,
+        completeness,
+    }
 }
 
 fn ensure_still_orphans(wanted: &[String], fresh: &[FirewallRule]) -> Result<(), String> {
@@ -292,7 +331,7 @@ mod tests {
         };
         let mut input: Vec<FirewallRule> = (0..205).rev().map(rule).collect();
         input.reverse();
-        let result = finalize_rules(input);
+        let result = finalize_rules(input, crate::scan_contract::ScanCompleteness::complete());
         assert_eq!(result.rules.len(), RESULT_CAP);
         assert_eq!(result.omitted, 5);
         assert_eq!(result.rules[0].rule_name, "Rule 000");

@@ -213,6 +213,8 @@ pub struct OrphanScanResult {
     pub items: Vec<CleanupItem>,
     #[serde(default)]
     pub omitted: u32,
+    #[serde(default)]
+    pub completeness: crate::scan_contract::ScanCompleteness,
 }
 
 fn orphan_roots() -> Vec<std::path::PathBuf> {
@@ -243,6 +245,7 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
         return OrphanScanResult {
             items: Vec::new(),
             omitted: 0,
+            completeness: crate::scan_contract::ScanCompleteness::cancelled(0),
         };
     }
     // load ignore rules once (was per candidate in the loop).
@@ -265,23 +268,41 @@ fn scan_orphans_in_roots(
     // made the reported subset depend on `read_dir` order, and stopped the scan
     // early on a machine whose first root happened to be full of leftovers.
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    let mut failed_roots = Vec::new();
+    let mut roots_scanned = 0u32;
     for root in roots {
         if !crate::scan_task::checkpoint("files", candidates.len()) {
             return OrphanScanResult {
                 items: out,
                 omitted: 0,
+                completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
             };
         }
-        let Ok(rd) = std::fs::read_dir(&root) else {
-            continue;
+        let rd = match std::fs::read_dir(&root) {
+            Ok(rd) => {
+                roots_scanned += 1;
+                rd
+            }
+            Err(_) => {
+                failed_roots.push(root.to_string_lossy().into_owned());
+                continue;
+            }
         };
-        for e in rd.flatten() {
+        for e in rd {
             if !crate::scan_task::checkpoint("files", candidates.len()) {
                 return OrphanScanResult {
                     items: out,
                     omitted: 0,
+                    completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
                 };
             }
+            let e = match e {
+                Ok(e) => e,
+                Err(_) => {
+                    failed_roots.push(root.to_string_lossy().into_owned());
+                    continue;
+                }
+            };
             if !e.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
@@ -340,6 +361,7 @@ fn scan_orphans_in_roots(
             return OrphanScanResult {
                 items: out,
                 omitted,
+                completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
             };
         }
         // The expensive shape probe runs only for what the cap keeps.
@@ -438,6 +460,7 @@ fn scan_orphans_in_roots(
         return OrphanScanResult {
             items: out,
             omitted,
+            completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
         };
     }
     // Orphan rows otherwise bypass the app analyzer's service-bound marking.
@@ -447,13 +470,24 @@ fn scan_orphans_in_roots(
         return OrphanScanResult {
             items: out,
             omitted,
+            completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
         };
     }
     crate::scanner::fill_item_buckets(&mut out, "");
     remember_orphan_paths(&scanned);
+    let completeness = if failed_roots.is_empty() {
+        crate::scan_contract::ScanCompleteness {
+            status: crate::scan_contract::ScanStatus::Complete,
+            roots_scanned,
+            failed_roots,
+        }
+    } else {
+        crate::scan_contract::ScanCompleteness::partial(roots_scanned, failed_roots)
+    };
     OrphanScanResult {
         items: out,
         omitted,
+        completeness,
     }
 }
 

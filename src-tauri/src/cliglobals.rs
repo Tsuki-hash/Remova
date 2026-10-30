@@ -34,6 +34,8 @@ pub struct CliGlobalScanResult {
     /// Managers whose root was not found or not readable — reported, never silent.
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub completeness: crate::scan_contract::ScanCompleteness,
 }
 
 /// Injectable roots so the layout walk is testable against fixtures.
@@ -289,36 +291,80 @@ fn scan_pnpm_shims(
     Ok(found)
 }
 
+/// One manager's scanner: walks its root, appending items (and omitted rows)
+/// to the shared accumulators. `Ok(found)` keeps "readable but empty" distinct
+/// from a read failure.
+type ManagerScan<'a> =
+    &'a mut dyn FnMut(&Path, &mut Vec<CliGlobalItem>, &mut u32) -> Result<bool, ()>;
+
 /// Core scan over injected roots.
 pub fn scan_with(roots: &CliRoots) -> CliGlobalScanResult {
     let mut items = Vec::new();
     let mut omitted = 0u32;
     let mut notes = Vec::new();
+    let mut roots_scanned = 0u32;
+    let mut failed_roots = Vec::new();
+    let mut cancelled = false;
     // A manager is reported once when its root is missing, unreadable, or the
     // scan fails — all three are "not scanned" with the same user-facing note.
-    let npm_ok = roots.npm_prefix.as_deref().is_some_and(|npm| {
-        npm.is_dir() && scan_node_modules_tree(npm, "npm", &mut items, &mut omitted).is_ok()
-    });
-    if !npm_ok {
-        notes.push("npm".into());
-    }
-    let pnpm_ok = roots.pnpm_home.as_deref().is_some_and(|pnpm| {
-        pnpm.is_dir() && scan_pnpm_shims(pnpm, &mut items, &mut omitted).is_ok()
-    });
-    if !pnpm_ok {
-        notes.push("pnpm".into());
-    }
-    let yarn_ok = roots.yarn_global.as_deref().is_some_and(|yarn| {
-        yarn.is_dir() && scan_node_modules_tree(yarn, "yarn", &mut items, &mut omitted).is_ok()
-    });
-    if !yarn_ok {
-        notes.push("yarn".into());
+    let mut scan_manager = |name: &str, root: Option<&Path>, scan: ManagerScan| {
+        let Some(root) = root else {
+            notes.push(name.into());
+            failed_roots.push(name.into());
+            return;
+        };
+        if crate::scan_task::cancelled() {
+            cancelled = true;
+            return;
+        }
+        if !root.is_dir() {
+            notes.push(name.into());
+            failed_roots.push(name.into());
+            return;
+        }
+        match scan(root, &mut items, &mut omitted) {
+            Ok(_) => roots_scanned += 1,
+            Err(_) => {
+                notes.push(name.into());
+                failed_roots.push(name.into());
+            }
+        }
+    };
+    scan_manager(
+        "npm",
+        roots.npm_prefix.as_deref(),
+        &mut |root, items, omitted| scan_node_modules_tree(root, "npm", items, omitted),
+    );
+    scan_manager(
+        "pnpm",
+        roots.pnpm_home.as_deref(),
+        &mut |root, items, omitted| scan_pnpm_shims(root, items, omitted),
+    );
+    scan_manager(
+        "yarn",
+        roots.yarn_global.as_deref(),
+        &mut |root, items, omitted| scan_node_modules_tree(root, "yarn", items, omitted),
+    );
+    if crate::scan_task::cancelled() {
+        cancelled = true;
     }
     items.sort_by_key(|i| (i.manager.clone(), i.name.to_lowercase()));
+    let completeness = if cancelled {
+        crate::scan_contract::ScanCompleteness::cancelled(roots_scanned)
+    } else if failed_roots.is_empty() {
+        crate::scan_contract::ScanCompleteness {
+            status: crate::scan_contract::ScanStatus::Complete,
+            roots_scanned,
+            failed_roots,
+        }
+    } else {
+        crate::scan_contract::ScanCompleteness::partial(roots_scanned, failed_roots)
+    };
     CliGlobalScanResult {
         items,
         omitted,
         notes,
+        completeness,
     }
 }
 

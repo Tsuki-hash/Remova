@@ -37,6 +37,8 @@ pub struct TraceScanResult {
     pub consent_orphans: Vec<ConsentOrphan>,
     #[serde(default)]
     pub omitted: u32,
+    #[serde(default)]
+    pub completeness: crate::scan_contract::ScanCompleteness,
 }
 
 /// Pure orphan test, shared with the (future, gated) delete path.
@@ -57,13 +59,29 @@ fn is_consent_orphan(exe_path: &str) -> bool {
 /// Orphaned ConsentStore `NonPackaged` entries, read-only.
 pub fn scan_consent_orphans() -> TraceScanResult {
     let mut out = TraceScanResult::default();
-    for capability in crate::regscan::list_subkeys(CONSENT_STORE_ROOT) {
+    let capabilities = crate::regscan::list_subkeys(CONSENT_STORE_ROOT);
+    if crate::scan_task::cancelled() {
+        out.completeness = crate::scan_contract::ScanCompleteness::cancelled(0);
+        return out;
+    }
+    out.completeness.roots_scanned = 1;
+    for capability in capabilities {
+        if crate::scan_task::cancelled() {
+            out.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
+            break;
+        }
         let non_packaged = format!("{CONSENT_STORE_ROOT}\\{capability}\\NonPackaged");
         let (values, _subkeys) = match crate::regscan::snapshot_names(&non_packaged) {
             Ok(pair) => pair,
+            Err(e) if e == "scan:cancelled" => {
+                out.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
+                break;
+            }
             Err(_) => {
-                // Capabilities without a NonPackaged child are normal; only
-                // report when the capability root itself vanished mid-scan.
+                // Capabilities without a NonPackaged child are normal; an
+                // unexpected access/enumeration error is incomplete evidence.
+                out.completeness.status = crate::scan_contract::ScanStatus::Partial;
+                out.completeness.failed_roots.push(non_packaged);
                 continue;
             }
         };

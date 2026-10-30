@@ -35,6 +35,7 @@ pub mod regscan;
 pub mod restore;
 pub mod safety;
 pub mod scan_allow;
+pub mod scan_contract;
 pub mod scan_task;
 pub mod scanner;
 pub mod shared;
