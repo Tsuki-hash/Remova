@@ -90,7 +90,7 @@ export function CloseChoiceHost() {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            fontSize: 12.5,
+            fontSize: 13,
             color: "var(--muted)",
             cursor: "pointer",
             userSelect: "none",

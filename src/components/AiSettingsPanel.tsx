@@ -298,7 +298,7 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
             display: "flex",
             gap: 10,
             alignItems: "flex-start",
-            fontSize: 12.5,
+            fontSize: 13,
             color: "var(--muted)",
             lineHeight: 1.45,
             cursor: "pointer",

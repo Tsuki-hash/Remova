@@ -216,7 +216,26 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
             let nm = npm.join("node_modules");
             if let Ok(read) = std::fs::read_dir(npm) {
                 for entry in read.flatten() {
-                    if !entry.file_type().is_ok_and(|t| t.is_file()) {
+                    if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        if !name.starts_with('.')
+                            && !name.starts_with('@')
+                            && name != "node_modules"
+                        {
+                            let manifest = entry.path().join("package.json");
+                            if !manifest.is_file() {
+                                push(
+                                    &mut entries,
+                                    CliResidueEntry {
+                                        manager: "npm".into(),
+                                        kind: "pkg_no_manifest".into(),
+                                        name,
+                                        detail: entry.path().to_string_lossy().into_owned(),
+                                        redacted: false,
+                                    },
+                                );
+                            }
+                        }
                         continue;
                     }
                     let name = entry.file_name().to_string_lossy().into_owned();
@@ -249,6 +268,30 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if !name.starts_with('@') {
                         continue;
+                    }
+                    let Ok(scope_read) = std::fs::read_dir(entry.path()) else {
+                        continue;
+                    };
+                    for scoped in scope_read.flatten() {
+                        let scoped_name = scoped.file_name().to_string_lossy().into_owned();
+                        if scoped_name.starts_with('.') {
+                            continue;
+                        }
+                        // A package directory without package.json is not a
+                        // working package: leftover or a broken install.
+                        let manifest = scoped.path().join("package.json");
+                        if !manifest.is_file() {
+                            push(
+                                &mut entries,
+                                CliResidueEntry {
+                                    manager: "npm".into(),
+                                    kind: "pkg_no_manifest".into(),
+                                    name: format!("{name}/{scoped_name}"),
+                                    detail: scoped.path().to_string_lossy().into_owned(),
+                                    redacted: false,
+                                },
+                            );
+                        }
                     }
                     let empty = std::fs::read_dir(entry.path())
                         .map(|mut d| d.next().is_none())

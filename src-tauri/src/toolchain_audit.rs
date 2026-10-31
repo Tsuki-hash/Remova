@@ -30,10 +30,23 @@ pub struct VsInstance {
 pub struct ToolchainAuditResult {
     pub vswhere_available: bool,
     pub instances: Vec<VsInstance>,
+    /// Read-only SDK presence probes: the tool resolved on PATH, or a stable
+    /// "absent". Absence is only ever claimed from PATH resolution.
+    #[serde(default)]
+    pub sdks: Vec<SdkProbe>,
     #[serde(default)]
     pub notes: Vec<String>,
     #[serde(default)]
     pub completeness: crate::scan_contract::ScanCompleteness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdkProbe {
+    /// `dotnet` | `rustup` | `java`
+    pub tool: String,
+    pub present: bool,
+    /// First line of the tool's own version output (empty when absent).
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +187,67 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
     result
 }
 
+/// Probe one SDK tool via PATH resolution (`where`) and its own version flag.
+/// Read-only; a tool that resolves but fails to run reports "present" with
+/// the error as detail — absence is only ever claimed from PATH resolution.
+#[cfg(windows)]
+fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
+    let resolved = std::process::Command::new(crate::regops::sys_tool("where.exe"))
+        .arg(tool)
+        .output();
+    let Ok(output) = resolved else {
+        return SdkProbe {
+            tool: tool.into(),
+            present: false,
+            detail: String::new(),
+        };
+    };
+    if !output.status.success() {
+        return SdkProbe {
+            tool: tool.into(),
+            present: false,
+            detail: String::new(),
+        };
+    }
+    let first = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if first.is_empty() {
+        return SdkProbe {
+            tool: tool.into(),
+            present: false,
+            detail: String::new(),
+        };
+    }
+    let run = std::process::Command::new(&first).arg(version_arg).output();
+    let detail = match run {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        Err(e) => format!("resolved at {first}; run failed: {e}"),
+    };
+    SdkProbe {
+        tool: tool.into(),
+        present: true,
+        detail,
+    }
+}
+
+#[cfg(not(windows))]
+fn probe_sdk(tool: &str, _version_arg: &str) -> SdkProbe {
+    SdkProbe {
+        tool: tool.into(),
+        present: false,
+        detail: String::new(),
+    }
+}
+
 /// Read-only Visual Studio family audit. Notes carry the evidence quality.
 pub fn audit_toolchains() -> ToolchainAuditResult {
     let mut result = ToolchainAuditResult::default();
@@ -246,6 +320,17 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
             size_kb,
             size_capped,
         });
+    }
+    for (tool, arg) in [
+        ("dotnet", "--list-sdks"),
+        ("rustup", "show"),
+        ("java", "-version"),
+    ] {
+        if crate::scan_task::cancelled() {
+            result.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
+            return result;
+        }
+        result.sdks.push(probe_sdk(tool, arg));
     }
     result.completeness.status = crate::scan_contract::ScanStatus::Complete;
     result

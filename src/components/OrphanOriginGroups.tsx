@@ -41,7 +41,7 @@ export function OrphanOriginGroups({
         const isOpen = expanded.has(g.origin);
         const shown = isOpen ? g.items : g.items.slice(0, 8);
         return (
-          <div key={g.origin} style={{ ...css.card, padding: "10px 12px", fontSize: 12.5 }}>
+          <div key={g.origin} style={{ ...css.card, padding: "10px 12px", fontSize: 13 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
               <strong style={{ fontSize: 13 }}>{g.origin}</strong>
               <span style={css.muted}>

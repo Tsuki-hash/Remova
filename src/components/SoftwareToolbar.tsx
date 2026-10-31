@@ -134,7 +134,7 @@ export function SoftwareToolbar({
               background: category === id ? "var(--accent-soft)" : "var(--surface)",
               color: category === id ? "var(--accent)" : "var(--fg)",
               fontWeight: category === id ? 650 : 500,
-              fontSize: 12.5,
+              fontSize: 13,
               cursor: "pointer",
             }}
             aria-pressed={category === id}
@@ -183,7 +183,7 @@ export function SoftwareToolbar({
               border: "1px solid var(--border)",
               background: "var(--surface)",
               boxShadow: "0 8px 24px rgba(0,0,0,.12)",
-              fontSize: 12.5,
+              fontSize: 13,
               lineHeight: 1.55,
               color: "var(--fg)",
             }}

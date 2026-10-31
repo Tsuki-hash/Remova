@@ -20,13 +20,13 @@ export function SelectedAppCard({
         ...css.card,
         marginBottom: 10,
         padding: showDetail ? "10px 14px" : "8px 14px",
-        fontSize: 12.5,
+        fontSize: 13,
         background: "var(--surface-2)",
         flexShrink: 0,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 13.5 }}>{prettyAppName(selected.name, selected.source)}</strong>
+        <strong style={{ fontSize: 14 }}>{prettyAppName(selected.name, selected.source)}</strong>
         <span style={css.sourceBadge} title={selected.source}>
           {sourceLabel(selected.source, L)}
         </span>

@@ -92,7 +92,7 @@ export function Sidebar({
               color: active ? "var(--accent-text)" : "var(--muted)",
               background: active ? "var(--accent-soft)" : "transparent",
               fontWeight: active ? 650 : 500,
-              fontSize: 13.5,
+              fontSize: 14,
               cursor: "pointer",
               justifyContent: collapsed ? "center" : "flex-start",
               position: "relative",
@@ -164,7 +164,7 @@ export function Shell({
               style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}
             >
               {subtitle && (
-                <div style={{ fontSize: 12.5, color: "var(--muted)" }} data-tauri-drag-region>
+                <div style={{ fontSize: 13, color: "var(--muted)" }} data-tauri-drag-region>
                   {subtitle}
                 </div>
               )}
@@ -175,7 +175,7 @@ export function Shell({
                     gap: 12,
                     flexWrap: "wrap",
                     alignItems: "center",
-                    fontSize: 12.5,
+                    fontSize: 13,
                     color: "var(--muted)",
                   }}
                 >

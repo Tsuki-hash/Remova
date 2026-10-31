@@ -202,7 +202,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
             display: "flex",
             alignItems: "flex-start",
             gap: 8,
-            fontSize: 12.5,
+            fontSize: 13,
             color: "var(--fg)",
             cursor: "pointer",
             userSelect: "none" as const,

@@ -167,7 +167,7 @@ function RowMenu({
                   color: "var(--fg)",
                   padding: "8px 10px",
                   borderRadius: 6,
-                  fontSize: 12.5,
+                  fontSize: 13,
                   cursor: "pointer",
                   whiteSpace: "nowrap" as const,
                 }}

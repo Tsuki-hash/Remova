@@ -272,7 +272,7 @@ export function OrphanPage({
                 padding: "8px 12px",
                 borderBottom: "1px solid var(--border)",
                 background: "var(--surface)",
-                fontSize: 12.5,
+                fontSize: 13,
                 flexShrink: 0,
               }}
             >

@@ -126,7 +126,7 @@ export function CheckupPanel({
               padding: "8px 10px",
               borderRadius: 8,
               background: "var(--accent-soft)",
-              fontSize: 12.5,
+              fontSize: 13,
             }}
           >
             {L.checkupOrphanFound(orphanCount)}

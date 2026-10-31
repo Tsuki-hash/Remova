@@ -328,7 +328,7 @@ export function ScopedScanPanel({
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 13.5, fontWeight: 650 }}>{title}</h2>
+        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>{title}</h2>
         <span style={css.muted}>{hint}</span>
         {!busy && lastScanCount !== null && (
           <span style={css.muted}>

@@ -43,7 +43,7 @@ export function OnboardingCard({ onClose }: { onClose: () => void }) {
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
         <button
           type="button"
-          style={{ ...css.btn, height: 32, fontSize: 12.5 }}
+          style={{ ...css.btn, height: 32, fontSize: 13 }}
           onClick={onClose}
         >
           {L.onboardingDismiss}

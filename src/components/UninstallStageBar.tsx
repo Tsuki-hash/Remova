@@ -50,7 +50,7 @@ export function UninstallStageBar({
       role="status"
       aria-live="polite"
     >
-      <strong style={{ fontSize: 12.5 }}>{L.uninstallFlowDeep}</strong>
+      <strong style={{ fontSize: 13 }}>{L.uninstallFlowDeep}</strong>
       {ORDER.map((s, i) => {
         const done = i < idx;
         const active = s === stage;

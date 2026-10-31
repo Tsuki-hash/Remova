@@ -485,7 +485,7 @@ export function MorePage({
             marginBottom: 16,
           }}
         >
-          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{L.moreSearchLabel}</span>
+          <span style={{ fontSize: 13, color: "var(--muted)" }}>{L.moreSearchLabel}</span>
           <div
             style={{
               position: "relative",
@@ -556,7 +556,7 @@ export function MorePage({
         </div>
       )}
       {q && matchedCount === 0 && (
-        <div style={{ ...css.muted, fontSize: 12.5, marginBottom: 16 }}>{L.moreSearchEmpty}</div>
+        <div style={{ ...css.muted, fontSize: 13, marginBottom: 16 }}>{L.moreSearchEmpty}</div>
       )}
       {trackedCommon.length > 0 && (
         <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>

@@ -25,7 +25,7 @@ export function IgnoreSuggestBar({
         borderRadius: 8,
         border: "1px solid var(--border)",
         background: "var(--surface-2)",
-        fontSize: 12.5,
+        fontSize: 13,
         display: "flex",
         gap: 10,
         flexWrap: "wrap",

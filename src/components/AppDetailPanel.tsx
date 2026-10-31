@@ -171,7 +171,7 @@ export function AppDetailPanel({
                       padding: "8px 10px",
                       borderRadius: 6,
                       cursor: "pointer",
-                      fontSize: 12.5,
+                      fontSize: 13,
                       color: m.danger ? "var(--danger)" : "var(--fg)",
                     }}
                     onClick={() => {
@@ -209,7 +209,7 @@ export function AppDetailPanel({
                   flex: 1,
                   minWidth: 0,
                   fontFamily: r.mono ? "var(--mono)" : undefined,
-                  fontSize: 12.5,
+                  fontSize: 13,
                 }}
                 title={r.value}
               >
@@ -262,7 +262,7 @@ export function AppDetailPanel({
                     width: "100%",
                     padding: "12px 0",
                     border: "none",
-                    fontSize: 12.5,
+                    fontSize: 13,
                     background: "transparent",
                     cursor: onDrillDown ? "pointer" : "default",
                     textAlign: "left",

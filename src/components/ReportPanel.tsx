@@ -139,7 +139,7 @@ export function ReportPanel({
         <div
           style={{
             marginTop: 8,
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.5,
             color: "var(--muted)",
             borderLeft: "3px solid var(--accent)",
@@ -183,7 +183,7 @@ export function ReportPanel({
         (() => {
           const p = cleanupProgress(report.deleted, report.failed + report.skipped + (report.delayed ?? 0), 0);
           return (
-            <div style={{ marginTop: 8, fontSize: 12.5 }}>
+            <div style={{ marginTop: 8, fontSize: 13 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
                 {p.complete && !report.dry_run && !report.aborted
                   ? L.reportProgressComplete
@@ -289,7 +289,7 @@ export function ReportPanel({
             padding: "8px 10px",
             borderRadius: 8,
             background: "var(--accent-soft)",
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.5,
           }}
         >
@@ -299,7 +299,7 @@ export function ReportPanel({
       )}
       {verifyRows && verifyRows.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontWeight: 650, fontSize: 12.5, marginBottom: 4 }}>{L.verifyChecklist}</div>
+          <div style={{ fontWeight: 650, fontSize: 13, marginBottom: 4 }}>{L.verifyChecklist}</div>
           <div style={{ maxHeight: 120, overflow: "auto", fontSize: 12, color: "var(--muted)" }}>
             {verifyRows.map((v, i) => (
               <div key={`${v.path}-${i}`} className="ell" title={v.path}>

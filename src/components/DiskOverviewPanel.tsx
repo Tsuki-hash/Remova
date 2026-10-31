@@ -354,7 +354,7 @@ export function DiskOverviewPanel({
                 background: "transparent",
                 color: active ? "var(--accent-text)" : "var(--muted)",
                 padding: "6px 10px",
-                fontSize: 12.5,
+                fontSize: 13,
                 fontWeight: active ? 650 : 500,
                 cursor: "pointer",
               }}
@@ -439,7 +439,7 @@ export function DiskOverviewPanel({
             <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
-                style={{ ...css.btn, height: 32, fontSize: 12.5 }}
+                style={{ ...css.btn, height: 32, fontSize: 13 }}
                 onClick={() => setTab("cleanup")}
               >
                 {L.diskOverviewOpenActions(actionableCount)}

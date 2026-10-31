@@ -270,7 +270,7 @@ export function CopilotPanel({
             borderRadius: 10,
             padding: "10px 12px",
             background: "var(--surface-2)",
-            fontSize: 12.5,
+            fontSize: 13,
             lineHeight: 1.5,
             marginTop: 8,
           }}

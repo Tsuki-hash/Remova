@@ -52,7 +52,7 @@ export function AiRiskBanner({ risk, onDismiss }: { risk: string; onDismiss: () 
         borderRadius: 8,
         background: "var(--accent-soft)",
         color: "var(--fg)",
-        fontSize: 12.5,
+        fontSize: 13,
         lineHeight: 1.5,
         flexShrink: 0,
       }}

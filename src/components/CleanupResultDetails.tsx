@@ -230,7 +230,7 @@ export function CleanupResultDetails({
   const known = new Set<string>(groups.map(([status]) => status));
   const other = items.filter(item => !known.has(item.status));
   return <div style={{ color: "var(--muted)", fontSize: 12 }}>
-    {title && <h3 style={{ margin: "8px 0 0", fontSize: 12.5, fontWeight: 650, color: "var(--fg)" }}>{title}</h3>}
+    {title && <h3 style={{ margin: "8px 0 0", fontSize: 13, fontWeight: 650, color: "var(--fg)" }}>{title}</h3>}
     {groups.map(([status, label]) => {
       const entries = items.filter(item => item.status === status);
       return entries.length ? <ResultGroup key={status} label={label} items={entries} expanded={status === "failed"}
