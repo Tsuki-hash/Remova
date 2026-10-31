@@ -612,6 +612,7 @@ export const dict: EnDict = {
     shellAssocTitle: "3. Ghost file associations and open-with entries",
     shellAssocHint: "Registry entries still pointing at executables that no longer exist (judged by the full path, read-only)",
     shellAssocNote: "Deletion needs per-entry evaluation: a URL protocol can be re-registered by a still-installed product.",
+    shellAssocFailed: "The file-association scan failed; this section is unavailable. Press reload to retry.",
     orphanExtendedScope: "Scan every local drive root (extended audit)",
     orphanConverged: "Residue review converged: the last two scans agree",
     orphanNotConverged: "Residue review not converged: entries appeared or disappeared since the last round — scan again",

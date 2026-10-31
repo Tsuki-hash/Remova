@@ -65,6 +65,11 @@ fn orphan_value_path(value_name: &str) -> Option<String> {
 fn scan_applications(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) {
     const ROOT: &str = r"HKCU\Software\Classes\Applications";
     for key in crate::regscan::list_subkeys(ROOT) {
+        // Thousands of Applications keys can exist on a lived-in machine; the
+        // cancel check keeps an abandoned scan from walking all of them.
+        if crate::scan_task::cancelled() {
+            return;
+        }
         let command_key = format!("{ROOT}\\{key}\\shell\\open\\command");
         let Some(command) = crate::regscan::read_string(&command_key, "") else {
             continue;
@@ -88,6 +93,11 @@ fn scan_applications(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) 
 fn scan_url_protocols(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) {
     const ROOT: &str = r"HKCU\Software\Classes";
     for key in crate::regscan::list_subkeys(ROOT) {
+        // Same responsiveness rule as scan_applications: Classes is one of the
+        // largest hives the radar touches, so cancellation must land here too.
+        if crate::scan_task::cancelled() {
+            return;
+        }
         let proto_key = format!("{ROOT}\\{key}");
         // Cheap pre-filter: only keys that carry the URL Protocol marker.
         if crate::regscan::read_string(&proto_key, "URL Protocol").is_none() {

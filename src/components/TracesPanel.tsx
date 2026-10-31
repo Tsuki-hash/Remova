@@ -19,6 +19,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
   const [traces, setTraces] = useState<TraceScanResult | null>(null);
   const [portable, setPortable] = useState<PortableScanResult | null>(null);
   const [shellAssoc, setShellAssoc] = useState<import("../types").ShellAssocScanResult | null>(null);
+  const [shellFailed, setShellFailed] = useState(false);
   const [completeness, setCompleteness] = useState<ScanCompleteness>({
     status: "unknown",
     roots_scanned: 0,
@@ -34,11 +35,14 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       const [tr, pb, shell] = await Promise.all([
         api.consentOrphans(),
         api.portableCandidates(),
+        // A failed shell-assoc scan is surfaced as a note, never folded into
+        // the result list: hiding it would read as "nothing found".
         api.shellAssocOrphans().catch(() => null),
       ]);
       setTraces(tr);
       setPortable(pb);
       setShellAssoc(shell);
+      setShellFailed(shell === null);
       setCompleteness(
         tr.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
       );
@@ -236,6 +240,11 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <div style={{ fontSize: 11, marginTop: 4 }}>{L.shellAssocNote}</div>
+    </div>
+  )}
+  {shellFailed && (
+    <div role="note" style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>
+      {L.shellAssocFailed}
     </div>
   )}
 </div>

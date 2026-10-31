@@ -596,6 +596,7 @@ export const dict = {
     shellAssocTitle: "③ 文件关联与打开方式的幽灵记录",
     shellAssocHint: "注册表里仍指向已不存在 exe 的关联条目（按完整路径精确判定，只读）",
     shellAssocNote: "删除需逐条评估：URL 协议可能被仍在安装的产品重新注册。",
+    shellAssocFailed: "文件关联记录扫描失败，本区结果不可用；请点「刷新」重试。",
     orphanExtendedScope: "扫描全部本地盘根目录（扩展审计）",
     orphanConverged: "残留复核已收敛：连续两轮扫描结果一致",
     orphanNotConverged: "残留复核未收敛：与上一轮相比仍有增减，建议再扫描一轮",
