@@ -8,10 +8,15 @@ import type {
   AiExplainOutput,
   BrokenCleanupReport,
   BrokenInstall,
+  CliResidueReport,
+  ConsumerSearchResult,
   FirewallCleanupReport,
   FirewallScanResult,
   JunctionScanResult,
   ComponentStoreAnalysis,
+  MsiConsistencyReport,
+  ProductFamily,
+  ShellAssocScanResult,
   TriageScanResult,
   RegenerableScanResult,
   RegenerableCleanupReport,
@@ -23,6 +28,7 @@ import type {
   MigrationFinishReport,
   MigrationRollbackReport,
   MigrationState,
+  ToolchainAuditResult,
   TraceScanResult,
   PortableScanResult,
   CleanupItem,
@@ -131,8 +137,8 @@ export const api = {
     invoke<OfficialUninstallResult>("run_official_uninstall", { app }),
   verifyLeftovers: (items: CleanupItem[]) =>
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
-  orphanScan: (scanId?: number) =>
-    invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId }),
+  orphanScan: (scanId?: number, extended?: boolean) =>
+    invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId, extended }),
   /** M1: broken MSI install records (read-only). */
   brokenInstalls: () => invoke<BrokenInstall[]>("scan_broken_installs"),
   /** M2: export then remove a broken record (server re-verifies the record). */
@@ -171,6 +177,13 @@ export const api = {
     invoke<MigrationState>("migrate_status", { source, target }),
   /** M4: orphaned ConsentStore entries (read-only, evaluation-gated). */
   consentOrphans: () => invoke<TraceScanResult>("scan_consent_orphans"),
+  installVectors: () => invoke<ProductFamily[]>("scan_install_vectors"),
+  msiConsistency: () => invoke<MsiConsistencyReport>("scan_msi_consistency"),
+  cliResidue: () => invoke<CliResidueReport>("scan_cli_residue"),
+  shellAssocOrphans: () => invoke<ShellAssocScanResult>("scan_shell_assoc_orphans"),
+  auditToolchains: () => invoke<ToolchainAuditResult>("audit_toolchains"),
+  findProjectConsumers: (roots: string[]) =>
+    invoke<ConsumerSearchResult>("find_project_consumers", { roots }),
   /** M4: portable-app candidates (read-only cross-reference). */
   portableCandidates: () => invoke<PortableScanResult>("scan_portable_candidates"),
   cancelMigrateCopy: () => invoke<void>("cancel_migrate_copy"),

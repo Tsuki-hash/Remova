@@ -18,6 +18,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
   const L = t();
   const [traces, setTraces] = useState<TraceScanResult | null>(null);
   const [portable, setPortable] = useState<PortableScanResult | null>(null);
+  const [shellAssoc, setShellAssoc] = useState<import("../types").ShellAssocScanResult | null>(null);
   const [completeness, setCompleteness] = useState<ScanCompleteness>({
     status: "unknown",
     roots_scanned: 0,
@@ -30,12 +31,14 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
     setBusy(true);
     setLoadError(null);
     try {
-      const [tr, pb] = await Promise.all([
+      const [tr, pb, shell] = await Promise.all([
         api.consentOrphans(),
         api.portableCandidates(),
+        api.shellAssocOrphans().catch(() => null),
       ]);
       setTraces(tr);
       setPortable(pb);
+      setShellAssoc(shell);
       setCompleteness(
         tr.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
       );
@@ -216,6 +219,26 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.tracesAdvice}</div>
       <details style={{ marginTop: 8 }}>
         <summary style={{ ...css.muted, fontSize: 12, cursor: "pointer" }}>{L.tracesTechSummary}</summary>
+        <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
+  {shellAssoc && shellAssoc.orphans.length > 0 && (
+    <div role="note" style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+      <div style={{ fontWeight: 600 }}>{L.shellAssocTitle}</div>
+      <div style={{ fontSize: 12, margin: "4px 0 6px" }}>{L.shellAssocHint}</div>
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 180, overflow: "auto" }}>
+        {shellAssoc.orphans.map((o) => (
+          <div key={o.class + "|" + o.exe_path} style={{ display: "flex", gap: 8, padding: "6px 8px", borderBottom: "1px solid var(--border)", fontSize: 12, alignItems: "center" }}>
+            <span style={{ ...css.mono, fontSize: 11, flexShrink: 0 }}>{o.class}</span>
+            <span className="ell" style={{ ...css.mono, fontSize: 11, flex: 1 }} title={o.exe_path}>{o.exe_path}</span>
+            <button type="button" style={{ ...css.btnGhost, height: 24, padding: "0 8px", flexShrink: 0 }} aria-label={L.copyPath + ": " + o.exe_path} onClick={() => copyPath(o.exe_path)}>
+              {L.copyPath}
+            </button>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, marginTop: 4 }}>{L.shellAssocNote}</div>
+    </div>
+  )}
+</div>
         <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>{L.tracesNote}</div>
       </details>
     </section>

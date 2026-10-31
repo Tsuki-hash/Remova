@@ -26,6 +26,7 @@ import {
 import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { loadRestorePointPref } from "../lib/restorePointPref";
+import { compareConvergence, type ConvergenceRound } from "../lib/residueConvergence";
 import { summarizeCleanupPlan } from "../lib/cleanupPlan";
 import { normalizeOrphanScan } from "../lib/scopedScan";
 
@@ -50,6 +51,10 @@ export function OrphanPage({
     roots_scanned: 0,
     failed_roots: ["not_scanned"],
   });
+  const [extended, setExtended] = useState(false);
+  const roundsRef = useRef<ConvergenceRound[]>([]);
+  const [convergenceRounds, setConvergenceRounds] = useState(0);
+  const [converged, setConverged] = useState<boolean | null>(null);
   const { runReadOnly, cancel, progress } = useAssociationScan();
   const { next: nextScanRound, isCurrent: isCurrentScanRound, invalidate: invalidateScanRound } = useRequestSeq();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -78,11 +83,18 @@ export function OrphanPage({
     if (!quiet) toast.info(L.orphanScanProgress, { channel: ORPHAN_CHANNEL });
     try {
       const raw = await runReadOnly(
-        (id: number) => api.orphanScan(id),
+        (id: number) => api.orphanScan(id, extended),
         (r) => normalizeOrphanScan(r).items.length,
       );
       const { items: list, omitted: leftOut, completeness } = normalizeOrphanScan(raw);
       setCompleteness(completeness);
+      // Convergence rounds: only complete scans feed the comparator; an
+      // incomplete scan cannot prove the next sweep would not surface more.
+      const complete = completeness.status === "complete";
+      roundsRef.current = [...roundsRef.current, { items: list, complete }].slice(-2);
+      const conv = compareConvergence(roundsRef.current);
+      setConvergenceRounds(conv.rounds);
+      setConverged(conv.converged);
       setOmitted(leftOut);
       setItems(list);
       setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
@@ -213,8 +225,12 @@ export function OrphanPage({
               ? L.orphanScanEmpty
               : `${L.orphanJustScanned} · ${lastScanCount}`}
           </span>}
+          <label style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto", fontSize: 12 }}>
+            <input type="checkbox" checked={extended} disabled={busy} onChange={(e) => setExtended(e.target.checked)} />
+            {L.orphanExtendedScope}
+          </label>
           <button
-            style={{ ...css.btn, marginLeft: "auto", height: 36 }}
+            style={{ ...css.btn, height: 36 }}
             disabled={busy}
             onClick={() => void scan()}
           >
@@ -223,6 +239,16 @@ export function OrphanPage({
         </div>
         <ScanProgressBar progress={progress} onCancel={cancel} />
         <ScanCompletenessNotice completeness={completeness} />
+        {convergenceRounds >= 2 && converged === true && (
+          <div style={{ ...css.muted, fontSize: 12 }} role="status">
+            {L.orphanConverged}
+          </div>
+        )}
+        {convergenceRounds >= 2 && converged === false && (
+          <div style={{ ...css.muted, fontSize: 12 }} role="status">
+            {L.orphanNotConverged}
+          </div>
+        )}
         {omitted > 0 && (
           <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
             {/* regression fix: the cap is applied before the shape probe, so the dropped

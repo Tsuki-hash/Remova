@@ -8,7 +8,12 @@ import { toast } from "../lib/toast";
 import { t } from "../i18n";
 
 vi.mock("../lib/api", () => ({
-  api: { cliGlobals: vi.fn(), openPath: vi.fn(), removeNpmGlobals: vi.fn() },
+  api: {
+    cliGlobals: vi.fn(),
+    openPath: vi.fn(),
+    removeNpmGlobals: vi.fn(),
+    cliResidue: vi.fn(async () => ({ entries: [], completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } })),
+  },
 }));
 vi.mock("../lib/confirm", () => ({
   requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })),

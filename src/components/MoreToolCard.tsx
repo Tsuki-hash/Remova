@@ -24,7 +24,10 @@ export type ToolId =
   | "diskoverview"
   | "cliglobals"
   | "migrate"
-  | "traces";
+  | "traces"
+  | "vectors"
+  | "msi"
+  | "toolaudit";
 
 export type ToolItem = {
   id: ToolId;

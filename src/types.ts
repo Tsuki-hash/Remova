@@ -235,6 +235,86 @@ export type MigrationState =
   | "finished"
   | "inconsistent";
 
+/** M4E.2: one install vector of a product family (read-only). */
+export type InstallationVector = {
+  vector_id: string;
+  source: string;
+  name: string;
+  version: string;
+  install_location: string;
+  registry_key: string;
+  estimated_size_kb: number;
+  per_user: boolean;
+};
+export type ProductFamily = { family: string; vectors: InstallationVector[] };
+
+/** M4E.3: MSI database cross-check diagnosis (read-only). */
+export type MsiDiagnosis = {
+  product_code: string;
+  display_name: string;
+  install_location: string;
+  location_exists: boolean | null;
+  has_uninstall_record: boolean;
+  has_installer_key: boolean;
+  in_msi_db: boolean;
+  class: string;
+};
+export type MsiConsistencyReport = {
+  products: MsiDiagnosis[];
+  notes: string[];
+  completeness: ScanCompleteness;
+};
+
+/** M4E.4: CLI residue evidence (read-only; credential values never leave the backend). */
+export type CliResidueEntry = {
+  manager: string;
+  kind: string;
+  name: string;
+  detail: string;
+  redacted: boolean;
+};
+export type CliResidueReport = {
+  entries: CliResidueEntry[];
+  completeness: ScanCompleteness;
+};
+
+/** M4E.5: shell-association orphan (read-only). */
+export type ShellAssocOrphan = {
+  class: string;
+  key: string;
+  exe_path: string;
+};
+export type ShellAssocScanResult = {
+  orphans: ShellAssocOrphan[];
+  omitted: number;
+  completeness: ScanCompleteness;
+};
+
+/** M4E.6: toolchain audit (read-only). */
+export type VsInstance = {
+  display_name: string;
+  installation_path: string;
+  installation_version: string;
+  product_id: string;
+  has_msvc: boolean;
+  has_msbuild: boolean;
+  has_ide: boolean;
+  size_kb: number;
+  size_capped: boolean;
+};
+export type ToolchainAuditResult = {
+  vswhere_available: boolean;
+  instances: VsInstance[];
+  notes: string[];
+  completeness: ScanCompleteness;
+};
+export type ConsumerHit = { root: string; path: string };
+export type ConsumerSearchResult = {
+  hits: ConsumerHit[];
+  omitted: number;
+  completeness: ScanCompleteness;
+};
+
 /** M4: system traces — ConsentStore orphan (read-only this cycle). */
 export type ConsentOrphan = {
   capability: string;

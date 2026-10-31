@@ -7,7 +7,7 @@ import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
-import type { CliGlobalItem, CliGlobalScanResult, ScanCompleteness } from "../types";
+import type { CliGlobalItem, CliGlobalScanResult, CliResidueEntry, CliResidueReport, ScanCompleteness } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 
 const MANAGERS = ["npm", "pnpm", "yarn"] as const;
@@ -40,13 +40,18 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
   });
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [residue, setResidue] = useState<CliResidueReport | null>(null);
 
   const reload = async () => {
     setSel(new Set());
-    const next = await api.cliGlobals();
+    const [next, res] = await Promise.all([
+      api.cliGlobals(),
+      api.cliResidue().catch(() => null),
+    ]);
     setCompleteness(
       next.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
     );
+    setResidue(res);
     setResult(next);
   };
 
@@ -231,7 +236,28 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.cliNote}</div>
+      {residue && residue.entries.length > 0 && (
+  <details style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+    <summary style={{ cursor: "pointer", fontWeight: 600 }}>{L.cliResidueTitle}</summary>
+    <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.cliResidueHint}</div>
+    <div style={{ maxHeight: 200, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+      {residue.entries.map((e: CliResidueEntry, i: number) => (
+        <div key={e.manager + "-" + e.kind + "-" + i} style={{ display: "flex", gap: 8, padding: "4px 8px", borderBottom: "1px solid var(--border)", fontSize: 12, alignItems: "center" }}>
+          <span style={{ ...css.mono, fontSize: 11, flexShrink: 0 }}>{e.kind}</span>
+          <span style={{ flexShrink: 0 }}>{e.name}</span>
+          <span className="ell" style={{ ...css.muted, fontSize: 11, flex: 1 }} title={e.detail}>
+            {e.redacted ? L.cliResidueRedacted : e.detail}
+          </span>
+          {e.kind === "shim_orphan" && (
+            <span style={{ color: "var(--warn-text)", fontSize: 11, flexShrink: 0 }}>{L.cliResidueOrphan}</span>
+          )}
+        </div>
+      ))}
+    </div>
+    <div style={{ ...css.muted, fontSize: 11, marginTop: 4 }}>{L.cliResidueNote}</div>
+  </details>
+)}
+<div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.cliNote}</div>
     </section>
   );
 }

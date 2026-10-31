@@ -23,6 +23,8 @@ import { DiskOverviewPanel } from "./DiskOverviewPanel";
 import { CliGlobalsPanel } from "./CliGlobalsPanel";
 import { MigratePanel } from "./MigratePanel";
 import { TracesPanel } from "./TracesPanel";
+import { MsiPanel, VectorsPanel } from "./AuditPanels";
+import { ToolchainPanel } from "./ToolchainPanel";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
 import { useMoreRestore } from "../hooks/useMoreRestore";
@@ -254,6 +256,27 @@ export function MorePage({
 
   const traces: ToolItem[] = [
     {
+      id: "vectors",
+      title: L.vectorsTitle,
+      desc: L.vectorsHint,
+      icon: "report",
+      action: () => tools.toggleTool("vectors"),
+    },
+    {
+      id: "msi",
+      title: L.msiTitle,
+      desc: L.msiHint,
+      icon: "report",
+      action: () => tools.toggleTool("msi"),
+    },
+    {
+      id: "toolaudit",
+      title: L.toolchainTitle,
+      desc: L.toolchainHint,
+      icon: "services",
+      action: () => tools.toggleTool("toolaudit"),
+    },
+    {
       id: "firewall",
       title: L.firewallTitle,
       desc: L.firewallHint,
@@ -431,6 +454,9 @@ export function MorePage({
         <MigratePanel onClose={() => tools.setOpenTool(null)} initialSource={migrateSeed} />
       )}
       {openTool === "traces" && <TracesPanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "vectors" && <VectorsPanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "msi" && <MsiPanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "toolaudit" && <ToolchainPanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
