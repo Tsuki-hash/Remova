@@ -69,8 +69,16 @@ fn vswhere_path() -> Option<std::path::PathBuf> {
     }
 }
 
-fn probe_dir(instance: &str, rel: &str) -> bool {
-    std::path::Path::new(instance).join(rel).is_dir()
+/// `is_dir` for directory workloads (MSVC/MSBuild); devenv.exe is a file, so
+/// the IDE probe is an existence check — `is_dir` would always answer "no"
+/// for every full IDE.
+fn probe_path(instance: &str, rel: &str, want_file: bool) -> bool {
+    let joined = std::path::Path::new(instance).join(rel);
+    if want_file {
+        joined.is_file()
+    } else {
+        joined.is_dir()
+    }
 }
 
 fn should_prune(name: &str) -> bool {
@@ -232,9 +240,9 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
             installation_path: path.clone(),
             installation_version: instance.installation_version.unwrap_or_default(),
             product_id: instance.product_id.unwrap_or_default(),
-            has_msvc: probe_dir(&path, r"VC\Tools\MSVC"),
-            has_msbuild: probe_dir(&path, r"MSBuild\Current\Bin"),
-            has_ide: probe_dir(&path, r"Common7\IDE\devenv.exe"),
+            has_msvc: probe_path(&path, r"VC\Tools\MSVC", false),
+            has_msbuild: probe_path(&path, r"MSBuild\Current\Bin", false),
+            has_ide: probe_path(&path, r"Common7\IDE\devenv.exe", true),
             size_kb,
             size_capped,
         });
