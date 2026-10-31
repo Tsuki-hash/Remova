@@ -393,7 +393,7 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                 let expanded = crate::cliglobals::expand_env_vars_public(value);
                 // Environment expansion can resolve a variable to a value
                 // carrying a credential: re-run the heuristic on the result
-                // before it leaves the module (SEC-5).
+                // before it leaves the module.
                 let redacted = redacted || value_looks_secret(&expanded);
                 let detail = if redacted {
                     "<redacted>".into()
