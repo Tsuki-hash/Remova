@@ -62,9 +62,19 @@ fn orphan_value_path(value_name: &str) -> Option<String> {
 
 /// `HKCU\Software\Classes\Applications\<exe>.exe` — the `shell\open\command`
 /// default value names the full path of the registered exe.
-fn scan_applications(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) {
+fn scan_applications(out: &mut Vec<ShellAssocOrphan>, omitted: &mut u32, failed: &mut Vec<String>) {
     const ROOT: &str = r"HKCU\Software\Classes\Applications";
-    for key in crate::regscan::list_subkeys(ROOT) {
+    // snapshot_names carries the error channel `list_subkeys` lacks: an
+    // unreadable root must degrade the result, never read as "0 orphans".
+    let keys = match crate::regscan::snapshot_names(ROOT) {
+        Ok((keys, _)) => keys,
+        Err(e) if e == "scan:cancelled" => return,
+        Err(_) => {
+            failed.push(ROOT.into());
+            return;
+        }
+    };
+    for key in keys {
         // Thousands of Applications keys can exist on a lived-in machine; the
         // cancel check keeps an abandoned scan from walking all of them.
         if crate::scan_task::cancelled() {
@@ -76,7 +86,8 @@ fn scan_applications(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) 
         };
         if let Some(exe) = orphan_command_exe(&command) {
             if out.len() >= RESULT_CAP {
-                break;
+                *omitted += 1;
+                continue;
             }
             out.push(ShellAssocOrphan {
                 class: "applications".into(),
@@ -85,14 +96,25 @@ fn scan_applications(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) 
             });
         }
     }
-    let _ = failed;
 }
 
 /// `HKCU\Software\Classes\<proto>` with a `URL Protocol` value; the open
 /// command's exe decides orphan-ness.
-fn scan_url_protocols(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) {
+fn scan_url_protocols(
+    out: &mut Vec<ShellAssocOrphan>,
+    omitted: &mut u32,
+    failed: &mut Vec<String>,
+) {
     const ROOT: &str = r"HKCU\Software\Classes";
-    for key in crate::regscan::list_subkeys(ROOT) {
+    let keys = match crate::regscan::snapshot_names(ROOT) {
+        Ok((keys, _)) => keys,
+        Err(e) if e == "scan:cancelled" => return,
+        Err(_) => {
+            failed.push(ROOT.into());
+            return;
+        }
+    };
+    for key in keys {
         // Same responsiveness rule as scan_applications: Classes is one of the
         // largest hives the radar touches, so cancellation must land here too.
         if crate::scan_task::cancelled() {
@@ -109,7 +131,8 @@ fn scan_url_protocols(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>)
         };
         if let Some(exe) = orphan_command_exe(&command) {
             if out.len() >= RESULT_CAP {
-                break;
+                *omitted += 1;
+                continue;
             }
             out.push(ShellAssocOrphan {
                 class: "url_protocol".into(),
@@ -118,12 +141,11 @@ fn scan_url_protocols(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>)
             });
         }
     }
-    let _ = failed;
 }
 
 /// `AppCompatFlags\Compatibility Assistant\Store` — value NAMES are full exe
 /// paths with empty data.
-fn scan_compat_store(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) {
+fn scan_compat_store(out: &mut Vec<ShellAssocOrphan>, omitted: &mut u32, failed: &mut Vec<String>) {
     const KEY: &str = r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Store";
     let (_, values) = match crate::regscan::snapshot_names(KEY) {
         Ok(pair) => pair,
@@ -135,7 +157,8 @@ fn scan_compat_store(out: &mut Vec<ShellAssocOrphan>, failed: &mut Vec<String>) 
     };
     for value_name in values {
         if out.len() >= RESULT_CAP {
-            break;
+            *omitted += 1;
+            continue;
         }
         if let Some(path) = orphan_value_path(&value_name) {
             out.push(ShellAssocOrphan {
@@ -155,17 +178,17 @@ pub fn scan_shell_assoc_orphans() -> ShellAssocScanResult {
     }
     let mut failed = Vec::new();
     result.completeness.roots_scanned = 3;
-    scan_applications(&mut result.orphans, &mut failed);
+    scan_applications(&mut result.orphans, &mut result.omitted, &mut failed);
     if crate::scan_task::cancelled() {
         result.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
         return result;
     }
-    scan_url_protocols(&mut result.orphans, &mut failed);
+    scan_url_protocols(&mut result.orphans, &mut result.omitted, &mut failed);
     if crate::scan_task::cancelled() {
         result.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
         return result;
     }
-    scan_compat_store(&mut result.orphans, &mut failed);
+    scan_compat_store(&mut result.orphans, &mut result.omitted, &mut failed);
     if failed.is_empty() {
         result.completeness.status = crate::scan_contract::ScanStatus::Complete;
     } else {

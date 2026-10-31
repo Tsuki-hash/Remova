@@ -847,49 +847,74 @@ async fn scan_install_vectors() -> Result<Vec<vectors::ProductFamily>, String> {
 }
 
 /// MSI database cross-check (M4E.3): Uninstall records x Installer product
-/// keys x Windows Installer database. Read-only diagnosis.
+/// keys x Windows Installer database. Read-only diagnosis. Runs under a scan
+/// task so the in-scan cancellation checks are live.
 #[tauri::command]
-async fn scan_msi_consistency() -> Result<msiconsistency::MsiConsistencyReport, String> {
-    tauri::async_runtime::spawn_blocking(msiconsistency::scan_msi_consistency)
-        .await
-        .map_err(|e| e.to_string())
+async fn scan_msi_consistency(
+    scan_id: Option<u32>,
+) -> Result<msiconsistency::MsiConsistencyReport, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "msiconsistency", msiconsistency::scan_msi_consistency)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// CLI residue diagnostics (M4E.4): prefixes, shims, empty scopes, PATH
-/// entries and redacted .npmrc keys. Read-only.
+/// entries and redacted .npmrc keys. Read-only. Runs under a scan task.
 #[tauri::command]
-async fn scan_cli_residue() -> Result<cliresidue::CliResidueReport, String> {
-    tauri::async_runtime::spawn_blocking(cliresidue::scan_cli_residue)
-        .await
-        .map_err(|e| e.to_string())
+async fn scan_cli_residue(scan_id: Option<u32>) -> Result<cliresidue::CliResidueReport, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "cliresidue", cliresidue::scan_cli_residue)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Shell-association orphans (M4E.5): Applications / URL protocols /
-/// Compatibility Assistant entries whose exe is gone. Read-only.
+/// Compatibility Assistant entries whose exe is gone. Read-only. Runs under a
+/// scan task so the in-loop cancellation checks are live.
 #[tauri::command]
-async fn scan_shell_assoc_orphans() -> Result<shellassoc::ShellAssocScanResult, String> {
-    tauri::async_runtime::spawn_blocking(shellassoc::scan_shell_assoc_orphans)
-        .await
-        .map_err(|e| e.to_string())
+async fn scan_shell_assoc_orphans(
+    scan_id: Option<u32>,
+) -> Result<shellassoc::ShellAssocScanResult, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "shellassoc", shellassoc::scan_shell_assoc_orphans)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Toolchain audit (M4E.6): every Visual Studio family instance with
-/// filesystem workload probes. Read-only.
+/// filesystem workload probes. Read-only. Runs under a scan task.
 #[tauri::command]
-async fn audit_toolchains() -> Result<toolchain_audit::ToolchainAuditResult, String> {
-    tauri::async_runtime::spawn_blocking(toolchain_audit::audit_toolchains)
-        .await
-        .map_err(|e| e.to_string())
+async fn audit_toolchains(
+    scan_id: Option<u32>,
+) -> Result<toolchain_audit::ToolchainAuditResult, String> {
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "toolchain", toolchain_audit::audit_toolchains)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Bounded project-consumer search under user-chosen roots. Read-only.
+/// Bounded project-consumer search under user-chosen roots. Read-only. Runs
+/// under a scan task.
 #[tauri::command]
 async fn find_project_consumers(
+    scan_id: Option<u32>,
     roots: Vec<String>,
 ) -> Result<toolchain_audit::ConsumerSearchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || toolchain_audit::find_consumers(&roots))
-        .await
-        .map_err(|e| e.to_string())
+    let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(id, "consumers", || toolchain_audit::find_consumers(&roots))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Broken MSI install records: the directory is gone but the Uninstall entry

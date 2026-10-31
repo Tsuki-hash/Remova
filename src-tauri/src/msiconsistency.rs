@@ -83,10 +83,14 @@ pub fn reconcile(
                 "record_only"
             } else if has_installer_key && !has_uninstall_record {
                 "key_only"
-            } else if !in_msi_db && has_uninstall_record {
-                "db_missing"
             } else if location_exists == Some(false) {
                 "missing_location"
+            } else if in_msi_db && !has_uninstall_record && !has_installer_key {
+                // The doc comment promises this class: a product only the
+                // installer database knows about (no record, no packed key).
+                "db_only"
+            } else if !in_msi_db && has_uninstall_record {
+                "db_missing"
             } else {
                 "consistent"
             };
@@ -184,17 +188,29 @@ fn to_wide(s: &str) -> Vec<u16> {
 /// unpacked form and comparing packed-to-packed is exact without inventing an
 /// inverse (a wrong inverse would misattribute products).
 #[cfg(windows)]
-fn installer_key_codes() -> HashSet<String> {
+fn installer_key_codes() -> (HashSet<String>, Vec<String>) {
+    // Result channel: an unreadable view must degrade the diagnosis, never
+    // silently report "no product keys" (which would misclassify live
+    // products as record_only). Returns (codes, failed_roots).
     let mut out = HashSet::new();
+    let mut failed = Vec::new();
     for alias in ["HKLM64", "HKLM32"] {
         let root = format!(r"{alias}\SOFTWARE\Classes\Installer\Products");
-        for packed in crate::regscan::list_subkeys(&root) {
+        let (_, keys) = match crate::regscan::snapshot_names(&root) {
+            Ok(pair) => pair,
+            Err(e) if e == "scan:cancelled" => return (out, vec![root]),
+            Err(_) => {
+                failed.push(root);
+                continue;
+            }
+        };
+        for packed in keys {
             if let Some(guid) = unpack_product_code(&packed) {
                 out.insert(guid.to_uppercase());
             }
         }
     }
-    out
+    (out, failed)
 }
 
 /// Exact inverse of `apps::packed_product_code`: undo the nibble swap on the
@@ -263,8 +279,16 @@ pub fn scan_msi_consistency() -> MsiConsistencyReport {
             })
             .collect();
     report.completeness.roots_scanned += 1;
-    // View 2: packed Installer\Products keys.
-    let installer_keys = installer_key_codes();
+    // View 2: packed Installer\Products keys. An unreadable view degrades the
+    // diagnosis (Partial) instead of misclassifying live products.
+    let (installer_keys, installer_failed) = installer_key_codes();
+    if !installer_failed.is_empty() {
+        report.completeness.status = crate::scan_contract::ScanStatus::Partial;
+        report.notes.push(format!(
+            "installer_keys_unreadable:{}",
+            installer_failed.join(",")
+        ));
+    }
     report.completeness.roots_scanned += 1;
     // View 3: the Windows Installer database. Unavailable (not elevated /
     // API failure) is a note, never "no products".

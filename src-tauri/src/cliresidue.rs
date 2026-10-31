@@ -49,12 +49,14 @@ fn is_secret_key(key_lower: &str) -> bool {
     SECRET_KEY_MARKERS.iter().any(|m| key_lower.contains(m))
 }
 
-/// Strip credentials from a registry URL: `scheme://user:pass@host/path` and
-/// `host:path` style registry values keep only the host. `_auth` values are
-/// handled by `is_secret_key` before this is called.
+/// Strip credentials from a registry URL: `scheme://user:pass@host/path?query`
+/// keeps only scheme + host — the query string can carry `?token=` style
+/// secrets, and `@`-userinfo is stripped in both scheme and schemeless forms.
 pub fn redact_registry_url(raw: &str) -> String {
     let trimmed = raw.trim();
     let Some(scheme_end) = trimmed.find("://") else {
+        // Schemeless registry values: keep everything after the last `@`
+        // (userinfo before host), credentials included in the dropped part.
         return trimmed
             .split('@')
             .next_back()
@@ -62,10 +64,25 @@ pub fn redact_registry_url(raw: &str) -> String {
             .to_string();
     };
     let (scheme, rest) = trimmed.split_at(scheme_end + 3);
-    match rest.split_once('@') {
-        Some((_, host_part)) => format!("{scheme}{host_part}"),
-        None => trimmed.to_string(),
-    }
+    let authority = match rest.split_once('@') {
+        Some((_, host_part)) => host_part,
+        None => rest,
+    };
+    let host = authority.split(['?', '/']).next().unwrap_or(authority);
+    format!("{scheme}{host}")
+}
+
+/// True when an expanded `.npmrc` value still looks credential-bearing after
+/// environment expansion (`${VAR}` / `%VAR%` may resolve to a secret).
+fn value_looks_secret(expanded: &str) -> bool {
+    let lower = expanded.to_lowercase();
+    SECRET_KEY_MARKERS.iter().any(|m| lower.contains(m))
+        || lower.contains("://")
+            && lower
+                .rsplit('@')
+                .next()
+                .map(|last| last != expanded)
+                .unwrap_or(false)
 }
 
 /// Extract the exe path a shim/`Applications`-style command string points at:
@@ -216,6 +233,16 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
             let nm = npm.join("node_modules");
             if let Ok(read) = std::fs::read_dir(npm) {
                 for entry in read.flatten() {
+                    // Cancel lands between packages: large global trees must
+                    // not outlive an abandoned scan.
+                    if crate::scan_task::cancelled() {
+                        return CliResidueReport {
+                            entries,
+                            completeness: crate::scan_contract::ScanCompleteness::cancelled(
+                                roots_scanned,
+                            ),
+                        };
+                    }
                     if entry.file_type().is_ok_and(|t| t.is_dir()) {
                         let name = entry.file_name().to_string_lossy().into_owned();
                         if !name.starts_with('.')
@@ -363,12 +390,17 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                     continue;
                 }
                 let redacted = is_secret_key(&key_lower);
+                let expanded = crate::cliglobals::expand_env_vars_public(value);
+                // Environment expansion can resolve a variable to a value
+                // carrying a credential: re-run the heuristic on the result
+                // before it leaves the module (SEC-5).
+                let redacted = redacted || value_looks_secret(&expanded);
                 let detail = if redacted {
                     "<redacted>".into()
                 } else if key_lower.contains("registry") {
-                    redact_registry_url(value)
+                    redact_registry_url(&expanded)
                 } else {
-                    crate::cliglobals::expand_env_vars_public(value)
+                    expanded
                 };
                 push(
                     &mut entries,
@@ -411,13 +443,20 @@ mod tests {
     fn secret_keys_are_redacted_and_registry_urls_keep_the_host() {
         assert!(is_secret_key("authtoken"));
         assert!(is_secret_key("//registry.npmjs.org/:_authToken"));
+        // Path and query are stripped too: a registry URL can carry
+        // `?token=` style secrets in its query.
         assert_eq!(
-            redact_registry_url("https://user:pass@registry.example.com/path"),
-            "https://registry.example.com/path"
+            redact_registry_url("https://user:pass@registry.example.com/path?token=x"),
+            "https://registry.example.com"
         );
         assert_eq!(
             redact_registry_url("registry.npmjs.org"),
             "registry.npmjs.org"
+        );
+        // Schemeless values with userinfo keep only the host.
+        assert_eq!(
+            redact_registry_url("user:pass@registry.example.com"),
+            "registry.example.com"
         );
     }
 

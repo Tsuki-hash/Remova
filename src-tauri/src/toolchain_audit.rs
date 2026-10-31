@@ -164,7 +164,13 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let name_lower = name.to_lowercase();
                 if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                    if depth < CONSUMER_DEPTH && !should_prune(&name_lower) {
+                    // A junction under a user-chosen root may point at a UNC
+                    // share: descending would authenticate to it. Same rule
+                    // as dirsize/shellassoc.
+                    if depth < CONSUMER_DEPTH
+                        && !should_prune(&name_lower)
+                        && !crate::fsutil::is_reparse_point(&path)
+                    {
                         stack.push((path, depth + 1));
                     }
                     continue;
@@ -231,12 +237,26 @@ fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
     }
     let run = std::process::Command::new(&first).arg(version_arg).output();
     let detail = match run {
-        Ok(o) => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string(),
+        Ok(o) => {
+            // `java -version` prints to stderr; stdout-empty falls back so the
+            // detail line is never blank for a tool that ran.
+            let out = String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if out.is_empty() {
+                String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            } else {
+                out
+            }
+        }
         Err(e) => format!("resolved at {first}; run failed: {e}"),
     };
     SdkProbe {
@@ -268,6 +288,9 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
         result.completeness.failed_roots.push("vswhere".into());
         return result;
     };
+    // The binary resolved: the audit can enumerate instances. Without this the
+    // panel showed the "vswhere missing" warning even next to a full list.
+    result.vswhere_available = true;
     let output = std::process::Command::new(&vswhere)
         .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
         .output();
@@ -339,6 +362,14 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
         }
         result.sdks.push(probe_sdk(tool, arg));
     }
+    // M4E.6 acceptance: the shared Package Cache backs repair/modify/uninstall
+    // of EVERY remaining instance — report its footprint (a capped walk is a
+    // lower bound, marked as such) so "drop the IDE" can be weighed against a
+    // tight drive. Only reclaimable when no instance is left.
+    let (cache_kb, cache_capped) =
+        crate::dirsize::walk_size_kb_capped(std::path::Path::new(r"C:\ProgramData\Package Cache"));
+    result.package_cache_kb = cache_kb;
+    result.package_cache_capped = cache_capped;
     result.completeness.status = crate::scan_contract::ScanStatus::Complete;
     result
 }

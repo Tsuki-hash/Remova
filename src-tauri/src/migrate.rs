@@ -60,7 +60,8 @@ fn default_true() -> bool {
 pub struct MigrationCopyReport {
     pub files: u64,
     pub source_kb: i64,
-    /// File-count the walk refused to exceed; non-zero means rerun needed.
+    /// Protocol-compat field: the copy cap now aborts the pass with an Err
+    /// (see `copy_phase`), so this is always false on a successful report.
     pub files_capped: bool,
     /// Relative paths skipped because they are reparse points (recorded,
     /// never followed). These travel in the ledger, not in the copy.
@@ -639,6 +640,12 @@ fn tree_diff(a: &Path, b: &Path) -> Result<Vec<String>, String> {
     ) -> Result<(), String> {
         let read = std::fs::read_dir(root).map_err(|e| e.to_string())?;
         for entry in read {
+            // The diff reads both trees end to end; a cancel must land here
+            // too. In copy the user can cancel while the diff runs; in
+            // cutover the gen was just re-armed, so only a live cancel lands.
+            if copy_cancelled() {
+                return Err("migrate:cancelled".into());
+            }
             let entry = entry.map_err(|e| format!("{rel}: {e}"))?;
             let child = entry.path();
             let child_rel = if rel.is_empty() {
@@ -1138,17 +1145,21 @@ fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
             eprintln!("migration ledger: could not create {}", dir.display());
             return;
         }
-        let line = format!(
-        "{{\"ts\":{},\"source\":\"{}\",\"target\":\"{}\",\"phase\":\"{}\",\"outcome\":\"{}\"}}\n",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-        source.replace('\\', "\\\\"),
-        target.replace('\\', "\\\\"),
-        phase,
-        outcome
-    );
+        // serde_json builds the line: hand-rolled escaping only covered
+        // backslashes, so a quote or newline in an IPC string broke the row.
+        let line = {
+            let record = serde_json::json!({
+                "ts": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                "source": source,
+                "target": target,
+                "phase": phase,
+                "outcome": outcome,
+            });
+            format!("{record}\n")
+        };
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
