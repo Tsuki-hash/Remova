@@ -49,40 +49,38 @@ fn is_secret_key(key_lower: &str) -> bool {
     SECRET_KEY_MARKERS.iter().any(|m| key_lower.contains(m))
 }
 
-/// Strip credentials from a registry URL: `scheme://user:pass@host/path?query`
-/// keeps only scheme + host — the query string can carry `?token=` style
-/// secrets, and `@`-userinfo is stripped in both scheme and schemeless forms.
+/// Strip credentials from a registry URL: keep only scheme + host, dropping
+/// userinfo (RFC 3986: authority ends at the **last** `@`), path and query —
+/// the query string can carry `?token=` style secrets.
 pub fn redact_registry_url(raw: &str) -> String {
     let trimmed = raw.trim();
     let Some(scheme_end) = trimmed.find("://") else {
         // Schemeless registry values: keep everything after the last `@`
         // (userinfo before host), credentials included in the dropped part.
         return trimmed
-            .split('@')
-            .next_back()
-            .unwrap_or(trimmed)
-            .to_string();
+            .rsplit_once('@')
+            .map(|(_, host)| host.to_string())
+            .unwrap_or_else(|| trimmed.to_string());
     };
     let (scheme, rest) = trimmed.split_at(scheme_end + 3);
-    let authority = match rest.split_once('@') {
-        Some((_, host_part)) => host_part,
-        None => rest,
+    // Authority ends at the first `/` or `?` — never at an `@` inside the
+    // path. Userinfo, if present, terminates at the **last** `@` before that.
+    let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let host = match authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => authority,
     };
-    let host = authority.split(['?', '/']).next().unwrap_or(authority);
     format!("{scheme}{host}")
 }
 
 /// True when an expanded `.npmrc` value still looks credential-bearing after
-/// environment expansion (`${VAR}` / `%VAR%` may resolve to a secret).
+/// environment expansion (`${VAR}` / `%VAR%` may resolve to a secret). A URL
+/// with `@` may carry userinfo credentials.
 fn value_looks_secret(expanded: &str) -> bool {
     let lower = expanded.to_lowercase();
     SECRET_KEY_MARKERS.iter().any(|m| lower.contains(m))
-        || lower.contains("://")
-            && lower
-                .rsplit('@')
-                .next()
-                .map(|last| last != expanded)
-                .unwrap_or(false)
+        || lower.contains("://") && expanded.contains('@')
 }
 
 /// Extract the exe path a shim/`Applications`-style command string points at:

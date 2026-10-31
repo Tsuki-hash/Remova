@@ -131,12 +131,14 @@ export function useAnalyzeFlow({
         const r = await runScan(app);
         if (seq !== analyzeSeqRef.current) return false;
         setScan(r, app);
-        // M4E.1: post-uninstall rescans feed the convergence evidence.
+        // M4E.1: post-uninstall rescans feed the convergence evidence. A
+        // degraded scan (TEMP partial, MuiCache truncated, …) is NOT a
+        // complete round — convergence requires both rounds to be whole.
         if (opts?.fromUninstall)
           recordReviewRound(
             r.app_key ?? `${app.source}\u0000${app.registry_key}\u0000${app.name}`,
             r.items,
-            true,
+            (r.degraded ?? []).length === 0,
           );
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {

@@ -290,7 +290,6 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
     };
     // The binary resolved: the audit can enumerate instances. Without this the
     // panel showed the "vswhere missing" warning even next to a full list.
-    result.vswhere_available = true;
     let output = std::process::Command::new(&vswhere)
         .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
         .output();
@@ -330,6 +329,11 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
             return result;
         }
     };
+    // Only flag the tool as available after it has actually answered — a
+    // vswhere that resolved but failed to run would leave the flag true with
+    // zero instances, and the panel would show a contradictory "no instances
+    // found" alongside the failure notice.
+    result.vswhere_available = true;
     for instance in parsed {
         let path = instance.installation_path.unwrap_or_default();
         if path.is_empty() {

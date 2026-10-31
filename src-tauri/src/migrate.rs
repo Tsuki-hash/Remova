@@ -281,6 +281,19 @@ fn free_kb_of(path: &Path) -> Option<i64> {
 }
 
 /// Admission for both Plan and Cutover. Pure-ish: filesystem probes only.
+///
+/// The path strings are ultimately passed to `cmd.exe /c mklink /J` at the
+/// cutover phase. std quotes each argument so cmd metacharacters inside a
+/// quoted arg stay literal — but a path containing `&` can still terminate
+/// the quoted region if the path also has no spaces (std only quotes when the
+/// arg contains whitespace). Rejecting these characters at admission is the
+/// cheapest defence; a native reparse-point API would be the full fix.
+fn path_has_cmd_metachars(path_lower: &str) -> bool {
+    path_lower
+        .chars()
+        .any(|c| matches!(c, '<' | '>' | '&' | '|' | '^' | '%' | '\u{0}'))
+}
+
 fn check_admission(
     source: &Path,
     target: &Path,
@@ -299,6 +312,17 @@ fn check_admission(
     ];
     if !crate::fsutil::is_local_drive_path(&src_l) {
         rej.push("source_not_local_fixed".into());
+    }
+    if !crate::fsutil::is_local_drive_path(&src_l) {
+        rej.push("source_not_local_fixed".into());
+    }
+    // cmd.exe /c mklink /J re-interprets & | < > ^ % even inside quoted args
+    // when the arg has no spaces; reject at admission so the metacharacter
+    // never reaches the subprocess.
+    for (label, p) in [("source", source), ("target", target)] {
+        if path_has_cmd_metachars(&p.to_string_lossy()) {
+            rej.push(format!("{label}_cmd_metachar"));
+        }
     }
     let source_md = std::fs::symlink_metadata(source);
     match source_md {
