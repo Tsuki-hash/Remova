@@ -182,6 +182,11 @@ fn expand_env_vars(raw: &str) -> String {
     out
 }
 
+/// Public wrapper for the CLI residue diagnostics.
+pub fn expand_env_vars_public(raw: &str) -> String {
+    expand_env_vars(raw)
+}
+
 /// Read `"version"` out of a package.json without failing the listing.
 fn package_version(pkg_dir: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(pkg_dir.join("package.json")).ok()?;

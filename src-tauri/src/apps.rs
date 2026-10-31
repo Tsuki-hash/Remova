@@ -799,6 +799,12 @@ fn fixed_local_install_path(location: &str) -> bool {
 /// Parse a real `msiexec.exe /x {GUID}` command. A substring match would also
 /// catch wrappers such as `msiexec-helper.exe /x ...`, whose record must not be
 /// deleted as if it were an MSI product.
+/// Parse a real `msiexec.exe /x {GUID}` command. Public for the MSI
+/// consistency cross-check; the tokenizer refuses wrapper exes.
+pub fn msiexec_uninstall_guid_public(cmd: &str) -> Option<String> {
+    msiexec_uninstall_guid(cmd)
+}
+
 fn msiexec_uninstall_guid(cmd: &str) -> Option<String> {
     let cmd = cmd.trim();
     let (exe, rest) = split_command_token(cmd)?;
@@ -939,7 +945,7 @@ fn find_installer_product_keys(guid: &str) -> Vec<String> {
 /// Windows Installer's compressed ProductCode form used as the
 /// `Installer\Products` key: reverse the first three GUID groups, then swap the
 /// nibbles of every remaining byte.
-fn packed_product_code(guid: &str) -> Option<String> {
+pub fn packed_product_code(guid: &str) -> Option<String> {
     let hex: String = guid
         .chars()
         .filter(|c| c.is_ascii_hexdigit())

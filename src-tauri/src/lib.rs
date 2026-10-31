@@ -5,6 +5,7 @@ pub mod apps;
 pub mod association;
 pub mod backup;
 pub mod cliglobals;
+pub mod cliresidue;
 pub mod commands;
 pub mod constants;
 pub mod deep_reg;
@@ -24,6 +25,7 @@ pub mod junction;
 pub mod locks;
 pub mod manage;
 pub mod migrate;
+pub mod msiconsistency;
 pub mod npmglobals;
 pub mod orphans;
 pub mod path_seal;
@@ -39,11 +41,14 @@ pub mod scan_contract;
 pub mod scan_task;
 pub mod scanner;
 pub mod shared;
+pub mod shellassoc;
 pub mod storeapps;
 pub mod sysops;
 pub mod toolcache;
+pub mod toolchain_audit;
 pub mod traces;
 pub mod triage;
+pub mod vectors;
 pub mod winsxs;
 
 // End-to-end smokes (temp dirs / path mock only) — kept in the module tree so
@@ -810,17 +815,81 @@ fn take_pending_analyze() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn scan_orphan_leftovers(scan_id: Option<u32>) -> Result<orphans::OrphanScanResult, String> {
+async fn scan_orphan_leftovers(
+    scan_id: Option<u32>,
+    extended: Option<bool>,
+) -> Result<orphans::OrphanScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
+    let extended = extended.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "orphan", || {
             scan_task::checkpoint("registry", 0);
             let installed = apps::scan_installed_inventory();
-            orphans::scan_orphans(&installed)
+            if extended {
+                orphans::scan_orphans_extended(&installed)
+            } else {
+                orphans::scan_orphans(&installed)
+            }
         })
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Installation vectors (M4E.2): product families with one row per install
+/// vector (per-machine / per-user / Store). Read-only; grouping never merges
+/// authorization identities.
+#[tauri::command]
+async fn scan_install_vectors() -> Result<Vec<vectors::ProductFamily>, String> {
+    tauri::async_runtime::spawn_blocking(vectors::scan_install_vectors)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// MSI database cross-check (M4E.3): Uninstall records x Installer product
+/// keys x Windows Installer database. Read-only diagnosis.
+#[tauri::command]
+async fn scan_msi_consistency() -> Result<msiconsistency::MsiConsistencyReport, String> {
+    tauri::async_runtime::spawn_blocking(msiconsistency::scan_msi_consistency)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// CLI residue diagnostics (M4E.4): prefixes, shims, empty scopes, PATH
+/// entries and redacted .npmrc keys. Read-only.
+#[tauri::command]
+async fn scan_cli_residue() -> Result<cliresidue::CliResidueReport, String> {
+    tauri::async_runtime::spawn_blocking(cliresidue::scan_cli_residue)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Shell-association orphans (M4E.5): Applications / URL protocols /
+/// Compatibility Assistant entries whose exe is gone. Read-only.
+#[tauri::command]
+async fn scan_shell_assoc_orphans() -> Result<shellassoc::ShellAssocScanResult, String> {
+    tauri::async_runtime::spawn_blocking(shellassoc::scan_shell_assoc_orphans)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Toolchain audit (M4E.6): every Visual Studio family instance with
+/// filesystem workload probes. Read-only.
+#[tauri::command]
+async fn audit_toolchains() -> Result<toolchain_audit::ToolchainAuditResult, String> {
+    tauri::async_runtime::spawn_blocking(toolchain_audit::audit_toolchains)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Bounded project-consumer search under user-chosen roots. Read-only.
+#[tauri::command]
+async fn find_project_consumers(
+    roots: Vec<String>,
+) -> Result<toolchain_audit::ConsumerSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || toolchain_audit::find_consumers(&roots))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Broken MSI install records: the directory is gone but the Uninstall entry
@@ -1387,6 +1456,12 @@ pub fn run() {
         // `migrate_status`
         // `cancel_migrate_copy`
         // `scan_consent_orphans`
+        // `scan_install_vectors`
+        // `scan_msi_consistency`
+        // `scan_cli_residue`
+        // `scan_shell_assoc_orphans`
+        // `audit_toolchains`
+        // `find_project_consumers`
         // `scan_portable_candidates`
         // `diagnose_locked_path`
         // `end_locking_process`
@@ -1474,6 +1549,12 @@ pub fn run() {
             migrate_status,
             cancel_migrate_copy,
             scan_consent_orphans,
+            scan_install_vectors,
+            scan_msi_consistency,
+            scan_cli_residue,
+            scan_shell_assoc_orphans,
+            audit_toolchains,
+            find_project_consumers,
             scan_portable_candidates,
             diagnose_locked_path,
             end_locking_process,
