@@ -9,6 +9,7 @@ import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
 import { appKey } from "../lib/appKey";
 import { loadRescanAfterUninstall, saveRescanAfterUninstall } from "../lib/rescanPref";
+import { recordReviewRound } from "../lib/rescanRounds";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
@@ -130,6 +131,13 @@ export function useAnalyzeFlow({
         const r = await runScan(app);
         if (seq !== analyzeSeqRef.current) return false;
         setScan(r, app);
+        // M4E.1: post-uninstall rescans feed the convergence evidence.
+        if (opts?.fromUninstall)
+          recordReviewRound(
+            r.app_key ?? `${app.source}\u0000${app.registry_key}\u0000${app.name}`,
+            r.items,
+            true,
+          );
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
           void api
@@ -372,6 +380,13 @@ const openOfficialOnly = useCallback(
             stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
           } else {
             setUninstallStage("idle");
+            // A failed rescan is an incomplete review round, never silence.
+            // Same key shape as the success path (backend app_key).
+            recordReviewRound(
+              `${app.source}\u0000${app.registry_key}\u0000${app.name}`,
+              [],
+              false,
+            );
           }
         }
         await refreshApps();

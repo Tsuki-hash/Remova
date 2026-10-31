@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { VerifyRow } from "../lib/api";
@@ -11,6 +11,9 @@ import { CleanupResultDetails } from "./CleanupResultDetails";
 import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
+import { downloadAudit } from "../lib/exportAuditReport";
+import { reviewConvergedFor, reviewRoundsFor } from "../lib/rescanRounds";
+import { requestConfirmEx } from "../lib/confirm";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
 type Props = {
@@ -50,6 +53,36 @@ export function ReportPanel({
   useEffect(() => {
     if (!report.dry_run) panel.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   }, [report]);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const exportAudit = async (format: "json" | "md", summaryOnly: boolean) => {
+    if (!("deleted" in report) || report.dry_run) return;
+    const key = report.app_key ?? report.app_name;
+    const rounds = reviewRoundsFor(key);
+    const converged = reviewConvergedFor(key);
+    const { ok, checked } = await requestConfirmEx({
+      title: L.auditExportTitle,
+      message: L.auditExportPreview(
+        report.app_name,
+        report.deleted,
+        report.failed,
+        rounds,
+        converged === true ? L.auditConvergedYes : converged === false ? L.auditConvergedNo : L.auditConvergedUnknown,
+      ),
+      confirmLabel: L.auditExportGo,
+      checkbox: { label: L.auditExportIncludePaths, defaultChecked: false },
+    });
+    if (!ok) return;
+    setAuditBusy(true);
+    try {
+      downloadAudit(report, rounds, converged, format, {
+        summaryOnly,
+        includeUserPaths: checked,
+      });
+    } finally {
+      setAuditBusy(false);
+    }
+  };
+
   const backupSession = "backup_dir" in report && !report.dry_run && !report.aborted && report.backup_dir
     ? report.backup_dir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   return (
@@ -92,6 +125,20 @@ export function ReportPanel({
             : null}
         </div>
       ) : null}
+      {!report.dry_run && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("json", false)}>
+            {L.auditExportJson}
+          </button>
+          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("md", false)}>
+            {L.auditExportMd}
+          </button>
+          <button style={{ ...css.btnGhost, height: 28 }} disabled={auditBusy} onClick={() => void exportAudit("json", true)}>
+            {L.auditExportSummary}
+          </button>
+        </div>
+      )}
+
       <details open={"aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
         <summary style={{ cursor: "pointer", fontWeight: 600 }}>
           {L.cleanupReportDetails}{"deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}

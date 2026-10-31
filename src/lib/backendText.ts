@@ -86,7 +86,21 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   }
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
-  if (raw.startsWith("uninstaller exited with ")) return L.backendUninstallExit(raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?");
+  if (raw.startsWith("uninstaller exited with ")) {
+    const code = raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?";
+    const classMatch = raw.match(/\[([a-z_]+)\]$/);
+    const cls = classMatch?.[1] ?? "";
+    const reasons: Record<string, string> = {
+      product_absent: L.backendExitProductAbsent,
+      config_corrupt: L.backendExitConfigCorrupt,
+      install_source_missing: L.backendExitSourceMissing,
+      another_install_running: L.backendExitAnotherInstall,
+      fatal_or_source_missing: L.backendExitFatal,
+      product_not_installed: L.backendExitProductAbsent,
+    };
+    if (cls && Object.hasOwn(reasons, cls)) return L.backendUninstallExitReason(code, reasons[cls]!);
+    return L.backendUninstallExit(code);
+  }
   if (raw.includes("process image changed")) return L.lockImageChanged;
   if (raw.includes("process no longer holds this path")) return L.lockNoLongerHolds;
   if (raw.includes("process did not exit in time")) return L.lockExitTimeout;

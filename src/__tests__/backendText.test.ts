@@ -8,6 +8,14 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   const L = t();
   expect(backendText("uninstaller finished: vendor.exe")).toBe(L.uninstallOk);
   expect(backendText("uninstaller exited with Some(1603)")).toBe(L.backendUninstallExit("1603"));
+  expect(backendText("uninstaller exited with Some(1603) [fatal_or_source_missing]")).toBe(
+    L.backendUninstallExitReason("1603", L.backendExitFatal),
+  );
+  expect(backendText("uninstaller exited with Some(1605) [product_absent]")).toBe(
+    L.backendUninstallExitReason("1605", L.backendExitProductAbsent),
+  );
+  // An unknown class falls back to the generic wording.
+  expect(backendText("uninstaller exited with Some(9) [mystery]")).toBe(L.backendUninstallExit("9"));
   expect(backendText("uninstaller timed out (5m): vendor.exe")).toBe(L.backendTimeout);
   expect(backendText("backup failed for 2 item(s); aborted")).toBe(L.backendBackupFailed);
   expect(backendText("SRSetRestorePointW failed")).toBe(L.restorePointFail);
