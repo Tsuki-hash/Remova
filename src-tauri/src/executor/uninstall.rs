@@ -186,6 +186,27 @@ fn uninstaller_exit_ok(code: Option<i32>) -> bool {
     matches!(code, Some(0 | 3010 | 1641))
 }
 
+/// Stable classification of one uninstaller exit, per the MSI exit-code table
+/// (SOP §9.7): the 1600 range is not one lump of "failure" — 1605/1610/1612
+/// mean "there is nothing left to uninstall", which for a broken-record
+/// cleanup is the success it is, while 1603 with a live directory is a real
+/// fatal error. Pure so every code is testable without spawning msiexec.
+fn classify_uninstaller_exit(code: Option<i32>) -> &'static str {
+    match code {
+        Some(0) => "ok",
+        Some(3010) => "reboot_required",
+        Some(1641) => "reboot_initiated",
+        Some(1605) => "product_absent",
+        Some(1610) => "config_corrupt",
+        Some(1612) => "install_source_missing",
+        Some(1618) => "another_install_running",
+        Some(1603) => "fatal_or_source_missing",
+        Some(1614) => "product_not_installed",
+        Some(_) => "unknown_failure",
+        None => "no_exit_code",
+    }
+}
+
 /// 1641 means the uninstaller already started the reboot; 3010 merely requests one.
 fn uninstaller_reboot_initiated(code: Option<i32>) -> bool {
     code == Some(1641)
@@ -343,12 +364,19 @@ fn run_official_uninstall_unchecked(
                                     crate::scanner::reg_scans::invalidate_muicache_cache();
                                     crate::scanner::fs_scans::clear_scan_caches();
                                 }
+                                // The stable class rides along so the UI can
+                                // say WHY an exit is what it is (the 1600
+                                // range is not one lump of failure).
+                                let class = classify_uninstaller_exit(code);
                                 let message = if ok && matches!(code, Some(3010 | 1641)) {
-                                    format!("uninstaller finished (reboot required): {}", argv[0])
+                                    format!(
+                                        "uninstaller finished (reboot required): {} [{}]",
+                                        argv[0], class
+                                    )
                                 } else if ok {
                                     format!("uninstaller finished: {}", argv[0])
                                 } else {
-                                    format!("uninstaller exited with {:?}", code)
+                                    format!("uninstaller exited with {:?} [{}]", code, class)
                                 };
                                 return OfficialUninstallResult {
                                     ok,
@@ -426,6 +454,34 @@ fn run_official_uninstall_unchecked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_codes_classify_per_the_msi_table() {
+        assert_eq!(classify_uninstaller_exit(Some(0)), "ok");
+        assert_eq!(classify_uninstaller_exit(Some(3010)), "reboot_required");
+        assert_eq!(classify_uninstaller_exit(Some(1641)), "reboot_initiated");
+        // The 1600 range: "nothing left" is distinct from a real failure.
+        assert_eq!(classify_uninstaller_exit(Some(1605)), "product_absent");
+        assert_eq!(classify_uninstaller_exit(Some(1610)), "config_corrupt");
+        assert_eq!(
+            classify_uninstaller_exit(Some(1612)),
+            "install_source_missing"
+        );
+        assert_eq!(
+            classify_uninstaller_exit(Some(1618)),
+            "another_install_running"
+        );
+        assert_eq!(
+            classify_uninstaller_exit(Some(1603)),
+            "fatal_or_source_missing"
+        );
+        assert_eq!(
+            classify_uninstaller_exit(Some(1614)),
+            "product_not_installed"
+        );
+        assert_eq!(classify_uninstaller_exit(Some(1)), "unknown_failure");
+        assert_eq!(classify_uninstaller_exit(None), "no_exit_code");
+    }
 
     #[test]
     fn reboot_required_exit_codes_count_as_success() {

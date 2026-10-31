@@ -240,6 +240,31 @@ fn orphan_roots() -> Vec<std::path::PathBuf> {
     }
 }
 
+/// User library roots (Documents / Downloads / Desktop) — candidates under
+/// them are marked `user_library` so the gate treats them as confirm-class
+/// instead of preselecting user files. Relocated Known Folders resolve here,
+/// which is exactly the case a hardcoded `%USERPROFILE%\Documents` misses.
+fn user_library_roots() -> Vec<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads};
+        [&FOLDERID_Documents, &FOLDERID_Downloads, &FOLDERID_Desktop]
+            .into_iter()
+            .filter_map(crate::sysops::known_folder)
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+fn is_under_user_library(path: &str) -> bool {
+    user_library_roots()
+        .iter()
+        .any(|root| path_same_or_under(path, root.to_string_lossy().as_ref()))
+}
+
 /// Top-level directories of every local fixed drive that the standard roots do
 /// not already cover. The extended audit is opt-in: the shape probe keeps the
 /// cost bounded, but a drive root can still hold hundreds of candidates.
@@ -291,6 +316,7 @@ fn extended_roots() -> Vec<std::path::PathBuf> {
                 roots.push(p);
             }
         }
+        roots.extend(user_library_roots());
         roots
     }
     #[cfg(not(windows))]
@@ -513,7 +539,7 @@ fn scan_orphans_in_roots(
         let path_str = p.to_string_lossy().to_string();
         scanned.insert(path_str.clone());
         out.push(CleanupItem {
-            path: path_str,
+            path: path_str.clone(),
             kind: ItemKind::Dir,
             score,
             confidence: Confidence::Suspected,
@@ -527,7 +553,9 @@ fn scan_orphans_in_roots(
             shared: false,
             service_bound: false,
             user_data: false,
-            user_library: false,
+            // A candidate under a user library is confirm-class: the gate and
+            // the UI never preselect user files, even app-shaped ones.
+            user_library: is_under_user_library(&path_str),
             size_kb: None,
             size_capped: false,
             bucket: None,
