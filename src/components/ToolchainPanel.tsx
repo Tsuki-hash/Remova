@@ -85,6 +85,14 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
       {result && result.instances.length === 0 && result.vswhere_available && (
         <p style={css.muted}>{L.toolchainNoInstances}</p>
       )}
+      {result && result.package_cache_kb > 0 && (
+        <div style={{ ...css.muted, fontSize: 12, margin: "4px 0" }}>
+          {L.toolchainPackageCache(
+            formatSize(result.package_cache_kb),
+            result.package_cache_capped,
+          )}
+        </div>
+      )}
       {result &&
         result.instances.map((inst) => (
           <div key={inst.installation_path} style={{ borderTop: "1px solid var(--border)", padding: "6px 0" }}>

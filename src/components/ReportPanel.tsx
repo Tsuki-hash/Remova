@@ -78,6 +78,8 @@ export function ReportPanel({
         summaryOnly,
         includeUserPaths: checked,
       });
+    } catch (e) {
+      toast.error(formatError(e));
     } finally {
       setAuditBusy(false);
     }

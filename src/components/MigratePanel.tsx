@@ -92,7 +92,13 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   // The four phase actions are plain async functions; the call sites below are
   // their single withBusy wrapper.
   const startMigration = async () => {
-    const plan = await api.migratePlan(source, target);
+    let plan: import("../types").MigrationPlan;
+    try {
+      plan = await api.migratePlan(source, target);
+    } catch (e) {
+      toast.error(backendErrorText(formatError(e)));
+      return;
+    }
     setPlan(plan);
     if (!plan.ok) return;
     setCopying(true);

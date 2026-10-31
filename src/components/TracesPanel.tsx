@@ -224,6 +224,12 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       <details style={{ marginTop: 8 }}>
         <summary style={{ ...css.muted, fontSize: 12, cursor: "pointer" }}>{L.tracesTechSummary}</summary>
         <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
+  {shellAssoc && (
+    <ScanCompletenessNotice completeness={shellAssoc.completeness} />
+  )}
+  {shellAssoc && shellAssoc.omitted > 0 && (
+    <div style={{ ...css.muted, fontSize: 12 }}>{L.orphanOmitted(shellAssoc.omitted)}</div>
+  )}
   {shellAssoc && shellAssoc.orphans.length > 0 && (
     <div role="note" style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
       <div style={{ fontWeight: 600 }}>{L.shellAssocTitle}</div>

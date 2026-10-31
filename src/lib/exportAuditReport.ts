@@ -50,6 +50,9 @@ export function buildAuditJson(
     exported_at: new Date().toISOString(),
     kind: "remova-audit-report",
     version: 1,
+    /** Verify: SHA-256 of `JSON.stringify(JSON.parse(text).report)` (compact
+     * JS serialization, key insertion order). */
+    report_sha256_recipe: "SHA-256 of JSON.stringify(JSON.parse(text).report)",
     summary_only: options.summaryOnly === true,
     review_rounds: reviewRounds,
     review_converged: reviewConverged,
@@ -124,7 +127,7 @@ export async function downloadAudit(
   format: "json" | "md",
   options: AuditExportOptions = {},
 ) {
-  const stem = (report.app_name || "app").replace(/[^\w.-]+/g, "_");
+  const stem = (report.app_name || "app").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
   if (format === "md") {
     const md = buildAuditMarkdown(report, reviewRounds, reviewConverged, options);
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });

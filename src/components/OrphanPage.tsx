@@ -226,7 +226,7 @@ export function OrphanPage({
               : `${L.orphanJustScanned} · ${lastScanCount}`}
           </span>}
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto", fontSize: 12 }}>
-            <input type="checkbox" checked={extended} disabled={busy} onChange={(e) => setExtended(e.target.checked)} />
+            <input type="checkbox" checked={extended} disabled={busy} onChange={(e) => { setExtended(e.target.checked); roundsRef.current = []; setConvergenceRounds(0); setConverged(null); }} />
             {L.orphanExtendedScope}
           </label>
           <button

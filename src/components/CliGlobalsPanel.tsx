@@ -41,6 +41,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [residue, setResidue] = useState<CliResidueReport | null>(null);
+  const [residueFailed, setResidueFailed] = useState(false);
 
   const reload = async () => {
     setSel(new Set());
@@ -52,6 +53,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       next.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] },
     );
     setResidue(res);
+    setResidueFailed(res === null);
     setResult(next);
   };
 
@@ -236,6 +238,11 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {residueFailed && (
+        <div role="note" style={{ ...css.muted, fontSize: 12, marginTop: 8 }}>
+          {L.cliResidueFailed}
+        </div>
+      )}
       {residue && residue.entries.length > 0 && (
   <details style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
     <summary style={{ cursor: "pointer", fontWeight: 600 }}>{L.cliResidueTitle}</summary>

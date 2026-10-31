@@ -305,6 +305,9 @@ export type VsInstance = {
 export type ToolchainAuditResult = {
   vswhere_available: boolean;
   instances: VsInstance[];
+  /** Shared Package Cache footprint in KB (lower bound when capped). */
+  package_cache_kb: number;
+  package_cache_capped: boolean;
   notes: string[];
   completeness: ScanCompleteness;
 };
