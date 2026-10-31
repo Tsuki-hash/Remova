@@ -240,6 +240,65 @@ fn orphan_roots() -> Vec<std::path::PathBuf> {
     }
 }
 
+/// Top-level directories of every local fixed drive that the standard roots do
+/// not already cover. The extended audit is opt-in: the shape probe keeps the
+/// cost bounded, but a drive root can still hold hundreds of candidates.
+fn extended_roots() -> Vec<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut roots = Vec::new();
+        let covered: std::collections::HashSet<String> = orphan_roots()
+            .iter()
+            .map(|p| p.to_string_lossy().to_lowercase())
+            .collect();
+        for letter in b'A'..=b'Z' {
+            let c = letter as char;
+            if !crate::diskradar::is_local_fixed_drive(c) {
+                continue;
+            }
+            let Ok(rd) = std::fs::read_dir(format!("{c}:\\")) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    continue;
+                }
+                let p = entry.path();
+                if covered.contains(&p.to_string_lossy().to_lowercase()) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                // System-owned roots and per-user profiles: the standard roots
+                // or a future profile scan own these, not the extended sweep.
+                if matches!(
+                    name.as_str(),
+                    "windows"
+                        | "program files"
+                        | "program files (x86)"
+                        | "programdata"
+                        | "users"
+                        | "$recycle.bin"
+                        | "system volume information"
+                        | "recovery"
+                        | "perflogs"
+                        | "intel"
+                        | "drivers"
+                        | "dumpstacklogs.tmp"
+                ) || name.starts_with('.')
+                {
+                    continue;
+                }
+                roots.push(p);
+            }
+        }
+        roots
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
     if crate::scan_task::cancelled() {
         return OrphanScanResult {
@@ -251,6 +310,24 @@ pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
     // load ignore rules once (was per candidate in the loop).
     let ignore = crate::ignore::load();
     let roots = orphan_roots();
+    scan_orphans_in_roots(installed, &ignore, roots)
+}
+
+/// Opt-in extended audit: standard roots plus every other local fixed drive's
+/// top-level directories. Still bounded — candidates are top-level dirs and
+/// the shape probe decides what becomes a row — but the scope is wider and is
+/// reported as such (`roots_scanned` covers every added drive root).
+pub fn scan_orphans_extended(installed: &[InstalledApp]) -> OrphanScanResult {
+    if crate::scan_task::cancelled() {
+        return OrphanScanResult {
+            items: Vec::new(),
+            omitted: 0,
+            completeness: crate::scan_contract::ScanCompleteness::cancelled(0),
+        };
+    }
+    let ignore = crate::ignore::load();
+    let mut roots = orphan_roots();
+    roots.extend(extended_roots());
     scan_orphans_in_roots(installed, &ignore, roots)
 }
 
