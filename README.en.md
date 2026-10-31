@@ -95,7 +95,7 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | `Remova_*_x64_zh-CN.msi` | MSI installer (per-machine, Chinese-only wizard; non-admin needs UAC elevation) |
 | `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
-Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included in Windows 11 and most Windows 10 installs; the portable build does not bundle it). The NSIS installer downloads WebView2 when it is missing, so offline networks must install WebView2 first or use the MSI/portable build. Cleaning machine-wide apps, the machine PATH, services, firewall rules, or restoring into protected directories requires running Remova as administrator; without elevation these items fail individually and report the reason.
+Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included in Windows 11 and most Windows 10 installs; the portable build does not bundle it). The NSIS installer downloads WebView2 when it is missing, so offline networks must install WebView2 first (download from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)) or use the MSI/portable build. Cleaning machine-wide apps, the machine PATH, services, firewall rules, or restoring into protected directories requires running Remova as administrator; without elevation these items fail individually and report the reason.
 
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 
@@ -168,6 +168,7 @@ Remova/
 ├── scripts/             # Build helpers
 ├── .github/             # CI / Release / signing docs
 ├── SECURITY.md          # Security policy & private vulnerability reporting
+├── RELEASE-STATUS.md    # Release gates & status
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── README.md            # 中文

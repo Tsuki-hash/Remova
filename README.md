@@ -100,7 +100,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | `Remova_*_x64_zh-CN.msi` | MSI 安装程序（per-machine，仅中文向导；非管理员需 UAC 提权） |
 | `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
-系统要求：Windows 10 / 11（x64），以及 Microsoft Edge WebView2 Runtime（Windows 11 与多数 Windows 10 已内置；便携版不附带，缺失时需先安装）。NSIS 安装器在缺少 WebView2 时会联网下载；离线/内网环境请先安装 WebView2，或改用已预装的 MSI/便携包。清理系统级应用、Machine PATH/服务/防火墙以及还原到受保护目录时，需要以管理员身份运行；普通权限下这些条目会逐条失败并报告原因。
+系统要求：Windows 10 / 11（x64），以及 Microsoft Edge WebView2 Runtime（Windows 11 与多数 Windows 10 已内置；便携版不附带，缺失时需先安装）。NSIS 安装器在缺少 WebView2 时会联网下载；离线/内网环境请先从 [Microsoft 官网](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) 下载安装 WebView2，或改用已预装的 MSI/便携包。清理系统级应用、Machine PATH/服务/防火墙以及还原到受保护目录时，需要以管理员身份运行；普通权限下这些条目会逐条失败并报告原因。
 
 > **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。
 
@@ -177,6 +177,7 @@ Remova/
 │   ├── signpath/        # SignPath 签名工件配置
 │   └── RELEASE_SIGNING.md
 ├── SECURITY.md          # 安全策略与漏洞私下报告渠道
+├── RELEASE-STATUS.md    # 发版状态与门槛记录
 ├── index.html           # Vite 入口 HTML
 ├── package.json         # 前端依赖与脚本（版本号唯一源）
 ├── package-lock.json    # 锁定依赖树
