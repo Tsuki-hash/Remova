@@ -106,8 +106,18 @@ export function buildAuditMarkdown(
   ].join("\n");
 }
 
+/** SHA-256 over the exact report payload bytes — the export carries it so a
+ * reviewer can re-hash the `report` field and verify nothing was altered. */
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** Build and trigger the download (same mechanism as the HTML report). */
-export function downloadAudit(
+export async function downloadAudit(
   report: FullCleanupReport,
   reviewRounds: number,
   reviewConverged: boolean | null,
@@ -128,8 +138,9 @@ export function downloadAudit(
     URL.revokeObjectURL(url);
     return;
   }
+  const payload = buildAuditJson(report, reviewRounds, reviewConverged, options);
   const json = JSON.stringify(
-    buildAuditJson(report, reviewRounds, reviewConverged, options),
+    { ...payload, report_sha256: await sha256Hex(JSON.stringify(payload.report)) },
     null,
     2,
   );

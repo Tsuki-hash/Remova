@@ -9,7 +9,7 @@ import { residueKey, type ConvergenceRound } from "./residueConvergence";
  * scan that failed or was cancelled — an incomplete round can never converge.
  */
 
-const MAX_ROUNDS = 2;
+const MAX_ROUNDS = 3;
 const roundsByApp = new Map<string, ConvergenceRound[]>();
 
 export function recordReviewRound(

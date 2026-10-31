@@ -293,8 +293,11 @@ fn extended_roots() -> Vec<std::path::PathBuf> {
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().to_lowercase();
-                // System-owned roots and per-user profiles: the standard roots
-                // or a future profile scan own these, not the extended sweep.
+                // System-owned roots: the standard roots or a future profile
+                // scan own these, not the extended sweep. Per-user profiles
+                // are excluded here, but the user's HOME top-level dot-dirs
+                // and library folders are added below — that is where
+                // shared-vendor residue hides (`.gemini/<product>` etc.).
                 if matches!(
                     name.as_str(),
                     "windows"
@@ -317,6 +320,32 @@ fn extended_roots() -> Vec<std::path::PathBuf> {
             }
         }
         roots.extend(user_library_roots());
+        // Shared-vendor product subdirs hide in HOME dot-dirs (`.gemini/<app>`
+        // style): the drive-root sweep above skips dot-dirs, so the extended
+        // audit adds the user profile's own top-level dot-dirs explicitly.
+        // Their candidates are marked `shared` — a dot-dir also carries the
+        // tool's own config/history, which must never read as residue.
+        if let Some(home) = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) {
+            if let Ok(rd) = std::fs::read_dir(&home) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with('.') {
+                        continue;
+                    }
+                    if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                        continue;
+                    }
+                    // Tooling internals that always look like leftovers.
+                    if matches!(
+                        name.to_lowercase().as_str(),
+                        ".cargo" | ".rustup" | ".npm" | ".pnpm-store" | ".yarn" | ".cache"
+                    ) {
+                        continue;
+                    }
+                    roots.push(entry.path());
+                }
+            }
+        }
         roots
     }
     #[cfg(not(windows))]
@@ -354,13 +383,34 @@ pub fn scan_orphans_extended(installed: &[InstalledApp]) -> OrphanScanResult {
     let ignore = crate::ignore::load();
     let mut roots = orphan_roots();
     roots.extend(extended_roots());
-    scan_orphans_in_roots(installed, &ignore, roots)
+    let home_dotdirs: Vec<std::path::PathBuf> = roots
+        .iter()
+        .filter(|r| {
+            r.file_name()
+                .map(|n| n.to_string_lossy().starts_with('.'))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    scan_orphans_in_roots_with(installed, &ignore, roots, &home_dotdirs)
 }
 
 fn scan_orphans_in_roots(
     installed: &[InstalledApp],
     ignore: &crate::ignore::IgnoreList,
     roots: Vec<std::path::PathBuf>,
+) -> OrphanScanResult {
+    scan_orphans_in_roots_with(installed, ignore, roots, &[])
+}
+
+/// `home_dotdirs` lists roots whose candidates are shared-vendor tooling —
+/// those rows are marked `shared` (never default-select; the dot-dir also
+/// carries the tool's own config/history).
+fn scan_orphans_in_roots_with(
+    installed: &[InstalledApp],
+    ignore: &crate::ignore::IgnoreList,
+    roots: Vec<std::path::PathBuf>,
+    home_dotdirs: &[std::path::PathBuf],
 ) -> OrphanScanResult {
     let mut out = Vec::new();
     let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -550,7 +600,12 @@ fn scan_orphans_in_roots(
             },
             reason: "Orphan app-like folder (no matching uninstall entry)".into(),
             evidence,
-            shared: false,
+            // A candidate directly under a HOME dot-dir is shared-vendor
+            // tooling territory: the dot-dir also carries the tool's own
+            // config/history, so the row stays out of default selection.
+            shared: home_dotdirs
+                .iter()
+                .any(|d| path_same_or_under(&path_str, d.to_string_lossy().as_ref())),
             service_bound: false,
             user_data: false,
             // A candidate under a user library is confirm-class: the gate and

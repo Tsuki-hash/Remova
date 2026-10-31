@@ -34,6 +34,13 @@ pub struct ToolchainAuditResult {
     /// "absent". Absence is only ever claimed from PATH resolution.
     #[serde(default)]
     pub sdks: Vec<SdkProbe>,
+    /// Shared `C:\ProgramData\Package Cache` footprint (lower bound when
+    /// capped): it backs repair/uninstall of every remaining instance and is
+    /// only reclaimable when none are left.
+    #[serde(default)]
+    pub package_cache_kb: i64,
+    #[serde(default)]
+    pub package_cache_capped: bool,
     #[serde(default)]
     pub notes: Vec<String>,
     #[serde(default)]

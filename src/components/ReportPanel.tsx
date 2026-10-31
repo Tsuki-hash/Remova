@@ -74,7 +74,7 @@ export function ReportPanel({
     if (!ok) return;
     setAuditBusy(true);
     try {
-      downloadAudit(report, rounds, converged, format, {
+      await downloadAudit(report, rounds, converged, format, {
         summaryOnly,
         includeUserPaths: checked,
       });
