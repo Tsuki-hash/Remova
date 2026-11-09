@@ -86,6 +86,7 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
   const L = t();
   const [cfg, setCfg] = useState<AiConfigView>(empty);
   const [apiKey, setApiKey] = useState("");
+  const [clearKey, setClearKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dirtyPreset, setDirtyPreset] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -106,6 +107,7 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
   }, [loadAttempt]);
 
   const applyPreset = (p: Preset) => {
+    setApiKey("");
     setCfg((c) => ({
       ...c,
       provider: p.id,
@@ -125,11 +127,12 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
         baseUrl: cfg.base_url,
         model: cfg.model,
         allowCloudPaths: cfg.allow_cloud_paths,
-        apiKey: apiKey.trim() || null,
+        apiKey: clearKey ? "" : apiKey.trim() || null,
       });
       setCfg(next);
       onEnabledChange?.(next.enabled);
       setApiKey("");
+      setClearKey(false);
       toast.success(L.aiSaved);
     } catch (e) {
       toast.error(formatError(e));
@@ -287,10 +290,17 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
             type="password"
             placeholder={cfg.has_api_key ? L.aiApiKeyKeep : activePreset.needsKey ? "sk-…" : "—"}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => { setApiKey(e.target.value); setClearKey(false); }}
             autoComplete="new-password"
-            disabled={!activePreset.needsKey}
+            disabled={!activePreset.needsKey || clearKey}
           />
+          {cfg.has_api_key && <label style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input type="checkbox" checked={clearKey} onChange={(e) => {
+              setClearKey(e.target.checked);
+              setApiKey("");
+            }} />
+            {L.aiApiKeyClear}
+          </label>}
         </div>
 
         <label

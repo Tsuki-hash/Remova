@@ -449,9 +449,98 @@ mod cleanup_trust_tests {
                 &[item(r"C:\Program Files\TrustedDemo")],
                 CleanupSource::Orphan
             )
-            .is_ok(),
-            "scoped scans carry their own server allow-list"
+            .is_err(),
+            "an orphan request must match the server snapshot, not another scope"
         );
+    }
+
+    #[test]
+    fn orphan_ipc_rejects_cleared_guards_before_executor_dispatch() {
+        let _lock = crate::scan_allow::test_lock();
+        let app = app("Fixture", "orphan", "");
+        let mut original = item("C:/Fixture/Orphan/Child");
+        for service in [false, true] {
+            original.shared = !service;
+            original.service_bound = service;
+            orphans::remember_orphan_items(&[original.clone()]);
+            assert!(
+                authorize_cleanup_items(&app, &[original.clone()], CleanupSource::Orphan).is_ok()
+            );
+            let mut forged = original.clone();
+            forged.shared = false;
+            forged.service_bound = false;
+            assert!(authorize_cleanup_items(&app, &[forged], CleanupSource::Orphan).is_err());
+        }
+        let mut forged_kind = original.clone();
+        forged_kind.kind = ItemKind::Registry;
+        assert!(authorize_cleanup_items(&app, &[forged_kind], CleanupSource::Orphan).is_err());
+        orphans::remember_orphan_items(&[]);
+        assert!(authorize_cleanup_items(&app, &[original], CleanupSource::Orphan).is_err());
+    }
+
+    #[test]
+    fn orphan_forgery_reaches_preview_and_full_gates_without_deleting_sentinel() {
+        let _lock = crate::scan_allow::test_lock();
+        let root = crate::test_support::TempDir::new("orphan_guard");
+        let directory = root.subdir("Candidate");
+        let sentinel = directory.join("sentinel.bin");
+        std::fs::write(&sentinel, b"unchanged fixture").unwrap();
+        let app = app("Fixture", "orphan", "");
+        let mut trusted = item(&directory.to_string_lossy());
+        let options = FullCleanupOptions {
+            dry_run: false,
+            skip_official_uninstall: true,
+            backup_enabled: false,
+            restore_point: false,
+            cleanup_source: Some("orphan".into()),
+        };
+        for service in [false, true] {
+            trusted.shared = !service;
+            trusted.service_bound = service;
+            orphans::remember_orphan_items(&[trusted.clone()]);
+            let mut forged = trusted.clone();
+            forged.shared = false;
+            forged.service_bound = false;
+            let preview = executor::run_cleanup_dry_for_app_source(
+                &app,
+                &[forged.clone()],
+                CleanupSource::Orphan,
+            );
+            assert_eq!(preview.deleted_planned, 0);
+            assert_eq!(preview.skipped, 1);
+            assert_eq!(
+                preview.item_details[0].message,
+                "path not associated with app"
+            );
+            let report = executor::run_full_cleanup(&app, &[forged], &options);
+            assert!(
+                !report.aborted,
+                "must reach the item gate, not an earlier abort"
+            );
+            assert_eq!(report.deleted, 0);
+            assert_eq!(report.skipped, 1);
+            assert_eq!(
+                report.item_details[0].message,
+                "path not associated with app"
+            );
+            assert!(report.backup_dir.is_empty());
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"unchanged fixture");
+        }
+        trusted.shared = false;
+        trusted.service_bound = false;
+        orphans::remember_orphan_items(&[trusted.clone()]);
+        let preview = executor::run_cleanup_dry_for_app_source(
+            &app,
+            &[trusted.clone()],
+            CleanupSource::Orphan,
+        );
+        assert_eq!(
+            preview.deleted_planned, 1,
+            "the ordinary fixture must be eligible"
+        );
+        let report = executor::run_full_cleanup(&app, &[trusted], &options);
+        assert_eq!(report.deleted, 1, "ordinary authorized cleanup still works");
+        assert!(!directory.exists());
     }
 
     #[test]
@@ -609,6 +698,17 @@ fn authorize_cleanup_items(
     items: &[CleanupItem],
     source: policy::CleanupSource,
 ) -> Result<(), String> {
+    if source == policy::CleanupSource::Orphan {
+        for item in items {
+            if !orphans::was_recent_orphan_item(item) {
+                return Err(format!(
+                    "orphan item not from the latest scan: {}",
+                    item.path
+                ));
+            }
+        }
+        return Ok(());
+    }
     if source.is_scoped_scan() {
         return Ok(());
     }

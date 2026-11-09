@@ -144,7 +144,8 @@ pub fn run_scoped<T>(id: u32, scope: &'static str, work: impl FnOnce() -> T) -> 
 }
 
 /// Publish a scan allow-list atomically with cancellation/supersession checks.
-/// Unmanaged callers retain their existing behavior; no new paths are authorized.
+/// State locks remain held through the in-memory publication so a newer scan or
+/// cancellation cannot overtake the admitted write.
 pub fn publish(work: impl FnOnce()) {
     CURRENT.with(|current| {
         let current = current.borrow();
@@ -161,6 +162,8 @@ pub fn publish(work: impl FnOnce()) {
             return;
         };
         if task.cancelled.load(Ordering::SeqCst)
+            || task.committed.load(Ordering::SeqCst)
+            || task.committing.load(Ordering::SeqCst)
             || task
                 .scope
                 .is_some_and(|scope| latest.get(scope) != Some(&task.id))
@@ -168,7 +171,10 @@ pub fn publish(work: impl FnOnce()) {
             task.cancelled.store(true, Ordering::SeqCst);
             return;
         }
+        task.committing.store(true, Ordering::SeqCst);
         work();
+        task.committing.store(false, Ordering::SeqCst);
+        task.committed.store(true, Ordering::SeqCst);
     });
 }
 
@@ -392,6 +398,42 @@ mod tests {
             assert!(published);
         })
         .unwrap();
+    }
+
+    #[test]
+    fn newer_scan_cannot_overtake_an_inflight_publication() {
+        let _guard = crate::scan_allow::test_lock();
+        let old = begin().unwrap();
+        let new = begin().unwrap();
+        let published = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let old_value = std::sync::Arc::clone(&published);
+        let old_thread = std::thread::spawn(move || {
+            run_scoped(old, "atomic-publication", || {
+                publish(|| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    old_value.store(1, Ordering::SeqCst);
+                });
+            })
+        });
+        entered_rx.recv().unwrap();
+
+        let new_value = std::sync::Arc::clone(&published);
+        let (new_started_tx, new_started_rx) = std::sync::mpsc::channel();
+        let new_thread = std::thread::spawn(move || {
+            new_started_tx.send(()).unwrap();
+            run_scoped(new, "atomic-publication", || {
+                publish(|| new_value.store(2, Ordering::SeqCst));
+            })
+        });
+        new_started_rx.recv().unwrap();
+        release_tx.send(()).unwrap();
+
+        assert!(old_thread.join().unwrap().is_ok());
+        assert!(new_thread.join().unwrap().is_ok());
+        assert_eq!(published.load(Ordering::SeqCst), 2);
     }
 
     #[test]

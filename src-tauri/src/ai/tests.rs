@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn credential_binding_changes_when_provider_or_origin_changes() {
+    assert_eq!(
+        credential_source("openai", "https://api.example.test/v1").as_deref(),
+        Some("openai|https://api.example.test")
+    );
+    assert_ne!(
+        credential_source("openai", "https://api.example.test/v1"),
+        credential_source("anthropic", "https://api.example.test/v1")
+    );
+    assert_ne!(
+        credential_source("openai", "https://api.example.test/v1"),
+        credential_source("openai", "https://other.example.test/v1")
+    );
+    assert_eq!(
+        credential_source("openai", "https://api.example.test/v1"),
+        credential_source("openai", "https://api.example.test:443/other/path")
+    );
+    assert!(credential_source("openai", "http://remote.example.test/v1").is_none());
+}
+
+#[test]
+fn changing_ai_credential_source_clears_key_but_same_origin_retains_it() {
+    let mut cfg = AiConfig::default();
+    cfg.api_key = "fixture-secret".into();
+    replace_credential(&mut cfg, "openai", "https://api.openai.com/v1/", None);
+    assert_eq!(cfg.api_key, "fixture-secret");
+
+    replace_credential(&mut cfg, "anthropic", "https://api.anthropic.com/v1", None);
+    assert!(cfg.api_key.is_empty());
+    cfg.api_key = "fixture-secret".into();
+    replace_credential(&mut cfg, "ollama", "http://127.0.0.1:11434/v1", None);
+    assert!(cfg.api_key.is_empty());
+
+    cfg.api_key = "fixture-secret".into();
+    replace_credential(&mut cfg, "openai", "https://different.example/v1", None);
+    assert!(cfg.api_key.is_empty());
+
+    cfg.api_key = "fixture-secret".into();
+    replace_credential(
+        &mut cfg,
+        "openai",
+        "https://api.openai.com/v1",
+        Some(zeroize::Zeroizing::new(String::new())),
+    );
+    assert!(
+        cfg.api_key.is_empty(),
+        "explicit empty input clears the key"
+    );
+}
+
+#[test]
 fn cleartext_remote_endpoints_are_refused_before_any_request() {
     for bad in [
         "http://api.example.com/v1",
@@ -33,6 +84,152 @@ fn cleartext_remote_endpoints_are_refused_before_any_request() {
         secure_base_url("", "openai").unwrap(),
         provider_preset("openai").0
     );
+}
+
+// Loopback-only fixture: both destinations are owned by the test and all keys
+// are synthetic. The server answers a followed redirect too, so a regression
+// fails an assertion rather than waiting for the HTTP timeout.
+fn capture_ai_request(
+    cfg: &mut AiConfig,
+    response_status: u16,
+    cross_origin: bool,
+) -> (Result<String, String>, Vec<(bool, String)>) {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    fn read_request(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            let n = stream.read(&mut buffer).unwrap();
+            assert!(n > 0, "fixture request closed early");
+            bytes.extend_from_slice(&buffer[..n]);
+            assert!(bytes.len() < 32 * 1024, "fixture request exceeded limit");
+            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..end]);
+                let content_length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap_or(0);
+                if bytes.len() >= end + 4 + content_length {
+                    return String::from_utf8(bytes).unwrap();
+                }
+            }
+        }
+    }
+
+    let source = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    source.set_nonblocking(true).unwrap();
+    target.set_nonblocking(true).unwrap();
+    let source_addr = source.local_addr().unwrap();
+    let target_addr = target.local_addr().unwrap();
+    cfg.base_url = format!("http://{source_addr}/v1");
+    let location = if cross_origin {
+        format!("http://{target_addr}/redirected")
+    } else {
+        format!("http://{source_addr}/redirected")
+    };
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        let mut deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            for (is_target, listener) in [(false, &source), (true, &target)] {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let request = read_request(&mut stream);
+                        let first = requests.is_empty();
+                        requests.push((is_target, request));
+                        let body = r#"{"content":[{"text":"ok"}],"choices":[{"message":{"content":"ok"}}]}"#;
+                        let status = if first { response_status } else { 200 };
+                        let response = format!(
+                            "HTTP/1.1 {status} Fixture\r\nLocation: {location}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                        deadline = Instant::now() + Duration::from_millis(150);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        requests
+    });
+    let result = chat_completion(cfg, "fixture system", "fixture user");
+    (result, server.join().unwrap())
+}
+
+#[test]
+fn production_ai_transport_refuses_all_redirects_without_contacting_target() {
+    for provider in ["anthropic", "openai"] {
+        for status in [301, 302, 303, 307, 308] {
+            for cross_origin in [false, true] {
+                let mut cfg = AiConfig::default();
+                cfg.enabled = true;
+                cfg.provider = provider.into();
+                cfg.api_key = "fixture-redirect-secret".into();
+                let (result, requests) = capture_ai_request(&mut cfg, status, cross_origin);
+                assert_eq!(result, Err("ai redirect refused".into()));
+                assert_eq!(
+                    requests.len(),
+                    1,
+                    "a redirect must not make another request"
+                );
+                assert!(!requests[0].0, "only the initial source may be contacted");
+                let header = if provider == "anthropic" {
+                    "x-api-key:"
+                } else {
+                    "authorization:"
+                };
+                assert!(
+                    requests[0].1.to_ascii_lowercase().contains(header),
+                    "the test must reach an authenticated production request"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn switching_to_local_provider_does_not_send_the_old_cloud_key() {
+    let mut cfg = AiConfig::default();
+    cfg.enabled = true;
+    cfg.api_key = "fixture-old-cloud-secret".into();
+    replace_credential(&mut cfg, "ollama", "http://127.0.0.1:11434/v1", None);
+    cfg.provider = "ollama".into();
+    let (result, requests) = capture_ai_request(&mut cfg, 200, false);
+    assert_eq!(result, Ok("ok".into()));
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0]
+        .1
+        .to_ascii_lowercase()
+        .contains("authorization:"));
+    assert!(!requests[0].1.contains("fixture-old-cloud-secret"));
+}
+
+#[test]
+fn credential_rebinding_is_persisted_and_reloads_without_the_old_key() {
+    let root = crate::test_support::TempDir::new("ai-source-binding");
+    let path = root.join("config.json");
+    let mut cfg = AiConfig::default();
+    cfg.api_key = "fixture-bound-key".into();
+    save_config_file(&path, &cfg).unwrap();
+    update_config_file(&path, |stored| {
+        replace_credential(stored, "openai", "https://new.example.test/v1", None);
+        stored.base_url = "https://new.example.test/v1".into();
+    })
+    .unwrap();
+    assert!(load_config_file(&path).unwrap().api_key.is_empty());
 }
 
 #[test]

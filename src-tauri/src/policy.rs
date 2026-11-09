@@ -40,9 +40,10 @@ impl CleanupSource {
         )
     }
 
-    fn allow_ok(&self, path: &str) -> bool {
+    fn allow_ok(&self, item: &CleanupItem) -> bool {
+        let path = &item.path;
         match self {
-            CleanupSource::Orphan => crate::orphans::was_recent_orphan_path(path),
+            CleanupSource::Orphan => crate::orphans::was_recent_orphan_item(item),
             CleanupSource::Monitor => {
                 crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Monitor, path)
             }
@@ -218,6 +219,9 @@ pub fn gate_cleanup_item(
     source: CleanupSource,
     ignore: &crate::ignore::IgnoreList,
 ) -> GateDecision {
+    if source == CleanupSource::Orphan && !source.allow_ok(item) {
+        return GateDecision::Skip("path not associated with app");
+    }
     // Never trust client-only flags — recompute red lines server-side.
     if item.user_data || crate::safety::is_user_data_path(&item.path) {
         return GateDecision::Skip("user_data red line");
@@ -286,10 +290,11 @@ pub fn gate_cleanup_item(
             // A forged non-orphan app must not downgrade a scoped source to
             // name/install-root association. Scoped sources always have a
             // server-side allow-list, so it is the only acceptable proof.
-            if !source.allow_ok(&item.path) {
+            if !source.allow_ok(item) {
                 return GateDecision::Skip("path not associated with app");
             }
-            // Confirmed scan path — the allow-list is the association proof.
+            // Confirmed scan path/classification is the authorization proof;
+            // client flags remain untrusted even for scoped orphan scans.
             // CF vendor paths still hard-skip (shared runtime).
             if matches!(item.kind, ItemKind::File | ItemKind::Dir)
                 && crate::shared::is_common_files_vendor_path(&item.path)
@@ -315,7 +320,7 @@ pub fn gate_cleanup_item(
         return GateDecision::Skip("shared runtime");
     } else if source.is_scoped_scan() {
         // Scoped scan without app: only paths from the last server-side scan.
-        if !source.allow_ok(&item.path) {
+        if !source.allow_ok(item) {
             return GateDecision::Skip("path not associated with app");
         }
     } else {

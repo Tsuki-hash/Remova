@@ -49,12 +49,18 @@ fn item_kind_tag(kind: &crate::scanner::ItemKind) -> &'static str {
     }
 }
 
-fn authorized_item_key(item: &crate::scanner::CleanupItem) -> Option<String> {
+pub(crate) fn authorized_item_key(item: &crate::scanner::CleanupItem) -> Option<String> {
     normalize(&item.path).map(|key| {
+        // Security-relevant classification is part of the authorization
+        // snapshot. A renderer may not clear shared/service/user-data flags
+        // while keeping the same path and kind.
         format!(
-            "{key}\0{}\0{}",
+            "{key}\0{}\0{}\0{}\0{}\0{}",
             item_kind_tag(&item.kind),
-            item.service_bound
+            item.shared,
+            item.service_bound,
+            item.user_data,
+            item.user_library
         )
     })
 }
@@ -365,5 +371,26 @@ mod tests {
         let mut forged_bound = item.clone();
         forged_bound.service_bound = false;
         assert!(!was_recent_uninstall_item(app, &forged_bound));
+    }
+
+    #[test]
+    fn all_security_classification_flags_are_bound_to_the_scan() {
+        let _g = test_lock();
+        let app = "HKLM64\0HKLM64\\SOFTWARE\\Flags\0Flags";
+        let mut item = cleanup_item(r"C:\Program Files\Flags");
+        item.shared = true;
+        item.user_data = true;
+        item.user_library = true;
+        remember_uninstall_items(app, &[item.clone()]);
+        assert!(was_recent_uninstall_item(app, &item));
+        for mutate in [
+            |it: &mut crate::scanner::CleanupItem| it.shared = false,
+            |it: &mut crate::scanner::CleanupItem| it.user_data = false,
+            |it: &mut crate::scanner::CleanupItem| it.user_library = false,
+        ] {
+            let mut forged = item.clone();
+            mutate(&mut forged);
+            assert!(!was_recent_uninstall_item(app, &forged));
+        }
     }
 }

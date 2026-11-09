@@ -1,14 +1,15 @@
 //! AI command layer. AI only explains; it never deletes.
 
 use crate::ai;
-use zeroize::Zeroize;
 
 #[tauri::command]
 pub fn get_ai_config() -> Result<ai::AiConfigView, String> {
     Ok(ai::AiConfigView::from(&ai::load_config()?))
 }
 
-/// Save AI settings. Empty `api_key` keeps the stored key unchanged.
+/// Save AI settings. An omitted key keeps the stored key only when the
+/// provider and normalized endpoint remain the same. Changing either source
+/// requires a new key or an explicit empty value to clear it.
 #[tauri::command]
 pub fn save_ai_config(
     enabled: bool,
@@ -20,21 +21,12 @@ pub fn save_ai_config(
 ) -> Result<ai::AiConfigView, String> {
     let api_key = api_key.map(zeroize::Zeroizing::new);
     ai::update_config(move |c| {
+        ai::replace_credential(c, &provider, &base_url, api_key);
         c.enabled = enabled;
         c.provider = provider;
         c.base_url = base_url;
         c.model = model;
         c.allow_cloud_paths = allow_cloud_paths;
-        if let Some(mut k) = api_key {
-            let trimmed = k.trim().to_string();
-            // The IPC copy (possibly padded) holds the secret too — wipe it.
-            k.zeroize();
-            if !trimmed.is_empty() {
-                // assignment would drop the old decrypted key without wipe.
-                c.api_key.zeroize();
-                c.api_key = trimmed;
-            }
-        }
     })
 }
 

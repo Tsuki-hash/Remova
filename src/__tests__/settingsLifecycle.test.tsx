@@ -12,6 +12,24 @@ vi.mock("../lib/api", () => ({ api: { getAiConfig: vi.fn(), saveAiConfig: vi.fn(
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const config: AiConfigView = { enabled: false, provider: "ollama", base_url: "http://localhost/v1",
   model: "saved-model", allow_cloud_paths: false, has_api_key: false };
+it("explicitly clears a saved key and discards unsaved keys on provider switch", async () => {
+  const cloud = { ...config, provider: "openai", base_url: "https://api.example.test/v1", has_api_key: true };
+  vi.mocked(api.getAiConfig).mockResolvedValue(cloud);
+  vi.mocked(api.saveAiConfig).mockResolvedValue({ ...cloud, has_api_key: false });
+  render(<AiSettingsPanel onClose={() => {}} />);
+  const clear = await screen.findByRole("checkbox", { name: t().aiApiKeyClear });
+  fireEvent.click(clear);
+  fireEvent.click(screen.getByRole("button", { name: t().aiSave }));
+  await waitFor(() => expect(api.saveAiConfig).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "" })));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: t().aiSave }).disabled).toBe(false));
+  const input = screen.getByLabelText<HTMLInputElement>(t().aiApiKey, { exact: true });
+  fireEvent.change(input, { target: { value: "fixture-unsaved-cloud-key" } });
+  fireEvent.click(screen.getByRole("button", { name: t().aiProviderOllama }));
+  expect(input.value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: t().aiSave }));
+  await waitFor(() => expect(api.saveAiConfig).toHaveBeenLastCalledWith(expect.objectContaining({ provider: "ollama", apiKey: null })));
+});
+
 beforeEach(() => vi.resetAllMocks());
 afterEach(cleanup);
 

@@ -77,6 +77,38 @@ pub fn provider_preset(provider: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Stable credential binding key: credentials belong to a provider and origin,
+/// never to a UI preset or an arbitrary path spelling.
+fn credential_source(provider: &str, base_url: &str) -> Option<String> {
+    let base = secure_base_url(base_url, provider).ok()?;
+    let url = tauri::Url::parse(&base).ok()?;
+    let provider = provider.trim().to_ascii_lowercase();
+    Some(format!("{provider}|{}", url.origin().ascii_serialization()))
+}
+
+/// None retains an existing credential only at the same valid provider/origin;
+/// Some("") explicitly clears it. Called inside the config transaction before
+/// changing provider/base_url, so the comparison always uses the stored source.
+pub fn replace_credential(
+    config: &mut AiConfig,
+    provider: &str,
+    base_url: &str,
+    key: Option<zeroize::Zeroizing<String>>,
+) {
+    let old_source = credential_source(&config.provider, &config.base_url);
+    let new_source = credential_source(provider, base_url);
+    match key {
+        Some(key) => {
+            config.api_key.zeroize();
+            config.api_key = key.trim().to_string();
+        }
+        None if old_source.is_none() || old_source != new_source => {
+            config.api_key.zeroize();
+        }
+        None => {}
+    }
+}
+
 /// Config view for UI — never returns the raw API key.
 #[derive(Debug, Clone, Serialize)]
 pub struct AiConfigView {
@@ -531,42 +563,23 @@ struct Endpoint {
 
 fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
     let text = raw.trim();
-    if text.is_empty() {
-        return Err("ai endpoint empty".into());
+    if !text.contains("://") || text.contains(char::from(92)) || text.chars().any(char::is_control)
+    {
+        return Err("ai endpoint must be an absolute http(s) URL".into());
     }
-    let (scheme, rest) = text
+    let url = tauri::Url::parse(text).map_err(|_| "ai endpoint invalid".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("ai endpoint scheme not allowed".into());
+    }
+    let host = url.host_str().ok_or("ai endpoint has no host")?;
+    let authority = text
         .split_once("://")
-        .ok_or_else(|| "ai endpoint must be an absolute http(s) URL".to_string())?;
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err(format!("ai endpoint scheme not allowed: {scheme}"));
-    }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() {
-        return Err("ai endpoint has no host".into());
-    }
-    // Userinfo (`user:pass@host`) can hide the real host from a naive reader and
-    // is never needed for a chat API.
-    let (has_userinfo, hostport) = match authority.rsplit_once('@') {
-        Some((_, hostport)) => (true, hostport),
-        None => (false, authority),
-    };
-    // Strip an optional port, keeping bracketed IPv6 literals intact.
-    let host = if let Some(rest) = hostport.strip_prefix('[') {
-        let end = rest
-            .find(']')
-            .ok_or_else(|| "ai endpoint has an unterminated IPv6 host".to_string())?;
-        format!("[{}]", &rest[..end])
-    } else {
-        hostport.split(':').next().unwrap_or("").to_string()
-    };
-    if host.is_empty() {
-        return Err("ai endpoint has no host".into());
-    }
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
+        .unwrap_or("");
     Ok(Endpoint {
-        scheme,
+        scheme: url.scheme().to_string(),
         host: host.to_ascii_lowercase(),
-        has_userinfo,
+        has_userinfo: authority.contains('@'),
     })
 }
 
@@ -598,10 +611,21 @@ fn secure_base_url(raw: &str, provider: &str) -> Result<String, String> {
 }
 
 fn build_agent() -> ureq::Agent {
+    // AI requests carry credentials. Do not let ureq follow a redirect and
+    // decide which destination receives provider-specific authentication.
+    // The response checker below reports 3xx without exposing Location.
     ureq::AgentBuilder::new()
+        .redirects(0)
         .timeout_connect(Duration::from_secs(HTTP_TIMEOUT_SECS))
         .timeout_read(Duration::from_secs(HTTP_TIMEOUT_SECS))
         .build()
+}
+
+fn require_chat_response(response: ureq::Response) -> Result<ureq::Response, String> {
+    if (300..400).contains(&response.status()) {
+        return Err("ai redirect refused".into());
+    }
+    Ok(response)
 }
 
 /// Anthropic Messages API (`POST /v1/messages`).
@@ -634,7 +658,7 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
         .send_json(body)
         // transport detail survives to the command layer.
         .map_err(|e| format!("ai http failed: {e}"))?;
-    let v: serde_json::Value = resp
+    let v: serde_json::Value = require_chat_response(resp)?
         .into_json()
         .map_err(|e| format!("ai parse failed: {e}"))?;
     if let Some(arr) = v["content"].as_array() {
@@ -654,13 +678,12 @@ fn chat_anthropic(cfg: &AiConfig, system: &str, user: &str) -> Result<String, St
 
 /// OpenAI-compatible `/chat/completions`. Ollama uses the same shape.
 fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String, String> {
-    let needs_key = cfg.provider != "ollama"
-        && !cfg.base_url.contains("127.0.0.1")
-        && !cfg.base_url.contains("localhost");
+    let base = secure_base_url(&cfg.base_url, &cfg.provider)?;
+    let endpoint = parse_endpoint(&base)?;
+    let needs_key = cfg.provider != "ollama" && !is_loopback_host(&endpoint.host);
     if needs_key && cfg.api_key.trim().is_empty() {
         return Err("ai api key empty".into());
     }
-    let base = secure_base_url(&cfg.base_url, &cfg.provider)?;
     let url = format!("{base}/chat/completions");
     let body = serde_json::json!({
         "model": cfg.model.trim(),
@@ -683,7 +706,7 @@ fn chat_openai_compat(cfg: &AiConfig, system: &str, user: &str) -> Result<String
         .send_json(body)
         // transport detail survives to the command layer.
         .map_err(|e| format!("ai http failed: {e}"))?;
-    let v: serde_json::Value = resp
+    let v: serde_json::Value = require_chat_response(resp)?
         .into_json()
         .map_err(|e| format!("ai parse failed: {e}"))?;
     let text = v["choices"][0]["message"]["content"]

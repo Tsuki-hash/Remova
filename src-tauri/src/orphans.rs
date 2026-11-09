@@ -413,7 +413,6 @@ fn scan_orphans_in_roots_with(
     home_dotdirs: &[std::path::PathBuf],
 ) -> OrphanScanResult {
     let mut out = Vec::new();
-    let mut scanned: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Normalize each installed app once instead of once per candidate.
     let match_index = build_match_index(installed);
     // Collect candidates across every root first, then order and truncate. The
@@ -587,7 +586,6 @@ fn scan_orphans_in_roots_with(
         // Orphans stay Suspected/Medium —never auto-select; user must confirm.
         let recent = write_age_days.is_some_and(|days| days < 3);
         let path_str = p.to_string_lossy().to_string();
-        scanned.insert(path_str.clone());
         out.push(CleanupItem {
             path: path_str.clone(),
             kind: ItemKind::Dir,
@@ -634,7 +632,7 @@ fn scan_orphans_in_roots_with(
         };
     }
     crate::scanner::fill_item_buckets(&mut out, "");
-    remember_orphan_paths(&scanned);
+    remember_orphan_items(&out);
     let completeness = if failed_roots.is_empty() {
         crate::scan_contract::ScanCompleteness {
             status: crate::scan_contract::ScanStatus::Complete,
@@ -651,46 +649,77 @@ fn scan_orphans_in_roots_with(
     }
 }
 
-/// Server-side allow-list of paths from the latest `scan_orphans`.
-static ORPHAN_PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+/// Latest published orphan scan, including server-classified deletion guards.
+type OrphanItems = std::collections::HashMap<String, CleanupItem>;
+static ORPHAN_ITEMS: std::sync::OnceLock<std::sync::Mutex<OrphanItems>> =
     std::sync::OnceLock::new();
 
-fn orphan_paths() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
-    ORPHAN_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+fn orphan_items() -> &'static std::sync::Mutex<OrphanItems> {
+    ORPHAN_ITEMS.get_or_init(|| std::sync::Mutex::new(OrphanItems::new()))
 }
 
-/// Normalize an allow-list key so case, trailing `\`, slash style and Win32's
-/// per-segment trailing dots/spaces cannot bypass it.
-///
-/// Delegates to `fsutil::path_key`. This used to be a private copy that was
-/// byte-identical to `scan_allow::normalize` and, unlike `safety::path_utf8_lower`,
-/// did not strip per-segment trailing dots and spaces — so the orphan allow-list
-/// and the red-line checks disagreed about what a path was.
 fn normalize_orphan_key(path: &str) -> Option<String> {
     crate::fsutil::path_key(std::path::Path::new(path))
 }
 
-fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
+pub(crate) fn remember_orphan_items(items: &[CleanupItem]) {
     crate::scan_task::publish(|| {
-        if let Ok(mut g) = orphan_paths().lock() {
-            // A path that cannot be named is never authorized.
-            *g = paths
+        if let Ok(mut saved) = orphan_items().lock() {
+            *saved = items
                 .iter()
-                .filter_map(|p| normalize_orphan_key(p))
+                .filter_map(|item| normalize_orphan_key(&item.path).map(|key| (key, item.clone())))
                 .collect();
         }
     });
 }
 
-/// True when `path` came from the most recent orphan scan in this process.
-pub fn was_recent_orphan_path(path: &str) -> bool {
-    let Some(key) = normalize_orphan_key(path) else {
+/// Used at IPC admission and by both preview/full policy.
+pub fn was_recent_orphan_item(item: &CleanupItem) -> bool {
+    let Some(key) = normalize_orphan_key(&item.path) else {
         return false;
     };
-    orphan_paths()
+    orphan_items()
         .lock()
-        .map(|g| g.contains(&key))
+        .map(|saved| {
+            saved.get(&key).is_some_and(|original| {
+                crate::scan_allow::authorized_item_key(original)
+                    == crate::scan_allow::authorized_item_key(item)
+            })
+        })
         .unwrap_or(false)
+}
+
+pub fn was_recent_orphan_path(path: &str) -> bool {
+    normalize_orphan_key(path).is_some_and(|key| {
+        orphan_items()
+            .lock()
+            .map(|saved| saved.contains_key(&key))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(test)]
+fn remember_orphan_paths(paths: &std::collections::HashSet<String>) {
+    let items: Vec<CleanupItem> = paths
+        .iter()
+        .map(|path| CleanupItem {
+            path: path.clone(),
+            kind: ItemKind::Dir,
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: String::new(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        })
+        .collect();
+    remember_orphan_items(&items);
 }
 
 #[cfg(test)]
@@ -781,10 +810,82 @@ mod tests {
         assert!(!was_recent_orphan_path(r"C:\Program Files\SomeVendor"));
     }
 
-    /// the orphan allow-list now shares `fsutil::path_key` with the
-    /// red-line checks. This used to be a private copy missing Win32's
-    /// per-segment trailing dots and spaces, so a reported `…\App.` stored
-    /// `…\app.` and the delete request for `…\App` was refused.
+    #[test]
+    fn orphan_scan_publishes_shared_guard_and_replaces_old_paths() {
+        let _guard = crate::scan_allow::test_lock();
+        let root = crate::test_support::TempDir::new("orphan_snapshot");
+        let vendor = root.subdir(".vendor");
+        let candidate = vendor.join("FixtureApp");
+        std::fs::create_dir(&candidate).unwrap();
+        std::fs::write(candidate.join("app.exe"), b"fixture").unwrap();
+        let result = scan_orphans_in_roots_with(
+            &[],
+            &crate::ignore::IgnoreList::default(),
+            vec![vendor.clone()],
+            &[vendor],
+        );
+        assert_eq!(result.items.len(), 1, "must reach the production scanner");
+        let item = result.items[0].clone();
+        assert!(
+            item.shared,
+            "the production dot-directory classifier must run"
+        );
+        assert!(was_recent_orphan_item(&item));
+        let mut forged = item.clone();
+        forged.shared = false;
+        assert!(!was_recent_orphan_item(&forged));
+        let id = crate::scan_task::begin().unwrap();
+        let cancelled = crate::scan_task::run_scoped(id, "orphan-fixture", || {
+            crate::scan_task::cancel(id).unwrap();
+            remember_orphan_items(&[]);
+        });
+        assert!(cancelled.is_err());
+        assert!(
+            was_recent_orphan_item(&item),
+            "cancelled scan must not publish"
+        );
+        remember_orphan_items(&[]);
+        assert!(
+            !was_recent_orphan_item(&item),
+            "new snapshot replaces old paths"
+        );
+    }
+
+    #[test]
+    fn orphan_authorization_binds_security_classification_to_latest_snapshot() {
+        let _guard = crate::scan_allow::test_lock();
+        let mut item = CleanupItem {
+            path: r"C:\Users\alice\.vendor\tool".into(),
+            kind: ItemKind::Dir,
+            score: 30,
+            confidence: Confidence::Suspected,
+            risk: RiskLevel::Medium,
+            reason: "orphan".into(),
+            evidence: vec![],
+            shared: true,
+            service_bound: true,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        remember_orphan_items(&[item.clone()]);
+        assert!(was_recent_orphan_item(&item));
+        for mutate in [
+            |row: &mut CleanupItem| row.shared = false,
+            |row: &mut CleanupItem| row.service_bound = false,
+            |row: &mut CleanupItem| row.kind = ItemKind::File,
+        ] {
+            let mut forged = item.clone();
+            mutate(&mut forged);
+            assert!(!was_recent_orphan_item(&forged));
+        }
+        item.shared = false;
+        remember_orphan_items(&[item.clone()]);
+        assert!(was_recent_orphan_item(&item));
+    }
+
     #[test]
     fn orphan_allow_list_matches_win32_on_trailing_dots_and_spaces() {
         let _guard = crate::scan_allow::test_lock();
