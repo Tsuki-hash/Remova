@@ -227,6 +227,60 @@ pub fn append(
     false
 }
 
+/// Read the newest `limit` rows. A missing file is an empty history; an
+/// unreadable or corrupt file is an error, so the UI never shows "no cleanup
+/// history" for data it could not read.
+pub fn load_checked(limit: usize) -> Result<Vec<HistoryEntry>, String> {
+    if limit == 0 {
+        return Ok(vec![]);
+    }
+    let _g = lock_file();
+    let p = history_path();
+    let file = match fs::File::open(&p) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("history read failed: {e}")),
+    };
+    // Read raw bytes and split on `\n` so one torn (non-UTF-8) row is counted
+    // as unreadable instead of aborting the whole file. Only the newest
+    // `limit` rows are kept, and ids keep file-order occurrence numbering.
+    let mut raw = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::BufReader::new(file), &mut raw)
+        .map_err(|e| format!("history read failed: {e}"))?;
+    let mut ring: VecDeque<(Vec<u8>, String)> = VecDeque::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for line in raw.split(|b| *b == b'\n') {
+        if line.iter().all(|b| b.is_ascii_whitespace()) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(line).into_owned();
+        let id = next_line_id(&mut seen, &text);
+        if ring.len() == limit {
+            ring.pop_front();
+        }
+        ring.push_back((line.to_vec(), id));
+    }
+    let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
+    let mut corrupt = 0usize;
+    for (line, id) in ring.into_iter().rev() {
+        match std::str::from_utf8(&line)
+            .map_err(|_| ())
+            .and_then(|text| serde_json::from_str::<HistoryEntry>(text).map_err(|_| ()))
+        {
+            Ok(mut e) => {
+                e.id = id;
+                out.push(e);
+            }
+            Err(()) => corrupt += 1,
+        }
+    }
+    if corrupt > 0 {
+        return Err(format!("history read failed: {corrupt} unreadable row(s)"));
+    }
+    Ok(out)
+}
+
+/// Lenient reader for internal callers that can work with the readable rows.
 pub fn load(limit: usize) -> Vec<HistoryEntry> {
     if limit == 0 {
         return vec![];
@@ -236,22 +290,22 @@ pub fn load(limit: usize) -> Vec<HistoryEntry> {
     let Ok(file) = fs::File::open(&p) else {
         return vec![];
     };
-    // stream lines, keep only the newest `limit` in a ring, parse
-    // after the pass — memory is O(limit), not O(file); rows whose ids must be
-    // counted across the whole file still get file-order occurrence ids.
-    let reader = std::io::BufReader::new(file);
+    let mut raw = Vec::new();
+    if std::io::Read::read_to_end(&mut std::io::BufReader::new(file), &mut raw).is_err() {
+        return vec![];
+    }
     let mut ring: VecDeque<(String, String)> = VecDeque::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
-    for line in reader.lines() {
-        let Ok(line) = line else { continue };
-        if line.trim().is_empty() {
+    for line in raw.split(|b| *b == b'\n') {
+        if line.iter().all(|b| b.is_ascii_whitespace()) {
             continue;
         }
-        let id = next_line_id(&mut seen, &line);
+        let text = String::from_utf8_lossy(line).into_owned();
+        let id = next_line_id(&mut seen, &text);
         if ring.len() == limit {
             ring.pop_front();
         }
-        ring.push_back((line, id));
+        ring.push_back((text, id));
     }
     let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
     for (line, id) in ring.into_iter().rev() {
@@ -582,9 +636,14 @@ mod tests {
         rebuilt.extend_from_slice(&lines[split + 1..]);
         std::fs::write(&p, &rebuilt).unwrap();
 
-        // Load sees only the two UTF-8 rows (bad line is invisible to the UI).
+        // Load reports the unreadable row instead of pretending the history is
+        // shorter than it is; the strict reader is the one the UI now uses.
+        assert!(
+            super::load_checked(10).is_err(),
+            "an unreadable row must surface as an error"
+        );
         let rows = super::load(10);
-        assert_eq!(rows.len(), 2, "load rows");
+        assert_eq!(rows.len(), 2, "the lenient reader keeps the good rows");
         // Delete the oldest good row (newest-first → index 1) — opaque line remains.
         let removed = super::delete_by_ids(&[rows[1].id.clone()]).unwrap();
         assert_eq!(removed, 1);

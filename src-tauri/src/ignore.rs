@@ -99,6 +99,12 @@ fn update_file(p: &std::path::Path, f: impl FnOnce(&mut IgnoreList)) -> Result<I
     let mut l = read_ignore_file(p)?;
     f(&mut l);
     write_ignore_file(p, &l)?;
+    // Every add/remove/apply goes through here. Without this, a read that
+    // populated the TTL cache before the edit keeps serving the old rules for
+    // up to five seconds, so the item the user just ignored still appears.
+    if let Ok(mut cache) = READ_CACHE.lock() {
+        *cache = None;
+    }
     Ok(l)
 }
 
@@ -439,9 +445,50 @@ mod tests {
 
     #[test]
     fn apply_suggestions_persists_paths() {
-        let mut l = IgnoreList::default();
-        l.paths.push(r"C:\ProgramData\Package Cache".into());
-        assert!(is_path_ignored(&l, r"C:\ProgramData\Package Cache\x"));
+        let tmp = crate::test_support::TempDir::new("ignore-apply");
+        let p = tmp.path().join("ignore.json");
+        // A read before the edit primes the TTL cache; the edit must invalidate
+        // it, otherwise the next load still reports the old rules.
+        assert!(super::read_ignore_file(&p).unwrap().paths.is_empty());
+        if let Ok(mut cache) = super::READ_CACHE.lock() {
+            *cache = Some((std::time::Instant::now(), IgnoreList::default()));
+        }
+        let updated = super::update_file(&p, |l| {
+            l.paths.push(r"C:\ProgramData\Package Cache".into());
+        })
+        .unwrap();
+        assert!(is_path_ignored(&updated, r"C:\ProgramData\Package Cache\x"));
+        // Persisted to disk and readable back with the new rule.
+        let reloaded = super::read_ignore_file(&p).unwrap();
+        assert_eq!(
+            reloaded.paths,
+            vec![r"C:\ProgramData\Package Cache".to_string()]
+        );
+        // Applying the same suggestion twice stays idempotent.
+        let again = super::update_file(&p, |l| {
+            if !l.paths.iter().any(|x| x == r"C:\ProgramData\Package Cache") {
+                l.paths.push(r"C:\ProgramData\Package Cache".into());
+            }
+        })
+        .unwrap();
+        assert_eq!(again.paths.len(), 1);
+    }
+
+    #[test]
+    fn an_edit_invalidates_the_read_cache() {
+        if let Ok(mut cache) = super::READ_CACHE.lock() {
+            *cache = Some((std::time::Instant::now(), IgnoreList::default()));
+        }
+        let tmp = crate::test_support::TempDir::new("ignore-cache");
+        super::update_file(&tmp.path().join("ignore.json"), |l| {
+            l.names.push("FreshlyIgnored".into());
+        })
+        .unwrap();
+        let cached = super::READ_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none();
+        assert!(cached, "an edit must drop the cached read");
     }
 
     #[test]

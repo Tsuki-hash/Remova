@@ -6,7 +6,7 @@ use crate::history::HistoryEntry;
 
 #[tauri::command]
 pub fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
-    Ok(history::load(crate::constants::HISTORY_LIST_CAP))
+    history::load_checked(crate::constants::HISTORY_LIST_CAP)
 }
 
 /// Delete rows by runtime ids from `list_cleanup_history`. Returns removed count.
@@ -27,7 +27,7 @@ pub async fn clear_cleanup_history() -> Result<(), String> {
 
 #[tauri::command]
 pub fn export_history_csv() -> Result<String, String> {
-    let entries = history::load(crate::constants::HISTORY_CSV_CAP);
+    let entries = history::load_checked(crate::constants::HISTORY_CSV_CAP)?;
     // Excel (the default Windows .csv handler) needs a UTF-8 BOM
     // or it decodes Chinese app names as ANSI.
     let mut out = String::from(

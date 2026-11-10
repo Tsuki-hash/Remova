@@ -392,6 +392,11 @@ fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
 /// else fails closed.
 pub(crate) fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     if raw.starts_with(&[0xFF, 0xFE]) {
+        // An odd byte count cannot be a complete UTF-16LE stream. Silently
+        // dropping the trailing byte would hide a truncated registry export.
+        if raw[2..].len() % 2 != 0 {
+            return Err("registry text has a truncated UTF-16 code unit".into());
+        }
         let units: Vec<u16> = raw[2..]
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))

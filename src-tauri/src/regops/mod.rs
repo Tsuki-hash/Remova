@@ -1183,6 +1183,11 @@ fn read_reg_value_raw_with_missing(
 /// surrogates are an error so the read-modify-write path never rewrites a
 /// value containing replacement characters.
 fn decode_reg_utf16(data: &[u8]) -> Result<String, String> {
+    // An odd byte count cannot be a complete UTF-16LE string; dropping the
+    // trailing byte would rewrite a truncated value as if it were whole.
+    if data.len() % 2 != 0 {
+        return Err("registry string data has a truncated UTF-16 code unit".into());
+    }
     let wide: Vec<u16> = data
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
