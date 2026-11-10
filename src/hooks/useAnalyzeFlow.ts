@@ -9,7 +9,7 @@ import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
 import { appKey } from "../lib/appKey";
 import { loadRescanAfterUninstall, saveRescanAfterUninstall } from "../lib/rescanPref";
-import { recordReviewRound } from "../lib/rescanRounds";
+import { recordReviewRound, startReviewSession } from "../lib/rescanRounds";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
@@ -231,6 +231,9 @@ export function useAnalyzeFlow({
       clearStageTimer();
       saveRescanAfterUninstall(checked);
       const key = appKey(app);
+      // A cleanup run opens its own review session: rounds from an earlier
+      // cleanup of this app must not count toward this one.
+      startReviewSession(key);
       setUninstallingKey(key);
       setSelected(app);
       setResidualFromUninstall(false);
@@ -346,6 +349,7 @@ const openOfficialOnly = useCallback(
       // back to idle before the official uninstaller finishes.
       clearStageTimer();
       const key = appKey(app);
+      startReviewSession(key);
       setUninstallingKey(key);
       setSelected(app);
       busyRef.current = true;

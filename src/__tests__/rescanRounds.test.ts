@@ -74,3 +74,19 @@ it("a new cleanup session drops the previous convergence verdict", async () => {
   expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
   mod.resetReviewRounds();
 });
+
+it("startReviewSession clears the verdict a previous cleanup produced", async () => {
+  const mod = await import("../lib/rescanRounds");
+  mod.resetReviewRounds();
+  const item = { path: "C:\\\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
+    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
+    user_data: false, user_library: false };
+  mod.startReviewSession("app");
+  mod.recordReviewRound("app", [item], true);
+  mod.recordReviewRound("app", [item], true);
+  expect(mod.reviewVerdictFor("app").state).toBe("converged");
+  // A new cleanup run starts over even though the rounds looked converged.
+  mod.startReviewSession("app");
+  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
+  mod.resetReviewRounds();
+});

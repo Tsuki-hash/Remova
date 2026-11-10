@@ -27,6 +27,15 @@ export function beginReviewSession(appKey: string, sessionId: string): void {
   roundsByApp.delete(key);
 }
 
+/**
+ * Open a fresh review session for one cleanup run. Every cleanup entry point
+ * calls this before it starts, so rounds recorded by an earlier cleanup can
+ * never combine with this one into a "converged" verdict.
+ */
+export function startReviewSession(appKey: string): void {
+  beginReviewSession(appKey, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+}
+
 export function recordReviewRound(
   appKey: string,
   items: CleanupItem[],
