@@ -102,7 +102,7 @@ fn yarnrc_global_folder() -> Option<PathBuf> {
 }
 
 fn yarnrc_global_folder_at(path: &Path) -> Option<PathBuf> {
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::fsutil::read_local_scan_text(path).ok()?;
     let mut found: Option<PathBuf> = None;
     for line in raw.lines() {
         let line = line.trim().trim_start_matches('\u{feff}');
@@ -128,7 +128,7 @@ fn yarnrc_global_folder_at(path: &Path) -> Option<PathBuf> {
 /// npm applies ini last-wins semantics, so a repeated key resolves to its last
 /// value; a valueless line is skipped rather than ending the search.
 fn npmrc_value_at(path: &Path, key: &str) -> Option<PathBuf> {
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::fsutil::read_local_scan_text(path).ok()?;
     let mut found: Option<PathBuf> = None;
     for line in raw.lines() {
         let line = line.trim().trim_start_matches('\u{feff}');
@@ -189,7 +189,7 @@ pub fn expand_env_vars_public(raw: &str) -> String {
 
 /// Read `"version"` out of a package.json without failing the listing.
 fn package_version(pkg_dir: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(pkg_dir.join("package.json")).ok()?;
+    let raw = crate::fsutil::read_local_scan_text(&pkg_dir.join("package.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     v.get("version")?.as_str().map(str::to_string)
 }
@@ -200,12 +200,14 @@ fn push_pkg(
     manager: &str,
     name: String,
     dir: &Path,
-) {
+) -> Result<(), String> {
     if out.len() >= ITEM_CAP {
         *omitted += 1;
-        return;
+        return Ok(());
     }
-    let (size_kb, size_capped) = crate::dirsize::walk_size_kb_capped(dir);
+    let _pins =
+        crate::fsutil::pin_local_scan_path(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (size_kb, size_capped) = crate::fsutil::local_scan_size(dir);
     out.push(CliGlobalItem {
         manager: manager.into(),
         name,
@@ -214,6 +216,7 @@ fn push_pkg(
         size_kb,
         size_capped,
     });
+    Ok(())
 }
 
 /// Enumerate one npm/yarn-style global `node_modules` tree. `Ok(found)` keeps
@@ -225,13 +228,30 @@ fn scan_node_modules_tree(
     omitted: &mut u32,
 ) -> Result<bool, ()> {
     let node_modules = root.join("node_modules");
-    if !node_modules.exists() {
-        return Ok(false);
+    // Root is held by scan_manager. A missing child is empty, not a failed
+    // manager; a reparse/unreadable child is explicitly incomplete.
+    match crate::fsutil::local_scan_exists(&node_modules) {
+        Ok(false) => return Ok(false),
+        Err(_) => return Err(()),
+        Ok(true) => {}
     }
-    let read = std::fs::read_dir(&node_modules).map_err(|_| ())?;
+    let _pins = crate::fsutil::pin_local_scan_path(&node_modules).map_err(|_| ())?;
+    let read = crate::fsutil::read_local_scan_dir(&node_modules).map_err(|_| ())?;
     let mut found = false;
-    for entry in read.flatten() {
+    let mut incomplete = false;
+    for entry in read {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                incomplete = true;
+                continue;
+            }
+        };
         let path = entry.path();
+        let Ok(_entry_pins) = crate::fsutil::pin_local_scan_path(&path) else {
+            incomplete = true;
+            continue;
+        };
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
@@ -242,11 +262,23 @@ fn scan_node_modules_tree(
         }
         found = true;
         if name.starts_with('@') {
-            let Ok(scope_read) = std::fs::read_dir(&path) else {
+            let Ok(scope_read) = crate::fsutil::read_local_scan_dir(&path) else {
+                incomplete = true;
                 continue;
             };
-            for scoped in scope_read.flatten() {
+            for scoped in scope_read {
+                let scoped = match scoped {
+                    Ok(scoped) => scoped,
+                    Err(_) => {
+                        incomplete = true;
+                        continue;
+                    }
+                };
                 let sp = scoped.path();
+                let Ok(_scoped_pins) = crate::fsutil::pin_local_scan_path(&sp) else {
+                    incomplete = true;
+                    continue;
+                };
                 if !scoped.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     continue;
                 }
@@ -254,13 +286,19 @@ fn scan_node_modules_tree(
                 if scoped_name.starts_with('.') {
                     continue;
                 }
-                push_pkg(out, omitted, manager, format!("{name}/{scoped_name}"), &sp);
+                if push_pkg(out, omitted, manager, format!("{name}/{scoped_name}"), &sp).is_err() {
+                    incomplete = true;
+                }
             }
-        } else {
-            push_pkg(out, omitted, manager, name, &path);
+        } else if push_pkg(out, omitted, manager, name, &path).is_err() {
+            incomplete = true;
         }
     }
-    Ok(found)
+    if incomplete {
+        Err(())
+    } else {
+        Ok(found)
+    }
 }
 
 /// pnpm's global store is link-based; the shims in PNPM_HOME are the provable
@@ -270,9 +308,18 @@ fn scan_pnpm_shims(
     out: &mut Vec<CliGlobalItem>,
     omitted: &mut u32,
 ) -> Result<bool, ()> {
-    let read = std::fs::read_dir(home).map_err(|_| ())?;
+    let _pins = crate::fsutil::pin_local_scan_path(home).map_err(|_| ())?;
+    let read = crate::fsutil::read_local_scan_dir(home).map_err(|_| ())?;
     let mut found = false;
-    for entry in read.flatten() {
+    let mut incomplete = false;
+    for entry in read {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                incomplete = true;
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.ends_with(".cmd") || name.ends_with(".ps1") {
             // One command may carry both shims; the .cmd is the canonical row.
@@ -293,7 +340,11 @@ fn scan_pnpm_shims(
             }
         }
     }
-    Ok(found)
+    if incomplete {
+        Err(())
+    } else {
+        Ok(found)
+    }
 }
 
 /// One manager's scanner: walks its root, appending items (and omitted rows)
@@ -322,7 +373,12 @@ pub fn scan_with(roots: &CliRoots) -> CliGlobalScanResult {
             cancelled = true;
             return;
         }
-        if !root.is_dir() {
+        let Ok(_pins) = crate::fsutil::pin_local_scan_path(root) else {
+            notes.push(name.into());
+            failed_roots.push(name.into());
+            return;
+        };
+        if !crate::fsutil::local_scan_is_dir(root) {
             notes.push(name.into());
             failed_roots.push(name.into());
             return;
@@ -389,6 +445,139 @@ mod tests {
             format!(r#"{{"name":"{name}","version":"{version}"}}"#),
         )
         .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_children_keep_readable_packages_and_report_partial() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = crate::test_support::TempDir::new("cli-unreadable-child");
+        let npm = tmp.subdir("npm");
+        let pnpm = tmp.subdir("pnpm");
+        let yarn = tmp.subdir("yarn");
+        for root in [&npm, &yarn] {
+            pkg(root, "good", "1.0");
+            pkg(root, "blocked", "1.0");
+            pkg(root, "@scope/good", "1.0");
+            pkg(root, "@scope/blocked", "1.0");
+        }
+        std::fs::write(pnpm.join("good.cmd"), b"fixture").unwrap();
+        std::fs::write(pnpm.join("blocked.cmd"), b"fixture").unwrap();
+        let mut locks = vec![];
+        for path in [
+            npm.join("node_modules/blocked"),
+            npm.join("node_modules/@scope/blocked"),
+            yarn.join("node_modules/blocked"),
+            yarn.join("node_modules/@scope/blocked"),
+            pnpm.join("blocked.cmd"),
+        ] {
+            locks.push(
+                std::fs::OpenOptions::new()
+                    .access_mode(2)
+                    .share_mode(7)
+                    .custom_flags(0x0220_0000)
+                    .open(path)
+                    .unwrap(),
+            );
+        }
+        let roots = CliRoots {
+            npm_prefix: Some(npm),
+            pnpm_home: Some(pnpm),
+            yarn_global: Some(yarn),
+        };
+        let report = scan_with(&roots);
+        for manager in ["npm", "pnpm", "yarn"] {
+            assert!(report
+                .items
+                .iter()
+                .any(|i| i.manager == manager && i.name == "good"));
+            assert!(!report
+                .items
+                .iter()
+                .any(|i| i.manager == manager && i.name.contains("blocked")));
+            assert!(report.notes.iter().any(|n| n == manager));
+            assert!(report
+                .completeness
+                .failed_roots
+                .iter()
+                .any(|n| n == manager));
+        }
+        for manager in ["npm", "yarn"] {
+            assert!(report
+                .items
+                .iter()
+                .any(|i| i.manager == manager && i.name == "@scope/good"));
+        }
+        assert_ne!(
+            report.completeness.status,
+            crate::scan_contract::ScanStatus::Complete
+        );
+        drop(locks);
+        let complete = scan_with(&roots);
+        assert_eq!(
+            complete.completeness.status,
+            crate::scan_contract::ScanStatus::Complete
+        );
+        assert!(complete
+            .items
+            .iter()
+            .any(|i| i.manager == "npm" && i.name == "blocked"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_scan_refuses_linked_descendants_and_user_config() {
+        let _env = crate::test_support::EnvLock::new();
+        let tmp = crate::test_support::TempDir::new("cli-local-only");
+        let other = tmp.subdir("other");
+        pkg(&other, "foreign", "1.0");
+        std::fs::write(other.join(".npmrc"), "prefix=D:\\must-not-read\n").unwrap();
+        std::fs::write(other.join(".yarnrc"), "global-folder D:\\must-not-read\n").unwrap();
+        let junction = |link: &Path, target: &Path| {
+            assert!(
+                std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+                    .args(["/c", "mklink", "/J"])
+                    .arg(PathBuf::from(link.to_string_lossy().replace('/', "\\")))
+                    .arg(PathBuf::from(target.to_string_lossy().replace('/', "\\")))
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        let home = tmp.path().join("home-link");
+        junction(&home, &other);
+        let _home = crate::test_support::EnvVar::set("USERPROFILE", &home);
+        assert_eq!(npmrc_value_at(&home.join(".npmrc"), "prefix"), None);
+        assert_eq!(yarnrc_global_folder(), None);
+        let root = tmp.subdir("npm");
+        junction(&root.join("node_modules"), &other.join("node_modules"));
+        let out = scan_with(&CliRoots {
+            npm_prefix: Some(root.clone()),
+            ..Default::default()
+        });
+        assert!(out.items.is_empty());
+        assert!(out.notes.iter().any(|n| n == "npm"));
+        std::fs::remove_dir(root.join("node_modules")).unwrap();
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        junction(
+            &root.join("node_modules/@scope"),
+            &other.join("node_modules"),
+        );
+        let out = scan_with(&CliRoots {
+            npm_prefix: Some(root.clone()),
+            ..Default::default()
+        });
+        assert!(out.items.is_empty());
+        assert!(out.notes.iter().any(|n| n == "npm"));
+        // A linked manifest is unknown; size traversal also refuses descendants.
+        std::fs::remove_dir(root.join("node_modules/@scope")).unwrap();
+        pkg(&root, "good", "1.0");
+        let manifest = root.join("node_modules/good/package.json");
+        std::fs::remove_file(&manifest).unwrap();
+        junction(&manifest, &other);
+        assert_eq!(package_version(&root.join("node_modules/good")), None);
+        let (_, capped) = crate::fsutil::local_scan_size(&root.join("node_modules/good"));
+        assert!(capped);
     }
 
     #[test]

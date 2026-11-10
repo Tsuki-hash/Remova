@@ -90,6 +90,491 @@ pub fn ensure_no_reparse_ancestors(p: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Resolve each component relative to the preceding verified directory handle.
+/// Sharing pins alone do NOT prevent FILE_WRITE_ATTRIBUTES from converting an
+/// empty directory to a junction. Never reuse these pins to authorize path IO.
+pub fn pin_local_scan_path(path: &Path) -> std::io::Result<Vec<DirPin>> {
+    validate_local_scan_path(path)?;
+    let mut pins = Vec::new();
+    for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let pin = if let Some(parent) = pins.last() {
+            open_relative(
+                parent,
+                component
+                    .file_name()
+                    .ok_or_else(|| std::io::Error::other("invalid component"))?,
+                0x81,
+                false,
+            )?
+        } else {
+            pin_scan_component(component)?
+        };
+        pins.push(pin);
+    }
+    Ok(pins)
+}
+
+#[cfg(windows)]
+fn pin_metadata(pin: &DirPin) -> std::io::Result<std::fs::Metadata> {
+    use std::os::windows::io::FromRawHandle;
+    let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(pin.handle.0) });
+    file.metadata()
+}
+#[cfg(not(windows))]
+fn pin_metadata(_: &DirPin) -> std::io::Result<std::fs::Metadata> {
+    Err(std::io::Error::other(
+        "handle-relative scanning requires Windows",
+    ))
+}
+
+/// One name only, no traversal. OBJ_DONT_REPARSE prevents native name resolution
+/// from reparsing; OPEN_REPARSE_POINT opens the final link object, not its target.
+fn open_relative(
+    parent: &DirPin,
+    name: &std::ffi::OsStr,
+    access: u32,
+    allow_reparse: bool,
+) -> std::io::Result<DirPin> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PWSTR;
+        use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+        use windows::Wdk::Storage::FileSystem::{
+            NtCreateFile, FILE_OPEN, NTCREATEFILE_CREATE_OPTIONS,
+        };
+        use windows::Win32::Foundation::{HANDLE, UNICODE_STRING};
+        use windows::Win32::Storage::FileSystem::{
+            FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
+        };
+        let mut wide: Vec<u16> = name.encode_wide().collect();
+        if wide.is_empty()
+            || wide.len() > 255
+            || wide.iter().any(|c| matches!(*c, 0 | 47 | 92 | 58))
+            || name == "."
+            || name == ".."
+        {
+            return Err(std::io::Error::other("invalid relative name"));
+        }
+        let unicode = UNICODE_STRING {
+            Length: (wide.len() * 2) as u16,
+            MaximumLength: (wide.len() * 2) as u16,
+            Buffer: PWSTR(wide.as_mut_ptr()),
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent.handle,
+            ObjectName: &unicode,
+            Attributes: 0x40 | 0x1000,
+            ..Default::default()
+        };
+        let mut handle = HANDLE::default();
+        let mut status = windows::Win32::System::IO::IO_STATUS_BLOCK::default();
+        let result = unsafe {
+            NtCreateFile(
+                &mut handle,
+                FILE_ACCESS_RIGHTS(access | 0x0010_0000),
+                &attributes,
+                &mut status,
+                None,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                FILE_SHARE_MODE(1),
+                FILE_OPEN,
+                NTCREATEFILE_CREATE_OPTIONS(0x0020_0000 | 0x20),
+                None,
+                0,
+            )
+        };
+        if result.0 < 0 {
+            let kind = match result.0 as u32 {
+                0xc0000034 | 0xc000003a | 0xc000000f => std::io::ErrorKind::NotFound,
+                _ => std::io::ErrorKind::Other,
+            };
+            return Err(std::io::Error::new(
+                kind,
+                format!("relative open NTSTATUS {:08x}", result.0 as u32),
+            ));
+        }
+        let pin = DirPin {
+            handle,
+            guard: None,
+        };
+        if !allow_reparse && is_reparse_metadata(&pin_metadata(&pin)?) {
+            return Err(std::io::Error::other("relative open refuses reparse point"));
+        }
+        Ok(pin)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (parent, name, access, allow_reparse);
+        Err(std::io::Error::other(
+            "handle-relative scanning requires Windows",
+        ))
+    }
+}
+
+fn scan_path_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    let pins = pin_local_scan_path(path)?;
+    pin_metadata(
+        pins.last()
+            .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
+    )
+}
+
+pub fn local_scan_is_dir(path: &Path) -> bool {
+    scan_path_metadata(path).is_ok_and(|md| md.is_dir())
+}
+
+pub fn read_local_scan_link(path: &Path) -> std::io::Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let pins = pin_local_scan_path(
+            path.parent()
+                .ok_or_else(|| std::io::Error::other("no parent"))?,
+        )?;
+        let link = open_relative(
+            pins.last().unwrap(),
+            path.file_name()
+                .ok_or_else(|| std::io::Error::other("no link name"))?,
+            0x81,
+            true,
+        )?;
+        let mut buffer = [0u8; 16384];
+        let mut returned = 0;
+        unsafe {
+            windows::Win32::System::IO::DeviceIoControl(
+                link.handle,
+                0x900a8,
+                None,
+                0,
+                Some(buffer.as_mut_ptr().cast()),
+                buffer.len() as u32,
+                Some(&mut returned),
+                None,
+            )
+        }
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let tag = u32::from_le_bytes(buffer[..4].try_into().unwrap());
+        let start = match tag {
+            0xa0000003 => 16,
+            0xa000000c => 20,
+            _ => return Err(std::io::Error::other("unknown reparse tag")),
+        };
+        let offset = u16::from_le_bytes(buffer[8..10].try_into().unwrap()) as usize;
+        let len = u16::from_le_bytes(buffer[10..12].try_into().unwrap()) as usize;
+        if len % 2 != 0 || start + offset + len > returned as usize {
+            return Err(std::io::Error::other("invalid reparse data"));
+        }
+        let units: Vec<u16> = buffer[start + offset..start + offset + len]
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let target = String::from_utf16(&units).map_err(std::io::Error::other)?;
+        // Normalize only a local NT DOS prefix; UNC stays a rejected remote form.
+        let target = if let Some(rest) = target.strip_prefix(r"\??\") {
+            if let Some(unc) = rest.strip_prefix(r"UNC\") {
+                format!(r"\\{unc}")
+            } else {
+                rest.to_string()
+            }
+        } else {
+            target
+        };
+        Ok(target.into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err(std::io::Error::other("Windows handle required"))
+    }
+}
+
+fn validate_local_scan_path(path: &Path) -> std::io::Result<()> {
+    let denied = || std::io::Error::other("scan requires an ordinary absolute local path");
+    let raw = path.to_str().ok_or_else(denied)?;
+    #[cfg(windows)]
+    {
+        let candidate = local_drive_candidate(raw).ok_or_else(denied)?;
+        if raw.trim() != raw
+            || raw.contains('"')
+            || candidate[3..]
+                .split('\\')
+                .any(|s| s == "." || s == ".." || s.ends_with(['.', ' ']) || s.contains(':'))
+        {
+            return Err(denied());
+        }
+        // Deliberately bypass the drive/type and prefix caches used for UI hints.
+        let root = to_wide(&candidate[..3]);
+        let ty = unsafe {
+            windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(root.as_ptr()))
+        };
+        if !matches!(ty, 2 | 3 | 5 | 6) {
+            return Err(denied());
+        }
+    }
+    #[cfg(not(windows))]
+    if !path.is_absolute() || raw.contains("..") {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+fn pin_scan_component(path: &Path) -> std::io::Result<DirPin> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::IntoRawHandle;
+        let file = std::fs::OpenOptions::new()
+            .access_mode(0x81) // READ_DATA/LIST_DIRECTORY + ATTRIBUTES: enforce WRITE sharing
+            .share_mode(1) // No ordinary write/rename; attribute-only mutation is handled by relative IO
+            .custom_flags(0x0220_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+            .open(path)?;
+        if is_reparse_metadata(&file.metadata()?) {
+            return Err(std::io::Error::other("scan refuses reparse point"));
+        }
+        Ok(DirPin {
+            handle: windows::Win32::Foundation::HANDLE(file.into_raw_handle()),
+            guard: None,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let md = std::fs::symlink_metadata(path)?;
+        if is_reparse_metadata(&md) {
+            return Err(std::io::Error::other("scan refuses symlink"));
+        }
+        Ok(DirPin {})
+    }
+}
+
+/// Compatibility predicate only. IO callers must retain `pin_local_scan_path`.
+pub fn is_safe_local_scan_root(path: &Path) -> bool {
+    pin_local_scan_path(path).is_ok()
+}
+
+pub fn read_local_scan_text(path: &Path) -> std::io::Result<String> {
+    let pins = pin_local_scan_path(path)?;
+    read_pin_text(
+        pins.last()
+            .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
+    )
+}
+
+fn read_pin_text(pin: &DirPin) -> std::io::Result<String> {
+    #[cfg(windows)]
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        use std::os::windows::io::FromRawHandle;
+        let borrowed =
+            std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(pin.handle.0) });
+        let mut source = borrowed.try_clone()?;
+        source.seek(SeekFrom::Start(0))?;
+        let mut text = String::new();
+        source.take(1_048_577).read_to_string(&mut text)?;
+        if text.len() > 1_048_576 {
+            return Err(std::io::Error::other("text exceeds scan budget"));
+        }
+        Ok(text)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pin;
+        Err(std::io::Error::other("Windows handle required"))
+    }
+}
+
+/// Enumerate the opened directory object, never its potentially redirected path.
+fn relative_names(pin: &DirPin) -> std::io::Result<Vec<std::ffi::OsString>> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        use windows::Win32::Storage::FileSystem::{
+            FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
+            FILE_ID_BOTH_DIR_INFO,
+        };
+        let mut names = Vec::new();
+        let mut first = true;
+        loop {
+            let mut buffer = vec![0u64; 8192]; // native structures require 8-byte alignment
+            let result = unsafe {
+                GetFileInformationByHandleEx(
+                    pin.handle,
+                    if first {
+                        FileIdBothDirectoryRestartInfo
+                    } else {
+                        FileIdBothDirectoryInfo
+                    },
+                    buffer.as_mut_ptr().cast(),
+                    (buffer.len() * 8) as u32,
+                )
+            };
+            first = false;
+            if let Err(e) = result {
+                if e.code().0 as u32 == 0x80070012 {
+                    break;
+                } // ERROR_NO_MORE_FILES
+                return Err(std::io::Error::other(e.to_string()));
+            }
+            let mut offset = 0;
+            loop {
+                // FILE_ID_BOTH_DIR_INFO has a variable UTF-16 tail.
+                let entry = unsafe {
+                    &*(buffer
+                        .as_ptr()
+                        .cast::<u8>()
+                        .add(offset)
+                        .cast::<FILE_ID_BOTH_DIR_INFO>())
+                };
+                let len = entry.FileNameLength as usize / 2;
+                let name_offset =
+                    (&entry.FileName as *const _ as usize) - (buffer.as_ptr() as usize);
+                if entry.FileNameLength % 2 != 0 || name_offset + len * 2 > buffer.len() * 8 {
+                    return Err(std::io::Error::other("invalid directory record"));
+                }
+                let units = unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), len) };
+                let name = std::ffi::OsString::from_wide(units);
+                if name != "." && name != ".." {
+                    names.push(name);
+                }
+                if names.len() > 20_000 {
+                    return Err(std::io::Error::other("directory budget exceeded"));
+                }
+                if entry.NextEntryOffset == 0 {
+                    break;
+                }
+                let next = offset + entry.NextEntryOffset as usize;
+                if next <= offset
+                    || next + std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>() > buffer.len() * 8
+                {
+                    return Err(std::io::Error::other("invalid directory offset"));
+                }
+                offset = next;
+            }
+        }
+        Ok(names)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pin;
+        Err(std::io::Error::other("Windows handle required"))
+    }
+}
+
+pub struct LocalScanEntry {
+    path: PathBuf,
+    metadata: std::fs::Metadata,
+    _pin: DirPin,
+}
+impl LocalScanEntry {
+    pub fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+    pub fn file_name(&self) -> std::ffi::OsString {
+        self.path.file_name().unwrap().into()
+    }
+    pub fn file_type(&self) -> std::io::Result<std::fs::FileType> {
+        Ok(self.metadata.file_type())
+    }
+    pub fn metadata(&self) -> std::io::Result<std::fs::Metadata> {
+        Ok(self.metadata.clone())
+    }
+}
+pub struct LocalScanDir {
+    entries: std::vec::IntoIter<std::io::Result<LocalScanEntry>>,
+    _pins: Vec<DirPin>,
+}
+impl Iterator for LocalScanDir {
+    type Item = std::io::Result<LocalScanEntry>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next()
+    }
+}
+pub fn read_local_scan_dir(path: &Path) -> std::io::Result<LocalScanDir> {
+    let pins = pin_local_scan_path(path)?;
+    let parent = pins
+        .last()
+        .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
+    let entries = relative_names(parent)?
+        .into_iter()
+        .map(|name| {
+            let pin = open_relative(parent, &name, 0x81, true)?;
+            let metadata = pin_metadata(&pin)?;
+            Ok(LocalScanEntry {
+                path: path.join(name),
+                metadata,
+                _pin: pin,
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter();
+    Ok(LocalScanDir {
+        entries,
+        _pins: pins,
+    })
+}
+
+/// Missing is only conclusive with held ordinary parents. An inaccessible or
+/// redirected manifest is unknown, never evidence of an orphan package.
+pub fn local_scan_file_exists(path: &Path) -> std::io::Result<bool> {
+    match scan_path_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+        Ok(md) => Ok(md.is_file()),
+    }
+}
+
+pub fn local_scan_exists(path: &Path) -> std::io::Result<bool> {
+    match scan_path_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+        Ok(_) => Ok(true),
+    }
+}
+
+/// Bounded CLI size estimate. Each descendant is pinned before any IO; unlike
+/// a generic size walker this cannot enter a junction swapped in mid-scan.
+pub fn local_scan_size(root: &Path) -> (i64, bool) {
+    fn walk_pin(
+        pin: &DirPin,
+        depth: usize,
+        left: &mut usize,
+        bytes: &mut u64,
+    ) -> std::io::Result<()> {
+        let md = pin_metadata(pin)?;
+        if is_reparse_metadata(&md) {
+            return Err(std::io::Error::other("size refuses reparse"));
+        }
+        if md.is_file() {
+            *bytes = bytes.saturating_add(md.len());
+        } else if md.is_dir() {
+            for name in relative_names(pin)? {
+                if *left == 0 || depth >= 8 || crate::scan_task::cancelled() {
+                    return Err(std::io::Error::other("size capped"));
+                }
+                *left -= 1;
+                let child = open_relative(pin, &name, 0x81, false)?;
+                walk_pin(&child, depth + 1, left, bytes)?;
+            }
+        }
+        Ok(())
+    }
+    fn walk(path: &Path, depth: usize, left: &mut usize, bytes: &mut u64) -> std::io::Result<()> {
+        if *left == 0 || depth > 8 || crate::scan_task::cancelled() {
+            return Err(std::io::Error::other("size scan capped"));
+        }
+        *left -= 1;
+        let pins = pin_local_scan_path(path)?;
+        let pin = pins
+            .last()
+            .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
+        walk_pin(pin, depth, left, bytes)?;
+        Ok(())
+    }
+    let mut bytes = 0;
+    let capped = walk(root, 0, &mut 5000, &mut bytes).is_err();
+    (bytes.div_ceil(1024).min(i64::MAX as u64) as i64, capped)
+}
+
 /// Windows reparse point (junction / mount / symlink). Never follow when copying.
 pub fn is_reparse_point(p: &Path) -> bool {
     std::fs::symlink_metadata(p)
@@ -798,6 +1283,163 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
         remove_dir_with_readonly_retry(p)
     } else {
         remove_file_with_readonly_retry(p)
+    }
+}
+
+/// An immutable, non-following snapshot held from authorization through backup
+/// and deletion. Unlike `remove_tree_with_pin` (whose final unlink is path based),
+/// this consumes the exact verified objects by handle. Windows only: the Unix
+/// DirPin implementation does not offer the required sharing/identity contract.
+pub(crate) struct PinnedLocalDeleteTree {
+    path: PathBuf,
+    is_dir: bool,
+    objects: Vec<(PathBuf, bool, DirPin)>,
+    _parents: Vec<DirPin>,
+}
+
+impl PinnedLocalDeleteTree {
+    pub(crate) fn new(path: &Path) -> std::io::Result<Self> {
+        Self::new_with(path, &mut |_| Ok(()))
+    }
+
+    fn new_with(
+        path: &Path,
+        after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<Self> {
+        let _parents = pin_local_scan_path(
+            path.parent()
+                .ok_or_else(|| std::io::Error::other("cannot delete a volume root"))?,
+        )?;
+        let root = open_relative(
+            _parents
+                .last()
+                .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
+            path.file_name()
+                .ok_or_else(|| std::io::Error::other("invalid target"))?,
+            0x10081,
+            false,
+        )?;
+        let mut objects = Vec::new();
+        fn collect(
+            path: &Path,
+            pin: DirPin,
+            depth: usize,
+            objects: &mut Vec<(PathBuf, bool, DirPin)>,
+            after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+        ) -> std::io::Result<bool> {
+            if depth > 128 || objects.len() >= 20_000 {
+                return Err(std::io::Error::other("package snapshot budget exceeded"));
+            }
+            let md = pin_metadata(&pin)?;
+            if is_reparse_metadata(&md) || !(md.is_dir() || md.is_file()) {
+                return Err(std::io::Error::other(
+                    "package snapshot refuses reparse/special entry",
+                ));
+            }
+            let is_dir = md.is_dir();
+            after_open(path)?;
+            // An empty object may have become a junction at this exact point.
+            // Enumeration and every child open still use that object handle.
+            if is_dir {
+                for name in relative_names(&pin)? {
+                    let child = open_relative(&pin, &name, 0x10081, false)?;
+                    collect(&path.join(name), child, depth + 1, objects, after_open)?;
+                }
+            }
+            // Postorder storage; removal consumes children before their parents.
+            objects.push((path.into(), is_dir, pin));
+            Ok(is_dir)
+        }
+        let is_dir = collect(path, root, 0, &mut objects, after_open)?;
+        objects.reverse();
+        Ok(Self {
+            path: path.into(),
+            is_dir,
+            objects,
+            _parents,
+        })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+    pub(crate) fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+
+    pub(crate) fn contains_file(&self, path: &Path) -> bool {
+        self.objects.iter().any(|(p, dir, _)| p == path && !dir)
+    }
+
+    pub(crate) fn read_text(&self, path: &Path) -> std::io::Result<String> {
+        let (_, _, pin) = self
+            .objects
+            .iter()
+            .find(|(p, dir, _)| p == path && !dir)
+            .ok_or_else(|| std::io::Error::other("file not in held snapshot"))?;
+        read_pin_text(pin)
+    }
+
+    /// Copy the exact held file handles, never reopening a source pathname.
+    pub(crate) fn copy_to(&self, destination: &Path) -> std::io::Result<()> {
+        for (path, is_dir, pin) in &self.objects {
+            let rel = path
+                .strip_prefix(&self.path)
+                .map_err(std::io::Error::other)?;
+            let dest = if rel.as_os_str().is_empty() {
+                destination.into()
+            } else {
+                destination.join(rel)
+            };
+            if *is_dir {
+                std::fs::create_dir_all(&dest)?;
+            } else {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::io::FromRawHandle;
+                    // Borrow ownership only for try_clone; the DirPin owns the original.
+                    let borrowed = std::mem::ManuallyDrop::new(unsafe {
+                        std::fs::File::from_raw_handle(pin.handle.0)
+                    });
+                    let mut source = borrowed.try_clone()?;
+                    use std::io::{Seek, SeekFrom};
+                    source.seek(SeekFrom::Start(0))?;
+                    let mut out = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&dest)?;
+                    std::io::copy(&mut source, &mut out)?;
+                    out.sync_all()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn remove(mut self) -> std::io::Result<()> {
+        // Children close before their parents, which must be empty for disposition.
+        while let Some((_path, _is_dir, pin)) = self.objects.pop() {
+            #[cfg(windows)]
+            {
+                use windows::Win32::Storage::FileSystem::{
+                    FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+                };
+                let info = FILE_DISPOSITION_INFO {
+                    DeleteFile: true.into(),
+                };
+                unsafe {
+                    SetFileInformationByHandle(
+                        pin.handle,
+                        FileDispositionInfo,
+                        (&info as *const FILE_DISPOSITION_INFO).cast(),
+                        std::mem::size_of_val(&info) as u32,
+                    )
+                }
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            }
+            drop(pin);
+        }
+        Ok(())
     }
 }
 

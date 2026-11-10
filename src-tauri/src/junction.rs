@@ -71,19 +71,46 @@ fn visit_step<F: Fn(&Path) -> JunctionEntry>(
 
 /// IO classification of one reparse-point directory.
 fn classify(path: &Path) -> JunctionEntry {
-    let target = std::fs::read_link(path)
+    let parent_pins = path
+        .parent()
+        .and_then(|p| crate::fsutil::pin_local_scan_path(p).ok());
+    if parent_pins.is_none() {
+        return JunctionEntry {
+            path: path.to_string_lossy().into_owned(),
+            target: None,
+            reachable: true,
+        };
+    }
+    let Some(target) = crate::fsutil::read_local_scan_link(path)
         .ok()
-        .map(|t| t.to_string_lossy().into_owned());
-    // Ok(false) is the only provably-dead outcome; errors mean unknown.
-    let reachable = match &target {
-        None => true,
-        Some(t) => Path::new(t).try_exists().unwrap_or(true),
+        .map(|t| t.to_string_lossy().into_owned())
+    else {
+        return JunctionEntry {
+            path: path.to_string_lossy().into_owned(),
+            target: None,
+            reachable: true,
+        };
     };
+    // Compatibility contract: true means present OR unknown/not probed. Only
+    // conclusive local absence may set false; remote/relative/reparse targets
+    // must not be contacted and must never inflate the UI dead-link count.
+    let reachable = target_reachable(Path::new(&target));
     JunctionEntry {
         path: path.to_string_lossy().into_owned(),
-        target,
+        target: Some(target),
         reachable,
     }
+}
+
+fn target_reachable(target: &Path) -> bool {
+    let Some(parent) = target.parent() else {
+        return true;
+    };
+    let Ok(_parents) = crate::fsutil::pin_local_scan_path(parent) else {
+        return true;
+    };
+    // Inspect final entry without following a target that is itself a link.
+    !matches!(crate::fsutil::local_scan_exists(target), Ok(false))
 }
 
 /// Bounded walk of one root. Plain directories are descended up to
@@ -92,21 +119,39 @@ fn scan_root<F: Fn(&Path) -> JunctionEntry>(
     root: &Path,
     cap: usize,
     classify: F,
-) -> (Vec<JunctionEntry>, bool) {
+) -> (Vec<JunctionEntry>, bool, bool) {
     let mut out: Vec<JunctionEntry> = Vec::new();
     let mut queue: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
     let mut truncated = false;
+    let mut degraded = false;
     while let Some((dir, depth)) = queue.pop() {
-        let Ok(read) = std::fs::read_dir(&dir) else {
+        let Ok(_pins) = crate::fsutil::pin_local_scan_path(&dir) else {
+            degraded = true;
+            continue;
+        };
+        let Ok(read) = crate::fsutil::read_local_scan_dir(&dir) else {
+            degraded = true;
             continue;
         };
         let children: Vec<ChildDir> = read
-            .flatten()
-            .filter_map(|e| {
+            .filter_map(|entry| {
+                let e = match entry {
+                    Ok(e) => e,
+                    Err(_) => {
+                        degraded = true;
+                        return None;
+                    }
+                };
                 // DirEntry::metadata does not traverse the link. std's
                 // file_type() reports junctions as is_dir() == false on
                 // Windows, so directory-ness comes from the attribute bit.
-                let md = e.metadata().ok()?;
+                let md = match e.metadata() {
+                    Ok(md) => md,
+                    Err(_) => {
+                        degraded = true;
+                        return None;
+                    }
+                };
                 #[cfg(windows)]
                 let dir_like = {
                     use std::os::windows::fs::MetadataExt;
@@ -129,7 +174,7 @@ fn scan_root<F: Fn(&Path) -> JunctionEntry>(
             break;
         }
     }
-    (out, truncated)
+    (out, truncated, degraded)
 }
 
 /// Known roots, in scan order. `USERPROFILE` nests the two AppData roots, so
@@ -171,11 +216,19 @@ fn finalize(
 /// Bounded, read-only enumeration of directory reparse points under the
 /// known roots. Unreadable roots land in `degraded_roots`.
 pub fn scan_junction_ledger() -> JunctionScanResult {
+    scan_ledger_with(scan_roots())
+}
+
+fn scan_ledger_with(roots: Vec<PathBuf>) -> JunctionScanResult {
     let mut entries = Vec::new();
     let mut degraded = Vec::new();
     let mut omitted_roots: u32 = 0;
-    for root in scan_roots() {
-        if std::fs::read_dir(&root).is_err() {
+    for root in roots {
+        let Ok(_pins) = crate::fsutil::pin_local_scan_path(&root) else {
+            degraded.push(root.to_string_lossy().into_owned());
+            continue;
+        };
+        if crate::fsutil::read_local_scan_dir(&root).is_err() {
             degraded.push(root.to_string_lossy().into_owned());
             continue;
         }
@@ -184,7 +237,10 @@ pub fn scan_junction_ledger() -> JunctionScanResult {
             omitted_roots += 1;
             continue;
         }
-        let (found, truncated) = scan_root(&root, remaining, classify);
+        let (found, truncated, incomplete) = scan_root(&root, remaining, classify);
+        if incomplete {
+            degraded.push(root.to_string_lossy().into_owned());
+        }
         entries.extend(found);
         if truncated {
             omitted_roots += 1;
@@ -210,6 +266,28 @@ mod tests {
             target: Some("Z:\\target".into()),
             reachable: true,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_scan_unknown_targets_never_count_as_dead() {
+        for raw in [
+            r"\\invalid.example\share\x",
+            r"relative\target",
+            r"C:relative",
+            r"\\?\UNC\invalid.example\share\x",
+        ] {
+            assert!(
+                target_reachable(Path::new(raw)),
+                "unknown must stay reachable-compatible: {raw}"
+            );
+        }
+        let tmp = crate::test_support::TempDir::new("junction-unknown");
+        let target = tmp.subdir("target");
+        let link = tmp.path().join("link");
+        make_junction(&link, &target);
+        assert!(target_reachable(&link));
+        assert!(!target_reachable(&tmp.path().join("missing")));
     }
 
     #[test]
@@ -320,6 +398,36 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn unreadable_link_child_keeps_readable_links_and_reports_degraded_root() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = crate::test_support::TempDir::new("junction-unreadable-child");
+        let root = tmp.subdir("root");
+        let target = tmp.subdir("target");
+        let good = root.join("good");
+        let blocked = root.join("blocked");
+        make_junction(&good, &target);
+        make_junction(&blocked, &target);
+        let lock = std::fs::OpenOptions::new()
+            .access_mode(2)
+            .share_mode(7)
+            .custom_flags(0x0220_0000)
+            .open(&blocked)
+            .unwrap();
+        let report = scan_ledger_with(vec![root.clone()]);
+        assert!(report.entries.iter().any(|e| Path::new(&e.path) == good));
+        assert!(!report.entries.iter().any(|e| Path::new(&e.path) == blocked));
+        assert_eq!(report.degraded_roots, [root.to_string_lossy().into_owned()]);
+        drop(lock);
+        let complete = scan_ledger_with(vec![root]);
+        assert!(complete.degraded_roots.is_empty());
+        assert!(complete
+            .entries
+            .iter()
+            .any(|e| Path::new(&e.path) == blocked));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn scan_root_classifies_live_and_dead_junctions_without_following() {
         let tmp = crate::test_support::TempDir::new("junction-ledger");
         let root = tmp.path().join("root");
@@ -344,8 +452,9 @@ mod tests {
         make_junction(&inner_link, &inner_target);
         make_junction(&root.join("outer"), &outer_target);
 
-        let (entries, truncated) = scan_root(&root, RESULT_CAP, classify);
+        let (entries, truncated, degraded) = scan_root(&root, RESULT_CAP, classify);
         assert!(!truncated);
+        assert!(!degraded);
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths.len(), 3, "three junctions: {paths:?}");
         assert!(

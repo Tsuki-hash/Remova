@@ -108,43 +108,46 @@ pub fn command_exe_path(command: &str) -> Option<String> {
 /// here is alive even when its package is scoped or renamed.
 fn package_bin_names(prefix: &Path) -> Option<HashSet<String>> {
     let nm = prefix.join("node_modules");
-    let read = std::fs::read_dir(&nm).ok()?;
+    let read = crate::fsutil::read_local_scan_dir(&nm).ok()?;
     let mut out = HashSet::new();
-    let bin_of = |dir: &Path| -> Vec<String> {
-        let bins = (|| -> Option<Vec<String>> {
-            let raw = std::fs::read_to_string(dir.join("package.json")).ok()?;
-            let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-            match v.get("bin")? {
-                serde_json::Value::String(_) => {
-                    // A string bin uses the package name as the command.
-                    let name = v.get("name")?.as_str()?.to_string();
-                    Some(vec![name.rsplit('/').next().unwrap_or(&name).to_string()])
-                }
-                serde_json::Value::Object(map) => Some(map.keys().cloned().collect()),
-                _ => Some(vec![]),
-            }
-        })()
-        .unwrap_or_default();
-        bins
-    };
-    for entry in read.flatten() {
-        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
+    let bin_of = |dir: &Path| -> Option<Vec<String>> {
+        let raw = crate::fsutil::read_local_scan_text(&dir.join("package.json")).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        if !v.is_object() {
+            return None;
         }
+        match v.get("bin") {
+            Some(serde_json::Value::String(_)) => {
+                let name = v.get("name")?.as_str()?;
+                Some(vec![name.rsplit('/').next()?.to_string()])
+            }
+            Some(serde_json::Value::Object(map)) if map.values().all(|v| v.is_string()) => {
+                Some(map.keys().cloned().collect())
+            }
+            None => Some(vec![]),
+            _ => None,
+        }
+    };
+    for entry in read {
+        let entry = entry.ok()?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') {
             continue;
         }
+        let _pins = crate::fsutil::pin_local_scan_path(&entry.path()).ok()?;
+        if !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
         if name.starts_with('@') {
-            if let Ok(scope) = std::fs::read_dir(entry.path()) {
-                for scoped in scope.flatten() {
-                    if scoped.file_type().is_ok_and(|t| t.is_dir()) {
-                        out.extend(bin_of(&scoped.path()));
-                    }
+            for scoped in crate::fsutil::read_local_scan_dir(&entry.path()).ok()? {
+                let scoped = scoped.ok()?;
+                let _pins = crate::fsutil::pin_local_scan_path(&scoped.path()).ok()?;
+                if scoped.file_type().ok()?.is_dir() {
+                    out.extend(bin_of(&scoped.path())?);
                 }
             }
         } else {
-            out.extend(bin_of(&entry.path()));
+            out.extend(bin_of(&entry.path())?);
             out.insert(name);
         }
     }
@@ -153,6 +156,7 @@ fn package_bin_names(prefix: &Path) -> Option<HashSet<String>> {
 
 /// True when a shim stem matches no bin evidence in the global tree. An
 /// unreadable tree never claims orphan (fail closed).
+#[cfg(test)]
 fn shim_target_missing(prefix: &Path, stem: &str) -> bool {
     package_bin_names(prefix)
         .map(|bins| !bins.contains(stem))
@@ -216,127 +220,168 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
 
     // npm: prefix root, shims, empty scope dirs, PATH, npmrc keys.
     if let Some(npm) = roots.npm_prefix.as_deref() {
-        if npm.is_dir() {
-            roots_scanned += 1;
-            push(
-                &mut entries,
-                CliResidueEntry {
-                    manager: "npm".into(),
-                    kind: "prefix_root".into(),
-                    name: "npm".into(),
-                    detail: npm.to_string_lossy().into_owned(),
-                    redacted: false,
-                },
-            );
-            let nm = npm.join("node_modules");
-            if let Ok(read) = std::fs::read_dir(npm) {
-                for entry in read.flatten() {
-                    // Cancel lands between packages: large global trees must
-                    // not outlive an abandoned scan.
-                    if crate::scan_task::cancelled() {
-                        return CliResidueReport {
-                            entries,
-                            completeness: crate::scan_contract::ScanCompleteness::cancelled(
-                                roots_scanned,
-                            ),
-                        };
-                    }
-                    if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                        let name = entry.file_name().to_string_lossy().into_owned();
-                        if !name.starts_with('.')
-                            && !name.starts_with('@')
-                            && name != "node_modules"
-                        {
-                            let manifest = entry.path().join("package.json");
-                            if !manifest.is_file() {
-                                push(
-                                    &mut entries,
-                                    CliResidueEntry {
-                                        manager: "npm".into(),
-                                        kind: "pkg_no_manifest".into(),
-                                        name,
-                                        detail: entry.path().to_string_lossy().into_owned(),
-                                        redacted: false,
-                                    },
-                                );
-                            }
-                        }
-                        continue;
-                    }
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    let lower = name.to_lowercase();
-                    if lower.ends_with(".cmd") || lower.ends_with(".ps1") {
-                        let stem = name
-                            .trim_end_matches(".cmd")
-                            .trim_end_matches(".ps1")
-                            .to_string();
-                        let kind = if shim_target_missing(npm, &stem) {
-                            "shim_orphan"
-                        } else {
-                            "shim"
-                        };
-                        push(
-                            &mut entries,
-                            CliResidueEntry {
-                                manager: "npm".into(),
-                                kind: kind.into(),
-                                name: stem,
-                                detail: entry.path().to_string_lossy().into_owned(),
-                                redacted: false,
-                            },
-                        );
-                    }
+        if let Ok(_npm_pins) = crate::fsutil::pin_local_scan_path(npm) {
+            if !crate::fsutil::local_scan_is_dir(npm) {
+                failed_roots.push("npm".into());
+            } else {
+                roots_scanned += 1;
+                push(
+                    &mut entries,
+                    CliResidueEntry {
+                        manager: "npm".into(),
+                        kind: "prefix_root".into(),
+                        name: "npm".into(),
+                        detail: npm.to_string_lossy().into_owned(),
+                        redacted: false,
+                    },
+                );
+                let nm = npm.join("node_modules");
+                // One evidence snapshot per prefix, not a full tree walk per shim.
+                // An unreadable descendant is unknown and cannot prove an orphan.
+                let bins = package_bin_names(npm);
+                if bins.is_none() {
+                    failed_roots.push("npm: package evidence incomplete".into());
                 }
-            }
-            if let Ok(read) = std::fs::read_dir(&nm) {
-                for entry in read.flatten() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if !name.starts_with('@') {
-                        continue;
-                    }
-                    let Ok(scope_read) = std::fs::read_dir(entry.path()) else {
-                        continue;
-                    };
-                    for scoped in scope_read.flatten() {
-                        let scoped_name = scoped.file_name().to_string_lossy().into_owned();
-                        if scoped_name.starts_with('.') {
+                if let Ok(read) = crate::fsutil::read_local_scan_dir(npm) {
+                    for entry in read {
+                        let entry = match entry {
+                            Ok(entry) => entry,
+                            Err(_) => {
+                                failed_roots.push("npm: child unreadable".into());
+                                continue;
+                            }
+                        };
+                        // Cancel lands between packages: large global trees must
+                        // not outlive an abandoned scan.
+                        if crate::scan_task::cancelled() {
+                            return CliResidueReport {
+                                entries,
+                                completeness: crate::scan_contract::ScanCompleteness::cancelled(
+                                    roots_scanned,
+                                ),
+                            };
+                        }
+                        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if !name.starts_with('.')
+                                && !name.starts_with('@')
+                                && name != "node_modules"
+                            {
+                                let manifest = entry.path().join("package.json");
+                                if matches!(
+                                    crate::fsutil::local_scan_file_exists(&manifest),
+                                    Ok(false)
+                                ) {
+                                    push(
+                                        &mut entries,
+                                        CliResidueEntry {
+                                            manager: "npm".into(),
+                                            kind: "pkg_no_manifest".into(),
+                                            name,
+                                            detail: entry.path().to_string_lossy().into_owned(),
+                                            redacted: false,
+                                        },
+                                    );
+                                }
+                            }
                             continue;
                         }
-                        // A package directory without package.json is not a
-                        // working package: leftover or a broken install.
-                        let manifest = scoped.path().join("package.json");
-                        if !manifest.is_file() {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        let lower = name.to_lowercase();
+                        if lower.ends_with(".cmd") || lower.ends_with(".ps1") {
+                            let stem = name
+                                .trim_end_matches(".cmd")
+                                .trim_end_matches(".ps1")
+                                .to_string();
+                            let kind = if bins.as_ref().is_some_and(|bins| !bins.contains(&stem)) {
+                                "shim_orphan"
+                            } else {
+                                "shim"
+                            };
                             push(
                                 &mut entries,
                                 CliResidueEntry {
                                     manager: "npm".into(),
-                                    kind: "pkg_no_manifest".into(),
-                                    name: format!("{name}/{scoped_name}"),
-                                    detail: scoped.path().to_string_lossy().into_owned(),
+                                    kind: kind.into(),
+                                    name: stem,
+                                    detail: entry.path().to_string_lossy().into_owned(),
                                     redacted: false,
                                 },
                             );
                         }
                     }
-                    let empty = std::fs::read_dir(entry.path())
-                        .map(|mut d| d.next().is_none())
-                        .unwrap_or(false);
-                    if empty {
-                        push(
-                            &mut entries,
-                            CliResidueEntry {
-                                manager: "npm".into(),
-                                kind: "empty_scope_dir".into(),
-                                name,
-                                detail: entry.path().to_string_lossy().into_owned(),
-                                redacted: false,
-                            },
-                        );
-                    }
+                } else {
+                    failed_roots.push("npm: prefix unreadable".into());
                 }
+                if let Ok(read) = crate::fsutil::read_local_scan_dir(&nm) {
+                    for entry in read {
+                        let entry = match entry {
+                            Ok(entry) => entry,
+                            Err(_) => {
+                                failed_roots.push("npm: child unreadable".into());
+                                continue;
+                            }
+                        };
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        if !name.starts_with('@') {
+                            continue;
+                        }
+                        let Ok(scope_read) = crate::fsutil::read_local_scan_dir(&entry.path())
+                        else {
+                            failed_roots.push("npm: scope unreadable".into());
+                            continue;
+                        };
+                        for scoped in scope_read {
+                            let scoped = match scoped {
+                                Ok(scoped) => scoped,
+                                Err(_) => {
+                                    failed_roots.push("npm: scoped child unreadable".into());
+                                    continue;
+                                }
+                            };
+                            let scoped_name = scoped.file_name().to_string_lossy().into_owned();
+                            if scoped_name.starts_with('.') {
+                                continue;
+                            }
+                            // A package directory without package.json is not a
+                            // working package: leftover or a broken install.
+                            let manifest = scoped.path().join("package.json");
+                            if matches!(crate::fsutil::local_scan_file_exists(&manifest), Ok(false))
+                            {
+                                push(
+                                    &mut entries,
+                                    CliResidueEntry {
+                                        manager: "npm".into(),
+                                        kind: "pkg_no_manifest".into(),
+                                        name: format!("{name}/{scoped_name}"),
+                                        detail: scoped.path().to_string_lossy().into_owned(),
+                                        redacted: false,
+                                    },
+                                );
+                            }
+                        }
+                        let empty = crate::fsutil::read_local_scan_dir(&entry.path())
+                            .map(|mut d| d.next().is_none())
+                            .unwrap_or(false);
+                        if empty {
+                            push(
+                                &mut entries,
+                                CliResidueEntry {
+                                    manager: "npm".into(),
+                                    kind: "empty_scope_dir".into(),
+                                    name,
+                                    detail: entry.path().to_string_lossy().into_owned(),
+                                    redacted: false,
+                                },
+                            );
+                        }
+                    }
+                } else {
+                    failed_roots.push("npm: node_modules unreadable".into());
+                }
+                let root_lower = npm.to_string_lossy().to_lowercase().replace('/', "\\");
+                path_entries_for(&mut entries, "npm", root_lower.trim_end_matches('\\'));
             }
-            let root_lower = npm.to_string_lossy().to_lowercase().replace('/', "\\");
-            path_entries_for(&mut entries, "npm", root_lower.trim_end_matches('\\'));
         } else {
             failed_roots.push("npm".into());
         }
@@ -348,18 +393,22 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
         ("yarn", roots.yarn_global.as_deref()),
     ] {
         if let Some(root) = root {
-            if root.is_dir() {
-                roots_scanned += 1;
-                push(
-                    &mut entries,
-                    CliResidueEntry {
-                        manager: manager.into(),
-                        kind: "prefix_root".into(),
-                        name: manager.into(),
-                        detail: root.to_string_lossy().into_owned(),
-                        redacted: false,
-                    },
-                );
+            if let Ok(_pins) = crate::fsutil::pin_local_scan_path(root) {
+                if !crate::fsutil::local_scan_is_dir(root) {
+                    failed_roots.push(manager.into());
+                } else {
+                    roots_scanned += 1;
+                    push(
+                        &mut entries,
+                        CliResidueEntry {
+                            manager: manager.into(),
+                            kind: "prefix_root".into(),
+                            name: manager.into(),
+                            detail: root.to_string_lossy().into_owned(),
+                            redacted: false,
+                        },
+                    );
+                }
             } else {
                 failed_roots.push(manager.into());
             }
@@ -369,7 +418,7 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
     // .npmrc keys — key names only; secret values never leave this module.
     if let Some(npmrc) = std::env::var_os("USERPROFILE").map(|home| Path::new(&home).join(".npmrc"))
     {
-        if let Ok(raw) = std::fs::read_to_string(&npmrc) {
+        if let Ok(raw) = crate::fsutil::read_local_scan_text(&npmrc) {
             for line in raw.lines() {
                 let line = line.trim().trim_start_matches('\u{feff}');
                 if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
@@ -436,6 +485,124 @@ pub fn scan_cli_residue() -> CliResidueReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn local_scan_residue_refuses_config_and_descendant_links_without_orphan_claims() {
+        let _env = crate::test_support::EnvLock::new();
+        let tmp = crate::test_support::TempDir::new("cli-residue-links");
+        let foreign = tmp.subdir("foreign");
+        std::fs::write(foreign.join(".npmrc"), "prefix=must-not-read\n").unwrap();
+        let junction = |link: &Path, target: &Path| {
+            assert!(
+                std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+                    .args(["/c", "mklink", "/J"])
+                    .arg(link.to_string_lossy().replace('/', "\\"))
+                    .arg(target.to_string_lossy().replace('/', "\\"))
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        let home = tmp.path().join("home");
+        junction(&home, &foreign);
+        let _home = crate::test_support::EnvVar::set("USERPROFILE", &home);
+        let prefix = tmp.subdir("npm");
+        let nm = prefix.join("node_modules");
+        std::fs::create_dir(&nm).unwrap();
+        junction(&nm.join("@scope"), &foreign);
+        std::fs::write(prefix.join("unproven.cmd"), b"fixture").unwrap();
+        assert_eq!(package_bin_names(&prefix), None);
+        assert!(!shim_target_missing(&prefix, "unproven"));
+        let report = scan_residue_with(&crate::cliglobals::CliRoots {
+            npm_prefix: Some(prefix),
+            ..Default::default()
+        });
+        assert!(report.entries.iter().all(|e| e.kind != "npmrc_key"
+            && e.kind != "shim_orphan"
+            && e.kind != "empty_scope_dir"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_prefix_shim_keeps_readable_residue_and_reports_partial() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _env = crate::test_support::EnvLock::new();
+        let tmp = crate::test_support::TempDir::new("residue-unreadable-child");
+        let _home = crate::test_support::EnvVar::set("USERPROFILE", tmp.path());
+        let prefix = tmp.subdir("npm");
+        std::fs::create_dir(prefix.join("node_modules")).unwrap();
+        std::fs::write(prefix.join("good.cmd"), b"fixture").unwrap();
+        let blocked = prefix.join("blocked.cmd");
+        std::fs::write(&blocked, b"fixture").unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(7)
+            .open(&blocked)
+            .unwrap();
+        let roots = crate::cliglobals::CliRoots {
+            npm_prefix: Some(prefix),
+            ..Default::default()
+        };
+        let report = scan_residue_with(&roots);
+        assert!(report.entries.iter().any(|e| e.name == "good"));
+        assert!(!report.entries.iter().any(|e| e.name == "blocked"));
+        assert!(report
+            .completeness
+            .failed_roots
+            .iter()
+            .any(|r| r.contains("child unreadable")));
+        assert_ne!(
+            report.completeness.status,
+            crate::scan_contract::ScanStatus::Complete
+        );
+        drop(lock);
+        let complete = scan_residue_with(&roots);
+        assert!(complete.completeness.failed_roots.is_empty());
+        assert!(complete.entries.iter().any(|e| e.name == "blocked"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn invalid_manifest_shapes_keep_residue_unknown_and_partial() {
+        let _env = crate::test_support::EnvLock::new();
+        let tmp = crate::test_support::TempDir::new("residue-invalid-manifest");
+        let _home = crate::test_support::EnvVar::set("USERPROFILE", tmp.path());
+        let prefix = tmp.subdir("npm");
+        let package = prefix.join("node_modules/pkg");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(prefix.join("unmatched.cmd"), b"fixture").unwrap();
+        for raw in [
+            "null",
+            "[]",
+            "true",
+            "42",
+            r#""scalar""#,
+            r#"{"bin":null}"#,
+            r#"{"bin":[]}"#,
+            r#"{"bin":3}"#,
+            r#"{"bin":{"tool":null}}"#,
+        ] {
+            std::fs::write(package.join("package.json"), raw).unwrap();
+            assert_eq!(package_bin_names(&prefix), None, "{raw}");
+            let report = scan_residue_with(&crate::cliglobals::CliRoots {
+                npm_prefix: Some(prefix.clone()),
+                ..Default::default()
+            });
+            assert!(
+                report.entries.iter().all(|e| e.kind != "shim_orphan"),
+                "{raw}"
+            );
+            assert!(
+                report
+                    .completeness
+                    .failed_roots
+                    .iter()
+                    .any(|r| r.contains("evidence incomplete")),
+                "{raw}"
+            );
+        }
+    }
 
     #[test]
     fn secret_keys_are_redacted_and_registry_urls_keep_the_host() {

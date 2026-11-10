@@ -13,6 +13,174 @@ fn fixture_junction(link: &Path, target: &Path) {
     assert!(is_reparse_point(link));
 }
 
+/// Deliberately uses FILE_WRITE_ATTRIBUTES only: ordinary WRITE sharing pins
+/// do not exclude this access. All targets are siblings inside one temp tree.
+#[cfg(windows)]
+fn convert_with_attribute_handle(path: &Path, target: &Path) {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    let file = fs::OpenOptions::new()
+        .access_mode(0x100)
+        .share_mode(7)
+        .custom_flags(0x0220_0000)
+        .open(path)
+        .unwrap();
+    let substitute: Vec<u16> = format!("\\??\\{}", target.display())
+        .encode_utf16()
+        .collect();
+    let print: Vec<u16> = target
+        .as_os_str()
+        .to_string_lossy()
+        .encode_utf16()
+        .collect();
+    let mut buffer = 0xa0000003u32.to_le_bytes().to_vec();
+    buffer
+        .extend_from_slice(&((8 + (substitute.len() + print.len() + 2) * 2) as u16).to_le_bytes());
+    buffer.extend_from_slice(&0u16.to_le_bytes());
+    for value in [
+        0,
+        substitute.len() * 2,
+        (substitute.len() + 1) * 2,
+        print.len() * 2,
+    ] {
+        buffer.extend_from_slice(&(value as u16).to_le_bytes());
+    }
+    for unit in substitute
+        .into_iter()
+        .chain(Some(0))
+        .chain(print)
+        .chain(Some(0))
+    {
+        buffer.extend_from_slice(&unit.to_le_bytes());
+    }
+    let mut written = 0;
+    unsafe {
+        windows::Win32::System::IO::DeviceIoControl(
+            windows::Win32::Foundation::HANDLE(file.as_raw_handle()),
+            0x900a4,
+            Some(buffer.as_ptr().cast()),
+            buffer.len() as u32,
+            None,
+            0,
+            Some(&mut written),
+            None,
+        )
+    }
+    .unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn local_scan_attribute_only_conversion_never_reads_foreign_children() {
+    let tmp = crate::test_support::TempDir::new("scan-attribute-reparse");
+    let outside = tmp.subdir("outside");
+    fs::write(outside.join("proof"), b"outside sentinel").unwrap();
+    let empty = tmp.subdir("empty");
+    let pins = pin_local_scan_path(&empty).unwrap();
+    let pin = pins.last().unwrap();
+    convert_with_attribute_handle(&empty, &outside);
+    // Actual OS conversion succeeded after validation, not a simulated error.
+    assert!(is_reparse_metadata(&pin_metadata(pin).unwrap()));
+    let names = relative_names(pin);
+    assert!(names.is_err() || names.unwrap().is_empty());
+    assert!(open_relative(pin, std::ffi::OsStr::new("proof"), 0x81, false).is_err());
+    assert!(read_local_scan_text(&empty.join("proof")).is_err());
+    assert!(read_local_scan_dir(&empty).is_err());
+    assert!(local_scan_size(&empty).1);
+    drop(pins);
+    fs::remove_dir(&empty).unwrap();
+    assert_eq!(
+        fs::read(outside.join("proof")).unwrap(),
+        b"outside sentinel"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn snapshot_attribute_only_conversion_never_collects_or_deletes_foreign_children() {
+    let tmp = crate::test_support::TempDir::new("snapshot-attribute-reparse");
+    let outside = tmp.subdir("outside");
+    fs::write(outside.join("proof"), b"outside sentinel").unwrap();
+    let package = tmp.subdir("package");
+    fs::write(package.join("package.json"), b"{}").unwrap();
+    let empty = package.join("empty");
+    fs::create_dir(&empty).unwrap();
+    let mut converted = false;
+    let snapshot = PinnedLocalDeleteTree::new_with(&package, &mut |path| {
+        if path == empty {
+            convert_with_attribute_handle(path, &outside);
+            converted = true;
+        }
+        Ok(())
+    });
+    assert!(
+        converted,
+        "must reach empty directory after holding deletion handle"
+    );
+    let snapshot = snapshot.expect("handle enumeration must not enter converted directory");
+    assert!(!snapshot
+        .objects
+        .iter()
+        .any(|(p, _, _)| p.file_name().is_some_and(|n| n == "proof")));
+    snapshot
+        .remove()
+        .expect("delete only held package objects, including converted link");
+    assert_eq!(
+        fs::read(outside.join("proof")).unwrap(),
+        b"outside sentinel"
+    );
+    if empty.exists() {
+        fs::remove_dir(&empty).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn local_scan_pins_reject_stale_cached_junction_and_hold_each_component() {
+    let tmp = crate::test_support::TempDir::new("local-scan-pins");
+    let parent = tmp.subdir("parent");
+    let dir = parent.join("child");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("manifest"), b"fixture").unwrap();
+    // Warm the old UI topology cache, then replace an ancestor. The strict
+    // scan path must not consult that cached Safe result.
+    assert!(is_local_drive_path(dir.join("manifest").to_str().unwrap()));
+    fs::remove_file(dir.join("manifest")).unwrap();
+    fs::remove_dir(&dir).unwrap();
+    let other = tmp.subdir("other");
+    fs::write(other.join("manifest"), b"not scanned").unwrap();
+    fixture_junction(&dir, &other);
+    assert!(pin_local_scan_path(&dir.join("manifest")).is_err());
+    assert!(read_local_scan_text(&dir.join("manifest")).is_err());
+    assert!(read_local_scan_dir(&dir).is_err());
+    fs::remove_dir(&dir).unwrap();
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("manifest"), b"fixture").unwrap();
+    let pins = pin_local_scan_path(&dir.join("manifest")).unwrap();
+    assert!(fs::rename(&parent, parent.with_extension("moved")).is_err());
+    assert!(fs::write(dir.join("manifest"), b"changed").is_err());
+    drop(pins);
+    assert_eq!(
+        read_local_scan_text(&dir.join("manifest")).unwrap(),
+        "fixture"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn local_scan_rejects_remote_relative_device_before_io() {
+    // The spellings are rejected lexically, before any remote filesystem IO.
+    for raw in [
+        r"\\invalid.example\share\x",
+        r"\\?\UNC\invalid.example\share\x",
+        r"\\.\pipe\x",
+        r"C:relative",
+        r"relative\x",
+    ] {
+        assert!(pin_local_scan_path(Path::new(raw)).is_err(), "{raw}");
+    }
+}
+
 #[test]
 fn atomic_tmp_collisions_never_truncate_or_remove_foreign_files() {
     use std::io::Write;
