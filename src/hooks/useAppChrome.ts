@@ -60,6 +60,7 @@ export function useAppChrome({
   flow,
   residual,
   setCheckupOrphanCount,
+  setCheckupOrphanCompleteness,
 }: {
   L: Strings;
   selected: InstalledApp | null;
@@ -68,6 +69,7 @@ export function useAppChrome({
   flow: AppChromeFlow;
   residual: AppChromeResidual;
   setCheckupOrphanCount: (v: number | null) => void;
+  setCheckupOrphanCompleteness: (v: import("../types").ScanCompleteness | null) => void;
 }) {
   /** Orphan checkup scan has its own spinner (never the analyze spinner). */
   const [checkupOrphanBusy, setCheckupOrphanBusy] = useState(false);
@@ -238,6 +240,7 @@ export function useAppChrome({
     if (checkupBusyRef.current) return;
     checkupBusyRef.current = true;
     setCheckupOrphanCount(null);
+    setCheckupOrphanCompleteness(null);
  // Independent spinner — never touch the analyze `scanning` flag.
     void (async () => {
       setCheckupOrphanBusy(true);
@@ -246,7 +249,11 @@ export function useAppChrome({
           (id: number) => api.orphanScan(id),
           (r) => normalizeOrphanScan(r).items.length,
         );
-        setCheckupOrphanCount(normalizeOrphanScan(raw).items.length);
+        const normalized = normalizeOrphanScan(raw);
+        setCheckupOrphanCount(normalized.items.length);
+        // A partial scan found N so far, not N total: the panel must not show
+        // an incomplete count as a finished one.
+        setCheckupOrphanCompleteness(normalized.completeness);
       } catch (e) {
         setCheckupOrphanCount(null);
         if (!scanCancelled(e)) toast.error(formatError(e, "analyze"));

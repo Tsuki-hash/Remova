@@ -13,6 +13,8 @@ export type ShellState = {
   updateInfo: UpdateInfo | null;
   checkupOpen: boolean;
   checkupOrphanCount: number | null;
+  /** Completeness of the scan that produced the count above. */
+  checkupOrphanCompleteness: import("../../types").ScanCompleteness | null;
   uninstallStage: UninstallStage;
   showDetail: boolean;
 };
@@ -27,6 +29,10 @@ export type ShellAction =
   | { type: "checkup/open" }
   | { type: "checkup/close" }
   | { type: "checkup/orphanCount"; value: number | null }
+  | {
+      type: "checkup/orphanCompleteness";
+      value: import("../../types").ScanCompleteness | null;
+    }
   | { type: "uninstallStage/set"; value: UninstallStage }
   | { type: "detail/toggle" }
   | { type: "detail/set"; value: boolean };
@@ -40,6 +46,7 @@ export function initialShellState(): ShellState {
     updateInfo: null,
     checkupOpen: false,
     checkupOrphanCount: null,
+    checkupOrphanCompleteness: null,
     uninstallStage: "idle",
     showDetail: true,
   };
@@ -65,6 +72,8 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
       return { ...state, checkupOpen: false };
     case "checkup/orphanCount":
       return { ...state, checkupOrphanCount: action.value };
+    case "checkup/orphanCompleteness":
+      return { ...state, checkupOrphanCompleteness: action.value };
     case "uninstallStage/set":
       return { ...state, uninstallStage: action.value };
     case "detail/toggle":

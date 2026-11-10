@@ -147,6 +147,7 @@ export type SoftwarePageProps = {
   checkupOpen: boolean;
   setCheckupOpen: (v: boolean) => void;
   checkupOrphanCount: number | null;
+  checkupOrphanCompleteness?: import("../types").ScanCompleteness | null;
   checkupOrphanBusy: boolean;
   checkupScanStatus?: ReactNode;
   checkupOrphanScan: () => void;
@@ -312,6 +313,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           orphanScanning={p.checkupOrphanBusy}
           scanStatus={p.checkupScanStatus}
           orphanCount={p.checkupOrphanCount}
+          orphanCompleteness={p.checkupOrphanCompleteness}
           onClose={() => p.setCheckupOpen(false)}
           onOrphanScan={p.checkupOrphanScan}
           onOpenOrphans={p.onGoOrphans}

@@ -16,6 +16,7 @@ export function CheckupPanel({
   orphanScanning,
   scanStatus,
   orphanCount,
+  orphanCompleteness,
   onClose,
   onOrphanScan,
   onOpenOrphans,
@@ -25,6 +26,8 @@ export function CheckupPanel({
   orphanScanning: boolean;
   scanStatus?: ReactNode;
   orphanCount: number | null;
+  /** Completeness of the scan behind `orphanCount`; partial counts are not totals. */
+  orphanCompleteness?: import("../types").ScanCompleteness | null;
   onClose: () => void;
   onOrphanScan: () => void;
   onOpenOrphans: () => void;
@@ -94,8 +97,10 @@ export function CheckupPanel({
                   ? orphanScanning
                     ? "…"
                     : "—"
-                  : String(orphanCount),
-              ok: orphanCount !== null,
+                  : (orphanCompleteness?.status ?? "complete") === "complete"
+                    ? String(orphanCount)
+                    : `${orphanCount}+`,
+              ok: orphanCount !== null && (orphanCompleteness?.status ?? "complete") === "complete",
             },
           ].map((row) => (
             <div

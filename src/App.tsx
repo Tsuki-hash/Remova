@@ -462,6 +462,7 @@ export default function App() {
     flow: chromeFlow,
     residual: chromeResidual,
     setCheckupOrphanCount: shell.setCheckupOrphanCount,
+    setCheckupOrphanCompleteness: shell.setCheckupOrphanCompleteness,
   });
   const monitorSnapshotBusy = monitorScanProgress?.status === "running" || monitorScanProgress?.status === "stopping";
   // Same defect as the bags above, one level down: an inline JSX element is an

@@ -55,6 +55,12 @@ export function useShellState() {
   const setCheckupOrphanCount = useCallback((v: number | null) => {
     dispatch({ type: "checkup/orphanCount", value: v });
   }, []);
+  const setCheckupOrphanCompleteness = useCallback(
+    (v: import("../types").ScanCompleteness | null) => {
+      dispatch({ type: "checkup/orphanCompleteness", value: v });
+    },
+    [],
+  );
   const setUninstallStage = useCallback((v: UninstallStage) => {
     dispatch({ type: "uninstallStage/set", value: v });
   }, []);
@@ -93,6 +99,8 @@ export function useShellState() {
       setCheckupOpen,
       checkupOrphanCount: state.checkupOrphanCount,
       setCheckupOrphanCount,
+      checkupOrphanCompleteness: state.checkupOrphanCompleteness,
+      setCheckupOrphanCompleteness,
       uninstallStage: state.uninstallStage,
       setUninstallStage,
       showDetail: state.showDetail,
@@ -107,6 +115,7 @@ export function useShellState() {
       state.updateInfo,
       state.checkupOpen,
       state.checkupOrphanCount,
+      state.checkupOrphanCompleteness,
       state.uninstallStage,
       state.showDetail,
       setTheme,
