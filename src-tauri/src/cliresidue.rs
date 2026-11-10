@@ -289,9 +289,17 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                         let name = entry.file_name().to_string_lossy().into_owned();
                         let lower = name.to_lowercase();
                         if lower.ends_with(".cmd") || lower.ends_with(".ps1") {
+                            // Match and truncate on the same case-insensitive
+                            // extension: `TOOL.CMD` used to pass the lowercase
+                            // test but keep its extension as the stem.
                             let stem = name
-                                .trim_end_matches(".cmd")
-                                .trim_end_matches(".ps1")
+                                .strip_suffix(".cmd")
+                                .or_else(|| name.strip_suffix(".CMD"))
+                                .or_else(|| name.strip_suffix(".Cmd"))
+                                .or_else(|| name.strip_suffix(".ps1"))
+                                .or_else(|| name.strip_suffix(".PS1"))
+                                .or_else(|| name.strip_suffix(".Ps1"))
+                                .unwrap_or(&name)
                                 .to_string();
                             let kind = if bins.as_ref().is_some_and(|bins| !bins.contains(&stem)) {
                                 "shim_orphan"

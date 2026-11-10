@@ -724,7 +724,11 @@ pub(super) fn scan_temp(name_slugs: &[String], items: &mut Vec<CleanupItem>) -> 
         }
         (out, complete)
     });
-    let slug_norms: Vec<String> = name_slugs.iter().map(|s| normalize_for_match(s)).collect();
+    // Match with the SAME length-filtered slugs the admission check used. This
+    // used to rebuild an unfiltered list from `name_slugs`, so a short prefix
+    // slug ("ab" from "A B Studio") matched unrelated TEMP files even though
+    // the pre-check had already discarded it.
+    let slug_norms = &slugs;
     for entry in entries.iter() {
         if crate::scan_task::cancelled() {
             break;
@@ -973,6 +977,24 @@ mod tests {
         assert!(!temp_entry_matches("savegame.tmp", &slugs));
         // Name-insensitive composite still matches.
         assert!(temp_entry_matches("MySteamTemp", &slugs));
+    }
+
+    /// A short prefix slug from a multi-word product name must not match
+    /// unrelated TEMP entries. The admission list drops slugs under four
+    /// characters; the match loop used to rebuild an unfiltered list.
+    #[test]
+    fn short_prefix_slug_never_matches_unrelated_temp_entries() {
+        let admitted: Vec<String> = ["A B Studio", "A B"]
+            .iter()
+            .map(|s| normalize_for_match(s))
+            .filter(|s| s.len() >= 4)
+            .collect();
+        assert_eq!(admitted, vec![normalize_for_match("A B Studio")]);
+        assert!(temp_entry_matches("abstudio-cache", &admitted));
+        assert!(
+            !temp_entry_matches("table.tmp", &admitted),
+            "the short prefix slug must not claim unrelated files"
+        );
     }
 
     /// The cross-drive scan collects every top-level directory, orders the

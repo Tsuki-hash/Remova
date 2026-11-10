@@ -321,16 +321,19 @@ fn scan_pnpm_shims(
             }
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.ends_with(".cmd") || name.ends_with(".ps1") {
+        // Windows shims are commonly upper-case (`TOOL.CMD`); matching only the
+        // lower-case spelling silently dropped them from the inventory.
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".cmd") || lower.ends_with(".ps1") {
             // One command may carry both shims; the .cmd is the canonical row.
-            if name.ends_with(".cmd") {
+            if lower.ends_with(".cmd") {
                 found = true;
                 if out.len() >= ITEM_CAP {
                     *omitted += 1;
                 } else {
                     out.push(CliGlobalItem {
                         manager: "pnpm".into(),
-                        name: name.trim_end_matches(".cmd").to_string(),
+                        name: name[..name.len() - 4].to_string(),
                         version: None,
                         path: entry.path().to_string_lossy().into_owned(),
                         size_kb: 0,
@@ -610,6 +613,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join("rimraf.cmd"), b"@echo off").unwrap();
         std::fs::write(home.join("rimraf.ps1"), b"exit 0").unwrap();
+        // Windows shims are often upper-case; they must be listed, with the
+        // extension removed on the same case-insensitive basis.
+        std::fs::write(home.join("TSC.CMD"), b"@echo off").unwrap();
         std::fs::write(home.join("readme.txt"), b"x").unwrap();
 
         let out = scan_with(&CliRoots {
@@ -617,8 +623,9 @@ mod tests {
             pnpm_home: Some(home),
             yarn_global: None,
         });
-        assert_eq!(out.items.len(), 1, "one row per command, not per shim file");
+        assert_eq!(out.items.len(), 2, "one row per command, not per shim file");
         assert_eq!(out.items[0].name, "rimraf");
+        assert_eq!(out.items[1].name, "TSC", "upper-case shim keeps its stem");
         assert_eq!(out.items[0].version, None);
         assert_eq!(out.notes, ["npm", "yarn"]);
     }
