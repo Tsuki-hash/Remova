@@ -36,7 +36,7 @@ describe("OnboardingCard", () => {
     const onClose = vi.fn();
     render(<OnboardingCard onClose={onClose} />);
     expect(screen.getByText(/先检查再执行/)).toBeTruthy();
-    expect(screen.getByText(/默认可恢复/)).toBeTruthy();
+    expect(screen.getByText(/备份可选、非默认/)).toBeTruthy();
     expect(screen.getByText(/高风险不预选/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "知道了" }));
     expect(onClose).toHaveBeenCalledTimes(1);

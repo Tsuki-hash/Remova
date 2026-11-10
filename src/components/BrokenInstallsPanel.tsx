@@ -24,15 +24,22 @@ export function BrokenInstallsPanel({
 }) {
   const L = t();
   const [rows, setRows] = useState<BrokenInstall[] | null>(null);
+  // A failed load must end the loading state and stay visible. Reporting only
+  // through the parent left the panel on "loading" forever.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
 
   const scan = useCallback(async () => {
     setBusy(true);
+    setLoadError(null);
     try {
       setRows(await api.brokenInstalls());
     } catch (e) {
-      onError(formatError(e));
+      const msg = formatError(e);
+      setLoadError(msg);
+      setRows([]);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -124,8 +131,15 @@ export function BrokenInstallsPanel({
           </button>
         </div>
       </div>
-      {rows === null ? (
-        <div style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
+      {loadError ? (
+        <div role="alert" style={{ ...css.muted, padding: "10px 0", color: "var(--danger)" }}>
+          {loadError}{" "}
+          <button style={{ ...css.btnGhost, height: 26 }} onClick={() => void scan()}>
+            {L.manageReload}
+          </button>
+        </div>
+      ) : rows === null ? (
+        <div role="status" style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
       ) : rows.length === 0 ? (
         <div style={{ ...css.muted, padding: "10px 0" }}>{L.brokenInstallsEmpty}</div>
       ) : (

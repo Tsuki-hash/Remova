@@ -182,9 +182,14 @@ export type LeftoverSummary = {
   byKind: { kind: string; count: number }[];
 };
 
-/** Safe = confirmed, not high risk, not shared, not user data. Keep = high risk or shared. */
+/** Safe = confirmed, low risk, not shared, not user data. Keep = high risk or shared.
+ *
+ * A medium-risk item is never "safe": it is preselected only when it carries no
+ * shared/service/user-data marker, and it belongs in the review bucket so the
+ * label cannot promise more than the item's own risk tier. */
 export function bucketItem(it: CleanupItem): "safe" | "suggest" | "keep" {
-  if (defaultSelectable(it)) return "safe";
+  if (defaultSelectable(it) && it.risk === "low") return "safe";
+  if (defaultSelectable(it)) return "suggest";
   if (isKeepItem(it)) return "keep";
   return "suggest";
 }

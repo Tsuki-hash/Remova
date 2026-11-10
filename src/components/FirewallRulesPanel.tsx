@@ -41,9 +41,13 @@ export function FirewallRulesPanel({
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // A failed scan ends the loading state and stays visible with a retry; the
+  // parent toast alone left this panel showing "loading" indefinitely.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const scan = useCallback(async () => {
     setBusy(true);
+    setLoadError(null);
     try {
       const result = await api.firewallOrphans();
       setRows(result.rules);
@@ -51,7 +55,10 @@ export function FirewallRulesPanel({
       setCompleteness(result.completeness ?? { status: "unknown", roots_scanned: 0, failed_roots: ["legacy_payload"] });
       setSelected(new Set());
     } catch (e) {
-      onError(formatError(e));
+      const msg = formatError(e);
+      setLoadError(msg);
+      setRows([]);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -168,8 +175,15 @@ export function FirewallRulesPanel({
           )}
         </div>
       )}
-      {rows === null ? (
-        <div style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
+      {loadError ? (
+        <div role="alert" style={{ ...css.muted, padding: "10px 0", color: "var(--danger)" }}>
+          {loadError}{" "}
+          <button style={{ ...css.btnGhost, height: 26 }} onClick={() => void scan()}>
+            {L.manageReload}
+          </button>
+        </div>
+      ) : rows === null ? (
+        <div role="status" style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
       ) : rows.length === 0 ? (
         <div style={{ ...css.muted, padding: "10px 0" }}>
           {completeness.status === "complete" ? L.firewallEmpty : L.scanEmptyNone}

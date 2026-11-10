@@ -141,3 +141,18 @@ it("keeps the failed rules on screen after the list refreshes", async () => {
   expect(screen.getByText(rule.value_name)).toBeTruthy();
   expect(screen.getByText("C:\\ProgramData\\Remova\\Backup\\sess")).toBeTruthy();
 });
+
+it("shows a retryable error instead of loading forever when the scan fails", async () => {
+  firewallOrphans.mockRejectedValueOnce("backend exploded");
+  panel();
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toContain("backend exploded");
+  expect(screen.queryByText(t().loadingGeneric)).toBeNull();
+  // Retrying succeeds and replaces the error with the real list.
+  firewallOrphans.mockResolvedValueOnce({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  const retry = screen.getAllByRole("button", { name: t().manageReload })[0];
+  expect(retry).toBeTruthy();
+  fireEvent.click(retry!);
+  await screen.findByText(rule.rule_name);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

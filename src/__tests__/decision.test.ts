@@ -351,3 +351,22 @@ describe("buildCleanupRiskBits / formatRiskNote", () => {
       .toEqual([riskL.riskBitSuspected]);
   });
 });
+
+it("a medium-risk item is never labelled safe", () => {
+  const medium = {
+    path: "C:\\Program Files\\Vendor\\cache",
+    kind: "dir" as const,
+    score: 60,
+    confidence: "confirmed" as const,
+    risk: "medium" as const,
+    reason: "r",
+    evidence: [],
+    shared: false,
+    service_bound: false,
+    user_data: false,
+    user_library: false,
+  };
+  expect(bucketItem(medium)).toBe("suggest");
+  const low = { ...medium, risk: "low" as const };
+  expect(bucketItem(low)).toBe("safe");
+});

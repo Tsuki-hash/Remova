@@ -56,6 +56,18 @@ export function BatchProgress({
   );
 }
 
+/** A skipped row must say why it was skipped: cancelled, protected, or truly
+ * clean. One shared "no leftovers" label hid all three behind the same word. */
+function skippedLabel(detail: string, L: ReturnType<typeof t>): string {
+  const text = detail.toLowerCase();
+  if (text.includes("cancel")) return L.batchSkippedCancelled;
+  if (text.includes("protect") || text.includes("not associated") || text.includes("refus")) {
+    return L.batchSkippedBlocked;
+  }
+  if (!detail.trim()) return L.batchSkippedNone;
+  return L.batchSkipped;
+}
+
 export function BatchSummaryPanel({
   results,
   onRetryFailed,
@@ -109,7 +121,7 @@ export function BatchSummaryPanel({
                   ? L.batchFailed
                   : r.status === "reboot"
                     ? L.batchReboot
-                    : L.batchSkipped}
+                    : skippedLabel(r.detail, L)}
             </span>
             {r.name}
             {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}
