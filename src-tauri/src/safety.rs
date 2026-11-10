@@ -820,6 +820,7 @@ mod tests {
 
     #[test]
     fn protected_service_families_are_symmetric() {
+        let spy = crate::test_support::native_commands::Spy::new();
         for name in [
             "MicrosoftEdgeUpdate",
             "MS Example",
@@ -842,10 +843,24 @@ mod tests {
             let key = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}");
             assert!(super::is_safe_to_delete_registry(&key).is_err());
             assert!(super::allow_reg_value_write(&key, Some("Start")).is_err());
-            assert!(!crate::regops::sc_delete_service(name));
-            assert!(crate::regops::sc_set_service_running(name, false).is_err());
+            let deleted = crate::regops::sc_delete_service(name);
+            assert!(
+                spy.calls().is_empty(),
+                "protected service reached native commands: {name}"
+            );
+            assert!(!deleted);
+            let running = crate::regops::sc_set_service_running(name, false);
+            assert!(
+                spy.calls().is_empty(),
+                "protected service state reached native commands: {name}"
+            );
+            assert!(running.is_err());
         }
         assert!(super::allow_manage_service_write("VendorService").is_ok());
+        assert!(
+            spy.calls().is_empty(),
+            "protected services reached native commands"
+        );
     }
     use super::*;
     use std::path::Path;

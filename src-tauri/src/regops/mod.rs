@@ -8,8 +8,8 @@ use windows::Win32::Foundation::{
 };
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER,
-    HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS,
+    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+    KEY_READ, KEY_SET_VALUE, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS,
 };
 
 fn parse(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
@@ -41,15 +41,29 @@ pub fn delete_key(key_path: &str) -> Result<bool, String> {
     if let Err(e) = crate::safety::is_safe_to_delete_registry(key_path) {
         return Err(format!("registry delete blocked: {e}"));
     }
-    #[cfg(not(windows))]
+    #[cfg(test)]
+    {
+        let (_, sub, _) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        if sub.is_empty() || sub.ends_with('\\') {
+            return Err("registry key leaf must not be empty".into());
+        }
+        if crate::test_support::registry_mutations::is_missing_key(key_path) {
+            return Ok(false);
+        }
+        crate::test_support::registry_mutations::record(
+            crate::test_support::registry_mutations::Mutation::DeleteKey(key_path.into()),
+        )?;
+        Ok(true)
+    }
+    #[cfg(all(not(test), not(windows)))]
     {
         let _ = key_path;
         Err("not windows".into())
     }
-    #[cfg(windows)]
+    #[cfg(all(not(test), windows))]
     {
         use windows::Win32::System::Registry::{
-            KEY_ENUMERATE_SUB_KEYS, KEY_QUERY_VALUE, KEY_SET_VALUE,
+            RegDeleteTreeW, KEY_ENUMERATE_SUB_KEYS, KEY_QUERY_VALUE, KEY_SET_VALUE,
         };
         // DELETE (0x00010000) is not exported by this windows crate build.
         const DELETE_RIGHT: REG_SAM_FLAGS = REG_SAM_FLAGS(0x0001_0000);
@@ -115,6 +129,43 @@ pub fn delete_value(key_path: &str, value_name: &str) -> Result<bool, String> {
     if let Err(e) = crate::safety::is_safe_to_delete_registry(&combined) {
         return Err(format!("registry delete blocked: {e}"));
     }
+    #[cfg(test)]
+    {
+        parse(key_path).ok_or_else(|| "bad key".to_string())?;
+        crate::fsutil::validate_native_name(value_name)?;
+        if crate::test_support::registry_mutations::is_missing_key(key_path) {
+            return Ok(false);
+        }
+        crate::test_support::registry_mutations::record(
+            crate::test_support::registry_mutations::Mutation::DeleteValue {
+                key: key_path.into(),
+                name: value_name.into(),
+            },
+        )?;
+        Ok(true)
+    }
+    #[cfg(not(test))]
+    delete_value_native(key_path, value_name)
+}
+
+// Private native backend for production and explicitly opted-in integration
+// fixtures only. Keep the policy check here too: opting in never bypasses it.
+fn delete_value_native(key_path: &str, value_name: &str) -> Result<bool, String> {
+    #[cfg(test)]
+    if std::env::var("REMOVA_TEST_ALLOW_SYS_MUTATION").as_deref() != Ok("1")
+        || key_path != r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        || !value_name.starts_with(&format!("RemovaRenameTest_{}_", std::process::id()))
+        || value_name.contains(['\\', '/', '\0', '\r', '\n'])
+    {
+        return Err("native registry backend requires the opted-in unique startup fixture".into());
+    }
+    let combined = if value_name.trim().is_empty() {
+        key_path.to_string()
+    } else {
+        format!("{key_path}|{value_name}")
+    };
+    crate::safety::is_safe_to_delete_registry(&combined)
+        .map_err(|e| format!("registry delete blocked: {e}"))?;
     #[cfg(not(windows))]
     {
         let _ = (key_path, value_name);
@@ -203,6 +254,21 @@ pub fn hide_console(cmd: &mut std::process::Command) {
 #[cfg(not(windows))]
 pub fn hide_console(_cmd: &mut std::process::Command) {}
 
+/// Destructive native command boundary. Unit tests can only record simulated
+/// success; an absent spy is an error, never permission to spawn on the host.
+pub(crate) fn mutation_command_output(
+    cmd: &mut std::process::Command,
+) -> std::io::Result<std::process::Output> {
+    #[cfg(test)]
+    {
+        crate::test_support::native_commands::output(cmd)
+    }
+    #[cfg(not(test))]
+    {
+        cmd.output()
+    }
+}
+
 /// Stop or start a Windows service via sc.exe (process state, not Start type).
 pub fn sc_set_service_running(svc_name: &str, run: bool) -> Result<(), String> {
     #[cfg(not(windows))]
@@ -226,7 +292,7 @@ pub fn sc_set_service_running(svc_name: &str, run: bool) -> Result<(), String> {
         let mut cmd = Command::new(&sc);
         cmd.args([arg, svc_name]);
         hide_console(&mut cmd);
-        match cmd.output() {
+        match mutation_command_output(&mut cmd) {
             Ok(o) if o.status.success() => Ok(()),
             Ok(o) => {
                 let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -258,11 +324,11 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
     let mut stop = Command::new(&sc);
     stop.args(["stop", svc_name]);
     hide_console(&mut stop);
-    let _ = stop.output();
+    let _ = mutation_command_output(&mut stop);
     let mut del = Command::new(&sc);
     del.args(["delete", svc_name]);
     hide_console(&mut del);
-    let out = del.output();
+    let out = mutation_command_output(&mut del);
     matches!(out, Ok(o) if o.status.success())
 }
 
@@ -290,7 +356,7 @@ pub fn schtasks_delete(task_name: &str) -> bool {
     let mut cmd = Command::new(sys_tool("schtasks.exe"));
     cmd.args(["/delete", "/tn", task_name, "/f"]);
     hide_console(&mut cmd);
-    let out = cmd.output();
+    let out = mutation_command_output(&mut cmd);
     matches!(out, Ok(o) if o.status.success())
 }
 
@@ -696,6 +762,10 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
 
 /// Notify Explorer/new processes that PATH changed (WM_SETTINGCHANGE).
 fn broadcast_env_change() {
+    #[cfg(test)]
+    if path_mock::active() {
+        return;
+    }
     #[cfg(windows)]
     {
         use std::process::Command;
@@ -707,7 +777,7 @@ fn broadcast_env_change() {
             "Add-Type -Namespace W -Name N -MemberDefinition '[DllImport(\"user32.dll\", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'; [UIntPtr]$r=0; [void][W.N]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)",
         ]);
         hide_console(&mut cmd);
-        let _ = cmd.output();
+        let _ = mutation_command_output(&mut cmd);
     }
 }
 
@@ -731,6 +801,7 @@ pub(crate) mod path_mock {
     static FAIL_MACHINE_WRITE: Mutex<bool> = Mutex::new(false);
 
     fn put(user: &str, machine: &str, expand: bool) {
+        require_scope();
         let mut map = HashMap::new();
         map.insert("User".to_string(), (user.to_string(), expand));
         map.insert("Machine".to_string(), (machine.to_string(), expand));
@@ -822,10 +893,109 @@ pub(crate) mod path_mock {
         *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
-    /// Serialize tests that install/use/clear the process-wide PATH mock.
-    pub fn lock_mock() -> std::sync::MutexGuard<'static, ()> {
+    struct Snapshot {
+        state: Option<HashMap<String, (String, bool)>>,
+        fail_read: bool,
+        fail_scope_read: Option<String>,
+        fail_machine_write: bool,
+    }
+
+    impl Snapshot {
+        fn capture() -> Self {
+            Self {
+                state: STATE.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+                fail_read: *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()),
+                fail_scope_read: FAIL_SCOPE_READ
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone(),
+                fail_machine_write: *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()),
+            }
+        }
+
+        fn restore(self) {
+            *STATE.lock().unwrap_or_else(|e| e.into_inner()) = self.state;
+            *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner()) = self.fail_read;
+            *FAIL_SCOPE_READ.lock().unwrap_or_else(|e| e.into_inner()) = self.fail_scope_read;
+            *FAIL_MACHINE_WRITE.lock().unwrap_or_else(|e| e.into_inner()) = self.fail_machine_write;
+        }
+    }
+
+    thread_local! {
+        static SCOPE_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    pub(super) fn require_scope() {
+        assert!(
+            SCOPE_HELD.with(|held| held.get()),
+            "mock installation requires lock_mock()"
+        );
+    }
+
+    /// Owns every PATH/expansion installation made while this lock is held,
+    /// including legacy callers that still clear at the end of the test body.
+    /// Restore all state before unlocking, also when an assertion unwinds.
+    #[must_use = "keep the PATH mock scope alive until the test finishes"]
+    pub struct MockScope {
+        snapshot: Option<Snapshot>,
+        expansion: Option<super::expand_mock::Snapshot>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for MockScope {
+        fn drop(&mut self) {
+            self.snapshot.take().expect("mock scope snapshot").restore();
+            self.expansion.take().expect("expansion snapshot").restore();
+            SCOPE_HELD.with(|held| held.set(false));
+        }
+    }
+
+    /// Serialize installations and bind them to a panic-safe owning scope.
+    pub fn lock_mock() -> MockScope {
+        assert!(
+            !SCOPE_HELD.with(|held| held.get()),
+            "nested mock lock would deadlock"
+        );
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let scope = MockScope {
+            snapshot: Some(Snapshot::capture()),
+            expansion: Some(super::expand_mock::Snapshot::capture()),
+            _lock: lock,
+        };
+        SCOPE_HELD.with(|held| held.set(true));
+        scope
+    }
+
+    #[must_use = "keep the scoped PATH installation alive"]
+    pub struct InstallGuard<'a> {
+        snapshot: Option<Snapshot>,
+        _scope: &'a MockScope,
+    }
+
+    impl Drop for InstallGuard<'_> {
+        fn drop(&mut self) {
+            self.snapshot
+                .take()
+                .expect("PATH installation snapshot")
+                .restore();
+        }
+    }
+
+    pub fn install_scoped<'a>(
+        scope: &'a MockScope,
+        user: &str,
+        machine: &str,
+        expand: bool,
+    ) -> InstallGuard<'a> {
+        require_scope();
+        let guard = InstallGuard {
+            snapshot: Some(Snapshot::capture()),
+            _scope: scope,
+        };
+        clear();
+        put(user, machine, expand);
+        guard
     }
 }
 
@@ -840,6 +1010,7 @@ pub(crate) mod expand_mock {
     static MAP: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
     pub fn install(entries: &[(&str, &str)]) {
+        super::path_mock::require_scope();
         let mut m = HashMap::new();
         for (k, v) in entries {
             m.insert((*k).to_string(), (*v).to_string());
@@ -854,8 +1025,48 @@ pub(crate) mod expand_mock {
             .and_then(|m| m.get(name).cloned())
     }
 
-    pub fn clear() {
-        *MAP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    pub fn active() -> bool {
+        MAP.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    pub(super) struct Snapshot(Option<HashMap<String, String>>);
+
+    impl Snapshot {
+        pub(super) fn capture() -> Self {
+            Self(MAP.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        }
+
+        pub(super) fn restore(self) {
+            *MAP.lock().unwrap_or_else(|e| e.into_inner()) = self.0;
+        }
+    }
+
+    #[must_use = "keep the scoped expansion installation alive"]
+    pub struct InstallGuard<'a> {
+        snapshot: Option<Snapshot>,
+        _scope: &'a super::path_mock::MockScope,
+    }
+
+    impl Drop for InstallGuard<'_> {
+        fn drop(&mut self) {
+            self.snapshot
+                .take()
+                .expect("expansion installation snapshot")
+                .restore();
+        }
+    }
+
+    pub fn install_scoped<'a>(
+        scope: &'a super::path_mock::MockScope,
+        entries: &[(&str, &str)],
+    ) -> InstallGuard<'a> {
+        super::path_mock::require_scope();
+        let guard = InstallGuard {
+            snapshot: Some(Snapshot::capture()),
+            _scope: scope,
+        };
+        install(entries);
+        guard
     }
 }
 
@@ -1136,8 +1347,8 @@ fn resolve_unresolved_vars(s: &str, depth: usize) -> String {
 
 fn fallback_var(name: &str, depth: usize) -> Option<String> {
     #[cfg(test)]
-    if let Some(v) = expand_mock::get(name) {
-        return Some(v);
+    if expand_mock::active() {
+        return expand_mock::get(name);
     }
     registry_env_var(name, depth)
 }
@@ -1197,6 +1408,37 @@ pub(crate) fn write_path_scope(scope: &str, value: &str, expand: bool) -> Result
 }
 
 fn write_path_value(key: &str, value: &str, expand: bool) -> Result<(), String> {
+    crate::fsutil::validate_native_name(value)?;
+    #[cfg(test)]
+    {
+        parse(key).ok_or_else(|| "bad key".to_string())?;
+        crate::test_support::registry_mutations::record(
+            crate::test_support::registry_mutations::Mutation::WritePath {
+                key: key.into(),
+                value: value.into(),
+                expand,
+            },
+        )
+    }
+    #[cfg(not(test))]
+    write_path_value_native(key, value, expand)
+}
+
+// Private backend; only production or an ignored, explicitly opted-in fixture
+// may use it. Default tests always pass through the non-native transport above.
+fn write_path_value_native(key: &str, value: &str, expand: bool) -> Result<(), String> {
+    #[cfg(test)]
+    if std::env::var("REMOVA_TEST_ALLOW_SYS_MUTATION").as_deref() != Ok("1")
+        || !key.starts_with(&format!(
+            r"HKCU\Software\RemovaPathTest_{}_",
+            std::process::id()
+        ))
+        || key
+            .strip_prefix(r"HKCU\Software\")
+            .map_or(true, |leaf| leaf.contains(['\\', '/', '\0', '\r', '\n']))
+    {
+        return Err("native registry backend requires the opted-in unique PATH fixture".into());
+    }
     crate::fsutil::validate_native_name(value)?;
     #[cfg(not(windows))]
     {
@@ -1477,12 +1719,21 @@ pub fn write_service_start(svc_name: &str, start: u32) -> Result<(), String> {
         &format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}"),
         Some("Start"),
     )?;
-    #[cfg(not(windows))]
+    #[cfg(test)]
+    {
+        crate::test_support::registry_mutations::record(
+            crate::test_support::registry_mutations::Mutation::ServiceStart {
+                name: name.into(),
+                start,
+            },
+        )
+    }
+    #[cfg(all(not(test), not(windows)))]
     {
         let _ = (svc_name, start);
         Err("not windows".into())
     }
-    #[cfg(windows)]
+    #[cfg(all(not(test), windows))]
     {
         use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
         use windows::Win32::System::Registry::{RegOpenKeyExW, RegSetValueExW, REG_DWORD};

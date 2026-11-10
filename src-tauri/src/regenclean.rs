@@ -289,11 +289,55 @@ pub fn delete_regenerable(paths: &[String]) -> Result<RegenerableCleanupReport, 
     if crate::executor::reboot::any_pending() {
         return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
     }
+    #[cfg(test)]
+    if let Some((layouts, busy)) = test_layouts::current() {
+        return delete_with(&layouts, busy, paths);
+    }
     delete_with(
         &fixed_layouts(&crate::triage::roots_from_env()),
         servicing_busy(),
         paths,
     )
+}
+
+/// Inject only directories created under an owned temporary root. The real
+/// entry point and reboot gate still run; neither environment nor OS roots
+/// are redirected, and an open gate can only delete disposable fixture data.
+#[cfg(test)]
+mod test_layouts {
+    use super::*;
+    type Layouts = (Vec<(PathBuf, &'static str)>, bool);
+    thread_local! {
+        static LAYOUTS: std::cell::RefCell<Option<Layouts>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub fn current() -> Option<Layouts> {
+        LAYOUTS.with(|layouts| layouts.borrow().clone())
+    }
+
+    #[must_use = "keep the temporary layouts installed until cleanup returns"]
+    pub struct Fixture<'a> {
+        previous: Option<Layouts>,
+        _root: &'a crate::test_support::TempDir,
+        _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+    }
+
+    impl<'a> Fixture<'a> {
+        pub fn new(root: &'a crate::test_support::TempDir) -> Self {
+            let layouts = vec![(root.subdir("Temp"), "win_temp")];
+            Self {
+                previous: LAYOUTS.with(|slot| slot.replace(Some((layouts, false)))),
+                _root: root,
+                _not_send: std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl Drop for Fixture<'_> {
+        fn drop(&mut self) {
+            LAYOUTS.with(|slot| slot.replace(self.previous.take()));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -431,13 +475,44 @@ mod tests {
         assert!(err.starts_with("not a regenerable layout"));
     }
 
-    #[cfg(windows)]
     #[test]
     fn a_pending_reboot_blocks_regenerable_deletion() {
+        struct ResetReboot;
+        impl Drop for ResetReboot {
+            fn drop(&mut self) {
+                crate::executor::reboot::reset_for_test();
+            }
+        }
         crate::executor::reboot::reset_for_test();
+        let _reboot = ResetReboot;
+        let root = crate::test_support::TempDir::new("regenclean-pending");
+        let _layouts = test_layouts::Fixture::new(&root);
+        let layout = root.join("Temp");
+        let payload = layout.join("must-survive.bin");
+        let sibling = root.subdir("not-a-layout").join("keep.bin");
+        std::fs::write(&payload, b"pending payload").unwrap();
+        std::fs::write(&sibling, b"unrelated payload").unwrap();
+        let paths = [layout.to_string_lossy().into_owned()];
+
         crate::executor::reboot::mark_pending("source\u{0}key\u{0}Temp");
-        let err = delete_regenerable(&[r"C:\Windows\Temp".to_string()]).unwrap_err();
-        assert_eq!(err, crate::executor::reboot::PENDING_MESSAGE);
+        let outcome = delete_regenerable(&paths);
+        // Check the effect before the error: a missing reboot gate stays inside
+        // this temp root and makes the preservation assertion red.
+        assert_eq!(std::fs::read(&payload).unwrap(), b"pending payload");
+        assert_eq!(
+            outcome.unwrap_err(),
+            crate::executor::reboot::PENDING_MESSAGE
+        );
+        assert_eq!(std::fs::read(&sibling).unwrap(), b"unrelated payload");
+
+        // Same admitted fixture through the real entry point with the gate open:
+        // prove the rejected call was not merely blocked by layout admission.
         crate::executor::reboot::reset_for_test();
+        let report = delete_regenerable(&paths).unwrap();
+        assert_eq!(report.cleaned, paths);
+        assert!(report.skipped.is_empty());
+        assert!(layout.is_dir());
+        assert!(!payload.exists());
+        assert_eq!(std::fs::read(&sibling).unwrap(), b"unrelated payload");
     }
 }

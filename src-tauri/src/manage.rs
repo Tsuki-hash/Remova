@@ -871,6 +871,12 @@ fn remember_scheduled_task_names(names: impl Iterator<Item = String>) {
 
 fn is_trusted_task(name: &str) -> bool {
     let k = normalize_task_key(name);
+    #[cfg(test)]
+    if let Some(trusted) =
+        tests::TASK_NAMES.with(|names| names.borrow().as_ref().map(|names| names.contains(&k)))
+    {
+        return trusted;
+    }
     task_trust().lock().map(|g| g.contains(&k)).unwrap_or(false)
 }
 
@@ -902,7 +908,7 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
         // Manual quotes make schtasks look for a name with literal quote chars.
         cmd.args(["/change", "/tn", task_name, action]);
         crate::regops::hide_console(&mut cmd);
-        let st = cmd.output().map_err(|e| e.to_string())?;
+        let st = crate::regops::mutation_command_output(&mut cmd).map_err(|e| e.to_string())?;
         if st.status.success() {
             Ok(())
         } else {
@@ -913,6 +919,9 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    thread_local! {
+        pub(super) static TASK_NAMES: std::cell::RefCell<Option<std::collections::HashSet<String>>> = const { std::cell::RefCell::new(None) };
+    }
     #[test]
     fn cancelled_management_scan_skips_all_sources() {
         let id = crate::scan_task::begin().unwrap();
@@ -1060,16 +1069,47 @@ mod tests {
 
     #[test]
     fn system_scheduled_task_write_rejected() {
+        let spy = crate::test_support::native_commands::Spy::new();
+        let names = [
+            r"\Microsoft\Windows\Defrag\ScheduledDefrag",
+            r"Microsoft\Windows\Update",
+            r"\Microsoft\Office\Office Automatic Updates",
+            r"\Microsoft\EdgeUpdate\UpdateTask",
+            "/Microsoft/OneDrive/Update",
+        ];
+        // Exercise the system-tree gate, not the earlier not-listed gate.
+        // Only this test thread sees trusted system names. Never publish them
+        // into the process-wide list another management test could consume.
+        struct TrustGuard(Option<std::collections::HashSet<String>>);
+        impl Drop for TrustGuard {
+            fn drop(&mut self) {
+                TASK_NAMES.with(|names| names.replace(self.0.take()));
+            }
+        }
+        let _trust = TrustGuard(TASK_NAMES.with(|slot| {
+            slot.replace(Some(
+                names
+                    .iter()
+                    .map(|name| super::normalize_task_key(name))
+                    .collect(),
+            ))
+        }));
+        for name in names {
+            let result = super::set_task_enabled(name, false);
+            assert!(
+                spy.calls().is_empty(),
+                "system task reached native commands: {name}"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("protected_task"),
+                "wrong gate for {name}: {err}"
+            );
+        }
         assert!(
-            super::set_task_enabled(r"\Microsoft\Windows\Defrag\ScheduledDefrag", false).is_err()
+            spy.calls().is_empty(),
+            "system tasks reached native commands"
         );
-        assert!(super::set_task_enabled("Microsoft\\Windows\\Update", true).is_err());
-        // whole `\Microsoft\` tree, not only `\Microsoft\Windows\`.
-        assert!(
-            super::set_task_enabled(r"\Microsoft\Office\Office Automatic Updates", false).is_err()
-        );
-        assert!(super::set_task_enabled(r"\Microsoft\EdgeUpdate\UpdateTask", true).is_err());
-        assert!(super::set_task_enabled("/Microsoft/OneDrive/Update", false).is_err());
     }
 
     #[test]
@@ -1087,6 +1127,7 @@ mod tests {
 
     #[test]
     fn critical_services_rejected_by_manage() {
+        let spy = crate::test_support::registry_mutations::Spy::new();
         for name in [
             "WinDefend",
             "windefend",
@@ -1095,12 +1136,22 @@ mod tests {
             "Power",
             "ProfSvc",
         ] {
+            let result = super::set_service_start_disabled(name, true);
             assert!(
-                super::set_service_start_disabled(name, true).is_err(),
-                "expected {name} to be protected"
+                spy.calls().is_empty(),
+                "critical service reached registry transport: {name}"
             );
             assert!(
-                super::set_startup_enabled(&format!("SVC::{name}"), false).is_err(),
+                result.unwrap_err().contains("protected"),
+                "expected {name} to be protected"
+            );
+            let result = super::set_startup_enabled(&format!("SVC::{name}"), false);
+            assert!(
+                spy.calls().is_empty(),
+                "critical startup service reached registry transport: {name}"
+            );
+            assert!(
+                result.unwrap_err().contains("protected"),
                 "expected SVC::{name} to be protected"
             );
         }

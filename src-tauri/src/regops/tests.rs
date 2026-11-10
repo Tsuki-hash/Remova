@@ -1,3 +1,12 @@
+#[cfg(windows)]
+fn require_registry_fixture_opt_in() {
+    assert_eq!(
+        std::env::var("REMOVA_TEST_ALLOW_SYS_MUTATION").as_deref(),
+        Ok("1"),
+        "real registry fixtures require explicit opt-in on a disposable Windows host"
+    );
+}
+
 #[test]
 fn path_presence_requires_complete_reads_only_to_prove_absence() {
     assert!(super::path_entry_presence_with("fixture", |_| Err("denied".into())).is_err());
@@ -13,6 +22,7 @@ fn path_presence_requires_complete_reads_only_to_prove_absence() {
 }
 #[test]
 fn task_delete_rejects_wildcards_before_launching_native_tool() {
+    let spy = crate::test_support::native_commands::Spy::new();
     for name in [
         "*",
         r"\*",
@@ -25,18 +35,15 @@ fn task_delete_rejects_wildcards_before_launching_native_tool() {
     ] {
         assert!(!super::schtasks_delete(name));
     }
+    assert!(
+        spy.calls().is_empty(),
+        "invalid task names reached native commands"
+    );
 }
 #[test]
 fn path_partial_failure_preserves_successful_user_write() {
     let _lock = super::path_mock::lock_mock();
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            super::path_mock::clear();
-        }
-    }
-    let _reset = Reset;
-    super::path_mock::install(r"C:\Vendor\bin", r"C:\Vendor\bin");
+    let _path = super::path_mock::install_scoped(&_lock, r"C:\Vendor\bin", r"C:\Vendor\bin", false);
     super::path_mock::fail_machine_write();
     assert!(super::scrub_path_entry(r"C:\Vendor\bin")
         .unwrap_err()
@@ -67,7 +74,7 @@ fn rename_value_refuses_existing_destination_without_changing_either() {
     impl Drop for Cleanup {
         fn drop(&mut self) {
             for name in &self.0 {
-                let _ = super::delete_value(KEY, name);
+                let _ = super::delete_value_native(KEY, name);
             }
         }
     }
@@ -92,7 +99,7 @@ fn rename_value_refuses_existing_destination_without_changing_either() {
         before_from
     );
     assert_eq!(super::read_reg_value_bytes(KEY, &to).unwrap(), before_to);
-    super::delete_value(KEY, &to).unwrap();
+    super::delete_value_native(KEY, &to).unwrap();
     super::rename_reg_value(KEY, &from, &to).unwrap();
     assert!(super::read_reg_value_bytes(KEY, &from).unwrap().is_none());
     assert_eq!(super::read_reg_value_bytes(KEY, &to).unwrap(), before_from);
@@ -219,12 +226,19 @@ fn path_contains_entry_matches_win32_decorated_segments() {
 
 #[test]
 fn delete_key_intrinsic_gate_blocks_protected() {
-    // write primitive refuses protected trees even without caller checks.
-    assert!(super::delete_key(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend").is_err());
-    assert!(super::delete_key(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run").is_err());
-    assert!(
-        super::delete_key(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall").is_err()
-    );
+    let spy = crate::test_support::registry_mutations::Spy::new();
+    for key in [
+        r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend",
+        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    ] {
+        let result = super::delete_key(key);
+        assert!(
+            spy.calls().is_empty(),
+            "protected key reached registry transport: {key}"
+        );
+        assert!(result.unwrap_err().starts_with("registry delete blocked:"));
+    }
 }
 
 /// A trailing separator makes the effective leaf empty — RegDeleteTreeW
@@ -252,9 +266,29 @@ fn delete_key_refuses_trailing_separator_shapes() {
 
 #[test]
 fn scrub_path_entry_intrinsic_gate_blocks_system() {
-    // PATH scrub refuses system segments even without caller checks.
-    assert!(super::scrub_path_entry(r"C:\Windows\System32").is_err());
-    assert!(super::scrub_path_entry(r"C:\Windows").is_err());
+    let spy = crate::test_support::registry_mutations::Spy::new();
+    let commands = crate::test_support::native_commands::Spy::new();
+    let lock = super::path_mock::lock_mock();
+    let _path = super::path_mock::install_scoped(
+        &lock,
+        r"C:\Windows\System32;C:\Windows;C:\Keep",
+        r"C:\Windows",
+        false,
+    );
+    for entry in [r"C:\Windows\System32", r"C:\Windows"] {
+        let result = super::scrub_path_entry(entry);
+        assert_eq!(
+            super::path_mock::get("User"),
+            r"C:\Windows\System32;C:\Windows;C:\Keep"
+        );
+        assert_eq!(super::path_mock::get("Machine"), r"C:\Windows");
+        assert!(spy.calls().is_empty(), "PATH escaped the mock");
+        assert!(
+            commands.calls().is_empty(),
+            "PATH broadcast escaped the mock"
+        );
+        assert_eq!(result.unwrap_err(), "protected PATH entry");
+    }
 }
 
 /// Non-ASCII REG_SZ data must survive export byte-exact: reg.exe text
@@ -262,7 +296,9 @@ fn scrub_path_entry_intrinsic_gate_blocks_system() {
 /// seal-digested value.reg (the only authorized restore source).
 #[cfg(windows)]
 #[test]
+#[ignore = "writes real registry fixtures; requires REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
 fn native_path_roundtrip_handles_absence_empty_and_type() {
+    require_registry_fixture_opt_in();
     struct Cleanup(String);
     impl Drop for Cleanup {
         fn drop(&mut self) {
@@ -290,7 +326,7 @@ fn native_path_roundtrip_handles_absence_empty_and_type() {
         ("", false),
         ("C:\\Vendor", false),
     ] {
-        super::write_path_value(&key, value, expand).unwrap();
+        super::write_path_value_native(&key, value, expand).unwrap();
         assert_eq!(
             super::read_reg_value_raw(&key, "Path").unwrap(),
             (value.to_string(), expand)
@@ -322,7 +358,9 @@ fn native_path_roundtrip_handles_absence_empty_and_type() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "writes real registry fixtures; requires REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
 fn export_reg_value_preserves_non_ascii_bytes() {
+    require_registry_fixture_opt_in();
     struct RegistryKeyCleanup(String);
     impl Drop for RegistryKeyCleanup {
         fn drop(&mut self) {
@@ -492,18 +530,22 @@ fn export_reg_value_preserves_non_ascii_bytes() {
 
 #[test]
 fn delete_value_intrinsic_gate_blocks_protected() {
-    // value delete refuses protected trees even without caller checks.
-    assert!(
-        super::delete_value(r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend", "Start").is_err()
-    );
-    assert!(
-        super::delete_value(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "").is_err()
-    );
-    assert!(super::delete_value(
-        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        "DisplayName"
-    )
-    .is_err());
+    let spy = crate::test_support::registry_mutations::Spy::new();
+    for (key, name) in [
+        (r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend", "Start"),
+        (r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", ""),
+        (
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            "DisplayName",
+        ),
+    ] {
+        let result = super::delete_value(key, name);
+        assert!(
+            spy.calls().is_empty(),
+            "protected value reached registry transport: {key}"
+        );
+        assert!(result.unwrap_err().starts_with("registry delete blocked:"));
+    }
     // Validate the allowed shape without deleting anything in the real Run key.
     assert!(crate::safety::is_safe_to_delete_registry(
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|DemoVendorStartup"
@@ -567,7 +609,9 @@ fn export_reg_value_rejects_unsafe_names() {
 /// nothing to restore from, while the UI reported a successful backup.
 #[cfg(windows)]
 #[test]
+#[ignore = "writes real registry fixtures; requires REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
 fn only_not_found_counts_as_a_missing_registry_value() {
+    require_registry_fixture_opt_in();
     struct KeyCleanup(String);
     impl Drop for KeyCleanup {
         fn drop(&mut self) {
@@ -661,7 +705,9 @@ fn only_not_found_counts_as_a_missing_registry_value() {
 /// the anti-rollback `.remova-disabled` rename used to fail on it forever.
 #[cfg(windows)]
 #[test]
+#[ignore = "writes real registry fixtures; requires REMOVA_TEST_ALLOW_SYS_MUTATION=1 and --ignored"]
 fn rename_reg_value_reads_values_beyond_the_first_buffer() {
+    require_registry_fixture_opt_in();
     // The raw Win32 setter: the crate's own RegSetValueExW wrapper is
     // allowlist-gated and would refuse this fixture key.
     use windows::Win32::System::Registry::{RegSetValueExW as RawSetValueExW, REG_SZ};
@@ -845,11 +891,11 @@ fn read_reg_path_value_reads_real_user_environment() {
 fn scrub_and_restore_preserve_expand_sz_raw_bytes() {
     use super::path_mock;
     let _lock = path_mock::lock_mock();
-    path_mock::clear();
     // Expansion sources are pinned for hermeticity: the machine's
     // ProgramFiles may be relocated or absent, so the test pins its own
     // variable that only the fallback source can resolve.
-    super::expand_mock::install(&[("RemovaVendorDir", r"C:\Program Files")]);
+    let _expand =
+        super::expand_mock::install_scoped(&_lock, &[("RemovaVendorDir", r"C:\Program Files")]);
     assert_eq!(
         super::resolve_unresolved_vars("PREFIX%RemovaUnknownFixture%TAIL", 0),
         "PREFIX%RemovaUnknownFixture%TAIL"
@@ -862,9 +908,11 @@ fn scrub_and_restore_preserve_expand_sz_raw_bytes() {
         super::resolve_unresolved_vars("literal%unfinished", 0),
         "literal%unfinished"
     );
-    path_mock::install_expand(
+    let _path = path_mock::install_scoped(
+        &_lock,
         r"%SystemRoot%\system32;C:\Tools\App;%RemovaVendorDir%\Shared",
         r"%SystemRoot%",
+        true,
     );
     // Scrub a literal entry: untouched %VAR% segments survive verbatim.
     assert!(super::scrub_path_entry(r"C:\Tools\App").unwrap());
@@ -889,14 +937,11 @@ fn scrub_and_restore_preserve_expand_sz_raw_bytes() {
     assert!(expand);
     assert_eq!(raw, r"%SystemRoot%\system32;C:\Tools\App");
     // REG_SZ scopes keep plain String semantics.
-    super::expand_mock::clear();
-    path_mock::clear();
-    path_mock::install(r"C:\A;C:\B", r"C:\Windows");
+    let _plain = path_mock::install_scoped(&_lock, r"C:\A;C:\B", r"C:\Windows", false);
     assert!(super::scrub_path_entry(r"C:\A").unwrap());
     let (raw, expand) = path_mock::read_raw("User").unwrap();
     assert!(!expand);
     assert_eq!(raw, r"C:\B");
-    path_mock::clear();
 }
 
 /// A variable no source can resolve stays literal; restore appends
@@ -905,11 +950,204 @@ fn scrub_and_restore_preserve_expand_sz_raw_bytes() {
 fn restore_appends_when_var_unresolvable() {
     use super::path_mock;
     let _lock = path_mock::lock_mock();
-    path_mock::clear();
-    path_mock::install_expand(r"%RemovaNowhereAtAll%\Shared", r"");
+    let _expand = super::expand_mock::install_scoped(&_lock, &[]);
+    let _path = path_mock::install_scoped(&_lock, r"%RemovaNowhereAtAll%\Shared", r"", true);
     assert!(super::restore_path_entry(r"C:\Program Files\Shared", &["User"]).unwrap());
     let (raw, expand) = path_mock::read_raw("User").unwrap();
     assert!(expand);
     assert_eq!(raw, r"%RemovaNowhereAtAll%\Shared;C:\Program Files\Shared");
-    path_mock::clear();
+}
+
+#[test]
+fn mock_installations_restore_inactive_after_unwind() {
+    use super::{expand_mock, path_mock};
+    let _lock = path_mock::lock_mock();
+    assert!(!path_mock::active());
+    assert!(!expand_mock::active());
+    let outcome = std::panic::catch_unwind(|| {
+        let _path = path_mock::install_scoped(&_lock, "fixture-user", "fixture-machine", true);
+        let _expand = expand_mock::install_scoped(&_lock, &[("FixtureVariable", "fixture-value")]);
+        path_mock::set_fail_read(true);
+        path_mock::set_fail_scope_read(Some("User"));
+        path_mock::fail_machine_write();
+        panic!("injected failure after both mock installations");
+    });
+    assert!(outcome.is_err());
+    assert!(!path_mock::active());
+    assert!(!expand_mock::active());
+    // A subsequent installation must not inherit any failure flag.
+    let _path = path_mock::install_scoped(&_lock, "next-user", "next-machine", false);
+    assert_eq!(
+        path_mock::read_raw("User").unwrap(),
+        ("next-user".into(), false)
+    );
+    path_mock::write("Machine", "next-write", false).unwrap();
+}
+
+#[test]
+fn mock_installations_restore_previous_state_after_unwind() {
+    use super::{expand_mock, path_mock};
+    let _lock = path_mock::lock_mock();
+    let _path = path_mock::install_scoped(&_lock, "old-user", "old-machine", true);
+    let _expand = expand_mock::install_scoped(&_lock, &[("FixtureVariable", "old-value")]);
+    path_mock::set_fail_scope_read(Some("Machine"));
+    path_mock::fail_machine_write();
+    let outcome = std::panic::catch_unwind(|| {
+        let _path = path_mock::install_scoped(&_lock, "new-user", "new-machine", false);
+        let _expand = expand_mock::install_scoped(&_lock, &[("FixtureVariable", "new-value")]);
+        assert_eq!(path_mock::read_raw("Machine").unwrap().0, "new-machine");
+        path_mock::write("Machine", "new-write", false).unwrap();
+        panic!("injected failure in nested mock scope");
+    });
+    assert!(outcome.is_err());
+    assert_eq!(
+        path_mock::read_raw("User").unwrap(),
+        ("old-user".into(), true)
+    );
+    assert_eq!(path_mock::get("Machine"), "old-machine");
+    assert_eq!(
+        expand_mock::get("FixtureVariable").as_deref(),
+        Some("old-value")
+    );
+    assert!(path_mock::read_raw("Machine").is_err());
+    assert!(path_mock::write("Machine", "must-not-write", false).is_err());
+}
+
+#[test]
+fn legacy_mock_installations_are_owned_by_lock_scope_on_unwind() {
+    use super::{expand_mock, path_mock};
+    let outcome = std::panic::catch_unwind(|| {
+        let _lock = path_mock::lock_mock();
+        assert!(!path_mock::active());
+        assert!(!expand_mock::active());
+        path_mock::install_expand("legacy-user", "legacy-machine");
+        expand_mock::install(&[("LegacyVariable", "legacy-value")]);
+        path_mock::set_fail_read(true);
+        panic!("legacy caller never reaches its trailing clear");
+    });
+    assert!(outcome.is_err());
+    let _lock = path_mock::lock_mock();
+    assert!(!path_mock::active());
+    assert!(!expand_mock::active());
+    let _path = path_mock::install_scoped(&_lock, "healthy", "healthy", false);
+    assert_eq!(path_mock::read_raw("User").unwrap().0, "healthy");
+}
+
+#[test]
+fn native_registry_backends_reject_host_targets_even_with_opt_in() {
+    let _lock = crate::test_support::EnvLock::new();
+    let _opt_in = crate::test_support::EnvVar::set("REMOVA_TEST_ALLOW_SYS_MUTATION", "1");
+    assert!(super::delete_value_native(
+        r"HKLM\SYSTEM\CurrentControlSet\Services\WinDefend",
+        "Start",
+    )
+    .unwrap_err()
+    .starts_with("native registry backend requires"));
+    assert!(
+        super::write_path_value_native(r"HKCU\Environment", "must-not-write", false,)
+            .unwrap_err()
+            .starts_with("native registry backend requires")
+    );
+}
+
+#[test]
+fn registry_mutation_transport_blocks_unobserved_writes_and_records_allowed_fixture() {
+    use crate::test_support::registry_mutations::{Mutation, Spy};
+    let fixture = crate::test_support::TempDir::new("registry-intent");
+    let name = fixture.file_name().unwrap().to_str().unwrap();
+    let key = format!(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{name}");
+    for result in [
+        super::delete_key(&key).map(|_| ()),
+        super::delete_value(&key, "FixtureValue").map(|_| ()),
+        super::write_path_value(&key, "fixture-path", false),
+        super::write_service_start(name, 4),
+    ] {
+        assert!(result
+            .unwrap_err()
+            .starts_with("registry mutation is disabled in unit tests"));
+    }
+    let spy = Spy::new();
+    assert!(super::delete_key(&key).unwrap());
+    assert!(super::delete_value(&key, "FixtureValue").unwrap());
+    super::write_path_value(&key, "fixture-path", true).unwrap();
+    super::write_service_start(name, 4).unwrap();
+    assert_eq!(
+        spy.calls(),
+        vec![
+            Mutation::DeleteKey(key.clone()),
+            Mutation::DeleteValue {
+                key: key.clone(),
+                name: "FixtureValue".into()
+            },
+            Mutation::WritePath {
+                key,
+                value: "fixture-path".into(),
+                expand: true
+            },
+            Mutation::ServiceStart {
+                name: name.into(),
+                start: 4
+            },
+        ]
+    );
+}
+
+#[test]
+fn mutation_spies_restore_previous_and_inactive_state_after_unwind() {
+    use crate::test_support::{native_commands, registry_mutations};
+    let mut cmd = std::process::Command::new("must-never-be-launched");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let commands = native_commands::Spy::new();
+        let registry = registry_mutations::Spy::new();
+        super::mutation_command_output(&mut cmd).unwrap();
+        registry_mutations::record(registry_mutations::Mutation::DeleteKey(
+            "outer-fixture".into(),
+        ))
+        .unwrap();
+        let outer_commands = commands.calls();
+        let outer_registry = registry.calls();
+        let nested = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _commands = native_commands::Spy::new();
+            let _registry = registry_mutations::Spy::new();
+            super::mutation_command_output(&mut cmd).unwrap();
+            registry_mutations::record(registry_mutations::Mutation::DeleteKey(
+                "inner-fixture".into(),
+            ))
+            .unwrap();
+            panic!("nested spies must restore outer state");
+        }));
+        assert!(nested.is_err());
+        assert_eq!(commands.calls(), outer_commands);
+        assert_eq!(registry.calls(), outer_registry);
+        panic!("outer spies must restore inactive state");
+    }));
+    assert!(outcome.is_err());
+    assert_eq!(
+        super::mutation_command_output(&mut cmd).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert!(
+        registry_mutations::record(registry_mutations::Mutation::DeleteKey(
+            "not-recorded".into()
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn native_mutation_transport_never_spawns_without_a_spy() {
+    let mut cmd = std::process::Command::new("must-never-be-launched");
+    let err = super::mutation_command_output(&mut cmd).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    let spy = crate::test_support::native_commands::Spy::new();
+    // A deliberately nonexistent executable succeeds only in the spy.
+    assert!(super::mutation_command_output(&mut cmd)
+        .unwrap()
+        .status
+        .success());
+    assert_eq!(spy.calls().len(), 1);
+    assert_eq!(
+        spy.calls()[0].program,
+        std::ffi::OsString::from("must-never-be-launched")
+    );
 }

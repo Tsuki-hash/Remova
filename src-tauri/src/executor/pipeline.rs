@@ -284,11 +284,16 @@ fn delete_planned_items_with_native(
     items: &[CleanupItem],
     native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
 ) -> DeleteOutcome {
+    let mut delete_registry = |path: &str, value_name: Option<&str>| match value_name {
+        Some(name) => crate::regops::delete_value(path, name),
+        None => crate::regops::delete_key(path),
+    };
     delete_planned_items_with_io(
         items,
         native_delete,
         &mut crate::fsutil::remove_tree_no_reparse,
         &mut crate::sysops::schedule_delete_on_reboot,
+        &mut delete_registry,
     )
 }
 
@@ -297,6 +302,7 @@ fn delete_planned_items_with_io(
     native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
     delete_fs: &mut impl FnMut(&Path) -> std::io::Result<()>,
     schedule: &mut impl FnMut(&str) -> bool,
+    delete_registry: &mut impl FnMut(&str, Option<&str>) -> Result<bool, String>,
 ) -> DeleteOutcome {
     let mut deleted = 0u32;
     let mut failed = 0u32;
@@ -351,11 +357,11 @@ fn delete_planned_items_with_io(
                     Ok(true)
                 } else if it.path.contains('|') {
                     match crate::regops::split_value_path(&it.path) {
-                        Some((k, v)) => crate::regops::delete_value(k, v),
+                        Some((k, v)) => delete_registry(k, Some(v)),
                         None => Err("registry value name must not be empty".into()),
                     }
                 } else {
-                    crate::regops::delete_key(&it.path)
+                    delete_registry(&it.path, None)
                 };
                 match res {
                     Ok(true) => {
@@ -905,12 +911,10 @@ mod tests {
         );
     }
 
-    /// Native stop/delete triggers are anchored to canonical HKLM roots: a
-    /// forged `HKCU\...\Services\Spooler`-shaped path must not even reach the
-    /// native tools. (Red-state of this test ran `sc delete RemovaFakeSvc` —
-    /// against a nonexistent service, so the red was harmless.)
+    /// Prefix regressions must fail without ever spawning a native command.
     #[test]
     fn native_delete_requires_canonical_hklm_prefix() {
+        let spy = crate::test_support::native_commands::Spy::new();
         assert_eq!(
             native_delete_note(r"HKCU\Software\x\SYSTEM\CURRENTCONTROLSET\SERVICES\RemovaFakeSvc"),
             None,
@@ -921,9 +925,13 @@ mod tests {
             None,
             "forged task shape must not trigger schtasks delete"
         );
-        // Canonical shape reaches the arm; the intrinsic protected-service gate
-        // refuses any real execution (no process is spawned for such a name).
+        // The leaf gate refuses this real name; the test transport independently
+        // prevents a host mutation even if that gate regresses.
         let note = native_delete_note(r"HKLM64\SYSTEM\CurrentControlSet\Services\Spooler");
+        assert!(
+            spy.calls().is_empty(),
+            "protected service reached native commands"
+        );
         assert_eq!(
             note,
             Some((false, "sc delete Spooler: failed or not found".to_string()))
@@ -940,27 +948,90 @@ mod tests {
             native_delete_note(r"HKLM64\SYSTEM\CurrentControlSet\Services\Spooler\Parameters"),
             None
         );
+        assert!(
+            spy.calls().is_empty(),
+            "refused shapes reached native commands"
+        );
     }
 
-    /// The native tools refuse critical services and the system task tree
-    /// themselves. These asserts pin the refusal only — the red state of these
-    /// calls would touch real system entries and was deliberately not executed.
+    /// Spy success makes a missing guard fail assertions; no command can spawn.
     #[test]
     fn native_tools_refuse_critical_and_system_targets() {
-        assert!(!crate::regops::sc_delete_service("Spooler"));
-        assert!(!crate::regops::sc_delete_service("RpcSs"));
-        // Microsoft-family services are write-protected — native deletion and
-        // stop/start must refuse them equally.
-        assert!(!crate::regops::sc_delete_service("MicrosoftEdgeUpdate"));
-        assert!(crate::regops::sc_set_service_running("MicrosoftEdgeUpdate", false).is_err());
+        let spy = crate::test_support::native_commands::Spy::new();
+        for name in ["Spooler", "RpcSs", "MicrosoftEdgeUpdate"] {
+            let deleted = crate::regops::sc_delete_service(name);
+            assert!(
+                spy.calls().is_empty(),
+                "protected service reached native commands: {name}"
+            );
+            assert!(!deleted);
+        }
+        let running = crate::regops::sc_set_service_running("MicrosoftEdgeUpdate", false);
+        assert!(
+            spy.calls().is_empty(),
+            "protected service state reached native commands"
+        );
+        assert!(running.is_err());
         assert!(crate::safety::is_safe_to_delete_registry(
             r"HKLM64\SYSTEM\CurrentControlSet\Services\MicrosoftEdgeUpdate"
         )
         .is_err());
-        assert!(!crate::regops::schtasks_delete(
-            r"\Microsoft\Windows\Defrag\ScheduledDefrag"
-        ));
+        let deleted = crate::regops::schtasks_delete(r"\Microsoft\Windows\Defrag\ScheduledDefrag");
+        assert!(
+            spy.calls().is_empty(),
+            "system task reached native commands"
+        );
+        assert!(!deleted);
         assert!(!crate::regops::schtasks_delete(""));
+        assert!(
+            spy.calls().is_empty(),
+            "protected targets reached native commands"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_delete_allowed_fixture_reaches_command_transport() {
+        let spy = crate::test_support::native_commands::Spy::new();
+        let fixture = crate::test_support::TempDir::new("native-target");
+        let name = fixture.file_name().unwrap().to_str().unwrap();
+        let service = format!(r"HKLM64\SYSTEM\CurrentControlSet\Services\{name}");
+        assert_eq!(
+            native_delete_note(&service),
+            Some((true, format!("sc delete {name}: ok")))
+        );
+        let task = format!(r"\{name}\Task");
+        let task_key = format!(
+            r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree{task}"
+        );
+        assert_eq!(
+            native_delete_note(&task_key),
+            Some((true, format!("schtasks delete {task}: ok")))
+        );
+        crate::regops::sc_set_service_running(name, true).unwrap();
+        let calls = spy.calls();
+        assert_eq!(calls.len(), 4);
+        for (call, tool, args) in [
+            (&calls[0], "sc.exe", vec!["stop", name]),
+            (&calls[1], "sc.exe", vec!["delete", name]),
+            (
+                &calls[2],
+                "schtasks.exe",
+                vec!["/delete", "/tn", &task, "/f"],
+            ),
+            (&calls[3], "sc.exe", vec!["start", name]),
+        ] {
+            assert_eq!(
+                call.program,
+                std::ffi::OsString::from(crate::regops::sys_tool(tool))
+            );
+            assert_eq!(
+                call.args,
+                args.into_iter()
+                    .map(std::ffi::OsString::from)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
@@ -1119,6 +1190,7 @@ mod tests {
                 ))
             },
             &mut |_| false,
+            &mut |_, _| Err("registry fixture denied".into()),
         );
         assert_eq!(outcome.failed, 1);
         assert_eq!(outcome.details[0].path, failed_items[0].path);
@@ -1416,6 +1488,8 @@ mod tests {
         }];
         // The uninstall key itself exists but the GUID subkey does not, which is
         // the "the uninstaller already took it" shape.
+        let registry = crate::test_support::registry_mutations::Spy::new();
+        crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
         let outcome = delete_planned_items_with_native(&items, &mut |_| None);
         assert_eq!(
             (outcome.deleted, outcome.failed, outcome.skipped),
@@ -1429,6 +1503,11 @@ mod tests {
             outcome.details[0].message
         );
         assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert!(
+            registry.calls().is_empty(),
+            "missing key must not be deleted"
+        );
+        crate::test_support::registry_mutations::set_missing_key(uninstall_key, false);
 
         // A missing VALUE under a key that does not exist is the same family.
         let value_items = vec![CleanupItem {
@@ -1447,6 +1526,10 @@ mod tests {
             size_capped: false,
             bucket: None,
         }];
+        crate::test_support::registry_mutations::set_missing_key(
+            r"HKCU\SOFTWARE\RemovaNoSuchVendor",
+            true,
+        );
         let value_outcome = delete_planned_items_with_native(&value_items, &mut |_| None);
         assert_eq!(
             (
@@ -1457,8 +1540,13 @@ mod tests {
             (0, 0, 1)
         );
         assert_eq!(value_outcome.details[0].status, "skipped");
+        crate::test_support::registry_mutations::set_missing_key(
+            r"HKCU\SOFTWARE\RemovaNoSuchVendor",
+            false,
+        );
 
         // The full run reports the same thing end to end.
+        crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
         let report = crate::executor::run_full_cleanup(
             &app,
             &items,
@@ -1477,5 +1565,6 @@ mod tests {
             .item_details
             .iter()
             .any(|d| d.status == "skipped" && d.message.contains("missing")));
+        crate::test_support::registry_mutations::set_missing_key(uninstall_key, false);
     }
 }

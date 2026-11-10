@@ -268,6 +268,165 @@ impl Drop for EnvVar {
     }
 }
 
+/// Registry mutation transport: records intent only, never opens a native key.
+/// An absent spy is a hard error, independent of every product policy guard.
+pub(crate) mod registry_mutations {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::marker::PhantomData;
+    use std::rc::Rc;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Mutation {
+        DeleteKey(String),
+        DeleteValue {
+            key: String,
+            name: String,
+        },
+        WritePath {
+            key: String,
+            value: String,
+            expand: bool,
+        },
+        ServiceStart {
+            name: String,
+            start: u32,
+        },
+    }
+
+    thread_local! {
+        static CALLS: RefCell<Option<Vec<Mutation>>> = const { RefCell::new(None) };
+        static MISSING_KEYS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    }
+
+    #[must_use = "keep the registry spy alive for the whole test"]
+    pub struct Spy {
+        previous: Option<Vec<Mutation>>,
+        _not_send: PhantomData<Rc<()>>,
+    }
+
+    impl Spy {
+        pub fn new() -> Self {
+            Self {
+                previous: CALLS.with(|calls| calls.replace(Some(Vec::new()))),
+                _not_send: PhantomData,
+            }
+        }
+
+        pub fn calls(&self) -> Vec<Mutation> {
+            CALLS.with(|calls| {
+                calls
+                    .borrow()
+                    .as_ref()
+                    .expect("registry spy is active")
+                    .clone()
+            })
+        }
+    }
+
+    impl Drop for Spy {
+        fn drop(&mut self) {
+            CALLS.with(|calls| calls.replace(self.previous.take()));
+        }
+    }
+
+    pub fn record(mutation: Mutation) -> Result<(), String> {
+        CALLS.with(|calls| {
+            let mut calls = calls.borrow_mut();
+            let calls = calls
+                .as_mut()
+                .ok_or("registry mutation is disabled in unit tests; install a registry spy")?;
+            calls.push(mutation);
+            Ok(())
+        })
+    }
+
+    pub fn set_missing_key(key: &str, missing: bool) {
+        MISSING_KEYS.with(|keys| {
+            let mut keys = keys.borrow_mut();
+            if missing {
+                keys.insert(key.to_ascii_uppercase());
+            } else {
+                keys.remove(&key.to_ascii_uppercase());
+            }
+        });
+    }
+
+    pub fn is_missing_key(key: &str) -> bool {
+        MISSING_KEYS.with(|keys| keys.borrow().contains(&key.to_ascii_uppercase()))
+    }
+}
+
+/// Transport for destructive native tools in unit tests. There is deliberately
+/// no real-process fallback, even when a test forgets to install a spy.
+pub(crate) mod native_commands {
+    use std::cell::RefCell;
+    use std::ffi::OsString;
+    use std::marker::PhantomData;
+    use std::process::{Command, Output};
+    use std::rc::Rc;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Invocation {
+        pub program: OsString,
+        pub args: Vec<OsString>,
+    }
+
+    thread_local! {
+        static CALLS: RefCell<Option<Vec<Invocation>>> = const { RefCell::new(None) };
+    }
+
+    #[must_use = "keep the native command spy alive for the whole test"]
+    pub struct Spy {
+        previous: Option<Vec<Invocation>>,
+        _not_send: PhantomData<Rc<()>>,
+    }
+
+    impl Spy {
+        pub fn new() -> Self {
+            Self {
+                previous: CALLS.with(|calls| calls.replace(Some(Vec::new()))),
+                _not_send: PhantomData,
+            }
+        }
+
+        pub fn calls(&self) -> Vec<Invocation> {
+            CALLS.with(|calls| calls.borrow().as_ref().expect("spy is active").clone())
+        }
+    }
+
+    impl Drop for Spy {
+        fn drop(&mut self) {
+            CALLS.with(|calls| calls.replace(self.previous.take()));
+        }
+    }
+
+    pub fn output(cmd: &Command) -> std::io::Result<Output> {
+        CALLS.with(|calls| {
+            let mut calls = calls.borrow_mut();
+            let Some(calls) = calls.as_mut() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "native mutation is disabled in unit tests; install a command spy",
+                ));
+            };
+            calls.push(Invocation {
+                program: cmd.get_program().to_os_string(),
+                args: cmd.get_args().map(OsString::from).collect(),
+            });
+            #[cfg(not(windows))]
+            use std::os::unix::process::ExitStatusExt;
+            #[cfg(windows)]
+            use std::os::windows::process::ExitStatusExt;
+            Ok(Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
