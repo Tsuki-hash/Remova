@@ -38,6 +38,8 @@ cargo clippy --all-targets -- -D warnings
 # clippy --all-targets but never runs them).
 cargo bench
 # CycloneDX SBOM from Cargo.lock + production npm deps (also attached to releases).
+# Run from the repository root: the script resolves both lockfiles itself.
+# From src-tauri use `node ../scripts/make-sbom.mjs`.
 node scripts/make-sbom.mjs
 
 # Dependency audit: cargo audit (cargo-audit) and npm audit. CI runs both as
