@@ -41,29 +41,42 @@ export function parseCargoLock(text) {
  * excluded, like dev-dependencies.
  */
 export function reachableCargoNames(metadata) {
-  const depsOfName = new Map();
-  for (const pkg of metadata.packages ?? []) {
-    if (!depsOfName.has(pkg.name)) depsOfName.set(pkg.name, new Set());
-    for (const dep of pkg.dependencies ?? []) {
-      if (dep.kind && dep.kind !== "normal") continue;
-      depsOfName.get(pkg.name).add(dep.name);
+  // Traverse RESOLVED package IDs, not names. Walking by name merged every
+  // version of a crate that appears more than once and invented reachability
+  // edges that exist in no real build. The returned keys are
+  // `name@version`, which is what the lockfile parser produces.
+  // Resolved edges live in `resolve.nodes[].deps[]`, each naming an exact
+  // package id. `packages[].dependencies` only holds version requirements, which
+  // cannot distinguish two versions of the same crate.
+  const depsOfId = new Map();
+  for (const node of metadata.resolve?.nodes ?? []) {
+    const deps = new Set();
+    for (const dep of node.deps ?? []) {
+      // `dep_kinds` lists how the edge is used. A normal dependency is encoded
+      // as `kind: null` (not the string "normal"), so compare against null.
+      const kinds = (dep.dep_kinds ?? []).map((k) => k.kind ?? "normal");
+      if (kinds.length > 0 && !kinds.includes("normal")) continue;
+      deps.add(dep.pkg);
     }
+    depsOfId.set(node.id, deps);
   }
-  const byId = new Map((metadata.packages ?? []).map((p) => [p.id, p.name]));
-  const memberNames = (metadata.workspace_members ?? [])
-    .map((id) => byId.get(id))
-    .filter((name) => name);
+  const byId = new Map((metadata.packages ?? []).map((p) => [p.id, p]));
   const seen = new Set();
-  const queue = [...memberNames];
+  const queue = [...(metadata.workspace_members ?? [])];
   while (queue.length) {
-    const name = queue.pop();
-    if (seen.has(name)) continue;
-    seen.add(name);
-    for (const dep of depsOfName.get(name) ?? []) {
+    const id = queue.pop();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const dep of depsOfId.get(id) ?? []) {
       if (!seen.has(dep)) queue.push(dep);
     }
   }
-  return seen;
+  return new Set(
+    [...seen]
+      .map((id) => byId.get(id))
+      .filter((p) => p)
+      .map((p) => `${p.name}@${p.version}`),
+  );
 }
 
 /** Production packages of a package-lock.json (v3 "packages" map), {name, version}. */
@@ -83,13 +96,32 @@ export function buildSbom({ productName, productVersion, cargo, npm }) {
   const components = [...cargo, ...npm]
     .filter((c) => c.name !== "remova")
     .filter((c) => {
-      const key = `${c.name}@${c.version}`;
+      // Ecosystem-aware identity: the same name and version in crates.io and
+      // npm are different components, not one.
+      const key = `${c.ecosystem ?? "cargo"}:${c.name}@${c.version}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`))
-    .map((c) => ({ type: "library", "bom-ref": `${c.name}@${c.version}`, name: c.name, version: c.version }));
+    .sort((a, b) =>
+      `${a.ecosystem ?? "cargo"}:${a.name}@${a.version}`.localeCompare(
+        `${b.ecosystem ?? "cargo"}:${b.name}@${b.version}`,
+      ),
+    )
+    .map((c) => {
+      const ecosystem = c.ecosystem ?? "cargo";
+      const purl =
+        ecosystem === "npm"
+          ? `pkg:npm/${encodeURIComponent(c.name).replace(/%2F/g, "/")}@${c.version}`
+          : `pkg:cargo/${c.name}@${c.version}`;
+      return {
+        type: "library",
+        "bom-ref": purl,
+        name: c.name,
+        version: c.version,
+        purl,
+      };
+    });
   const serialInput = components.map((c) => c["bom-ref"]).join("\n");
   const serialNumber = `urn:uuid:${createHash("sha256").update(serialInput).digest("hex").replace(/(.{8})(.{4})(.{4})(.{4})(.{12}).*/, "$1-$2-$3-$4-$5")}`;
   return {
@@ -116,7 +148,9 @@ async function main() {
   // The full lockfile lists every crate ever resolved in this tree; the SBOM
   // reports the graph the shipped binary actually links.
   const metadata = JSON.parse(
-    execFileSync("cargo", ["metadata", "--format-version", "1"], {
+    // `--locked` keeps the SBOM tied to the committed lockfile instead of a
+    // silently re-resolved graph.
+    execFileSync("cargo", ["metadata", "--format-version", "1", "--locked"], {
       cwd: path.join(root, "src-tauri"),
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
@@ -126,8 +160,10 @@ async function main() {
   const sbom = buildSbom({
     productName: "Remova",
     productVersion: JSON.parse(pkg).version,
-    cargo: parseCargoLock(cargoText).filter((c) => reachable.has(c.name)),
-    npm: parsePackageLock(JSON.parse(lockText)),
+    cargo: parseCargoLock(cargoText)
+      .filter((c) => reachable.has(`${c.name}@${c.version}`))
+      .map((c) => ({ ...c, ecosystem: "cargo" })),
+    npm: parsePackageLock(JSON.parse(lockText)).map((c) => ({ ...c, ecosystem: "npm" })),
   });
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");

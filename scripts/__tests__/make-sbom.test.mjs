@@ -73,24 +73,52 @@ test("generates an sbom from the repository lockfiles", () => {
   }
 });
 
-test("cargo reachability follows the workspace graph, not the whole lockfile", () => {
+test("cargo reachability follows the resolved graph, not the whole lockfile", () => {
+  // Real `cargo metadata` shape: resolved edges live in `resolve.nodes`, each
+  // naming an exact package id, and a normal dependency has `kind: null`.
+  const pkg = (id, name, version) => ({ id, name, version });
   const metadata = {
     packages: [
-      { id: 1, name: "remova", dependencies: [{ name: "tauri", kind: null }] },
-      { id: 2, name: "tauri", dependencies: [{ name: "zip", kind: null }, { name: "trybuild", kind: "dev" }] },
-      { id: 3, name: "zip", dependencies: [] },
-      // Not reachable from any workspace member: a dev-only crate and an
-      // unrelated tool's dependency that merely share the lockfile.
-      { id: 4, name: "trybuild", dependencies: [] },
-      { id: 5, name: "lockfile-only-crate", dependencies: [] },
-      { id: 6, name: "other-tool", dependencies: [{ name: "lockfile-only-crate", kind: "normal" }] },
+      pkg("remova 1.4.1", "remova", "1.4.1"),
+      pkg("tauri 2.0.0", "tauri", "2.0.0"),
+      pkg("zip 4.6.1", "zip", "4.6.1"),
+      pkg("base64 0.22.1", "base64", "0.22.1"),
+      pkg("base64 0.21.7", "base64", "0.21.7"),
+      pkg("trybuild 1.0.0", "trybuild", "1.0.0"),
+      pkg("lockfile-only 1.0.0", "lockfile-only-crate", "1.0.0"),
     ],
-    workspace_members: [1],
+    workspace_members: ["remova 1.4.1"],
+    resolve: {
+      nodes: [
+        {
+          id: "remova 1.4.1",
+          deps: [
+            { pkg: "tauri 2.0.0", dep_kinds: [{ kind: null }] },
+            // A dev-only edge must not make the crate ship.
+            { pkg: "trybuild 1.0.0", dep_kinds: [{ kind: "dev" }] },
+          ],
+        },
+        {
+          id: "tauri 2.0.0",
+          deps: [
+            { pkg: "zip 4.6.1", dep_kinds: [{ kind: null }] },
+            { pkg: "base64 0.22.1", dep_kinds: [{ kind: null }] },
+          ],
+        },
+        { id: "zip 4.6.1", deps: [] },
+        { id: "base64 0.22.1", deps: [] },
+        { id: "base64 0.21.7", deps: [] },
+        { id: "trybuild 1.0.0", deps: [] },
+        { id: "lockfile-only 1.0.0", deps: [] },
+      ],
+    },
   };
   const seen = reachableCargoNames(metadata);
-  assert.ok(seen.has("remova"));
-  assert.ok(seen.has("tauri"));
-  assert.ok(seen.has("zip"));
-  assert.ok(!seen.has("trybuild"), "dev dependencies do not ship");
-  assert.ok(!seen.has("lockfile-only-crate"), "unreachable lockfile entries do not ship");
+  assert.ok(seen.has("remova@1.4.1"));
+  assert.ok(seen.has("tauri@2.0.0"));
+  assert.ok(seen.has("zip@4.6.1"));
+  assert.ok(seen.has("base64@0.22.1"));
+  assert.ok(!seen.has("base64@0.21.7"), "an unreachable version of a reachable crate stays out");
+  assert.ok(!seen.has("trybuild@1.0.0"), "dev dependencies do not ship");
+  assert.ok(!seen.has("lockfile-only-crate@1.0.0"), "unreachable entries do not ship");
 });
