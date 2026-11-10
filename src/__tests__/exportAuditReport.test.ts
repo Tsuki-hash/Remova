@@ -53,3 +53,16 @@ describe("buildAuditJson", () => {
     expect(out.kind).toBe("remova-audit-report");
   });
 });
+
+it("redacts profile names beyond the canonical Users spelling", async () => {
+  const { redactUserProfiles } = await import("../lib/exportAuditReport");
+  const raw = String.raw;
+  // Case-insensitive segment.
+  expect(redactUserProfiles(raw`C:\users\Aaron\AppData`)).toBe(raw`C:\users\<user>\AppData`);
+  // UNC share keeps the server, loses the profile.
+  expect(redactUserProfiles(raw`\\host\Users\Aaron\data`)).toBe(raw`\\host\Users\<user>\data`);
+  // Relocated profile root.
+  expect(redactUserProfiles(raw`D:\Profiles\Aaron\x`)).toBe(raw`D:\Profiles\<user>\x`);
+  // A path that merely contains "users" as a substring stays untouched.
+  expect(redactUserProfiles(raw`C:\tools\userspace\bin`)).toBe(raw`C:\tools\userspace\bin`);
+});

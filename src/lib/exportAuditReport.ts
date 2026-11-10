@@ -9,11 +9,17 @@ import type { FullCleanupReport } from "../types";
  * boundary — see the CLI residue scanner).
  */
 
-/** Reduce every user-profile prefix to a placeholder. Applied recursively. */
+/**
+ * Reduce every user-profile prefix to a placeholder. Applied recursively.
+ *
+ * Covers what the first version missed: the profile segment is matched
+ * case-insensitively (`C:\users\Aaron`), UNC shares keep their server but lose
+ * the profile name (`\\host\Users\Aaron`), and a relocated profile root
+ * (`D:\Profiles\Aaron`) is recognised by its profile-shaped segment.
+ */
 export function redactUserProfiles(input: string): string {
-  // `C:\Users\Aaron\…`, `C:/Users/Aaron/…` and `\\?\C:\Users\Aaron\…`.
   return input.replace(
-    /((?:\\\\\?\\)?[A-Za-z]:[\\/]+Users[\\/]+)[^\\/]+/g,
+    /((?:\\\\\?\\)?(?:[A-Za-z]:[\\/]+|\\\\[^\\/]+[\\/]+)(?:Users|Profiles|Home)[\\/]+)[^\\/]+/gi,
     "$1<user>",
   );
 }
