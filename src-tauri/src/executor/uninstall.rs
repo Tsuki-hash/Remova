@@ -410,10 +410,10 @@ fn run_official_uninstall_unchecked(
                                 }
                                 std::thread::sleep(std::time::Duration::from_millis(200));
                             }
-                            Err(_e) => {
+                            Err(e) => {
                                 return OfficialUninstallResult {
                                     ok: false,
-                                    message: "uninstall wait failed".into(),
+                                    message: format!("uninstall wait failed: {e}"),
                                     had_command: true,
                                     reboot_initiated: false,
                                     reboot_gate_persisted: true,
@@ -422,9 +422,9 @@ fn run_official_uninstall_unchecked(
                         }
                     }
                 }
-                Err(_e) => OfficialUninstallResult {
+                Err(e) => OfficialUninstallResult {
                     ok: false,
-                    message: "uninstall launch failed".into(),
+                    message: format!("uninstall launch failed: {e}"),
                     had_command: true,
                     reboot_initiated: false,
                     reboot_gate_persisted: true,

@@ -99,7 +99,12 @@ pub fn delete_key(key_path: &str) -> Result<bool, String> {
                 return Ok(false);
             }
             if open.is_err() {
-                return Err(format!("open parent failed for {key_path}"));
+                // Keep the Win32 status: "open parent failed" alone hides
+                // whether this was access denied or a malformed key.
+                return Err(format!(
+                    "open parent failed for {key_path} (Win32 {})",
+                    open.0
+                ));
             }
             let st = RegDeleteTreeW(parent_hk, PCWSTR(leaf_w.as_ptr()));
             let _ = RegCloseKey(parent_hk);
@@ -107,7 +112,10 @@ pub fn delete_key(key_path: &str) -> Result<bool, String> {
                 return Ok(false);
             }
             if st != ERROR_SUCCESS {
-                return Err(format!("RegDeleteTreeW failed for {key_path}"));
+                return Err(format!(
+                    "RegDeleteTreeW failed for {key_path} (Win32 {})",
+                    st.0
+                ));
             }
         }
         Ok(true)
