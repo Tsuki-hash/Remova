@@ -7,6 +7,10 @@ use std::process::Command;
 
 /// A single registry export larger than this is refused before it is read.
 const MAX_REGISTRY_EXPORT_BYTES: u64 = 64 * 1024 * 1024;
+/// Entries visited while checking one backed-up directory against the seal.
+/// A directory larger than this cannot be verified, so it is refused rather
+/// than restored on partial evidence.
+const DIR_VERIFY_BUDGET: usize = 200_000;
 /// Total registry bytes a single restore may hold in memory at once.
 const MAX_RESTORE_REGISTRY_BYTES: usize = 256 * 1024 * 1024;
 
@@ -112,6 +116,87 @@ fn restore_order(map: &std::collections::BTreeMap<String, String>) -> Vec<(&Stri
     ordered
 }
 
+/// Check one mapped backup entry against the seal's payload digests.
+///
+/// A file must match its recorded digest. A directory must contain exactly the
+/// recorded files, each unchanged: restoring a directory used to copy whatever
+/// was on disk, so a file added or rewritten inside it after sealing was written
+/// back as if it had been backed up.
+///
+/// Returns `Ok(Some(reason))` when the entry must be skipped, `Ok(None)` when it
+/// is covered, and `Err` when the evidence itself cannot be read.
+fn payload_refusal(
+    files: &std::collections::BTreeMap<String, String>,
+    rel: &str,
+    src: &Path,
+) -> Result<Option<String>, String> {
+    if !src.is_dir() {
+        let key = format!("files/{rel}");
+        let Some(expected) = files.get(&key) else {
+            return Ok(Some(format!(
+                "skipped backup entry with no recorded digest: {rel}"
+            )));
+        };
+        let actual = crate::path_seal::publication_file_digest(src)
+            .map_err(|e| format!("seal:file_digest: {e}"))?;
+        return Ok(if &actual == expected {
+            None
+        } else {
+            Some(format!(
+                "skipped modified backup entry (digest mismatch): {rel}"
+            ))
+        });
+    }
+
+    let prefix = format!("files/{rel}/");
+    let mut seen = 0usize;
+    let mut visited = 0usize;
+    let mut stack = vec![src.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        visited += 1;
+        if visited > DIR_VERIFY_BUDGET {
+            return Ok(Some(format!(
+                "skipped backup directory too large to verify: {rel}"
+            )));
+        }
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let nested = path
+                .strip_prefix(src)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let Some(expected) = files.get(&format!("{prefix}{nested}")) else {
+                return Ok(Some(format!(
+                    "skipped unrecorded backup file: {rel}/{nested}"
+                )));
+            };
+            let actual = crate::path_seal::publication_file_digest(&path)
+                .map_err(|e| format!("seal:file_digest: {e}"))?;
+            if &actual != expected {
+                return Ok(Some(format!(
+                    "skipped modified backup entry (digest mismatch): {rel}/{nested}"
+                )));
+            }
+            seen += 1;
+        }
+    }
+    // Every recorded file must still be present: a deleted file means the
+    // directory would be restored incomplete.
+    let recorded = files.keys().filter(|key| key.starts_with(&prefix)).count();
+    if seen != recorded {
+        return Ok(Some(format!(
+            "skipped backup directory with missing recorded file: {rel}"
+        )));
+    }
+    Ok(None)
+}
+
 pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
     // Restore is a destructive transaction too: it must not interleave with a
     // cleanup, and a pending 1641 reboot must finish before files are written
@@ -170,33 +255,12 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 continue;
             }
             // When the seal carries payload digests, the bytes about to be
-            // written must be the ones that were backed up. A missing digest for
-            // a mapped entry is a tampered session, not an old one.
+            // written must be the ones that were backed up. A mapped entry whose
+            // contents are not covered by the seal is a tampered session.
             if let Some(files) = &seal.file_digests {
-                let key = format!("files/{rel}");
-                // A directory entry has no digest of its own: its contents are
-                // recorded individually, so only files are checked here.
-                if src.is_dir() {
-                    // fall through to the directory copy below
-                } else {
-                    match files.get(&key) {
-                        Some(expected) => {
-                            let actual = crate::path_seal::publication_file_digest(&src)
-                                .map_err(|e| format!("seal:file_digest: {e}"))?;
-                            if &actual != expected {
-                                messages.push(format!(
-                                    "skipped modified backup entry (digest mismatch): {rel}"
-                                ));
-                                continue;
-                            }
-                        }
-                        None => {
-                            messages.push(format!(
-                                "skipped backup entry with no recorded digest: {rel}"
-                            ));
-                            continue;
-                        }
-                    }
+                if let Some(reason) = payload_refusal(files, rel, &src)? {
+                    messages.push(reason);
+                    continue;
                 }
             }
             let dest = PathBuf::from(&original);
@@ -1885,6 +1949,57 @@ mod tests {
         assert!(!original.exists(), "nothing is written back");
         crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A file added inside a backed-up directory after sealing must block that
+    /// directory: copying the tree as it stands would restore unbacked bytes.
+    #[test]
+    fn an_added_file_inside_a_backed_up_directory_is_refused() {
+        let root = std::env::temp_dir().join(format!("remova_restore_dir_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.join("source").join("app");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("a.txt"), b"backed up").unwrap();
+        let session = root.join("1700000000_dir");
+        fs::create_dir_all(&session).unwrap();
+        let item = crate::scanner::CleanupItem {
+            path: source.to_string_lossy().into_owned(),
+            kind: crate::scanner::ItemKind::Dir,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "fixture".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let (ok, fail, errors) = crate::backup::backup_items(std::slice::from_ref(&item), &session);
+        assert_eq!((ok, fail), (1, 0), "{errors:?}");
+        // Find the published copy of the directory and inject a file.
+        let backed = fs::read_dir(session.join("files"))
+            .unwrap()
+            .flatten()
+            .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .expect("the directory payload is published")
+            .path();
+        fs::write(backed.join("injected.txt"), b"not backed up").unwrap();
+
+        let msgs = restore_session(&session).expect("the session itself is authentic");
+        assert!(
+            msgs.iter().any(|m| m.contains("unrecorded backup file")),
+            "the injected file must be named: {msgs:?}"
+        );
+        assert!(
+            !source.join("injected.txt").exists(),
+            "an unbacked file must never be written back"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// a recorded Machine scope without snapshot evidence must not
