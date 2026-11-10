@@ -104,7 +104,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 > **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。
 
-升级、降级与异常恢复（迁移卡住、备份读不出、清理后找回文件）请按 [升级、降级与恢复操作手册](./RECOVERY.md) 执行。
+升级、降级与异常恢复（迁移卡住、备份读不出、清理后找回文件）请按 [升级、降级与恢复操作手册](./RECOVERY.md) 执行；AI、扫描范围与备份的配置位置和数据去向见 [配置与隐私说明](./CONFIGURATION.md)。
 
 ---
 
