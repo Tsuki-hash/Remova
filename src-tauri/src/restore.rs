@@ -1730,6 +1730,56 @@ mod tests {
         assert!(!std::path::Path::new(r"C:\Windows\System32\evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
     }
+    /// An authenticated session that still names a protected target: the
+    /// earlier version of this test only proved a missing seal is rejected, so
+    /// the protected-target branch itself was never exercised.
+    #[test]
+    fn an_authenticated_session_skips_protected_targets_and_restores_siblings() {
+        let tmp = std::env::temp_dir().join(format!("remova_restore_prot_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("sess");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        // One protected destination and one ordinary sibling.
+        let protected = r"C:\Windows\System32\evil.dll";
+        let sibling = tmp.join("sibling").join("keep.txt");
+        fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+        fs::write(files.join("evil.txt"), b"pwn").unwrap();
+        fs::write(files.join("keep.txt"), b"restored").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("evil.txt".to_string(), protected.to_string());
+        map.insert(
+            "keep.txt".to_string(),
+            sibling.to_string_lossy().to_string(),
+        );
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        // The seal authenticates the map, so the skip below comes from the
+        // protected-target gate, not from a missing seal.
+        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        let msgs = restore_session(&sess).expect("the session is authenticated");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("skipped protected restore target")),
+            "the protected target is named as skipped: {msgs:?}"
+        );
+        assert_eq!(
+            fs::read(&sibling).unwrap(),
+            b"restored",
+            "the sibling is restored"
+        );
+        assert!(!std::path::Path::new(protected).exists());
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     /// a recorded Machine scope without snapshot evidence must not
     /// unlock the system PATH — it degrades to the evidence-based fallback.
     #[test]

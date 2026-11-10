@@ -641,6 +641,60 @@ mod tests {
         .is_allow());
     }
 
+    /// The two production entry points must agree on the same input. The old
+    /// test called `gate_cleanup_item` twice, which only proved the function is
+    /// deterministic — a missing gate in one caller would have stayed green.
+    #[test]
+    fn preview_and_full_entries_agree_on_the_same_items() {
+        let _env = crate::test_support::EnvLock::new();
+        let tmp = crate::test_support::TempDir::new("policy-entries");
+        let a = app("DemoApp", r"C:\Program Files\DemoApp");
+        let allowed = tmp.subdir("DemoApp");
+        std::fs::write(allowed.join("payload.bin"), b"x").unwrap();
+        let outside = tmp.subdir("Unrelated");
+        std::fs::write(outside.join("other.bin"), b"x").unwrap();
+        let items = vec![
+            item(
+                &allowed.join("payload.bin").to_string_lossy(),
+                ItemKind::File,
+            ),
+            item(&outside.join("other.bin").to_string_lossy(), ItemKind::File),
+        ];
+        let preview = crate::executor::run_cleanup_dry_for_app(&a, &items);
+        let full = crate::executor::run_full_cleanup(
+            &a,
+            &items,
+            &crate::executor::FullCleanupOptions {
+                dry_run: true,
+                skip_official_uninstall: true,
+                backup_enabled: false,
+                restore_point: false,
+                cleanup_source: Some("uninstall".into()),
+            },
+        );
+        assert_eq!(
+            preview.deleted_planned, full.deleted,
+            "both count the same plan"
+        );
+        assert_eq!(preview.skipped, full.skipped);
+        let preview_skips: Vec<&str> = preview
+            .item_details
+            .iter()
+            .filter(|d| d.status == "skipped")
+            .map(|d| d.path.as_str())
+            .collect();
+        let full_skips: Vec<&str> = full
+            .item_details
+            .iter()
+            .filter(|d| d.status == "skipped")
+            .map(|d| d.path.as_str())
+            .collect();
+        assert_eq!(
+            preview_skips, full_skips,
+            "both entries skip the same paths"
+        );
+    }
+
     #[test]
     fn dry_and_full_gate_decisions_match_same_items() {
         // T-N1: dry-run preview skip set must equal full-delete gate skip set.

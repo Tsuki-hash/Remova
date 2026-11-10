@@ -1233,6 +1233,54 @@ mod tests {
         assert!(visible.is_empty());
     }
 
+    /// The production reader must turn a REG_DWORD EstimatedSize into KB. The
+    /// old test built the DWORD bytes itself, so deleting the native branch
+    /// would not have failed anything.
+    #[cfg(windows)]
+    #[test]
+    fn native_estimated_size_reads_a_reg_dword() {
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new(crate::regops::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
+        }
+        let sub = format!(
+            r"Software\RemovaSizeTest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let key = format!(r"HKCU\{sub}\Sized");
+        let _cleanup = Cleanup(format!(r"HKCU\{sub}"));
+        for (name, kind, data) in [
+            ("DisplayName", "REG_SZ", "Sized App"),
+            ("EstimatedSize", "REG_DWORD", "4096"),
+        ] {
+            let output = std::process::Command::new(crate::regops::sys_tool("reg.exe"))
+                .args(["add", &key, "/v", name, "/t", kind, "/d", data, "/f"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
+        let entry = unsafe {
+            read_uninstall_entry(
+                HKEY_CURRENT_USER,
+                &sub,
+                KEY_WOW64_64KEY,
+                "HKCU",
+                "Sized",
+                256,
+            )
+        }
+        .expect("the sized entry is readable");
+        assert_eq!(entry.estimated_size_kb, 4096);
+    }
+
     #[test]
     fn install_date_formats() {
         assert_eq!(format_install_date("20250601"), "2025-06-01");

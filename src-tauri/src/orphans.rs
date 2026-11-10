@@ -171,41 +171,6 @@ fn match_installed_index(index: &[InstalledMatch], dir: &std::path::Path) -> boo
     false
 }
 
-#[cfg(test)]
-fn match_installed(installed: &[InstalledApp], dir: &std::path::Path) -> bool {
-    let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
-    let leaf = dir
-        .file_name()
-        .map(|s| s.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    for app in installed {
-        if crate::scan_task::cancelled() {
-            return true;
-        }
-        let loc = app.install_location.replace('/', "\\").to_lowercase();
-        let loc_trim = loc.trim_end_matches('\\');
-        // a broken InstallLocation of a drive root (`C:` / `C:\`)
-        // must not claim every path on that drive — require a real depth.
-        let rooted = loc_trim.split('\\').filter(|s| !s.is_empty()).count() >= 2;
-        if rooted && path_same_or_under(&d, loc_trim) {
-            return true;
-        }
-        if leaf.is_empty() {
-            continue;
-        }
-        let tokens = slug_tokens(&app.name);
-        // boundary-anchored like the install-path side — `Notepad`
-        // must not claim `NotepadPlusPlus`.
-        if tokens
-            .iter()
-            .any(|t| t.len() >= 4 && crate::scanner::slug_boundary_hit(&leaf, t))
-        {
-            return true;
-        }
-    }
-    false
-}
-
 /// the cap used to be invisible. The UI now says how many candidates
 /// the result limit left out.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -746,10 +711,13 @@ mod tests {
     #[test]
     fn match_installed_by_path() {
         let installed = [app("Foo", r"C:\Program Files\FooApp")];
+        // Exercise the PRODUCTION index path, not a parallel copy: a regression
+        // in build_match_index would otherwise leave this test green.
+        let index = build_match_index(&installed);
         let p = std::path::Path::new(r"C:\Program Files\FooApp");
-        assert!(match_installed(&installed, p));
+        assert!(match_installed_index(&index, p));
         let p2 = std::path::Path::new(r"C:\Program Files\OtherThing");
-        assert!(!match_installed(&installed, p2));
+        assert!(!match_installed_index(&index, p2));
     }
 
     #[cfg(windows)]
@@ -770,11 +738,19 @@ mod tests {
     #[test]
     fn match_installed_requires_path_segment_boundary() {
         let installed = [app("App", r"C:\Program Files\App")];
+        let index = build_match_index(&installed);
         // Sibling that merely shares a string prefix must not match.
         let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
-        assert!(!match_installed(&installed, evil));
+        assert!(!match_installed_index(&index, evil));
         let child = std::path::Path::new(r"C:\Program Files\App\bin");
-        assert!(match_installed(&installed, child));
+        assert!(match_installed_index(&index, child));
+        // A drive-root install location must not claim the whole drive.
+        let root = [app("RootApp", "C:\\")];
+        let root_index = build_match_index(&root);
+        assert!(!match_installed_index(
+            &root_index,
+            std::path::Path::new(r"C:\Users\Other\Data")
+        ));
     }
 
     #[test]
