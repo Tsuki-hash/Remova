@@ -56,3 +56,21 @@ it("separates 'not enough rounds' from 'a round failed'", async () => {
   expect(mod.reviewConvergedFor("app")).toBeNull();
   mod.resetReviewRounds();
 });
+
+it("a new cleanup session drops the previous convergence verdict", async () => {
+  const mod = await import("../lib/rescanRounds");
+  mod.resetReviewRounds();
+  const item = { path: "C:\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
+    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
+    user_data: false, user_library: false };
+  mod.beginReviewSession("app", "cleanup-1");
+  mod.recordReviewRound("app", [item], true);
+  mod.recordReviewRound("app", [item], true);
+  expect(mod.reviewVerdictFor("app").state).toBe("converged");
+  // A new cleanup starts over: the old two-round verdict must not survive.
+  mod.beginReviewSession("app", "cleanup-2");
+  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
+  mod.recordReviewRound("app", [item], true);
+  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
+  mod.resetReviewRounds();
+});

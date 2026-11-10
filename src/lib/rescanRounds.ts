@@ -12,6 +12,21 @@ import { residueKey, type ConvergenceRound } from "./residueConvergence";
 const MAX_ROUNDS = 3;
 const roundsByApp = new Map<string, ConvergenceRound[]>();
 
+/** The cleanup session each app's rounds belong to. */
+const sessionByApp = new Map<string, string>();
+
+/**
+ * Bind the app to a cleanup session. Rounds recorded under a different session
+ * are dropped: a new cleanup invalidates the previous convergence verdict,
+ * which otherwise kept exporting `true` for a run nobody had reviewed.
+ */
+export function beginReviewSession(appKey: string, sessionId: string): void {
+  const key = appKey.trim() || "(unknown)";
+  if (sessionByApp.get(key) === sessionId) return;
+  sessionByApp.set(key, sessionId);
+  roundsByApp.delete(key);
+}
+
 export function recordReviewRound(
   appKey: string,
   items: CleanupItem[],
@@ -63,4 +78,5 @@ export function reviewConvergedFor(appKey: string): boolean | null {
 /** Test hook: clear every recorded round. */
 export function resetReviewRounds(): void {
   roundsByApp.clear();
+  sessionByApp.clear();
 }
