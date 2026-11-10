@@ -1,0 +1,34 @@
+[
+  {
+    "name": "complete",
+    "notes": ["uninstall_ok", "installer_keys_ok", "msi_db_ok"],
+    "status": "complete",
+    "roots_scanned": 3,
+    "failed_roots": [],
+    "class": "consistent"
+  },
+  {
+    "name": "inventory_unknown",
+    "notes": ["uninstall_unavailable:inventory_completeness_unknown", "installer_keys_ok", "msi_db_ok"],
+    "status": "partial",
+    "roots_scanned": 2,
+    "failed_roots": ["uninstall"],
+    "class": "inconclusive"
+  },
+  {
+    "name": "installer_failed",
+    "notes": ["uninstall_ok", "installer_keys_unavailable:HKLM64\\SOFTWARE\\Classes\\Installer\\Products:fixture denied", "installer_keys_unavailable:HKLM32\\SOFTWARE\\Classes\\Installer\\Products:fixture denied", "msi_db_ok"],
+    "status": "partial",
+    "roots_scanned": 2,
+    "failed_roots": ["installer_keys"],
+    "class": "inconclusive"
+  },
+  {
+    "name": "database_failed",
+    "notes": ["uninstall_ok", "installer_keys_ok", "msi_db_unavailable:fixture API failed"],
+    "status": "partial",
+    "roots_scanned": 2,
+    "failed_roots": ["msi_db"],
+    "class": "inconclusive"
+  }
+]

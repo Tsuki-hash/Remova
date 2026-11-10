@@ -1,0 +1,4 @@
+{
+  "states": ["absent", "idle", "copied", "cutover", "finished", "inconsistent"],
+  "legacy_cutover": "cut_over"
+}

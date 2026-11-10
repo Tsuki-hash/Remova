@@ -101,6 +101,7 @@ pub enum MigrationState {
     /// Target populated by Copy; source untouched.
     Copied,
     /// Source is a junction to the target and the backup exists.
+    #[serde(rename = "cutover", alias = "cut_over")]
     CutOver,
     /// Junction in place, backup gone (finish completed).
     Finished,
@@ -1200,6 +1201,34 @@ fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn migration_state_wire_matches_frontend_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/__tests__/fixtures/migration-state-wire.json"
+        ))
+        .unwrap();
+        let states = [
+            MigrationState::Absent,
+            MigrationState::Idle,
+            MigrationState::Copied,
+            MigrationState::CutOver,
+            MigrationState::Finished,
+            MigrationState::Inconsistent,
+        ];
+        assert_eq!(serde_json::to_value(states).unwrap(), fixture["states"]);
+        for state in states {
+            let wire = serde_json::to_string(&state).unwrap();
+            assert_eq!(
+                serde_json::from_str::<MigrationState>(&wire).unwrap(),
+                state
+            );
+        }
+        assert_eq!(
+            serde_json::from_value::<MigrationState>(fixture["legacy_cutover"].clone()).unwrap(),
+            MigrationState::CutOver
+        );
+    }
+
     fn mkjunction(link: &Path, target: &Path) {
         let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
             .args(["/c", "mklink", "/J"])
@@ -1208,6 +1237,28 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "junction fixture failed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn migration_state_wire_derived_cutover_uses_canonical_value() {
+        // Only a new isolated fixture is changed; no migration/ledger or host
+        // registry/API is invoked. Exercise the actual status -> serde boundary.
+        let tmp = crate::test_support::TempDir::new("migr-wire");
+        let source = tmp.path().join("source");
+        let target = tmp.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(tmp.path().join("source.bak")).unwrap();
+        mkjunction(&source, &target);
+        let state = state_of(&source, &target);
+        // Remove only the junction, not its target, even before assertions.
+        std::fs::remove_dir(&source).unwrap();
+        assert_eq!(state, MigrationState::CutOver);
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../src/__tests__/fixtures/migration-state-wire.json"
+        ))
+        .unwrap();
+        assert_eq!(serde_json::to_value(state).unwrap(), fixture["states"][3]);
     }
 
     fn seed_source(root: &Path) -> PathBuf {

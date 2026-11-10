@@ -138,7 +138,23 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
       record_only: L.msiClassRecordOnly,
       key_only: L.msiClassKeyOnly,
       db_missing: L.msiClassDbMissing,
+      inconclusive: L.msiClassInconclusive,
     })[cls] ?? cls;
+
+  // Notes describe one collection source, not the result of all three views.
+  // Keep unknown/legacy notes neutral instead of guessing an MSI API failure.
+  const noteLabel = (note: string): string => {
+    if (note === "uninstall_ok") return L.msiUninstallOk;
+    if (note === "installer_keys_ok") return L.msiInstallerKeysOk;
+    if (note === "msi_db_ok") return L.msiDbOk;
+    if (note === "uninstall_unavailable:inventory_completeness_unknown") return L.msiUninstallUnknown;
+    if (note.startsWith("uninstall_unavailable:")) return L.msiUninstallUnavailable;
+    if (note.startsWith("installer_keys_unavailable:") || note.startsWith("installer_keys_unreadable:")) {
+      return L.msiInstallerKeysUnavailable;
+    }
+    if (note.startsWith("msi_db_unavailable:")) return L.msiDbUnavailable;
+    return L.msiSourceUnknown;
+  };
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.msiTitle}>
@@ -159,7 +175,7 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
       {report && report.notes.length > 0 && (
         <div style={{ ...css.muted, fontSize: 12, margin: "6px 0" }}>
           {report.notes.map((n) => (
-            <div key={n}>{n === "msi_db_ok" ? L.msiDbOk : L.msiDbUnavailable}</div>
+            <div key={n}>{noteLabel(n)}</div>
           ))}
         </div>
       )}

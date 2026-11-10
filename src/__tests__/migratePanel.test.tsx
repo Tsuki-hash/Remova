@@ -9,6 +9,16 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import type { MigrationState } from "../types";
+import migrationWire from "./fixtures/migration-state-wire.json";
+
+// The Rust serde test checks these same bytes against every enum variant.
+const cutoverWire = migrationWire.states[3] as MigrationState;
+
+it("shares the canonical Rust state wire contract", () => {
+  const states: MigrationState[] = ["absent", "idle", "copied", "cutover", "finished", "inconsistent"];
+  expect(migrationWire.states).toEqual(states);
+  expect(cutoverWire).toBe("cutover");
+});
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -101,7 +111,7 @@ it("marks a capped size estimate as an estimate, never a confirmed figure", asyn
 it("reports a cutover IPC rejection and refreshes the state afterwards", async () => {
   vi.mocked(api.migrateStatus)
     .mockResolvedValueOnce("copied")
-    .mockResolvedValue("cutover");
+    .mockResolvedValue(cutoverWire);
   vi.mocked(api.migrateCutover).mockRejectedValue(new Error("worker died"));
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
@@ -126,7 +136,7 @@ it("gates destructive phases on the derived state and confirms cutover", async (
   // Mount sees "copied"; the post-cutover refreshState sees "cutover".
   vi.mocked(api.migrateStatus)
     .mockResolvedValueOnce("copied")
-    .mockResolvedValue("cutover");
+    .mockResolvedValue(cutoverWire);
   vi.mocked(api.migrateCutover).mockResolvedValue({
     ok: true,
     junction: "C:\\src",
@@ -221,7 +231,7 @@ it("prefills the source handed over by the disk overview triage", () => {
 });
 
 it("finish confirms, verifies and reports the removed backup", async () => {
-  vi.mocked(api.migrateStatus).mockResolvedValue("cutover");
+  vi.mocked(api.migrateStatus).mockResolvedValue(cutoverWire);
   vi.mocked(api.migrateFinish).mockResolvedValue({ removed_bak: true, missing_in_target: [] });
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
@@ -236,7 +246,7 @@ it("finish confirms, verifies and reports the removed backup", async () => {
 });
 
 it("finish reports the verification refusal with the missing files", async () => {
-  vi.mocked(api.migrateStatus).mockResolvedValue("cutover");
+  vi.mocked(api.migrateStatus).mockResolvedValue(cutoverWire);
   vi.mocked(api.migrateFinish).mockResolvedValue({
     removed_bak: false,
     missing_in_target: ["db.sqlite"],
@@ -269,7 +279,7 @@ it("a refused confirm leaves the disk untouched", async () => {
 });
 
 it("rollback reports a restored source", async () => {
-  vi.mocked(api.migrateStatus).mockResolvedValue("cutover");
+  vi.mocked(api.migrateStatus).mockResolvedValue(cutoverWire);
   vi.mocked(api.migrateRollback).mockResolvedValue({ ok: true, message: null });
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();

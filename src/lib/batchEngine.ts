@@ -92,6 +92,12 @@ export async function runBatchCleanup(
           // otherwise eight failed apps exhaust the 8-task cap for the session.
           void api.cancelAssociationScan(scanId).catch(() => {});
         }
+        // The scan may finish before the 250 ms cancel poll reaches the
+        // backend. A cancelled analysis must never start destructive cleanup.
+        if (cb.cancelRef.current) {
+          results.push({ key, name: app.name, status: "skipped", detail: L.batchCancelled, officialDone });
+          break;
+        }
         const items = r.items.filter(defaultSelectable);
  // do not skip the whole app when there are no default-selectable leftovers.
  // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
