@@ -12,7 +12,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Installer140,
     [Parameter(Mandatory = $true)][string]$Installer141,
-    [string]$InstallDir = 'D:\Users\Aaron\AppData\Local\Remova',
+    [Parameter(Mandatory = $true)][string]$InstallDir,
     [string]$ConfigDir = '',
     [string]$Out = '',
     [switch]$ConfirmReplaceInstalledApp
