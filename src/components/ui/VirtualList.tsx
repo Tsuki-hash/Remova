@@ -1,6 +1,9 @@
 import { useRef, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
+/** Rows rendered when the viewport cannot be measured (tests, hidden panel). */
+const FALLBACK_HEAD_ROWS = 200;
+
 /**
  * shared windowed list for the tool panels (History / Disk / Idle).
  * Rows are absolutely positioned and measured, so variable heights stay correct
@@ -45,9 +48,12 @@ export function VirtualList<T>({
     return empty ? <>{empty}</> : null;
   }
   const virtualItems = virtualizer.getVirtualItems();
- // Unmeasurable viewport (jsdom, display:none) yields an empty window —
- // render everything rather than nothing. Real browsers always measure.
+  // Unmeasurable viewport (jsdom, display:none) yields an empty window. Rendering
+  // every row in that case turned a bounded list back into an unbounded DOM on
+  // a large result set; render a bounded head instead and say so.
   const fallbackAll = virtualItems.length === 0;
+  const fallbackRows = fallbackAll ? items.slice(0, FALLBACK_HEAD_ROWS) : [];
+  const fallbackOmitted = fallbackAll ? Math.max(0, items.length - FALLBACK_HEAD_ROWS) : 0;
   return (
     <div
       ref={scrollRef}
@@ -60,7 +66,7 @@ export function VirtualList<T>({
     >
       <div style={{ height: fallbackAll ? undefined : virtualizer.getTotalSize(), position: "relative" }}>
         {fallbackAll
-          ? items.map((it, i) => (
+          ? fallbackRows.map((it, i) => (
               <div
                 key={keyOf(it, i)}
                 role={rowRole ? rowRole(it, i) : listRole ? "listitem" : undefined}
@@ -87,6 +93,11 @@ export function VirtualList<T>({
                 {renderItem(items[vr.index]!, vr.index)}
               </div>
             ))}
+        {fallbackOmitted > 0 && (
+          <div role="note" style={{ padding: "6px 0", fontSize: 12, opacity: 0.75 }}>
+            +{fallbackOmitted}
+          </div>
+        )}
       </div>
     </div>
   );

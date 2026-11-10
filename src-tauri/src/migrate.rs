@@ -198,6 +198,11 @@ fn files_equal(a: &Path, b: &Path) -> Result<bool, String> {
     let mut ba = [0u8; 64 * 1024];
     let mut bb = [0u8; 64 * 1024];
     loop {
+        // A large file comparison must honour a cancel request; without this
+        // one multi-GB file kept the copy/cutover unresponsive until it ended.
+        if copy_cancelled() {
+            return Err("migrate:cancelled".into());
+        }
         let na = read_fill(&mut fa, &mut ba)?;
         let nb = read_fill(&mut fb, &mut bb)?;
         if na != nb {

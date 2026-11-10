@@ -5,6 +5,11 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// A single registry export larger than this is refused before it is read.
+const MAX_REGISTRY_EXPORT_BYTES: u64 = 64 * 1024 * 1024;
+/// Total registry bytes a single restore may hold in memory at once.
+const MAX_RESTORE_REGISTRY_BYTES: usize = 256 * 1024 * 1024;
+
 struct RestoreInputs {
     seal: crate::path_seal::PathMapSeal,
     map: std::collections::BTreeMap<String, String>,
@@ -44,6 +49,10 @@ fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
     }
     let mut imports = vec![];
     let mut selected = std::collections::BTreeSet::new();
+    // Every registry export is held in memory until the whole batch validates.
+    // A bounded total keeps a bloated session from pinning memory inside the
+    // cleanup lock; exceeding it fails closed rather than restoring partially.
+    let mut total_bytes = 0usize;
     let reg_root = session.join("registry");
     if reg_root.is_dir() {
         for entry in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
@@ -57,6 +66,18 @@ fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
                         .ok_or("seal:bad_export_name")?
                         .to_string_lossy()
                 );
+                let size = fs::metadata(&target).map_err(|e| e.to_string())?.len();
+                if size > MAX_REGISTRY_EXPORT_BYTES {
+                    return Err(format!(
+                        "registry export too large to restore: {rel} ({size} bytes)"
+                    ));
+                }
+                total_bytes = total_bytes.saturating_add(size as usize);
+                if total_bytes > MAX_RESTORE_REGISTRY_BYTES {
+                    return Err(format!(
+                        "registry restore exceeds the total budget at {rel}; refusing the whole session"
+                    ));
+                }
                 let bytes = fs::read(&target).map_err(|e| e.to_string())?;
                 if !crate::path_seal::snapshot_matches(&seal, &rel, &bytes) {
                     return Err("seal:registry_snapshot_mismatch".into());
