@@ -20,6 +20,9 @@ use std::time::{Duration, Instant};
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Per-stream byte budget. Output beyond this is discarded, not buffered.
 pub const PROBE_OUTPUT_CAP: usize = 256 * 1024;
+/// Registry tools run inside the cleanup lock. A longer ceiling is fine for a
+/// large export, but it still has to end so the lock is released.
+pub const REG_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoundedOutput {

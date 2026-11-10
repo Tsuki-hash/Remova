@@ -315,15 +315,29 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         let mut cmd = Command::new(crate::regops::sys_tool("reg.exe"));
         cmd.args(["import", &pinned.to_string_lossy(), view]);
         crate::regops::hide_console(&mut cmd);
-        let out = cmd.output();
-        let import_res = match out {
-            Ok(o) if o.status.success() => Ok(()),
-            Ok(_) => Err(crate::error::restore_reg_err(format!(
-                "reg import failed {}",
-                target.display()
-            ))
+        // A registry import can partially apply before it returns, so a timeout
+        // must be reported as an incomplete import rather than retried blindly.
+        let import_res = match crate::bounded_cmd::run_bounded(
+            cmd,
+            crate::bounded_cmd::REG_TOOL_TIMEOUT,
+            crate::bounded_cmd::PROBE_OUTPUT_CAP,
+        ) {
+            crate::bounded_cmd::BoundedOutput::Finished { success: true, .. } => Ok(()),
+            crate::bounded_cmd::BoundedOutput::Finished { .. } => Err(
+                crate::error::restore_reg_err(format!(
+                    "reg import failed {}",
+                    target.display()
+                ))
+                .to_ipc(),
+            ),
+            crate::bounded_cmd::BoundedOutput::TimedOut => Err(crate::error::restore_reg_err(
+                format!(
+                    "reg import timed out {}; the registry may be partially updated, review before retrying",
+                    target.display()
+                ),
+            )
             .to_ipc()),
-            Err(e) => Err(e.to_string()),
+            crate::bounded_cmd::BoundedOutput::Failed(e) => Err(e),
         };
         drop(pin);
         let _ = fs::remove_file(&pinned);

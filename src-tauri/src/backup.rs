@@ -775,16 +775,36 @@ fn backup_item_with_map(
                 reg_view_flag(export_path),
             ]);
             crate::regops::hide_console(&mut cmd);
-            let out = cmd.output().map_err(|e| {
-                crate::error::backup_reg_err(format!("reg export failed for {}: {e}", item.path))
-                    .to_ipc()
-            })?;
-            if !out.status.success() {
-                return Err(crate::error::backup_reg_err(format!(
-                    "reg export failed for {}",
-                    item.path
-                ))
-                .to_ipc());
+            // `reg export` runs while the cleanup lock is held. Without a
+            // deadline a stuck registry IO would keep every later cleanup,
+            // restore and migration waiting on that same lock.
+            match crate::bounded_cmd::run_bounded(
+                cmd,
+                crate::bounded_cmd::REG_TOOL_TIMEOUT,
+                crate::bounded_cmd::PROBE_OUTPUT_CAP,
+            ) {
+                crate::bounded_cmd::BoundedOutput::Finished { success: true, .. } => {}
+                crate::bounded_cmd::BoundedOutput::Finished { .. } => {
+                    return Err(crate::error::backup_reg_err(format!(
+                        "reg export failed for {}",
+                        item.path
+                    ))
+                    .to_ipc())
+                }
+                crate::bounded_cmd::BoundedOutput::TimedOut => {
+                    return Err(crate::error::backup_reg_err(format!(
+                        "reg export timed out for {}",
+                        item.path
+                    ))
+                    .to_ipc())
+                }
+                crate::bounded_cmd::BoundedOutput::Failed(e) => {
+                    return Err(crate::error::backup_reg_err(format!(
+                        "reg export failed for {}: {e}",
+                        item.path
+                    ))
+                    .to_ipc())
+                }
             }
             // The view belongs inside the authenticated export bytes; an
             // unsigned sidecar could redirect a sealed backup to another hive view.
