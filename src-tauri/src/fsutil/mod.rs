@@ -686,7 +686,7 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
         let n = std::io::copy(&mut reader, &mut out)?;
         out.sync_all()?;
         drop(out);
-        std::fs::rename(&tmp, dest)?;
+        rename_with_retry(&tmp, dest)?;
         Ok(n)
     })();
     if result.is_err() {
@@ -1996,6 +1996,28 @@ fn create_atomic_tmp_with(
     ))
 }
 
+/// Rename over an existing file, retrying the two transient Windows failures.
+///
+/// Antivirus/indexers open a just-written file for a moment, and `rename` then
+/// fails with `ERROR_SHARING_VIOLATION` (32) or `ERROR_ACCESS_DENIED` (5) even
+/// though nothing in this process holds it. The bounded retry keeps the atomic
+/// replace atomic while surviving that scan window; every other error is
+/// returned immediately.
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut delay = std::time::Duration::from_millis(5);
+    for attempt in 0..6 {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < 5 && matches!(error.raw_os_error(), Some(5) | Some(32)) => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the loop returns on the last attempt")
+}
+
 /// Write bytes to a unique tmp sibling, fsync, then rename over `p` — a
 /// crash mid-write never tears `p`, and a failed write leaves no tmp.
 pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -2005,7 +2027,7 @@ pub fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, p)
+        rename_with_retry(&tmp, p)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
