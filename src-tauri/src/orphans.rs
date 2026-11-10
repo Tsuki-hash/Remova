@@ -466,14 +466,24 @@ fn scan_orphans_in_roots_with(
             candidates.push(p);
         }
     }
-    let ordered = crate::fsutil::order_candidates(candidates);
-    let omitted = ordered
-        .len()
-        .saturating_sub(crate::constants::ORPHAN_RESULT_CAP) as u32;
-    for p in ordered
-        .into_iter()
-        .take(crate::constants::ORPHAN_RESULT_CAP)
-    {
+    // Bounded top-K: keep at most the cap plus a deterministic ordering key,
+    // instead of sorting every candidate on a machine with a huge leftover
+    // tree. The retained subset is the same one a full sort would report.
+    let cap = crate::constants::ORPHAN_RESULT_CAP;
+    let total = candidates.len();
+    let ordered = if total > cap {
+        let mut keyed: Vec<(String, std::path::PathBuf)> = candidates
+            .into_iter()
+            .map(|p| (p.to_string_lossy().to_lowercase(), p))
+            .collect();
+        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        keyed.truncate(cap);
+        keyed.into_iter().map(|(_, p)| p).collect::<Vec<_>>()
+    } else {
+        crate::fsutil::order_candidates(candidates)
+    };
+    let omitted = total.saturating_sub(cap) as u32;
+    for p in ordered {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return OrphanScanResult {
                 items: out,

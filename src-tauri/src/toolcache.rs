@@ -30,6 +30,7 @@
 
 use crate::constants::{
     EMPTY_PROBE_DEPTH, EMPTY_PROBE_ENTRIES, SPECIALTY_RESULT_CAP, TOOL_CACHE_CHILD_CAP,
+    TOOL_CACHE_ENTRY_BUDGET,
 };
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
@@ -663,7 +664,13 @@ fn scan_shared_cache_children(
     // Collect first, then order and truncate: a `take(n)` during enumeration
     // would drop a different subset depending on filesystem order.
     let mut children: Vec<PathBuf> = Vec::new();
-    for entry in rd.flatten() {
+    // Bounded collection: a pathological shared root must not buffer an
+    // unbounded child list just to report a lower-bound size.
+    for (visited, entry) in rd.flatten().enumerate() {
+        if visited >= TOOL_CACHE_ENTRY_BUDGET {
+            report.omit(1);
+            break;
+        }
         if !crate::scan_task::checkpoint("files", children.len()) {
             return empty_shells;
         }

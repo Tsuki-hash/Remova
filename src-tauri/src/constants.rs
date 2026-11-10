@@ -34,6 +34,8 @@ pub const SPECIALTY_RESULT_CAP: usize = 80;
 /// A shared root holds many tools' caches, so the cap bounds one level of
 /// enumeration instead of the root ever becoming a single cleanup target.
 pub const TOOL_CACHE_CHILD_CAP: usize = 60;
+/// Entries inspected per cache root before the result is reported truncated.
+pub const TOOL_CACHE_ENTRY_BUDGET: usize = 50_000;
 
 /// Single-phase result cap for the installer scan.
 ///
@@ -43,6 +45,9 @@ pub const TOOL_CACHE_CHILD_CAP: usize = 60;
 /// own, so the scan reports up to **twice** this value — it is a per-phase cap,
 /// not a total.
 pub const INSTALLER_PHASE_CAP: usize = 60;
+/// Entries inspected per installer directory before the scan reports a
+/// truncated result. Bounds peak memory on pathological folders.
+pub const INSTALLER_ENTRY_BUDGET: usize = 50_000;
 
 /// Bounds for the "does this cache directory actually hold anything" probe.
 /// Cache scanners select by name, and name-matched shells (an updater after a

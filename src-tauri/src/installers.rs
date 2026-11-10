@@ -2,8 +2,8 @@
 //! Distinct from orphan leftovers: objects are installers and updater caches.
 
 use crate::constants::{
-    EMPTY_PROBE_DEPTH, EMPTY_PROBE_ENTRIES, INSTALLER_PHASE_CAP, MIN_AMBIGUOUS_PACKAGE_BYTES,
-    UPDATER_CACHE_LEAVES,
+    EMPTY_PROBE_DEPTH, EMPTY_PROBE_ENTRIES, INSTALLER_ENTRY_BUDGET, INSTALLER_PHASE_CAP,
+    MIN_AMBIGUOUS_PACKAGE_BYTES, UPDATER_CACHE_LEAVES,
 };
 use crate::scan_allow::{self, AllowScope};
 use crate::scanner::{
@@ -313,7 +313,13 @@ fn scan_downloads_from(
     // result depend on filesystem order.
     let mut definite: Vec<(PathBuf, DownloadEvidence)> = Vec::new();
     let mut ambiguous: Vec<PathBuf> = Vec::new();
-    for ent in rd.flatten() {
+    // A Downloads folder can hold a very large number of entries; past the
+    // budget the rest is reported as omitted instead of buffered.
+    for (visited, ent) in rd.flatten().enumerate() {
+        if visited >= INSTALLER_ENTRY_BUDGET {
+            report.omit(1);
+            break;
+        }
         if !crate::scan_task::checkpoint("files", definite.len() + ambiguous.len()) {
             return;
         }
