@@ -67,11 +67,24 @@ export function buildAuditJson(
 const REVIEW_TEXT = {
   converged: "residue review converged (two complete rounds agree)",
   open: "residue review NOT converged",
-  unknown: "residue review has fewer than two complete rounds",
+  insufficient: "residue review has fewer than two complete rounds",
+  incomplete: "a residue review round failed or was cancelled",
 } as const;
 
-function reviewLine(rounds: number, converged: boolean | null): string {
-  if (rounds < 2 || converged === null) return `- Review: ${REVIEW_TEXT.unknown}`;
+/**
+ * One review line that says *why* a verdict is unavailable. Passing `null`
+ * without a reason was the bug: "fewer than two rounds" and "a round failed"
+ * read the same, so a failed review looked like an unfinished one.
+ */
+function reviewLine(
+  rounds: number,
+  converged: boolean | null,
+  reason?: "insufficient" | "incomplete",
+): string {
+  if (converged === null) {
+    const text = reason === "incomplete" ? REVIEW_TEXT.incomplete : REVIEW_TEXT.insufficient;
+    return `- Review: ${text} (${rounds} rounds)`;
+  }
   return `- Review: ${converged ? REVIEW_TEXT.converged : REVIEW_TEXT.open} (${rounds} rounds)`;
 }
 
@@ -81,6 +94,7 @@ export function buildAuditMarkdown(
   reviewRounds: number,
   reviewConverged: boolean | null,
   options: AuditExportOptions = {},
+  reviewReason?: "insufficient" | "incomplete",
 ): string {
   const redact = options.includeUserPaths !== true;
   const r = redact ? (redactDeep(report) as FullCleanupReport) : report;
@@ -91,7 +105,7 @@ export function buildAuditMarkdown(
     `- Uninstall: ${r.uninstall_ok ? "ok" : "failed"}${r.dry_run ? " (dry run)" : ""}`,
     `- Deleted: ${r.deleted} · Failed: ${r.failed} · Skipped: ${r.skipped}${r.delayed ? ` · Reboot-delayed: ${r.delayed}` : ""}`,
     `- Backup: ${r.backup_dir || "(none)"}`,
-    reviewLine(reviewRounds, reviewConverged),
+    reviewLine(reviewRounds, reviewConverged, reviewReason),
     "",
   ];
   if (options.summaryOnly === true) {
@@ -126,10 +140,11 @@ export async function downloadAudit(
   reviewConverged: boolean | null,
   format: "json" | "md",
   options: AuditExportOptions = {},
+  reviewReason?: "insufficient" | "incomplete",
 ) {
   const stem = (report.app_name || "app").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
   if (format === "md") {
-    const md = buildAuditMarkdown(report, reviewRounds, reviewConverged, options);
+    const md = buildAuditMarkdown(report, reviewRounds, reviewConverged, options, reviewReason);
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

@@ -12,7 +12,7 @@ import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
 import { downloadAudit } from "../lib/exportAuditReport";
-import { reviewConvergedFor, reviewRoundsFor } from "../lib/rescanRounds";
+import { reviewRoundsFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
@@ -58,7 +58,17 @@ export function ReportPanel({
     if (!("deleted" in report) || report.dry_run) return;
     const key = report.app_key ?? report.app_name;
     const rounds = reviewRoundsFor(key);
-    const converged = reviewConvergedFor(key);
+    const verdict = reviewVerdictFor(key);
+    // "Fewer than two rounds" and "a round failed" are different answers; the
+    // export must say which one applies instead of one generic unknown.
+    const verdictText =
+      verdict.state === "converged"
+        ? L.auditConvergedYes
+        : verdict.state === "diverged"
+          ? L.auditConvergedNo
+          : verdict.state === "insufficient_rounds"
+            ? L.auditConvergedInsufficient(verdict.rounds)
+            : L.auditConvergedIncomplete;
     const { ok, checked } = await requestConfirmEx({
       title: L.auditExportTitle,
       message: L.auditExportPreview(
@@ -66,7 +76,7 @@ export function ReportPanel({
         report.deleted,
         report.failed,
         rounds,
-        converged === true ? L.auditConvergedYes : converged === false ? L.auditConvergedNo : L.auditConvergedUnknown,
+        verdictText,
       ),
       confirmLabel: L.auditExportGo,
       checkbox: { label: L.auditExportIncludePaths, defaultChecked: false },
@@ -74,10 +84,18 @@ export function ReportPanel({
     if (!ok) return;
     setAuditBusy(true);
     try {
-      await downloadAudit(report, rounds, converged, format, {
-        summaryOnly,
-        includeUserPaths: checked,
-      });
+      await downloadAudit(
+        report,
+        rounds,
+        verdict.state === "converged" ? true : verdict.state === "diverged" ? false : null,
+        format,
+        { summaryOnly, includeUserPaths: checked },
+        verdict.state === "incomplete_round"
+          ? "incomplete"
+          : verdict.state === "insufficient_rounds"
+            ? "insufficient"
+            : undefined,
+      );
     } catch (e) {
       toast.error(formatError(e));
     } finally {

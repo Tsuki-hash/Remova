@@ -27,17 +27,37 @@ export function reviewRoundsFor(appKey: string): number {
   return (roundsByApp.get(appKey.trim()) ?? []).length;
 }
 
-export function reviewConvergedFor(appKey: string): boolean | null {
+/** Why a convergence verdict is unavailable, when it is. */
+export type ReviewVerdict =
+  | { state: "converged" }
+  | { state: "diverged" }
+  | { state: "insufficient_rounds"; rounds: number }
+  | { state: "incomplete_round" };
+
+/**
+ * Convergence verdict with the reason it is unavailable. "Not enough rounds"
+ * and "a round failed or was cancelled" are different situations and must not
+ * collapse into one "fewer than two rounds" message.
+ */
+export function reviewVerdictFor(appKey: string): ReviewVerdict {
   const rounds = roundsByApp.get(appKey.trim()) ?? [];
-  if (rounds.length < 2 || rounds.some((r) => !r.complete)) return null;
+  if (rounds.some((r) => !r.complete)) return { state: "incomplete_round" };
+  if (rounds.length < 2) return { state: "insufficient_rounds", rounds: rounds.length };
   const [a, b] = rounds.slice(-2);
   const ka = new Set(a!.items.map(residueKey));
   const kb = new Set(b!.items.map(residueKey));
-  if (ka.size !== kb.size) return false;
+  if (ka.size !== kb.size) return { state: "diverged" };
   for (const key of ka) {
-    if (!kb.has(key)) return false;
+    if (!kb.has(key)) return { state: "diverged" };
   }
-  return true;
+  return { state: "converged" };
+}
+
+export function reviewConvergedFor(appKey: string): boolean | null {
+  const verdict = reviewVerdictFor(appKey);
+  if (verdict.state === "converged") return true;
+  if (verdict.state === "diverged") return false;
+  return null;
 }
 
 /** Test hook: clear every recorded round. */

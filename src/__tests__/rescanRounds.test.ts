@@ -42,3 +42,17 @@ describe("rescanRounds", () => {
     expect(reviewConvergedFor("app-a")).toBe(true);
   });
 });
+
+it("separates 'not enough rounds' from 'a round failed'", async () => {
+  const mod = await import("../lib/rescanRounds");
+  mod.resetReviewRounds();
+  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
+  const item = { path: "C:\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
+    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
+    user_data: false, user_library: false };
+  mod.recordReviewRound("app", [item], true);
+  mod.recordReviewRound("app", [item], false);
+  expect(mod.reviewVerdictFor("app").state).toBe("incomplete_round");
+  expect(mod.reviewConvergedFor("app")).toBeNull();
+  mod.resetReviewRounds();
+});
