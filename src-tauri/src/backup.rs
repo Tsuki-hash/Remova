@@ -494,28 +494,179 @@ pub fn backup_items(items: &[CleanupItem], session: &Path) -> (u32, u32, Vec<Str
 /// avoids rewriting every backed-up byte; a copy is the fallback for filesystems
 /// or antivirus locks that refuse the move. Either way the seal is written only
 /// after the complete tree is in place.
-fn publish_stage(private: &Path, session: &Path) -> Result<(), String> {
-    for sub in ["files", "registry"] {
-        let _ = fs::remove_dir(session.join(sub));
+trait PublishIo {
+    fn entries(
+        &mut self,
+        private: &Path,
+    ) -> std::io::Result<Box<dyn Iterator<Item = std::io::Result<PathBuf>>>>;
+    fn rename(&mut self, src: &Path, dest: &Path) -> std::io::Result<()>;
+    fn copy(&mut self, src: &Path, dest: &Path) -> std::io::Result<()>;
+}
+
+struct NativePublishIo;
+impl PublishIo for NativePublishIo {
+    fn entries(
+        &mut self,
+        private: &Path,
+    ) -> std::io::Result<Box<dyn Iterator<Item = std::io::Result<PathBuf>>>> {
+        let entries = fs::read_dir(private)?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        Ok(Box::new(entries.into_iter().map(Ok)))
     }
-    let entries = fs::read_dir(private).map_err(|e| e.to_string())?;
-    for entry in entries.flatten() {
-        let src = entry.path();
-        let dest = session.join(entry.file_name());
-        if fs::rename(&src, &dest).is_ok() {
-            continue;
-        }
-        let meta = fs::symlink_metadata(&src).map_err(|e| e.to_string())?;
+    fn rename(&mut self, src: &Path, dest: &Path) -> std::io::Result<()> {
+        fs::rename(src, dest)
+    }
+    fn copy(&mut self, src: &Path, dest: &Path) -> std::io::Result<()> {
+        let meta = fs::symlink_metadata(src)?;
         if meta.is_dir() {
-            crate::fsutil::copy_dir(&src, &dest).map_err(|e| e.to_string())?;
+            crate::fsutil::copy_dir(src, dest)
         } else {
-            crate::fsutil::copy_file_no_reparse(&src, &dest).map_err(|e| e.to_string())?;
+            crate::fsutil::copy_file_no_reparse(src, dest).map(|_| ())
+        }
+    }
+}
+
+fn publish_stage(private: &Path, session: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    return publication_tests::with_io(|io| publish_stage_with_io(private, session, io));
+    #[cfg(not(test))]
+    publish_stage_with_io(private, session, &mut NativePublishIo)
+}
+
+fn publish_stage_with_io(
+    private: &Path,
+    session: &Path,
+    io: &mut dyn PublishIo,
+) -> Result<(), String> {
+    for sub in ["files", "registry"] {
+        match fs::remove_dir(session.join(sub)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("backup publish destination: {e}")),
+        }
+    }
+    let entries = io
+        .entries(private)
+        .map_err(|e| format!("backup publish enumeration: {e}"))?;
+    for entry in entries {
+        // ReadDir may fail after returning earlier entries. Never flatten it.
+        let src = entry.map_err(|e| format!("backup publish enumeration: {e}"))?;
+        let dest = session.join(src.file_name().ok_or("backup publish entry name")?);
+        if let Err(rename_error) = io.rename(&src, &dest) {
+            io.copy(&src, &dest).map_err(|e| {
+                format!("backup publish copy failed: {e} (rename failed: {rename_error})")
+            })?;
         }
     }
     // Moved files keep the private stage's SYSTEM/Administrators-only DACL;
     // grant the invoking owner access so restore can read them.
     let mut budget = SECURE_TREE_BUDGET;
     secure_tree(session, 0, &mut budget).map_err(|e| format!("backup ACL securing failed: {e}"))?;
+    Ok(())
+}
+
+/// Transient publication receipt, not a new seal field or restore authorization.
+/// Capture it before moving anything: a vanished stage must never become a new
+/// empty inventory. Include directories and file bytes to catch omitted children,
+/// truncation and a faulty fallback copy, not just missing top-level entries.
+fn publication_inventory(
+    root: &Path,
+) -> Result<std::collections::BTreeMap<PathBuf, Option<String>>, String> {
+    fn walk(
+        root: &Path,
+        path: &Path,
+        depth: u8,
+        left: &mut u32,
+        out: &mut std::collections::BTreeMap<PathBuf, Option<String>>,
+    ) -> Result<(), String> {
+        if depth > 64 || *left == 0 {
+            return Err("backup publication inventory budget exceeded".into());
+        }
+        *left -= 1;
+        let _pin = crate::fsutil::pin_target_readonly(path).map_err(|e| e.to_string())?;
+        let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        let digest = if meta.is_dir() {
+            None
+        } else if meta.is_file() {
+            Some(crate::path_seal::publication_file_digest(path)?)
+        } else {
+            return Err("backup publication unsupported entry".into());
+        };
+        // The root itself has no relative name; both sides compare only the
+        // published children, so recording an empty key here would never match.
+        if path != root {
+            out.insert(
+                path.strip_prefix(root)
+                    .map_err(|e| e.to_string())?
+                    .to_path_buf(),
+                digest,
+            );
+        }
+        if meta.is_dir() {
+            for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+                walk(
+                    root,
+                    &entry.map_err(|e| e.to_string())?.path(),
+                    depth + 1,
+                    left,
+                    out,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    let mut out = std::collections::BTreeMap::new();
+    let mut budget = SECURE_TREE_BUDGET;
+    walk(root, root, 0, &mut budget, &mut out)?;
+    Ok(out)
+}
+
+fn verify_publication(
+    session: &Path,
+    inventory: &std::collections::BTreeMap<PathBuf, Option<String>>,
+    map: &std::collections::BTreeMap<String, String>,
+    digests: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    // Compare the published tree with the receipt captured from the private
+    // stage. Every entry the backup produced must be present with the same
+    // bytes, and the published payload trees must not gain entries. Root-level
+    // siblings the caller owns (a test seal store, for example) are not part of
+    // the publication and are ignored.
+    let published_inventory = publication_inventory(session)?;
+    for (rel, digest) in inventory {
+        if published_inventory.get(rel) != Some(digest) {
+            return Err("backup publication inventory mismatch".into());
+        }
+    }
+    let published_payload = published_inventory
+        .keys()
+        .filter(|rel| {
+            rel.components().next().is_some_and(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(name)
+                        if name == "files" || name == "registry"
+                )
+            })
+        })
+        .filter(|rel| !inventory.contains_key(*rel))
+        .count();
+    if published_payload > 0 {
+        return Err("backup publication inventory mismatch".into());
+    }
+    let published_map: std::collections::BTreeMap<String, String> = serde_json::from_slice(
+        &fs::read(session.join("files/path_map.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    if &published_map != map || &crate::path_seal::collect_reg_digests(session)? != digests {
+        return Err("backup publication snapshot mismatch".into());
+    }
+    for rel in map.keys() {
+        if !inventory.contains_key(&PathBuf::from("files").join(rel)) {
+            return Err("backup publication mapped payload missing".into());
+        }
+    }
     Ok(())
 }
 
@@ -572,7 +723,12 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     let digests = crate::path_seal::collect_reg_digests(private)?;
     let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
     write_bytes_atomic(&private.join("files/path_map.json"), json.as_bytes())?;
+    let inventory = publication_inventory(private)?;
+    // Failure policy: abort before any source deletion; Stage::drop removes the
+    // private remainder. A partial public session is deliberately left unsealed
+    // for diagnosis, never re-inventoried and signed as an empty success.
     publish_stage(private, session)?;
+    verify_publication(session, &inventory, &map, &digests)?;
     crate::path_seal::write_seal(session, &json, &map, &digests)?;
     Ok((ok, fail, errors))
 }
@@ -694,6 +850,9 @@ fn backup_item_with_map(
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
     crate::fsutil::copy_dir(src, dest)
 }
+
+#[cfg(test)]
+mod publication_tests;
 
 #[cfg(test)]
 mod tests {

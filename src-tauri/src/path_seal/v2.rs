@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use windows::Win32::Security::Cryptography::*;
 
 const MAGIC: &[u8] = b"RSEAL2";
-const MAX_ENVELOPE: usize = 128 * 1024;
+// UTF-8 bytes of the canonical JSON envelope, before DPAPI protection.
+const MAX_PLAINTEXT_ENVELOPE: usize = 128 * 1024;
 
 struct Provider(BCRYPT_ALG_HANDLE);
 impl Drop for Provider {
@@ -25,6 +26,13 @@ impl Drop for Hash {
 }
 
 fn digest(data: &[u8], key: Option<&[u8; 32]>) -> Result<[u8; 32], String> {
+    digest_reader(&mut std::io::Cursor::new(data), key)
+}
+
+fn digest_reader(
+    reader: &mut dyn std::io::Read,
+    key: Option<&[u8; 32]>,
+) -> Result<[u8; 32], String> {
     unsafe {
         let flags = if key.is_some() {
             BCRYPT_ALG_HANDLE_HMAC_FLAG
@@ -53,8 +61,15 @@ fn digest(data: &[u8], key: Option<&[u8; 32]>) -> Result<[u8; 32], String> {
         .ok()
         .map_err(|_| "seal:cng_create_hash")?;
         let hash = Hash(raw_hash);
-        for chunk in data.chunks(1024 * 1024) {
-            BCryptHashData(hash.0, chunk, 0)
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            let n = reader
+                .read(&mut chunk)
+                .map_err(|e| format!("seal:hash_read: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            BCryptHashData(hash.0, &chunk[..n], 0)
                 .ok()
                 .map_err(|_| "seal:cng_hash_data")?;
         }
@@ -136,7 +151,7 @@ fn envelope(key: &[u8; 32], payload: &Payload) -> Result<Vec<u8>, String> {
         mac: hex(&mac),
     })
     .map_err(|_| "seal:v2_envelope_json")?;
-    if bytes.len() > MAX_ENVELOPE {
+    if bytes.len() > MAX_PLAINTEXT_ENVELOPE {
         return Err("seal:v2_input_too_large".into());
     }
     Ok(bytes)
@@ -147,7 +162,7 @@ fn verify_envelope(
     expected_session: &str,
     bytes: &[u8],
 ) -> Result<Payload, String> {
-    if bytes.len() > MAX_ENVELOPE {
+    if bytes.len() > MAX_PLAINTEXT_ENVELOPE {
         return Err("seal:v2_input_too_large".into());
     }
     let env: Envelope = serde_json::from_slice(bytes).map_err(|_| "seal:v2_envelope_json")?;
@@ -191,8 +206,16 @@ fn verify_envelope(
 }
 
 pub(super) fn encode_blob(key: &[u8; 32], payload: &Payload) -> Result<Vec<u8>, String> {
+    let plain = envelope(key, payload)?;
+    // Encoding must not report success for a payload rejected by our strict
+    // reader (including malformed digests or noncanonical target inventories).
+    verify_envelope(key, &payload.session, &plain)?;
     let mut bytes = MAGIC.to_vec();
-    bytes.extend(super::protect(&envelope(key, payload)?)?);
+    bytes.extend(super::protect(&plain)?);
+    if bytes.len() > super::MAX_PROTECTED_BLOB {
+        return Err("seal:v2_protected_blob_too_large".into());
+    }
+    verify_blob(key, &payload.session, &bytes)?;
     Ok(bytes)
 }
 pub(super) fn verify_blob(
@@ -200,7 +223,7 @@ pub(super) fn verify_blob(
     expected_session: &str,
     bytes: &[u8],
 ) -> Result<Payload, String> {
-    if bytes.len() > MAX_ENVELOPE || !bytes.starts_with(MAGIC) {
+    if bytes.len() > super::MAX_PROTECTED_BLOB || !bytes.starts_with(MAGIC) {
         return Err("seal:v2_bad_magic_or_length".into());
     }
     verify_envelope(
@@ -209,6 +232,9 @@ pub(super) fn verify_blob(
         &super::unprotect(&bytes[MAGIC.len()..])?,
     )
 }
+
+#[cfg(test)]
+mod boundary_tests;
 
 #[test]
 fn cng_reproduces_independent_sha256_hmac_vector() {
@@ -279,7 +305,7 @@ fn v2_strict_fields_lengths_and_mac_tampering() {
     env.mac
         .replace_range(0..1, if old == b'0' { "1" } else { "0" });
     assert!(verify_envelope(&key, session, &serde_json::to_vec(&env).unwrap()).is_err());
-    assert!(verify_envelope(&key, session, &[b'x'; MAX_ENVELOPE + 1]).is_err());
+    assert!(verify_envelope(&key, session, &[b'x'; MAX_PLAINTEXT_ENVELOPE + 1]).is_err());
     let unknown = String::from_utf8(good.clone())
         .unwrap()
         .replacen('{', "{\"extra\":true,", 1);
@@ -321,6 +347,11 @@ fn v2_canonical_payload_rejects_duplicate_nested_keys() {
 
 pub(super) fn sha256(bytes: &[u8]) -> Result<String, String> {
     Ok(hex(&digest(bytes, None)?))
+}
+
+pub(super) fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    Ok(hex(&digest_reader(&mut file, None)?))
 }
 
 #[test]

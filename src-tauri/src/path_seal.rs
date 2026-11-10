@@ -10,6 +10,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+// Total on-disk bytes, including RSEAL2 magic and DPAPI overhead. This is an
+// independent finite budget, not a claim that DPAPI has fixed expansion. The
+// canonical plaintext envelope remains capped at 128 KiB in v2.
+const MAX_PROTECTED_BLOB: usize = 256 * 1024;
+
 #[cfg(windows)]
 mod key;
 #[cfg(windows)]
@@ -240,6 +245,7 @@ pub fn write_seal(
         .map_err(|e| e.to_string())?
         .as_nanos();
     let tmp = dir.join(format!("seal.{}.{}.tmp", std::process::id(), nonce));
+    let mut published = false;
     let result = (|| {
         use std::io::Write;
         let mut file = std::fs::OpenOptions::new()
@@ -251,9 +257,29 @@ pub fn write_seal(
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;
         drop(file);
-        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())
+        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+        published = true;
+        #[cfg(all(test, windows))]
+        boundary_tests::after_write(&target);
+        // Exercise exactly the bounded production reader before any caller may
+        // return Ready. A durable but unreadable seal is not a successful backup.
+        let verified = verified_seal(session)?;
+        let mut targets: Vec<_> = path_map.values().map(|s| normalize_target(s)).collect();
+        targets.sort();
+        targets.dedup();
+        if verified.session != name
+            || !map_matches(&verified, path_map)
+            || verified.targets != targets
+            || &verified.reg_digests != reg_digests
+        {
+            return Err("seal:write_readback_mismatch".into());
+        }
+        Ok(())
     })();
     let _ = std::fs::remove_file(&tmp);
+    if result.is_err() && published {
+        let _ = std::fs::remove_file(&target);
+    }
     result
 }
 
@@ -268,10 +294,10 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     use std::io::Read;
     let file = std::fs::File::open(seal_path(&name)).map_err(|_| "seal:missing")?;
     let mut raw = vec![];
-    file.take(128 * 1024 + 1)
+    file.take(MAX_PROTECTED_BLOB as u64 + 1)
         .read_to_end(&mut raw)
         .map_err(|_| "seal:read")?;
-    if raw.len() > 128 * 1024 {
+    if raw.len() > MAX_PROTECTED_BLOB {
         return Err("seal:v2_input_too_large".into());
     }
     if raw.starts_with(b"RSEAL1") {
@@ -290,6 +316,19 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     }
     #[cfg(not(windows))]
     {
+        Err("seal:windows_required".into())
+    }
+}
+
+/// Streaming publication-only receipt; never persisted in the RSEAL2 payload.
+pub(crate) fn publication_file_digest(path: &Path) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        v2::sha256_file(path)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
         Err("seal:windows_required".into())
     }
 }
@@ -387,6 +426,9 @@ pub fn collect_reg_digests(session: &Path) -> Result<BTreeMap<String, String>, S
 pub fn reg_export_allowed(session: &Path, rel: &str, bytes: &[u8]) -> bool {
     load_seal(session).is_some_and(|seal| snapshot_matches(&seal, rel, bytes))
 }
+
+#[cfg(all(test, windows))]
+pub(crate) mod boundary_tests;
 
 #[cfg(test)]
 mod tests {
