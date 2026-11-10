@@ -48,3 +48,7 @@ flow-compare.html
 
 # ZCode tool-local ignore rules (not part of the app).
 .zcodeignore
+
+# Local performance samples: machine-specific paths and host names.
+benchmarks/runs/
+benchmarks/runs-*/

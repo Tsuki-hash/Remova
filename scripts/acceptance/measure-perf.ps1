@@ -9,7 +9,11 @@ param(
     [Parameter(Mandatory = $true)][string]$Exe,
     [Parameter(Mandatory = $true)][string]$Out,
     [string]$Thresholds = '',
-    [int]$Runs = 3
+    [int]$Runs = 3,
+    # Collect data without judging it. Useful before the maintainer has agreed
+    # thresholds: the numbers are recorded, but no verdict is produced and the
+    # report row stays incomplete.
+    [switch]$CollectOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,16 +28,19 @@ if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "Executable not f
 if (-not (Test-Path -LiteralPath $Thresholds -PathType Leaf)) { throw "Threshold file not found: $Thresholds" }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-# --- Refuse to measure without pre-agreed thresholds ------------------------
+# --- Refuse to judge without pre-agreed thresholds --------------------------
 $thresholdText = Get-Content -LiteralPath $Thresholds -Raw
 $pending = ([regex]::Matches($thresholdText, '待填')).Count
+if ($pending -gt 0 -and -not $CollectOnly) {
+    throw "The threshold file still has $pending unfilled values. A maintainer must set the bounds BEFORE measuring; otherwise the result cannot be judged. Use -CollectOnly to record numbers without a verdict."
+}
 if ($pending -gt 0) {
-    throw "The threshold file still has $pending unfilled values. A maintainer must set the bounds BEFORE measuring; otherwise the result cannot be judged."
+    Write-Host "Thresholds are not confirmed yet; collecting data only (no verdict)." -ForegroundColor Yellow
 }
 
 # --- Collect runs ----------------------------------------------------------
 $sha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-$runs = @()
+$samples = @()
 for ($i = 1; $i -le $Runs; $i++) {
     $proc = Start-Process -FilePath $Exe -PassThru
     try {
@@ -45,7 +52,7 @@ for ($i = 1; $i -le $Runs; $i++) {
         $sw.Stop()
         Start-Sleep -Seconds 2
         $proc.Refresh()
-        $runs += [ordered]@{
+        $samples += [ordered]@{
             run          = $i
             idle_observed = $idle
             startup_ms   = [int]$sw.ElapsedMilliseconds
@@ -57,7 +64,7 @@ for ($i = 1; $i -le $Runs; $i++) {
     }
 }
 
-$startupValues = $runs | ForEach-Object { $_.startup_ms } | Sort-Object
+$startupValues = $samples | ForEach-Object { $_.startup_ms } | Sort-Object
 $median = $startupValues[[int][math]::Floor($startupValues.Count / 2)]
 $worst = $startupValues[-1]
 
@@ -65,7 +72,7 @@ $result = [ordered]@{
     executable   = (Resolve-Path $Exe).Path
     sha256       = $sha
     measured_at  = (Get-Date).ToString('o')
-    runs         = $runs
+    runs         = $samples
     startup_median_ms = $median
     startup_worst_ms  = $worst
     machine      = [ordered]@{
@@ -85,6 +92,12 @@ Write-Host ("Startup median {0} ms, worst {1} ms over {2} runs" -f $median, $wor
 # Only the startup metric is automated here; the remaining rows in the
 # threshold file need the scan/backup fixtures described in
 # scripts/acceptance/README.md and must be filled by the operator.
+if ($CollectOnly) {
+    Write-Host 'Collected only: no threshold was applied, so this run proves nothing about P-01.' -ForegroundColor Yellow
+    Write-Host "Raw data: $file"
+    exit 0
+}
+
 $limitMatch = [regex]::Match($thresholdText, '(?m)^\|\s*冷启动到可交互\s*\|\s*([0-9]+)\s*(ms|s)?\s*\|')
 if ($limitMatch.Success) {
     $limit = [int]$limitMatch.Groups[1].Value
