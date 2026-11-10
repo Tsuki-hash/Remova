@@ -262,28 +262,10 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                             };
                         }
                         if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                            let name = entry.file_name().to_string_lossy().into_owned();
-                            if !name.starts_with('.')
-                                && !name.starts_with('@')
-                                && name != "node_modules"
-                            {
-                                let manifest = entry.path().join("package.json");
-                                if matches!(
-                                    crate::fsutil::local_scan_file_exists(&manifest),
-                                    Ok(false)
-                                ) {
-                                    push(
-                                        &mut entries,
-                                        CliResidueEntry {
-                                            manager: "npm".into(),
-                                            kind: "pkg_no_manifest".into(),
-                                            name,
-                                            detail: entry.path().to_string_lossy().into_owned(),
-                                            redacted: false,
-                                        },
-                                    );
-                                }
-                            }
+                            // `prefix` holds command shims and the
+                            // `node_modules` tree; an ordinary directory here is
+                            // not an npm package. Package manifests are checked
+                            // under `node_modules` below.
                             continue;
                         }
                         let name = entry.file_name().to_string_lossy().into_owned();
@@ -332,6 +314,28 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                         };
                         let name = entry.file_name().to_string_lossy().into_owned();
                         if !name.starts_with('@') {
+                            // An unscoped package directory under `node_modules`
+                            // must carry a manifest; without one it is a broken
+                            // install, not a working package.
+                            if !name.starts_with('.') && entry.file_type().is_ok_and(|t| t.is_dir())
+                            {
+                                let manifest = entry.path().join("package.json");
+                                if matches!(
+                                    crate::fsutil::local_scan_file_exists(&manifest),
+                                    Ok(false)
+                                ) {
+                                    push(
+                                        &mut entries,
+                                        CliResidueEntry {
+                                            manager: "npm".into(),
+                                            kind: "pkg_no_manifest".into(),
+                                            name,
+                                            detail: entry.path().to_string_lossy().into_owned(),
+                                            redacted: false,
+                                        },
+                                    );
+                                }
+                            }
                             continue;
                         }
                         let Ok(scope_read) = crate::fsutil::read_local_scan_dir(&entry.path())
