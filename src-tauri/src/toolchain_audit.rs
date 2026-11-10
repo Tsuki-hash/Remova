@@ -200,6 +200,46 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
     result
 }
 
+/// Directories an SDK probe may execute a program from. PATH is user-writable:
+/// resolving `dotnet` to a first match under the current directory or a temp
+/// folder and then running it would execute untrusted code just by opening a
+/// read-only panel. Only OS/vendor install roots qualify.
+fn trusted_probe_root(path: &std::path::Path) -> bool {
+    let Some(raw) = path.to_str() else {
+        return false;
+    };
+    if !crate::fsutil::is_local_drive_path(raw) || crate::fsutil::is_reparse_point(path) {
+        return false;
+    }
+    let normalized = crate::fsutil::path_key(path).unwrap_or_default();
+    if normalized.is_empty() {
+        return false;
+    }
+    let mut roots: Vec<String> = Vec::new();
+    for env in [
+        "SystemRoot",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramData",
+    ] {
+        if let Some(value) = std::env::var_os(env) {
+            if let Some(key) = crate::fsutil::path_key(std::path::Path::new(&value)) {
+                roots.push(key);
+            }
+        }
+    }
+    for fallback in [
+        r"c:\windows",
+        r"c:\program files",
+        r"c:\program files (x86)",
+    ] {
+        roots.push(fallback.to_string());
+    }
+    roots
+        .iter()
+        .any(|root| normalized == *root || normalized.starts_with(&format!("{root}\\")))
+}
+
 /// Probe one SDK tool via PATH resolution (`where`) and its own version flag.
 /// Read-only; a tool that resolves but fails to run reports "present" with
 /// the error as detail — absence is only ever claimed from PATH resolution.
@@ -222,20 +262,35 @@ fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
             detail: String::new(),
         };
     }
-    let first = String::from_utf8_lossy(&output.stdout)
+    let candidates: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if first.is_empty() {
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    if candidates.is_empty() {
         return SdkProbe {
             tool: tool.into(),
             present: false,
             detail: String::new(),
         };
     }
-    let run = std::process::Command::new(&first).arg(version_arg).output();
+    // The first match may live anywhere on PATH, including the working
+    // directory. Report presence from PATH, but only execute a candidate that
+    // sits under a trusted install root.
+    let executable = candidates
+        .iter()
+        .find(|candidate| trusted_probe_root(std::path::Path::new(candidate)));
+    let Some(first) = executable else {
+        return SdkProbe {
+            tool: tool.into(),
+            present: true,
+            detail: format!(
+                "resolved outside trusted install roots; version not run: {}",
+                candidates[0]
+            ),
+        };
+    };
+    let run = std::process::Command::new(first).arg(version_arg).output();
     let detail = match run {
         Ok(o) => {
             // `java -version` prints to stderr; stdout-empty falls back so the
@@ -381,6 +436,30 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sdk_probe_only_executes_from_trusted_install_roots() {
+        // A working-directory or temp candidate is reported present but never run.
+        let tmp = crate::test_support::TempDir::new("probe-untrusted");
+        let fake = tmp.path().join("dotnet.exe");
+        std::fs::write(&fake, b"not a real binary").unwrap();
+        assert!(
+            !trusted_probe_root(&fake),
+            "a temp-directory candidate must not be executed"
+        );
+        assert!(!trusted_probe_root(std::path::Path::new(
+            r"\\server\share\dotnet.exe"
+        )));
+        // A real System32 binary is trusted.
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            let where_exe = std::path::Path::new(&system_root)
+                .join("System32")
+                .join("where.exe");
+            if where_exe.is_file() {
+                assert!(trusted_probe_root(&where_exe));
+            }
+        }
+    }
 
     #[test]
     fn consumer_prune_list_blocks_dependency_and_vcs_dirs() {

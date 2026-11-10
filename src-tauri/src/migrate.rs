@@ -610,6 +610,15 @@ fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result
     if copy_cancelled() {
         return Err("migrate:cancelled".into());
     }
+    // Admission checks the source and target roots only. A pre-planted junction
+    // or symlink below the target would make every later write land outside the
+    // target tree, so the copy refuses the whole operation instead of following it.
+    if is_reparse(to) {
+        return Err(format!(
+            "migrate:target reparse point refused: {}",
+            to.display()
+        ));
+    }
     std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
     let read = std::fs::read_dir(from).map_err(|e| e.to_string())?;
     for entry in read {
@@ -645,6 +654,16 @@ fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result
                 _ => false,
             };
             if !same {
+                // A target leaf that is a hard link or symlink shares or
+                // redirects the file behind it; writing through it would modify
+                // data outside the migration target.
+                if crate::fsutil::is_reparse_point(&child_to)
+                    || crate::fsutil::has_multiple_links(&child_to)
+                {
+                    return Err(format!(
+                        "migrate:target leaf is linked or redirected: {child_rel}"
+                    ));
+                }
                 std::fs::copy(&child_from, &child_to).map_err(|e| format!("{child_rel}: {e}"))?;
             }
         }
@@ -1125,12 +1144,39 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
                 message: None,
             }
         }
-        Err(e) => MigrationRollbackReport {
-            ok: false,
-            message: Some(format!(
-                "junction removed but the backup could not be renamed back: {e}"
-            )),
-        },
+        Err(e) => {
+            // The junction is already gone, so the original path no longer
+            // exists and a second rollback would be refused at the "source is
+            // not a junction" gate. Re-create the junction when the target is
+            // still intact: the user keeps working from the migrated location
+            // and the rollback entry stays retryable once the rename obstacle
+            // (an open handle, a transient ACL/IO error) clears.
+            let target_intact = target_path.is_dir() && !is_reparse(&target_path);
+            let recreated = target_intact && make_junction(&source_path, &target_path).is_ok();
+            if recreated {
+                ledger(
+                    source,
+                    target,
+                    "rollback",
+                    "rename_failed_junction_restored",
+                );
+                MigrationRollbackReport {
+                    ok: false,
+                    message: Some(format!(
+                        "backup rename failed ({e}); the junction was restored so the migrated data stays reachable and rollback can be retried"
+                    )),
+                }
+            } else {
+                ledger(source, target, "rollback", "rename_failed_manual");
+                MigrationRollbackReport {
+                    ok: false,
+                    message: Some(format!(
+                        "junction removed but the backup could not be renamed back: {e}; the backup remains at {} and needs manual recovery",
+                        backup.display()
+                    )),
+                }
+            }
+        }
     }
 }
 
@@ -1241,6 +1287,43 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn copy_refuses_a_linked_target_subtree_without_touching_the_target() {
+        let tmp = crate::test_support::TempDir::new("migr-linked-target");
+        let source = tmp.path().join("source");
+        std::fs::create_dir_all(source.join("sub")).unwrap();
+        std::fs::write(source.join("sub").join("sentinel.bin"), b"source bytes").unwrap();
+        let target = tmp.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        // A junction planted at the exact path the copy would write into.
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("sentinel.bin"), b"outside must stay").unwrap();
+        mkjunction(&target.join("sub"), &outside);
+
+        // A cancel is armed when no run registered a generation; register this
+        // fixture's run so the copy proceeds to the target check.
+        begin_copy_run();
+        let mut state = CopyState::default();
+        let err = copy_tree(&source, &target, "", &mut state).unwrap_err();
+        assert!(
+            err.contains("target reparse point refused"),
+            "must refuse the linked target subtree: {err}"
+        );
+        // The external tree is byte-identical: nothing was written through the link.
+        assert_eq!(
+            std::fs::read(outside.join("sentinel.bin")).unwrap(),
+            b"outside must stay"
+        );
+        assert!(!outside.join("sentinel2.bin").exists());
+        assert_eq!(
+            std::fs::read(source.join("sub").join("sentinel.bin")).unwrap(),
+            b"source bytes",
+            "the source is never modified"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn migration_state_wire_derived_cutover_uses_canonical_value() {
         // Only a new isolated fixture is changed; no migration/ledger or host
         // registry/API is invoked. Exercise the actual status -> serde boundary.
@@ -1326,6 +1409,45 @@ mod tests {
         let roots = triage_roots_away(tmp.path());
         let rej = check_admission(&src, &tmp.path().join("tgt"), &roots, false);
         assert!(rej.contains(&"source_hardlinks".to_string()), "{rej:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rollback_restores_the_junction_when_the_backup_rename_fails() {
+        let tmp = crate::test_support::TempDir::new("migr-rb-rename");
+        let src = seed_source(tmp.path());
+        let tgt = tmp.path().join("tgt");
+        let roots = triage_roots_away(tmp.path());
+        assert!(check_admission(&src, &tgt, &roots, false).is_empty());
+        copy_phase(&src.to_string_lossy(), &tgt.to_string_lossy()).unwrap();
+        cutover(&src.to_string_lossy(), &tgt.to_string_lossy());
+
+        // Hold the backup open with no delete sharing so the rename must fail
+        // after the junction has already been removed.
+        let backup = tmp.path().join("src-app.bak");
+        // A handle on a file inside the directory blocks renaming that directory
+        // (verified on Windows); a handle on the directory itself does not.
+        use std::os::windows::fs::OpenOptionsExt;
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x0000_0001)
+            .open(backup.join("a.txt"))
+            .unwrap();
+        let rb = rollback(&src.to_string_lossy(), &tgt.to_string_lossy());
+        assert!(!rb.ok, "the rename cannot succeed while the handle is held");
+        // The migrated data stays reachable: the junction was re-created and the
+        // rollback entry remains retryable instead of leaving an empty path.
+        assert!(src.is_dir(), "the source path must still resolve");
+        assert!(src.join("a.txt").is_file(), "migrated data stays reachable");
+        let retry = rollback(&src.to_string_lossy(), &tgt.to_string_lossy());
+        assert!(!retry.ok, "still held: the retry reports failure honestly");
+        drop(held);
+        let recovered = rollback(&src.to_string_lossy(), &tgt.to_string_lossy());
+        assert!(
+            recovered.ok,
+            "after release the same entry recovers: {recovered:?}"
+        );
+        assert!(src.join("a.txt").is_file(), "the original tree is back");
     }
 
     #[cfg(windows)]

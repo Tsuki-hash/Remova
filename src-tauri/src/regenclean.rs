@@ -190,6 +190,22 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
     RegenerableScanResult { items, omitted }
 }
 
+/// Fixed layouts are deletable only when every level from the root down to the
+/// layout is a real local directory. A redirected root (or a junction planted
+/// above one) would make the "cache" name point at unrelated user data, and
+/// this module deletes without a Safety Vault backup.
+///
+/// Only layouts that exist are judged here: a missing layout is a separate,
+/// already-reported outcome, and admission still runs before any deletion.
+fn layouts_are_trusted(layouts: &[(PathBuf, &'static str)]) -> bool {
+    layouts.iter().all(|(path, _)| {
+        if !path.try_exists().unwrap_or(false) {
+            return true;
+        }
+        crate::fsutil::is_safe_local_scan_root(path) && !crate::fsutil::is_reparse_point(path)
+    })
+}
+
 /// Delete core over injected layouts. Re-admits every wanted path through a
 /// fresh scan, keeps the layout directory, and reports locked children.
 fn delete_with(
@@ -197,6 +213,9 @@ fn delete_with(
     busy: bool,
     paths: &[String],
 ) -> Result<RegenerableCleanupReport, String> {
+    if !layouts_are_trusted(layouts) {
+        return Err("regenerable layout root is redirected or not local".into());
+    }
     let fresh = scan_with(layouts, busy);
     let fresh_paths: std::collections::HashSet<String> = fresh
         .items
@@ -466,6 +485,40 @@ mod tests {
             || false
         ));
         assert!(cache.is_none());
+    }
+
+    #[test]
+    fn a_redirected_layout_root_is_refused_before_any_delete() {
+        let tmp = crate::test_support::TempDir::new("regenclean-redirected");
+        let outside = tmp.subdir("outside");
+        let payload = outside.join("user-data.bin");
+        std::fs::write(&payload, b"must survive").unwrap();
+        // The layout name itself is a junction pointing at unrelated data.
+        let layout = tmp.path().join("Temp");
+        #[cfg(windows)]
+        {
+            assert!(
+                std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+                    .args(["/c", "mklink", "/J"])
+                    .arg(&layout)
+                    .arg(&outside)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let layouts = vec![(layout.clone(), "win_temp")];
+        let err =
+            delete_with(&layouts, false, &[layout.to_string_lossy().into_owned()]).unwrap_err();
+        assert!(
+            err.contains("redirected or not local"),
+            "a redirected layout root must be refused: {err}"
+        );
+        assert_eq!(
+            std::fs::read(&payload).unwrap(),
+            b"must survive",
+            "nothing outside the layout may be deleted"
+        );
     }
 
     #[test]
