@@ -39,6 +39,7 @@ export function HistoryPanel({
   onClose,
   loading,
   loadError,
+  mutating,
   onReload,
 }: {
   history: HistoryRow[];
@@ -49,6 +50,8 @@ export function HistoryPanel({
   onClose: () => void;
   loading?: boolean;
   loadError?: string | null;
+  /** A delete/clear is running; destructive controls stay disabled. */
+  mutating?: boolean;
   onReload?: () => void;
 }) {
   const L = t();
@@ -90,9 +93,9 @@ export function HistoryPanel({
             height: 30,
             background: "var(--danger-text)",
             color: "var(--surface)",
-            opacity: loading || !!loadError || history.length === 0 ? 0.5 : 1,
+            opacity: loading || !!loadError || history.length === 0 || mutating ? 0.5 : 1,
           }}
-          disabled={loading || !!loadError || history.length === 0}
+          disabled={loading || !!loadError || history.length === 0 || mutating}
           onClick={onClearAll}
         >
           {L.clearHistory}

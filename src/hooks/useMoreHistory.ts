@@ -12,6 +12,8 @@ export function useMoreHistory(onError: (msg: string) => void) {
   const [openHistory, setOpenHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  /** True while a delete/clear is in flight; the list controls stay disabled. */
+  const [historyMutating, setHistoryMutating] = useState(false);
   const loadSequence = useRef(0);
   useEffect(() => () => { ++loadSequence.current; }, []);
 
@@ -47,13 +49,21 @@ export function useMoreHistory(onError: (msg: string) => void) {
         danger: true,
       });
       if (!ok) return;
+      // A mutation invalidates every in-flight read before it starts, and its
+      // own refresh only publishes if no newer mutation has begun. Without
+      // this, a slow delete refresh could overwrite a later "clear all".
+      const sequence = ++loadSequence.current;
+      setHistoryMutating(true);
       try {
         await api.deleteHistory([id]);
         const h = await api.history();
+        if (sequence !== loadSequence.current) return;
         setHistory(h);
         toast.success(L.historyDeleted);
       } catch (e) {
-        onError(formatError(e));
+        if (sequence === loadSequence.current) onError(formatError(e));
+      } finally {
+        setHistoryMutating(false);
       }
     },
     [history, onError],
@@ -68,12 +78,18 @@ export function useMoreHistory(onError: (msg: string) => void) {
       danger: true,
     });
     if (!ok) return;
+    // Same generation rule as delete: the newest mutation owns the list.
+    const sequence = ++loadSequence.current;
+    setHistoryMutating(true);
     try {
       await api.clearHistory();
+      if (sequence !== loadSequence.current) return;
       setHistory([]);
       toast.success(L.historyCleared);
     } catch (e) {
-      onError(formatError(e));
+      if (sequence === loadSequence.current) onError(formatError(e));
+    } finally {
+      setHistoryMutating(false);
     }
   }, [onError]);
 
@@ -106,6 +122,7 @@ export function useMoreHistory(onError: (msg: string) => void) {
     history,
     historyLoading,
     historyLoadError,
+    historyMutating,
     histQ,
     setHistQ,
     openHistory,
