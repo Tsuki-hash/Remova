@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef } from "react";
+import { useCallback, useMemo, useReducer } from "react";
 import type { CloseMode } from "../lib/closeMode";
 import type { NavId, ThemePreference } from "../lib/theme";
 import type { UninstallStage } from "../components/UninstallStageBar";
@@ -10,8 +10,6 @@ import { initialShellState, shellReducer } from "./reducers/shell";
 /** Shell chrome state + actions (domain reducer). */
 export function useShellState() {
   const [state, dispatch] = useReducer(shellReducer, undefined, initialShellState);
-  const stateRef = useRef(state);
-  stateRef.current = state;
 
   const toggleLang = useCallback(() => {
     setLang(currentLang() === "zh" ? "en" : "zh");
@@ -29,19 +27,13 @@ export function useShellState() {
   const openCheckup = useCallback(() => dispatch({ type: "checkup/open" }), []);
   const closeCheckup = useCallback(() => dispatch({ type: "checkup/close" }), []);
 
-  /** Real functional updaters — not toggle-on-fn. */
+  /** Functional updaters run inside the reducer, on the newest state. */
   const setTheme = useCallback((t: ThemePreference | ((th: ThemePreference) => ThemePreference)) => {
-    const next = typeof t === "function" ? t(stateRef.current.theme) : t;
-    if (next !== stateRef.current.theme) {
-      dispatch({ type: "theme/set", theme: next });
-    }
+    dispatch({ type: "theme/set", theme: t });
   }, []);
   const setNav = useCallback((n: NavId) => dispatch({ type: "nav/set", nav: n }), []);
   const setLangVer = useCallback((updater: number | ((v: number) => number)) => {
-    const next = typeof updater === "function" ? updater(stateRef.current.langVer) : updater;
-    if (next !== stateRef.current.langVer) {
-      dispatch({ type: "lang/set", value: next });
-    }
+    dispatch({ type: "lang/set", value: updater });
   }, []);
   const setCloseModeState = useCallback((m: CloseMode | null) => {
     dispatch({ type: "closeMode/set", value: m });
@@ -65,10 +57,7 @@ export function useShellState() {
     dispatch({ type: "uninstallStage/set", value: v });
   }, []);
   const setShowDetail = useCallback((v: boolean | ((s: boolean) => boolean)) => {
-    const next = typeof v === "function" ? v(stateRef.current.showDetail) : v;
-    if (next !== stateRef.current.showDetail) {
-      dispatch({ type: "detail/set", value: next });
-    }
+    dispatch({ type: "detail/set", value: v });
   }, []);
 
   const actions = useMemo(

@@ -20,9 +20,12 @@ export type ShellState = {
 };
 
 export type ShellAction =
-  | { type: "theme/set"; theme: ThemePreference }
+  | {
+      type: "theme/set";
+      theme: ThemePreference | ((th: ThemePreference) => ThemePreference);
+    }
   | { type: "lang/bump" }
-  | { type: "lang/set"; value: number }
+  | { type: "lang/set"; value: number | ((v: number) => number) }
   | { type: "nav/set"; nav: NavId }
   | { type: "closeMode/set"; value: CloseMode | null }
   | { type: "update/set"; value: UpdateInfo | null }
@@ -35,7 +38,7 @@ export type ShellAction =
     }
   | { type: "uninstallStage/set"; value: UninstallStage }
   | { type: "detail/toggle" }
-  | { type: "detail/set"; value: boolean };
+  | { type: "detail/set"; value: boolean | ((v: boolean) => boolean) };
 
 export function initialShellState(): ShellState {
   return {
@@ -55,11 +58,21 @@ export function initialShellState(): ShellState {
 export function shellReducer(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
     case "theme/set":
-      return { ...state, theme: action.theme };
+      // Apply a function updater against the newest state, not a render-time
+      // ref: two batched increments must both land.
+      return {
+        ...state,
+        theme:
+          typeof action.theme === "function" ? action.theme(state.theme) : action.theme,
+      };
     case "lang/bump":
       return { ...state, langVer: state.langVer + 1 };
     case "lang/set":
-      return { ...state, langVer: action.value };
+      return {
+        ...state,
+        langVer:
+          typeof action.value === "function" ? action.value(state.langVer) : action.value,
+      };
     case "nav/set":
       return { ...state, nav: action.nav };
     case "closeMode/set":
@@ -79,7 +92,11 @@ export function shellReducer(state: ShellState, action: ShellAction): ShellState
     case "detail/toggle":
       return { ...state, showDetail: !state.showDetail };
     case "detail/set":
-      return { ...state, showDetail: action.value };
+      return {
+        ...state,
+        showDetail:
+          typeof action.value === "function" ? action.value(state.showDetail) : action.value,
+      };
     default:
       return state;
   }

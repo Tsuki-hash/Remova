@@ -4,6 +4,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useAppCoreState } from "../hooks/useAppCoreState";
 import { useResidualState } from "../hooks/useResidualState";
 import { useShellState } from "../hooks/useShellState";
+import { initialShellState, shellReducer } from "../hooks/reducers/shell";
 
 describe("FE-P0a functional setters", () => {
   it("setMulti applies updater instead of clearing", () => {
@@ -78,4 +79,25 @@ describe("FE-P0a functional setters", () => {
     act(() => result.current.setShowDetail(true));
     expect(result.current.showDetail).toBe(true);
   });
+});
+
+it("two batched functional updates both land", () => {
+  // The reducer applies the updater against the newest state, so a second
+  // increment in the same batch is not lost to a stale render-time ref.
+  const state = { ...initialShellState(), langVer: 5, theme: "light" as const, showDetail: true };
+  const afterLang = shellReducer(
+    shellReducer(state, { type: "lang/set", value: (v: number) => v + 1 }),
+    { type: "lang/set", value: (v: number) => v + 1 },
+  );
+  expect(afterLang.langVer).toBe(7);
+  const afterTheme = shellReducer(
+    shellReducer(state, { type: "theme/set", theme: (t) => (t === "light" ? "dark" : "light") }),
+    { type: "theme/set", theme: (t) => (t === "light" ? "dark" : "light") },
+  );
+  expect(afterTheme.theme).toBe("light");
+  const afterDetail = shellReducer(
+    shellReducer(state, { type: "detail/set", value: (v: boolean) => !v }),
+    { type: "detail/set", value: (v: boolean) => !v },
+  );
+  expect(afterDetail.showDetail).toBe(true);
 });
