@@ -4,6 +4,7 @@ pub mod ai;
 pub mod apps;
 pub mod association;
 pub mod backup;
+pub mod bounded_cmd;
 pub mod cliglobals;
 pub mod cliresidue;
 pub mod commands;

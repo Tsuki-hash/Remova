@@ -245,24 +245,42 @@ fn trusted_probe_root(path: &std::path::Path) -> bool {
 /// the error as detail — absence is only ever claimed from PATH resolution.
 #[cfg(windows)]
 fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
-    let resolved = std::process::Command::new(crate::regops::sys_tool("where.exe"))
-        .arg(tool)
-        .output();
-    let Ok(output) = resolved else {
-        return SdkProbe {
-            tool: tool.into(),
-            present: false,
-            detail: String::new(),
-        };
+    let mut where_cmd = std::process::Command::new(crate::regops::sys_tool("where.exe"));
+    where_cmd.arg(tool);
+    let resolved = crate::bounded_cmd::run_bounded(
+        where_cmd,
+        crate::bounded_cmd::PROBE_TIMEOUT,
+        crate::bounded_cmd::PROBE_OUTPUT_CAP,
+    );
+    let (stdout, success) = match resolved {
+        crate::bounded_cmd::BoundedOutput::Finished {
+            success, stdout, ..
+        } => (stdout, success),
+        // A hung or cancelled `where` must not look like "absent": report the
+        // real cause so the panel can say the probe did not finish.
+        crate::bounded_cmd::BoundedOutput::TimedOut => {
+            return SdkProbe {
+                tool: tool.into(),
+                present: false,
+                detail: "path lookup timed out".into(),
+            }
+        }
+        crate::bounded_cmd::BoundedOutput::Failed(e) => {
+            return SdkProbe {
+                tool: tool.into(),
+                present: false,
+                detail: format!("path lookup failed: {e}"),
+            }
+        }
     };
-    if !output.status.success() {
+    if !success {
         return SdkProbe {
             tool: tool.into(),
             present: false,
             detail: String::new(),
         };
     }
-    let candidates: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let candidates: Vec<String> = stdout
         .lines()
         .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty())
@@ -290,29 +308,30 @@ fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
             ),
         };
     };
-    let run = std::process::Command::new(first).arg(version_arg).output();
+    let mut version_cmd = std::process::Command::new(first);
+    version_cmd.arg(version_arg);
+    let run = crate::bounded_cmd::run_bounded(
+        version_cmd,
+        crate::bounded_cmd::PROBE_TIMEOUT,
+        crate::bounded_cmd::PROBE_OUTPUT_CAP,
+    );
     let detail = match run {
-        Ok(o) => {
+        crate::bounded_cmd::BoundedOutput::Finished { stdout, stderr, .. } => {
             // `java -version` prints to stderr; stdout-empty falls back so the
             // detail line is never blank for a tool that ran.
-            let out = String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let out = stdout.lines().next().unwrap_or("").trim().to_string();
             if out.is_empty() {
-                String::from_utf8_lossy(&o.stderr)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string()
+                stderr.lines().next().unwrap_or("").trim().to_string()
             } else {
                 out
             }
         }
-        Err(e) => format!("resolved at {first}; run failed: {e}"),
+        crate::bounded_cmd::BoundedOutput::TimedOut => {
+            format!("resolved at {first}; version probe timed out")
+        }
+        crate::bounded_cmd::BoundedOutput::Failed(e) => {
+            format!("resolved at {first}; run failed: {e}")
+        }
     };
     SdkProbe {
         tool: tool.into(),
@@ -345,20 +364,37 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
     };
     // The binary resolved: the audit can enumerate instances. Without this the
     // panel showed the "vswhere missing" warning even next to a full list.
-    let output = std::process::Command::new(&vswhere)
-        .args(["-all", "-prerelease", "-products", "*", "-format", "json"])
-        .output();
-    let Ok(output) = output else {
-        result.notes.push("vswhere_failed".into());
-        result.completeness.status = crate::scan_contract::ScanStatus::Partial;
-        result.completeness.failed_roots.push("vswhere".into());
-        return result;
+    let mut vswhere_cmd = std::process::Command::new(&vswhere);
+    vswhere_cmd.args(["-all", "-prerelease", "-products", "*", "-format", "json"]);
+    let output = crate::bounded_cmd::run_bounded(
+        vswhere_cmd,
+        crate::bounded_cmd::PROBE_TIMEOUT,
+        crate::bounded_cmd::PROBE_OUTPUT_CAP,
+    );
+    let (vs_stdout, vs_success, vs_code) = match output {
+        crate::bounded_cmd::BoundedOutput::Finished {
+            status_code,
+            success,
+            stdout,
+            ..
+        } => (stdout, success, status_code),
+        crate::bounded_cmd::BoundedOutput::TimedOut => {
+            result.notes.push("vswhere_timeout".into());
+            result.completeness.status = crate::scan_contract::ScanStatus::Partial;
+            result.completeness.failed_roots.push("vswhere".into());
+            return result;
+        }
+        crate::bounded_cmd::BoundedOutput::Failed(_) => {
+            result.notes.push("vswhere_failed".into());
+            result.completeness.status = crate::scan_contract::ScanStatus::Partial;
+            result.completeness.failed_roots.push("vswhere".into());
+            return result;
+        }
     };
-    if !output.status.success() {
-        result.notes.push(format!(
-            "vswhere_exit:{}",
-            output.status.code().unwrap_or(-1)
-        ));
+    if !vs_success {
+        result
+            .notes
+            .push(format!("vswhere_exit:{}", vs_code.unwrap_or(-1)));
         result.completeness.status = crate::scan_contract::ScanStatus::Partial;
         result.completeness.failed_roots.push("vswhere".into());
         return result;
@@ -375,7 +411,7 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
         #[serde(rename = "productId")]
         product_id: Option<String>,
     }
-    let parsed: Vec<VsWhereInstance> = match serde_json::from_slice(&output.stdout) {
+    let parsed: Vec<VsWhereInstance> = match serde_json::from_str(&vs_stdout) {
         Ok(list) => list,
         Err(e) => {
             result.notes.push(format!("vswhere_parse:{e}"));
