@@ -26,6 +26,7 @@ export function useAiScanNarrative({
   aiEnabled,
   aiBusy,
   aiReportBusy,
+  langVer,
   L,
   setAiBusy,
   setAiNotes,
@@ -41,6 +42,8 @@ export function useAiScanNarrative({
   aiEnabled: boolean;
   aiBusy: boolean;
   aiReportBusy: boolean;
+  /** Bumped on every UI language switch; generated prose is language-bound. */
+  langVer: number;
   L: Strings;
   setAiBusy: (v: boolean) => void;
   setAiNotes: (v: Record<string, string>) => void;
@@ -103,7 +106,14 @@ export function useAiScanNarrative({
     }
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
+  const aiReportSeqRef = useRef(0);
   useEffect(() => {
+ // Always invalidate in-flight explain when scan identity or the UI language
+ // changes, even if this run is skipped because aiBusy: a response generated
+ // for the previous language must never land in the current one.
+    aiReportSeqRef.current += 1;
+    setAiReportNote(null);
+    setAiSummaryNote(null);
  // Always invalidate in-flight explain when scan identity changes,
  // even if this run is skipped because aiBusy.
     aiExplainSeqRef.current += 1;
@@ -119,9 +129,8 @@ export function useAiScanNarrative({
  // scanId fully identifies scan content; runAiExplain is stable
  // in the values it closes over.
  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanId, aiEnabled]);
+  }, [scanId, aiEnabled, langVer]);
 
-  const aiReportSeqRef = useRef(0);
   const runAiReport = useCallback(
     async (opts?: { force?: boolean }) => {
       if (!report || !("deleted" in report) || !aiEnabled) return;

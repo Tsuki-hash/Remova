@@ -8,8 +8,9 @@ import { backendErrorText } from "../lib/backendText";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
-import type { FirewallRule, ScanCompleteness } from "../types";
+import type { FirewallRule, ItemDetail, ScanCompleteness } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
+import { CleanupResultDetails } from "./CleanupResultDetails";
 
 /**
  * M3 (SOP §8-1): firewall rules whose program file no longer exists. The scan
@@ -25,6 +26,13 @@ export function FirewallRulesPanel({
 }) {
   const L = t();
   const [rows, setRows] = useState<FirewallRule[] | null>(null);
+  // The last destructive result stays on screen. A 3-second toast was the only
+  // record of which rules failed and why; a reload used to erase it.
+  const [lastResult, setLastResult] = useState<{
+    failed: ItemDetail[];
+    removed: string[];
+    backupDir: string;
+  } | null>(null);
   const [omitted, setOmitted] = useState(0);
   const [completeness, setCompleteness] = useState<ScanCompleteness>({
     status: "unknown",
@@ -74,6 +82,16 @@ export function FirewallRulesPanel({
     setBusy(true);
     try {
       const report = await api.deleteFirewallRules([...selected]);
+      setLastResult({
+        failed: report.failed.map(name => ({
+          path: name,
+          kind: "registry",
+          status: "failed",
+          message: L.firewallDeletePartial(report.failed.length),
+        })),
+        removed: report.removed,
+        backupDir: report.backup_dir,
+      });
       if (report.failed.length > 0) {
         toast.error(L.firewallDeletePartial(report.failed.length), {
           detail: report.backup_dir,
@@ -136,6 +154,20 @@ export function FirewallRulesPanel({
         </div>
       </div>
       <ScanCompletenessNotice completeness={completeness} />
+      {lastResult && (
+        <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--border)", borderRadius: 8 }}>
+          <CleanupResultDetails items={lastResult.failed} title={L.cleanupResultTitle} />
+          {lastResult.failed.length === 0 && (
+            <div style={{ ...css.muted, fontSize: 12 }}>
+              {L.firewallDeleteOk}
+              {lastResult.backupDir ? ` · ${lastResult.backupDir}` : ""}
+            </div>
+          )}
+          {lastResult.failed.length > 0 && lastResult.backupDir && (
+            <div style={{ ...css.muted, fontSize: 12 }}>{lastResult.backupDir}</div>
+          )}
+        </div>
+      )}
       {rows === null ? (
         <div style={{ ...css.muted, padding: "10px 0" }}>{L.loadingGeneric}</div>
       ) : rows.length === 0 ? (

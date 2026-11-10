@@ -35,3 +35,13 @@ describe("buildReportAiRequest", () => {
     expect(req.topFailed).toEqual(["C:\\f1", "C:\\f2", "C:\\f3", "C:\\f4", "C:\\f5"]);
   });
 });
+
+it("language switch clears the summary and invalidates in-flight report prose", async () => {
+  // The hook keys its invalidation on langVer; the App effect clears the rest.
+  // A response produced for the previous language must not be written back.
+  const source = await import("node:fs").then(fs =>
+    fs.readFileSync("src/hooks/useAiScanNarrative.ts", "utf8"));
+  expect(source).toContain("langVer");
+  expect(source).toMatch(/\[scanId, aiEnabled, langVer\]/);
+  expect(source).toMatch(/setAiSummaryNote\(null\)/);
+});

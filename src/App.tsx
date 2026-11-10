@@ -479,6 +479,7 @@ export default function App() {
     aiEnabled,
     aiBusy,
     aiReportBusy,
+    langVer,
     L,
     setAiBusy,
     setAiNotes,

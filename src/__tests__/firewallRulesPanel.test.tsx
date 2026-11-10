@@ -122,3 +122,22 @@ it("offers an elevated restart when deletion is refused for admin rights", async
   await waitFor(() => expect(elevateRestart).toHaveBeenCalledTimes(1));
   expect(toast.error).not.toHaveBeenCalled();
 });
+
+it("keeps the failed rules on screen after the list refreshes", async () => {
+  firewallOrphans.mockResolvedValue({ rules: [rule], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+  deleteFirewallRules.mockResolvedValue({
+    removed: [],
+    failed: [rule.value_name],
+    backup_dir: "C:\\ProgramData\\Remova\\Backup\\sess",
+  });
+  panel();
+  await screen.findByText(rule.rule_name);
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) }));
+  await waitFor(() => expect(deleteFirewallRules).toHaveBeenCalled());
+  // The rescan removed the row, but the failure record must survive it: the
+  // toast is only a notification, not the result.
+  await waitFor(() => expect(firewallOrphans).toHaveBeenCalledTimes(2));
+  expect(screen.getByText(rule.value_name)).toBeTruthy();
+  expect(screen.getByText("C:\\ProgramData\\Remova\\Backup\\sess")).toBeTruthy();
+});

@@ -9,6 +9,9 @@ export type HistoryRow = {
   deleted: number;
   failed: number;
   skipped?: number;
+  /** Rows written before these fields existed leave them undefined. */
+  delayed?: number;
+  aborted?: boolean;
   backup_dir: string;
   created_at?: string;
 };
@@ -147,6 +150,15 @@ export function HistoryPanel({
                   {L.histRow(u.h.deleted, u.h.failed)}
                   {typeof u.h.skipped === "number" && u.h.skipped > 0
                     ? ` · ${L.reportSkipped} ${u.h.skipped}`
+                    : ""}
+                  {/* An aborted run and a reboot-deferred one both end at 0/0;
+                      without these labels the history cannot tell them apart. */}
+                  {u.h.aborted ? ` · ${L.histAborted}` : ""}
+                  {typeof u.h.delayed === "number" && u.h.delayed > 0
+                    ? ` · ${L.histDelayed(u.h.delayed)}`
+                    : ""}
+                  {typeof u.h.aborted !== "boolean" && typeof u.h.delayed !== "number"
+                    ? ` · ${L.histLegacy}`
                     : ""}
                 </div>
               </div>
