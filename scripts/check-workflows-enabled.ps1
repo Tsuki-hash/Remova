@@ -25,12 +25,16 @@ $required = @(
   @{ Name = "Release"; Paths = @(".github/workflows/release.yml") }
 )
 
+$mustVerify = $env:CI -ceq 'true' -or -not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)
+
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+  if ($mustVerify) { throw 'gh CLI is required to verify workflow state in CI.' }
   Write-Host "SKIP: gh CLI not found; cannot verify workflow state."
   exit 0
 }
 $auth = & gh auth status 2>&1
 if ($LASTEXITCODE -ne 0) {
+  if ($mustVerify) { throw 'GitHub CLI authentication is required to verify workflow state in CI.' }
   Write-Host "SKIP: gh not authenticated; cannot verify workflow state."
   exit 0
 }

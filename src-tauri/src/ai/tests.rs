@@ -145,6 +145,10 @@ fn capture_ai_request(
             for (is_target, listener) in [(false, &source), (true, &target)] {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // Windows inherits the listener's non-blocking flag into
+                        // the accepted socket; the request reader needs a
+                        // blocking stream or every read fails with WouldBlock.
+                        stream.set_nonblocking(false).unwrap();
                         let request = read_request(&mut stream);
                         let first = requests.is_empty();
                         requests.push((is_target, request));
