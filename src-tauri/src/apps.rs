@@ -297,10 +297,21 @@ pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::i
 /// Complete ownership inventory, including products hidden from the app list.
 /// This read-only scan must not expand or replace uninstall authorization.
 pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
+    scan_installed_inventory_with_completeness().0
+}
+
+/// Inventory plus the completeness of *this* call. The process-wide flag used
+/// to be the only record, so one caller's partial read leaked into another
+/// request; the returned status is local and each caller decides what it can
+/// prove with the rows it received.
+pub(crate) fn scan_installed_inventory_with_completeness(
+) -> (Vec<InstalledApp>, crate::scan_contract::ScanCompleteness) {
     INVENTORY_INCOMPLETE.store(false, Ordering::SeqCst);
     let mut out: Vec<InstalledApp> = Vec::new();
+    let mut failed_roots: Vec<String> = Vec::new();
+    let mut roots_scanned = 0u32;
     if crate::scan_task::cancelled() {
-        return out;
+        return (out, crate::scan_contract::ScanCompleteness::cancelled(0));
     }
     #[cfg(windows)]
     {
@@ -326,20 +337,38 @@ pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
         ];
         for (alias, hive, sub, access) in sources {
             if crate::scan_task::cancelled() {
-                return out;
+                return (
+                    out,
+                    crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+                );
             }
-            if !collect_uninstall(hive, sub, access, alias, &mut out) {
+            if collect_uninstall(hive, sub, access, alias, &mut out) {
+                roots_scanned += 1;
+            } else {
                 INVENTORY_INCOMPLETE.store(true, Ordering::SeqCst);
+                failed_roots.push(alias.to_string());
             }
         }
         // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
         if crate::scan_task::cancelled() {
-            return out;
+            return (
+                out,
+                crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+            );
         }
         out.extend(crate::storeapps::scan_store_apps());
     }
     dedup_same_products(&mut out);
-    out
+    let completeness = if failed_roots.is_empty() {
+        crate::scan_contract::ScanCompleteness {
+            status: crate::scan_contract::ScanStatus::Complete,
+            roots_scanned,
+            failed_roots,
+        }
+    } else {
+        crate::scan_contract::ScanCompleteness::partial(roots_scanned, failed_roots)
+    };
+    (out, completeness)
 }
 
 /// Sort by lowercase name and merge same-product twins within one hive class.

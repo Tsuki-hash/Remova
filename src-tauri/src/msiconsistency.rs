@@ -389,11 +389,12 @@ pub fn scan_msi_consistency() -> MsiConsistencyReport {
         };
     }
     let mut report = collect_report(
-        || Collected {
-            rows: crate::apps::scan_installed_inventory(),
-            // The Vec-only inventory API cannot prove per-request completeness.
-            // Do not infer missing Uninstall records until that API carries it.
-            failures: vec!["inventory_completeness_unknown".into()],
+        || {
+            let (rows, completeness) = crate::apps::scan_installed_inventory_with_completeness();
+            Collected {
+                rows,
+                failures: completeness.failed_roots,
+            }
         },
         crate::regscan::snapshot_names,
         msi_db_products,
