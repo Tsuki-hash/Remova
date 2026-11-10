@@ -58,6 +58,12 @@ pub mod winsxs;
 mod path_value_smoke;
 #[cfg(test)]
 mod pipeline_smoke;
+// Opt-in performance baseline (every case #[ignore]d) — see the module docs.
+#[cfg(test)]
+mod perf_baseline;
+// Command-layer wire tests: real JSON payloads through the real handlers.
+#[cfg(test)]
+mod command_wire_tests;
 // Shared fixtures. Test-only, so it must never reach the shipped binary.
 #[cfg(test)]
 mod test_support;

@@ -134,6 +134,15 @@ impl From<&AiConfig> for AiConfigView {
 }
 
 fn config_path() -> Result<PathBuf, String> {
+    // Test-only redirect: the IPC tests exercise `save_ai_config` for real, and
+    // must never read or rewrite the user's actual AI settings. Compiled out of
+    // the shipped binary.
+    #[cfg(test)]
+    if let Ok(dir) = std::env::var("REMOVA_AI_CONFIG_DIR") {
+        if !dir.trim().is_empty() {
+            return Ok(PathBuf::from(dir).join("ai-config.json"));
+        }
+    }
     // Known Folder, not LOCALAPPDATA: an elevated process must not read or write
     // a path an environment variable can point at a network share.
     #[cfg(windows)]
