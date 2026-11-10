@@ -32,6 +32,10 @@ pub struct PathMapSeal {
     /// Empty inventories authorize no registry or PATH snapshots.
     #[serde(default)]
     pub reg_digests: BTreeMap<String, String>,
+    /// Digest of every backed-up payload file, keyed `files/<entry>`.
+    /// `None` for seals written before this field existed.
+    #[serde(default)]
+    pub file_digests: Option<BTreeMap<String, String>>,
 }
 
 pub(crate) fn normalize_target(s: &str) -> String {
@@ -225,13 +229,25 @@ pub fn write_seal(
     path_map: &BTreeMap<String, String>,
     reg_digests: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    write_seal_with_files(session, _map_json, path_map, reg_digests, None)
+}
+
+/// Seal including the digest of every published payload file. Restore uses this
+/// to prove the bytes it writes back are the ones that were backed up.
+pub fn write_seal_with_files(
+    session: &Path,
+    _map_json: &str,
+    path_map: &BTreeMap<String, String>,
+    reg_digests: &BTreeMap<String, String>,
+    file_digests: Option<BTreeMap<String, String>>,
+) -> Result<(), String> {
     let name = session_name_of(session).ok_or("seal: bad session name")?;
     #[cfg(windows)]
     let blob = {
         let store = key::load(true)?;
         v2::encode_blob(
             &store.key,
-            &v2::payload(&name, path_map, reg_digests.clone())?,
+            &v2::payload_with_files(&name, path_map, reg_digests.clone(), file_digests.clone())?,
         )?
     };
     #[cfg(not(windows))]
@@ -312,6 +328,7 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
             map_digest: seal.map_digest,
             targets: seal.targets,
             reg_digests: seal.reg_digests,
+            file_digests: seal.file_digests,
         })
     }
     #[cfg(not(windows))]
@@ -461,6 +478,7 @@ mod tests {
             map_digest: String::new(),
             targets: vec![],
             reg_digests: Default::default(),
+            file_digests: None,
         };
         assert!(!map_matches(&seal, &map));
         seal.map_digest = map_digest_of(&map);
@@ -517,6 +535,7 @@ mod tests {
                 map_digest: map_digest_of(&map),
                 targets: vec![normalize_target(r"C:\Users\a\Documents\App\f")],
                 reg_digests: BTreeMap::new(),
+                file_digests: None,
             })
             .unwrap();
             std::fs::write(seal_path(&name), forged).unwrap();
@@ -608,6 +627,7 @@ mod tests {
                 map_digest: map_digest_of(&map),
                 targets: map.values().map(|s| normalize_target(s)).collect(),
                 reg_digests: BTreeMap::new(),
+                file_digests: None,
             };
             let mut legacy = b"RSEAL1".to_vec();
             legacy.extend(protect(&serde_json::to_vec(&old).unwrap()).unwrap());

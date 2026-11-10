@@ -729,7 +729,19 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     // for diagnosis, never re-inventoried and signed as an empty success.
     publish_stage(private, session)?;
     verify_publication(session, &inventory, &map, &digests)?;
-    crate::path_seal::write_seal(session, &json, &map, &digests)?;
+    // Bind every published payload file into the seal. Without this, a rewrite
+    // of `files/<entry>` between backup and restore was invisible to the seal
+    // and the modified bytes were restored as if authentic.
+    let file_digests: std::collections::BTreeMap<String, String> = inventory
+        .iter()
+        .filter_map(|(rel, digest)| {
+            let digest = digest.as_ref()?;
+            // `inventory` keys are already relative to the private stage root,
+            // so they start with `files/` or `registry/`.
+            Some((rel.to_string_lossy().replace('\\', "/"), digest.clone()))
+        })
+        .collect();
+    crate::path_seal::write_seal_with_files(session, &json, &map, &digests, Some(file_digests))?;
     Ok((ok, fail, errors))
 }
 

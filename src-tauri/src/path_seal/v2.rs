@@ -106,6 +106,12 @@ pub(super) struct Payload {
     pub(super) map_digest: String,
     pub(super) targets: Vec<String>,
     pub(super) reg_digests: BTreeMap<String, String>,
+    /// SHA256 of every published backup payload, keyed by its relative path
+    /// (`files/<entry>`). `None` on seals written before this field existed;
+    /// restore treats `None` as "content not authenticated" rather than
+    /// pretending the bytes were verified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) file_digests: Option<BTreeMap<String, String>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,10 +122,22 @@ struct Envelope {
     mac: String,
 }
 
+/// Convenience wrapper for tests that carry no payload digests. Production
+/// backup uses `payload_with_files`.
+#[cfg(test)]
 pub(super) fn payload(
     session: &str,
     map: &BTreeMap<String, String>,
     reg_digests: BTreeMap<String, String>,
+) -> Result<Payload, String> {
+    payload_with_files(session, map, reg_digests, None)
+}
+
+pub(super) fn payload_with_files(
+    session: &str,
+    map: &BTreeMap<String, String>,
+    reg_digests: BTreeMap<String, String>,
+    file_digests: Option<BTreeMap<String, String>>,
 ) -> Result<Payload, String> {
     let targets: BTreeSet<_> = map.values().map(|s| super::normalize_target(s)).collect();
     let map_bytes = serde_json::to_vec(map).map_err(|_| "seal:v2_map_json")?;
@@ -128,6 +146,7 @@ pub(super) fn payload(
         map_digest: hex(&digest(&map_bytes, None)?),
         targets: targets.into_iter().collect(),
         reg_digests,
+        file_digests,
     })
 }
 
@@ -278,6 +297,7 @@ fn v2_dpapi_roundtrip_rejects_legacy_wrong_session_and_key() {
         map_digest: super::map_digest_of(&map),
         targets: vec![super::normalize_target(r"C:\Vendor\产品")],
         reg_digests: BTreeMap::new(),
+        file_digests: None,
     };
     let mut legacy = b"RSEAL1".to_vec();
     legacy.extend(super::protect(&serde_json::to_vec(&forged_v1).unwrap()).unwrap());

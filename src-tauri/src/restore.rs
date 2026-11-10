@@ -169,6 +169,36 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped missing backup entry: {rel}"));
                 continue;
             }
+            // When the seal carries payload digests, the bytes about to be
+            // written must be the ones that were backed up. A missing digest for
+            // a mapped entry is a tampered session, not an old one.
+            if let Some(files) = &seal.file_digests {
+                let key = format!("files/{rel}");
+                // A directory entry has no digest of its own: its contents are
+                // recorded individually, so only files are checked here.
+                if src.is_dir() {
+                    // fall through to the directory copy below
+                } else {
+                    match files.get(&key) {
+                        Some(expected) => {
+                            let actual = crate::path_seal::publication_file_digest(&src)
+                                .map_err(|e| format!("seal:file_digest: {e}"))?;
+                            if &actual != expected {
+                                messages.push(format!(
+                                    "skipped modified backup entry (digest mismatch): {rel}"
+                                ));
+                                continue;
+                            }
+                        }
+                        None => {
+                            messages.push(format!(
+                                "skipped backup entry with no recorded digest: {rel}"
+                            ));
+                            continue;
+                        }
+                    }
+                }
+            }
             let dest = PathBuf::from(&original);
             // protected / unsafe destinations skip + warn — never abort sibling entries.
             if original.trim().is_empty()
@@ -1804,6 +1834,55 @@ mod tests {
             "the sibling is restored"
         );
         assert!(!std::path::Path::new(protected).exists());
+        crate::path_seal::set_seals_root_for_tests(None);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Payload bytes are bound into the seal: rewriting a backed-up file after
+    /// the session was sealed must not restore the modified bytes.
+    #[test]
+    fn a_modified_backup_payload_is_refused_by_the_seal() {
+        let tmp =
+            std::env::temp_dir().join(format!("remova_restore_payload_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let seals = tmp.join("seals");
+        fs::create_dir_all(&seals).unwrap();
+        let _g = crate::path_seal::test_lock();
+        crate::path_seal::set_seals_root_for_tests(Some(seals));
+        let sess = tmp.join("sess");
+        let files = sess.join("files");
+        fs::create_dir_all(&files).unwrap();
+        let original = tmp.join("target").join("keep.txt");
+        fs::create_dir_all(original.parent().unwrap()).unwrap();
+        let rel = "payload.txt";
+        fs::write(files.join(rel), b"original bytes").unwrap();
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(rel.to_string(), original.to_string_lossy().to_string());
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+        let digests = std::collections::BTreeMap::from([(
+            format!("files/{rel}"),
+            crate::path_seal::publication_file_digest(&files.join(rel)).unwrap(),
+        )]);
+        crate::path_seal::write_seal_with_files(
+            &sess,
+            "",
+            &map,
+            &std::collections::BTreeMap::new(),
+            Some(digests),
+        )
+        .unwrap();
+        // Rewrite the payload after sealing.
+        fs::write(files.join(rel), b"tampered bytes").unwrap();
+        let msgs = restore_session(&sess).expect("the session itself is authentic");
+        assert!(
+            msgs.iter().any(|m| m.contains("digest mismatch")),
+            "the modified payload must be refused: {msgs:?}"
+        );
+        assert!(!original.exists(), "nothing is written back");
         crate::path_seal::set_seals_root_for_tests(None);
         let _ = fs::remove_dir_all(&tmp);
     }
