@@ -18,6 +18,15 @@ $stage = Join-Path $outDir "Remova-$ver"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item $exe (Join-Path $stage "Remova.exe")
+# The portable zip is a standalone distribution: the project licence and the
+# third-party notices must travel with it, not only live in the source tree.
+foreach ($doc in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
+    $src = Join-Path $root $doc
+    if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        throw "Portable package is missing required distribution file: $doc"
+    }
+    Copy-Item -LiteralPath $src -Destination (Join-Path $stage $doc)
+}
 # D-N1: portable runtime notes (WebView2 + backups + no installer)
 @"
 Remova $ver portable (x64)

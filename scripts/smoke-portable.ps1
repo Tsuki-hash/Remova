@@ -20,7 +20,9 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
 try {
   $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-  foreach ($required in @("Remova.exe", "PORTABLE.txt")) {
+  # The licence and third-party notices are part of the deliverable, not just
+  # the source tree.
+  foreach ($required in @("Remova.exe", "PORTABLE.txt", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
     if (-not ($names | Where-Object { $_ -eq $required -or $_ -like "*/$required" })) {
       Write-Error "smoke-portable FAILED: zip missing $required. Entries: $($names -join ', ')"
     }
@@ -38,4 +40,4 @@ if ($portableText -notmatch [regex]::Escape($ver)) {
 if ($portableText -notmatch "WebView2") {
   Write-Error "smoke-portable FAILED: PORTABLE.txt missing WebView2 runtime note"
 }
-Write-Host "smoke-portable OK: $zip (Remova.exe + PORTABLE.txt + WebView2 + $ver)" -ForegroundColor Green
+Write-Host "smoke-portable OK: $zip (Remova.exe + PORTABLE.txt + LICENSE + THIRD-PARTY-NOTICES.md + WebView2 + $ver)" -ForegroundColor Green
