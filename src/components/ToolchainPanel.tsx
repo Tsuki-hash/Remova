@@ -140,7 +140,16 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
             <div style={{ ...css.muted, fontSize: 12 }}>
               {L.toolchainConsumerFound(consumers.hits.length)}
               {consumers.omitted > 0 ? ` · ${L.scanOmitted(consumers.omitted)}` : ""}
+              {/* "0 found" only means "none" when every root was read. */}
+              {(consumers.completeness?.status ?? "complete") !== "complete"
+                ? ` · ${L.scanIncompleteNotice}`
+                : ""}
             </div>
+            {(consumers.completeness?.failed_roots?.length ?? 0) > 0 && (
+              <div role="status" style={{ ...css.muted, fontSize: 11, marginTop: 4 }}>
+                {L.scanFailedRoots(consumers.completeness.failed_roots.join(", "))}
+              </div>
+            )}
             <div style={{ maxHeight: 160, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
               {consumers.hits.map((h) => (
                 <div key={h.path} className="ell" style={{ ...css.mono, fontSize: 11, padding: "3px 8px" }} title={h.path}>

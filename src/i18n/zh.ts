@@ -544,6 +544,8 @@ export const dict = {
     scanElapsed: (text: string) => `已用时 ${text}`,
     // the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
+    scanIncompleteNotice: "扫描未完整完成，结果可能不全",
+    scanFailedRoots: (roots: string) => `未能读取的位置：${roots}`,
     scanOmitted: (n: number) => `还有 ${n} 项未显示（受单次扫描上限限制）`,
     orphanOmitted: (n: number) => `还有 ${n} 个候选目录未显示（受单次扫描上限限制）`,
     // the size-estimation phase is the longest one for a large cache and

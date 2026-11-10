@@ -249,7 +249,20 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
     </div>
   )}
   {shellFailed && (
-    <div role="note" style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>
+    // A failed Shell scan used to be one muted line above a collapsed
+    // "technical details" block. It is now a warning block at the same level as
+    // the results, so "no orphans" is never read as "nothing was found".
+    <div
+      role="alert"
+      style={{
+        ...css.muted,
+        fontSize: 12,
+        marginTop: 10,
+        padding: "6px 8px",
+        borderLeft: "3px solid var(--warn)",
+        background: "var(--surface-2)",
+      }}
+    >
       {L.shellAssocFailed}
     </div>
   )}

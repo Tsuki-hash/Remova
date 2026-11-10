@@ -560,6 +560,8 @@ export const dict: EnDict = {
     scanElapsed: (text: string) => `${text} elapsed`,
     // the shared-root phase cap drops rows; the panel must say so instead
     // of implying the list is exhaustive.
+    scanIncompleteNotice: "scan incomplete — results may be missing",
+    scanFailedRoots: (roots: string) => `could not read: ${roots}`,
     scanOmitted: (n: number) => `${n} more item(s) not shown (per-scan limit)`,
     orphanOmitted: (n: number) => `${n} more candidate folder(s) not shown (per-scan limit)`,
     // the size-estimation phase is the longest one for a large cache and
