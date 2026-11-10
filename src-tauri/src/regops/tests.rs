@@ -417,7 +417,7 @@ fn export_reg_value_preserves_non_ascii_bytes() {
         .filter_map(|b| u8::from_str_radix(b.trim(), 16).ok())
         .collect();
     let wide: Vec<u16> = bytes
-        .chunks_exact(2)
+        .chunks(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     let decoded = String::from_utf16(&wide)
@@ -741,7 +741,7 @@ fn rename_reg_value_reads_values_beyond_the_first_buffer() {
 
     // Overwrite "Big" with a 20_000-char string straight through the Win32
     // API — reg.exe cannot carry 20 KB on a command line.
-    let payload: Vec<u16> = std::iter::repeat('x' as u16)
+    let payload: Vec<u16> = std::iter::repeat_n('x' as u16, 20_000)
         .take(20_000)
         .chain(std::iter::once(0))
         .collect();

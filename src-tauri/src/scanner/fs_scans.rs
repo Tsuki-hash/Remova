@@ -576,8 +576,11 @@ fn collect_shortcut_dir(dir: &Path, depth: u32, out: &mut Vec<ShortcutEntry>) {
 fn peek_text_lc(peek: &[u8]) -> String {
     // Decode UTF-16LE and lowercase — byte-searching a lowercase needle in
     // raw-case UTF-16 always missed.
+    // A peek window can be odd-length; `chunks` yields a 1-byte tail, so the
+    // incomplete block is skipped instead of indexed out of bounds.
     let u16s: Vec<u16> = peek
-        .chunks_exact(2)
+        .chunks(2)
+        .filter(|c| c.len() == 2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16_lossy(&u16s).to_lowercase()

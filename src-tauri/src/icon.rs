@@ -260,7 +260,7 @@ fn hicon_to_png(
 /// Minimal PNG encoder (RGBA8).
 fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     let mut rgba = Vec::with_capacity(bgra.len());
-    for px in bgra.chunks_exact(4) {
+    for px in bgra.chunks(4) {
         // Windows DIB is BGRA
         rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
     }

@@ -3,7 +3,7 @@ name = "remova"
 version = "1.4.1"
 description = "Remova deep uninstall (Tauri)"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.95"
 default-run = "remova"
 
 [lib]

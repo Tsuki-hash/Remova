@@ -1193,11 +1193,11 @@ fn read_reg_value_raw_with_missing(
 fn decode_reg_utf16(data: &[u8]) -> Result<String, String> {
     // An odd byte count cannot be a complete UTF-16LE string; dropping the
     // trailing byte would rewrite a truncated value as if it were whole.
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err("registry string data has a truncated UTF-16 code unit".into());
     }
     let wide: Vec<u16> = data
-        .chunks_exact(2)
+        .chunks(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     let mut text = String::from_utf16(&wide)
@@ -1448,7 +1448,7 @@ fn write_path_value_native(key: &str, value: &str, expand: bool) -> Result<(), S
         ))
         || key
             .strip_prefix(r"HKCU\Software\")
-            .map_or(true, |leaf| leaf.contains(['\\', '/', '\0', '\r', '\n']))
+            .is_none_or(|leaf| leaf.contains(['\\', '/', '\0', '\r', '\n']))
     {
         return Err("native registry backend requires the opted-in unique PATH fixture".into());
     }

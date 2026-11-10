@@ -262,11 +262,11 @@ pub fn read_local_scan_link(path: &Path) -> std::io::Result<PathBuf> {
         };
         let offset = u16::from_le_bytes(buffer[8..10].try_into().unwrap()) as usize;
         let len = u16::from_le_bytes(buffer[10..12].try_into().unwrap()) as usize;
-        if len % 2 != 0 || start + offset + len > returned as usize {
+        if !len.is_multiple_of(2) || start + offset + len > returned as usize {
             return Err(std::io::Error::other("invalid reparse data"));
         }
         let units: Vec<u16> = buffer[start + offset..start + offset + len]
-            .chunks_exact(2)
+            .chunks(2)
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let target = String::from_utf16(&units).map_err(std::io::Error::other)?;

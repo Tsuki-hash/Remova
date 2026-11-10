@@ -243,6 +243,13 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         let snap: crate::backup::PathSnapshot =
             serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         for it in &snap.items {
+            // A cancel that landed while files were being restored must stop
+            // before the environment is rewritten: PATH is machine state, not
+            // just files this session owns.
+            if crate::executor::cleanup_cancelled() {
+                messages.push("restore cancelled before remaining PATH entries".into());
+                break;
+            }
             let scopes = path_restore_scopes(it);
             let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
@@ -408,11 +415,11 @@ pub(crate) fn decode_reg_text(raw: Vec<u8>) -> Result<String, String> {
     if raw.starts_with(&[0xFF, 0xFE]) {
         // An odd byte count cannot be a complete UTF-16LE stream. Silently
         // dropping the trailing byte would hide a truncated registry export.
-        if raw[2..].len() % 2 != 0 {
+        if !raw[2..].len().is_multiple_of(2) {
             return Err("registry text has a truncated UTF-16 code unit".into());
         }
         let units: Vec<u16> = raw[2..]
-            .chunks_exact(2)
+            .chunks(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         return String::from_utf16(&units).map_err(|e| e.to_string());

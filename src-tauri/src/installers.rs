@@ -582,7 +582,10 @@ mod tests {
         bytes.extend_from_slice(&[0u8; 0x3A]);
         bytes.extend_from_slice(&0x40u32.to_le_bytes());
         bytes.extend_from_slice(b"PE\0\0");
-        bytes.extend(std::iter::repeat(0u8).take(MIN_AMBIGUOUS_PACKAGE_BYTES as usize));
+        bytes.extend(std::iter::repeat_n(
+            0u8,
+            MIN_AMBIGUOUS_PACKAGE_BYTES as usize,
+        ));
         std::fs::write(&pe, &bytes).expect("write PE fixture");
         // Same layout, but far too small to be an installer.
         let tiny_pe = root.join("stub.exe");
@@ -658,7 +661,7 @@ mod tests {
         bytes.extend_from_slice(&[0u8; 0x3A]);
         bytes.extend_from_slice(&0x40u32.to_le_bytes());
         bytes.extend_from_slice(b"PE\0\0");
-        bytes.extend(std::iter::repeat(0u8).take(2 << 20));
+        bytes.extend(std::iter::repeat_n(0u8, 2 << 20));
         std::fs::write(&pe, &bytes).expect("write PE fixture");
 
         // Named after the app with no installer keyword — the PE header carries it.
@@ -742,7 +745,7 @@ mod tests {
         pe_bytes.extend_from_slice(&[0u8; 0x3A]);
         pe_bytes.extend_from_slice(&0x40u32.to_le_bytes());
         pe_bytes.extend_from_slice(b"PE\0\0");
-        pe_bytes.extend(std::iter::repeat(0u8).take(2 << 20));
+        pe_bytes.extend(std::iter::repeat_n(0u8, 2 << 20));
         // Far more app-named executables than the phase cap allows.
         let ambiguous_count = INSTALLER_PHASE_CAP * 3;
         for i in 0..ambiguous_count {

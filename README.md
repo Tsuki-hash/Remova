@@ -17,7 +17,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Tsuki-hash/Remova/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Tsuki-hash/Remova/actions)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.77%2B-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.95%2B-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
 
 </div>
 
@@ -114,7 +114,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 | 工具 | 版本 |
 |---|---|
-| Rust | ≥ 1.77.2 |
+| Rust | ≥ 1.95 |
 | Node.js | 22 |
 | Windows | 10 / 11 |
 

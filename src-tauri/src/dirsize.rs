@@ -659,7 +659,7 @@ where
                 }
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
-                if entries_seen % 512 == 0 && cancelled.load(Ordering::SeqCst) {
+                if entries_seen.is_multiple_of(512) && cancelled.load(Ordering::SeqCst) {
                     return (0, false);
                 }
             }
