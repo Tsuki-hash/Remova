@@ -58,10 +58,17 @@ try {
         "untrusted comment: release policy fixture`nminisign-encrypted-secret: Zml4dHVyZQ=="))
     $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = 'test-placeholder'
+    # This fixture exercises the updater path, so the explicit policy switch is
+    # on; configured keys without it are asserted to fail below.
+    $env:UPDATER_ENABLED = 'false'
     $env:GITHUB_REF_NAME = 'v1.3.0'
     $env:GITHUB_REPOSITORY = 'Tsuki-hash/Remova'
     $env:GITHUB_OUTPUT = Join-Path $temp 'outputs.txt'
     $prepare = Join-Path $temp 'scripts/prepare-signed-release.ps1'
+    # Keys are configured but the security switch is off: this must fail rather
+    # than silently re-enabling the updater after an advisory.
+    Assert-Throws { & $prepare } 'UPDATER_ENABLED is false'
+    $env:UPDATER_ENABLED = 'true'
     & $prepare
     if ((Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) -notmatch 'signpath-enabled=false') { throw 'SignPath must default to disabled.' }
     $passed++
@@ -77,12 +84,20 @@ try {
     $env:TAURI_SIGNING_PRIVATE_KEY = $script:fixturePrivateKey
     $passed++
 
+    & $prepare
+    if ((Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) -notmatch 'updater-enabled=true') {
+        throw 'An explicitly enabled updater must report updater-enabled=true.'
+    }
+    $passed++
+
     # Unsigned/manual mode: with none of the updater settings present the
     # release must still be prepared, and it must advertise updater-enabled=false
     # so finalize omits the updater assets instead of failing.
     $savedPublic = $env:TAURI_UPDATER_PUBLIC_KEY
     $savedPrivate = $env:TAURI_SIGNING_PRIVATE_KEY
     $savedPassword = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+    $savedPolicy = $env:UPDATER_ENABLED
+    $env:UPDATER_ENABLED = 'false'
     [Environment]::SetEnvironmentVariable('TAURI_UPDATER_PUBLIC_KEY', $null)
     [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY', $null)
     [Environment]::SetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', $null)
@@ -93,6 +108,7 @@ try {
         throw 'Unsigned/manual mode must report updater-enabled=false.'
     }
     $env:ALLOW_UNSIGNED_RELEASE = $null
+    $env:UPDATER_ENABLED = $savedPolicy
     $env:TAURI_UPDATER_PUBLIC_KEY = $savedPublic
     $env:TAURI_SIGNING_PRIVATE_KEY = $savedPrivate
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $savedPassword

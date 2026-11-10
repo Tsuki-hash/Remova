@@ -30,7 +30,24 @@ $updaterPresent = @($updaterNames | Where-Object {
 if ($updaterPresent -ne 0 -and $updaterPresent -ne $updaterNames.Count) {
     throw 'Updater signing requires all three settings, or none for unsigned/manual release.'
 }
-$updaterEnabled = $updaterPresent -eq $updaterNames.Count
+# Updater assets are a security-mode change, not an inference from "keys are
+# present". A release must opt in explicitly; otherwise a leftover secret turns
+# the update path back on without a fresh advisory review.
+$updaterPolicy = $env:UPDATER_ENABLED
+if ($null -eq $updaterPolicy -or $updaterPolicy -eq '') { $updaterPolicy = 'false' }
+if ($updaterPolicy -cnotin @('true', 'false')) {
+    throw 'UPDATER_ENABLED must be true or false.'
+}
+if ($updaterPolicy -ceq 'true' -and $updaterPresent -eq 0) {
+    throw 'Updater signing requires all three settings, or none for unsigned/manual release.'
+}
+if ($updaterPolicy -ceq 'true' -and $updaterPresent -ne $updaterNames.Count) {
+    throw 'UPDATER_ENABLED=true requires all three updater signing settings.'
+}
+if ($updaterPolicy -ceq 'false' -and $updaterPresent -eq $updaterNames.Count) {
+    throw 'Updater keys are configured but UPDATER_ENABLED is false. Remove the keys or set UPDATER_ENABLED=true after a security review.'
+}
+$updaterEnabled = $updaterPresent -eq $updaterNames.Count -and $updaterPolicy -ceq 'true'
 # Unsigned/manual releases are supported, but must be requested explicitly:
 # silently omitting updater assets after a key misconfiguration would publish
 # an install-only release while clients keep waiting for an update.
