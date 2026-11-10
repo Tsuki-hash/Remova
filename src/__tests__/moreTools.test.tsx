@@ -39,3 +39,37 @@ it("toggles panels and persists the rescan choice across mounts", () => {
   first.unmount();
   expect(renderHook(() => useMoreTools(opts)).result.current.rescanOn).toBe(false);
 });
+
+it("returns focus to the opener when the panel closes", () => {
+  const opts = { selected: null, onGoSoftware: vi.fn() };
+  const opener = document.createElement("button");
+  document.body.appendChild(opener);
+  opener.focus();
+  const { result } = renderHook(() => useMoreTools(opts));
+  act(() => result.current.toggleTool("history"));
+  expect(result.current.openTool).toBe("history");
+  // Focus moved into the panel while it was open.
+  const inside = document.createElement("input");
+  document.body.appendChild(inside);
+  inside.focus();
+  act(() => result.current.setOpenTool(null));
+  expect(document.activeElement).toBe(opener);
+  opener.remove();
+  inside.remove();
+});
+
+it("does not steal focus back to an opener that was removed", () => {
+  const opts = { selected: null, onGoSoftware: vi.fn() };
+  const opener = document.createElement("button");
+  document.body.appendChild(opener);
+  opener.focus();
+  const { result } = renderHook(() => useMoreTools(opts));
+  act(() => result.current.toggleTool("history"));
+  opener.remove();
+  const fallback = document.createElement("input");
+  document.body.appendChild(fallback);
+  fallback.focus();
+  act(() => result.current.setOpenTool(null));
+  expect(document.activeElement).toBe(fallback);
+  fallback.remove();
+});

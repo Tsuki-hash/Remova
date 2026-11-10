@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
 import type { InstalledApp } from "../types";
@@ -15,6 +15,20 @@ export function useMoreTools(opts: {
   const [openTool, setOpenTool] = useState<ToolId | null>(null);
   const [rescanOn, setRescanOn] = useState(() => loadRescanAfterUninstall());
   const [restorePointOn, setRestorePointOn] = useState(() => loadRestorePointPref());
+  // The element that opened the panel. Closing it must put keyboard focus back
+  // where the user was, or the next Tab starts from the top of the page.
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (openTool) return;
+    const opener = openerRef.current;
+    if (!opener) return;
+    openerRef.current = null;
+    // The card may have been filtered out while the panel was open; only
+    // restore focus when it is still in the document.
+    if (!opener.isConnected) return;
+    opener.focus({ preventScroll: true });
+  }, [openTool]);
 
   const requireSelection = useCallback(
     (run: () => void) => {
@@ -30,6 +44,10 @@ export function useMoreTools(opts: {
   );
 
   const toggleTool = useCallback((id: ToolId) => {
+    // Remember who opened the panel so closing can return focus there.
+    const active = document.activeElement;
+    openerRef.current =
+      active instanceof HTMLElement && active !== document.body ? active : null;
     setOpenTool((cur) => (cur === id ? null : id));
   }, []);
 

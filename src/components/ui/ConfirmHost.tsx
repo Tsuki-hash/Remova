@@ -34,6 +34,7 @@ function HoldButton({
     const start = performance.now();
     let raf = 0;
     const cancelHold = () => {
+      keyHeld.current = false;
       setHolding(false);
       setProgress(0);
       cancelAnimationFrame(raf);
@@ -102,6 +103,12 @@ function HoldButton({
       }}
       onPointerUp={() => setHolding(false)}
       onPointerLeave={() => setHolding(false)}
+      // A cancelled pointer or a focus change means the user is no longer
+      // deliberately holding this button; finishing the countdown anyway would
+      // turn "press and hold" into "press once, walk away".
+      onPointerCancel={() => { keyHeld.current = false; setHolding(false); }}
+      onLostPointerCapture={() => { keyHeld.current = false; setHolding(false); }}
+      onBlur={() => { keyHeld.current = false; setHolding(false); }}
       onKeyDown={(e) => {
         if (holdMs > 0 && !disabled && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();

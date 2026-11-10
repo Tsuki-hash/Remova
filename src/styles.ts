@@ -33,7 +33,8 @@ export const cssStyles = {
     fontSize: 13,
     background: "var(--surface)",
     color: "var(--fg)",
-    outline: "none",
+    // No inline `outline: none`: it outranks the global `:focus-visible`
+    // rule and erases the keyboard focus ring on every shared input.
     transition: "border-color .12s",
   },
   btn: {

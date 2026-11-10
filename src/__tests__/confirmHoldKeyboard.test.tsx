@@ -79,3 +79,46 @@ it("a non-danger confirm keeps a plain single click", () => {
   fireEvent.click(screen.getByRole("button", { name: "Go" }));
   return expect(answer).resolves.toEqual({ ok: true, checked: false });
 });
+
+it("leaving the button during a hold aborts it instead of finishing", async () => {
+  setLang("zh");
+  render(<ConfirmHost />);
+  let answer!: ReturnType<typeof requestConfirmEx>;
+  act(() => { answer = requestConfirmEx({ title: "Cleanup", message: "M", danger: true, holdMs: 600 }); });
+  try {
+    const hold = screen.getByRole("button", { name: t().confirmHoldStart });
+    const done = vi.fn();
+    void answer.then(done);
+    fireEvent.keyDown(hold, { key: "Enter" });
+    expect(screen.getByText(t().confirmHoldHint)).toBeTruthy();
+    // Focus moves to another control (Tab) while the key is still down: the
+    // original button never sees keyup, so blur must end the hold.
+    fireEvent.blur(hold);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    expect(screen.queryByText(t().confirmHoldHint)).toBeNull();
+    expect(done).not.toHaveBeenCalled();
+    // Releasing the key afterwards must not revive the aborted hold.
+    fireEvent.keyUp(hold, { key: "Enter" });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    expect(done).not.toHaveBeenCalled();
+  } finally {
+    if (getConfirm()) act(() => settleConfirm(false));
+  }
+});
+
+it("a cancelled pointer ends the hold", () => {
+  setLang("zh");
+  render(<ConfirmHost />);
+  let answer!: ReturnType<typeof requestConfirmEx>;
+  act(() => { answer = requestConfirmEx({ title: "Cleanup", message: "M", danger: true, holdMs: 600 }); });
+  try {
+    const hold = screen.getByRole("button", { name: t().confirmHoldStart });
+    fireEvent.pointerDown(hold);
+    expect(screen.getByText(t().confirmHoldHint)).toBeTruthy();
+    fireEvent.pointerCancel(hold);
+    expect(screen.queryByText(t().confirmHoldHint)).toBeNull();
+  } finally {
+    if (getConfirm()) act(() => settleConfirm(false));
+  }
+  void answer;
+});
