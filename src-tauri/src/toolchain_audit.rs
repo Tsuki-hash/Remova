@@ -73,6 +73,9 @@ pub struct ConsumerSearchResult {
 
 const CONSUMER_CAP: usize = 200;
 const CONSUMER_DEPTH: usize = 7;
+/// Hard ceiling on entries visited per search, so a huge tree cannot make the
+/// bounded search effectively unbounded.
+const CONSUMER_VISIT_BUDGET: usize = 200_000;
 
 fn vswhere_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
@@ -101,6 +104,9 @@ fn probe_path(instance: &str, rel: &str, want_file: bool) -> bool {
     }
 }
 
+/// Prune names are matched against the lower-cased directory name, so every
+/// entry here must be lower-case: `AppData` never matched and the search
+/// descended into the whole profile AppData tree.
 fn should_prune(name: &str) -> bool {
     matches!(
         name,
@@ -110,7 +116,7 @@ fn should_prune(name: &str) -> bool {
             | ".venv"
             | "venv"
             | "cache"
-            | "AppData"
+            | "appdata"
             | ".cargo"
             | ".rustup"
     )
@@ -134,6 +140,10 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
     }
     let mut failed = Vec::new();
     let mut roots_scanned = 0u32;
+    // Total entries visited across every root. A user-chosen profile can hold
+    // hundreds of thousands of entries at depth 7; without a budget the search
+    // keeps walking long after the hit cap made the extra work pointless.
+    let mut visited = 0usize;
     for raw in roots {
         let root = raw.trim();
         if root.is_empty() {
@@ -157,6 +167,24 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
                 continue;
             };
             for entry in read {
+                if visited >= CONSUMER_VISIT_BUDGET {
+                    result.omitted += 1;
+                    result.completeness.status = crate::scan_contract::ScanStatus::Partial;
+                    result.completeness.roots_scanned = roots_scanned;
+                    result.completeness.failed_roots = failed;
+                    result.hits.sort_by(|a, b| a.path.cmp(&b.path));
+                    return result;
+                }
+                // Cancellation must land per entry, not only per directory: one
+                // very wide directory would otherwise delay it for a long time.
+                if visited.is_multiple_of(256) && crate::scan_task::cancelled() {
+                    result.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
+                    result.completeness.roots_scanned = roots_scanned;
+                    result.completeness.failed_roots = failed;
+                    result.hits.sort_by(|a, b| a.path.cmp(&b.path));
+                    return result;
+                }
+                visited += 1;
                 let Ok(entry) = entry else {
                     continue;
                 };
@@ -499,7 +527,7 @@ mod tests {
 
     #[test]
     fn consumer_prune_list_blocks_dependency_and_vcs_dirs() {
-        for name in ["node_modules", ".git", "target", ".venv", "AppData"] {
+        for name in ["node_modules", ".git", "target", ".venv", "appdata"] {
             assert!(should_prune(name), "{name} must be pruned");
         }
         assert!(!should_prune("projects"));
