@@ -1066,15 +1066,23 @@ pub fn finish(
             }
         }
     }
-    let mut report = MigrationFinishReport::default();
-    if missing.is_empty() {
-        std::fs::remove_dir_all(&backup).map_err(|e| format!("backup removal failed: {e}"))?;
-        report.removed_bak = true;
-        ledger(source, target, "finish", "ok");
-    } else {
-        report.missing_in_target = missing;
+    // A failed content check is a refusal, not a successful finish with an
+    // empty detail list: `Ok` here let a caller that only inspects the result
+    // type treat a silent mismatch as done. The backup stays in place.
+    if !missing.is_empty() {
         ledger(source, target, "finish", "verification_refused");
+        return Err(format!(
+            "finish refused: {} backup file(s) are not present and unchanged in the target: {}",
+            missing.len(),
+            missing.join(", ")
+        ));
     }
+    std::fs::remove_dir_all(&backup).map_err(|e| format!("backup removal failed: {e}"))?;
+    let report = MigrationFinishReport {
+        removed_bak: true,
+        missing_in_target: Vec::new(),
+    };
+    ledger(source, target, "finish", "ok");
     Ok(report)
 }
 
@@ -1556,12 +1564,56 @@ mod tests {
         copy_phase(&src.to_string_lossy(), &tgt.to_string_lossy()).unwrap();
         let cut = cutover(&src.to_string_lossy(), &tgt.to_string_lossy());
         assert!(cut.ok, "{cut:?}");
-        // A same-size mismatch under a different name blocks the finish.
-        std::fs::write(tgt.join("db.sqlite"), b"9876543210").unwrap();
-        // db.sqlite differs in content but matches in size; the per-byte
-        // contract is (relative path, byte count), so restore first.
-        drop(rollback(&src.to_string_lossy(), &tgt.to_string_lossy()));
-        assert!(src.join("db.sqlite").exists());
+        // A same-size, different-content target written before the junction
+        // was created must block finish itself. The earlier version of this
+        // test only called rollback, so a finish that accepted the mismatch
+        // still passed.
+        let tampered = tgt.join("db.sqlite");
+        std::fs::write(&tampered, b"9876543210").unwrap();
+        // Force the write strictly earlier than the junction so it cannot be
+        // excused as a legitimate post-cutover application write.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        set_file_modified(&tampered, old);
+        let backup = tmp.path().join("dbapp.bak");
+        let result = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true);
+        assert!(
+            result.is_err(),
+            "finish must refuse a pre-cutover content mismatch: {result:?}"
+        );
+        assert!(backup.is_dir(), "the backup must survive the refusal");
+        assert_eq!(
+            std::fs::read(tgt.join("db.sqlite")).unwrap(),
+            b"9876543210",
+            "finish must not rewrite the target on refusal"
+        );
+        // The control case: a write after the junction is a legitimate
+        // post-cutover application update and finish accepts it.
+        std::fs::write(&tampered, b"9876543210").unwrap();
+        set_file_modified(&tampered, std::time::SystemTime::now());
+        let accepted = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true);
+        assert!(
+            accepted.is_ok(),
+            "a post-cutover write is accepted: {accepted:?}"
+        );
+    }
+
+    /// Set a file's modification time on Windows (used to separate a
+    /// pre-cutover tamper from a legitimate post-cutover write).
+    fn set_file_modified(path: &std::path::Path, when: std::time::SystemTime) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .share_mode(0x7)
+                .open(path)
+                .unwrap();
+            file.set_modified(when).unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (path, when);
+        }
     }
 
     /// Copy self-heals: a target file with the same length but different
@@ -1729,12 +1781,11 @@ mod tests {
         let cut = cutover(&src.to_string_lossy(), &tgt.to_string_lossy());
         assert!(cut.ok, "{cut:?}");
         std::fs::remove_file(tgt.join("sub").join("b.txt")).unwrap();
-        let fin = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true).unwrap();
-        assert!(!fin.removed_bak, "the backup must survive a refused finish");
-        assert_eq!(
-            fin.missing_in_target,
-            vec!["sub\\b.txt"],
-            "the missing file is named"
+        let err = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true)
+            .expect_err("a missing target file must refuse the finish");
+        assert!(
+            err.contains("sub\\b.txt"),
+            "the missing file is named: {err}"
         );
         assert!(tmp.path().join("src-app.bak").join("a.txt").exists());
         let rb = rollback(&src.to_string_lossy(), &tgt.to_string_lossy());
@@ -1783,12 +1834,12 @@ mod tests {
         // The app checkpointed: both -wal files are gone from the target.
         std::fs::remove_file(tgt.join("db.sqlite-wal")).unwrap();
         std::fs::remove_file(tgt.join("notes.txt-wal")).unwrap();
-        let fin = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true).unwrap();
+        let err = finish(&src.to_string_lossy(), &tgt.to_string_lossy(), true)
+            .expect_err("a non-SQLite companion must block the finish");
         assert!(
-            !fin.removed_bak,
-            "the non-SQLite companion blocks the finish"
+            err.contains("notes.txt-wal"),
+            "the blocking file is named: {err}"
         );
-        assert_eq!(fin.missing_in_target, vec!["notes.txt-wal"]);
     }
 
     /// A backup directory swapped for a reparse point is not this migration's
