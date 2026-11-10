@@ -1,0 +1,18 @@
+# Accepted advisories for `cargo audit`.
+#
+# Every entry needs a concrete reachability argument and a trigger that makes
+# us revisit it. A blanket "we accept everything" entry would turn this gate
+# back into the manual note it replaced.
+#
+# zip 4.6.1 is pulled in by tauri-plugin-updater 2.12.0. Releases ship without
+# updater assets unless the maintainer configures all three updater keys, and
+# update packages are minisign-verified before extraction, so the affected
+# extraction path is unreachable in the shipped build. Revisit as soon as the
+# plugin moves to a zip major that contains the fixes.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+]

@@ -40,15 +40,19 @@ cargo bench
 # CycloneDX SBOM from Cargo.lock + production npm deps (also attached to releases).
 node scripts/make-sbom.mjs
 
-# Dependency audit: cargo audit (cargo-audit) and npm audit. Production npm
-# dependencies must stay at zero vulnerabilities. Currently accepted known
-# advisories — verify the rationale still holds before enabling updater assets:
-#   RUSTSEC-2026-0367/0368/0369 (zip 4.6.1, via tauri-plugin-updater 2.12):
-#     upstream pins zip 4 (fix needs zip >= 9); releases ship without updater
-#     assets, so the extraction path is unreachable, and update packages are
-#     minisign-verified before extraction. Remove this note when the plugin
-#     moves to zip 9 and the lockfile is bumped.
+# Dependency audit: cargo audit (cargo-audit) and npm audit. CI runs both as
+# release gates: `cargo audit` in src-tauri and `npm audit --omit=dev
+# --audit-level=high`. Production npm dependencies must stay at zero
+# vulnerabilities. Accepted Rust advisories live in `src-tauri/.cargo/audit.toml`
+# with a reachability argument each — do not add a blanket ignore. Currently
+# accepted (verify the rationale still holds before enabling updater assets):
+#   RUSTSEC-2026-0367/0368/0369/0429 (zip 4.6.1, via tauri-plugin-updater 2.12):
+#     upstream pins zip 4 (fix needs a later major); releases ship without
+#     updater assets, so the extraction path is unreachable, and update packages
+#     are minisign-verified before extraction. Remove these entries when the
+#     plugin moves to a fixed zip and the lockfile is bumped.
 cargo audit
+npm audit --omit=dev --audit-level=high
 # Targeted race fixture: requires Developer Mode or symlink privilege.
 # CI and release run it explicitly; do not run every ignored system test.
 cargo test copy_dir_refuses_file_swapped_to_symlink_after_enumeration -- --ignored

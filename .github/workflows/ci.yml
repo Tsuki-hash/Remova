@@ -109,6 +109,22 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      # Dependency advisories are a release gate, not a manual note in
+      # CONTRIBUTING. The tool and database versions are printed so a report
+      # can be tied to the exact scan that produced it.
+      - name: install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit (Rust dependencies)
+        run: |
+          cargo audit --version
+          cargo audit
+        working-directory: src-tauri
+
+      - name: npm audit (production dependencies)
+        run: |
+          npm audit --omit=dev --audit-level=high
+
       - name: check versions
         run: npm run check-versions
 
