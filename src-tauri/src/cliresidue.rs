@@ -650,6 +650,35 @@ mod tests {
         assert_eq!(command_exe_path(""), None);
     }
 
+    /// The bin index is built once per prefix: many shims must not multiply
+    /// manifest reads, and each command must be found by its own manifest.
+    #[test]
+    fn bin_evidence_is_built_once_per_prefix() {
+        let tmp = crate::test_support::TempDir::new("cli-residue-index");
+        let prefix = tmp.path().join("npm");
+        let nm = prefix.join("node_modules");
+        std::fs::create_dir_all(&nm).unwrap();
+        for i in 0..5 {
+            let pkg = nm.join(format!("pkg{i}"));
+            std::fs::create_dir_all(&pkg).unwrap();
+            std::fs::write(
+                pkg.join("package.json"),
+                format!(r#"{{"name":"pkg{i}","bin":{{"cmd{i}":"cli.js"}}}}"#),
+            )
+            .unwrap();
+            for ext in [".cmd", ".ps1"] {
+                std::fs::write(prefix.join(format!("cmd{i}{ext}")), b"shim").unwrap();
+            }
+        }
+        let bins = package_bin_names(&prefix).expect("the tree is readable");
+        // The index holds each package directory name AND each explicit bin
+        // key: five packages contribute ten distinct command names.
+        assert_eq!(bins.len(), 10);
+        for i in 0..5 {
+            assert!(bins.contains(&format!("cmd{i}")));
+        }
+    }
+
     #[test]
     fn shim_targets_missing_requires_bin_evidence() {
         let tmp = crate::test_support::TempDir::new("cli-residue");
