@@ -302,9 +302,18 @@ export type VsInstance = {
   size_kb: number;
   size_capped: boolean;
 };
+export type SdkProbe = {
+  /** `dotnet` | `rustup` | `java` */
+  tool: string;
+  present: boolean;
+  /** First line of the tool's own output; a failure reason when not run. */
+  detail: string;
+};
 export type ToolchainAuditResult = {
   vswhere_available: boolean;
   instances: VsInstance[];
+  /** Read-only SDK presence probes. Older payloads omit this field. */
+  sdks?: SdkProbe[];
   /** Shared Package Cache footprint in KB (lower bound when capped). */
   package_cache_kb: number;
   package_cache_capped: boolean;

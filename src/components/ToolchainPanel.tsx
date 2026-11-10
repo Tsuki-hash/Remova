@@ -85,6 +85,18 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
       {result && result.instances.length === 0 && result.vswhere_available && (
         <p style={css.muted}>{L.toolchainNoInstances}</p>
       )}
+      {result && (result.sdks?.length ?? 0) > 0 && (
+        <div style={{ margin: "8px 0" }}>
+          <div style={{ fontSize: 12, fontWeight: 600 }}>{L.toolchainSdks}</div>
+          <div style={{ ...css.muted, fontSize: 12 }}>
+            {(result.sdks ?? []).map((sdk) => (
+              <div key={sdk.tool} className="ell" title={sdk.detail || undefined}>
+                {sdk.tool}: {sdk.present ? sdk.detail || L.toolchainSdkPresent : L.toolchainSdkAbsent}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {result && result.package_cache_kb > 0 && (
         <div style={{ ...css.muted, fontSize: 12, margin: "4px 0" }}>
           {L.toolchainPackageCache(
