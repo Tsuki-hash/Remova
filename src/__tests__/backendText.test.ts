@@ -18,6 +18,8 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("uninstaller exited with Some(9) [mystery]")).toBe(L.backendUninstallExit("9"));
   expect(backendText("uninstaller timed out (5m): vendor.exe")).toBe(L.backendTimeout);
   expect(backendText("backup failed for 2 item(s); aborted")).toBe(L.backendBackupFailed);
+  expect(backendText("backup failed for file: named data streams cannot be backed up or restored")).toBe(L.backendBackupNamedStreams);
+  expect(backendText("backup source could not be verified: entry changed")).toBe(L.backendBackupSourceUnverified);
   expect(backendText("SRSetRestorePointW failed")).toBe(L.restorePointFail);
   expect(backendText("sc delete Vendor: failed or not found")).toBe(L.backendNativeDeleteFailed);
   expect(backendText("programFiles", "scan")).toBe(L.linkedProgramFiles);

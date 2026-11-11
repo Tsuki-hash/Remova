@@ -14,6 +14,8 @@ pub(super) struct Receipt {
     source_id: (u32, u64),
     target_id: (u32, u64),
     pub(super) complete: bool,
+    #[serde(default)]
+    cleanup_pending: bool,
 }
 
 fn receipt_path(target: &Path) -> io::Result<PathBuf> {
@@ -44,6 +46,7 @@ impl Receipt {
             source_id: fsutil::local_directory_id(source)?,
             target_id: fsutil::local_directory_id(target)?,
             complete: false,
+            cleanup_pending: false,
         })
     }
 
@@ -53,6 +56,43 @@ impl Receipt {
         let mut current = Self::new(source, target).ok()?;
         current.complete = saved.complete;
         (saved == current).then_some(saved)
+    }
+
+    pub(super) fn prepare_cleanup(
+        source: &Path,
+        target: &Path,
+        source_id: (u32, u64),
+        target_id: (u32, u64),
+    ) -> io::Result<()> {
+        Self {
+            source: lower(source),
+            target: lower(target),
+            source_id,
+            target_id,
+            complete: true,
+            cleanup_pending: true,
+        }
+        .save(target)
+    }
+
+    pub(super) fn matches_cleanup(
+        source: &Path,
+        target: &Path,
+        source_id: (u32, u64),
+        target_id: (u32, u64),
+    ) -> bool {
+        let saved = receipt_path(target)
+            .and_then(|path| fsutil::read_local_scan_text(&path))
+            .ok()
+            .and_then(|json| serde_json::from_str::<Self>(&json).ok());
+        saved.is_some_and(|receipt| {
+            receipt.cleanup_pending
+                && receipt.complete
+                && receipt.source == lower(source)
+                && receipt.target == lower(target)
+                && receipt.source_id == source_id
+                && receipt.target_id == target_id
+        })
     }
 
     pub(super) fn save(&self, target: &Path) -> io::Result<()> {

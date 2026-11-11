@@ -5,6 +5,7 @@ import { formatError, prettyAppName } from "../lib/format";
 import { backendText } from "./backendText";
 import { defaultSelectable } from "../lib/decision";
 import {
+  cleanupAbortText,
   cleanupAccomplishedSomething,
   cleanupNothingText,
   cleanupOutcomeText,
@@ -157,7 +158,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "failed",
-            detail: backendText(report.uninstall_message) || L.uninstallFail,
+            detail: cleanupAbortText(report, L),
             officialDone,
           });
           // Results are published once after the queue stops: spreading the

@@ -52,6 +52,21 @@ it("explains a zero-delete cleanup instead of claiming success", () => {
   );
   setLang("zh");
 });
+
+it.each(["zh", "en"] as const)("reports backup refusal and all-skipped cleanup without success in %s", lang => {
+  setLang(lang);
+  try {
+    const L = t();
+    cleanupFeedback(report({ aborted: true, deleted: 0, uninstall_message: "backup session failed",
+      errors: ["file example: named data streams cannot be backed up or restored"] }), L, "fixture");
+    expect(toast.error).toHaveBeenCalledWith(L.backendBackupNamedStreams, { channel: "fixture" });
+    cleanupFeedback(report({ deleted: 0, skipped: 1 }), L, "fixture");
+    expect(toast.info).toHaveBeenCalledWith(L.cleanupOutcome(0, 0, 1, 0), { channel: "fixture" });
+    expect(toast.success).not.toHaveBeenCalled();
+  } finally {
+    setLang("zh");
+  }
+});
 it.each([true, false])("retains scoped cleanup feedback after refresh, aborted=%s", async aborted => {
   const item: CleanupItem = { path: "fixture", kind: "file", score: 90, confidence: "confirmed",
     risk: "low", reason: "fixture", evidence: [] };

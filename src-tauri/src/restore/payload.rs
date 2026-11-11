@@ -3,20 +3,22 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DIR_VERIFY_BUDGET: usize = 200_000;
-
-pub(super) enum Inventory<'a> {
+pub(super) enum Inventory {
     Complete(FileManifest),
-    LegacyFiles(&'a BTreeMap<String, String>),
+    LegacyFiles(BTreeMap<String, String>),
 }
 
-impl<'a> Inventory<'a> {
-    pub(super) fn read(session: &Path, seal: &'a PathMapSeal) -> Result<Option<Self>, String> {
+impl Inventory {
+    pub(super) fn read(
+        session: &Path,
+        seal: &PathMapSeal,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Self>, String> {
         if let Some(expected) = &seal.file_manifest_digest {
-            return path_seal::read_file_manifest(session, expected)
+            return path_seal::read_file_manifest_with_cancel(session, expected, cancelled)
                 .map(|m| Some(Self::Complete(m)));
         }
-        Ok(seal.file_digests.as_ref().map(Self::LegacyFiles))
+        Ok(seal.file_digests.clone().map(Self::LegacyFiles))
     }
 
     fn expected_count(&self, key: &str, directory: bool) -> usize {
@@ -52,7 +54,7 @@ impl<'a> Inventory<'a> {
             staged: stage.path().join(rel),
             directory,
         };
-        let mut left = DIR_VERIFY_BUDGET;
+        let mut left = path_seal::MAX_PAYLOAD_NODES;
         let count = self.copy_tree(source, &payload.staged, &key, directory, &mut left, 0)?;
         if count != self.expected_count(&key, directory) {
             return Err(format!(
@@ -83,6 +85,9 @@ impl<'a> Inventory<'a> {
         }
         *left -= 1;
         if directory {
+            let source_pin =
+                crate::fsutil::pin_target_readonly(source).map_err(|e| e.to_string())?;
+            source_pin.check_data_streams().map_err(|e| e.to_string())?;
             let count_root = match self {
                 Self::Complete(entries) if entries.get(key) != Some(&None) => {
                     return Err(format!("skipped unrecorded backup directory: {rel}"));
@@ -112,6 +117,7 @@ impl<'a> Inventory<'a> {
                     depth + 1,
                 )?;
             }
+            source_pin.check_data_streams().map_err(|e| e.to_string())?;
             return Ok(count);
         }
 

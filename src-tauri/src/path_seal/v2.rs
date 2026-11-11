@@ -163,7 +163,7 @@ fn frame(key_id: &[u8; 32], payload: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn envelope(key: &[u8; 32], payload: &Payload) -> Result<Vec<u8>, String> {
+pub(super) fn envelope(key: &[u8; 32], payload: &Payload) -> Result<Vec<u8>, String> {
     let key_id = digest(key, None)?;
     let payload = serde_json::to_string(payload).map_err(|_| "seal:v2_payload_json")?;
     let mac = digest(&frame(&key_id, payload.as_bytes()), Some(key))?;
@@ -390,10 +390,20 @@ pub(super) fn digest_payload(
     source: impl std::io::Read,
     output: impl std::io::Write,
 ) -> Result<String, String> {
-    struct PayloadReader<R, W>(R, W);
-    impl<R: std::io::Read, W: std::io::Write> std::io::Read for PayloadReader<R, W> {
+    digest_payload_with_cancel(source, output, crate::executor::cleanup_cancelled)
+}
+
+pub(super) fn digest_payload_with_cancel(
+    source: impl std::io::Read,
+    output: impl std::io::Write,
+    cancelled: impl Fn() -> bool,
+) -> Result<String, String> {
+    struct PayloadReader<R, W, C>(R, W, C);
+    impl<R: std::io::Read, W: std::io::Write, C: Fn() -> bool> std::io::Read
+        for PayloadReader<R, W, C>
+    {
         fn read(&mut self, chunk: &mut [u8]) -> std::io::Result<usize> {
-            if crate::executor::cleanup_cancelled() {
+            if (self.2)() {
                 return Err(std::io::Error::other("cleanup cancelled"));
             }
             let n = self.0.read(chunk)?;
@@ -402,7 +412,7 @@ pub(super) fn digest_payload(
         }
     }
     Ok(hex(&digest_reader(
-        &mut PayloadReader(source, output),
+        &mut PayloadReader(source, output, cancelled),
         None,
     )?))
 }

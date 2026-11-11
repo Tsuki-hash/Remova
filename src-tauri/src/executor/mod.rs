@@ -6,13 +6,17 @@
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(not(test))]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub(crate) static CLEANUP_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(not(test))]
 static CLEANUP_CANCELLED: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static OPERATION_CANCELLED: std::cell::RefCell<Option<Arc<AtomicBool>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
 #[cfg(test)]
 thread_local! {
     /// Thread-local in tests so one test's cancellation cannot abort a parallel
@@ -46,6 +50,13 @@ pub fn cancel_cleanup_operation() {
 }
 
 pub(crate) fn cleanup_cancelled() -> bool {
+    if let Some(cancelled) = OPERATION_CANCELLED.with(|flag| {
+        flag.borrow()
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Acquire))
+    }) {
+        return cancelled;
+    }
     #[cfg(test)]
     {
         TEST_CLEANUP_CANCELLED.with(|v| v.get())
@@ -54,6 +65,18 @@ pub(crate) fn cleanup_cancelled() -> bool {
     {
         CLEANUP_CANCELLED.load(Ordering::SeqCst)
     }
+}
+
+/// Use this request's cancellation while a blocking worker owns the operation.
+pub(crate) fn with_operation_cancellation<T>(flag: Arc<AtomicBool>, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<Arc<AtomicBool>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OPERATION_CANCELLED.with(|flag| flag.replace(self.0.take()));
+        }
+    }
+    let _reset = Reset(OPERATION_CANCELLED.with(|current| current.replace(Some(flag))));
+    run()
 }
 
 mod pipeline;
@@ -141,6 +164,9 @@ pub struct FullCleanupReport {
     pub app_key: String,
     pub dry_run: bool,
     pub backup_dir: String,
+    /// The backup completed and its session was authenticated before cleanup.
+    #[serde(default)]
+    pub backup_verified: bool,
     pub uninstall_ok: bool,
     pub uninstall_message: String,
     pub deleted: u32,
@@ -149,7 +175,7 @@ pub struct FullCleanupReport {
     /// Reboot-delayed deletes (not counted in `deleted`).
     #[serde(default)]
     pub delayed: u32,
-    /// Sum of `size_kb` for rows this run actually deleted (M5).
+    /// Sum of `size_kb` for rows this run actually deleted.
     #[serde(default)]
     pub reclaimed_kb: u64,
     /// Sum of `size_kb` for selected rows the gate refused (keep-class).
@@ -188,6 +214,7 @@ mod tests {
             app_key: "k".into(),
             dry_run: false,
             backup_dir: String::new(),
+            backup_verified: true,
             uninstall_ok: true,
             uninstall_message: "ok".into(),
             deleted: 1,
@@ -216,6 +243,7 @@ mod tests {
         assert_eq!(obj["reboot_pending"], serde_json::json!(true));
         assert_eq!(obj["reboot_gate_persisted"], serde_json::json!(true));
         assert_eq!(obj["aborted"], serde_json::json!(true));
+        assert_eq!(obj["backup_verified"], serde_json::json!(true));
         assert_eq!(obj["uninstall_ok"], serde_json::json!(true));
         assert_eq!(obj["uninstall_message"], serde_json::json!("ok"));
         assert_eq!(obj["deleted"], serde_json::json!(1));

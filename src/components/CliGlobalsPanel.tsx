@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
-import { backendErrorText } from "../lib/backendText";
+import { backendErrorText, NPM_BACKUP_FAILURE_PREFIX } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
@@ -118,7 +118,14 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       }
       await reload();
     } catch (e) {
-      toast.error(backendErrorText(formatError(e)));
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+      const detail = raw.startsWith(NPM_BACKUP_FAILURE_PREFIX) ? raw.slice(NPM_BACKUP_FAILURE_PREFIX.length) : undefined;
+      const message = formatError(e);
+      if (detail) {
+        toast.error(L.backendNpmBackupFailed, { detail: message === L.backendNpmBackupFailed ? detail : `${message}\n${detail}` });
+      } else {
+        toast.error(message);
+      }
     } finally {
       setBusy(false);
     }

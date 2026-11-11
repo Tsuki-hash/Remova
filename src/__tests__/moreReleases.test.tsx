@@ -3,6 +3,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
+import { useMoreRestore } from "../hooks/useMoreRestore";
+import type { ComponentProps } from "react";
 import { api } from "../lib/api";
 import { RELEASES_URL } from "../lib/updateCheck";
 import { t } from "../i18n";
@@ -19,9 +21,14 @@ vi.mock("../lib/api", () => ({
 
 afterEach(cleanup);
 
+function Toolbox(props: Omit<ComponentProps<typeof MorePage>, "restore">) {
+  const restore = useMoreRestore(props.onError);
+  return <MorePage {...props} restore={restore} />;
+}
+
 it("opens the Releases page from the help section header", async () => {
   render(
-    <MorePage
+    <Toolbox
       selected={null}
       monitoring={false}
       monitorDiff={null}
@@ -49,7 +56,7 @@ it("opens the Releases page from the help section header", async () => {
 it("offers a recovery action for a corrupt reboot gate", async () => {
   vi.mocked(api.rebootGateStatus).mockResolvedValueOnce("corrupt");
   render(
-    <MorePage
+    <Toolbox
       selected={null}
       monitoring={false}
       monitorDiff={null}

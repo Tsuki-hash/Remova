@@ -2,7 +2,7 @@
 // Migration panel: plan refusals render, phases gate on the derived state,
 // and destructive phases confirm first.
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MigratePanel } from "../components/MigratePanel";
 import { api } from "../lib/api";
 import { requestConfirmEx } from "../lib/confirm";
@@ -15,7 +15,7 @@ import migrationWire from "./fixtures/migration-state-wire.json";
 const cutoverWire = migrationWire.states[3] as MigrationState;
 
 it("shares the canonical Rust state wire contract", () => {
-  const states: MigrationState[] = ["absent", "idle", "copied", "cutover", "finished", "inconsistent"];
+  const states: MigrationState[] = ["absent", "idle", "copied", "cutover", "finished", "inconsistent", "cleanup_pending"];
   expect(migrationWire.states).toEqual(states);
   expect(cutoverWire).toBe("cutover");
 });
@@ -366,4 +366,68 @@ it("drops a stale status answer that arrives after a newer one", async () => {
       throw new Error("a stale answer must not overwrite the newest state");
     }
   }, { timeout: 1000 });
+});
+
+it("invalidates migration actions as soon as either path changes", async () => {
+  let release!: (state: MigrationState) => void;
+  vi.mocked(api.migrateStatus).mockResolvedValueOnce("cutover")
+    .mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  await screen.findByRole("button", { name: L.migrateFinish });
+  fireEvent.change(screen.getByLabelText(L.migrateTarget), { target: { value: "E:\\elsewhere" } });
+  expect(screen.queryByRole("button", { name: L.migrateFinish })).toBeNull();
+  expect(screen.queryByRole("button", { name: L.migrateRollback })).toBeNull();
+  await waitFor(() => expect(api.migrateStatus).toHaveBeenCalledWith("C:\\src", "E:\\elsewhere"));
+  fireEvent.change(screen.getByLabelText(L.migrateSource), { target: { value: "" } });
+  await act(async () => release("cutover"));
+  expect(screen.queryByRole("button", { name: L.migrateFinish })).toBeNull();
+  expect(screen.getByRole("button", { name: L.migrateStart })).toHaveProperty("disabled", true);
+  expect(api.migrateFinish).not.toHaveBeenCalled();
+  expect(api.migrateRollback).not.toHaveBeenCalled();
+});
+
+it("keeps the confirmed migration path pair locked until the action ends", async () => {
+  let accept!: (result: { ok: boolean; checked: boolean }) => void;
+  vi.mocked(api.migrateStatus).mockResolvedValue("cutover");
+  vi.mocked(api.migrateFinish).mockResolvedValue({ removed_bak: true, missing_in_target: [] });
+  vi.mocked(requestConfirmEx).mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  fireEvent.click(await screen.findByRole("button", { name: L.migrateFinish }));
+  expect(requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
+    message: `${L.migrateFinishConfirm}\n${L.migrateSource}: C:\\src\n${L.migrateTarget}: D:\\dst`,
+  }));
+  expect(screen.getByLabelText(L.migrateSource)).toHaveProperty("disabled", true);
+  const target = screen.getByLabelText(L.migrateTarget);
+  expect(target).toHaveProperty("disabled", true);
+  fireEvent.change(target, { target: { value: "E:\\elsewhere" } });
+  await act(async () => accept({ ok: true, checked: false }));
+  expect(api.migrateFinish).toHaveBeenCalledWith("C:\\src", "D:\\dst", true);
+  expect(target).toHaveProperty("value", "D:\\dst");
+  expect(target).toHaveProperty("disabled", false);
+});
+
+it("shows remaining old files after an interrupted finish and retries without offering rollback", async () => {
+  vi.mocked(api.migrateStatus).mockResolvedValueOnce("cutover")
+    .mockRejectedValueOnce(new Error("status unavailable"))
+    .mockResolvedValue("finished");
+  vi.mocked(api.migrateFinish).mockRejectedValueOnce("migrate:cleanup_pending: old copy is locked")
+    .mockResolvedValueOnce({ removed_bak: true, missing_in_target: [] });
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  fireEvent.click(await screen.findByRole("button", { name: L.migrateFinish }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", L.migrateCleanupPending);
+  expect(screen.queryByRole("button", { name: L.migrateRollback })).toBeNull();
+  expect(toast.success).not.toHaveBeenCalled();
+  const retry = screen.getByRole("button", { name: L.migrateRetryCleanup });
+  await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+  fireEvent.click(retry);
+  await waitFor(() => expect(api.migrateFinish).toHaveBeenCalledTimes(2));
+  expect(requestConfirmEx).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: L.migrateRetryCleanup }));
+  expect(toast.success).toHaveBeenCalledWith(L.migrateFinishDone);
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });

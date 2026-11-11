@@ -1,19 +1,10 @@
-import { currentLang, t } from "../i18n";
-import { formatSize } from "../i18n";
+import { currentLang, formatSize, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { RestorePreview } from "../lib/api";
-
-export type SessionInfo = {
-  name: string;
-  size_kb: number;
-  created_at: string;
-  /** `false` = an aborted backup's leftover directory; it has no seal and can never be restored. */
-  sealed: boolean;
-};
+import { backupSessionStatus, type BackupSession } from "../lib/backupSession";
 
 export function RestorePanel({
   sessions,
-  unsealedCount = 0,
   loading,
   loadError,
   onReload,
@@ -25,13 +16,15 @@ export function RestorePanel({
   setPick,
   busy,
   msgs,
+  resultName,
+  runningRestore,
+  cancelRequested,
+  onCancelRestore,
   onRun,
   onDelete,
   onClose,
 }: {
-  sessions: SessionInfo[];
-  /** Session directories that never got a seal and are therefore not listed above. */
-  unsealedCount?: number;
+  sessions: BackupSession[];
   loading?: boolean;
   loadError?: string | null;
   onReload?: () => void;
@@ -43,12 +36,26 @@ export function RestorePanel({
   setPick: (v: string) => void;
   busy: boolean;
   msgs: string[];
+  resultName?: string;
+  runningRestore?: string | null;
+  cancelRequested?: boolean;
+  onCancelRestore?: () => void;
   onRun: () => void;
   onDelete: (name: string) => void;
   onClose: () => void;
 }) {
   const L = t();
-  const selectedPreview = preview?.name === pick ? preview : null;
+  const selectable = sessions.some(session => backupSessionStatus(session) === "verified");
+  const selected = sessions.some(session => session.name === pick && backupSessionStatus(session) === "verified");
+  const selectedPreview = selected && preview?.name === pick ? preview : null;
+  const canRestore = !busy && !loading && !loadError && !previewLoading && !previewError && Boolean(selectedPreview);
+  const availability = {
+    verified: "",
+    unsealed: L.restoreSessionUnsealed,
+    requires_admin: L.restoreSessionRequiresAdmin,
+    invalid: L.restoreSessionInvalid,
+    legacy: L.restoreSessionLegacy,
+  };
   const statusOrder = { missing: 0, blocked: 0, existing: 1, available: 2 };
   const previewEntries = [...(selectedPreview?.entries ?? [])]
     .sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
@@ -59,15 +66,8 @@ export function RestorePanel({
         <span style={css.muted}>{L.safetyVaultHint}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
-            style={{
-              ...css.btn,
-              height: 32,
-              opacity:
-                busy || loading || !!loadError || !pick || previewLoading || !!previewError || !selectedPreview
-                  ? 0.5
-                  : 1,
-            }}
-            disabled={busy || loading || !!loadError || !pick || previewLoading || !!previewError || !selectedPreview}
+            style={{ ...css.btn, height: 32, opacity: canRestore ? 1 : 0.5 }}
+            disabled={!canRestore}
             onClick={onRun}
           >
             {L.restoreRun}
@@ -77,20 +77,34 @@ export function RestorePanel({
           </button>
         </div>
       </div>
-      {loadError ? (
+      {runningRestore && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span role="status">{cancelRequested ? L.restoreCancelling : L.restoreRunning(runningRestore)}</span>
+          <button style={css.btnGhost} disabled={cancelRequested} onClick={onCancelRestore}>{L.restoreCancel}</button>
+        </div>
+      )}
+      {loadError && (
         <div role="alert">
           <span>{L.restoreLoadFailed}: {loadError}</span>
-          <button style={css.btnGhost} onClick={onReload}>{L.manageReload}</button>
+          <button style={css.btnGhost} disabled={busy} onClick={onReload}>{L.manageReload}</button>
         </div>
-      ) : sessions.length === 0 ? (
-        <div style={css.muted}>{loading ? L.loadingGeneric : L.restoreNoSessions}</div>
-      ) : (
+      )}
+      {loading ? <div role="status" style={css.muted}>{L.loadingGeneric}</div>
+        : sessions.length === 0 && !loadError ? <div style={css.muted}>{L.restoreNoSessions}</div> : null}
+      {sessions.length > 0 && (
         <>
-          <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>          <div style={{ maxHeight: 220, overflow: "auto" }}>
+          {selectable && <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>}
+          <div style={{ maxHeight: 220, overflow: "auto" }}>
             {sessions.map((s) => {
+              const status = backupSessionStatus(s);
               const date = /^\d{10}$/.test(s.created_at)
                 ? new Date(Number(s.created_at) * 1000).toLocaleString(currentLang() === "zh" ? "zh-CN" : "en-US")
                 : s.created_at || "—";
+              const details = <span style={{ flex: 1, minWidth: 0 }}>
+                <span className="ell" style={{ display: "block" }} title={s.name}>{s.name}</span>
+                <span style={{ ...css.muted, fontSize: 12 }}>{L.restoreCreated}: {date} · {formatSize(s.size_kb)}</span>
+                {availability[status] && <span style={{ display: "block", color: "var(--warn-ink)" }}>{availability[status]}</span>}
+              </span>;
               return (
               <div
                 key={s.name}
@@ -102,7 +116,7 @@ export function RestorePanel({
                   borderBottom: "1px solid var(--border)",
                 }}
               >
-                <label
+                {status === "verified" ? <label
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -119,35 +133,22 @@ export function RestorePanel({
                     disabled={busy}
                     onChange={() => setPick(s.name)}
                   />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span className="ell" style={{ display: "block" }} title={s.name}>{s.name}</span>
-                    <span style={{ ...css.muted, fontSize: 12 }}>{L.restoreCreated}: {date}</span>
-                  </span>
-                  <span style={{ ...css.muted, whiteSpace: "nowrap" }}>
-                    {formatSize(s.size_kb)}
-                  </span>
-                </label>
-                <button
+                  {details}
+                </label> : details}
+                {(status === "verified" || status === "unsealed") && <button
                   style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger-text)" }}
                   disabled={busy}
-                  onClick={() => {
- // Confirm lives in useMoreRestore — no second dialog here.
-                    onDelete(s.name);
-                  }}
+                  aria-label={`${L.deleteSession}: ${s.name}`}
+                  onClick={() => onDelete(s.name)}
                 >
                   {L.deleteSession}
-                </button>
+                </button>}
               </div>
             ); })}
           </div>
-          {unsealedCount > 0 && (
-            <p style={{ ...css.muted, fontSize: 12, marginTop: 6 }} data-testid="restore-unsealed">
-              {L.restoreUnsealedSessions(unsealedCount)}
-            </p>
-          )}
         </>
       )}
-      {!!pick && !loadError && <section aria-label={L.restorePreviewTitle} style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+      {selected && !loadError && <section aria-label={L.restorePreviewTitle} style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
         <strong>{L.restorePreviewTitle}</strong>
         {previewLoading ? <p role="status" style={css.muted}>{L.loadingGeneric}</p>
           : previewError ? <div role="alert" style={{ marginTop: 8 }}>
@@ -175,7 +176,7 @@ export function RestorePanel({
       </section>}
       {msgs.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <strong>{L.restoreResult}</strong>
+          <strong role="status">{resultName ? `${L.restoreResult}: ${resultName}` : L.restoreResult}</strong>
           <pre
             style={{
               margin: "6px 0 0",

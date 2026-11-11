@@ -1,5 +1,11 @@
 import { t } from "../i18n";
 
+export const NPM_BACKUP_FAILURE_PREFIX = "backup failed; npm packages kept: ";
+
+export function isNamedStreamRefusal(raw: string) {
+  return raw.trimEnd().endsWith("named data streams cannot be backed up or restored");
+}
+
 /** Localize backend diagnostics without treating unknown text as success. */
 export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = "cleanup"): string {
   const L = t();
@@ -57,6 +63,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "SRSetRestorePointW failed": L.restorePointFail, "not windows": L.backendUnsupported,
   };
   if (Object.hasOwn(exact, raw)) return exact[raw]!;
+  if (isNamedStreamRefusal(raw)) return L.backendBackupNamedStreams;
+  if (raw.startsWith("backup source could not be verified: ")) return L.backendBackupSourceUnverified;
   if (raw.startsWith("uninstaller finished (reboot required): ")) return L.backendRebootRequired;
   if (
     raw === "official uninstaller initiated reboot; residual cleanup skipped" ||
@@ -80,7 +88,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     return L.backendNotRegenerable(raw.slice("not a regenerable layout: ".length));
   }
   if (raw.startsWith("migration is not in the cutover state")) return L.backendMigrateState;
-  if (raw.startsWith("backup failed; npm packages kept: ")) return L.backendNpmBackupFailed;
+  if (raw.startsWith(NPM_BACKUP_FAILURE_PREFIX)) return L.backendNpmBackupFailed;
   if (raw.startsWith("package is no longer listed by the fresh scan: ")) {
     return L.backendNpmStale(raw.slice("package is no longer listed by the fresh scan: ".length));
   }

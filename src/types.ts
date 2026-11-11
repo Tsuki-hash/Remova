@@ -30,7 +30,7 @@ export type CleanupItem = {
   shared?: boolean;
   /** Hosts a registered Windows service image — keep-class, never default-select. */
   service_bound?: boolean;
-  /** Likely user documents/downloads — never auto-select (SOP). */
+  /** Likely user documents/downloads — never auto-select. */
   user_data?: boolean;
   /** Under a user library folder but not the root — confirm only, never default-select. */
   user_library?: boolean;
@@ -96,14 +96,14 @@ export type BrokenInstall = {
   reason: string;
 };
 
-/** M2: keys removed by the broken-record cleanup, and where the export lives. */
+/** keys removed by the broken-record cleanup, and where the export lives. */
 export type BrokenCleanupReport = {
   removed: string[];
   failed: string[];
   backup_dir: string;
 };
 
-/** M3: a firewall rule whose App= executable no longer exists. */
+/** a firewall rule whose App= executable no longer exists. */
 export type FirewallRule = {
   value_name: string;
   rule_name: string;
@@ -172,7 +172,7 @@ export type RegenerableCleanupReport = {
   reclaimed_kb: number;
 };
 
-/** M4: global CLI package inventory (read-only; npm/pnpm/yarn). */
+/** global CLI package inventory (read-only; npm/pnpm/yarn). */
 export type CliGlobalItem = {
   manager: string;
   name: string;
@@ -193,7 +193,7 @@ export type NpmCleanupReport = {
   backup_dir: string;
 };
 
-/** M6.3: junction directory migration (four gated phases). */
+/** junction directory migration (four gated phases). */
 export type MigrationPlan = {
   source: string;
   target: string;
@@ -234,7 +234,8 @@ export type MigrationState =
   | "copied"
   | "cutover"
   | "finished"
-  | "inconsistent";
+  | "inconsistent"
+  | "cleanup_pending";
 
 /** M4E.2: one install vector of a product family (read-only). */
 export type InstallationVector = {
@@ -328,7 +329,7 @@ export type ConsumerSearchResult = {
   completeness: ScanCompleteness;
 };
 
-/** M4: system traces — ConsentStore orphan (read-only this cycle). */
+/** system traces — ConsentStore orphan (read-only this cycle). */
 export type ConsentOrphan = {
   capability: string;
   key: string;
@@ -340,7 +341,7 @@ export type TraceScanResult = {
   completeness: ScanCompleteness;
 };
 
-/** M4: portable-app candidates (read-only). */
+/** portable-app candidates (read-only). */
 export type PortableCandidate = {
   exe_path: string;
   rule_name: string;
@@ -350,10 +351,10 @@ export type PortableScanResult = {
   omitted: number;
 };
 
-/** M4: processes the Restart Manager reports as holding a path. */
+/** processes the Restart Manager reports as holding a path. */
 export type LockingProcess = { pid: number; name: string; path?: string };
 
-/** M5: bounded, read-only registry key matches. */
+/** bounded, read-only registry key matches. */
 export type RegistryCheckHit = { key: string; name: string; detail: string };
 export type RegistryCheckResult = {
   hits: RegistryCheckHit[];
@@ -381,6 +382,8 @@ export type FullCleanupReport = {
   app_key?: string;
   dry_run: boolean;
   backup_dir: string;
+  /** The backup was published and verified before cleanup continued. */
+  backup_verified?: boolean;
   uninstall_ok: boolean;
   uninstall_message: string;
   deleted: number;
@@ -388,7 +391,7 @@ export type FullCleanupReport = {
   skipped: number;
   /** Reboot-delayed deletes (not in `deleted`). */
   delayed?: number;
-  /** M5: size actually deleted, kept by the gate, and scheduled for reboot. */
+  /** size actually deleted, kept by the gate, and scheduled for reboot. */
   reclaimed_kb?: number;
   kept_kb?: number;
   delayed_kb?: number;

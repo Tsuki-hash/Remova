@@ -1,4 +1,4 @@
-//! Junction directory migration (M6.3) — move without delete, gated per phase.
+//! Junction directory migration — move without delete, gated per phase.
 //!
 //! Four phases, each independently runnable and gate-checked:
 //!
@@ -17,7 +17,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(windows)]
+mod finishing;
 mod receipt;
+#[cfg(windows)]
+mod security;
 #[cfg(windows)]
 mod streams;
 
@@ -102,6 +106,8 @@ pub enum MigrationState {
     Finished,
     /// A combination that does not match any phase — needs manual attention.
     Inconsistent,
+    /// The verified rollback copy was committed for removal. Cleanup can be retried.
+    CleanupPending,
 }
 
 /// Cancellation targets a run, not a flag. Each copy (or cutover top-up)
@@ -129,6 +135,20 @@ fn lower(p: &Path) -> String {
         .to_lowercase()
         .trim_end_matches('\\')
         .to_string()
+}
+
+fn sibling_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    name.into()
+}
+
+fn backup_path(source: &Path) -> PathBuf {
+    sibling_suffix(source, ".bak")
+}
+
+fn pending_path(source: &Path) -> PathBuf {
+    sibling_suffix(source, ".bak.cleanup")
 }
 
 fn is_reparse(p: &Path) -> bool {
@@ -336,9 +356,10 @@ fn check_admission(
         rej.push("source_squirrel_updater".into());
     }
     // A pre-existing backup blocks a clean rename target choice.
-    let mut bak_name = source.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    if Path::new(&bak_name).exists() {
+    if [backup_path(source), pending_path(source)]
+        .iter()
+        .any(|path| std::fs::symlink_metadata(path).is_ok())
+    {
         rej.push("backup_path_taken".into());
     }
     // Target: must be absent or an empty directory, on a local fixed drive,
@@ -402,13 +423,10 @@ fn check_admission(
 /// plan admission cannot apply — the source is already a junction — so every
 /// path these phases may touch is verified here instead, inside the exclusive
 /// lock, right before any delete or rename.
-fn check_destructive(source: &Path, target: &Path) -> Vec<String> {
+fn check_destructive(source: &Path, target: &Path, backup: &Path) -> Vec<String> {
     let mut rej = Vec::new();
     let src_l = lower(source);
     let tgt_l = lower(target);
-    let mut bak_name = source.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    let backup = PathBuf::from(&bak_name);
     if src_l == tgt_l {
         rej.push("same_path".into());
     }
@@ -423,11 +441,7 @@ fn check_destructive(source: &Path, target: &Path) -> Vec<String> {
         program_data.join("Remova"),
         program_data.join("RemovaSealKeys"),
     ];
-    for (label, p) in [
-        ("source", source),
-        ("target", target),
-        ("backup", backup.as_path()),
-    ] {
+    for (label, p) in [("source", source), ("target", target), ("backup", backup)] {
         if under_any(&lower(p), &protected) {
             rej.push(format!("{label}_protected_tree"));
         }
@@ -447,7 +461,7 @@ fn check_destructive(source: &Path, target: &Path) -> Vec<String> {
             }
         }
     }
-    match std::fs::symlink_metadata(&backup) {
+    match std::fs::symlink_metadata(backup) {
         Err(_) => rej.push("backup_missing".into()),
         Ok(md) => {
             if meta_is_reparse(&md) {
@@ -681,6 +695,17 @@ fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result
     }
     let _source = crate::fsutil::pin_target_readonly(from).map_err(|err| err.to_string())?;
     let _target = crate::fsutil::create_dirs_pinned(to).map_err(|err| err.to_string())?;
+    #[cfg(windows)]
+    {
+        let source = streams::open(from).map_err(|err| err.to_string())?;
+        let target = streams::open(to).map_err(|err| err.to_string())?;
+        if !security::directories_equal(&source, &target).map_err(|err| err.to_string())? {
+            return Err(format!(
+                "migrate:directory_permissions_differ: {}",
+                to.display()
+            ));
+        }
+    }
     let read = std::fs::read_dir(from).map_err(|e| e.to_string())?;
     for entry in read {
         // An enumeration error is a hole in the copy, not a skippable entry.
@@ -774,7 +799,7 @@ fn compare_trees(a: &Path, b: &Path, allow_extra_in_b: bool) -> Result<Vec<Strin
     walk(b, Path::new(""), &mut mb)?;
     let mut diffs = Vec::new();
     if !files_equal(a, b)? {
-        diffs.push("root directory streams".into());
+        diffs.push("root directory streams or permissions".into());
     }
     for (k, va) in &ma {
         match mb.get(k) {
@@ -1014,9 +1039,7 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
             error: Some(format!("pre-rename verification failed: {e}")),
         };
     }
-    let mut bak_name = source_path.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    let backup = PathBuf::from(bak_name);
+    let backup = backup_path(&source_path);
     let mut report = MigrationCutoverReport {
         ok: false,
         junction: source_path.to_string_lossy().into_owned(),
@@ -1089,9 +1112,8 @@ pub fn finish(
     }
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
-    let mut bak_name = source_path.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    let backup = PathBuf::from(bak_name);
+    let backup = backup_path(&source_path);
+    let pending = pending_path(&source_path);
     // The junction must be in place AND point at the stated target before the
     // backup may be dropped — the shape check rollback applies, because finish
     // is strictly more destructive.
@@ -1104,22 +1126,31 @@ pub fn finish(
             "migration is not in the cutover state (junction missing or pointing elsewhere)".into(),
         );
     }
-    match state_of(&source_path, &target_path) {
-        MigrationState::CutOver => {}
+    let staged = match state_of(&source_path, &target_path) {
+        MigrationState::CutOver => false,
+        MigrationState::CleanupPending => true,
         other => {
             return Err(format!(
                 "migration is not in the cutover state (current: {other:?})"
             ));
         }
-    }
+    };
     // Re-check every path the destructive part will touch, inside the lock.
-    let refused = check_destructive(&source_path, &target_path);
+    let refused = check_destructive(
+        &source_path,
+        &target_path,
+        if staged { &pending } else { &backup },
+    );
     if !refused.is_empty() {
         return Err(format!("refusing to finish: {}", refused.join(",")));
     }
-    verify_and_remove_backup(&backup, &target_path).map_err(|err| {
-        ledger(source, target, "finish", "verification_refused");
-        format!("finish refused: {err}")
+    finish_backup(&source_path, &backup, &pending, &target_path, staged).inspect_err(|err| {
+        let outcome = if err.starts_with("migrate:cleanup_pending:") {
+            "cleanup_pending"
+        } else {
+            "verification_refused"
+        };
+        ledger(source, target, "finish", outcome);
     })?;
     let report = MigrationFinishReport {
         removed_bak: true,
@@ -1130,18 +1161,11 @@ pub fn finish(
 }
 
 #[cfg(windows)]
-fn verify_and_remove_backup(backup: &Path, target: &Path) -> std::io::Result<()> {
-    let snapshot = crate::fsutil::PinnedLocalDeleteTree::with_entry_limit(backup, COPY_FILE_CAP)?;
-    begin_copy_run();
-    let _verified_target = snapshot.hold_verified_copy(target, false, readers_equal)?;
-    snapshot.remove()
-}
+use finishing::finish as finish_backup;
 
 #[cfg(not(windows))]
-fn verify_and_remove_backup(_backup: &Path, _target: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::other(
-        "directory migration requires Windows",
-    ))
+fn finish_backup(_: &Path, _: &Path, _: &Path, _: &Path, _: bool) -> Result<(), String> {
+    Err("directory migration requires Windows".into())
 }
 
 #[cfg(windows)]
@@ -1149,7 +1173,7 @@ fn hold_rollback_target(
     backup: &Path,
     target: &Path,
 ) -> std::io::Result<Vec<crate::fsutil::DirPin>> {
-    let snapshot = crate::fsutil::PinnedLocalDeleteTree::with_entry_limit(backup, COPY_FILE_CAP)?;
+    let snapshot = crate::fsutil::PinnedLocalDeleteTree::with_security(backup, COPY_FILE_CAP)?;
     begin_copy_run();
     snapshot.hold_verified_copy(target, true, readers_equal)
 }
@@ -1183,9 +1207,7 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
     }
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
-    let mut bak_name = source_path.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    let backup = PathBuf::from(bak_name);
+    let backup = backup_path(&source_path);
     if !is_reparse(&source_path) {
         return MigrationRollbackReport {
             ok: false,
@@ -1202,6 +1224,12 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
         };
     }
     if !backup.exists() {
+        if state_of(&source_path, &target_path) == MigrationState::CleanupPending {
+            return MigrationRollbackReport {
+                ok: false,
+                message: Some("finish committed the old copy for removal; the live target remains available and finish cleanup can be retried".into()),
+            };
+        }
         return MigrationRollbackReport {
             ok: false,
             message: Some("backup directory is missing; cannot restore".into()),
@@ -1209,7 +1237,7 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
     }
     // Re-check every path the destructive part will touch, inside the lock:
     // protected trees, ancestor reparse points, a plain backup directory.
-    let refused = check_destructive(&source_path, &target_path);
+    let refused = check_destructive(&source_path, &target_path, &backup);
     if !refused.is_empty() {
         return MigrationRollbackReport {
             ok: false,
@@ -1278,14 +1306,31 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
 
 /// Where the migration currently stands, derived from the filesystem.
 pub fn state_of(source: &Path, target: &Path) -> MigrationState {
-    let mut bak_name = source.as_os_str().to_os_string();
-    bak_name.push(".bak");
-    let backup = PathBuf::from(bak_name);
-    let bak = backup.exists();
+    let backup = backup_path(source);
+    let pending = pending_path(source);
+    let bak = std::fs::symlink_metadata(&backup).is_ok();
     let src = std::fs::symlink_metadata(source);
     let src_reparse = src.as_ref().map(|_| is_reparse(source)).unwrap_or(false);
     let src_plain = src.is_ok() && !src_reparse;
     let tgt = std::fs::symlink_metadata(target).is_ok();
+    if std::fs::symlink_metadata(&pending).is_ok() {
+        let matches_receipt = crate::fsutil::local_directory_id(&pending)
+            .and_then(|backup_id| {
+                let target_id = crate::fsutil::local_directory_id(target)?;
+                Ok(receipt::Receipt::matches_cleanup(
+                    source, target, backup_id, target_id,
+                ))
+            })
+            .unwrap_or(false);
+        if !bak
+            && src_reparse
+            && matches_receipt
+            && std::fs::read_link(source).is_ok_and(|path| lower(&path) == lower(target))
+        {
+            return MigrationState::CleanupPending;
+        }
+        return MigrationState::Inconsistent;
+    }
     match (src_plain, src_reparse, bak, tgt) {
         (false, false, false, false) => MigrationState::Absent,
         // Plain source, no target yet (or rolled back with the target gone).
@@ -1361,6 +1406,7 @@ mod tests {
             MigrationState::CutOver,
             MigrationState::Finished,
             MigrationState::Inconsistent,
+            MigrationState::CleanupPending,
         ];
         assert_eq!(serde_json::to_value(states).unwrap(), fixture["states"]);
         for state in states {
@@ -1602,6 +1648,135 @@ mod tests {
         assert!(rb2.ok, "rollback: {:?}", rb2);
         assert!(!is_reparse(&src2), "the junction is gone");
         assert!(src2.join("a.txt").exists(), "the original tree is back");
+    }
+
+    #[cfg(windows)]
+    fn grant_guest_read(path: &Path) {
+        let result = std::process::Command::new(crate::regops::sys_tool("icacls.exe"))
+            .arg(path)
+            .args(["/grant", "*S-1-5-32-546:(OI)(CI)(RX)"])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn copy_refuses_a_different_inherited_directory_acl_before_writing_payload() {
+        let tmp = crate::test_support::TempDir::new("migration_parent_acl");
+        let source = seed_source(tmp.path());
+        let target_parent = tmp.subdir("different_inheritance");
+        grant_guest_read(&target_parent);
+        let target = target_parent.join("tgt");
+        let error = copy_phase(&source.to_string_lossy(), &target.to_string_lossy()).unwrap_err();
+        assert!(error.contains("permissions"), "{error}");
+        assert!(std::fs::read_dir(target).unwrap().next().is_none());
+        assert!(source.join("a.txt").is_file());
+        assert!(!backup_path(&source).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_acl_drift_blocks_finish_and_rollback_without_changing_either_tree() {
+        let tmp = crate::test_support::TempDir::new("migration_target_acl");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_string_lossy();
+        let dst = target.to_string_lossy();
+        copy_phase(&src, &dst).unwrap();
+        assert!(cutover(&src, &dst).ok);
+        grant_guest_read(&target);
+        assert!(finish(&src, &dst, true).is_err());
+        assert!(!rollback(&src, &dst).ok);
+        assert_eq!(state_of(&source, &target), MigrationState::CutOver);
+        assert!(backup_path(&source).join("a.txt").is_file());
+        assert!(source.join("a.txt").is_file());
+        assert!(!pending_path(&source).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finish_refuses_a_locked_entry_before_committing_the_rollback_copy() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let tmp = crate::test_support::TempDir::new("migration_finish_lock");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_string_lossy();
+        let dst = target.to_string_lossy();
+        copy_phase(&src, &dst).unwrap();
+        assert!(cutover(&src, &dst).ok);
+        let backup = backup_path(&source);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1) // FILE_SHARE_READ
+            .open(backup.join("a.txt"))
+            .unwrap();
+        let error = finish(&src, &dst, true).unwrap_err();
+        assert!(!error.starts_with("migrate:cleanup_pending:"), "{error}");
+        assert!(backup.join("a.txt").is_file());
+        assert!(!pending_path(&source).exists());
+        assert_eq!(state_of(&source, &target), MigrationState::CutOver);
+        drop(held);
+        assert!(rollback(&src, &dst).ok);
+        assert!(!is_reparse(&source));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finish_retries_partial_cleanup_and_refuses_a_substituted_pending_copy() {
+        let tmp = crate::test_support::TempDir::new("migration_finish_retry");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_string_lossy();
+        let dst = target.to_string_lossy();
+        std::fs::write(source.join("zzz-readonly.txt"), b"readonly").unwrap();
+        copy_phase(&src, &dst).unwrap();
+        assert!(cutover(&src, &dst).ok);
+        let old_readonly = backup_path(&source).join("zzz-readonly.txt");
+        let original_permissions = old_readonly.metadata().unwrap().permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        std::fs::set_permissions(&old_readonly, readonly_permissions).unwrap();
+
+        let error = finish(&src, &dst, true).unwrap_err();
+        assert!(error.starts_with("migrate:cleanup_pending:"), "{error}");
+        assert_eq!(state_of(&source, &target), MigrationState::CleanupPending);
+        let pending = pending_path(&source);
+        assert!(!backup_path(&source).exists());
+        assert!(
+            !pending.join("a.txt").exists(),
+            "an earlier child was removed"
+        );
+        assert_eq!(
+            std::fs::read(source.join("zzz-readonly.txt")).unwrap(),
+            b"readonly"
+        );
+        assert!(source.join("a.txt").is_file());
+        let rollback = rollback(&src, &dst);
+        assert!(!rollback.ok);
+        assert!(rollback.message.unwrap().contains("cleanup can be retried"));
+
+        let displaced = tmp.join("displaced");
+        std::fs::rename(&pending, &displaced).unwrap();
+        std::fs::create_dir(&pending).unwrap();
+        std::fs::write(
+            pending.join("a.txt"),
+            std::fs::read(target.join("a.txt")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(finish(&src, &dst, true).is_err());
+        assert!(pending.join("a.txt").is_file());
+        std::fs::remove_file(pending.join("a.txt")).unwrap();
+        std::fs::remove_dir(&pending).unwrap();
+        std::fs::rename(displaced, &pending).unwrap();
+
+        std::fs::set_permissions(pending.join("zzz-readonly.txt"), original_permissions).unwrap();
+        assert!(finish(&src, &dst, true).unwrap().removed_bak);
+        assert!(!pending.exists());
+        assert!(source.join("a.txt").is_file());
+        assert_eq!(state_of(&source, &target), MigrationState::Finished);
     }
 
     #[cfg(windows)]

@@ -1,6 +1,6 @@
 import type { FullCleanupReport } from "../types";
 import type { Strings } from "../i18n";
-import { backendText } from "./backendText";
+import { backendText, isNamedStreamRefusal } from "./backendText";
 import { toast } from "./toast";
 
 /**
@@ -38,6 +38,10 @@ export function cleanupNothingText(report: FullCleanupReport, L: Strings): strin
   return L.cleanupNothingRemoved(report.skipped);
 }
 
+export function cleanupAbortText(report: Pick<FullCleanupReport, "uninstall_message" | "errors">, L: Strings): string {
+  return backendText(report.errors.find(isNamedStreamRefusal) ?? (report.uninstall_message || report.errors[0] || "")) || L.uninstallFail;
+}
+
 /** May the report panel offer "rescan after uninstall"? A 1641/pending
  * report has `uninstall_ok` too: the uninstaller succeeded, only deletion was
  * postponed. */
@@ -50,9 +54,10 @@ export function shouldRescanAfterUninstall(report: {
 
 export function cleanupFeedback(report: FullCleanupReport, L: Strings, channel?: string, prefix = "") {
   const message = report.aborted
-    ? backendText(report.uninstall_message || report.errors[0] || "") || L.uninstallFail
+    ? cleanupAbortText(report, L)
     : `${prefix}${cleanupOutcomeText(report, L)}`;
   if (report.aborted || report.failed > 0) toast.error(message, { channel });
-  else toast.success(message, { channel, ttl: 3000 });
+  else if (cleanupAccomplishedSomething(report)) toast.success(message, { channel, ttl: 3000 });
+  else toast.info(message, { channel });
   return message;
 }

@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { CliGlobalsPanel } from "../components/CliGlobalsPanel";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -25,6 +25,7 @@ vi.mock("../lib/toast", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  setLang("zh");
 });
 
 it("groups the inventory by manager and opens the root folder", async () => {
@@ -99,4 +100,21 @@ it("removes selected npm packages after a no-override confirm and reports", asyn
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   // pnpm rows never get a checkbox: only npm is gated.
   expect(screen.queryByRole("checkbox", { name: "cowsay" })).toBeNull();
+});
+
+it.each(["zh", "en"] as const)("keeps the localized and technical npm backup refusal in %s", async lang => {
+  setLang(lang);
+  const L = t();
+  vi.mocked(api.cliGlobals).mockResolvedValue({
+    items: [{ manager: "npm", name: "rimraf", version: "6.0.0", path: "C:\\npm\\node_modules\\rimraf", size_kb: 1, size_capped: false }],
+    omitted: 0, notes: [], completeness: { status: "complete", roots_scanned: 1, failed_roots: [] },
+  });
+  const detail = "rimraf: named data streams cannot be backed up or restored";
+  vi.mocked(api.removeNpmGlobals).mockRejectedValueOnce(`backup failed; npm packages kept: ${detail}`);
+  render(<CliGlobalsPanel onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "rimraf" }));
+  fireEvent.click(screen.getByRole("button", { name: L.cliRemove }));
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(L.backendNpmBackupFailed,
+    { detail: `${L.backendBackupNamedStreams}\n${detail}` }));
+  expect(toast.success).not.toHaveBeenCalled();
 });

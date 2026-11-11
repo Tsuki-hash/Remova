@@ -42,12 +42,16 @@ pub(crate) fn write_file_manifest(
 pub(super) fn open_verified_manifest(
     session: &Path,
     expected: &str,
+    cancelled: impl Fn() -> bool,
 ) -> Result<(FileManifest, std::fs::File), String> {
     let file = crate::fsutil::open_local_regular_file(&session.join(FILE_MANIFEST_NAME))
         .map_err(|e| format!("seal:file_manifest_read: {e}"))?;
     let mut manifest = BoundedManifest::default();
-    let actual =
-        super::v2::digest_payload((&file).take(MAX_MANIFEST_BYTES as u64 + 1), &mut manifest)?;
+    let actual = super::v2::digest_payload_with_cancel(
+        (&file).take(MAX_MANIFEST_BYTES as u64 + 1),
+        &mut manifest,
+        cancelled,
+    )?;
     if actual != expected {
         return Err("seal:file_manifest_mismatch".into());
     }
@@ -57,5 +61,13 @@ pub(super) fn open_verified_manifest(
 }
 
 pub(crate) fn read_file_manifest(session: &Path, expected: &str) -> Result<FileManifest, String> {
-    open_verified_manifest(session, expected).map(|(entries, _pin)| entries)
+    read_file_manifest_with_cancel(session, expected, crate::executor::cleanup_cancelled)
+}
+
+pub(crate) fn read_file_manifest_with_cancel(
+    session: &Path,
+    expected: &str,
+    cancelled: impl Fn() -> bool,
+) -> Result<FileManifest, String> {
+    open_verified_manifest(session, expected, cancelled).map(|(entries, _pin)| entries)
 }

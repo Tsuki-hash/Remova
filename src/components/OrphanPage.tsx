@@ -3,8 +3,7 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
-import { backendText } from "../lib/backendText";
-import { cleanupFeedback } from "../lib/cleanupFeedback";
+import { cleanupAbortText, cleanupFeedback } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
@@ -178,7 +177,7 @@ export function OrphanPage({
         cleanup_source: "orphan",
       });
       if (report.aborted) {
-        const msg = backendText(report.uninstall_message) || L.uninstallFail;
+        const msg = cleanupAbortText(report, L);
         onError?.(msg);
         toast.error(msg, { channel: ORPHAN_CHANNEL });
         onLastReport(report);

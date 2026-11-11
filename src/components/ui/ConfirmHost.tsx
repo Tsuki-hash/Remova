@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from "react";
 import { t } from "../../i18n";
-import { useDialogFocus } from "../../lib/useDialogFocus";
+import { dialogLayer, useDialogFocus } from "../../lib/useDialogFocus";
 import {
   getConfirm,
   getConfirmChecked,
@@ -174,7 +174,7 @@ function HoldButton({
 function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>> }) {
   const L = t();
   const dialogRef = useRef<HTMLDivElement>(null);
-  useDialogFocus(true, dialogRef);
+  useDialogFocus(true, dialogRef, dialogLayer.confirm, () => settleConfirm(false, opts.id));
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
   const [checked, setChecked] = useState(getConfirmChecked());
   const confirm = useCallback(() => settleConfirm(true, opts.id), [opts.id]);
@@ -279,18 +279,6 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
 
 export function ConfirmHost() {
   const opts = useSyncExternalStore(subscribeConfirm, getConfirm, getConfirm);
-  useEffect(() => {
-    if (!opts) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        settleConfirm(false, opts.id);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [opts]);
-
   if (!opts) return null;
   return (
     <div
@@ -298,7 +286,7 @@ export function ConfirmHost() {
         position: "fixed",
         animation: "remova-fade-in var(--dur-float) var(--ease-standard)",
         inset: 0,
-        zIndex: 1000,
+        zIndex: dialogLayer.confirm,
         background: "rgba(15,23,42,.42)",
         display: "grid",
         placeItems: "center",

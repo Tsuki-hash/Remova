@@ -130,6 +130,117 @@ fn app(source: &Path) -> crate::apps::InstalledApp {
 
 #[test]
 #[cfg(windows)]
+fn cleanup_with_backup_preserves_files_and_directories_with_named_streams() {
+    let _env = lock_backup_env();
+    let root = crate::test_support::TempDir::new("named-backup-streams");
+    let _store = crate::path_seal::TestStore::new(root.join("seals"));
+    let _backup = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", root.join("Backup"));
+    let source = source(&root);
+    let payload = source.join("nested/payload.bin");
+    for (owner, selected, suffix) in [
+        (&payload, &payload, ":FixtureMetadata"),
+        (&payload, &source, ":Zone.Identifier"),
+        (&source, &source, ":FixtureMetadata"),
+    ] {
+        let mut stream = owner.as_os_str().to_os_string();
+        stream.push(suffix);
+        let stream = PathBuf::from(stream);
+        fs::write(&stream, b"preserve this stream").unwrap();
+        let mut selected_item = item(selected);
+        if selected == &payload {
+            selected_item.kind = ItemKind::File;
+        }
+        let report = crate::executor::run_full_cleanup(
+            &app(&source),
+            &[selected_item],
+            &crate::executor::FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: true,
+                restore_point: false,
+                cleanup_source: None,
+            },
+        );
+        assert!(report.aborted && report.deleted == 0, "{report:?}");
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("named data streams")),
+            "{:?}",
+            report.errors
+        );
+        assert!(crate::path_seal::verified_seal(Path::new(&report.backup_dir)).is_err());
+        assert_eq!(fs::read(&payload).unwrap(), b"complete backup bytes");
+        assert_eq!(fs::read(&stream).unwrap(), b"preserve this stream");
+        fs::remove_file(&stream).unwrap();
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn backup_keeps_a_file_when_its_contents_cannot_be_opened() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let _env = lock_backup_env();
+    let root = crate::test_support::TempDir::new("backup-locked-source");
+    let _store = crate::path_seal::TestStore::new(root.join("seals"));
+    let _backup = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", root.join("Backup"));
+    let source = source(&root);
+    let file = source.join("nested/payload.bin");
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&file)
+        .unwrap();
+    let session = create_session("locked-source").unwrap();
+    let (ok, fail, _) = backup_items(&[item(&source)], &session);
+    assert_eq!((ok, fail), (0, 1));
+    assert!(crate::path_seal::verified_seal(&session).is_err());
+    drop(lock);
+    assert_eq!(fs::read(file).unwrap(), b"complete backup bytes");
+}
+
+#[test]
+#[cfg(windows)]
+fn backup_and_restore_use_the_same_limit_for_each_payload_tree() {
+    let limit = crate::path_seal::MAX_PAYLOAD_NODES;
+    let first = std::iter::repeat_n("files/first/entry", limit);
+    let two_roots = first.clone().chain(["files/second"]);
+    validate_payload_capacity(two_roots).unwrap();
+    assert!(validate_payload_capacity(first.chain(["files/first/last"])).is_err());
+}
+
+#[test]
+#[cfg(windows)]
+fn oversized_seal_is_rejected_before_backup_publication() {
+    let root = crate::test_support::TempDir::new("seal-capacity");
+    let stage = root.subdir("stage");
+    let session = root.subdir("1700000000_capacity");
+    fs::create_dir_all(stage.join("files")).unwrap();
+    fs::create_dir_all(stage.join("registry")).unwrap();
+    let targets = (0..1000)
+        .map(|i| {
+            (
+                format!("target-{i}"),
+                format!(r"C:\Fixture\{i}\{}", "x".repeat(180)),
+            )
+        })
+        .collect();
+    let error = publish_verified_stage(
+        &stage,
+        &session,
+        &targets,
+        &std::collections::BTreeMap::new(),
+        |_| panic!("an oversized seal must be rejected before publication"),
+    )
+    .unwrap_err();
+    assert_eq!(error, "seal:v2_input_too_large");
+    assert_eq!(fs::read_dir(&session).unwrap().count(), 0);
+}
+
+#[test]
+#[cfg(windows)]
 fn publication_faults_fail_backup_and_abort_real_pipeline_without_deleting_sources() {
     let _env = lock_backup_env();
     for fault in [

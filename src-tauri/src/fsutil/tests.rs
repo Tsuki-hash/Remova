@@ -436,7 +436,7 @@ fn copy_stream_failure_preserves_dest_and_leaves_no_tmp() {
     let tmp = unique_tmp("atomic_copy");
     let dest = tmp.join("out.bin");
     fs::write(&dest, b"ORIGINAL").unwrap();
-    let err = copy_stream_atomic(FailAfter { left: 8 }, &dest).unwrap_err();
+    let err = copy_stream_atomic(FailAfter { left: 8 }, &dest, |_| Ok(())).unwrap_err();
     assert!(err.to_string().contains("injected"), "{err}");
     assert_eq!(
         fs::read(&dest).unwrap(),
@@ -468,7 +468,7 @@ fn copy_stream_cancellation_keeps_the_destination_and_removes_the_temporary_file
     let dest = tmp.path().join("destination");
     std::fs::write(&dest, b"pre-existing").unwrap();
     crate::executor::begin_cleanup_control();
-    let result = copy_stream_atomic(CancelAfterChunk, &dest);
+    let result = copy_stream_atomic(CancelAfterChunk, &dest, |_| Ok(()));
     crate::executor::begin_cleanup_control();
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
     assert_eq!(std::fs::read(&dest).unwrap(), b"pre-existing");
@@ -480,7 +480,7 @@ fn copy_stream_success_replaces_dest_without_tmp() {
     let tmp = unique_tmp("atomic_copy_ok");
     let dest = tmp.join("out.bin");
     fs::write(&dest, b"OLD").unwrap();
-    let n = copy_stream_atomic(&b"NEWER"[..], &dest).unwrap();
+    let n = copy_stream_atomic(&b"NEWER"[..], &dest, |_| Ok(())).unwrap();
     assert_eq!(n, 5);
     assert_eq!(fs::read(&dest).unwrap(), b"NEWER");
     assert!(!tmp.join("out.bin.removal-tmp").exists());
@@ -674,7 +674,7 @@ fn copy_dir_roundtrip() {
     );
     let _ = fs::remove_dir_all(&root);
 }
-/// M2 (SOP §8-22): only empty, matching vendor/product shells below a known
+/// only empty, matching vendor/product shells below a known
 /// root are removed; the root and sibling directories survive.
 #[test]
 fn prune_removes_only_empty_matching_shells() {
@@ -724,7 +724,7 @@ fn attribute_retry_is_limited_to_access_denied_with_protected_attributes() {
     ));
 }
 
-/// M4 (SOP §9.3): READONLY/HIDDEN/SYSTEM is an attribute, not a lock —
+/// READONLY/HIDDEN/SYSTEM is an attribute, not a lock —
 /// the delete path clears it and retries once.
 #[cfg(windows)]
 #[test]
@@ -760,7 +760,7 @@ fn target_can_be_marked_covers_roots_and_unc_shares() {
     assert!(target_can_be_marked(std::path::Path::new("relative")));
 }
 
-/// A10 / A4: the marker name is bounded, unique per attempt, and still
+/// the marker name is bounded, unique per attempt, and still
 /// parses as a hidden file name.
 #[cfg(windows)]
 #[test]
@@ -775,7 +775,7 @@ fn guard_marker_names_are_short_and_distinct() {
     }
 }
 
-/// A2: raw CreateFileW does not get std's verbatim conversion. Long
+/// raw CreateFileW does not get std's verbatim conversion. Long
 /// absolute paths must be promoted so a valid deep destination can still
 /// be pinned; short and relative paths must keep their ordinary form.
 #[cfg(windows)]
@@ -803,7 +803,7 @@ fn wide_path_promotes_only_long_absolute_paths() {
     assert_eq!(text, relative.replace('/', "\\"));
 }
 
-/// A2 e2e: a destination deeper than MAX_PATH must pin successfully, and
+/// a destination deeper than MAX_PATH must pin successfully, and
 /// its target must carry the marker.
 #[cfg(windows)]
 #[test]

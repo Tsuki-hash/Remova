@@ -587,9 +587,10 @@ fn publication_inventory(
             return Err("cleanup cancelled during backup".into());
         }
         *left -= 1;
-        let _pin = crate::fsutil::pin_target_readonly(path).map_err(|e| e.to_string())?;
+        let pin = crate::fsutil::pin_target_readonly(path).map_err(|e| e.to_string())?;
         let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
         let digest = if meta.is_dir() {
+            pin.check_data_streams().map_err(|e| e.to_string())?;
             None
         } else if meta.is_file() {
             Some(crate::path_seal::publication_file_digest(path)?)
@@ -674,6 +675,25 @@ fn verify_publication(
 }
 
 #[cfg(windows)]
+fn validate_payload_capacity<'a>(keys: impl IntoIterator<Item = &'a str>) -> Result<(), String> {
+    let mut counts = std::collections::BTreeMap::new();
+    for key in keys {
+        let root = key
+            .strip_prefix("files/")
+            .and_then(|relative| relative.split('/').next())
+            .ok_or("backup payload path is invalid")?;
+        let count = counts.entry(root).or_insert(0usize);
+        *count += 1;
+        if *count > crate::path_seal::MAX_PAYLOAD_NODES {
+            return Err(format!(
+                "backup payload exceeds the restore directory limit: {root}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 pub(crate) fn publish_verified_stage(
     private: &Path,
     session: &Path,
@@ -700,7 +720,9 @@ pub(crate) fn publish_verified_stage(
             files.insert(key.replace('\\', "/"), digest.clone());
         }
     }
+    validate_payload_capacity(files.keys().map(String::as_str))?;
     let manifest_digest = write_file_manifest(private, &files)?;
+    crate::path_seal::check_manifest_seal_capacity(session, map, digests, &manifest_digest)?;
     drop(files);
     inventory.insert(
         PathBuf::from(FILE_MANIFEST_NAME),
@@ -877,16 +899,18 @@ fn backup_item_with_map(
         }
         ItemKind::File | ItemKind::Dir => {
             let src = Path::new(&item.path);
-            if !src.exists() {
-                return Ok(());
-            }
+            let metadata = match fs::symlink_metadata(src) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error.to_string()),
+            };
             // never copy through junction/mount reparse (backup exfil / restore write-through).
-            if crate::fsutil::is_reparse_point(src) {
+            if crate::fsutil::is_reparse_metadata(&metadata) {
                 return Ok(());
             }
             let rel = backup_rel_name(src, &item.path);
             let dest = session.join("files").join(&rel);
-            if src.is_dir() {
+            if metadata.is_dir() {
                 // copy_dir pins each level (including this root) with a
                 // non-following handle. A second outer pin that requests
                 // DELETE without FILE_SHARE_DELETE conflicts with that open
@@ -916,7 +940,7 @@ mod tests {
     use super::*;
     use crate::scanner::{Confidence, RiskLevel};
 
-    /// A1: the truncated name must survive the real backup path, including the
+    /// the truncated name must survive the real backup path, including the
     /// atomic temp file. A 238-unit ASCII name (rel = 255 units) and a
     /// 115-emoji name both used to fail at the temp component.
     #[test]

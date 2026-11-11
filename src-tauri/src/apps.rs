@@ -1,5 +1,6 @@
 //! Enumerate Windows uninstall registry entries (read-only).
 
+use crate::scan_contract::{ScanCompleteness, ScanStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -219,7 +220,7 @@ pub mod trust_test_support {
     }
 
     /// Snapshot + exclusive test lock. Restores on drop, including on panic
-    /// (A5): a failed assertion must not leave another test's trust set armed.
+    ///: a failed assertion must not leave another test's trust set armed.
     pub struct TrustGuard {
         saved: Option<Saved>,
         _lock: MutexGuard<'static, ()>,
@@ -299,15 +300,26 @@ pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::i
     });
 }
 
-/// Complete ownership inventory, including products hidden from the app list.
+/// Named inventory, including products hidden from the app list.
 /// This read-only scan must not expand or replace uninstall authorization.
 pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
     scan_installed_inventory_with_completeness().0
 }
 
 /// Inventory plus the completeness of this call.
-pub(crate) fn scan_installed_inventory_with_completeness(
-) -> (Vec<InstalledApp>, crate::scan_contract::ScanCompleteness) {
+pub(crate) fn scan_installed_inventory_with_completeness() -> (Vec<InstalledApp>, ScanCompleteness)
+{
+    let inventory = scan_install_owners();
+    (inventory.apps, inventory.completeness)
+}
+
+pub(crate) struct InstallInventory {
+    pub apps: Vec<InstalledApp>,
+    pub install_roots: Vec<String>,
+    pub completeness: ScanCompleteness,
+}
+
+pub(crate) fn scan_install_owners() -> InstallInventory {
     #[cfg(windows)]
     {
         let sources: [(&str, HKEY, &str, REG_SAM_FLAGS); 3] = [
@@ -345,29 +357,28 @@ pub(crate) fn scan_installed_inventory_with_completeness(
         )
     }
     #[cfg(not(windows))]
-    (
-        Vec::new(),
-        crate::scan_contract::ScanCompleteness::complete(),
-    )
+    InstallInventory {
+        apps: Vec::new(),
+        install_roots: Vec::new(),
+        completeness: ScanCompleteness::complete(),
+    }
 }
 
 #[cfg(any(windows, test))]
 fn collect_inventory<T>(
     sources: impl IntoIterator<Item = (&'static str, T)>,
     mut collect: impl FnMut(T, &mut Vec<InstalledApp>) -> bool,
-) -> (Vec<InstalledApp>, crate::scan_contract::ScanCompleteness) {
-    use crate::scan_contract::{ScanCompleteness, ScanStatus};
-
+) -> InstallInventory {
     let mut out = Vec::new();
     let mut failed_roots = Vec::new();
     let mut roots_scanned = 0;
     for (alias, source) in sources {
         if crate::scan_task::cancelled() {
-            return (out, ScanCompleteness::cancelled(roots_scanned));
+            return finish_inventory(out, ScanCompleteness::cancelled(roots_scanned));
         }
         let complete = collect(source, &mut out);
         if crate::scan_task::cancelled() {
-            return (out, ScanCompleteness::cancelled(roots_scanned));
+            return finish_inventory(out, ScanCompleteness::cancelled(roots_scanned));
         }
         if complete {
             roots_scanned += 1;
@@ -375,13 +386,12 @@ fn collect_inventory<T>(
             failed_roots.push(alias.to_string());
         }
     }
-    dedup_same_products(&mut out);
     let status = match (failed_roots.is_empty(), roots_scanned) {
         (true, _) => ScanStatus::Complete,
         (false, 0) => ScanStatus::Failed,
         (false, _) => ScanStatus::Partial,
     };
-    (
+    finish_inventory(
         out,
         ScanCompleteness {
             status,
@@ -389,6 +399,29 @@ fn collect_inventory<T>(
             failed_roots,
         },
     )
+}
+
+#[cfg(any(windows, test))]
+fn finish_inventory(
+    mut apps: Vec<InstalledApp>,
+    completeness: ScanCompleteness,
+) -> InstallInventory {
+    // Every registration can claim a directory, including unnamed rows and
+    // alternate registry views that the app list merges into one product.
+    let install_roots = apps
+        .iter()
+        .filter(|app| !app.install_location.trim().is_empty())
+        .map(|app| app.install_location.clone())
+        .collect();
+    apps.retain(|app| !app.name.trim().is_empty());
+    if completeness.status != ScanStatus::Cancelled {
+        dedup_same_products(&mut apps);
+    }
+    InstallInventory {
+        apps,
+        install_roots,
+        completeness,
+    }
 }
 
 /// Sort by lowercase name and merge same-product twins within one hive class.
@@ -590,7 +623,7 @@ fn collect_uninstall(
 fn collect_uninstall_entries(
     count: u32,
     out: &mut Vec<InstalledApp>,
-    mut read: impl FnMut(u32) -> Result<Option<InstalledApp>, WIN32_ERROR>,
+    mut read: impl FnMut(u32) -> Result<InstalledApp, WIN32_ERROR>,
 ) -> Result<(), WIN32_ERROR> {
     let mut first_error = None;
     for i in 0..count {
@@ -598,8 +631,7 @@ fn collect_uninstall_entries(
             break;
         }
         match read(i) {
-            Ok(Some(app)) => out.push(app),
-            Ok(None) => {}
+            Ok(app) => out.push(app),
             Err(error) => {
                 first_error.get_or_insert(error);
             }
@@ -616,7 +648,7 @@ unsafe fn read_uninstall_entry(
     alias: &str,
     key_name: &str,
     max_val: u32,
-) -> Result<Option<InstalledApp>, WIN32_ERROR> {
+) -> Result<InstalledApp, WIN32_ERROR> {
     let path = format!(r"{}\{}", sub, key_name);
     let path_w = to_wide(&path);
     let mut hk = HKEY::default();
@@ -691,7 +723,9 @@ unsafe fn read_uninstall_entry(
                 "DisplayName" => display = s,
                 "DisplayVersion" => version = s,
                 "Publisher" => publisher = s,
-                "InstallLocation" => install_location = s.trim_end_matches(['\\', '/']).to_string(),
+                name if name.eq_ignore_ascii_case("InstallLocation") => {
+                    install_location = s.trim_end_matches(['\\', '/']).to_string();
+                }
                 "UninstallString" => uninstall_string = s,
                 "QuietUninstallString" => quiet = s,
                 "DisplayIcon" => display_icon = s,
@@ -706,15 +740,11 @@ unsafe fn read_uninstall_entry(
     }
     let _ = RegCloseKey(hk);
 
-    if display.trim().is_empty() {
-        return Ok(None);
-    }
-
     let registry_key = format!(
         r"{}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{}",
         alias, key_name
     );
-    Ok(Some(InstalledApp {
+    Ok(InstalledApp {
         name: display,
         version,
         publisher,
@@ -726,7 +756,7 @@ unsafe fn read_uninstall_entry(
         estimated_size_kb: size_kb,
         install_date,
         display_icon,
-    }))
+    })
 }
 
 /// Normalize common InstallDate registry formats to `YYYY-MM-DD`.
@@ -805,7 +835,7 @@ fn looks_system_update(name: &str) -> bool {
 use crate::fsutil::{to_wide, wstring_from_reg_data};
 
 /// An MSI product whose Uninstall record still exists while its install
-/// directory is gone — Programs & Features can no longer uninstall it (SOP §9.7).
+/// directory is gone — Programs & Features can no longer uninstall it.
 /// Detection is read-only; record cleanup is a separate, backed-up action.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BrokenInstall {
@@ -1095,22 +1125,22 @@ mod tests {
         let _trust = trust_test_support::guard();
         let complete_app = sample_app("Complete inventory app", "", "complete.exe");
         let partial_app = sample_app("Partial inventory app", "", "partial.exe");
-        let (rows, partial) = collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
+        let partial = collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
             if ok {
                 // Complete a different request while this one still owns a failed root.
-                let (complete_rows, complete) = collect_inventory([("HKCU", ())], |(), rows| {
+                let complete = collect_inventory([("HKCU", ())], |(), rows| {
                     rows.push(complete_app.clone());
                     true
                 });
-                remember_complete_inventory(&complete_rows, &complete);
+                remember_complete_inventory(&complete.apps, &complete.completeness);
                 rows.push(partial_app.clone());
             }
             ok
         });
-        assert_eq!(partial.status, ScanStatus::Partial);
-        assert_eq!(partial.failed_roots, ["HKCU"]);
-        assert_eq!(rows.len(), 1);
-        remember_complete_inventory(&rows, &partial);
+        assert_eq!(partial.completeness.status, ScanStatus::Partial);
+        assert_eq!(partial.completeness.failed_roots, ["HKCU"]);
+        assert_eq!(partial.apps.len(), 1);
+        remember_complete_inventory(&partial.apps, &partial.completeness);
 
         let current = scanned_current().lock().unwrap();
         assert!(current.contains_key(&app_key(&complete_app)));
@@ -1123,23 +1153,22 @@ mod tests {
         use crate::scan_contract::ScanStatus;
         use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
 
-        let (rows, inventory) =
-            collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
-                if ok {
-                    return true;
-                }
-                collect_uninstall_entries(3, rows, |index| match index {
-                    0 => Ok(None), // A readable subkey with no display name.
-                    1 => Err(ERROR_ACCESS_DENIED),
-                    _ => Ok(Some(sample_app("Readable sibling", "", "sibling.exe"))),
-                })
-                .is_ok()
-            });
-        assert_eq!(inventory.status, ScanStatus::Partial);
-        assert_eq!(inventory.roots_scanned, 1);
-        assert_eq!(inventory.failed_roots, ["HKCU"]);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].name, "Readable sibling");
+        let inventory = collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
+            if ok {
+                return true;
+            }
+            collect_uninstall_entries(3, rows, |index| match index {
+                0 => Ok(sample_app("", "", "")),
+                1 => Err(ERROR_ACCESS_DENIED),
+                _ => Ok(sample_app("Readable sibling", "", "sibling.exe")),
+            })
+            .is_ok()
+        });
+        assert_eq!(inventory.completeness.status, ScanStatus::Partial);
+        assert_eq!(inventory.completeness.roots_scanned, 1);
+        assert_eq!(inventory.completeness.failed_roots, ["HKCU"]);
+        assert_eq!(inventory.apps.len(), 1);
+        assert_eq!(inventory.apps[0].name, "Readable sibling");
     }
 
     #[cfg(windows)]
@@ -1324,7 +1353,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn native_inventory_keeps_non_uninstallable_component_owners() {
+    fn native_inventory_keeps_named_and_unnamed_component_owners() {
         struct Cleanup(String);
         impl Drop for Cleanup {
             fn drop(&mut self) {
@@ -1341,37 +1370,70 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         );
-        let key = format!(r"HKCU\{sub}\Component");
+        let named = format!(r"HKCU\{sub}\Component");
+        let unnamed = format!(r"HKCU\{sub}\Unnamed");
         let _cleanup = Cleanup(format!(r"HKCU\{sub}"));
-        for (name, kind, data) in [
-            ("DisplayName", "REG_SZ", "Owned Component"),
-            ("InstallLocation", "REG_SZ", r"C:\Vendor\OwnedComponent"),
-            ("SystemComponent", "REG_DWORD", "1"),
-            ("NoRemove", "REG_DWORD", "1"),
+        let temp = crate::test_support::TempDir::new("unnamed_install");
+        let unnamed_root = temp.path().to_str().unwrap();
+        for (key, name, kind, data) in [
+            (&named, "DisplayName", "REG_SZ", "Owned Component"),
+            (
+                &named,
+                "InstallLocation",
+                "REG_SZ",
+                r"C:\Vendor\OwnedComponent",
+            ),
+            (&named, "SystemComponent", "REG_DWORD", "1"),
+            (&named, "NoRemove", "REG_DWORD", "1"),
+            (&unnamed, "installlocation", "REG_SZ", unnamed_root),
+            (&unnamed, "UninstallString", "REG_SZ", "uninstall.exe"),
         ] {
             let output = std::process::Command::new(crate::regops::sys_tool("reg.exe"))
-                .args(["add", &key, "/v", name, "/t", kind, "/d", data, "/f"])
+                .args(["add", key, "/v", name, "/t", kind, "/d", data, "/f"])
                 .output()
                 .unwrap();
             assert!(output.status.success());
         }
-        let owner = unsafe {
-            read_uninstall_entry(
-                HKEY_CURRENT_USER,
-                &sub,
-                KEY_WOW64_64KEY,
-                "HKCU",
-                "Component",
-                256,
-            )
-        }
-        .expect("component registry key is readable")
-        .expect("component must retain ownership without uninstall commands");
-        assert_eq!(owner.install_location, r"C:\Vendor\OwnedComponent");
-        assert!(owner.uninstall_string.is_empty());
-        let mut visible = vec![owner];
+        let inventory = collect_inventory([("HKCU", ())], |(), rows| {
+            collect_uninstall(HKEY_CURRENT_USER, &sub, KEY_WOW64_64KEY, "HKCU", rows).is_ok()
+        });
+        assert_eq!(inventory.completeness.status, ScanStatus::Complete);
+        assert_eq!(inventory.apps.len(), 1);
+        assert_eq!(
+            inventory.apps[0].install_location,
+            r"C:\Vendor\OwnedComponent"
+        );
+        assert!(inventory.apps[0].uninstall_string.is_empty());
+        assert_eq!(inventory.install_roots.len(), 2);
+        assert!(inventory
+            .install_roots
+            .iter()
+            .any(|root| root == unnamed_root));
+        assert!(inventory
+            .install_roots
+            .iter()
+            .any(|root| root == r"C:\Vendor\OwnedComponent"));
+        let mut visible = inventory.apps;
         filter_visible_apps(&mut visible, &crate::ignore::IgnoreList::default());
         assert!(visible.is_empty());
+    }
+
+    #[test]
+    fn duplicate_product_guid_retains_each_registered_install_root() {
+        let guid = "{11111111-1111-1111-1111-111111111111}";
+        let mut first = sample_app("Same Product", r"C:\Vendor\Primary", "uninstall.exe");
+        first.registry_key = format!(r"HKLM64\Uninstall\{guid}");
+        let mut second = first.clone();
+        second.source = "HKLM32".into();
+        second.registry_key = format!(r"HKLM32\Uninstall\{guid}");
+        second.install_location = r"D:\Vendor\Alternate".into();
+        let inventory = finish_inventory(vec![first, second], ScanCompleteness::complete());
+        assert_eq!(inventory.apps.len(), 1);
+        assert_eq!(inventory.apps[0].install_location, r"C:\Vendor\Primary");
+        assert_eq!(
+            inventory.install_roots,
+            [r"C:\Vendor\Primary", r"D:\Vendor\Alternate"]
+        );
     }
 
     /// The production reader must turn a REG_DWORD EstimatedSize into KB. The
@@ -1418,8 +1480,7 @@ mod tests {
                 256,
             )
         }
-        .expect("the sized entry is readable")
-        .expect("the sized entry has a display name");
+        .expect("the sized entry is readable");
         assert_eq!(entry.estimated_size_kb, 4096);
     }
 

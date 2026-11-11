@@ -931,8 +931,8 @@ async fn scan_orphan_leftovers(
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "orphan", || {
             scan_task::checkpoint("registry", 0);
-            let (installed, inventory) = apps::scan_installed_inventory_with_completeness();
-            orphans::scan_orphans(&installed, &inventory, extended)
+            let inventory = apps::scan_install_owners();
+            orphans::scan_orphans_with_install_owners(&inventory, extended)
         })
     })
     .await
@@ -1240,7 +1240,7 @@ async fn end_locking_process(
     .map_err(|e| e.to_string())?
 }
 
-/// Bounded, read-only search for product-named keys under SOFTWARE (M5-4).
+/// Bounded, read-only search for product-named keys under SOFTWARE.
 #[tauri::command]
 async fn deep_registry_check(app_name: String) -> Result<deep_reg::RegistryCheckResult, String> {
     tauri::async_runtime::spawn_blocking(move || deep_reg::deep_registry_check(&app_name))
@@ -1340,7 +1340,7 @@ async fn list_dir_children(
     .map_err(|e| e.to_string())?
 }
 
-/// SOP §7: re-check selected paths after cleanup (checklist evidence).
+/// re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
     items: Vec<scanner::CleanupItem>,
@@ -1548,6 +1548,7 @@ pub fn run() {
         // `list_backup_sessions`
         // `delete_backup_session`
         // `restore_session_by_name`
+        // `cancel_restore`
         // `preview_restore_session`
         // `list_startup_items`
         // `list_services`
@@ -1641,6 +1642,7 @@ pub fn run() {
             commands::backup_cmd::list_backup_sessions,
             commands::backup_cmd::delete_backup_session,
             commands::backup_cmd::restore_session_by_name,
+            commands::backup_cmd::cancel_restore,
             commands::backup_cmd::preview_restore_session,
             commands::manage_cmd::list_startup_items,
             commands::manage_cmd::list_services,

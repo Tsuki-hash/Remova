@@ -1,4 +1,4 @@
-//! Path_map seal — out-of-session record of restore write-back targets (N-risk).
+//! Path_map seal — out-of-session record of restore write-back targets.
 //!
 //! Written next to (but outside) the backup session so a tampered `path_map.json`
 //! cannot silently widen restore destinations. Library-subpath write-back is only
@@ -24,7 +24,8 @@ mod v2;
 
 #[cfg(windows)]
 pub(crate) use manifest::{
-    read_file_manifest, write_file_manifest, FileManifest, FILE_MANIFEST_NAME,
+    read_file_manifest, read_file_manifest_with_cancel, write_file_manifest, FileManifest,
+    FILE_MANIFEST_NAME,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -265,8 +266,27 @@ pub(crate) fn write_seal_with_manifest(
 ) -> Result<(), String> {
     // Refuse to publish a seal for a missing, changed or malformed manifest.
     // The verified handle denies writes and renames until the seal is published.
-    let (_, _manifest_pin) = manifest::open_verified_manifest(session, &manifest_digest)?;
+    let (_, _manifest_pin) = manifest::open_verified_manifest(
+        session,
+        &manifest_digest,
+        crate::executor::cleanup_cancelled,
+    )?;
     write_seal_inner(session, path_map, reg_digests, None, Some(manifest_digest))
+}
+
+#[cfg(windows)]
+pub(crate) fn check_manifest_seal_capacity(
+    session: &Path,
+    path_map: &BTreeMap<String, String>,
+    reg_digests: &BTreeMap<String, String>,
+    manifest_digest: &str,
+) -> Result<(), String> {
+    let name = session_name_of(session).ok_or("seal: bad session name")?;
+    let mut payload = v2::payload_with_files(&name, path_map, reg_digests.clone(), None)?;
+    payload.file_manifest_digest = Some(manifest_digest.to_owned());
+    // The key ID and MAC are fixed-width hex, so every key yields the same
+    // serialized size. The preflight writes nothing and needs no real key.
+    v2::envelope(&[0; 32], &payload).map(|_| ())
 }
 
 fn write_seal_inner(
@@ -347,7 +367,11 @@ pub fn load_seal(session: &Path) -> Option<PathMapSeal> {
 pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     let name = session_name_of(session).ok_or("seal:bad_session")?;
     use std::io::Read;
-    let file = std::fs::File::open(seal_path(&name)).map_err(|_| "seal:missing")?;
+    let file = std::fs::File::open(seal_path(&name)).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => "seal:missing",
+        std::io::ErrorKind::PermissionDenied => "seal:read_requires_admin",
+        _ => "seal:read",
+    })?;
     let mut raw = vec![];
     file.take(MAX_PROTECTED_BLOB as u64 + 1)
         .read_to_end(&mut raw)
@@ -377,11 +401,17 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     }
 }
 
+pub(crate) const MAX_PAYLOAD_NODES: usize = 200_000;
+
 /// Streaming receipt for the private backup tree and published contents.
 pub(crate) fn publication_file_digest(path: &Path) -> Result<String, String> {
     #[cfg(windows)]
     {
-        v2::sha256_file(path)
+        let file = crate::fsutil::open_local_regular_file(path).map_err(|e| e.to_string())?;
+        crate::fsutil::reject_named_data_streams(&file).map_err(|e| e.to_string())?;
+        let digest = v2::digest_payload(&file, std::io::sink())?;
+        crate::fsutil::reject_named_data_streams(&file).map_err(|e| e.to_string())?;
+        Ok(digest)
     }
     #[cfg(not(windows))]
     {
@@ -390,16 +420,24 @@ pub(crate) fn publication_file_digest(path: &Path) -> Result<String, String> {
     }
 }
 
+/// Hash the default stream through an already held file handle.
+#[cfg(windows)]
+pub(crate) fn publication_reader_digest(reader: impl std::io::Read) -> Result<String, String> {
+    v2::digest_payload(reader, std::io::sink())
+}
+
 /// Write one privately staged file and return the digest of the bytes written.
 #[cfg(windows)]
 pub(crate) fn stage_payload_file(source: &Path, target: &Path) -> Result<String, String> {
     let source = crate::fsutil::open_local_regular_file(source).map_err(|e| e.to_string())?;
+    crate::fsutil::reject_named_data_streams(&source).map_err(|e| e.to_string())?;
     let mut output = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(target)
         .map_err(|e| e.to_string())?;
-    let digest = v2::digest_payload(source, &mut output)?;
+    let digest = v2::digest_payload(&source, &mut output)?;
+    crate::fsutil::reject_named_data_streams(&source).map_err(|e| e.to_string())?;
     if crate::executor::cleanup_cancelled() {
         return Err("cleanup cancelled".into());
     }

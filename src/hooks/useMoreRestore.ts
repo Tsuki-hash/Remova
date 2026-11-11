@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t, type Strings } from "../i18n";
-import type { BackupSession, RestorePreview } from "../lib/api";
+import type { RestorePreview } from "../lib/api";
+import { backupSessionStatus, type BackupSession } from "../lib/backupSession";
+import { isNamedStreamRefusal } from "../lib/backendText";
 
 const restoreResultPrefixes = [
   ["restored PATH entry ", "restoreDone", true],
@@ -30,11 +32,19 @@ const restoreResultPrefixes = [
   ["skipped reparse restore target: ", "restoreSkippedRedirectedTarget", false],
 ] as const;
 
+const restoreStoppedBeforeChanges = new Set([
+  "restore cancelled before any changes",
+  "restore:cancelled",
+  "cleanup cancelled",
+]);
+
 function describeRestoreResult(message: string, L: Strings) {
+  if (restoreStoppedBeforeChanges.has(message)) return { text: L.restoreCancelledBeforeChanges, complete: false };
   const match = restoreResultPrefixes.find(([prefix]) => message.startsWith(prefix));
   if (match) {
     const [prefix, label, complete] = match;
-    return { text: `${L[label]}: ${message.slice(prefix.length)}`, complete };
+    const summary = !complete && isNamedStreamRefusal(message) ? L.backendBackupNamedStreams : L[label];
+    return { text: `${summary}: ${message.slice(prefix.length)}`, complete };
   }
   switch (message) {
     case "restore cancelled":
@@ -54,16 +64,20 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [sessions, setSessions] = useState<BackupSession[]>([]);
   const [restorePick, setRestorePick] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restoreMsgs, setRestoreMsgs] = useState<string[]>([]);
+  const [restoreResult, setRestoreResult] = useState<(
+    { name: string; messages: string[] } | { name: string; error: unknown }
+  ) | null>(null);
+  const [runningRestore, setRunningRestore] = useState<string | null>(null);
+  const [cancelRequested, setCancelRequested] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
   const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
-  const [unsealedSessions, setUnsealedSessions] = useState(0);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTick, setPreviewTick] = useState(0);
   const operation = useRef(false);
+  const activeRestore = useRef<{ id: string; cancelling: boolean } | null>(null);
   const previewSequence = useRef(0);
 
   useEffect(() => {
@@ -86,21 +100,15 @@ export function useMoreRestore(onError: (msg: string) => void) {
     if (operation.current) return;
     operation.current = true;
     ++previewSequence.current;
-    setRestoreMsgs([]);
     setRestorePick("");
     setSessions([]);
-    setUnsealedSessions(0);
+    setOpenRestore(true);
     setRestoreLoading(true);
     setRestoreLoadError(null);
     try {
       const list = await api.backupSessions();
-      // an aborted backup leaves a session directory with no seal. It can
-      // never be restored (`validate_session` rejects it with `seal:missing`),
-      // so it must not become the default selection and then fail on confirm.
-      const restorable = list.filter(session => session.sealed);
-      setUnsealedSessions(list.length - restorable.length);
-      setSessions(restorable);
-      setOpenRestore(true);
+      const restorable = list.filter(session => backupSessionStatus(session) === "verified");
+      setSessions(list);
       if (requestedName && !restorable.some(session => session.name === requestedName)) {
         setRestoreLoadError(t().restoreSessionMissing);
         onError(t().restoreSessionMissing);
@@ -119,6 +127,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const deleteSession = useCallback(
     async (name: string) => {
       if (operation.current) return;
+      const session = sessions.find(candidate => candidate.name === name);
+      if (!session) return;
+      const status = backupSessionStatus(session);
+      if (status !== "verified" && status !== "unsealed") return;
       operation.current = true;
       setRestoreBusy(true);
       const L = t();
@@ -130,12 +142,14 @@ export function useMoreRestore(onError: (msg: string) => void) {
           danger: true,
         });
         if (!ok) return;
-        await api.deleteBackupSession(name);
+        await api.deleteBackupSession(name, status);
         const list = await api.backupSessions();
-        const restorable = list.filter(session => session.sealed);
-        setUnsealedSessions(list.length - restorable.length);
-        setSessions(restorable);
-        setRestorePick((cur) => (cur === name ? (restorable[0]?.name ?? "") : cur));
+        const restorable = list.filter(session => backupSessionStatus(session) === "verified");
+        setSessions(list);
+        setRestorePick(cur => {
+          if (cur === name) return restorable[0]?.name ?? "";
+          return restorable.some(session => session.name === cur) ? cur : "";
+        });
       } catch (e) {
         onError(formatError(e));
       } finally {
@@ -143,7 +157,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         setRestoreBusy(false);
       }
     },
-    [onError],
+    [onError, sessions],
   );
 
   const runRestore = useCallback(async () => {
@@ -151,7 +165,6 @@ export function useMoreRestore(onError: (msg: string) => void) {
     if (!restorePick || operation.current) return;
     operation.current = true;
     setRestoreBusy(true);
-    setRestoreMsgs([]);
     try {
       // Invalidate any older preview still in flight for this same selection.
       ++previewSequence.current;
@@ -180,23 +193,58 @@ export function useMoreRestore(onError: (msg: string) => void) {
         danger: true,
       });
       if (!ok) return;
-      const msgs = await api.restoreSessionByName(restorePick);
-      const rows = msgs.map((msg) => describeRestoreResult(msg, L));
-      setRestoreMsgs(rows.length ? rows.map(({ text }) => text) : [L.restoreNoDetail]);
-      if (rows.length && rows.every(({ complete }) => complete)) toast.success(L.restoreDone);
-      else toast.info(rows.length ? L.restoreIncomplete : L.restoreNoDetail);
+      const id = crypto.randomUUID();
+      activeRestore.current = { id, cancelling: false };
+      setRestoreResult(null);
+      setRunningRestore(restorePick);
+      const messages = await api.restoreSessionByName(restorePick, id);
+      const locale = t();
+      setRestoreResult({ name: restorePick, messages });
+      if (messages.length && messages.every(msg => describeRestoreResult(msg, locale).complete)) {
+        toast.success(locale.restoreDone);
+      } else {
+        toast.info(messages.length ? locale.restoreIncomplete : locale.restoreNoDetail);
+      }
     } catch (e) {
-      setRestoreMsgs([formatError(e)]);
-      toast.error(formatError(e));
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+      if (restoreStoppedBeforeChanges.has(raw)) {
+        setRestoreResult({ name: restorePick, messages: [raw] });
+        toast.info(t().restoreCancelledBeforeChanges);
+      } else {
+        setRestoreResult({ name: restorePick, error: e });
+        toast.error(formatError(e));
+      }
     } finally {
+      activeRestore.current = null;
+      setRunningRestore(null);
+      setCancelRequested(false);
       operation.current = false;
       setRestoreBusy(false);
     }
   }, [restorePick]);
 
-  const selectRestore = useCallback((name: string) => {
-    if (!operation.current) setRestorePick(name);
+  const cancelRestore = useCallback(async () => {
+    const current = activeRestore.current;
+    if (!current || current.cancelling) return;
+    current.cancelling = true;
+    setCancelRequested(true);
+    try {
+      if (await api.cancelRestore(current.id)) return;
+      if (activeRestore.current === current) toast.error(t().restoreCancelUnavailable);
+    } catch (error) {
+      if (activeRestore.current === current) toast.error(formatError(error));
+    }
+    if (activeRestore.current === current) {
+      current.cancelling = false;
+      setCancelRequested(false);
+    }
   }, []);
+
+  const selectRestore = useCallback((name: string) => {
+    if (operation.current || !sessions.some(session => session.name === name && backupSessionStatus(session) === "verified")) return;
+    setRestoreLoadError(null);
+    setRestorePick(name);
+  }, [sessions]);
   const retryPreview = useCallback(() => {
     if (!operation.current) setPreviewTick((v) => v + 1);
   }, []);
@@ -204,9 +252,16 @@ export function useMoreRestore(onError: (msg: string) => void) {
     if (!operation.current) setOpenRestore(false);
   }, []);
 
+  const L = t();
+  const restoreMsgs = useMemo(() => {
+    if (!restoreResult) return [];
+    if ("error" in restoreResult) return [formatError(restoreResult.error)];
+    if (!restoreResult.messages.length) return [L.restoreNoDetail];
+    return restoreResult.messages.map(msg => describeRestoreResult(msg, L).text);
+  }, [L, restoreResult]);
+
   return {
     sessions,
-    unsealedSessions,
     restoreLoading,
     restoreLoadError,
     restorePreview: restorePreview?.name === restorePick ? restorePreview : null,
@@ -216,6 +271,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestorePick: selectRestore,
     restoreBusy,
     restoreMsgs,
+    restoreResultName: restoreResult?.name,
+    runningRestore,
+    cancelRequested,
+    cancelRestore,
     openRestore,
     loadRestore,
     deleteSession,

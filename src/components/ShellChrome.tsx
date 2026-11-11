@@ -8,7 +8,7 @@ import {
   updateErrorMessage,
   type UpdateProgress,
 } from "../lib/installUpdate";
-import { useDialogFocus } from "../lib/useDialogFocus";
+import { dialogLayer, useDialogFocus } from "../lib/useDialogFocus";
 import { UPDATE_BUSY } from "../lib/nativeActivity";
 import { toast } from "../lib/toast";
 
@@ -98,7 +98,7 @@ export function ShellFooter({
   // Same dialog contract as every other modal: focus moves in, Tab cycles,
   // focus is restored on close. Escape is swallowed on purpose — an update
   // that was already confirmed must not be cancellable from the backdrop.
-  useDialogFocus(!!progress, overlayRef);
+  useDialogFocus(!!progress, overlayRef, dialogLayer.update);
   const installing = useRef(false);
   const blocked = useRef(false);
   blocked.current = Boolean(updateBlocked);
@@ -136,12 +136,8 @@ export function ShellFooter({
   return (
     <>
       {progress && (
-        <div role="dialog" aria-modal="true" aria-label={L.versionInstall}
-          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", animation: "remova-fade-in var(--dur-float) var(--ease-standard)" }}>
-          <div ref={overlayRef} tabIndex={-1}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") e.stopPropagation();
-            }}
+        <div style={{ position: "fixed", inset: 0, zIndex: dialogLayer.update, background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", animation: "remova-fade-in var(--dur-float) var(--ease-standard)" }}>
+          <div ref={overlayRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={L.versionInstall}
             style={{
               background: "var(--surface-elevated)",
               color: "var(--fg)",

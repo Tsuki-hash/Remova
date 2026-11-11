@@ -118,57 +118,57 @@ fn path_same_or_under(a: &str, b: &str) -> bool {
 }
 
 struct InstalledMatch {
-    loc: String,
-    rooted: bool,
+    roots: Vec<String>,
     tokens: Vec<String>,
 }
 
-fn build_match_index(installed: &[InstalledApp]) -> Vec<InstalledMatch> {
-    installed
-        .iter()
-        .map(|app| {
-            let loc = app.install_location.replace('/', "\\").to_lowercase();
-            let rooted = loc
-                .trim_end_matches('\\')
-                .split('\\')
-                .filter(|s| !s.is_empty())
-                .count()
-                >= 2;
-            InstalledMatch {
-                loc,
-                rooted,
-                tokens: slug_tokens(&app.name),
-            }
-        })
-        .collect()
+fn install_locations(apps: &[InstalledApp]) -> impl Iterator<Item = &str> {
+    apps.iter().map(|app| app.install_location.as_str())
 }
 
-fn match_installed_index(index: &[InstalledMatch], dir: &std::path::Path) -> bool {
-    let d = dir.to_string_lossy().replace('/', "\\").to_lowercase();
-    let leaf = dir
-        .file_name()
-        .map(|s| s.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    for app in index {
-        if crate::scan_task::cancelled() {
-            return true;
-        }
-        let loc_trim = app.loc.trim_end_matches('\\');
-        if app.rooted && path_same_or_under(&d, loc_trim) {
-            return true;
-        }
-        if leaf.is_empty() {
-            continue;
-        }
-        if app
-            .tokens
+fn build_match_index<'a>(
+    installed: &[InstalledApp],
+    install_roots: impl IntoIterator<Item = &'a str>,
+) -> InstalledMatch {
+    let roots = install_roots
+        .into_iter()
+        .filter_map(|raw| {
+            if raw.contains('%') {
+                normalize_orphan_key(&crate::regops::expand_env_string(raw))
+            } else {
+                normalize_orphan_key(raw)
+            }
+        })
+        .filter(|path| path.split('\\').filter(|s| !s.is_empty()).count() >= 2)
+        .collect();
+    let tokens = installed
+        .iter()
+        .flat_map(|app| slug_tokens(&app.name))
+        .filter(|token| token.len() >= 4)
+        .collect();
+    InstalledMatch { roots, tokens }
+}
+
+fn match_installed_index(index: &InstalledMatch, dir: &std::path::Path) -> bool {
+    if crate::scan_task::cancelled() {
+        return true;
+    }
+    if let Some(path) = crate::fsutil::path_key(dir) {
+        if index
+            .roots
             .iter()
-            .any(|t| t.len() >= 4 && crate::scanner::slug_boundary_hit(&leaf, t))
+            .any(|root| path_same_or_under(&path, root))
         {
             return true;
         }
     }
-    false
+    dir.file_name().is_some_and(|name| {
+        let leaf = name.to_string_lossy().to_lowercase();
+        index
+            .tokens
+            .iter()
+            .any(|token| crate::scanner::slug_boundary_hit(&leaf, token))
+    })
 }
 
 /// the cap used to be invisible. The UI now says how many candidates
@@ -327,6 +327,27 @@ pub fn scan_orphans(
     inventory: &crate::scan_contract::ScanCompleteness,
     extended: bool,
 ) -> OrphanScanResult {
+    scan_orphans_with_install_roots(installed, install_locations(installed), inventory, extended)
+}
+
+pub(crate) fn scan_orphans_with_install_owners(
+    inventory: &crate::apps::InstallInventory,
+    extended: bool,
+) -> OrphanScanResult {
+    scan_orphans_with_install_roots(
+        &inventory.apps,
+        inventory.install_roots.iter().map(String::as_str),
+        &inventory.completeness,
+        extended,
+    )
+}
+
+fn scan_orphans_with_install_roots<'a>(
+    installed: &[InstalledApp],
+    install_roots: impl IntoIterator<Item = &'a str>,
+    inventory: &crate::scan_contract::ScanCompleteness,
+    extended: bool,
+) -> OrphanScanResult {
     if crate::scan_task::cancelled() {
         return OrphanScanResult {
             items: Vec::new(),
@@ -351,7 +372,8 @@ pub fn scan_orphans(
                 .cloned(),
         );
     }
-    scan_orphans_in_roots_with(installed, &ignore, roots, &home_dotdirs, inventory)
+    let index = build_match_index(installed, install_roots);
+    scan_orphans_in_roots_with(&index, &ignore, roots, &home_dotdirs, inventory)
 }
 
 #[cfg(test)]
@@ -361,7 +383,7 @@ fn scan_orphans_in_roots(
     roots: Vec<std::path::PathBuf>,
 ) -> OrphanScanResult {
     scan_orphans_in_roots_with(
-        installed,
+        &build_match_index(installed, install_locations(installed)),
         ignore,
         roots,
         &[],
@@ -373,7 +395,7 @@ fn scan_orphans_in_roots(
 /// those rows are marked `shared` (never default-select; the dot-dir also
 /// carries the tool's own config/history).
 fn scan_orphans_in_roots_with(
-    installed: &[InstalledApp],
+    match_index: &InstalledMatch,
     ignore: &crate::ignore::IgnoreList,
     roots: Vec<std::path::PathBuf>,
     home_dotdirs: &[std::path::PathBuf],
@@ -383,8 +405,6 @@ fn scan_orphans_in_roots_with(
 
     let cleanup_allowed = inventory.status == ScanStatus::Complete;
     let mut out = Vec::new();
-    // Normalize each installed app once instead of once per candidate.
-    let match_index = build_match_index(installed);
     // Collect candidates across every root first, then order and truncate. The
     // old `if out.len() >= ORPHAN_RESULT_CAP { return }` inside the enumeration
     // made the reported subset depend on `read_dir` order, and stopped the scan
@@ -470,7 +490,7 @@ fn scan_orphans_in_roots_with(
             ) {
                 continue;
             }
-            if match_installed_index(&match_index, &p) {
+            if match_installed_index(match_index, &p) {
                 continue;
             }
             // honor ignore path rules for orphan candidates.
@@ -561,7 +581,7 @@ fn scan_orphans_in_roots_with(
                 weight: 0,
                 detail: format!("{days} day(s) ago"),
             });
-            // SOP §2.3: a directory still being written is active data, not a
+            // a directory still being written is active data, not a
             // leftover. Keep-class (high risk) rather than a hard refusal: the
             // user can still inspect and confirm it explicitly.
             if days < 3 {
@@ -743,7 +763,7 @@ mod tests {
         let installed = [app("Foo", r"C:\Program Files\FooApp")];
         // Exercise the PRODUCTION index path, not a parallel copy: a regression
         // in build_match_index would otherwise leave this test green.
-        let index = build_match_index(&installed);
+        let index = build_match_index(&installed, install_locations(&installed));
         let p = std::path::Path::new(r"C:\Program Files\FooApp");
         assert!(match_installed_index(&index, p));
         let p2 = std::path::Path::new(r"C:\Program Files\OtherThing");
@@ -768,7 +788,7 @@ mod tests {
     #[test]
     fn match_installed_requires_path_segment_boundary() {
         let installed = [app("App", r"C:\Program Files\App")];
-        let index = build_match_index(&installed);
+        let index = build_match_index(&installed, install_locations(&installed));
         // Sibling that merely shares a string prefix must not match.
         let evil = std::path::Path::new(r"C:\Program Files\AppEvil");
         assert!(!match_installed_index(&index, evil));
@@ -776,7 +796,7 @@ mod tests {
         assert!(match_installed_index(&index, child));
         // A drive-root install location must not claim the whole drive.
         let root = [app("RootApp", "C:\\")];
-        let root_index = build_match_index(&root);
+        let root_index = build_match_index(&root, install_locations(&root));
         assert!(!match_installed_index(
             &root_index,
             std::path::Path::new(r"C:\Users\Other\Data")
@@ -825,7 +845,7 @@ mod tests {
         std::fs::create_dir(&candidate).unwrap();
         std::fs::write(candidate.join("app.exe"), b"fixture").unwrap();
         let result = scan_orphans_in_roots_with(
-            &[],
+            &build_match_index(&[], []),
             &crate::ignore::IgnoreList::default(),
             vec![vendor.clone()],
             &[vendor],
@@ -873,19 +893,52 @@ mod tests {
         assert_eq!(complete.items.len(), 1);
         assert!(was_recent_orphan_item(&complete.items[0]));
 
-        let partial = scan_orphans_in_roots_with(
+        for failed_root in ["HKCU", crate::apps::STORE_INVENTORY_ROOT] {
+            let partial = scan_orphans_in_roots_with(
+                &build_match_index(&[], []),
+                &ignore,
+                roots.clone(),
+                &[],
+                &ScanCompleteness::partial(3, vec![failed_root.into()]),
+            );
+            assert!(!partial.cleanup_allowed);
+            assert_eq!(partial.completeness.status, ScanStatus::Partial);
+            assert_eq!(
+                partial.completeness.failed_roots,
+                [format!("inventory:{failed_root}")]
+            );
+            assert_eq!(partial.items.len(), 1);
+            assert!(!was_recent_orphan_item(&partial.items[0]));
+            assert!(!was_recent_orphan_item(&complete.items[0]));
+        }
+    }
+
+    #[test]
+    fn independent_install_roots_never_gain_orphan_authorization() {
+        let _guard = crate::scan_allow::test_lock();
+        let root = crate::test_support::TempDir::new("orphan_owner_roots");
+        let owned = root.subdir("OwnedComponent");
+        let alternate = root.subdir("AlternateLocation");
+        let orphan = root.subdir("OwnedComponentLeftover");
+        for dir in [&owned, &alternate, &orphan] {
+            std::fs::write(dir.join("app.exe"), b"fixture").unwrap();
+        }
+        let registered_roots = [owned.to_str().unwrap(), alternate.to_str().unwrap()];
+        let index = build_match_index(&[app("Example Product", "")], registered_roots);
+        let result = scan_orphans_in_roots_with(
+            &index,
+            &crate::ignore::IgnoreList::default(),
+            vec![root.path().to_path_buf()],
             &[],
-            &ignore,
-            roots,
-            &[],
-            &ScanCompleteness::partial(3, vec!["HKCU".into()]),
+            &crate::scan_contract::ScanCompleteness::complete(),
         );
-        assert!(!partial.cleanup_allowed);
-        assert_eq!(partial.completeness.status, ScanStatus::Partial);
-        assert_eq!(partial.completeness.failed_roots, ["inventory:HKCU"]);
-        assert_eq!(partial.items.len(), 1);
-        assert!(!was_recent_orphan_item(&partial.items[0]));
-        assert!(!was_recent_orphan_item(&complete.items[0]));
+        assert!(result.cleanup_allowed);
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].path, orphan.to_str().unwrap());
+        assert!(was_recent_orphan_item(&result.items[0]));
+        for path in registered_roots {
+            assert!(!was_recent_orphan_path(path));
+        }
     }
 
     #[test]
@@ -943,8 +996,8 @@ mod tests {
     #[test]
     fn scan_orphans_runs() {
         let _guard = crate::scan_allow::test_lock();
-        let (apps, inventory) = crate::apps::scan_installed_inventory_with_completeness();
-        let items = scan_orphans(&apps, &inventory, false).items;
+        let inventory = crate::apps::scan_install_owners();
+        let items = scan_orphans_with_install_owners(&inventory, false).items;
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
             assert!(it.path.len() > 3);

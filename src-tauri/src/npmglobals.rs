@@ -273,7 +273,7 @@ fn remove_with_backup(
                 error = Some("cleanup cancelled".into());
                 break;
             }
-            if let Err(e) = file.remove() {
+            if let Err(e) = file.remove_backed_up() {
                 error = Some(e.to_string());
                 break;
             }
@@ -352,6 +352,22 @@ mod tests {
         for ext in [".cmd", ".ps1", ""] {
             assert!(prefix.join(format!("tool{ext}")).is_file());
         }
+    }
+
+    #[test]
+    fn npm_backup_refuses_named_streams_and_keeps_the_package() {
+        let _env = crate::backup::lock_backup_env();
+        let tmp = crate::test_support::TempDir::new("npm-named-streams");
+        let _store = crate::path_seal::TestStore::new(tmp.join("seals"));
+        let _backup = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", tmp.join("vault"));
+        let (prefix, nm) = seed(tmp.path(), "fixture");
+        let stream = nm.join("fixture/cli.js:FixtureMetadata");
+        std::fs::write(&stream, b"keep this stream").unwrap();
+
+        let error = remove_with(&prefix, &nm, &wanted("fixture")).unwrap_err();
+        assert!(error.contains("named data streams"), "{error}");
+        intact(&prefix, &nm, "fixture");
+        assert_eq!(std::fs::read(stream).unwrap(), b"keep this stream");
     }
 
     #[test]

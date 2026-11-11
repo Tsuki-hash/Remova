@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../../i18n";
-import { useDialogFocus } from "../../lib/useDialogFocus";
+import { dialogLayer, useDialogFocus } from "../../lib/useDialogFocus";
 import {
   isCloseChoiceOpen,
   saveCloseMode,
@@ -13,19 +13,10 @@ export function CloseChoiceHost() {
   const [remember, setRemember] = useState(true);
   const dialogRef = useRef<HTMLDivElement>(null);
   const L = t();
-  useDialogFocus(open, dialogRef);
+  useDialogFocus(open, dialogRef, dialogLayer.closeChoice, () => settleCloseChoice("cancel"));
 
   useEffect(() => {
-    if (!open) return;
-    setRemember(true);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        settleCloseChoice("cancel");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    if (open) setRemember(true);
   }, [open]);
 
   if (!open) return null;
@@ -54,7 +45,7 @@ export function CloseChoiceHost() {
         position: "fixed",
         animation: "remova-fade-in var(--dur-float) var(--ease-standard)",
         inset: 0,
-        zIndex: 1000,
+        zIndex: dialogLayer.closeChoice,
         background: "rgba(15,23,42,.42)",
         display: "grid",
         placeItems: "center",

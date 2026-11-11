@@ -8,6 +8,7 @@ import { IdleRadarPanel } from "../components/IdleRadarPanel";
 import { t, formatSize, setLang } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
+import type { BackupSessionStatus } from "../lib/backupSession";
 
 const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn(), rankIdleApps: vi.fn(),
   beginAssociationScan: vi.fn(async () => 201), cancelAssociationScan: vi.fn(async () => {}),
@@ -118,7 +119,7 @@ it("names the selected backup and reports skipped or failed rows without a succe
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: t().restoreConfirm("older-backup") }));
-  expect(native.restoreSessionByName).toHaveBeenCalledWith("older-backup");
+  expect(native.restoreSessionByName).toHaveBeenCalledWith("older-backup", expect.any(String));
   expect(toast.success).not.toHaveBeenCalled();
   expect(toast.info).toHaveBeenCalledWith(t().restoreIncomplete);
   expect(result.current.restoreMsgs).toEqual([
@@ -272,9 +273,8 @@ it("updates the selected backup after deletion and preserves selection when anot
   await act(async () => { await result.current.loadRestore(); });
   native.backupSessions.mockResolvedValueOnce([newer]);
   await act(async () => { await result.current.deleteSession(older.name); });
-  expect(native.deleteBackupSession).toHaveBeenCalledWith(older.name);
+  expect(native.deleteBackupSession).toHaveBeenCalledWith(older.name, "verified");
   expect(result.current.restorePick).toBe(newer.name);
-  native.backupSessions.mockResolvedValueOnce([newer]);
   await act(async () => { await result.current.deleteSession("another-backup"); });
   expect(result.current.restorePick).toBe(newer.name);
   native.backupSessions.mockResolvedValueOnce([]);
@@ -326,6 +326,8 @@ it("selects the requested backup by identity and never falls back to the newest 
 });
 
 it("discards an old backup preview after selection changes", async () => {
+  native.backupSessions.mockResolvedValueOnce(["older-backup", "newer-backup"].map(name =>
+    ({ name, size_kb: 1, created_at: "", sealed: true })));
   let finish!: (preview: unknown) => void;
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
@@ -364,16 +366,42 @@ it("retries only the preview after a preview failure", async () => {
   expect(result.current.restorePick).toBe("older-backup");
 });
 
-it("keeps an unsealed session out of the restore selector and counts it", async () => {
+it("lists unfinished backups without offering them for restore", async () => {
   native.backupSessions.mockResolvedValueOnce([
-    { name: "aborted", size_kb: 1, created_at: "", sealed: false },
+    { name: "aborted", size_kb: 1, created_at: "", sealed: false, status: "unsealed" },
     { name: "good", size_kb: 1, created_at: "", sealed: true },
   ]);
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
   await act(async () => { await result.current.loadRestore(); });
-  expect(result.current.sessions.map(s => s.name)).toEqual(["good"]);
+  expect(result.current.sessions.map(s => s.name)).toEqual(["aborted", "good"]);
   expect(result.current.restorePick).toBe("good");
-  expect(result.current.unsealedSessions).toBe(1);
+  await act(async () => { result.current.setRestorePick("aborted"); });
+  expect(result.current.restorePick).toBe("good");
+  native.backupSessions.mockResolvedValueOnce([]);
+  await act(async () => { await result.current.deleteSession("aborted"); });
+  expect(native.deleteBackupSession).toHaveBeenCalledWith("aborted", "unsealed");
+});
+
+it.each(["zh", "en"] as const)("shows unavailable backup reasons and only proven actions in %s", lang => {
+  setLang(lang);
+  const L = t();
+  const statuses: BackupSessionStatus[] = ["unsealed", "requires_admin", "invalid", "legacy"];
+  const sessions = statuses.map(status => ({ name: status, status, size_kb: 1, created_at: "", sealed: false }));
+  const onDelete = vi.fn();
+  render(<RestorePanel sessions={sessions} pick="" setPick={vi.fn()} busy={false} msgs={[]}
+    onRun={vi.fn()} onDelete={onDelete} onClose={vi.fn()} />);
+  for (const label of [L.restoreSessionUnsealed, L.restoreSessionRequiresAdmin, L.restoreSessionInvalid, L.restoreSessionLegacy]) {
+    expect(screen.getByText(label)).toBeTruthy();
+  }
+  expect(screen.queryByText(L.restoreNoSessions)).toBeNull();
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.getByRole("button", { name: L.restoreRun })).toHaveProperty("disabled", true);
+  const remove = screen.getByRole("button", { name: `${L.deleteSession}: unsealed` });
+  fireEvent.click(remove);
+  expect(onDelete).toHaveBeenCalledWith("unsealed");
+  for (const status of statuses.slice(1)) {
+    expect(screen.queryByRole("button", { name: `${L.deleteSession}: ${status}` })).toBeNull();
+  }
 });
 
 it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {
@@ -429,6 +457,8 @@ it("does not let an older preview erase a fresh validation failure for the same 
 });
 
 it("locks selection and deletion during confirmation and releases the lock on cancellation", async () => {
+  native.backupSessions.mockResolvedValueOnce(["older-backup", "other"].map(name =>
+    ({ name, size_kb: 1, created_at: "", sealed: true })));
   let cancel!: (ok: boolean) => void;
   vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { cancel = resolve; }));
   const { result } = renderHook(() => useMoreRestore(vi.fn()));

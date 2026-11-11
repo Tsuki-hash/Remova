@@ -5,11 +5,18 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
+import { useMoreRestore } from "../hooks/useMoreRestore";
+import type { ComponentProps } from "react";
 import { t } from "../i18n";
 import type { FullCleanupReport } from "../types";
 
 vi.mock("../lib/api", () => ({ api: { openPath: vi.fn().mockResolvedValue(undefined), rebootGateStatus: vi.fn().mockResolvedValue("clear") } }));
 afterEach(cleanup);
+
+function Toolbox(props: Omit<ComponentProps<typeof MorePage>, "restore">) {
+  const restore = useMoreRestore(props.onError);
+  return <MorePage {...props} restore={restore} />;
+}
 
 const report: FullCleanupReport = {
   app_name: "Acme", dry_run: false, backup_dir: "", uninstall_ok: false, uninstall_message: "",
@@ -18,7 +25,7 @@ const report: FullCleanupReport = {
 };
 
 const view = (lastReport: FullCleanupReport | null) => render(
-  <MorePage
+  <Toolbox
     selected={null}
     monitoring={false}
     monitorDiff={null}
@@ -51,7 +58,7 @@ it("shows the New badge only for the first report of the session", () => {
 
   // The same page re-rendering with the report still retained must drop it.
   first.rerender(
-    <MorePage
+    <Toolbox
       selected={null}
       monitoring={false}
       monitorDiff={null}

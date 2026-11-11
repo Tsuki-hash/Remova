@@ -1,7 +1,7 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { useDialogFocus } from "../lib/useDialogFocus";
+import { dialogLayer, useDialogFocus } from "../lib/useDialogFocus";
 import { LEGACY_SCAN } from "../lib/scopedScan";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { CloseGlyph, Deco } from "./ui/Glyph";
@@ -42,34 +42,24 @@ export function CheckupPanel({
     : orphanComplete ? String(orphanCount)
       : completeness.status === "partial" ? `${orphanCount}+` : "—";
   const dialogRef = useRef<HTMLDivElement>(null);
-  useDialogFocus(true, dialogRef);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useDialogFocus(true, dialogRef, dialogLayer.overview, onClose);
   return (
     <div
       style={{
         position: "fixed",
         animation: "remova-fade-in var(--dur-float) var(--ease-standard)",
         inset: 0,
-        zIndex: 8500,
+        zIndex: dialogLayer.overview,
         background: "rgba(0,0,0,.35)",
         display: "grid",
         placeItems: "center",
         padding: 16,
       }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={L.checkupTitle}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={L.checkupTitle}
         tabIndex={-1}
         ref={dialogRef}
         style={{

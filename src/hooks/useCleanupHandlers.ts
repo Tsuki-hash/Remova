@@ -3,7 +3,6 @@ import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
-import { backendText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import {
@@ -15,7 +14,7 @@ import {
 } from "../lib/decision";
 import { appKey, scanMatchesApp } from "../lib/appKey";
 import { runBatchCleanup } from "../lib/batchEngine";
-import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
+import { cleanupAbortText, cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
 
@@ -146,8 +145,9 @@ export function useCleanupHandlers({
               : "uninstall",
         });
         if (report.aborted) {
-          toast.error(backendText(report.uninstall_message) || L.uninstallFail);
-          setError(backendText(report.uninstall_message) || L.uninstallFail);
+          const message = cleanupAbortText(report, L);
+          toast.error(message);
+          setError(message);
           setReport(report);
           setVerifyRows(null);
           setAiReportNote(null);
@@ -246,7 +246,7 @@ export function useCleanupHandlers({
       });
       setReport(r);
       if (r.aborted) {
-        const msg = backendText(r.uninstall_message) || L.uninstallFail;
+        const msg = cleanupAbortText(r, L);
         // A 1641/pending report is not a failure: the uninstaller succeeded and
         // deletion was postponed until the restart. Do not style it as one.
         if (r.reboot_pending) toast.info(msg);
@@ -274,7 +274,7 @@ export function useCleanupHandlers({
       } else {
         toast.success(cleanupOutcomeText(r, L));
       }
- // SOP checklist: re-probe cleaned paths
+ // Re-check cleaned paths
       const vseq = ++verifySeqRef.current;
       void api
         .verifyLeftovers(items)

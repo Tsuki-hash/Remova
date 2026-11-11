@@ -29,6 +29,7 @@ import { useListFilterChrome } from "./hooks/useListFilterChrome";
 import { useResidualState } from "./hooks/useResidualState";
 import { useScanUiState } from "./hooks/useScanUiState";
 import { useAppCoreState } from "./hooks/useAppCoreState";
+import { useMoreRestore } from "./hooks/useMoreRestore";
 import { useAppChrome, useCheckupStats } from "./hooks/useAppChrome";
 import { useAiScanNarrative } from "./hooks/useAiScanNarrative";
 import { ErrorBanner } from "./components/StatusBanners";
@@ -66,6 +67,7 @@ declare const __APP_VERSION__: string;
 export default function App() {
   const requestedBackup = useBackupSessionRequest();
   const core = useAppCoreState();
+  const restore = useMoreRestore(core.setError);
   const {
     apps,
     loading,
@@ -884,6 +886,7 @@ export default function App() {
           )}
           {nav === "more" && (
             <MorePage
+              restore={restore}
               selected={selected}
               monitoring={monitoring}
               monitorSnapshotBusy={monitorSnapshotBusy}

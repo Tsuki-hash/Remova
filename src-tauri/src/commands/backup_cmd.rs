@@ -1,6 +1,46 @@
 //! Safety Vault session listing, deletion and restore dispatch.
 
 use crate::restore;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+struct ActiveRestore {
+    id: String,
+    cancelled: Arc<AtomicBool>,
+}
+
+static ACTIVE_RESTORE: Mutex<Option<ActiveRestore>> = Mutex::new(None);
+
+struct RestoreOperation(Arc<AtomicBool>);
+
+impl RestoreOperation {
+    fn register(id: String) -> Result<Self, String> {
+        if id.is_empty()
+            || id.len() > 64
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err("invalid restore operation".into());
+        }
+        let mut active = ACTIVE_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
+        if active.is_some() {
+            return Err("a restore operation is already active".into());
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        *active = Some(ActiveRestore {
+            id,
+            cancelled: Arc::clone(&flag),
+        });
+        Ok(Self(flag))
+    }
+}
+
+impl Drop for RestoreOperation {
+    fn drop(&mut self) {
+        *ACTIVE_RESTORE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
 
 #[tauri::command]
 pub fn list_restore_sessions() -> Result<Vec<String>, String> {
@@ -15,17 +55,44 @@ pub async fn list_backup_sessions() -> Result<Vec<restore::SessionInfo>, String>
 }
 
 #[tauri::command]
-pub async fn delete_backup_session(name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || restore::delete_session_by_name(&name))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn delete_backup_session(
+    name: String,
+    expected_status: Option<restore::SessionStatus>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        restore::delete_session_with_status(&name, expected_status)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn restore_session_by_name(name: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || restore::restore_by_name(&name))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn restore_session_by_name(
+    name: String,
+    operation_id: Option<String>,
+) -> Result<Vec<String>, String> {
+    let operation = operation_id.map(RestoreOperation::register).transpose()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(operation) = operation {
+            crate::executor::with_operation_cancellation(Arc::clone(&operation.0), || {
+                restore::restore_by_name(&name)
+            })
+        } else {
+            restore::restore_by_name(&name)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn cancel_restore(operation_id: String) -> bool {
+    let active = ACTIVE_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(restore) = active.as_ref().filter(|restore| restore.id == operation_id) {
+        restore.cancelled.store(true, Ordering::Release);
+        return true;
+    }
+    false
 }
 
 #[tauri::command]
@@ -38,6 +105,26 @@ pub async fn preview_restore_session(name: String) -> Result<restore::RestorePre
 #[cfg(test)]
 mod tests {
     // Command-layer boundary coverage.
+
+    #[test]
+    fn restore_cancellation_belongs_to_one_request_and_does_not_cancel_cleanup() {
+        let operation = super::RestoreOperation::register("first".into()).unwrap();
+        assert!(!super::cancel_restore("unrelated".into()));
+        assert!(super::RestoreOperation::register("second".into()).is_err());
+        crate::executor::begin_cleanup_control();
+        assert!(super::cancel_restore("first".into()));
+        assert!(!crate::executor::cleanup_cancelled());
+        crate::executor::with_operation_cancellation(std::sync::Arc::clone(&operation.0), || {
+            assert!(crate::executor::cleanup_cancelled());
+        });
+        assert!(!crate::executor::cleanup_cancelled());
+        drop(operation);
+        assert!(!super::cancel_restore("first".into()));
+        let second = super::RestoreOperation::register("second".into()).unwrap();
+        crate::executor::with_operation_cancellation(std::sync::Arc::clone(&second.0), || {
+            assert!(!crate::executor::cleanup_cancelled());
+        });
+    }
 
     /// Redirects the backup root into a fixture directory for the guard's lifetime.
     ///

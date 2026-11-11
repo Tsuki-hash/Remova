@@ -93,24 +93,26 @@ it.each([41, 80])("keeps tail failures and unknown verification results reachabl
   expect(unknown.parentElement?.parentElement?.style.maxHeight).toBe("120px");
   expect(unknown.parentElement?.parentElement?.style.overflow).toBe("auto");
 });
-it.each(["zh", "en"] as const)("offers backup restoration only for a completed backed-up cleanup in %s", lang => {
+it.each(["zh", "en"] as const)("offers restoration only for a verified backup in %s", lang => {
   setLang(lang);
   const base: FullCleanupReport = { app_name: "Vendor", dry_run: false, backup_dir: "",
     uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
     aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  const verified = { ...base, backup_dir: "session", backup_verified: true };
   for (const report of [base, { ...base, backup_dir: "session" },
-    { ...base, backup_dir: "session", aborted: true },
-    { ...base, failed: 1 }, { ...base, dry_run: true }]) {
+    { ...base, backup_dir: "session", backup_verified: false, aborted: true },
+    verified, { ...verified, aborted: true }, { ...verified, aborted: true, uninstall_ok: false },
+    { ...verified, failed: 1 }, { ...verified, dry_run: true }]) {
     const view = render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false}
       aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
-    const hasRestoration = !!report.backup_dir && !report.aborted && !report.dry_run && !report.failed;
+    const hasRestoration = report.backup_verified === true && !report.dry_run;
     expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` }) !== null)
-      .toBe(!!report.backup_dir && !report.aborted && !report.dry_run);
-    expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration);
-    if (!report.backup_dir && !report.dry_run) {
-      // The no-backup state must be a warn-grade note, not a muted footnote.
-      const note = screen.getByRole("note");
-      expect(note.textContent).toBe(t().noBackupThisRun);
+      .toBe(hasRestoration);
+    expect(screen.queryByText(t().safetyVaultBanner) !== null).toBe(hasRestoration);
+    expect(screen.getByText(t().reportNarrative(report.deleted, report.failed, report.skipped, hasRestoration))).toBeTruthy();
+    expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration && !report.aborted && !report.failed);
+    if (!hasRestoration && !report.dry_run) {
+      expect(screen.getByRole("note").textContent).toBe(report.backup_dir ? t().unverifiedBackupThisRun : t().noBackupThisRun);
     }
     view.unmount();
   }
@@ -136,7 +138,7 @@ it("offers a post-cleanup rescan button and honors the busy state", () => {
 it("publishes the exact cleanup backup identity without executing restore", () => {
   const store = renderHook(useBackupSessionRequest);
   const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "C:\\Backups\\123_sample",
-    uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
+    backup_verified: true, uninstall_ok: true, uninstall_message: "", deleted: 1, failed: 0, skipped: 0,
     aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
   render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
     verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);

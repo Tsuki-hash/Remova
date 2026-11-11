@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 // More-page information architecture: five groups and a labelled search.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
+import { useMoreRestore } from "../hooks/useMoreRestore";
 import { t } from "../i18n";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
+import { api } from "../lib/api";
+import { getConfirm, settleConfirm } from "../lib/confirm";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -14,6 +17,7 @@ vi.mock("../lib/api", () => ({
     history: vi.fn().mockResolvedValue([]),
     previewRestore: vi.fn(),
     restoreSessionByName: vi.fn(),
+    cancelRestore: vi.fn(),
   },
 }));
 
@@ -36,11 +40,20 @@ const props = {
 
 beforeEach(() => {
   localStorage.clear();
+  vi.mocked(api.backupSessions).mockReset().mockResolvedValue([]);
+  vi.mocked(api.previewRestore).mockReset();
+  vi.mocked(api.restoreSessionByName).mockReset();
+  vi.mocked(api.cancelRestore).mockReset();
 });
-afterEach(cleanup);
+afterEach(() => { settleConfirm(false); cleanup(); vi.clearAllMocks(); });
+
+function Toolbox({ visible = true }: { visible?: boolean }) {
+  const restore = useMoreRestore(props.onError);
+  return visible && <MorePage {...props} restore={restore} />;
+}
 
 function mountMore() {
-  return render(<MorePage {...props} />);
+  return render(<Toolbox />);
 }
 
 it("groups the toolbox into the new sections and offers a search", async () => {
@@ -139,4 +152,51 @@ it("focuses tool search after closing restore opened from another page", async (
   close.focus();
   fireEvent.click(close);
   expect(document.activeElement).toBe(screen.getByLabelText(L.moreSearchTools));
+});
+
+it.each(["partial", "failure", "cancel", "cancel before writes"] as const)("keeps a %s restore result across navigation", async outcome => {
+  const name = "backup-for-restore";
+  const L = t();
+  vi.mocked(api.backupSessions).mockResolvedValueOnce([{ name, size_kb: 2, created_at: "", sealed: true, status: "verified" }]);
+  vi.mocked(api.previewRestore).mockResolvedValue({ name, files: 2, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] });
+  let finish!: () => void;
+  vi.mocked(api.restoreSessionByName).mockImplementationOnce(() => new Promise((resolve, reject) => {
+    finish = () => {
+      if (outcome === "failure") reject(new Error("seal:map_mismatch"));
+      else if (outcome === "cancel before writes") reject(new Error("restore cancelled before any changes"));
+      else resolve(["restored first-file", outcome === "cancel" ? "restore cancelled" : "restore failed for second-file: access denied"]);
+    };
+  }));
+  const cancel = outcome === "cancel" || outcome === "cancel before writes";
+  if (cancel) vi.mocked(api.cancelRestore).mockResolvedValueOnce(true);
+  const view = mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  await waitFor(() => expect(screen.getByRole("button", { name: L.restoreRun })).toHaveProperty("disabled", false), { timeout: 3000 });
+  fireEvent.click(screen.getByRole("button", { name: L.restoreRun }));
+  await waitFor(() => expect(getConfirm()?.title).toBe(L.restore));
+  await act(async () => settleConfirm(true));
+  await waitFor(() => expect(api.restoreSessionByName).toHaveBeenCalledOnce());
+  expect(screen.getByText(L.restoreRunning(name))).toBeTruthy();
+  view.rerender(<Toolbox visible={false} />);
+  view.rerender(<Toolbox />);
+  expect(screen.getByText(L.restoreRunning(name))).toBeTruthy();
+  if (cancel) {
+    fireEvent.click(screen.getByRole("button", { name: L.restoreCancel }));
+    const [calledName, operationId] = vi.mocked(api.restoreSessionByName).mock.calls[0]!;
+    expect(calledName).toBe(name);
+    expect(operationId).toMatch(/^[\da-f-]{36}$/);
+    expect(api.cancelRestore).toHaveBeenCalledWith(operationId);
+    expect(screen.getByText(L.restoreCancelling)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: L.restoreCancel }));
+    expect(api.cancelRestore).toHaveBeenCalledOnce();
+  }
+  view.rerender(<Toolbox visible={false} />);
+  await act(async () => finish());
+  view.rerender(<Toolbox />);
+  expect(screen.getByText(`${L.restoreResult}: ${name}`)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: L.restoreCancel })).toBeNull();
+  if (outcome === "partial") expect(screen.getByText(/second-file: access denied/)).toBeTruthy();
+  if (outcome === "failure") expect(screen.getByText(L.errSealInvalid)).toBeTruthy();
+  if (outcome === "cancel") expect(screen.getByText(new RegExp(L.restoreFilesCancelled))).toBeTruthy();
+  if (outcome === "cancel before writes") expect(screen.getByText(L.restoreCancelledBeforeChanges)).toBeTruthy();
 });

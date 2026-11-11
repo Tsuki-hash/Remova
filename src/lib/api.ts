@@ -2,6 +2,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { currentLang } from "../i18n";
 import { trackNativeCall } from "./nativeActivity";
+import type { BackupSession } from "./backupSession";
 import type {
   AiConfigView,
   AiExplainInput,
@@ -97,13 +98,6 @@ export type MonitorDiff = {
 };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
-export type BackupSession = {
-  name: string;
-  size_kb: number;
-  created_at: string;
-  /** `false` = an aborted backup's leftover directory; it has no seal and can never be restored. */
-  sealed: boolean;
-};
 export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
@@ -139,12 +133,12 @@ export const api = {
     invoke<VerifyRow[]>("verify_cleanup_leftovers", { items }),
   orphanScan: (scanId?: number, extended?: boolean) =>
     invoke<OrphanScanResult | CleanupItem[]>("scan_orphan_leftovers", { scanId, extended }),
-  /** M1: broken MSI install records (read-only). */
+  /** broken MSI install records (read-only). */
   brokenInstalls: () => invoke<BrokenInstall[]>("scan_broken_installs"),
-  /** M2: export then remove a broken record (server re-verifies the record). */
+  /** export then remove a broken record (server re-verifies the record). */
   cleanupBrokenInstall: (appName: string, registryKey: string, guid: string) =>
     invoke<BrokenCleanupReport>("cleanup_broken_install", { appName, registryKey, guid }),
-  /** M3: orphan firewall rules (read-only). */
+  /** orphan firewall rules (read-only). */
   firewallOrphans: () => invoke<FirewallScanResult>("scan_firewall_orphans"),
   /** Disk-space overview: junction ledger under known roots (read-only). */
   junctionLedger: () => invoke<JunctionScanResult>("scan_junction_ledger"),
@@ -162,7 +156,7 @@ export const api = {
   /** Remove npm global packages (server re-admits; Safety Vault backup first). */
   removeNpmGlobals: (packages: { name: string }[]) =>
     invoke<NpmCleanupReport>("remove_npm_globals", { packages }),
-  /** Junction migration (M6.3): plan / copy / cutover / finish / rollback. */
+  /** Junction migration: plan / copy / cutover / finish / rollback. */
   migratePlan: (source: string, target: string) =>
     invoke<MigrationPlan>("migrate_plan", { source, target }),
   migrateCopy: (source: string, target: string) =>
@@ -175,7 +169,7 @@ export const api = {
     invoke<MigrationRollbackReport>("migrate_rollback", { source, target }),
   migrateStatus: (source: string, target: string) =>
     invoke<MigrationState>("migrate_status", { source, target }),
-  /** M4: orphaned ConsentStore entries (read-only, evaluation-gated). */
+  /** orphaned ConsentStore entries (read-only, evaluation-gated). */
   consentOrphans: () => invoke<TraceScanResult>("scan_consent_orphans"),
   installVectors: () => invoke<ProductFamily[]>("scan_install_vectors"),
   msiConsistency: () => invoke<MsiConsistencyReport>("scan_msi_consistency"),
@@ -184,19 +178,19 @@ export const api = {
   auditToolchains: () => invoke<ToolchainAuditResult>("audit_toolchains"),
   findProjectConsumers: (roots: string[]) =>
     invoke<ConsumerSearchResult>("find_project_consumers", { roots }),
-  /** M4: portable-app candidates (read-only cross-reference). */
+  /** portable-app candidates (read-only cross-reference). */
   portableCandidates: () => invoke<PortableScanResult>("scan_portable_candidates"),
   cancelMigrateCopy: () => invoke<void>("cancel_migrate_copy"),
-  /** M3: export then delete rule values (server re-verifies each orphan). */
+  /** export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),
-  /** M4: name the processes holding a path (read-only). */
+  /** name the processes holding a path (read-only). */
   diagnoseLockedPath: (path: string) =>
     invoke<LockingProcess[]>("diagnose_locked_path", { path }),
-  /** M4: end one confirmed process after server-side image verification. */
+  /** end one confirmed process after server-side image verification. */
   endLockingProcess: (pid: number, expectedPath: string, targetPath: string) =>
     invoke<void>("end_locking_process", { pid, expectedPath, targetPath }),
-  /** M5: bounded read-only registry key search. */
+  /** bounded read-only registry key search. */
   deepRegistryCheck: (appName: string) =>
     invoke<RegistryCheckResult>("deep_registry_check", { appName }),
   rankIdleApps: (scanId?: number) =>
@@ -237,8 +231,11 @@ export const api = {
   clearHistory: () => invoke("clear_cleanup_history"),
   backupSessions: () => invoke<BackupSession[]>("list_backup_sessions"),
   previewRestore: (name: string) => invoke<RestorePreview>("preview_restore_session", { name }),
-  deleteBackupSession: (name: string) => invoke("delete_backup_session", { name }),
-  restoreSessionByName: (name: string) => invoke<string[]>("restore_session_by_name", { name }),
+  deleteBackupSession: (name: string, expectedStatus?: "verified" | "unsealed") =>
+    invoke("delete_backup_session", { name, expectedStatus }),
+  restoreSessionByName: (name: string, operationId?: string) =>
+    invoke<string[]>("restore_session_by_name", { name, operationId }),
+  cancelRestore: (operationId: string) => invoke<boolean>("cancel_restore", { operationId }),
   suggestIgnoreRules: (publisher: string, paths: string[]) =>
     invoke<IgnoreSuggestion[]>("suggest_ignore_rules", { publisher, paths }),
   applyIgnoreSuggestions: (suggestions: IgnoreSuggestion[]) =>

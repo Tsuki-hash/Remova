@@ -10,9 +10,10 @@ import { loadRestorePointPref, saveRestorePointPref } from "../lib/restorePointP
 export function useMoreTools(opts: {
   selected: InstalledApp | null;
   onGoSoftware: () => void;
+  initialTool?: ToolId | null;
 }) {
   const { selected, onGoSoftware } = opts;
-  const [openTool, setOpenTool] = useState<ToolId | null>(null);
+  const [openTool, setOpenTool] = useState<ToolId | null>(opts.initialTool ?? null);
   const [rescanOn, setRescanOn] = useState(() => loadRescanAfterUninstall());
   const [restorePointOn, setRestorePointOn] = useState(() => loadRestorePointPref());
   // The element that opened the panel. Closing it must put keyboard focus back

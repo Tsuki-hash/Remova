@@ -33,13 +33,15 @@ const REJECTION_TEXT: Record<string, string> = {
   target_space_unknown: "migrateRejSpaceUnknown",
 };
 
+const CLEANUP_PENDING_PREFIX = "migrate:cleanup_pending:";
+
 function rejectionText(L: ReturnType<typeof t>, code: string): string {
   const key = REJECTION_TEXT[code];
   return key ? (L[key as keyof typeof L] as string) : code;
 }
 
 /**
- * Junction directory migration (M6.3): Plan → Copy → Cutover → Finish, each
+ * Junction directory migration: Plan → Copy → Cutover → Finish, each
  * phase a separate button gated by the server-derived state; Rollback is
  * offered whenever the cutover is in place. Only-move: the source tree
  * survives as `<source>.bak` until Finish verifies it away.
@@ -60,15 +62,24 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   // with every scan, so a slow answer for an older path pair can arrive after
   // a newer one and must never overwrite its state.
   const statusGen = useRef(0);
+  const inFlight = useRef(false);
 
-  const refreshState = useCallback(async (src: string, dst: string) => {
+  const editPath = (setPath: (value: string) => void, value: string) => {
+    if (inFlight.current) return;
+    ++statusGen.current;
+    setState(null);
+    setPlan(null);
+    setPath(value);
+  };
+
+  const refreshState = useCallback(async (src: string, dst: string, fallback: MigrationState | null = null) => {
     if (!src.trim() || !dst.trim()) return;
     const gen = ++statusGen.current;
     try {
       const next = await api.migrateStatus(src, dst);
       if (gen === statusGen.current) setState(next);
     } catch {
-      if (gen === statusGen.current) setState(null);
+      if (gen === statusGen.current) setState(fallback);
     }
   }, []);
 
@@ -80,11 +91,13 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   }, [source, target, refreshState]);
 
   const withBusy = async (work: () => Promise<void>) => {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       await work();
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -126,10 +139,13 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     void api.cancelMigrateCopy().catch(() => {});
   };
 
+  const confirmPaths = (message: string) => `${message}\n${L.migrateSource}: ${source}\n${L.migrateTarget}: ${target}`;
+  const cleanupPending = state === "cleanup_pending";
+
   const runCutover = async () => {
     const { ok } = await requestConfirmEx({
       title: L.migrateCutoverTitle,
-      message: L.migrateCutoverConfirm,
+      message: confirmPaths(L.migrateCutoverConfirm),
       confirmLabel: L.migrateCutover,
       danger: true,
     });
@@ -158,15 +174,17 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
 
   const runFinish = async () => {
     const { ok } = await requestConfirmEx({
-      title: L.migrateFinishTitle,
-      message: L.migrateFinishConfirm,
-      confirmLabel: L.migrateFinish,
+      title: cleanupPending ? L.migrateRetryCleanup : L.migrateFinishTitle,
+      message: confirmPaths(cleanupPending ? L.migrateRetryCleanupConfirm : L.migrateFinishConfirm),
+      confirmLabel: cleanupPending ? L.migrateRetryCleanup : L.migrateFinish,
       danger: true,
     });
     if (!ok) return;
+    let fallback: MigrationState | null = null;
     try {
       const r = await api.migrateFinish(source, target, true);
       if (r.removed_bak) {
+        fallback = "finished";
         toast.success(L.migrateFinishDone);
       } else {
         toast.error(L.migrateFinishRefused, {
@@ -174,15 +192,22 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         });
       }
     } catch (e) {
-      toast.error(backendErrorText(formatError(e)));
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+      if (raw.startsWith(CLEANUP_PENDING_PREFIX)) {
+        fallback = "cleanup_pending";
+        toast.error(L.migrateCleanupPending, { detail: raw.slice(CLEANUP_PENDING_PREFIX.length).trim() });
+      } else {
+        toast.error(backendErrorText(formatError(e)));
+      }
     }
-    await refreshState(source, target);
+    if (fallback) setState(fallback);
+    await refreshState(source, target, fallback);
   };
 
   const runRollback = async () => {
     const { ok } = await requestConfirmEx({
       title: L.migrateRollback,
-      message: L.migrateRollbackConfirm,
+      message: confirmPaths(L.migrateRollbackConfirm),
       confirmLabel: L.migrateRollback,
       danger: true,
     });
@@ -215,12 +240,14 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
 
       <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
         <span style={{ ...css.muted, fontSize: 12, minWidth: 96 }}>{L.migrateSource}</span>
-        <input style={{ ...css.input, height: 30 }} value={source} onChange={(e) => setSource(e.target.value)}
+        <input style={{ ...css.input, height: 30 }} value={source} disabled={busy}
+          onChange={(e) => editPath(setSource, e.target.value)}
           placeholder="C:\\Users\\me\\AppData\\Local\\SomeApp" />
       </label>
       <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
         <span style={{ ...css.muted, fontSize: 12, minWidth: 96 }}>{L.migrateTarget}</span>
-        <input style={{ ...css.input, height: 30 }} value={target} onChange={(e) => setTarget(e.target.value)}
+        <input style={{ ...css.input, height: 30 }} value={target} disabled={busy}
+          onChange={(e) => editPath(setTarget, e.target.value)}
           placeholder="D:\\Moved\\SomeApp" />
       </label>
 
@@ -228,7 +255,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         const steps = [L.stepPlan, L.stepCopy, L.stepCutover, L.stepFinish];
         // The current step is the action the user takes NEXT: after a copy
         // the cutover is next; after a cutover the finish is next.
-        const idx = state === "cutover" ? 3 : state === "copied" ? 2 : state === "finished" ? 4 : 0;
+        const idx = state === "cutover" || cleanupPending ? 3 : state === "copied" ? 2 : state === "finished" ? 4 : 0;
         return (
           <ol aria-label={L.migrateTitle} style={{ display: "flex", gap: 6, flexWrap: "wrap", listStyle: "none", margin: "8px 0", padding: 0 }}>
             {steps.map((label, i) => {
@@ -266,7 +293,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           disabled={busy || !source.trim() || !target.trim() || state === "finished"}
           onClick={() => {
             if (state === "copied") void withBusy(runCutover);
-            else if (state === "cutover") void withBusy(runFinish);
+            else if (state === "cutover" || cleanupPending) void withBusy(runFinish);
             else void withBusy(startMigration);
           }}
         >
@@ -274,9 +301,9 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
             ? L.migrateWorking
             : state === "copied"
               ? L.migrateCutover
-              : state === "cutover"
-                ? L.migrateFinish
-                : L.migrateStart}
+              : cleanupPending
+                ? L.migrateRetryCleanup
+                : state === "cutover" ? L.migrateFinish : L.migrateStart}
         </button>
         {state === "cutover" && (
           <button type="button" style={{ ...css.btnGhost, height: 34 }} disabled={busy} onClick={() => void withBusy(runRollback)}>
@@ -296,6 +323,11 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       {state === "inconsistent" && (
         <div role="alert" style={{ color: "var(--danger-text)", fontSize: 12, marginTop: 6 }}>
           {L.migrateStateInconsistent}
+        </div>
+      )}
+      {cleanupPending && (
+        <div role="alert" style={{ color: "var(--warn-ink)", fontSize: 12, marginTop: 6 }}>
+          {L.migrateCleanupPending}
         </div>
       )}
 

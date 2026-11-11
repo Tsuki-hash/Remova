@@ -115,12 +115,10 @@ pub(crate) fn scan_store_apps_with_completeness() -> (Vec<InstalledApp>, bool) {
             .Version()
             .map(|v| format!("{}.{}.{}.{}", v.Major, v.Minor, v.Build, v.Revision))
             .unwrap_or_default();
-        let install_location = pkg
-            .InstalledLocation()
-            .ok()
-            .and_then(|loc| loc.Path().ok())
-            .map(|p| p.to_string())
-            .unwrap_or_default();
+        let install_location = store_install_location(
+            pkg.InstalledLocation().and_then(|loc| loc.Path()),
+            &mut complete,
+        );
         if is_system_install_path(&install_location) {
             continue;
         }
@@ -163,6 +161,20 @@ pub(crate) fn scan_store_apps_with_completeness() -> (Vec<InstalledApp>, bool) {
         });
     }
     (out, complete && !crate::scan_task::cancelled())
+}
+
+#[cfg(windows)]
+fn store_install_location(
+    location: windows::core::Result<windows::core::HSTRING>,
+    complete: &mut bool,
+) -> String {
+    match location {
+        Ok(path) => path.to_string(),
+        Err(_) => {
+            *complete = false;
+            String::new()
+        }
+    }
 }
 
 /// Crude AppxManifest DisplayName extract (avoids full XML dep).
@@ -260,6 +272,27 @@ mod tests {
         let name = super::read_manifest_display_name(&dir.to_string_lossy());
         assert_eq!(name.as_deref(), Some("计算器"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn store_location_read_error_marks_inventory_incomplete() {
+        use windows::core::HSTRING;
+        use windows::Win32::Foundation::E_ACCESSDENIED;
+
+        let mut complete = true;
+        assert!(super::store_install_location(Ok(HSTRING::new()), &mut complete).is_empty());
+        assert!(complete, "a successful empty path is an optional location");
+
+        let location = r"D:\Packages\Example";
+        assert_eq!(
+            super::store_install_location(Ok(HSTRING::from(location)), &mut complete),
+            location
+        );
+        assert!(complete);
+        let denied = Err(windows::core::Error::from(E_ACCESSDENIED));
+        assert!(super::store_install_location(denied, &mut complete).is_empty());
+        assert!(!complete);
     }
 
     #[cfg(windows)]

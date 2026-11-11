@@ -76,6 +76,9 @@ impl Drop for BackupReader {
 }
 
 pub(super) fn equal(left: File, right: File) -> io::Result<bool> {
+    if left.metadata()?.is_dir() && !super::security::directories_equal(&left, &right)? {
+        return Ok(false);
+    }
     let mut left = BackupReader::new(left);
     let mut right = BackupReader::new(right);
     let mut left_buffer = [0; 64 * 1024];

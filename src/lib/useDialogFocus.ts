@@ -1,52 +1,118 @@
-import { useEffect, type RefObject } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
+
+export const dialogLayer = {
+  overview: 8500,
+  confirm: 8600,
+  closeChoice: 8700,
+  update: 10000,
+};
 
 const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'button, [href], input:not([type="hidden"]), select, textarea, [tabindex]';
 
-/**
- * Shared dialog focus trap : initial focus, Tab/Shift+Tab cycle inside
- * the dialog, restore focus on close. Escape is left to each host (cancel semantics differ).
- */
-export function useDialogFocus(open: boolean, containerRef: RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    if (!open) return;
-    const container = containerRef.current;
-    if (!container) return;
-    const prev = document.activeElement as HTMLElement | null;
-    const focusables = () =>
-      Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (el) => el.getAttribute("aria-hidden") !== "true",
-      );
-    const first = focusables()[0];
-    (first ?? container).focus();
+type Dialog = {
+  element: HTMLElement;
+  layer: number;
+  previousFocus: HTMLElement | null;
+  escape: () => void;
+};
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const items = focusables();
-      if (items.length === 0) {
-        e.preventDefault();
-        container.focus();
-        return;
-      }
-      const firstEl = items[0]!;
-      const lastEl = items[items.length - 1]!;
-      const active = document.activeElement;
-      if (e.shiftKey) {
-        if (active === firstEl || !container.contains(active)) {
-          e.preventDefault();
-          lastEl.focus();
-        }
-      } else if (active === lastEl || !container.contains(active)) {
-        e.preventDefault();
-        firstEl.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
+const dialogs: Dialog[] = [];
+let pageFocus: HTMLElement | null = null;
+
+function topDialog() {
+  return dialogs.reduce<Dialog | undefined>((top, dialog) =>
+    !top || dialog.layer >= top.layer ? dialog : top, undefined);
+}
+
+function focusableItems(element: HTMLElement) {
+  return Array.from(element.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (item) => item.tabIndex >= 0 && !item.matches(":disabled") &&
+      !item.closest('[hidden], [inert], [aria-hidden="true"]'),
+  );
+}
+
+function focusDialog(dialog: Dialog, preferred?: HTMLElement | null) {
+  const items = focusableItems(dialog.element);
+  const target = preferred && items.includes(preferred) ? preferred : items[0] ?? dialog.element;
+  target.focus();
+}
+
+function handleKeyDown(event: KeyboardEvent) {
+  const top = topDialog();
+  if (!top) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) top.escape();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const items = focusableItems(top.element);
+  const index = items.findIndex((item) => item === document.activeElement);
+  if (index < 0 || (event.shiftKey ? index === 0 : index === items.length - 1)) {
+    event.preventDefault();
+    const target = event.shiftKey ? items.at(-1) : items[0];
+    (target ?? top.element).focus();
+  }
+}
+
+function containFocus(event: FocusEvent) {
+  const top = topDialog();
+  if (top && event.target instanceof Node && !top.element.contains(event.target)) {
+    focusDialog(top);
+  }
+}
+
+function setCovered(dialog: Dialog, covered: boolean) {
+  dialog.element.toggleAttribute("inert", covered);
+  if (covered) dialog.element.setAttribute("aria-hidden", "true");
+  else dialog.element.removeAttribute("aria-hidden");
+}
+
+export function useDialogFocus(
+  open: boolean,
+  containerRef: RefObject<HTMLElement | null>,
+  layer: number,
+  onEscape?: () => void,
+) {
+  const escape = useRef(onEscape);
+  useLayoutEffect(() => { escape.current = onEscape; }, [onEscape]);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!open || !element) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previous = topDialog();
+    if (!previous) {
+      pageFocus = previousFocus;
+      window.addEventListener("keydown", handleKeyDown, true);
+      document.addEventListener("focusin", containFocus);
+    }
+    const dialog = { element, layer, previousFocus, escape: () => escape.current?.() };
+    dialogs.push(dialog);
+    if (topDialog() === dialog) {
+      focusDialog(dialog);
+      if (previous) setCovered(previous, true);
+    } else {
+      setCovered(dialog, true);
+    }
+
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      if (prev && typeof prev.focus === "function" && document.contains(prev)) {
-        prev.focus();
+      const wasTop = topDialog() === dialog;
+      dialogs.splice(dialogs.indexOf(dialog), 1);
+      setCovered(dialog, false);
+      if (!wasTop) return;
+      const next = topDialog();
+      if (next) {
+        setCovered(next, false);
+        focusDialog(next, dialog.previousFocus);
+      } else {
+        window.removeEventListener("keydown", handleKeyDown, true);
+        document.removeEventListener("focusin", containFocus);
+        if (pageFocus?.isConnected) pageFocus.focus();
+        pageFocus = null;
       }
     };
-  }, [open, containerRef]);
+  }, [open, containerRef, layer]);
 }

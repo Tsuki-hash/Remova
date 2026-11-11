@@ -15,18 +15,25 @@ const MAX_RESTORE_REGISTRY_BYTES: usize = 256 * 1024 * 1024;
 
 struct RestoreInputs {
     seal: crate::path_seal::PathMapSeal,
+    #[cfg(windows)]
+    inventory: Option<payload::Inventory>,
     map: std::collections::BTreeMap<String, String>,
     path_bytes: Option<Vec<u8>>,
     imports: Vec<(PathBuf, PathBuf, String, &'static str)>,
 }
 
-fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
+fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<RestoreInputs, String> {
+    if cancelled() {
+        return Err("restore cancelled before any changes".into());
+    }
     if !session.is_dir() {
         return Err(crate::error::restore_err("session not found").to_ipc());
     }
     // Authorize the whole session before any file, PATH or registry write.
     // Missing/legacy/invalid seals never enter an automatic restore path.
     let seal = crate::path_seal::verified_seal(session)?;
+    #[cfg(windows)]
+    let inventory = payload::Inventory::read(session, &seal, cancelled)?;
     let map_path = session.join("files/path_map.json");
     let map: std::collections::BTreeMap<String, String> = if map_path.exists() {
         serde_json::from_slice(&fs::read(&map_path).map_err(|e| e.to_string())?)
@@ -103,6 +110,8 @@ fn validate_session(session: &Path) -> Result<RestoreInputs, String> {
     }
     Ok(RestoreInputs {
         seal,
+        #[cfg(windows)]
+        inventory,
         map,
         path_bytes,
         imports,
@@ -135,12 +144,14 @@ fn restore_with_before_copy(
     crate::executor::begin_cleanup_control();
     let RestoreInputs {
         seal,
+        #[cfg(windows)]
+        inventory,
         map,
         path_bytes,
         imports,
-    } = validate_session(session)?;
+    } = validate_session(session, crate::executor::cleanup_cancelled)?;
     #[cfg(windows)]
-    let authenticated = payload::Inventory::read(session, &seal)?
+    let authenticated = inventory
         .filter(|_| !map.is_empty())
         .map(|inventory| crate::path_seal::restore_stage().map(|stage| (inventory, stage)))
         .transpose()?;
@@ -832,7 +843,7 @@ pub fn preview_by_name(name: &str) -> Result<RestorePreview, String> {
 }
 
 fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String> {
-    let inputs = validate_session(session)?;
+    let inputs = validate_session(session, || false)?;
     let mut preview = RestorePreview {
         name: name.into(),
         files: inputs.map.len(),
@@ -896,12 +907,19 @@ pub struct SessionInfo {
     pub name: String,
     pub size_kb: u64,
     pub created_at: String,
-    /// `false` for a session directory that never got its seal — an aborted
-    /// backup leaves `files/` and `registry/` behind without reaching
-    /// `write_seal`. Such a session can never be restored
-    /// (`validate_session` rejects it with `seal:missing`), so the UI must not
-    /// offer it as a restore target.
+    /// Kept for callers that used the original restorable flag.
     pub sealed: bool,
+    pub status: SessionStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Verified,
+    Unsealed,
+    RequiresAdmin,
+    Invalid,
+    Legacy,
 }
 
 fn dir_size_kb(p: &Path) -> u64 {
@@ -915,7 +933,26 @@ fn dir_size_kb(p: &Path) -> u64 {
 /// A session is only restorable when its seal verifies. The seal is what binds
 /// the captured bytes to this session, so "directory exists" is not enough.
 fn session_is_sealed(dir: &Path) -> bool {
-    crate::path_seal::verified_seal(dir).is_ok()
+    session_status(dir) == SessionStatus::Verified
+}
+
+fn session_status(dir: &Path) -> SessionStatus {
+    let check = crate::path_seal::verified_seal(dir).and_then(|seal| {
+        #[cfg(windows)]
+        payload::Inventory::read(dir, &seal, || false)?;
+        #[cfg(not(windows))]
+        let _ = seal;
+        Ok(())
+    });
+    match check.as_ref().map_err(String::as_str) {
+        Ok(_) => SessionStatus::Verified,
+        Err("seal:missing") => SessionStatus::Unsealed,
+        Err("seal:legacy_manual_restore_only") => SessionStatus::Legacy,
+        Err("seal:key_unavailable_requires_admin" | "seal:read_requires_admin") => {
+            SessionStatus::RequiresAdmin
+        }
+        Err(_) => SessionStatus::Invalid,
+    }
 }
 
 /// List backup sessions with size (KB). Does NOT prune (read path is pure).
@@ -937,11 +974,13 @@ fn list_session_info_at(root: &Path) -> Result<Vec<SessionInfo>, String> {
         .iter()
         .filter_map(|p| {
             let name = p.file_name()?.to_string_lossy().to_string();
+            let status = session_status(p);
             Some(SessionInfo {
                 name: name.clone(),
                 size_kb: dir_size_kb(p),
                 created_at: name.split('_').next().unwrap_or("").to_string(),
-                sealed: session_is_sealed(p),
+                sealed: status == SessionStatus::Verified,
+                status,
             })
         })
         .collect())
@@ -997,6 +1036,13 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
 /// Delete one backup session by name. Path-traversal guarded.
 /// Session names must match `^[0-9]{8}-[0-9]{6}` (`YYYYMMDD-HHMMSS…`).
 pub fn delete_session_by_name(name: &str) -> Result<(), String> {
+    delete_session_with_status(name, None)
+}
+
+pub fn delete_session_with_status(
+    name: &str,
+    expected: Option<SessionStatus>,
+) -> Result<(), String> {
     // Serialize with restore: deleting a session mid-restore leaves a partial
     // restore with no source to retry from.
     let _guard = crate::executor::CLEANUP_LOCK
@@ -1023,6 +1069,13 @@ pub fn delete_session_by_name(name: &str) -> Result<(), String> {
     }
     if !path.is_dir() {
         return Err("session not found".into());
+    }
+    if let Some(expected) = expected {
+        if !matches!(expected, SessionStatus::Verified | SessionStatus::Unsealed)
+            || session_status(&path) != expected
+        {
+            return Err("backup session status changed; refresh and try again".into());
+        }
     }
     crate::fsutil::remove_tree_no_reparse(&path).map_err(|e| e.to_string())
 }
@@ -1596,7 +1649,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let seals = tmp.join("seals");
         // TestStore owns the seal-root override AND its lock; taking test_lock
-        // separately here would deadlock (A5 regression caught by the suite).
+        // separately here would deadlock.
         let _store = crate::path_seal::TestStore::new(seals);
         let sess = tmp.join("sess");
         let files = sess.join("files");
@@ -1634,7 +1687,7 @@ mod tests {
         // Force every PATH read to fail so restore_path_entry errors per
         // scope. The mock must be INSTALLED (not merely cleared): with no mock
         // state the reader falls through to the real registry. The reset guard
-        // clears it even if an assertion below panics (A5).
+        // clears it even if an assertion below panics.
         let _mock = crate::regops::path_mock::lock_mock();
         let _reset = crate::regops::path_mock::reset_on_drop();
         crate::regops::path_mock::install(r"C:\Windows", r"C:\Windows");
@@ -1931,6 +1984,62 @@ mod tests {
             .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .expect("the directory payload is published")
             .path()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_refuses_named_streams_added_to_a_sealed_payload() {
+        let root = crate::test_support::TempDir::new("restore-named-streams");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"backed up").unwrap();
+        let session = root.join("1700000000_dir");
+        let backed = back_up_fixture_directory(&source, &session);
+        fs::write(backed.join("a.txt:FixtureMetadata"), b"unsealed stream").unwrap();
+        fs::remove_file(source.join("a.txt")).unwrap();
+
+        let msgs = restore_session(&session).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("named data streams")),
+            "{msgs:?}"
+        );
+        assert!(!source.join("a.txt").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_changed_manifest_is_refused_by_the_list_preview_and_restore() {
+        let _env = crate::backup::lock_backup_env();
+        let root = crate::test_support::TempDir::new("restore-manifest-status");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let _backup = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", root.join("Backup"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"backed up").unwrap();
+        let backup_root = root.subdir("Backup");
+        let name = "1700000000_dir";
+        let session = backup_root.join(name);
+        back_up_fixture_directory(&source, &session);
+        let manifest = session.join(crate::path_seal::FILE_MANIFEST_NAME);
+        assert_eq!(session_status(&session), SessionStatus::Verified);
+        assert!(preview_session(name, &session).is_ok());
+
+        for bytes in [None, Some(b"{}".as_slice())] {
+            if let Some(bytes) = bytes {
+                fs::write(&manifest, bytes).unwrap();
+            } else {
+                fs::remove_file(&manifest).unwrap();
+            }
+            assert_eq!(session_status(&session), SessionStatus::Invalid);
+            assert!(list_session_names_at(&backup_root).unwrap().is_empty());
+            assert!(preview_session(name, &session)
+                .unwrap_err()
+                .contains("file_manifest"));
+            assert!(restore_session(&session)
+                .unwrap_err()
+                .contains("file_manifest"));
+            assert!(delete_session_with_status(name, Some(SessionStatus::Unsealed)).is_err());
+            assert!(session.is_dir());
+        }
     }
 
     /// A file added inside a backed-up directory after sealing must block that

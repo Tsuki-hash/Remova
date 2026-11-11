@@ -1,4 +1,4 @@
 {
-  "states": ["absent", "idle", "copied", "cutover", "finished", "inconsistent"],
+  "states": ["absent", "idle", "copied", "cutover", "finished", "inconsistent", "cleanup_pending"],
   "legacy_cutover": "cut_over"
 }

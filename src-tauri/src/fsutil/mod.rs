@@ -2,6 +2,16 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+mod streams;
+#[cfg(windows)]
+pub(crate) use streams::reject_named_data_streams;
+
+#[cfg(windows)]
+mod cleanup_snapshot;
+#[cfg(windows)]
+pub(crate) use cleanup_snapshot::CleanupTreeIdentity;
+
 /// Whether already-loaded metadata describes a reparse point. Callers that just
 /// stat'ed the entry must use this instead of a second `is_reparse_point` call.
 pub fn is_reparse_metadata(meta: &std::fs::Metadata) -> bool {
@@ -700,6 +710,8 @@ fn copy_dir_before_file(
     // Per-level pin (same as the delete path): a child swapped for a junction
     // between the reparse check and this open is refused, not followed.
     let mut pin = pin_dir_with_access(src, 0x0081)?;
+    #[cfg(windows)]
+    pin.check_data_streams()?;
     pin.guard_empty(true)?;
     let _dest_pins = create_dirs_pinned(dest)?;
     for entry in std::fs::read_dir(src)? {
@@ -742,7 +754,11 @@ fn copy_dir_before_file(
 /// Stream `reader` into a sibling tmp file, fsync, then atomically replace
 /// `dest`. A mid-copy failure leaves any pre-existing `dest` bytes intact and
 /// removes the tmp — never truncate-in-place.
-fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::Result<u64> {
+fn copy_stream_atomic<R: std::io::Read>(
+    mut reader: R,
+    dest: &Path,
+    verify_source: impl FnOnce(&R) -> std::io::Result<()>,
+) -> std::io::Result<u64> {
     // pid+nonce tmp: a fixed sibling name let a second Remova process (or a
     // concurrent restore in-process) truncate and interleave into the same
     // tmp file, tearing the restored/backed-up bytes.
@@ -769,6 +785,7 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
             copied += n as u64;
         }
         out.sync_all()?;
+        verify_source(&reader)?;
         if crate::executor::cleanup_cancelled() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
@@ -811,7 +828,7 @@ fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        let mut f = std::fs::OpenOptions::new()
+        let f = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(src)?;
@@ -843,12 +860,13 @@ fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::
                 "refusing reparse/directory copy destination",
             ));
         }
-        copy_stream_atomic(&mut f, dest)
+        reject_named_data_streams(&f)?;
+        copy_stream_atomic(f, dest, reject_named_data_streams)
     }
     #[cfg(not(windows))]
     {
         let _ = pin_parent;
-        copy_stream_atomic(std::fs::File::open(src)?, dest)
+        copy_stream_atomic(std::fs::File::open(src)?, dest, |_| Ok(()))
     }
 }
 
@@ -865,6 +883,11 @@ pub struct DirPin {
 }
 
 impl DirPin {
+    #[cfg(windows)]
+    pub(crate) fn check_data_streams(&self) -> std::io::Result<()> {
+        streams::check(self.handle)
+    }
+
     fn guard_empty(&mut self, mark_even_if_non_empty: bool) -> std::io::Result<()> {
         #[cfg(windows)]
         {
@@ -874,8 +897,8 @@ impl DirPin {
     }
 }
 
-/// A marker name that is unique per attempt and always short (A10 keeps it
-/// testable): pid + nanosecond stamp + attempt offset.
+/// A marker name that is unique per attempt and always short.
+/// The name combines the process ID, timestamp and attempt number.
 #[cfg(windows)]
 fn guard_marker_name(attempt: u32) -> String {
     format!(
@@ -891,7 +914,7 @@ fn guard_marker_name(attempt: u32) -> String {
 
 /// Raw NtCreateFile errors carry an NTSTATUS-derived HRESULT (`0xD0000022`
 /// for ACCESS_DENIED), not the Win32 `0x80070005` that `GetLastError` would
-/// return (A4). Accept both so the fallback is reachable and its intent clear.
+/// return. Accept both so the fallback is reachable and its intent clear.
 #[cfg(windows)]
 fn is_access_denied_error(error: &windows::core::Error) -> bool {
     matches!(error.code().0 as u32, 0x8007_0005 | 0xD000_0022)
@@ -1092,7 +1115,7 @@ fn target_can_be_marked(p: &Path) -> bool {
 ///
 /// Raw Win32 calls do not get std's automatic `\\?\` conversion, so a
 /// destination whose absolute length passes MAX_PATH failed even when every
-/// component was valid (A2). Short paths keep their ordinary form; long
+/// component was valid. Short paths keep their ordinary form; long
 /// absolute paths are promoted to an extended-length form. Relative paths are
 /// left alone — they cannot be made verbatim without changing their meaning.
 #[cfg(windows)]
@@ -1396,16 +1419,22 @@ impl PinnedLocalDeleteTree {
         path: &Path,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
-        Self::collect_with(path, 20_000, after_open)
+        Self::collect_with(path, 20_000, 0x10081, after_open)
     }
 
     pub(crate) fn with_entry_limit(path: &Path, limit: usize) -> std::io::Result<Self> {
-        Self::collect_with(path, limit, &mut |_| Ok(()))
+        Self::collect_with(path, limit, 0x10081, &mut |_| Ok(()))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn with_security(path: &Path, limit: usize) -> std::io::Result<Self> {
+        Self::collect_with(path, limit, 0x30081, &mut |_| Ok(()))
     }
 
     fn collect_with(
         path: &Path,
         limit: usize,
+        access: u32,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
         let _parents = pin_local_scan_path(
@@ -1418,13 +1447,14 @@ impl PinnedLocalDeleteTree {
                 .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
             path.file_name()
                 .ok_or_else(|| std::io::Error::other("invalid target"))?,
-            0x10081,
+            access,
             false,
         )?;
         let mut objects = Vec::new();
         fn collect(
             path: &Path,
             pin: DirPin,
+            access: u32,
             depth: usize,
             remaining: &mut usize,
             objects: &mut Vec<(PathBuf, bool, DirPin)>,
@@ -1446,10 +1476,11 @@ impl PinnedLocalDeleteTree {
             // Enumeration and every child open still use that object handle.
             if is_dir {
                 for name in relative_names_with_limit(&pin, *remaining)? {
-                    let child = open_relative(&pin, &name, 0x10081, false)?;
+                    let child = open_relative(&pin, &name, access, false)?;
                     collect(
                         &path.join(name),
                         child,
+                        access,
                         depth + 1,
                         remaining,
                         objects,
@@ -1462,7 +1493,15 @@ impl PinnedLocalDeleteTree {
             Ok(is_dir)
         }
         let mut remaining = limit;
-        let is_dir = collect(path, root, 0, &mut remaining, &mut objects, after_open)?;
+        let is_dir = collect(
+            path,
+            root,
+            access,
+            0,
+            &mut remaining,
+            &mut objects,
+            after_open,
+        )?;
         objects.reverse();
         Ok(Self {
             path: path.into(),
@@ -1477,6 +1516,19 @@ impl PinnedLocalDeleteTree {
     }
     pub(crate) fn is_dir(&self) -> bool {
         self.is_dir
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn root_pin(&self) -> &DirPin {
+        &self.objects[0].2
+    }
+
+    /// Keep the root and its parent pinned but release child handles before
+    /// an atomic sibling rename, which may be blocked by open descendants.
+    #[cfg(windows)]
+    pub(crate) fn release_children_for_rename(&mut self) -> &DirPin {
+        self.objects.truncate(1);
+        self.root_pin()
     }
 
     pub(crate) fn contains_file(&self, path: &Path) -> bool {
@@ -1509,8 +1561,21 @@ impl PinnedLocalDeleteTree {
             borrowed.try_clone()
         }
 
-        let mut pins = pin_local_scan_path(destination)?;
-        let target_root_index = pins.len() - 1;
+        let mut pins = pin_local_scan_path(
+            destination
+                .parent()
+                .ok_or_else(|| std::io::Error::other("target cannot be a volume root"))?,
+        )?;
+        let target_root_index = pins.len();
+        let root = open_relative(
+            pins.last().expect("target has a pinned parent"),
+            destination
+                .file_name()
+                .ok_or_else(|| std::io::Error::other("invalid target"))?,
+            0x20081,
+            false,
+        )?;
+        pins.push(root);
         let mut positions = std::collections::BTreeMap::new();
         let mut children = std::collections::BTreeMap::new();
         for (path, is_dir, backup) in &self.objects {
@@ -1529,7 +1594,7 @@ impl PinnedLocalDeleteTree {
                     .file_name()
                     .ok_or_else(|| std::io::Error::other("missing entry name"))?;
                 pins.push(
-                    open_relative(&pins[parent], name, 0x81, false).map_err(|err| {
+                    open_relative(&pins[parent], name, 0x20081, false).map_err(|err| {
                         std::io::Error::other(format!("{}: {err}", path.display()))
                     })?,
                 );
@@ -1579,6 +1644,9 @@ impl PinnedLocalDeleteTree {
     /// Copy the exact held file handles, never reopening a source pathname.
     pub(crate) fn copy_to(&self, destination: &Path) -> std::io::Result<()> {
         for (path, is_dir, pin) in &self.objects {
+            #[cfg(windows)]
+            pin.check_data_streams()
+                .map_err(|error| std::io::Error::other(format!("{}: {error}", path.display())))?;
             let rel = path
                 .strip_prefix(&self.path)
                 .map_err(std::io::Error::other)?;
@@ -1605,6 +1673,7 @@ impl PinnedLocalDeleteTree {
                         .create_new(true)
                         .open(&dest)?;
                     std::io::copy(&mut source, &mut out)?;
+                    reject_named_data_streams(&source)?;
                     out.sync_all()?;
                 }
             }
@@ -1612,26 +1681,42 @@ impl PinnedLocalDeleteTree {
         Ok(())
     }
 
-    pub(crate) fn remove(mut self) -> std::io::Result<()> {
+    pub(crate) fn remove(self) -> std::io::Result<()> {
+        self.remove_objects(false)
+    }
+
+    pub(crate) fn remove_backed_up(self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        for (_, _, pin) in &self.objects {
+            verify_backed_object(pin)?;
+        }
+        self.remove_objects(true)
+    }
+
+    fn remove_objects(mut self, verify_streams: bool) -> std::io::Result<()> {
+        #[cfg(not(windows))]
+        let _ = verify_streams;
         // Children close before their parents, which must be empty for disposition.
         while let Some((_path, _is_dir, pin)) = self.objects.pop() {
             #[cfg(windows)]
             {
-                use windows::Win32::Storage::FileSystem::{
-                    FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
-                };
-                let info = FILE_DISPOSITION_INFO {
-                    DeleteFile: true.into(),
-                };
-                unsafe {
-                    SetFileInformationByHandle(
-                        pin.handle,
-                        FileDispositionInfo,
-                        (&info as *const FILE_DISPOSITION_INFO).cast(),
-                        std::mem::size_of_val(&info) as u32,
-                    )
+                if verify_streams && crate::executor::cleanup_cancelled() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "cleanup cancelled",
+                    ));
                 }
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
+                let readonly = verify_streams && pin_metadata(&pin)?.permissions().readonly();
+                set_file_disposition(&pin, true, readonly)?;
+                if verify_streams {
+                    // A writer may have opened a different stream despite the
+                    // default stream's sharing mode. Recheck with deletion
+                    // pending, then undo the mark if the object is not backed up.
+                    if let Err(error) = verify_backed_object(&pin) {
+                        set_file_disposition(&pin, false, readonly)?;
+                        return Err(error);
+                    }
+                }
             }
             drop(pin);
         }
@@ -1639,7 +1724,60 @@ impl PinnedLocalDeleteTree {
     }
 }
 
-/// SOP §9.3: a READONLY attribute makes delete fail like a lock. Clear
+#[cfg(windows)]
+fn set_file_disposition(pin: &DirPin, delete: bool, readonly: bool) -> std::io::Result<()> {
+    use windows::Win32::Storage::FileSystem::{
+        FileDispositionInfo, FileDispositionInfoEx, SetFileInformationByHandle,
+        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_DO_NOT_DELETE,
+        FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_INFO,
+        FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS,
+    };
+    if readonly {
+        let info = FILE_DISPOSITION_INFO_EX {
+            Flags: if delete {
+                FILE_DISPOSITION_INFO_EX_FLAGS(
+                    FILE_DISPOSITION_FLAG_DELETE.0
+                        | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE.0,
+                )
+            } else {
+                FILE_DISPOSITION_FLAG_DO_NOT_DELETE
+            },
+        };
+        return unsafe {
+            SetFileInformationByHandle(
+                pin.handle,
+                FileDispositionInfoEx,
+                (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
+                std::mem::size_of_val(&info) as u32,
+            )
+        }
+        .map_err(std::io::Error::other);
+    }
+    let info = FILE_DISPOSITION_INFO {
+        DeleteFile: delete.into(),
+    };
+    unsafe {
+        SetFileInformationByHandle(
+            pin.handle,
+            FileDispositionInfo,
+            (&info as *const FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    }
+    .map_err(std::io::Error::other)
+}
+
+#[cfg(windows)]
+fn verify_backed_object(pin: &DirPin) -> std::io::Result<()> {
+    if is_reparse_metadata(&pin_metadata(pin)?) {
+        return Err(std::io::Error::other(
+            "backup source became a reparse point",
+        ));
+    }
+    pin.check_data_streams()
+}
+
+/// a READONLY attribute makes delete fail like a lock. Clear
 /// READONLY/HIDDEN/SYSTEM on the target and retry once — never on a reparse
 /// point, and never outside the tree being removed.
 fn remove_file_with_readonly_retry(p: &Path) -> std::io::Result<()> {
@@ -1796,7 +1934,7 @@ fn is_local_drive_path_with(
     true
 }
 
-/// Per-thread drive-type cache for `is_local_drive_path` (M1 hot-path item).
+/// Per-thread drive-type cache for `is_local_drive_path`.
 ///
 /// Batch scans classify thousands of candidate paths on the same handful of
 /// drive roots, and each classification used to pay a `GetDriveTypeW` syscall.
@@ -2079,7 +2217,7 @@ pub fn dir_has_payload(root: &Path, max_entries: usize, max_depth: usize) -> boo
     true
 }
 
-/// M2 (SOP §8-22): remove empty ancestor shells left after deleting an app
+/// remove empty ancestor shells left after deleting an app
 /// directory (e.g. `Program Files\Vendor`). Only directories that are empty,
 /// below one of the known roots, not reparse points, and whose name matches a
 /// product/publisher token are removed; the root itself is never touched.
@@ -2158,7 +2296,7 @@ fn prune_empty_ancestors_under(path: &Path, tokens: &[String], roots: &[PathBuf]
 /// The name deliberately does **not** embed the destination file name: Windows
 /// caps one path component at 255 UTF-16 units, and appending
 /// `.<pid>.<nonce>.tmp` to an already-truncated 255-unit backup name made the
-/// temp component invalid — the exact failure this naming rule prevents (A1).
+/// temp component invalid — the exact failure this naming rule prevents.
 /// pid + counter keeps the name unique across processes and threads, and it
 /// stays in the destination directory so the rename remains atomic.
 pub fn atomic_tmp_path(p: &Path) -> PathBuf {

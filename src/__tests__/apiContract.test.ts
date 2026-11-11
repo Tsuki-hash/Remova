@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { api } from "../lib/api";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 /**
  * IPC contract smoke: every public api method must be present and map to the
@@ -78,6 +81,7 @@ const COMMAND_KEYS = [
   "previewRestore",
   "deleteBackupSession",
   "restoreSessionByName",
+  "cancelRestore",
   "suggestIgnoreRules",
   "applyIgnoreSuggestions",
   "ignorePublisher",
@@ -160,6 +164,19 @@ describe("api IPC contract", () => {
     const backendOnly = parseBackendOnlyFromPs1();
     const registered = rustRegisteredCommands().filter((c) => !backendOnly.includes(c));
     expect(feInvokedCommands()).toEqual(registered);
+  });
+
+  it("sends the same operation ID on restore and cancel and binds deletion to its confirmed status", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce([]).mockResolvedValueOnce(true).mockResolvedValueOnce(undefined);
+    const operationId = "restore-example";
+    await api.restoreSessionByName("session", operationId);
+    await expect(api.cancelRestore(operationId)).resolves.toBe(true);
+    await api.deleteBackupSession("unfinished", "unsealed");
+    expect(vi.mocked(invoke).mock.calls.slice(-3)).toEqual([
+      ["restore_session_by_name", { name: "session", operationId }],
+      ["cancel_restore", { operationId }],
+      ["delete_backup_session", { name: "unfinished", expectedStatus: "unsealed" }],
+    ]);
   });
 });
 

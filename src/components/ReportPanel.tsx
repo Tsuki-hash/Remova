@@ -11,6 +11,7 @@ import { CleanupResultDetails } from "./CleanupResultDetails";
 import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
+import { cleanupAbortText } from "../lib/cleanupFeedback";
 import { downloadAudit } from "../lib/exportAuditReport";
 import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
@@ -23,12 +24,12 @@ type Props = {
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
   residualScan?: { scanning: boolean; count?: number };
-  /** M5-2: re-analyze the same app without preselecting anything. */
+  /** re-analyze the same app without preselecting anything. */
   onRescan?: () => void;
   rescanBusy?: boolean;
-  /** M5-4: explicit read-only deep registry check for this app. */
+  /** explicit read-only deep registry check for this app. */
   deepCheckApp?: { name: string } | null;
-  /** M4: install directory bounding the "end process and retry" action. */
+  /** install directory bounding the "end process and retry" action. */
   appInstallLocation?: string;
   onDismiss: () => void;
   onRegenerate: () => void;
@@ -103,8 +104,9 @@ export function ReportPanel({
     }
   };
 
-  const backupSession = "backup_dir" in report && !report.dry_run && !report.aborted && report.backup_dir
-    ? report.backup_dir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
+  const backupDir = "backup_dir" in report && !report.dry_run ? report.backup_dir : "";
+  const backupSession = backupDir && "backup_verified" in report && report.backup_verified === true
+    ? backupDir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
   return (
     <div
       ref={panel}
@@ -185,7 +187,7 @@ export function ReportPanel({
           >
             <Deco ch="✓" /> {L.safetyVaultBanner}
           </div>
-        ) : !report.dry_run && !report.backup_dir ? (
+        ) : !report.dry_run ? (
           <div
             role="note"
             style={{
@@ -199,7 +201,7 @@ export function ReportPanel({
               width: "fit-content",
             }}
           >
-            {L.noBackupThisRun}
+            {backupDir ? L.unverifiedBackupThisRun : L.noBackupThisRun}
           </div>
         ) : null)}
       {"deleted" in report && (
@@ -217,7 +219,7 @@ export function ReportPanel({
             report.deleted,
             report.failed,
             report.skipped,
-            Boolean("backup_dir" in report && report.backup_dir),
+            Boolean(backupSession),
           )}
           {"delayed" in report && report.delayed ? (
             <span style={{ marginLeft: 6 }}>· {L.reportDelayedNote(report.delayed)}</span>
@@ -240,7 +242,7 @@ export function ReportPanel({
                   ? L.reportNextCheck
                   : report.delayed
                     ? L.reportNextDelayed
-                  : "backup_dir" in report && report.backup_dir
+                  : backupSession
                     ? L.reportNextOk
                     : L.reportNextNoBackup}
           </div>
@@ -307,14 +309,14 @@ export function ReportPanel({
             <div style={{ ...css.muted, fontSize: 11, marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
-        {"backup_dir" in report && report.backup_dir && (
+        {backupDir && (
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
-            title={report.backup_dir}
+            title={backupDir}
             onClick={() => {
               void (async () => {
                 try {
-                  await api.openPath(report.backup_dir);
+                  await api.openPath(backupDir);
                 } catch (e) {
                   toast.error(formatError(e));
                 }
@@ -396,7 +398,9 @@ export function ReportPanel({
         />
       )}
       {"uninstall_message" in report && report.uninstall_message && (
-        <div style={{ marginTop: 6, color: "var(--muted)" }}>{backendText(report.uninstall_message)}</div>
+        <div style={{ marginTop: 6, color: "var(--muted)" }}>
+          {"aborted" in report && report.aborted ? cleanupAbortText(report, L) : backendText(report.uninstall_message)}
+        </div>
       )}
       {"restore_point_ok" in report && (
         <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12 }}>

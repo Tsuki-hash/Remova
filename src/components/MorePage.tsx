@@ -27,10 +27,11 @@ import { MsiPanel, VectorsPanel } from "./AuditPanels";
 import { ToolchainPanel } from "./ToolchainPanel";
 import { Section } from "./MoreSection";
 import { useMoreHistory } from "../hooks/useMoreHistory";
-import { useMoreRestore } from "../hooks/useMoreRestore";
+import type { useMoreRestore } from "../hooks/useMoreRestore";
 import { useMoreTools } from "../hooks/useMoreTools";
 
 export function MorePage({
+  restore: rest,
   selected,
   monitoring,
   monitorSnapshotBusy,
@@ -51,6 +52,7 @@ export function MorePage({
   onAiEnabledChange,
   onIgnoreListsChange,
 }: {
+  restore: ReturnType<typeof useMoreRestore>;
   selected: InstalledApp | null;
   monitoring: boolean;
   monitorSnapshotBusy?: boolean;
@@ -72,9 +74,8 @@ export function MorePage({
   onIgnoreListsChange?: (lists: IgnoreLists) => void;
 }) {
   const L = t();
-  const tools = useMoreTools({ selected, onGoSoftware });
+  const tools = useMoreTools({ selected, onGoSoftware, initialTool: rest.openRestore ? "restore" : null });
   const hist = useMoreHistory(onError);
-  const rest = useMoreRestore(onError);
   const [rebootGate, setRebootGate] = useState<string>("clear");
   const [filter, setFilter] = useState("");
   // A triage row can hand its path straight to the migration tool; opening
@@ -105,16 +106,16 @@ export function MorePage({
   };
   const requestedBackup = useBackupSessionRequest();
   const handledBackup = useRef(0);
-  const { loadRestore } = rest;
+  const { loadRestore, restoreBusy, restoreLoading } = rest;
   const { openFromTrigger } = tools;
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!requestedBackup || handledBackup.current === requestedBackup.id) return;
+    if (!requestedBackup || handledBackup.current === requestedBackup.id || restoreBusy || restoreLoading) return;
     handledBackup.current = requestedBackup.id;
     // A backup opened from another page has no card opener in this toolbox.
     openFromTrigger("restore", { opener: searchRef.current });
     void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
-  }, [requestedBackup, loadRestore, openFromTrigger]);
+  }, [requestedBackup, loadRestore, openFromTrigger, restoreBusy, restoreLoading]);
   const openTool = tools.openTool;
   const panelRef = useRef<HTMLDivElement>(null);
   const hasMonitorDiff = Boolean(monitorDiff);
@@ -375,18 +376,21 @@ export function MorePage({
       {openTool === "restore" && (
         <RestorePanel
           sessions={rest.sessions}
-          unsealedCount={rest.unsealedSessions}
           preview={rest.restorePreview}
           previewLoading={rest.previewLoading}
           previewError={rest.previewError}
           onRetryPreview={rest.retryPreview}
-            loading={rest.restoreLoading}
-            loadError={rest.restoreLoadError}
-            onReload={() => void rest.loadRestore()}
+          loading={rest.restoreLoading}
+          loadError={rest.restoreLoadError}
+          onReload={() => void rest.loadRestore()}
           pick={rest.restorePick}
           setPick={rest.setRestorePick}
           busy={rest.restoreBusy}
           msgs={rest.restoreMsgs}
+          resultName={rest.restoreResultName}
+          runningRestore={rest.runningRestore}
+          cancelRequested={rest.cancelRequested}
+          onCancelRestore={() => void rest.cancelRestore()}
           onRun={() => void rest.runRestore()}
           onDelete={(name) => void rest.deleteSession(name)}
           onClose={() => {
