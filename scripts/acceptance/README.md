@@ -32,14 +32,15 @@ $env:REMOVA_ACCEPTANCE_ISOLATED_VM = "1"
 $env:REMOVA_ACCEPTANCE_ARTIFACTS  = "D:\artifacts"   # 存放三个安装包
 $env:REMOVA_ACCEPTANCE_OUT        = "D:\acceptance"  # 结果输出目录
 
-# 2. 普通用户令牌：跑客户端场景
-pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite client
+# 2. 用候选构建记录里的完整提交 SHA 替换占位符
+$candidateCommit = "<候选提交的 40 位 SHA>"
+pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite client -CandidateCommit $candidateCommit -CandidateVersion 1.4.1
 
-# 3. 管理员令牌：跑提权场景
-pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated
+# 3. 另开管理员 PowerShell，使用相同的包和候选身份运行
+pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -CandidateCommit $candidateCommit -CandidateVersion 1.4.1
 ```
 
-每个场景写一条 JSON 记录到 `$env:REMOVA_ACCEPTANCE_OUT`，字段见第 6 节。
+在 Windows 10 和 11 上各留存两份摘要。脚本核对 `SHA256SUMS.txt` 中的三类发行包。按提示亲自执行各场景，输入观察结果和非空日志或截图路径。结果写入独立运行目录的 `acceptance-summary.json`，并附带与摘要哈希一致的证据副本。跳过、失败、缺包、错包或缺证据均不通过。
 
 ---
 
@@ -57,7 +58,7 @@ pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated
 
 ### 重定向不转发凭据
 
-用本机回环服务模拟端点（脚本内置，不访问外网）：
+在隔离 VM 中自行搭建回环服务，记录请求是否抵达以及请求头是否包含测试凭据：
 
 | 场景 | 预期 |
 |---|---|
@@ -77,6 +78,8 @@ pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated
 | 扫描后取消，再请求该扫描的结果 | 被拒绝（不发布陈旧授权） |
 | 普通非保护候选 | 正常清理成功（正例对照） |
 
+提权测试分别验证 AI 配置的 DPAPI 失败路径与备份封印密钥不可读路径。AI 测试应制造用户凭据 DPAPI 操作失败，检查配置无明文凭据。备份测试应在 VM 快照内让备份封印密钥不可读并尝试恢复。两组用例各保留相应结果。
+
 ---
 
 ## 4. 安装与关键路径
@@ -92,23 +95,23 @@ pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated
 
 每个 fixture 必须自建、可清理，且不得指向真实用户目录或系统目录。
 
+普通用户的 NSIS 路径还可用以下矩阵脚本复验。先用应用产生非空 AI 设置和测试清理历史，并关闭 Remova。候选 EXE 摘要取自同一批候选构建的主程序，例如便携包内的 `Remova.exe`。脚本断言实际 EXE 版本、候选 EXE SHA-256、安装位置、WebView2 导航是否就绪和夹具字节是否保留。
+
+```powershell
+pwsh -NoProfile -File scripts/acceptance/run-install-matrix.ps1 `
+  -Installer140 D:\stable\Remova_1.4.0_x64-setup.exe `
+  -Installer141 D:\artifacts\Remova_1.4.1_x64-setup.exe `
+  -InstallDir D:\vm-fixture\Remova -CandidateExeSha256 "<候选 EXE SHA-256>" `
+  -Out D:\acceptance\nsis-matrix -ConfirmReplaceInstalledApp
+```
+
+默认夹具为当前用户的 `Remova\ai-config.json` 和公共应用数据目录下的 `Remova\history.jsonl`。非默认配置可传 `-ConfigDir`，或用 `-FixtureFiles` 指向真实的配置和数据夹具。脚本在失败时也写出 `install-matrix.json`。导出证据后回滚虚拟机快照，以恢复试验前的安装、注册表和配置。
+
 ---
 
 ## 5. 性能与容量
 
-**阈值必须由维护者在测量前确定并写入本文件**，否则测量结果不能被当作通过证据。
-
-待维护者填写的阈值：
-
-| 指标 | 阈值 | 说明 |
-|---|---|---|
-| 冷启动到可交互 | 待定 | 秒 |
-| 应用列表首屏 | 待定 | 秒 |
-| 扫描 1 万项 | 待定 | 秒 |
-| 取消响应 | 待定 | 毫秒 |
-| 峰值工作集 | 待定 | MB |
-
-测量要求：同一台机器、同一数据规模、冷/热缓存各 3 次，记录中位数与尾部值；对比旧版本与当前候选。
+阈值与命令见 [性能与容量阈值](../../benchmarks/P-01-thresholds.md)。在同一机器和 WebView2 环境下测试已固定的候选。启动样本必须观察到软件导航控件就绪。最终判定要求六项指标、匹配的候选身份及阈值摘要。
 
 ---
 

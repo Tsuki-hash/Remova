@@ -68,6 +68,12 @@ test("generates an sbom from the repository lockfiles", () => {
     assert.ok(names.has("tauri"));
     assert.ok(names.has("react"));
     assert.ok(!names.has("vitest"), "dev tooling must not appear in the sbom");
+    for (const name of ["linux-raw-sys", "wasi", "windows_aarch64_msvc", "windows_i686_gnu"]) {
+      assert.ok(!names.has(name), `${name} is outside the Windows x64 release graph`);
+    }
+    const notices = readFileSync(path.resolve(import.meta.dirname, "..", "..", "THIRD-PARTY-NOTICES.md"), "utf8");
+    const purls = [...notices.matchAll(/\((pkg:[^)]+)\)/g)].map((match) => match[1]);
+    assert.deepEqual(purls, sbom.components.map((c) => c.purl));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

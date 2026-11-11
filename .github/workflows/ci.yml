@@ -140,6 +140,9 @@ jobs:
       - name: release signing policy regression (no build)
         run: pwsh -NoProfile -File scripts/test-release-signing-policy.ps1
 
+      - name: release draft approval regression
+        run: pwsh -NoProfile -NonInteractive -File scripts/test-release-approval.ps1
+
       - name: frontend lint
         run: npm run lint
 

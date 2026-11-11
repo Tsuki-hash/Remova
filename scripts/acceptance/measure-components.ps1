@@ -1,118 +1,107 @@
 #!/usr/bin/env pwsh
-# Judge the component performance baseline against the agreed thresholds.
-#
-# The measurement itself lives in the crate: `perf_baseline` is an #[ignore]d
-# test so it never runs beside the ordinary suite. This script runs it in
-# release mode (or reads an earlier JSON), then applies the thresholds file.
-#
-# Exit codes: 0 = every measured row within its bound; 1 = a bound was exceeded;
-# 2 = data missing (evidence insufficient, which is not a pass).
+# Judge startup and component evidence against all six agreed thresholds.
+# 0 = all six pass, 1 = threshold exceeded, 2 = evidence insufficient.
 param(
     [string]$Components = '',
-    [string]$Startup = '',
+    [Parameter(Mandatory = $true)][string]$Startup,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{64}$')][string]$CandidateExeSha256,
     [string]$Thresholds = '',
     [switch]$Run,
-    # Collect/compare only the rows that have data. Still never turns a missing
-    # row into a pass: it is reported as "未测".
     [switch]$AllowPartial
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/acceptance-common.ps1"
+. "$PSScriptRoot/performance-common.ps1"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/P-01-thresholds.md' }
 
-if ([string]::IsNullOrWhiteSpace($Thresholds)) {
-    $Thresholds = Join-Path (Join-Path $repoRoot 'benchmarks') 'P-01-thresholds.md'
-}
-if (-not (Test-Path -LiteralPath $Thresholds -PathType Leaf)) { throw "Threshold file not found: $Thresholds" }
+try {
+    $threshold = Get-PerformanceThresholds $Thresholds
+    $startupRecord = Get-Content -LiteralPath $Startup -Raw | ConvertFrom-Json
+    Assert-PerformanceIdentity $startupRecord 'remova-startup' $CandidateCommit $CandidateExeSha256 $threshold.sha256
+    if ($startupRecord.error) { throw "Startup collection failed: $($startupRecord.error)" }
+    $metrics = Get-StartupMetrics $startupRecord
 
-function New-RunDir {
-    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $dir = Join-Path (Join-Path $repoRoot 'benchmarks') "runs/perf-$stamp"
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $dir
-}
-
-if ($Run) {
-    $outDir = New-RunDir
-    Write-Host "Running the release baseline; output goes to $outDir"
-    Push-Location (Join-Path $repoRoot 'src-tauri')
-    try {
-        $env:REMOVA_PERF_OUT = $outDir
-        & cargo test --release --lib perf_baseline -- --ignored --nocapture --test-threads=1
-        # Never let a piped command hide a failed measurement.
-        if ($LASTEXITCODE -ne 0) { throw "perf_baseline failed with exit code $LASTEXITCODE" }
-    } finally {
-        Remove-Item Env:REMOVA_PERF_OUT -ErrorAction SilentlyContinue
-        Pop-Location
-    }
-    $Components = Join-Path $outDir 'components.json'
-}
-
-if ([string]::IsNullOrWhiteSpace($Components)) {
-    $latest = Get-ChildItem -Path (Join-Path $repoRoot 'benchmarks') -Recurse -Filter 'components.json' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $latest) { throw 'No components.json found. Run with -Run, or pass -Components.' }
-    $Components = $latest.FullName
-}
-# Startup: judge the worst value across every recorded run (cold and warm), so a
-# fast warm run cannot hide the cold-start number.
-$startupFiles = @(Get-ChildItem -Path (Join-Path $repoRoot 'benchmarks') -Recurse -Filter 'P-01-startup.json' -ErrorAction SilentlyContinue)
-$coldStartup = $startupFiles | Where-Object { $_.FullName -notmatch 'warm' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ([string]::IsNullOrWhiteSpace($Startup) -and $coldStartup) { $Startup = $coldStartup.FullName }
-
-# PowerShell variable names are case-insensitive: `$components` would overwrite
-# `$Components` (the path). Keep the parsed JSON under a distinct name.
-$perf = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json
-$startupJson = if ($Startup -and (Test-Path -LiteralPath $Startup -PathType Leaf)) {
-    Get-Content -LiteralPath $Startup -Raw | ConvertFrom-Json
-} else { $null }
-
-# Startup and idle memory come from the GUI harness; the component test covers
-# the scan/cancel/backup paths.
-function Get-Metric([string]$key) {
-    switch ($key) {
-        'startup_worst_ms' { if ($startupJson) { return [double]$startupJson.startup_worst_ms } }
-        'idle_working_set_mb' {
-            if ($startupJson -and $startupJson.runs) {
-                return [double](($startupJson.runs | ForEach-Object { $_.working_set_mb } | Measure-Object -Maximum).Maximum)
+    if ($Run) {
+        $head = & git -C $repoRoot rev-parse HEAD
+        if ($LASTEXITCODE -ne 0 -or $head -ine $CandidateCommit) { throw 'Check out the candidate commit before measuring components.' }
+        & git -C $repoRoot diff --quiet HEAD --
+        if ($LASTEXITCODE -ne 0) { throw 'Component measurement requires an unchanged candidate checkout.' }
+        $untracked = & git -C $repoRoot ls-files --others --exclude-standard -- src-tauri src public scripts
+        if ($LASTEXITCODE -ne 0 -or $untracked) { throw 'Untracked application or script source prevents candidate identification.' }
+        $environment = Get-PerformanceEnvironment
+        foreach ($key in $environment.Keys) {
+            if ($environment[$key] -cne $startupRecord.environment.$key) {
+                throw "Component and startup environments differ for $key."
             }
         }
-        default { if ($perf.metrics.PSObject.Properties.Name -contains $key) { return [double]$perf.metrics.$key } }
+
+        $runName = 'perf-{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $outDir = Join-Path $repoRoot "benchmarks/runs/$runName"
+        New-Item -ItemType Directory -Path $outDir | Out-Null
+        Write-Host "Running the release baseline; output goes to $outDir"
+        Push-Location (Join-Path $repoRoot 'src-tauri')
+        $previousOut = $env:REMOVA_PERF_OUT
+        try {
+            $env:REMOVA_PERF_OUT = $outDir
+            & cargo test --locked --release --lib perf_baseline -- --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { throw "perf_baseline failed with exit code $LASTEXITCODE" }
+        } finally {
+            $env:REMOVA_PERF_OUT = $previousOut
+            Pop-Location
+        }
+        $headAfter = & git -C $repoRoot rev-parse HEAD
+        if ($LASTEXITCODE -ne 0 -or $headAfter -ine $CandidateCommit) { throw 'Candidate commit changed during component measurement.' }
+        & git -C $repoRoot diff --quiet HEAD --
+        if ($LASTEXITCODE -ne 0) { throw 'Candidate checkout changed during component measurement.' }
+        $Components = Join-Path $outDir 'components.json'
+        $document = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json -AsHashtable
+        if ($document.kind -cne 'p01-components') { throw 'The component test did not emit a measurement.' }
+        $document.schema_version = 1
+        $document.candidate_commit = $CandidateCommit.ToLowerInvariant()
+        $document.sha256 = $CandidateExeSha256.ToLowerInvariant()
+        $document.thresholds_sha256 = $threshold.sha256
+        $document.environment = $environment
+        $document | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Components -Encoding utf8
     }
-    return $null
-}
 
-$rows = @()
-$failed = $false
-$missing = @()
-foreach ($line in Get-Content -LiteralPath $Thresholds) {
-    $m = [regex]::Match($line, '^\|\s*(?<label>[^|]+?)\s*\|\s*(?<key>[a-z0-9_]+)\s*\|\s*(?<limit>[0-9]+)\s*\|')
-    if (-not $m.Success) { continue }
-    $label = $m.Groups['label'].Value
-    $key = $m.Groups['key'].Value
-    $limit = [double]$m.Groups['limit'].Value
-    $value = Get-Metric $key
-    if ($null -eq $value) {
-        $missing += $label
-        $rows += [pscustomobject]@{ 指标 = $label; 实测 = '未测'; 上限 = $limit; 结论 = '证据不足' }
-        continue
+    if (-not $Components) { throw 'Pass -Components explicitly, or measure the current commit with -Run.' }
+    $componentRecord = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json
+    Assert-PerformanceIdentity $componentRecord 'p01-components' $CandidateCommit $CandidateExeSha256 $threshold.sha256
+    foreach ($key in @('machine_sha256', 'os_version', 'architecture', 'webview2_version')) {
+        if ($componentRecord.environment.$key -cne $startupRecord.environment.$key) {
+            throw "Component and startup environments differ for $key."
+        }
     }
-    $ok = $value -le $limit
-    if (-not $ok) { $failed = $true }
-    $rows += [pscustomobject]@{ 指标 = $label; 实测 = $value; 上限 = $limit; 结论 = $(if ($ok) { 'PASS' } else { 'FAIL' }) }
-}
+    if ($componentRecord.fixture.walk_entries -ne 4040 -or $componentRecord.fixture.analyze_files -ne 200 -or
+        $componentRecord.fixture.backup_bytes -ne 1GB) {
+        throw 'The component workload does not match the agreed fixture sizes.'
+    }
 
-$rows | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
-Write-Host "components: $Components"
-if ($Startup) { Write-Host "startup:    $Startup" }
-
-if ($failed) {
-    Write-Host 'Baseline NOT met: at least one measured row exceeds its agreed bound.' -ForegroundColor Red
-    exit 1
+    $missing = @()
+    $failed = $false
+    foreach ($key in $performanceKeys) {
+        $actual = if ($metrics.ContainsKey($key)) { $metrics[$key] } else { $componentRecord.metrics.$key }
+        $limit = $threshold.limits[$key]
+        if (-not (Test-PerformanceNumber $actual)) {
+            $missing += $key
+            continue
+        }
+        $within = $actual -le $limit
+        $status = if ($within) { 'PASS' } else { 'FAIL' }
+        Write-Host "$key = $actual (limit $limit) $status"
+        if (-not $within) { $failed = $true }
+    }
+    if ($missing.Count) { throw "Missing or invalid metric values: $($missing -join ', ')" }
+    if ($failed) { exit 1 }
+    Write-Host "All six performance thresholds passed for $CandidateCommit ($CandidateExeSha256)." -ForegroundColor Green
+    exit 0
+} catch {
+    Write-Host "Evidence insufficient: $($_.Exception.Message)" -ForegroundColor Yellow
+    if ($AllowPartial) { Write-Host 'Partial measurements do not pass the gate.' }
+    exit 2
 }
-if ($missing.Count -gt 0) {
-    Write-Host ("Baseline incomplete: no data for {0}." -f ($missing -join '、')) -ForegroundColor Yellow
-    if (-not $AllowPartial) { exit 2 }
-}
-Write-Host 'Baseline: every measured row is within its agreed bound.' -ForegroundColor Green
-exit 0

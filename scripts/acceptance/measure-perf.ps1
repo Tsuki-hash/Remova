@@ -1,113 +1,103 @@
 #!/usr/bin/env pwsh
-# Performance measurement harness.
-#
-# Records timings and peak working set for the candidate build, then compares
-# them against the thresholds a maintainer filled in beforehand. It refuses to
-# declare a pass while any threshold is still "待填": a measurement without a
-# pre-agreed bound cannot prove "no regression beyond the threshold".
+# Measure startup and idle memory from a candidate executable.
 param(
     [Parameter(Mandatory = $true)][string]$Exe,
     [Parameter(Mandatory = $true)][string]$Out,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit,
     [string]$Thresholds = '',
-    [int]$Runs = 3,
-    # Collect data without judging it. Useful before the maintainer has agreed
-    # thresholds: the numbers are recorded, but no verdict is produced and the
-    # report row stays incomplete.
+    [ValidateRange(3, 20)][int]$Runs = 3,
     [switch]$CollectOnly
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/acceptance-common.ps1"
+. "$PSScriptRoot/performance-common.ps1"
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/P-01-thresholds.md' }
 
-if ([string]::IsNullOrWhiteSpace($Thresholds)) {
-    # scripts/acceptance -> repository root
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $Thresholds = Join-Path (Join-Path $repoRoot 'benchmarks') 'P-01-thresholds.md'
-}
-
-if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "Executable not found: $Exe" }
-if (-not (Test-Path -LiteralPath $Thresholds -PathType Leaf)) { throw "Threshold file not found: $Thresholds" }
-New-Item -ItemType Directory -Force -Path $Out | Out-Null
-
-# --- Refuse to judge without pre-agreed thresholds --------------------------
-$thresholdText = Get-Content -LiteralPath $Thresholds -Raw
-$pending = ([regex]::Matches($thresholdText, '待填')).Count
-if ($pending -gt 0 -and -not $CollectOnly) {
-    throw "The threshold file still has $pending unfilled values. A maintainer must set the bounds BEFORE measuring; otherwise the result cannot be judged. Use -CollectOnly to record numbers without a verdict."
-}
-if ($pending -gt 0) {
-    Write-Host "Thresholds are not confirmed yet; collecting data only (no verdict)." -ForegroundColor Yellow
-}
-
-# --- Collect runs ----------------------------------------------------------
-$sha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-$samples = @()
-for ($i = 1; $i -le $Runs; $i++) {
-    $proc = Start-Process -FilePath $Exe -PassThru
-    try {
-        # Time to a responsive main window; WaitForInputIdle returns false on a
-        # console host, so measure wall clock to first idle as the proxy and
-        # record whether it was actually observed.
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $idle = $proc.WaitForInputIdle(30000)
-        $sw.Stop()
-        Start-Sleep -Seconds 2
-        $proc.Refresh()
-        $samples += [ordered]@{
-            run          = $i
-            idle_observed = $idle
-            startup_ms   = [int]$sw.ElapsedMilliseconds
-            working_set_mb = [math]::Round($proc.WorkingSet64 / 1MB, 1)
-            private_mb   = [math]::Round($proc.PrivateMemorySize64 / 1MB, 1)
-        }
-    } finally {
-        if (-not $proc.HasExited) { $proc.Kill(); $proc.WaitForExit(10000) | Out-Null }
+try {
+    $threshold = Get-PerformanceThresholds $Thresholds
+    $Exe = (Get-Item -LiteralPath $Exe).FullName
+    if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "Executable not found: $Exe" }
+    if (Get-Process -Name 'Remova', ([IO.Path]::GetFileNameWithoutExtension($Exe)) -ErrorAction SilentlyContinue) {
+        throw 'Close every running instance of the candidate before measuring startup.'
     }
+    $environment = Get-PerformanceEnvironment
+    $sha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    New-Item -ItemType Directory -Force -Path $Out | Out-Null
+} catch {
+    Write-Host "Evidence insufficient: $($_.Exception.Message)" -ForegroundColor Yellow
+    exit 2
 }
 
-$startupValues = $samples | ForEach-Object { $_.startup_ms } | Sort-Object
-$median = $startupValues[[int][math]::Floor($startupValues.Count / 2)]
-$worst = $startupValues[-1]
-
+$samples = [System.Collections.Generic.List[object]]::new()
 $result = [ordered]@{
-    executable   = (Resolve-Path $Exe).Path
-    sha256       = $sha
-    measured_at  = (Get-Date).ToString('o')
-    runs         = $samples
-    startup_median_ms = $median
-    startup_worst_ms  = $worst
-    machine      = [ordered]@{
-        cpu  = (Get-CimInstance Win32_Processor).Name
-        ram_mb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB)
-        os   = (Get-CimInstance Win32_OperatingSystem).Caption
-        os_version = (Get-CimInstance Win32_OperatingSystem).Version
-    }
-    thresholds_file = (Resolve-Path $Thresholds).Path
+    schema_version = 1
+    kind = 'remova-startup'
+    executable = $Exe
+    candidate_commit = $CandidateCommit.ToLowerInvariant()
+    sha256 = $sha
+    thresholds_sha256 = $threshold.sha256
+    environment = $environment
+    runs = $samples
 }
-$file = Join-Path $Out 'P-01-startup.json'
-$result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $file -Encoding utf8
-Write-Host "Wrote $file"
-Write-Host ("Startup median {0} ms, worst {1} ms over {2} runs" -f $median, $worst, $Runs)
+$exitCode = 2
+try {
+    for ($i = 1; $i -le $Runs; $i++) {
+        $startup = [Diagnostics.Stopwatch]::StartNew()
+        $process = Start-Process -FilePath $Exe -PassThru
+        try {
+            $ready = Wait-RemovaUiReady $process
+            $startup.Stop()
+            $sample = [ordered]@{
+                run = $i
+                ready_observed = $ready
+                startup_ms = $startup.Elapsed.TotalMilliseconds
+                working_set_mb = $null
+            }
+            $samples.Add($sample)
+            if (-not $ready) { throw "The candidate UI did not become ready in run $i." }
 
-# --- Judgement -------------------------------------------------------------
-# Only the startup metric is automated here; the remaining rows in the
-# threshold file need the scan/backup fixtures described in
-# scripts/acceptance/README.md and must be filled by the operator.
-if ($CollectOnly) {
-    Write-Host 'Collected only: no threshold was applied, so this run proves nothing about P-01.' -ForegroundColor Yellow
-    Write-Host "Raw data: $file"
-    exit 0
-}
-
-$limitMatch = [regex]::Match($thresholdText, '(?m)^\|\s*冷启动到可交互\s*\|\s*([0-9]+)\s*(ms|s)?\s*\|')
-if ($limitMatch.Success) {
-    $limit = [int]$limitMatch.Groups[1].Value
-    if ($limitMatch.Groups[2].Value -eq 's') { $limit *= 1000 }
-    if ($worst -gt $limit) {
-        Write-Host ("FAIL: worst startup {0} ms exceeds the agreed {1} ms" -f $worst, $limit) -ForegroundColor Red
-        exit 1
+            # Sample the Remova process's idle working set after UI readiness.
+            $idle = [Diagnostics.Stopwatch]::StartNew()
+            $peak = 0
+            while ($idle.Elapsed.TotalSeconds -lt 2) {
+                $process.Refresh()
+                if ($process.HasExited) { throw "The candidate quit while sampling run $i." }
+                $peak = [math]::Max($peak, $process.WorkingSet64)
+                Start-Sleep -Milliseconds 100
+            }
+            $sample.working_set_mb = $peak / 1MB
+        } finally {
+            Close-RemovaTestProcess $process
+        }
     }
-    Write-Host ("PASS: worst startup {0} ms within the agreed {1} ms" -f $worst, $limit) -ForegroundColor Green
-} else {
-    Write-Host 'The startup row in the threshold file could not be parsed; fill it as an integer (ms or s).' -ForegroundColor Yellow
-    exit 1
+    if ((Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash -ine $sha) {
+        throw 'The executable changed during measurement.'
+    }
+    $metrics = Get-StartupMetrics ([pscustomobject]$result)
+    foreach ($key in $metrics.Keys) { $result[$key] = $metrics[$key] }
+    if (-not $CollectOnly) {
+        $exitCode = 0
+        foreach ($key in $metrics.Keys) {
+            $limit = $threshold.limits[$key]
+            $actual = $metrics[$key]
+            $within = $actual -le $limit
+            $status = if ($within) { 'PASS' } else { 'FAIL' }
+            Write-Host "$key = $actual (limit $limit) $status"
+            if (-not $within) { $exitCode = 1 }
+        }
+    }
+} catch {
+    $result.error = $_.Exception.Message
+    Write-Host "Evidence insufficient: $($result.error)" -ForegroundColor Yellow
+} finally {
+    $result.measured_at = (Get-Date).ToUniversalTime().ToString('o')
+    $result.collect_only = [bool]$CollectOnly
+    $file = Join-Path $Out 'P-01-startup.json'
+    $result | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $file -Encoding utf8
+    Write-Host "Wrote $file"
 }
+if ($CollectOnly) { Write-Host 'Startup data collected without a gate verdict.' -ForegroundColor Yellow }
+exit $exitCode

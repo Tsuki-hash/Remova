@@ -1,7 +1,7 @@
 # P-01 性能与容量阈值
 
 **状态：已确认（维护者于 2026-11-10 确认本节六项上限；同日的候选版本实测见第 4 节）。**
-测量已经完成并记录在第 4 节；阈值必须在测量之前定稿，事后回填一律视为作弊。
+第 4 节保留历史样本。阈值须在测量前定稿，当前候选仍需按以下方法采证。
 
 ## 1. 适用范围
 
@@ -30,16 +30,25 @@
 | 原提议 | 现口径 | 原因 |
 |---|---|---|
 | 扫描 1 万 / 10 万项目录 | 目录大小行走 4,040 项 | 应用真实的目录大小行走有 5,000 项/次的硬上限（`dirsize::MAX_WALK_ENTRIES`），10 万项无法经由产品代码路径产生，测出来的只会是夹具生成器的速度 |
-| 应用列表首屏渲染 1500 ms | 并入「冷启动到可交互」 | 无 UI 驱动时无法把「首屏可见」与「窗口可交互」分开测；`WaitForInputIdle` 已覆盖后者，单独造一个数只会是估算 |
+| 应用列表首屏渲染 1500 ms | 并入「冷启动到可交互」 | 首个有效样本以 UI Automation 观察到可用、可见的软件导航按钮为准。应用列表数据完全加载另由关键路径验收核对。 |
 | 峰值工作集（扫描中） | 未纳入 | 需要在扫描进行中采样进程内存；当前无脚本化扫描入口，不伪造 |
 | 相对参照版本 +20% | 绝对上限 | 本机只有候选版本；构建 1.4.0 后可用 `measure-components.ps1` 的同口径数据补对照 |
 
 ## 3. 测量方法
 
-1. 组件指标：`cargo test --release --lib perf_baseline -- --ignored --nocapture --test-threads=1`，或直接 `scripts/acceptance/measure-components.ps1 -Run`。
-2. 启动与空闲工作集：`scripts/acceptance/measure-perf.ps1 -Exe <候选 exe> -Out <目录>`（3 次，记录最差）。
-3. 每次测量都写入 JSON，原始数据随结果归档；`benchmarks/runs*/` 已被 `.gitignore` 忽略。
-4. 判定：`scripts/acceptance/measure-components.ps1` 读取本文件的表格逐行比对；缺数据记为「证据不足」，退出码 2，绝不算通过。
+关闭运行中的 Remova。在候选 SHA 对应的干净检出上使用同一候选主程序和同一台机器测量。启动脚本记录至少三次独立进程启动到 WebView2 软件导航按钮就绪的耗时，并在每次就绪后采样两秒主进程工作集。正式冷启动样本应从干净会话开始。
+
+```powershell
+$candidateCommit = (git rev-parse HEAD).Trim()
+$exe = "D:\artifacts\Remova.exe"
+$exeSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+$out = "D:\acceptance\performance"
+pwsh -NoProfile -File scripts/acceptance/measure-perf.ps1 -Exe $exe -Out $out -CandidateCommit $candidateCommit
+pwsh -NoProfile -File scripts/acceptance/measure-components.ps1 -Startup (Join-Path $out 'P-01-startup.json') `
+  -CandidateCommit $candidateCommit -CandidateExeSha256 $exeSha -Run
+```
+
+要重新判定已有组件记录，传入 `-Components <components.json>`。启动样本、组件记录、预期候选和阈值表摘要须一致。六项完整且达标退出 0，超限退出 1，缺少数据、阈值、就绪证据或身份不符退出 2。归档两份 JSON 和实际运行环境。
 
 ## 4. 结果记录
 

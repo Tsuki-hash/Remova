@@ -395,7 +395,7 @@ jobs:
       - name: generate dependency sbom
         run: node scripts/make-sbom.mjs
 
-      - name: create GitHub release
+      - name: create GitHub release draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.4.1
         with:
           # Updater assets exist only in updater-signing mode. The `.sig` and
@@ -416,11 +416,3 @@ jobs:
           # a renamed/moved bundle must fail the job, not publish an asset-less Release.
           fail_on_unmatched_files: true
           draft: true
-
-      - name: publish complete verified release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit $env:GITHUB_REF_NAME --draft=false
-          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the completed draft.' }

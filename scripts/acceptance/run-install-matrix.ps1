@@ -1,217 +1,196 @@
 #!/usr/bin/env pwsh
-# Install / upgrade / rollback / uninstall matrix for the per-user NSIS package.
-#
-# Destructive by design: it replaces the Remova installation on THIS machine.
-# It therefore refuses to run without -ConfirmReplaceInstalledApp, backs up the
-# installed directory, the per-user config and the uninstall registry key first,
-# and restores the original installation in `finally` — including after a failed
-# assertion.
-#
-# Every step is recorded as one JSON record (step, ok, detail, at). The exit code
-# is non-zero if any assertion failed.
+# Test the per-user NSIS install, upgrade, downgrade and uninstall in a
+# disposable Windows VM. Restore the original environment by reverting the VM
+# snapshot, including when a step fails.
 param(
     [Parameter(Mandatory = $true)][string]$Installer140,
     [Parameter(Mandatory = $true)][string]$Installer141,
     [Parameter(Mandatory = $true)][string]$InstallDir,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9a-fA-F]{64}$')][string]$CandidateExeSha256,
     [string]$ConfigDir = '',
+    [string[]]$FixtureFiles = @(),
     [string]$Out = '',
     [switch]$ConfirmReplaceInstalledApp
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if ([string]::IsNullOrWhiteSpace($ConfigDir)) {
-    $ConfigDir = Join-Path $env:LOCALAPPDATA 'Remova'
+. "$PSScriptRoot/acceptance-common.ps1"
+
+function Add-MatrixResult([string]$Step, [bool]$Ok, [string]$Detail) {
+    $records.Add([ordered]@{ step = $Step; ok = $Ok; detail = $Detail; at = (Get-Date).ToString('o') })
+    $label = if ($Ok) { 'ok' } else { 'FAIL' }
+    Write-Host "[$label] ${Step}: $Detail"
 }
-if ([string]::IsNullOrWhiteSpace($Out)) {
-    $Out = Join-Path (Join-Path $repoRoot 'benchmarks') ("runs/install-matrix-" + (Get-Date).ToString('yyyyMMdd-HHmmss'))
+
+function Assert-MatrixResult([string]$Step, [bool]$Condition, [string]$Detail) {
+    Add-MatrixResult $Step $Condition $Detail
+    if (-not $Condition) { throw "${Step} failed: $Detail" }
+}
+
+function Invoke-NsisInstall([string]$Installer, [string]$Directory) {
+    # NSIS: /D= must be the last argument and unquoted, including paths with spaces.
+    (Start-Process -FilePath $Installer -ArgumentList @('/S', "/D=$Directory") -PassThru -Wait).ExitCode
+}
+
+function Test-MatrixAppLaunch([string]$Exe) {
+    $process = Start-Process -FilePath $Exe -PassThru
+    try {
+        Wait-RemovaUiReady $process
+    } finally {
+        Close-RemovaTestProcess $process
+    }
+}
+
+function Assert-MatrixInstall([string]$Step, [string]$Directory, [string]$Version, [string]$ExpectedExeSha = '') {
+    $entry = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction SilentlyContinue
+    $actualLocation = if ($entry.InstallLocation) {
+        [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($entry.InstallLocation))
+    }
+    Assert-MatrixResult "$Step-location" ($actualLocation -ieq $Directory) "registry=$actualLocation; expected=$Directory"
+
+    $exe = Join-Path $Directory 'remova.exe'
+    $file = Get-Item -LiteralPath $exe -ErrorAction SilentlyContinue
+    $actualVersion = $file.VersionInfo.ProductVersion
+    $versionMatches = $entry.DisplayVersion -eq $Version -and $actualVersion -in @($Version, "$Version.0")
+    Assert-MatrixResult "$Step-version" $versionMatches "registry=$($entry.DisplayVersion); exe=$actualVersion; expected=$Version"
+
+    if ($ExpectedExeSha) {
+        $actualSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+        Assert-MatrixResult "$Step-exe-sha256" ($actualSha -ieq $ExpectedExeSha) "exe=$actualSha; expected=$ExpectedExeSha"
+    }
+    Assert-MatrixResult "$Step-launches" (Test-MatrixAppLaunch $exe) 'The installed application exposes its Software navigation button.'
+}
+
+function Assert-MatrixFixtures([string]$Step, $Baseline) {
+    foreach ($path in $Baseline.Keys) {
+        $digest = if (Test-Path -LiteralPath $path -PathType Leaf) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+        }
+        Assert-MatrixResult $Step ($digest -eq $Baseline[$path]) "Fixture file remains byte-identical: $path"
+    }
+}
+
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Out) {
+    $runName = 'install-matrix-{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 8))
+    $Out = Join-Path $repoRoot "benchmarks/runs/$runName"
 }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
-
-if (-not $ConfirmReplaceInstalledApp) {
-    throw 'Refusing to replace the installed application without -ConfirmReplaceInstalledApp.'
-}
-foreach ($exe in @($Installer140, $Installer141)) {
-    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Installer not found: $exe" }
-}
-if ((Get-Process Remova -ErrorAction SilentlyContinue)) {
-    throw 'A Remova process is running; close it before running the matrix.'
-}
-
+$Out = (Resolve-Path -LiteralPath $Out).Path
+$uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Remova'
 $records = [System.Collections.Generic.List[object]]::new()
-function Record([string]$step, [bool]$ok, [string]$detail) {
-    $records.Add([ordered]@{ step = $step; ok = $ok; detail = $detail; at = (Get-Date).ToString('o') })
-    $colour = if ($ok) { 'Green' } else { 'Red' }
-    Write-Host ("[{0}] {1}: {2}" -f $(if ($ok) { 'ok' } else { 'FAIL' }), $step, $detail) -ForegroundColor $colour
+$result = [ordered]@{
+    kind = 'install-matrix'
+    install_dir = $InstallDir
+    expected_exe_sha256 = $CandidateExeSha256.ToLowerInvariant()
+    snapshot_rollback_required = $false
+    steps = $records
+    passed = $false
 }
-function Assert([string]$step, [bool]$condition, [string]$detail) {
-    if (-not $condition) { Record $step $false $detail; throw "$step failed: $detail" }
-    Record $step $true $detail
-}
-
-function Get-InstalledVersion {
-    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Remova'
-    (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).DisplayVersion
-}
-function Get-InstalledLocation {
-    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Remova'
-    (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).InstallLocation
-}
-function Get-ExeVersion([string]$dir) {
-    $exe = Join-Path $dir 'remova.exe'
-    if (-not (Test-Path -LiteralPath $exe)) { return $null }
-    (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
-}
-function Install-Silent([string]$exe, [string]$dir) {
-    # NSIS: /S is silent; /D= must be the last argument and unquoted.
-    $arguments = @('/S')
-    if (-not [string]::IsNullOrWhiteSpace($dir)) { $arguments += "/D=$dir" }
-    $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -Wait
-    $process.ExitCode
-}
-function Wait-For([scriptblock]$probe, [int]$seconds = 30) {
-    $deadline = (Get-Date).AddSeconds($seconds)
-    while ((Get-Date) -lt $deadline) {
-        if (& $probe) { return $true }
-        Start-Sleep -Milliseconds 500
-    }
-    return $false
-}
-function Uninstall-Silent([string]$dir) {
-    $uninstaller = Join-Path $dir 'uninstall.exe'
-    if (-not (Test-Path -LiteralPath $uninstaller)) { return }
-    Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait | Out-Null
-    Wait-For { -not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Remova') } 60 | Out-Null
-}
-function Start-Check([string]$dir) {
-    $exe = Join-Path $dir 'remova.exe'
-    $proc = Start-Process -FilePath $exe -PassThru
-    try {
-        Start-Sleep -Seconds 4
-        $proc.Refresh()
-        if ($proc.HasExited) { return $false }
-        return (Get-Process -Name Remova -ErrorAction SilentlyContinue) -ne $null
-    } finally {
-        if (-not $proc.HasExited) { $proc.Kill(); $proc.WaitForExit(10000) | Out-Null }
-        Get-Process -Name Remova -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    }
-}
-
-$backup = Join-Path $Out 'backup'
-New-Item -ItemType Directory -Force -Path $backup | Out-Null
-$originalVersion = Get-InstalledVersion
-Record 'preflight' $true ("installed={0}; location={1}" -f $originalVersion, (Get-InstalledLocation))
-if (Test-Path -LiteralPath $InstallDir) {
-    Copy-Item -LiteralPath $InstallDir -Destination (Join-Path $backup 'app') -Recurse -Force
-}
-if (Test-Path -LiteralPath $ConfigDir) {
-    Copy-Item -LiteralPath $ConfigDir -Destination (Join-Path $backup 'config') -Recurse -Force
-}
-$regBackup = Join-Path $backup 'uninstall-key.reg'
-& reg.exe export 'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Remova' $regBackup /y | Out-Null
-Assert 'backup' ((Test-Path (Join-Path $backup 'app')) -and (Test-Path $regBackup)) "backup at $backup"
-
-$configBefore = if (Test-Path (Join-Path $ConfigDir 'ai-config.json')) {
-    (Get-FileHash -LiteralPath (Join-Path $ConfigDir 'ai-config.json') -Algorithm SHA256).Hash
-} else { $null }
 
 try {
-    # 1) Install the older release.
-    $code = Install-Silent $Installer140 $InstallDir
-    Assert 'install-1.4.0' ($code -eq 0) "exit=$code"
-    Assert 'install-1.4.0-version' ((Wait-For { (Get-InstalledVersion) -eq '1.4.0' }) -and (Get-InstalledVersion) -eq '1.4.0') ("registry={0}; exe={1}" -f (Get-InstalledVersion), (Get-ExeVersion $InstallDir))
-    Assert 'install-1.4.0-location' ((Get-InstalledLocation) -like "*$InstallDir*") ("location={0}" -f (Get-InstalledLocation))
-    Assert 'install-1.4.0-launches' (Start-Check $InstallDir) 'process started and stayed alive for 4s'
+    if (-not $ConfirmReplaceInstalledApp) {
+        throw 'This matrix replaces the installed app in a disposable VM. Pass -ConfirmReplaceInstalledApp.'
+    }
+    $result.host_model = Confirm-AcceptanceVm
+    $result.elevated = Test-AcceptanceElevated
+    if ($result.elevated) { throw 'Run the per-user NSIS matrix from the standard-user token.' }
+    $windows = Get-AcceptanceWindows
+    $result.os_family = $windows.family
+    $result.os_version = $windows.version
+    $result.architecture = $windows.architecture
+    $result.webview2_version = Get-AcceptanceWebViewVersion
 
-    # 2) Upgrade over it.
-    $code = Install-Silent $Installer141 $InstallDir
-    Assert 'upgrade-1.4.1' ($code -eq 0) "exit=$code"
-    Assert 'upgrade-1.4.1-version' ((Wait-For { (Get-InstalledVersion) -eq '1.4.1' }) -and (Get-InstalledVersion) -eq '1.4.1') ("registry={0}; exe={1}" -f (Get-InstalledVersion), (Get-ExeVersion $InstallDir))
+    if (Get-Process -Name Remova -ErrorAction SilentlyContinue) {
+        throw 'Close the Remova process before running the matrix.'
+    }
+    if (-not [IO.Path]::IsPathFullyQualified($InstallDir)) { throw 'Use an absolute installation directory.' }
+    $InstallDir = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($InstallDir))
+    if ($InstallDir -eq [IO.Path]::GetPathRoot($InstallDir)) { throw 'The installation directory cannot be a drive root.' }
+    $defaultDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Remova'
+    foreach ($appDir in @($InstallDir, $defaultDir)) {
+        if ($Out -ieq $appDir -or $Out.StartsWith("$appDir\", [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Keep matrix evidence outside the directories the installer may replace.'
+        }
+    }
+    $result.install_dir = $InstallDir
+    $result.installers = [ordered]@{}
+    foreach ($item in @(@{ id = 'v140'; path = $Installer140 }, @{ id = 'v141'; path = $Installer141 })) {
+        $path = (Get-Item -LiteralPath $item.path).FullName
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installer not found: $path" }
+        $result.installers[$item.id] = @{
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+
+    if (-not $ConfigDir) {
+        $ConfigDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Remova'
+    }
+    if (-not $FixtureFiles.Count) {
+        $historyDir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Remova'
+        $FixtureFiles = @((Join-Path $ConfigDir 'ai-config.json'), (Join-Path $historyDir 'history.jsonl'))
+    }
+    $fixtureHashes = [ordered]@{}
+    foreach ($fixture in $FixtureFiles) {
+        $item = Get-Item -LiteralPath $fixture -ErrorAction SilentlyContinue
+        if (-not $item -or $item.PSIsContainer -or -not $item.Length) {
+            throw "Evidence insufficient: seed a nonempty Remova fixture before the matrix: $fixture"
+        }
+        $fixtureHashes[$item.FullName] = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
+    }
+    if ($fixtureHashes.Count -lt 2) { throw 'Seed separate Remova configuration and data fixtures.' }
+    $result.fixture_files = $fixtureHashes
+    Add-MatrixResult 'preflight' $true "Isolated VM snapshot confirmed. Fixture files: $($fixtureHashes.Count)."
+
+    $result.snapshot_rollback_required = $true
+    $code = Invoke-NsisInstall $result.installers.v140.path $InstallDir
+    Assert-MatrixResult 'install-1.4.0' ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall 'install-1.4.0' $InstallDir '1.4.0'
+    Assert-MatrixFixtures 'install-keeps-fixture' $fixtureHashes
+
+    $code = Invoke-NsisInstall $result.installers.v141.path $InstallDir
+    Assert-MatrixResult 'upgrade-1.4.1' ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall 'upgrade-1.4.1' $InstallDir '1.4.1' $CandidateExeSha256
     $entries = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' |
         ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like '*Remova*' })
-    Assert 'upgrade-single-entry' ($entries.Count -eq 1) ("uninstall entries={0}" -f $entries.Count)
-    if ($configBefore) {
-        $configAfter = (Get-FileHash -LiteralPath (Join-Path $ConfigDir 'ai-config.json') -Algorithm SHA256).Hash
-        Assert 'upgrade-keeps-config' ($configAfter -eq $configBefore) 'ai-config.json unchanged by the upgrade'
+    Assert-MatrixResult 'upgrade-single-entry' ($entries.Count -eq 1) "uninstall entries=$($entries.Count)"
+    Assert-MatrixFixtures 'upgrade-keeps-fixture' $fixtureHashes
+
+    $code = Invoke-NsisInstall $result.installers.v140.path $InstallDir
+    Assert-MatrixResult 'rollback-1.4.0' ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall 'rollback-1.4.0' $InstallDir '1.4.0'
+    Assert-MatrixFixtures 'rollback-keeps-fixture' $fixtureHashes
+
+    $code = Invoke-NsisInstall $result.installers.v141.path $InstallDir
+    Assert-MatrixResult 'reinstall-1.4.1' ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall 'reinstall-1.4.1' $InstallDir '1.4.1' $CandidateExeSha256
+    Assert-MatrixFixtures 'reinstall-keeps-fixture' $fixtureHashes
+
+    $uninstaller = Join-Path $InstallDir 'uninstall.exe'
+    $code = (Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait).ExitCode
+    Assert-MatrixResult 'uninstall-1.4.1' ($code -eq 0) "exit=$code"
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while ((Test-Path -LiteralPath $uninstallKey) -and $timer.Elapsed.TotalSeconds -lt 60) {
+        Start-Sleep -Milliseconds 250
     }
-
-    # 3) Roll back to the older release (downgrade over the newer install).
-    $code = Install-Silent $Installer140 $InstallDir
-    Assert 'rollback-1.4.0' ($code -eq 0) "exit=$code"
-    Assert 'rollback-1.4.0-version' ((Wait-For { (Get-InstalledVersion) -eq '1.4.0' }) -and (Get-InstalledVersion) -eq '1.4.0') ("registry={0}; exe={1}" -f (Get-InstalledVersion), (Get-ExeVersion $InstallDir))
-    Assert 'rollback-1.4.0-launches' (Start-Check $InstallDir) 'process started and stayed alive for 4s'
-
-    # 4) Uninstall.
-    Uninstall-Silent $InstallDir
-    Assert 'uninstall-key-removed' ($null -eq (Get-InstalledVersion)) ("registry={0}" -f (Get-InstalledVersion))
-    # The uninstaller must remove what it installed. Runtime data the
-    # application created (channel marker, generated icon) may remain, so it is
-    # listed rather than treated as a failure.
-    $leftoverNames = @(Get-ChildItem -LiteralPath $InstallDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-    $installedBinaries = @('remova.exe', 'list_apps.exe', 'uninstall.exe', 'verify_update.exe')
-    $binariesLeft = @($leftoverNames | Where-Object { $installedBinaries -contains $_ })
-    Assert 'uninstall-binaries-removed' ($binariesLeft.Count -eq 0) ("leftover binaries={0}" -f ($binariesLeft -join ','))
-    Record 'uninstall-leftovers' $true ("remaining runtime files={0}" -f ($leftoverNames -join ','))
+    Assert-MatrixResult 'uninstall-key-removed' (-not (Test-Path -LiteralPath $uninstallKey)) 'Uninstall registry entry absent.'
+    $leftovers = @(Get-ChildItem -LiteralPath $InstallDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    $binaries = @($leftovers | Where-Object { $_ -in @('remova.exe', 'list_apps.exe', 'uninstall.exe', 'verify_update.exe') })
+    Assert-MatrixResult 'uninstall-binaries-removed' ($binaries.Count -eq 0) "installed binaries left=$($binaries -join ',')"
+    Add-MatrixResult 'uninstall-leftovers' $true "remaining runtime files=$($leftovers -join ',')"
+    $result.passed = $true
+} catch {
+    $result.error = $_.Exception.Message
+    Add-MatrixResult 'matrix-stopped' $false $result.error
 } finally {
-    # Restore the original installation no matter where the matrix stopped.
-    Uninstall-Silent $InstallDir
-    # If an installer ignored /D=, it landed in the default per-user location,
-    # which is also this app's config directory. Remove only the binaries there;
-    # the config files are restored from the backup below.
-    $defaultDir = Join-Path $env:LOCALAPPDATA 'Remova'
-    if ((Test-Path (Join-Path $defaultDir 'remova.exe')) -and ($defaultDir -ne $InstallDir)) {
-        Uninstall-Silent $defaultDir
-        foreach ($name in @('remova.exe', 'list_apps.exe', 'uninstall.exe', 'verify_update.exe', '.remova-install-channel')) {
-            Remove-Item -LiteralPath (Join-Path $defaultDir $name) -Force -ErrorAction SilentlyContinue
-        }
-        Get-ChildItem -LiteralPath $defaultDir -Filter 'remova-icon-*.ico' -ErrorAction SilentlyContinue |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-        Record 'cleanup-default-location' $true "removed binaries from $defaultDir"
-    }
-    if ($originalVersion) {
-        $code = Install-Silent $Installer141 $InstallDir
-        Wait-For { (Get-InstalledVersion) -eq $originalVersion } 60 | Out-Null
-        Record 'restore-install' ((Get-InstalledVersion) -eq $originalVersion) ("exit=$code; version={0}" -f (Get-InstalledVersion))
-    }
-    if (Test-Path (Join-Path $backup 'config')) {
-        Get-ChildItem -LiteralPath (Join-Path $backup 'config') -Force | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $ConfigDir -Recurse -Force
-        }
-        Record 'restore-config' $true "restored $ConfigDir from $backup"
-    }
-    if (Test-Path (Join-Path $backup 'app\.remova-install-channel')) {
-        Copy-Item -LiteralPath (Join-Path $backup 'app\.remova-install-channel') -Destination $InstallDir -Force
-    }
-    if ($configBefore) {
-        $now = (Get-FileHash -LiteralPath (Join-Path $ConfigDir 'ai-config.json') -Algorithm SHA256).Hash
-        Record 'restore-config-verify' ($now -eq $configBefore) 'ai-config.json hash matches the pre-run value'
+    $result.generated_at = (Get-Date).ToUniversalTime().ToString('o')
+    $json = Join-Path $Out 'install-matrix.json'
+    $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $json -Encoding utf8
+    Write-Host "Wrote $json"
+    if ($result.snapshot_rollback_required) {
+        Write-Host 'Export the evidence and revert the VM snapshot to restore the pre-test app, registry and configuration.' -ForegroundColor Yellow
     }
 }
-
-$result = [ordered]@{
-    kind         = 'install-matrix'
-    generated_at = (Get-Date).ToString('o')
-    install_dir  = $InstallDir
-    config_dir   = $ConfigDir
-    installers   = [ordered]@{
-        v140 = [ordered]@{ path = (Resolve-Path $Installer140).Path; sha256 = (Get-FileHash -LiteralPath $Installer140 -Algorithm SHA256).Hash.ToLowerInvariant() }
-        v141 = [ordered]@{ path = (Resolve-Path $Installer141).Path; sha256 = (Get-FileHash -LiteralPath $Installer141 -Algorithm SHA256).Hash.ToLowerInvariant() }
-    }
-    original_version = $originalVersion
-    final_version    = Get-InstalledVersion
-    steps        = $records
-}
-
-# Remove the folder the current-user uninstaller leaves behind, if any, so the
-# next run starts clean; the backup stays in `backup/`.
-$json = Join-Path $Out 'install-matrix.json'
-$result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $json -Encoding utf8
-Write-Host "Wrote $json"
-
-$failed = @($records | Where-Object { -not $_.ok })
-if ($failed.Count -gt 0) {
-    Write-Host ("{0} step(s) failed" -f $failed.Count) -ForegroundColor Red
-    exit 1
-}
-Write-Host 'Install matrix: every step passed.' -ForegroundColor Green
-exit 0
+if (-not $result.passed) { exit 1 }

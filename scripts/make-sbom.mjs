@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // Generate a CycloneDX 1.5 SBOM for the shipped application: the Rust side
-// covers only the crates actually reachable from the workspace members'
-// dependency graphs (per `cargo metadata`, so lockfile-only dev/test crates
-// of unrelated workspace tooling are not reported as shipped components), and
+// covers the normal dependency graph for the Windows x64 release target
+// (per `cargo metadata`, excluding lockfile-only packages), and
 // the npm side covers production dependencies only — dev tooling never
 // reaches the bundle. Deterministic: components are sorted and the serial
 // number is a stable SHA-256 over the component list, so the same tree
 // always produces the same SBOM bytes.
-// Usage: node scripts/make-sbom.mjs [--out <path>]
+// Usage: node scripts/make-sbom.mjs [--out <path>] [--notices <path>]
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+const RELEASE_TARGET = "x86_64-pc-windows-msvc";
 
 /** [package] entries of a Cargo.lock, as {name, version}. */
 export function parseCargoLock(text) {
@@ -146,11 +147,11 @@ async function main() {
     readFile(path.join(root, "package.json"), "utf8"),
   ]);
   // The full lockfile lists every crate ever resolved in this tree; the SBOM
-  // reports the graph the shipped binary actually links.
+  // reports the normal graph resolved for the Windows release target.
   const metadata = JSON.parse(
     // `--locked` keeps the SBOM tied to the committed lockfile instead of a
     // silently re-resolved graph.
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--locked"], {
+    execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--filter-platform", RELEASE_TARGET], {
       cwd: path.join(root, "src-tauri"),
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
@@ -168,6 +169,21 @@ async function main() {
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
   console.log(`SBOM OK: ${out} (${sbom.components.length} components)`);
+  const noticesIdx = process.argv.indexOf("--notices");
+  if (noticesIdx > -1) {
+    const header = [
+      "# Third-party notices",
+      "",
+      "This list records the Windows x64 Rust dependency graph and npm production dependencies for Remova. Each component retains its upstream license.",
+      "",
+      "Regenerate from the repository root with `node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md`.",
+      "",
+      "## Components",
+      "",
+    ];
+    const components = sbom.components.map((c) => `- ${c.name} ${c.version} (${c.purl})`);
+    await writeFile(path.resolve(process.argv[noticesIdx + 1]), [...header, ...components, ""].join("\n"), "utf8");
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
