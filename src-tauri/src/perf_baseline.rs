@@ -239,7 +239,7 @@ fn p01_component_baseline() {
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir).expect("perf output dir");
         let doc = serde_json::json!({
-            "kind": "p01-components",
+            "kind": "remova-components",
             "generated_at": chrono_like_now(),
             "host": host_json(),
             "fixture": {

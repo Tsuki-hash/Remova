@@ -52,6 +52,36 @@ When enabled, missing settings, failed signing, invalid certificates, unexpected
 or missing timestamps stop the release. The workflow never silently falls back to
 unsigned Windows binaries after SignPath has been enabled.
 
+## Configure release approval signing
+
+The draft publication workflow trusts the RSA public PEM in the GitHub Actions
+repository variable `RELEASE_APPROVAL_PUBLIC_KEY`. The release approver keeps the
+matching private PEM in a user-restricted directory outside the checkout. Only the
+public PEM goes into GitHub. The approval uses RSA-PSS with SHA-256, independently
+of the Windows publisher and updater signatures.
+
+Generate a key pair in an existing private directory if no release approval key has
+been provisioned. The example refuses to replace existing keys.
+
+```powershell
+$keyDir = 'D:/private/remova-release-approval'
+$privateKey = Join-Path $keyDir 'approval-private.pem'
+$publicKey = Join-Path $keyDir 'approval-public.pem'
+if ((Test-Path -LiteralPath $privateKey) -or (Test-Path -LiteralPath $publicKey)) {
+    throw 'The release approval key already exists.'
+}
+$rsa = [Security.Cryptography.RSA]::Create(3072)
+try {
+    $rsa.ExportPkcs8PrivateKeyPem() | Out-File -LiteralPath $privateKey -Encoding utf8NoBOM -NoClobber
+    $rsa.ExportSubjectPublicKeyInfoPem() | Out-File -LiteralPath $publicKey -Encoding utf8NoBOM -NoClobber
+} finally {
+    $rsa.Dispose()
+}
+```
+
+Set `RELEASE_APPROVAL_PUBLIC_KEY` to the entire contents of `approval-public.pem`.
+The workflow stops if this variable is missing or the signature cannot be verified.
+
 ## Release order
 
 1. Validate signing configuration, version and tests.
@@ -64,7 +94,7 @@ unsigned Windows binaries after SignPath has been enabled.
    both installers pass verification.
 7. Complete smoke checks and portable packaging. The tag workflow uploads the packages, checksums, SBOM and any updater assets to a draft GitHub Release.
 8. Download the draft attachments into one folder and run the [isolated acceptance suite](../scripts/acceptance/README.md) on them. Keep the four summaries with their evidence files. Review the package hashes, SBOM, applicable license notices, publication mode and [recovery guide](../RECOVERY.md).
-9. Produce the approval input using the approved tag, the exact commit and the four acceptance summaries:
+9. Run the [performance gate](../benchmarks/performance-thresholds.md) against `remova.exe` from that portable ZIP. Keep the cold-start and component measurement JSON. Produce the signed approval input using the approved tag, exact commit and four acceptance summaries.
 
    ```powershell
    $summaries = @(
@@ -74,11 +104,14 @@ unsigned Windows binaries after SignPath has been enabled.
        'D:/acceptance/win11-elevated/acceptance-summary.json'
    )
    $approval = & ./scripts/release-approval.ps1 -Tag v1.4.1 -Commit $commit `
-       -BundleDir 'D:/candidate' -Acceptance $summaries -Reviewed
+       -BundleDir 'D:/candidate' -Acceptance $summaries `
+       -Startup 'D:/acceptance/performance/startup-cold.json' `
+       -Components 'D:/acceptance/performance/components.json' `
+       -PrivateKeyPath 'D:/private/remova-release-approval/approval-private.pem' -Reviewed
    gh workflow run publish-release.yml --ref main -f tag=v1.4.1 -f "approval=$approval"
    ```
 
-   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the tag, actual attachment bytes and approval against the draft before publishing. Approval input contains only digests, the tag and commit. Keep observations and screenshots with the private acceptance records.
+   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes and executable inside the downloaded portable ZIP before publishing. The signed payload contains the tag, commit and digests of the attachments and reviewed evidence. Keep the original evidence and observations with the private acceptance records.
 
 The NSIS update manifest uses the custom target `windows-x86_64-nsis`.
 MSI and portable users retain manual updates. Existing releases cannot be overwritten.

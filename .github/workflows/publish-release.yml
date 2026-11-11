@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       approval:
-        description: Reviewed approval JSON from scripts/release-approval.ps1
+        description: Signed approval JSON from scripts/release-approval.ps1
         required: true
         type: string
 
@@ -30,5 +30,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
           APPROVAL_JSON: ${{ inputs.approval }}
+          RELEASE_APPROVAL_PUBLIC_KEY: ${{ vars.RELEASE_APPROVAL_PUBLIC_KEY }}
           DISPATCH_ACTOR: ${{ github.triggering_actor }}
         run: pwsh -NoProfile -File scripts/publish-release-draft.ps1

@@ -62,15 +62,25 @@ function Assert-PerformanceIdentity($Record, [string]$Kind, [string]$Commit, [st
     }
 }
 
-function Get-StartupMetrics($Record) {
+function Get-StartupMetrics($Record, [ValidateSet('cold','warm')][string]$Mode = 'cold', [int]$Minimum = 3) {
+    if ($Record.measurement_mode -cne $Mode) {
+        throw "Expected $Mode startup evidence."
+    }
     $samples = @($Record.runs)
-    if ($samples.Count -lt 3) { throw 'At least three startup runs are required.' }
+    if ($samples.Count -lt $Minimum -or $samples.Count -gt 20) {
+        throw "At least $Minimum and at most twenty startup runs are required."
+    }
+    $boots = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     for ($i = 0; $i -lt $samples.Count; $i++) {
         $sample = $samples[$i]
         if (-not (Test-PerformanceNumber $sample.run) -or $sample.run -ne ($i + 1) -or
             $sample.ready_observed -isnot [bool] -or -not $sample.ready_observed -or
             -not (Test-PerformanceNumber $sample.startup_ms) -or -not (Test-PerformanceNumber $sample.working_set_mb)) {
             throw "Startup run $($i + 1) lacks a ready window or valid timing/memory data."
+        }
+        if ($Mode -ceq 'cold' -and
+            ($sample.boot_sha256 -cnotmatch '^[0-9a-f]{64}$' -or !$boots.Add($sample.boot_sha256))) {
+            throw "Each cold startup sample must come from a separate Windows boot."
         }
     }
     @{

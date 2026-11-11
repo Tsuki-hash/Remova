@@ -111,7 +111,7 @@ pwsh -NoProfile -File scripts/acceptance/run-install-matrix.ps1 `
 
 ## 5. 性能与容量
 
-阈值与命令见 [性能与容量阈值](../../benchmarks/P-01-thresholds.md)。在同一机器和 WebView2 环境下测试已固定的候选。启动样本必须观察到软件导航控件就绪。最终判定要求六项指标、匹配的候选身份及阈值摘要。
+阈值与命令见 [性能与容量阈值](../../benchmarks/performance-thresholds.md)。在同一机器和 WebView2 环境下测试已固定的候选。冷启动样本须来自三次不同 Windows 启动会话，并观察到软件导航控件就绪。最终判定要求六项指标、匹配的候选身份及阈值摘要。
 
 ---
 

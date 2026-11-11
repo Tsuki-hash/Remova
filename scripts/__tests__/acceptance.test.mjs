@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const source = fileURLToPath(new URL("../acceptance/", import.meta.url));
-const thresholds = fileURLToPath(new URL("../../benchmarks/P-01-thresholds.md", import.meta.url));
+const thresholds = fileURLToPath(new URL("../../benchmarks/performance-thresholds.md", import.meta.url));
 const commit = "a".repeat(40);
 const exeSha = "b".repeat(64);
 const sha = (data) => createHash("sha256").update(data).digest("hex");
@@ -159,14 +159,19 @@ test("the performance gate requires six limits, matching identities and three re
   const thresholdText = readFileSync(thresholds, "utf8");
   const environment = { machine_sha256: "e".repeat(64), os_version: "10.0.26200", architecture: "x64", webview2_version: "143.0.1.1" };
   const common = { schema_version: 1, candidate_commit: commit, sha256: exeSha, environment, thresholds_sha256: sha(thresholdText) };
-  const startup = { ...common, kind: "remova-startup", runs: [1, 2, 3].map((run) => ({ run, ready_observed: true, startup_ms: 100, working_set_mb: 10 })) };
+  const startup = { ...common, kind: "remova-startup", measurement_mode: "cold", runs: [1, 2, 3].map((run) => ({
+    run, boot_sha256: String(run).repeat(64), ready_observed: true, startup_ms: 100, working_set_mb: 10,
+  })) };
   const components = {
-    ...common, kind: "p01-components", fixture: { walk_entries: 4040, analyze_files: 200, backup_bytes: 1073741824 },
+    ...common, kind: "remova-components", fixture: { walk_entries: 4040, analyze_files: 200, backup_bytes: 1073741824 },
     metrics: { walk_worst_ms: 10, analyze_worst_ms: 10, cancel_worst_ms: 10, backup_ms: 10 },
   };
   const variants = [
     ["complete", 0, () => {}],
     ["over-limit", 1, (s, c) => { c.metrics.backup_ms = 60001; }],
+    ["cold-startup-over-limit", 1, (s) => { s.runs[0].startup_ms = 3038.4494; }],
+    ["warm-startup", 2, (s) => { s.measurement_mode = "warm"; }],
+    ["same-boot", 2, (s) => { s.runs[1].boot_sha256 = s.runs[0].boot_sha256; }],
     ["empty-startup", 2, (s) => { s.runs = []; }],
     ["false-ready", 2, (s) => { s.runs[0].ready_observed = false; }],
     ["bogus-ready", 2, (s) => { s.runs[0].ready_observed = "false"; }],

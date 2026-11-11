@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/acceptance-common.ps1"
 . "$PSScriptRoot/performance-common.ps1"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/P-01-thresholds.md' }
+if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/performance-thresholds.md' }
 
 try {
     $threshold = Get-PerformanceThresholds $Thresholds
@@ -60,7 +60,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Candidate checkout changed during component measurement.' }
         $Components = Join-Path $outDir 'components.json'
         $document = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json -AsHashtable
-        if ($document.kind -cne 'p01-components') { throw 'The component test did not emit a measurement.' }
+        if ($document.kind -cne 'remova-components') { throw 'The component test did not emit a measurement.' }
         $document.schema_version = 1
         $document.candidate_commit = $CandidateCommit.ToLowerInvariant()
         $document.sha256 = $CandidateExeSha256.ToLowerInvariant()
@@ -71,7 +71,7 @@ try {
 
     if (-not $Components) { throw 'Pass -Components explicitly, or measure the current commit with -Run.' }
     $componentRecord = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json
-    Assert-PerformanceIdentity $componentRecord 'p01-components' $CandidateCommit $CandidateExeSha256 $threshold.sha256
+    Assert-PerformanceIdentity $componentRecord 'remova-components' $CandidateCommit $CandidateExeSha256 $threshold.sha256
     foreach ($key in @('machine_sha256', 'os_version', 'architecture', 'webview2_version')) {
         if ($componentRecord.environment.$key -cne $startupRecord.environment.$key) {
             throw "Component and startup environments differ for $key."

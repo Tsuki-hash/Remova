@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit,
     [string]$Thresholds = '',
-    [ValidateRange(3, 20)][int]$Runs = 3,
+    [ValidateSet('cold','warm')][string]$Mode = 'warm',
+    [ValidateRange(1, 20)][int]$Runs = 3,
+    [switch]$ConfirmFirstLaunchSinceBoot,
     [switch]$CollectOnly
 )
 
@@ -14,7 +16,10 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/acceptance-common.ps1"
 . "$PSScriptRoot/performance-common.ps1"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/P-01-thresholds.md' }
+if (-not $Thresholds) { $Thresholds = Join-Path $repoRoot 'benchmarks/performance-thresholds.md' }
+
+$samples = [System.Collections.Generic.List[object]]::new()
+$boot = $null
 
 try {
     $threshold = Get-PerformanceThresholds $Thresholds
@@ -26,12 +31,40 @@ try {
     $environment = Get-PerformanceEnvironment
     $sha = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
+    $file = Join-Path $Out "startup-$Mode.json"
+    if ($Mode -ceq 'cold') {
+        if (!$ConfirmFirstLaunchSinceBoot -or ($PSBoundParameters.ContainsKey('Runs') -and $Runs -ne 1)) {
+            throw 'Record one cold sample per Windows boot and confirm that Remova has not been launched since rebooting.'
+        }
+        $Runs = 1
+        $bootTime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+        if ($bootTime -isnot [datetime]) { throw 'Could not identify the current Windows boot.' }
+        $identity = "$($environment.machine_sha256)|$($bootTime.ToUniversalTime().Ticks)"
+        $boot = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
+        if (Test-Path -LiteralPath $file) {
+            $previous = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+            Assert-PerformanceIdentity $previous 'remova-startup' $CandidateCommit $sha $threshold.sha256
+            if ($previous.error) { throw 'Keep the failed measurement record and use a new output directory for a new series.' }
+            foreach ($key in $environment.Keys) {
+                if ($environment[$key] -cne $previous.environment.$key) {
+                    throw "Cold startup environment changed for $key."
+                }
+            }
+            $null = Get-StartupMetrics $previous 'cold' 1
+            if ($boot -cin @($previous.runs.boot_sha256) -or @($previous.runs).Count -ge 20) {
+                throw 'The cold startup series already has a sample from this boot or is full.'
+            }
+            foreach ($sample in $previous.runs) { $samples.Add($sample) }
+        }
+    } elseif ($Runs -lt 3) {
+        throw 'Collect at least three runs for a warm startup series.'
+    }
 } catch {
     Write-Host "Evidence insufficient: $($_.Exception.Message)" -ForegroundColor Yellow
     exit 2
 }
 
-$samples = [System.Collections.Generic.List[object]]::new()
 $result = [ordered]@{
     schema_version = 1
     kind = 'remova-startup'
@@ -40,6 +73,7 @@ $result = [ordered]@{
     sha256 = $sha
     thresholds_sha256 = $threshold.sha256
     environment = $environment
+    measurement_mode = $Mode
     runs = $samples
 }
 $exitCode = 2
@@ -51,7 +85,8 @@ try {
             $ready = Wait-RemovaUiReady $process
             $startup.Stop()
             $sample = [ordered]@{
-                run = $i
+                run = $samples.Count + 1
+                boot_sha256 = $boot
                 ready_observed = $ready
                 startup_ms = $startup.Elapsed.TotalMilliseconds
                 working_set_mb = $null
@@ -76,9 +111,9 @@ try {
     if ((Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash -ine $sha) {
         throw 'The executable changed during measurement.'
     }
-    $metrics = Get-StartupMetrics ([pscustomobject]$result)
+    $metrics = Get-StartupMetrics ([pscustomobject]$result) $Mode 1
     foreach ($key in $metrics.Keys) { $result[$key] = $metrics[$key] }
-    if (-not $CollectOnly) {
+    if (-not $CollectOnly -and $Mode -ceq 'cold') {
         $exitCode = 0
         foreach ($key in $metrics.Keys) {
             $limit = $threshold.limits[$key]
@@ -88,6 +123,10 @@ try {
             Write-Host "$key = $actual (limit $limit) $status"
             if (-not $within) { $exitCode = 1 }
         }
+        if ($exitCode -eq 0 -and $samples.Count -lt 3) {
+            Write-Host 'Collect a sample after each of three separate Windows boots.' -ForegroundColor Yellow
+            $exitCode = 2
+        }
     }
 } catch {
     $result.error = $_.Exception.Message
@@ -95,9 +134,14 @@ try {
 } finally {
     $result.measured_at = (Get-Date).ToUniversalTime().ToString('o')
     $result.collect_only = [bool]$CollectOnly
-    $file = Join-Path $Out 'P-01-startup.json'
-    $result | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $file -Encoding utf8
+    $pending = "$file.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $result | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $pending -Encoding utf8
+        Move-Item -LiteralPath $pending -Destination $file -Force
+    } finally {
+        if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending }
+    }
     Write-Host "Wrote $file"
 }
-if ($CollectOnly) { Write-Host 'Startup data collected without a gate verdict.' -ForegroundColor Yellow }
+if ($CollectOnly -or $Mode -ceq 'warm') { Write-Host 'Startup data collected without a release verdict.' -ForegroundColor Yellow }
 exit $exitCode

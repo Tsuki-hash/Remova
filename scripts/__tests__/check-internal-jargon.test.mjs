@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 const script = fileURLToPath(new URL("../check-internal-jargon.mjs", import.meta.url));
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "remova-jargon-"));
-  for (const dir of ["src", "scripts", ".github", join("src-tauri", "src")]) {
+  for (const dir of ["src", "scripts", ".github", "benchmarks", join("src-tauri", "src")]) {
     mkdirSync(join(root, dir), { recursive: true });
   }
   try { run(root, join(root, "src", "sample.ts")); }
@@ -17,9 +17,9 @@ function fixture(run) {
 }
 const check = root => spawnSync(process.execPath, [script, "--check"], { cwd: root, encoding: "utf8" });
 
-test("rejects every historical review-code family without changing source bytes", () => {
+test("rejects development identifier formats without changing source bytes", () => {
   fixture((root, file) => {
-    for (const id of ["R2-11", "R-R7-02", "FE-R4-04", "R29-SEC-02", "R21-IO-02/BE-01", "REV-SEC-06", "F-22", "F-5", "CQ-16", "UX-14", "PF-08", "TC-05", "CD-02", "FC-01", "M-12", "R46 P2-09", "round-37", "round 30", "-03:", "A-4", "P-02"]) {
+    for (const id of ["R987-98", "R-R987-98", "FE-R987-98", "R987-SEC-98", "R987-IO-98/BE-98", "REV-SEC-98", "F-98", "F-8", "CQ-98", "UX-98", "PF-98", "TC-98", "CD-98", "FC-98", "M-98", "R987 P2-98", "round-987", "round 987", "-98:", "A-98", "P-98"]) {
       const source = `// ${id}: protect the operation\nexport const safe = true;\n`;
       writeFileSync(file, source);
       const result = check(root);
@@ -32,7 +32,7 @@ test("rejects every historical review-code family without changing source bytes"
 
 test("accepts explanatory comments and ordinary test string literals", () => {
   fixture((root, file) => {
-    const source = '// Refuse untrusted ancestors.\nexport const sample = "R-R7-02";\n';
+    const source = '// Refuse untrusted ancestors.\nexport const sample = "R-R987-98";\n';
     writeFileSync(file, source);
     const result = check(root);
     assert.equal(result.status, 0, result.stderr);
@@ -44,10 +44,28 @@ test("accepts explanatory comments and ordinary test string literals", () => {
 test("rejects review tags in release-facing Markdown", () => {
   fixture((root) => {
     const file = join(root, "CHANGELOG.md");
-    writeFileSync(file, "## 1.4.0\n\n- Fixed the round 30 regression.\n");
+    writeFileSync(file, "## 1.4.0\n\n- Fixed the round 987 regression.\n");
     const result = check(root);
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /CHANGELOG\.md:3:/);
+  });
+});
+
+test("rejects filenames and script references while ignoring local measurements", () => {
+  fixture((root, file) => {
+    const name = "Q-97-startup.json";
+    const publicFile = join(root, "benchmarks", name.replace(/\.json$/, ".md"));
+    writeFileSync(publicFile, "# Benchmark\n");
+    writeFileSync(file, `export const file = "${name}";\n`);
+    const blocked = check(root);
+    assert.equal(blocked.status, 1, blocked.stderr);
+    assert.match(blocked.stderr, /public file name/);
+    assert.match(blocked.stderr, /sample\.ts:1:/);
+    rmSync(publicFile);
+    writeFileSync(file, 'export const file = "startup-cold.json";\n');
+    mkdirSync(join(root, "benchmarks", "runs"));
+    writeFileSync(join(root, "benchmarks", "runs", name), "{}");
+    assert.equal(check(root).status, 0);
   });
 });
 

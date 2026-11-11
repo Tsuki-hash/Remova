@@ -6,8 +6,12 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Commit,
     [Parameter(Mandatory)][string]$BundleDir,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string[]]$Acceptance,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$Startup,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$Components,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$PrivateKeyPath,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][switch]$Reviewed,
-    [Parameter(Mandatory, ParameterSetName = 'Verify')][string]$ApprovalJson
+    [Parameter(Mandatory, ParameterSetName = 'Verify')][string]$ApprovalJson,
+    [Parameter(Mandatory, ParameterSetName = 'Verify')][string]$PublicKeyPem
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +30,60 @@ function Assert-SameKeys($Actual, $Expected, [string]$Context) {
     if (@($Actual).Count -ne @($Expected).Count -or (Compare-Object @($Actual) @($Expected) -CaseSensitive)) {
         throw "$Context does not contain exactly the expected entries."
     }
+}
+
+function ConvertTo-Sha256Hex([byte[]]$Hash) {
+    [Convert]::ToHexString($Hash).ToLowerInvariant()
+}
+
+function Open-ReviewFile([string]$Path) {
+    [IO.File]::Open((Resolve-Path -LiteralPath $Path).Path, 'Open', 'Read', 'Read')
+}
+
+function Get-PortableExeHash([string]$Path, [string]$ArchiveHash) {
+    $file = Open-ReviewFile $Path
+    try {
+        if ((ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($file))) -cne $ArchiveHash) {
+            throw 'The portable attachment changed during verification.'
+        }
+        $file.Position = 0
+        $archive = [IO.Compression.ZipArchive]::new($file, 'Read', $true)
+        try {
+            $entries = @($archive.Entries | Where-Object { $_.FullName -ieq 'remova.exe' })
+            if ($entries.Count -ne 1 -or $entries[0].Length -le 0) {
+                throw 'The portable archive must contain one nonempty remova.exe at its root.'
+            }
+            $exe = $entries[0].Open()
+            try { ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($exe)) }
+            finally { $exe.Dispose() }
+        } finally { $archive.Dispose() }
+    } finally { $file.Dispose() }
+}
+
+function Get-PerformanceApproval([string]$ExeSha256) {
+    $startupFile = Open-ReviewFile $Startup
+    try {
+        $componentsFile = Open-ReviewFile $Components
+        try {
+            & "$PSScriptRoot/acceptance/measure-components.ps1" -Startup $Startup -Components $Components `
+                -CandidateCommit $Commit -CandidateExeSha256 $ExeSha256
+            if ($LASTEXITCODE -ne 0) { throw 'The candidate did not pass the cold-start performance gate.' }
+            [ordered]@{
+                startup_sha256 = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($startupFile))
+                components_sha256 = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($componentsFile))
+                executable_sha256 = $ExeSha256
+            }
+        } finally { $componentsFile.Dispose() }
+    } finally { $startupFile.Dispose() }
+}
+
+function Import-ApprovalKey($Rsa, [string]$Pem, [bool]$Private) {
+    $expected = if ($Private) { '-----BEGIN (?:RSA )?PRIVATE KEY-----' } else { '-----BEGIN PUBLIC KEY-----' }
+    if ($Pem -cnotmatch "^\s*$expected") {
+        throw 'A release approval requires the configured RSA PEM key.'
+    }
+    $Rsa.ImportFromPem($Pem)
+    if ($Rsa.KeySize -lt 2048) { throw 'A release approval requires an RSA key of at least 2048 bits.' }
 }
 
 $hashes = [ordered]@{}
@@ -51,12 +109,16 @@ $sbom = Get-Content -LiteralPath (Join-Path $BundleDir 'SBOM.cdx.json') -Raw | C
 if ($sbom.bomFormat -cne 'CycloneDX' -or $sbom.metadata.component.version -cne $version -or !$sbom.components.Count) {
     throw 'SBOM does not identify the candidate version and its components.'
 }
+$exeHash = Get-PortableExeHash (Join-Path $BundleDir $names.portable) $hashes[$names.portable]
+$sha256 = [Security.Cryptography.HashAlgorithmName]::SHA256
+$pss = [Security.Cryptography.RSASignaturePadding]::Pss
 
 if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
     if (!$Reviewed) { throw 'Review the recorded observations, SBOM, release mode and recovery instructions first.' }
     $verified = [ordered]@{}
     foreach ($file in $Acceptance) {
-        $summary = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
+        $summaryBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $file).Path)
+        $summary = [Text.Encoding]::UTF8.GetString($summaryBytes).TrimStart([char]0xFEFF) | ConvertFrom-Json -AsHashtable
         $key = "$($summary.os_family)/$($summary.suite)"
         if ($key -cnotin $matrix -or $verified.Contains($key)) { throw "Unexpected or duplicate acceptance run for $key." }
         if ($summary.schema_version -ne 1 -or $summary.kind -cne 'remova-acceptance' -or
@@ -103,28 +165,59 @@ if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
                 }
             }
         }
-        $verified[$key] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $verified[$key] = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($summaryBytes))
     }
     Assert-SameKeys $verified.Keys $matrix 'Acceptance matrix'
-    [ordered]@{
-        schema_version = 1
+    $performance = Get-PerformanceApproval $exeHash
+    $approval = [ordered]@{
+        schema_version = 2
         tag = $Tag
         commit = $Commit
         assets = $hashes
         acceptance = $verified
+        performance = $performance
     } | ConvertTo-Json -Depth 5 -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($approval)
+    $rsa = [Security.Cryptography.RSA]::Create()
+    try {
+        Import-ApprovalKey $rsa ([IO.File]::ReadAllText((Resolve-Path -LiteralPath $PrivateKeyPath).Path)) $true
+        [ordered]@{
+            payload = [Convert]::ToBase64String($bytes)
+            signature = [Convert]::ToBase64String($rsa.SignData($bytes, $sha256, $pss))
+        } | ConvertTo-Json -Compress
+    } finally { $rsa.Dispose() }
     return
 }
 
-$approval = $ApprovalJson | ConvertFrom-Json -AsHashtable
-if ($approval.schema_version -ne 1 -or $approval.tag -cne $Tag -or $approval.commit -cne $Commit) {
+$envelope = $ApprovalJson | ConvertFrom-Json -AsHashtable
+if (!$envelope.payload -or !$envelope.signature) { throw 'A signed release approval is required.' }
+Assert-SameKeys $envelope.Keys @('payload', 'signature') 'Signed approval envelope'
+$bytes = [Convert]::FromBase64String($envelope.payload)
+$signature = [Convert]::FromBase64String($envelope.signature)
+$rsa = [Security.Cryptography.RSA]::Create()
+try {
+    Import-ApprovalKey $rsa $PublicKeyPem $false
+    if (!$rsa.VerifyData($bytes, $signature, $sha256, $pss)) { throw 'Invalid release approval signature.' }
+} finally { $rsa.Dispose() }
+$approval = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable
+Assert-SameKeys $approval.Keys @('schema_version', 'tag', 'commit', 'assets', 'acceptance', 'performance') 'Signed approval'
+if ($approval.schema_version -ne 2 -or $approval.tag -cne $Tag -or $approval.commit -cne $Commit) {
     throw 'Approval belongs to a different release or commit.'
 }
 Assert-SameKeys $approval.acceptance.Keys $matrix 'Approved acceptance matrix'
 foreach ($hash in $approval.acceptance.Values) {
-    if ($hash -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid acceptance record digest.' }
+    if ($hash -cnotmatch '^[a-f0-9]{64}$' -or $hash -cmatch '^0+$') { throw 'Invalid acceptance record digest.' }
 }
 Assert-SameKeys $approval.assets.Keys $hashes.Keys 'Approved attachments'
 foreach ($name in $hashes.Keys) {
     if ($approval.assets[$name] -cne $hashes[$name]) { throw "The draft attachment changed: $name." }
+}
+Assert-SameKeys $approval.performance.Keys @('startup_sha256', 'components_sha256', 'executable_sha256') 'Approved performance evidence'
+foreach ($key in @('startup_sha256', 'components_sha256')) {
+    if ($approval.performance[$key] -cnotmatch '^[a-f0-9]{64}$' -or $approval.performance[$key] -cmatch '^0+$') {
+        throw 'Invalid performance record digest.'
+    }
+}
+if ($approval.performance.executable_sha256 -cne $exeHash) {
+    throw 'The approved performance evidence used a different portable executable.'
 }

@@ -7,6 +7,9 @@ if ($tag -cnotmatch '^v\d+\.\d+\.\d+$' -or
     $actor -notmatch '^[a-z0-9-]+$') {
     throw 'Invalid release tag, repository or maintainer.'
 }
+if ([string]::IsNullOrWhiteSpace($env:RELEASE_APPROVAL_PUBLIC_KEY)) {
+    throw 'Configure the RELEASE_APPROVAL_PUBLIC_KEY repository variable before publishing.'
+}
 
 function Invoke-GitHub([string[]]$Arguments) {
     $result = gh api @Arguments
@@ -49,7 +52,8 @@ New-Item -ItemType Directory -Path $download | Out-Null
 gh release download $tag --repo $repository --pattern '*' --dir $download
 if ($LASTEXITCODE -ne 0) { throw 'Could not download the draft attachments.' }
 
-& "$PSScriptRoot/release-approval.ps1" -Tag $tag -Commit $commit -BundleDir $download -ApprovalJson $env:APPROVAL_JSON
+& "$PSScriptRoot/release-approval.ps1" -Tag $tag -Commit $commit -BundleDir $download `
+    -ApprovalJson $env:APPROVAL_JSON -PublicKeyPem $env:RELEASE_APPROVAL_PUBLIC_KEY
 $current = Get-Draft
 if ($current.id -ne $draft.id -or (Get-AttachmentIdentity $current) -cne $identity -or (Get-TagCommit) -cne $commit) {
     throw 'The release draft or tag changed during verification.'
