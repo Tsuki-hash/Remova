@@ -10,7 +10,7 @@
 |---|---|
 | 默认状态 | **关闭**。不配置就完全不发送任何请求。 |
 | 可配置字段 | 启用开关、服务商标识、基础 URL、模型名、API Key |
-| 本地保存位置 | `%PROGRAMDATA%\Remova\` 下的应用配置；API Key 额外用 Windows DPAPI 加密 |
+| 本地保存位置 | 当前 Windows 用户的 LocalAppData Known Folder 下的 `Remova\ai-config.json`（通常为 `%LOCALAPPDATA%\Remova\ai-config.json`）。API Key 由 Windows DPAPI 加密 |
 | 凭据绑定 | Key 与「服务商 + 规范化来源（scheme/host/port）」绑定；换服务商或换来源不会沿用旧 Key |
 | 清除 Key | 在设置面板使用显式「清除」；把输入框留空并保存**不会**删除已存 Key |
 | 出站请求 | 仅发送你启用的那次分析所需的软件名、路径与证据文本；默认不发送用户目录原文 |
@@ -45,9 +45,10 @@
 
 | 项目 | 说明 |
 |---|---|
-| 备份位置 | `%PROGRAMDATA%\Remova\Backup\`，可在设置中更改 |
+| 备份位置 | ProgramData Known Folder 下的 `Remova\Backup\`（通常为 `%PROGRAMDATA%\Remova\Backup\`） |
 | 是否默认启用 | 否。未勾选「创建备份」时删除不可恢复 |
 | 备份失败 | 本次清理中止，不继续删除 |
+| 文件格式 | 自动备份仅支持默认数据流。遇到 NTFS 命名数据流（包括下载来源标记）时，带备份清理停止并保留原件 |
 | 封印（RSEAL2） | 需要管理员权限；密钥位于系统保护的 Known Folder，丢失时不会自动重建 |
 | 旧格式 | RSEAL1 备份只能查看与手工导出，不能自动恢复 |
 

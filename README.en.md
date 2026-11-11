@@ -142,6 +142,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
 - Analysis and cleanup use the latest server-side scan identity and paths. Same-name HKCU and HKLM entries are never merged; an elevated process refuses to analyze, uninstall or clean HKCU apps.
 - Prefer **dry-run** before cleaning.
 - Backups are best-effort and **not** a system backup substitute; the backup tree uses a private DACL (SYSTEM / Administrators / current user).
+- Cleanup with backup keeps files that changed or appeared after backup. If a file has a named NTFS data stream that the backup format cannot save, cleanup stops and keeps the original.
 - A pending 1641 reboot blocks every cleanup and restore entry; an unreadable gate file is treated as pending (fail-closed).
 - Services and scheduled tasks are treated as high risk and unchecked by default.
 
