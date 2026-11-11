@@ -40,11 +40,15 @@ fn is_system_install_path(path: &str) -> bool {
     p.contains("\\windows\\systemapps\\") || p.contains("\\windows\\immersivecontrolpanel")
 }
 
-#[cfg(windows)]
 pub fn scan_store_apps() -> Vec<InstalledApp> {
+    scan_store_apps_with_completeness().0
+}
+
+#[cfg(windows)]
+pub(crate) fn scan_store_apps_with_completeness() -> (Vec<InstalledApp>, bool) {
     use windows::Management::Deployment::PackageManager;
     if crate::scan_task::cancelled() {
-        return Vec::new();
+        return (Vec::new(), false);
     }
 
     // Console / test processes may lack WinRT init; Tauri already has it.
@@ -55,20 +59,40 @@ pub fn scan_store_apps() -> Vec<InstalledApp> {
 
     let mut out = Vec::new();
     let Ok(pm) = PackageManager::new() else {
-        return out;
+        return (out, false);
     };
     // Empty user SID = current user (FindPackages() for all users needs admin).
-    let packages = match pm.FindPackagesByUserSecurityId(&windows::core::HSTRING::new()) {
-        Ok(p) => p,
-        Err(_) => return out,
+    let Ok(cursor) = pm
+        .FindPackagesByUserSecurityId(&windows::core::HSTRING::new())
+        .and_then(|packages| packages.First())
+    else {
+        return (out, false);
     };
-
-    for pkg in packages {
-        if crate::scan_task::cancelled() {
-            break;
+    let Ok(mut has_current) = cursor.HasCurrent() else {
+        return (out, false);
+    };
+    let mut complete = true;
+    while has_current && !crate::scan_task::cancelled() {
+        let current = cursor.Current();
+        match cursor.MoveNext() {
+            Ok(has_next) => has_current = has_next,
+            Err(_) => {
+                complete = false;
+                has_current = false;
+            }
         }
-        let Ok(id) = pkg.Id() else { continue };
-        let Ok(name_h) = id.Name() else { continue };
+        let Ok(pkg) = current else {
+            complete = false;
+            continue;
+        };
+        let Ok(id) = pkg.Id() else {
+            complete = false;
+            continue;
+        };
+        let Ok(name_h) = id.Name() else {
+            complete = false;
+            continue;
+        };
         let name = name_h.to_string();
         if is_blocked_package(&name) {
             continue;
@@ -83,6 +107,7 @@ pub fn scan_store_apps() -> Vec<InstalledApp> {
         // Skip non-stable / bundle noise when possible
         let full = id.FullName().map(|s| s.to_string()).unwrap_or_default();
         if full.is_empty() {
+            complete = false;
             continue;
         }
         let publisher = id.Publisher().map(|s| s.to_string()).unwrap_or_default();
@@ -137,7 +162,7 @@ pub fn scan_store_apps() -> Vec<InstalledApp> {
             display_icon: String::new(),
         });
     }
-    out
+    (out, complete && !crate::scan_task::cancelled())
 }
 
 /// Crude AppxManifest DisplayName extract (avoids full XML dep).
@@ -166,8 +191,8 @@ fn read_manifest_display_name(install_location: &str) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-pub fn scan_store_apps() -> Vec<InstalledApp> {
-    Vec::new()
+pub(crate) fn scan_store_apps_with_completeness() -> (Vec<InstalledApp>, bool) {
+    (Vec::new(), true)
 }
 
 /// Convert days since Unix epoch to `YYYY-MM-DD`.

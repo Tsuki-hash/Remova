@@ -88,6 +88,7 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
     checkup: { total: 0, large: 0, recent: 0 },
     checkupOpen: false,
     checkupOrphanCount: null,
+    checkupOrphanCompleteness: null,
     checkupOrphanBusy: false,
     batchIndex: 0,
     batchTotal: 0,

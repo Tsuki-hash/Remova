@@ -113,12 +113,82 @@ it("a cancelled pointer ends the hold", () => {
   act(() => { answer = requestConfirmEx({ title: "Cleanup", message: "M", danger: true, holdMs: 600 }); });
   try {
     const hold = screen.getByRole("button", { name: t().confirmHoldStart });
-    fireEvent.pointerDown(hold);
+    fireEvent.pointerDown(hold, { button: 0, isPrimary: true, pointerId: 1 });
     expect(screen.getByText(t().confirmHoldHint)).toBeTruthy();
-    fireEvent.pointerCancel(hold);
+    fireEvent.pointerCancel(hold, { pointerId: 1 });
     expect(screen.queryByText(t().confirmHoldHint)).toBeNull();
   } finally {
     if (getConfirm()) act(() => settleConfirm(false));
   }
   void answer;
+});
+
+it("accepts a hold only from the primary pointer's primary button", async () => {
+  render(<ConfirmHost />);
+  const answer = danger();
+  const hold = screen.getByRole("button", { name: t().confirmHoldStart });
+  let tick: FrameRequestCallback | undefined;
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+    tick = cb;
+    return 1;
+  });
+  try {
+    fireEvent.pointerDown(hold, { button: 2, isPrimary: true, pointerId: 1 });
+    fireEvent.pointerDown(hold, { button: 1, isPrimary: true, pointerId: 1 });
+    fireEvent.pointerDown(hold, { button: 0, isPrimary: false, pointerId: 2 });
+    expect(tick).toBeUndefined();
+
+    fireEvent.pointerDown(hold, { button: 0, isPrimary: true, pointerId: 1 });
+    fireEvent.pointerCancel(hold, { pointerId: 2 });
+    expect(screen.getByText(t().confirmHoldHint)).toBeTruthy();
+    act(() => tick!(performance.now() + 700));
+    await expect(answer).resolves.toEqual({ ok: true, checked: false });
+  } finally {
+    raf.mockRestore();
+  }
+});
+
+it.each(["keyboard", "pointer"] as const)("requires a fresh %s hold after the request is replaced", async (kind) => {
+  render(<ConfirmHost />);
+  const options = { title: "Cleanup", danger: true, holdMs: 600 };
+  let first!: ReturnType<typeof requestConfirmEx>;
+  act(() => { first = requestConfirmEx(options); });
+  let tick: FrameRequestCallback | undefined;
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+    tick = cb;
+    return 1;
+  });
+  try {
+    const hold = screen.getByRole("button", { name: t().confirmHoldStart });
+    if (kind === "keyboard") fireEvent.keyDown(hold, { key: "Enter" });
+    else fireEvent.pointerDown(hold, { button: 0, isPrimary: true, pointerId: 1 });
+    const oldTick = tick!;
+    expect(oldTick).toBeDefined();
+
+    // Fire the old frame in the same event turn as the replacement, before
+    // React gets to unmount its button. It must not resolve the new request.
+    let second!: ReturnType<typeof requestConfirmEx>;
+    act(() => {
+      second = requestConfirmEx(options);
+      oldTick(performance.now() + 700);
+    });
+    await expect(first).resolves.toEqual({ ok: false, checked: false });
+    const next = screen.getByRole("button", { name: t().confirmHoldStart });
+    expect(next).not.toBe(hold);
+    tick = undefined;
+    fireEvent.keyDown(next, { key: "Enter", repeat: true });
+    fireEvent.pointerUp(next, { button: 0, isPrimary: true, pointerId: 1 });
+    expect(tick).toBeUndefined();
+
+    if (kind === "keyboard") {
+      fireEvent.keyUp(next, { key: "Enter" });
+      fireEvent.keyDown(next, { key: " " });
+    } else {
+      fireEvent.pointerDown(next, { button: 0, isPrimary: true, pointerId: 1 });
+    }
+    act(() => tick!(performance.now() + 700));
+    await expect(second).resolves.toEqual({ ok: true, checked: false });
+  } finally {
+    raf.mockRestore();
+  }
 });

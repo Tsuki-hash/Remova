@@ -114,6 +114,7 @@ export function useShellState() {
       setUpdateInfo,
       setCheckupOpen,
       setCheckupOrphanCount,
+      setCheckupOrphanCompleteness,
       setUninstallStage,
       setShowDetail,
       actions,

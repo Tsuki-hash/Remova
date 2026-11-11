@@ -43,13 +43,16 @@ export function useMoreTools(opts: {
     [selected, onGoSoftware],
   );
 
-  const toggleTool = useCallback((id: ToolId) => {
-    // Remember who opened the panel so closing can return focus there.
-    const active = document.activeElement;
+  const openFromTrigger = useCallback((
+    id: ToolId,
+    { opener = document.activeElement, toggle = false }: { opener?: Element | null; toggle?: boolean } = {},
+  ) => {
     openerRef.current =
-      active instanceof HTMLElement && active !== document.body ? active : null;
-    setOpenTool((cur) => (cur === id ? null : id));
+      opener instanceof HTMLElement && opener !== document.body ? opener : null;
+    setOpenTool((cur) => (toggle && cur === id ? null : id));
   }, []);
+
+  const toggleTool = useCallback((id: ToolId) => openFromTrigger(id, { toggle: true }), [openFromTrigger]);
 
   const toggleRescan = useCallback(() => {
     setRescanOn((v) => {
@@ -70,6 +73,7 @@ export function useMoreTools(opts: {
   return {
     openTool,
     setOpenTool,
+    openFromTrigger,
     rescanOn,
     restorePointOn,
     setRescanOn,

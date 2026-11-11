@@ -112,6 +112,7 @@ function props(over: Partial<ComponentProps<typeof SoftwarePage>> = {}) {
     checkupOrphanBusy: false,
     checkupScanStatus: null,
     checkupOrphanCount: 0,
+    checkupOrphanCompleteness: null,
     checkupOrphanScan: vi.fn(),
     onGoOrphans: vi.fn(),
     setCheckupOpen: vi.fn(),

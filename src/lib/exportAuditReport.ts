@@ -50,6 +50,7 @@ export function buildAuditJson(
   reviewRounds: number,
   reviewConverged: boolean | null,
   options: AuditExportOptions = {},
+  reviewReason?: "insufficient" | "incomplete",
 ) {
   const body = options.includeUserPaths ? report : (redactDeep(report) as FullCleanupReport);
   const base = {
@@ -62,6 +63,7 @@ export function buildAuditJson(
     summary_only: options.summaryOnly === true,
     review_rounds: reviewRounds,
     review_converged: reviewConverged,
+    review_unavailable_reason: reviewReason,
     report: body,
   };
   if (options.summaryOnly !== true) return base;
@@ -162,7 +164,7 @@ export async function downloadAudit(
     URL.revokeObjectURL(url);
     return;
   }
-  const payload = buildAuditJson(report, reviewRounds, reviewConverged, options);
+  const payload = buildAuditJson(report, reviewRounds, reviewConverged, options, reviewReason);
   const json = JSON.stringify(
     { ...payload, report_sha256: await sha256Hex(JSON.stringify(payload.report)) },
     null,

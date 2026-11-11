@@ -1,11 +1,12 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import {
-  recordReviewRound,
-  reviewConvergedFor,
-  reviewRoundsFor,
-  resetReviewRounds,
-} from "../lib/rescanRounds";
-import type { CleanupItem } from "../types";
+import { describe, expect, it } from "vitest";
+import { recordReviewRound, reviewSessionFor, reviewVerdictFor, startReportReview } from "../lib/rescanRounds";
+import type { CleanupItem, FullCleanupReport } from "../types";
+
+const report = (): FullCleanupReport => ({
+  app_name: "Demo", app_key: "fixture", dry_run: false, backup_dir: "", uninstall_ok: true,
+  uninstall_message: "", deleted: 1, failed: 0, skipped: 0, delayed: 0, aborted: false,
+  restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [],
+});
 
 const item = (path: string): CleanupItem => ({
   path, kind: "dir", score: 35, confidence: "suspected", risk: "medium",
@@ -13,80 +14,43 @@ const item = (path: string): CleanupItem => ({
 });
 
 describe("rescanRounds", () => {
-  beforeEach(resetReviewRounds);
-
-  it("cannot converge from a single recorded round", () => {
-    recordReviewRound("app-a", [item("C:\\a")], true);
-    expect(reviewRoundsFor("app-a")).toBe(1);
-    expect(reviewConvergedFor("app-a")).toBeNull();
+  it("requires two complete rounds and compares the latest pair", () => {
+    const cleanup = report();
+    startReportReview(cleanup);
+    const session = reviewSessionFor(cleanup)!;
+    recordReviewRound(session, { items: [item("old")], complete: true });
+    expect(reviewVerdictFor(session)).toEqual({ state: "insufficient_rounds", rounds: 1 });
+    recordReviewRound(session, { items: [item("new"), item("keep")], complete: true });
+    expect(reviewVerdictFor(session)).toEqual({ state: "diverged" });
+    recordReviewRound(session, { items: [item("keep"), item("new")], complete: true });
+    expect(reviewVerdictFor(session)).toEqual({ state: "converged" });
   });
 
-  it("converges when two complete rounds agree and keeps keys separate", () => {
-    recordReviewRound("app-a", [item("C:\\a"), item("C:\\b")], true);
-    recordReviewRound("app-a", [item("C:\\b"), item("C:\\a")], true);
-    expect(reviewConvergedFor("app-a")).toBe(true);
-    expect(reviewConvergedFor("app-b")).toBeNull();
+  it("distinguishes incomplete evidence and keeps only the last three attempts", () => {
+    const cleanup = report();
+    startReportReview(cleanup);
+    const session = reviewSessionFor(cleanup)!;
+    recordReviewRound(session, { items: [], complete: false });
+    for (let i = 0; i < 2; i++) recordReviewRound(session, { items: [], complete: true });
+    expect(reviewVerdictFor(session)).toEqual({ state: "incomplete_round" });
+    recordReviewRound(session, { items: [], complete: true });
+    expect(session.rounds).toHaveLength(3);
+    expect(reviewVerdictFor(session)).toEqual({ state: "converged" });
   });
 
-  it("an incomplete round blocks convergence", () => {
-    recordReviewRound("app-a", [item("C:\\a")], true);
-    recordReviewRound("app-a", [item("C:\\a")], false);
-    expect(reviewConvergedFor("app-a")).toBeNull();
+  it("a new report for the same app does not use old or late evidence", () => {
+    const previous = report();
+    startReportReview(previous);
+    const oldSession = reviewSessionFor(previous)!;
+    const current = report();
+    startReportReview(current);
+    const newSession = reviewSessionFor(current)!;
+    recordReviewRound(oldSession, { items: [], complete: true });
+    recordReviewRound(oldSession, { items: [], complete: true });
+
+    expect(previous.app_key).toBe(current.app_key);
+    expect(reviewVerdictFor(oldSession)).toEqual({ state: "converged" });
+    expect(reviewVerdictFor(newSession)).toEqual({ state: "insufficient_rounds", rounds: 0 });
+    expect(reviewVerdictFor(reviewSessionFor(report()))).toEqual({ state: "insufficient_rounds", rounds: 0 });
   });
-
-  it("keeps only the two latest rounds per app", () => {
-    recordReviewRound("app-a", [item("C:\\old")], true);
-    recordReviewRound("app-a", [item("C:\\mid")], true);
-    recordReviewRound("app-a", [item("C:\\mid")], true);
-    // Latest pair (mid, mid) agrees even though old disappeared.
-    expect(reviewConvergedFor("app-a")).toBe(true);
-  });
-});
-
-it("separates 'not enough rounds' from 'a round failed'", async () => {
-  const mod = await import("../lib/rescanRounds");
-  mod.resetReviewRounds();
-  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
-  const item = { path: "C:\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
-    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
-    user_data: false, user_library: false };
-  mod.recordReviewRound("app", [item], true);
-  mod.recordReviewRound("app", [item], false);
-  expect(mod.reviewVerdictFor("app").state).toBe("incomplete_round");
-  expect(mod.reviewConvergedFor("app")).toBeNull();
-  mod.resetReviewRounds();
-});
-
-it("a new cleanup session drops the previous convergence verdict", async () => {
-  const mod = await import("../lib/rescanRounds");
-  mod.resetReviewRounds();
-  const item = { path: "C:\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
-    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
-    user_data: false, user_library: false };
-  mod.beginReviewSession("app", "cleanup-1");
-  mod.recordReviewRound("app", [item], true);
-  mod.recordReviewRound("app", [item], true);
-  expect(mod.reviewVerdictFor("app").state).toBe("converged");
-  // A new cleanup starts over: the old two-round verdict must not survive.
-  mod.beginReviewSession("app", "cleanup-2");
-  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
-  mod.recordReviewRound("app", [item], true);
-  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
-  mod.resetReviewRounds();
-});
-
-it("startReviewSession clears the verdict a previous cleanup produced", async () => {
-  const mod = await import("../lib/rescanRounds");
-  mod.resetReviewRounds();
-  const item = { path: "C:\\\\a", kind: "dir" as const, score: 1, confidence: "confirmed" as const,
-    risk: "low" as const, reason: "r", evidence: [], shared: false, service_bound: false,
-    user_data: false, user_library: false };
-  mod.startReviewSession("app");
-  mod.recordReviewRound("app", [item], true);
-  mod.recordReviewRound("app", [item], true);
-  expect(mod.reviewVerdictFor("app").state).toBe("converged");
-  // A new cleanup run starts over even though the rounds looked converged.
-  mod.startReviewSession("app");
-  expect(mod.reviewVerdictFor("app").state).toBe("insufficient_rounds");
-  mod.resetReviewRounds();
 });

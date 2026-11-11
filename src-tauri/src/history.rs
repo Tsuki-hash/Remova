@@ -86,6 +86,11 @@ fn next_line_id(seen: &mut HashMap<String, usize>, line: &str) -> String {
     id
 }
 
+fn history_line(raw: &[u8]) -> &[u8] {
+    let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
 /// Pin the history file's ancestor chain and refuse a reparse point. Every
 /// rewrite (append, compact, delete, clear) goes through this: a local user can
 /// pre-plant a junction under the shared ProgramData tree, and an elevated
@@ -231,90 +236,72 @@ pub fn append(
 /// unreadable or corrupt file is an error, so the UI never shows "no cleanup
 /// history" for data it could not read.
 pub fn load_checked(limit: usize) -> Result<Vec<HistoryEntry>, String> {
+    let (entries, corrupt) = read_history(limit)?;
+    if corrupt > 0 {
+        return Err(format!("history read failed: {corrupt} unreadable row(s)"));
+    }
+    Ok(entries)
+}
+
+/// Lenient reader for internal callers that can work with the readable rows.
+pub fn load(limit: usize) -> Vec<HistoryEntry> {
+    read_history(limit)
+        .map(|(entries, _)| entries)
+        .unwrap_or_default()
+}
+
+fn read_history(limit: usize) -> Result<(Vec<HistoryEntry>, usize), String> {
     if limit == 0 {
-        return Ok(vec![]);
+        return Ok((vec![], 0));
     }
     let _g = lock_file();
     let p = history_path();
     let file = match fs::File::open(&p) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], 0)),
         Err(e) => return Err(format!("history read failed: {e}")),
     };
-    // Read raw bytes and split on `\n` so one torn (non-UTF-8) row is counted
-    // as unreadable instead of aborting the whole file. Only the newest
-    // `limit` rows are kept, and ids keep file-order occurrence numbering.
+    // Keep only the newest rows and count each valid ID in file order, the
+    // same way delete_by_ids does. Malformed bytes have no addressable ID.
+    let mut reader = std::io::BufReader::new(file);
     let mut raw = Vec::new();
-    std::io::Read::read_to_end(&mut std::io::BufReader::new(file), &mut raw)
-        .map_err(|e| format!("history read failed: {e}"))?;
-    let mut ring: VecDeque<(Vec<u8>, String)> = VecDeque::new();
+    let mut ring = VecDeque::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
-    for line in raw.split(|b| *b == b'\n') {
+    loop {
+        raw.clear();
+        if reader
+            .read_until(b'\n', &mut raw)
+            .map_err(|e| format!("history read failed: {e}"))?
+            == 0
+        {
+            break;
+        }
+        let line = history_line(&raw);
         if line.iter().all(|b| b.is_ascii_whitespace()) {
             continue;
         }
-        let text = String::from_utf8_lossy(line).into_owned();
-        let id = next_line_id(&mut seen, &text);
+        let row = std::str::from_utf8(line)
+            .ok()
+            .map(|text| (text.to_owned(), next_line_id(&mut seen, text)));
         if ring.len() == limit {
             ring.pop_front();
         }
-        ring.push_back((line.to_vec(), id));
+        ring.push_back(row);
     }
     let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
     let mut corrupt = 0usize;
-    for (line, id) in ring.into_iter().rev() {
-        match std::str::from_utf8(&line)
-            .map_err(|_| ())
-            .and_then(|text| serde_json::from_str::<HistoryEntry>(text).map_err(|_| ()))
-        {
-            Ok(mut e) => {
-                e.id = id;
-                out.push(e);
-            }
-            Err(()) => corrupt += 1,
+    for row in ring.into_iter().rev() {
+        let entry = row.and_then(|(line, id)| {
+            let mut entry: HistoryEntry = serde_json::from_str(&line).ok()?;
+            entry.id = id;
+            Some(entry)
+        });
+        match entry {
+            Some(entry) => out.push(entry),
+            None => corrupt += 1,
         }
     }
-    if corrupt > 0 {
-        return Err(format!("history read failed: {corrupt} unreadable row(s)"));
-    }
-    Ok(out)
-}
-
-/// Lenient reader for internal callers that can work with the readable rows.
-pub fn load(limit: usize) -> Vec<HistoryEntry> {
-    if limit == 0 {
-        return vec![];
-    }
-    let _g = lock_file();
-    let p = history_path();
-    let Ok(file) = fs::File::open(&p) else {
-        return vec![];
-    };
-    let mut raw = Vec::new();
-    if std::io::Read::read_to_end(&mut std::io::BufReader::new(file), &mut raw).is_err() {
-        return vec![];
-    }
-    let mut ring: VecDeque<(String, String)> = VecDeque::new();
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    for line in raw.split(|b| *b == b'\n') {
-        if line.iter().all(|b| b.is_ascii_whitespace()) {
-            continue;
-        }
-        let text = String::from_utf8_lossy(line).into_owned();
-        let id = next_line_id(&mut seen, &text);
-        if ring.len() == limit {
-            ring.pop_front();
-        }
-        ring.push_back((text, id));
-    }
-    let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
-    for (line, id) in ring.into_iter().rev() {
-        if let Ok(mut e) = serde_json::from_str::<HistoryEntry>(&line) {
-            e.id = id;
-            out.push(e);
-        }
-    }
-    out
+    Ok((out, corrupt))
 }
 
 /// Delete rows by runtime ids returned from [`load`] (`H{hash}-{nth}`). Ids are
@@ -334,8 +321,10 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
     let _g = lock_file();
     let p = history_path();
     let _pins = pin_history_path(&p).map_err(|e| format!("history rewrite refused: {e}"))?;
-    let Ok(file) = fs::File::open(&p) else {
-        return Ok(0);
+    let file = match fs::File::open(&p) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("history read failed: {e}")),
     };
     let (tmp, out) = crate::fsutil::create_atomic_tmp(&p).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(out);
@@ -358,31 +347,20 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         if n == 0 {
             break;
         }
-        while matches!(raw.last(), Some(b'\n') | Some(b'\r')) {
-            raw.pop();
-        }
-        if raw.iter().all(|b| b.is_ascii_whitespace()) {
+        let selected = std::str::from_utf8(history_line(&raw))
+            .ok()
+            .filter(|text| !text.bytes().all(|b| b.is_ascii_whitespace()))
+            .is_some_and(|text| drop_ids.contains(&next_line_id(&mut seen, text)));
+        if selected {
+            removed += 1;
             continue;
         }
-        match std::str::from_utf8(&raw) {
-            Ok(line) => {
-                let id = next_line_id(&mut seen, line);
-                if drop_ids.contains(&id) {
-                    removed += 1;
-                    continue;
-                }
-                if writeln!(w, "{line}").is_err() {
-                    let _ = fs::remove_file(&tmp);
-                    return Err("history rewrite failed".into());
-                }
-            }
-            Err(_) => {
-                // Opaque bytes — never selected via UI ids, so always keep.
-                if w.write_all(&raw).is_err() || w.write_all(b"\n").is_err() {
-                    let _ = fs::remove_file(&tmp);
-                    return Err("history rewrite failed".into());
-                }
-            }
+        // Keep untouched records byte-for-byte, including malformed rows and
+        // their original LF/CRLF boundaries.
+        if w.write_all(&raw).is_err() {
+            drop(w);
+            let _ = fs::remove_file(&tmp);
+            return Err("history rewrite failed".into());
         }
     }
     if w.flush().and_then(|_| w.get_ref().sync_all()).is_err() {
@@ -572,6 +550,38 @@ mod tests {
         assert!(super::load(10).is_empty());
     }
 
+    #[test]
+    fn deletes_the_selected_occurrence_in_mixed_lf_and_crlf_history() {
+        let tmp = crate::test_support::TempDir::new("history_mixed_endings");
+        let _dir = super::use_history_dir(tmp.path());
+        assert!(super::append("First", 1, 0, 0, 0, false, false, ""));
+        let path = super::history_path();
+        let sample = std::fs::read_to_string(&path).unwrap();
+        let row = sample.strip_suffix('\n').unwrap();
+        let unrelated = row.replace("First", "Other");
+        std::fs::write(&path, format!("{row}\r\n{row}\n{unrelated}")).unwrap();
+
+        let listed = super::load_checked(3).unwrap();
+        assert_eq!(listed.len(), 3);
+        assert!(listed[1].id.ends_with("-1"));
+        assert!(listed[2].id.ends_with("-0"));
+        assert_eq!(super::delete_by_ids(&[listed[2].id.clone()]).unwrap(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("{row}\n{unrelated}")
+        );
+    }
+
+    #[test]
+    fn cannot_read_history_is_an_error_but_missing_history_removes_zero() {
+        let tmp = crate::test_support::TempDir::new("history_read_error");
+        let _dir = super::use_history_dir(tmp.path());
+        let ids = vec!["H0000000000000000-0".into()];
+        assert_eq!(super::delete_by_ids(&ids).unwrap(), 0);
+        std::fs::create_dir(super::history_path()).unwrap();
+        assert!(super::delete_by_ids(&ids).is_err());
+    }
+
     #[cfg(windows)]
     #[test]
     fn rewrite_refuses_a_junction_in_the_history_path() {
@@ -632,7 +642,7 @@ mod tests {
         let mut rebuilt = lines[..=split].to_vec();
         rebuilt.extend_from_slice(b"{\"app_name\":\"");
         rebuilt.extend_from_slice(&[0xFF, 0xFE, 0x80]);
-        rebuilt.extend_from_slice(b"\"}\n");
+        rebuilt.extend_from_slice(b"\"}\r\n");
         rebuilt.extend_from_slice(&lines[split + 1..]);
         std::fs::write(&p, &rebuilt).unwrap();
 
@@ -648,6 +658,7 @@ mod tests {
         let removed = super::delete_by_ids(&[rows[1].id.clone()]).unwrap();
         assert_eq!(removed, 1);
         let out = std::fs::read(&p).unwrap();
+        assert_eq!(out, rebuilt[split + 1..]);
         assert!(
             out.windows(3).any(|w| w == [0xFF, 0xFE, 0x80]),
             "non-UTF-8 line must pass through delete rewrite"

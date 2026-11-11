@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 // More-page information architecture: five groups and a labelled search.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
 import { t } from "../i18n";
+import { requestBackupSession } from "../lib/backupSessionNavigation";
 
 vi.mock("../lib/api", () => ({
   api: {
     openPath: vi.fn().mockResolvedValue(undefined),
     rebootGateStatus: vi.fn().mockResolvedValue("clear"),
     backupSessions: vi.fn().mockResolvedValue([]),
+    history: vi.fn().mockResolvedValue([]),
     previewRestore: vi.fn(),
     restoreSessionByName: vi.fn(),
   },
@@ -108,4 +110,33 @@ it("shows an explicit empty state when nothing matches", async () => {
   fireEvent.keyDown(screen.getByLabelText(L.moreSearchTools), { key: "Escape" });
   expect(screen.queryByText(L.moreSearchEmpty)).toBeNull();
   expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
+});
+
+it.each([
+  ["history", "panelClose"],
+  ["restore", "restoreClose"],
+  ["monitorInstall", "batchDismiss"],
+] as const)("returns keyboard focus after closing the %s tool", async (title, closeLabel) => {
+  mountMore();
+  const L = t();
+  const opener = screen.getByText(L[title]).closest("button")!;
+  opener.focus();
+  fireEvent.click(opener);
+  const panel = screen.getByRole("region", { name: L.toolboxTitle });
+  expect(document.activeElement).toBe(panel);
+  const close = await within(panel).findByRole("button", { name: L[closeLabel] });
+  close.focus();
+  fireEvent.click(close);
+  expect(document.activeElement).toBe(opener);
+});
+
+it("focuses tool search after closing restore opened from another page", async () => {
+  mountMore();
+  const L = t();
+  await act(async () => { requestBackupSession("other-page-backup"); });
+  const panel = screen.getByRole("region", { name: L.toolboxTitle });
+  const close = within(panel).getByRole("button", { name: L.restoreClose });
+  close.focus();
+  fireEvent.click(close);
+  expect(document.activeElement).toBe(screen.getByLabelText(L.moreSearchTools));
 });

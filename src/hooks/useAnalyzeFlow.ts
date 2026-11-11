@@ -7,12 +7,20 @@ import { backendText } from "../lib/backendText";
 import { requestConfirm, requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
-import { appKey } from "../lib/appKey";
+import { appKey, scanMatchesApp } from "../lib/appKey";
 import { loadRescanAfterUninstall, saveRescanAfterUninstall } from "../lib/rescanPref";
-import { recordReviewRound, startReviewSession } from "../lib/rescanRounds";
+import { recordReviewRound, type ReviewSession } from "../lib/rescanRounds";
+import type { ConvergenceRound } from "../lib/residueConvergence";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
+
+export type AnalyzeOptions = {
+  fromUninstall?: boolean;
+  afterCleanup?: boolean;
+  keepReport?: boolean;
+  reviewSession?: ReviewSession;
+};
 
 /** Grouped setters for the analyze/uninstall flow (fewer flat parameters). */
 export type AnalyzeFlowSetters = {
@@ -82,7 +90,7 @@ export function useAnalyzeFlow({
   const analyze = useCallback(
     async (
       app: InstalledApp,
-      opts?: { fromUninstall?: boolean; afterCleanup?: boolean; keepReport?: boolean },
+      opts?: AnalyzeOptions,
     ) => {
  // single in-flight ref (was dual scanningRef/analyzingRef).
  // Newer analyze supersedes via seq — do not early-return here (race tests require it).
@@ -127,19 +135,15 @@ export function useAnalyzeFlow({
  // A new app's scan must not inherit the previous app's evidence bar.
       setEvidence(null);
       const t0 = performance.now();
+      let reviewRound: ConvergenceRound = { items: [], complete: false };
       try {
         const r = await runScan(app);
         if (seq !== analyzeSeqRef.current) return false;
         setScan(r, app);
-        // M4E.1: post-uninstall rescans feed the convergence evidence. A
-        // degraded scan (TEMP partial, MuiCache truncated, …) is NOT a
-        // complete round — convergence requires both rounds to be whole.
-        if (opts?.fromUninstall)
-          recordReviewRound(
-            r.app_key ?? `${app.source}\u0000${app.registry_key}\u0000${app.name}`,
-            r.items,
-            (r.degraded ?? []).length === 0,
-          );
+        reviewRound = {
+          items: r.items,
+          complete: scanMatchesApp(r, app) && (r.degraded ?? []).length === 0,
+        };
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
           void api
@@ -169,6 +173,7 @@ export function useAnalyzeFlow({
         toast.error(formatError(e, "analyze"), { channel: "analyze-flow" });
         return false;
       } finally {
+        if (opts?.reviewSession) recordReviewRound(opts.reviewSession, reviewRound);
         analyzeHoldRef.current -= 1;
         // Release only when no analyze remains and this flow actually acquired
         // busyRef. A superseded scan must not clear a newer scan's claim, and a
@@ -231,9 +236,6 @@ export function useAnalyzeFlow({
       clearStageTimer();
       saveRescanAfterUninstall(checked);
       const key = appKey(app);
-      // A cleanup run opens its own review session: rounds from an earlier
-      // cleanup of this app must not count toward this one.
-      startReviewSession(key);
       setUninstallingKey(key);
       setSelected(app);
       setResidualFromUninstall(false);
@@ -349,7 +351,6 @@ const openOfficialOnly = useCallback(
       // back to idle before the official uninstaller finishes.
       clearStageTimer();
       const key = appKey(app);
-      startReviewSession(key);
       setUninstallingKey(key);
       setSelected(app);
       busyRef.current = true;
@@ -386,13 +387,6 @@ const openOfficialOnly = useCallback(
             stageTimerRef.current = setTimeout(() => setUninstallStage("idle"), 2000);
           } else {
             setUninstallStage("idle");
-            // A failed rescan is an incomplete review round, never silence.
-            // Same key shape as the success path (backend app_key).
-            recordReviewRound(
-              `${app.source}\u0000${app.registry_key}\u0000${app.name}`,
-              [],
-              false,
-            );
           }
         }
         await refreshApps();

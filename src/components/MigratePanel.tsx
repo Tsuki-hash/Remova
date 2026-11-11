@@ -180,13 +180,18 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   };
 
   const runRollback = async () => {
+    const { ok } = await requestConfirmEx({
+      title: L.migrateRollback,
+      message: L.migrateRollbackConfirm,
+      confirmLabel: L.migrateRollback,
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const r = await api.migrateRollback(source, target);
       if (r.ok) {
         toast.success(L.migrateRollbackDone);
       } else {
-        // The same string is localized for the finish path; the rollback
-        // report deserves the same treatment.
         toast.error(L.migrateRollbackFailed, {
           detail: r.message ? backendErrorText(r.message) : undefined,
         });

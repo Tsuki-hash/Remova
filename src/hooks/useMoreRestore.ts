@@ -3,8 +3,52 @@ import { api } from "../lib/api";
 import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { t } from "../i18n";
+import { t, type Strings } from "../i18n";
 import type { BackupSession, RestorePreview } from "../lib/api";
+
+const restoreResultPrefixes = [
+  ["restored PATH entry ", "restoreDone", true],
+  ["restored ", "restoreDone", true],
+  ["imported ", "restoreDone", true],
+  ["PATH entry already present: ", "restoreAlreadyPresent", true],
+  ["PATH restore failed for ", "restorePathFailed", false],
+  ["registry import failed ", "restoreImportFailed", false],
+  ["restore failed for ", "restoreFileFailed", false],
+  ["skipped backup entry with no recorded digest: ", "restoreSkippedNoDigest", false],
+  ["skipped modified backup entry (digest mismatch): ", "restoreSkippedDigestMismatch", false],
+  ["skipped backup directory too large to verify: ", "restoreSkippedVerificationLimit", false],
+  ["skipped unrecorded backup file: ", "restoreSkippedUnrecordedFile", false],
+  ["skipped unrecorded backup directory: ", "restoreSkippedUnrecordedDirectory", false],
+  ["skipped backup directory with missing recorded file: ", "restoreSkippedIncompleteDirectory", false],
+  ["skipped missing backup entry: ", "restoreSkippedMissingEntry", false],
+  ["skipped protected restore target: ", "restoreSkippedProtectedTarget", false],
+  ["skipped unsealed restore target: ", "restoreSkippedUnsealedTarget", false],
+  ["skipped reparse backup entry: ", "restoreSkippedReparseEntry", false],
+  ["skipped restore target without parent: ", "restoreSkippedUnsafeParent", false],
+  ["skipped restore target without parent pins: ", "restoreSkippedUnsafeParent", false],
+  ["skipped redirected restore target: ", "restoreSkippedRedirectedTarget", false],
+  ["skipped reparse restore target: ", "restoreSkippedRedirectedTarget", false],
+] as const;
+
+function describeRestoreResult(message: string, L: Strings) {
+  const match = restoreResultPrefixes.find(([prefix]) => message.startsWith(prefix));
+  if (match) {
+    const [prefix, label, complete] = match;
+    return { text: `${L[label]}: ${message.slice(prefix.length)}`, complete };
+  }
+  switch (message) {
+    case "restore cancelled":
+      return { text: L.restoreFilesCancelled, complete: false };
+    case "restore cancelled before remaining PATH entries":
+      return { text: L.restorePathCancelled, complete: false };
+    case "restore cancelled before remaining registry imports":
+      return { text: L.restoreCancelled, complete: false };
+    default:
+      // Preserve diagnostics from other backend versions without counting them
+      // as confirmed writes.
+      return { text: message || L.restoreNoDetail, complete: false };
+  }
+}
 
 export function useMoreRestore(onError: (msg: string) => void) {
   const [sessions, setSessions] = useState<BackupSession[]>([]);
@@ -137,23 +181,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
       });
       if (!ok) return;
       const msgs = await api.restoreSessionByName(restorePick);
-      setRestoreMsgs(msgs.length ? msgs.map((msg) => {
-        if (msg.startsWith("restored ")) return `${L.restoreDone}: ${msg.slice(msg.startsWith("restored PATH entry ") ? 20 : 9)}`;
-        if (msg.startsWith("imported ")) return `${L.restoreDone}: ${msg.slice(9)}`;
-        if (msg.startsWith("PATH entry already present: ")) return `${L.restoreAlreadyPresent}: ${msg.slice(28)}`;
-        // a PATH entry that could not be merged back is aggregated with its
-        // real cause and the restore continues, so the cause must be shown
-        // rather than collapsing to "no detail".
-        if (msg.startsWith("PATH restore failed for ")) return `${L.restorePathFailed}: ${msg.slice(24)}`;
-        if (msg.startsWith("restore cancelled before remaining registry imports")) return L.restoreCancelled;
-        if (msg.startsWith("registry import failed ")) return `${L.restoreImportFailed}: ${msg.slice(23)}`;
-        if (msg.startsWith("skipped ")) return `${L.restoreSkipped}: ${msg.slice(msg.indexOf(": ") + 2)}`;
-        if (msg.startsWith("restore failed for ")) return `${L.restoreIncomplete}: ${msg.slice(19).split(": ")[0]}`;
-        return L.restoreNoDetail;
-      }) : [L.restoreNoDetail]);
-      const complete = msgs.length > 0 && msgs.every((msg) => msg.startsWith("restored ") || msg.startsWith("imported ") || msg.startsWith("PATH entry already present: "));
-      if (complete) toast.success(L.restoreDone);
-      else toast.info(msgs.length ? L.restoreIncomplete : L.restoreNoDetail);
+      const rows = msgs.map((msg) => describeRestoreResult(msg, L));
+      setRestoreMsgs(rows.length ? rows.map(({ text }) => text) : [L.restoreNoDetail]);
+      if (rows.length && rows.every(({ complete }) => complete)) toast.success(L.restoreDone);
+      else toast.info(rows.length ? L.restoreIncomplete : L.restoreNoDetail);
     } catch (e) {
       setRestoreMsgs([formatError(e)]);
       toast.error(formatError(e));

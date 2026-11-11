@@ -106,13 +106,15 @@ export function MorePage({
   const requestedBackup = useBackupSessionRequest();
   const handledBackup = useRef(0);
   const { loadRestore } = rest;
-  const { setOpenTool } = tools;
+  const { openFromTrigger } = tools;
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!requestedBackup || handledBackup.current === requestedBackup.id) return;
     handledBackup.current = requestedBackup.id;
-    setOpenTool("restore");
+    // A backup opened from another page has no card opener in this toolbox.
+    openFromTrigger("restore", { opener: searchRef.current });
     void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
-  }, [requestedBackup, loadRestore, setOpenTool]);
+  }, [requestedBackup, loadRestore, openFromTrigger]);
   const openTool = tools.openTool;
   const panelRef = useRef<HTMLDivElement>(null);
   const hasMonitorDiff = Boolean(monitorDiff);
@@ -138,7 +140,7 @@ export function MorePage({
       icon: "history",
       action: () => {
  // Open the panel first so the click always has visible feedback.
-        tools.setOpenTool("history");
+        openFromTrigger("history");
         void hist.loadHistory();
       },
     },
@@ -148,7 +150,7 @@ export function MorePage({
       desc: L.restoreHint,
       icon: "restore",
       action: () => {
-        tools.setOpenTool("restore");
+        openFromTrigger("restore");
         void rest.loadRestore();
       },
     },
@@ -198,7 +200,7 @@ export function MorePage({
       icon: "monitor" as const,
       action: () => {
         void onToggleMonitor();
-        tools.setOpenTool("monitor");
+        openFromTrigger("monitor");
       },
       badge: monitoring ? L.badgeRunning : undefined,
     },
@@ -508,6 +510,7 @@ export function MorePage({
               <ToolGlyph name="monitor" />
             </span>
             <input
+              ref={searchRef}
               type="text"
               aria-label={L.moreSearchTools}
               placeholder={L.moreSearchToolsHint}

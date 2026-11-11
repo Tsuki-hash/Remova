@@ -17,11 +17,13 @@ import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from 
 
 const native = vi.hoisted(() => ({
   listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(), officialUninstall: vi.fn(),
+  orphanScan: vi.fn(),
   openPath: vi.fn(), elevateRestart: vi.fn(), takePendingAnalyze: vi.fn(),
   ignorePublisher: vi.fn(), ignoreAppName: vi.fn(),
   beginInstallMonitor: vi.fn(), endInstallMonitor: vi.fn(),
   verifyLeftovers: vi.fn(), aiSummarizeReport: vi.fn(),
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
+  showRealSoftwarePage: false,
   drag: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
 }));
 const pages = vi.hoisted(() => ({
@@ -61,12 +63,17 @@ vi.mock("@tauri-apps/api/webview", () => ({
 }));
 vi.mock("../components/WindowControls", () => ({ WindowControls: () => null }));
 vi.mock("../components/ui/ConfirmHost", () => ({ ConfirmHost: () => null }));
-vi.mock("../components/SoftwarePage", () => ({
-  SoftwarePage: (props: ComponentProps<typeof SoftwarePage>) => {
-    pages.software = props;
-    return <section data-testid="software">{props.detailPanel}</section>;
-  },
-}));
+vi.mock("../components/SoftwarePage", async (importOriginal) => {
+  const { SoftwarePage: RealSoftwarePage } = await importOriginal<typeof import("../components/SoftwarePage")>();
+  return {
+    SoftwarePage: (props: ComponentProps<typeof SoftwarePage>) => {
+      pages.software = props;
+      return <section data-testid="software">
+        {native.showRealSoftwarePage ? <RealSoftwarePage {...props} /> : props.detailPanel}
+      </section>;
+    },
+  };
+});
 vi.mock("../components/MorePage", () => ({
   MorePage: (props: ComponentProps<typeof MorePage>) => {
     pages.more = props;
@@ -99,6 +106,7 @@ import { appKey } from "../lib/appKey";
 import { appForPath } from "../hooks/useAppNavAssist";
 import { toast } from "../lib/toast";
 import { saveRescanAfterUninstall } from "../lib/rescanPref";
+import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 
 const demo: InstalledApp = {
   name: "Demo", version: "1", publisher: "Acme", install_location: "C:\\Apps\\Demo",
@@ -151,6 +159,7 @@ beforeEach(() => {
   i18n.setLang("zh");
   for (const key of Object.keys(pages) as (keyof typeof pages)[]) pages[key] = undefined;
   native.drag = undefined;
+  native.showRealSoftwarePage = false;
   native.listApps.mockResolvedValue([demo, other]);
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
@@ -171,9 +180,35 @@ beforeEach(() => {
   native.verifyLeftovers.mockResolvedValue([]);
   native.aiSummarizeReport.mockResolvedValue(null);
 });
-afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("App orchestration", () => {
+  it.each(["complete", "partial", "unknown"] as const)("shows orphan completeness from IPC in software checkup (%s)", async (status) => {
+    native.showRealSoftwarePage = true;
+    const items = scan.items;
+    native.orphanScan.mockResolvedValueOnce(status === "unknown" ? items : {
+      items,
+      omitted: 0,
+      completeness: {
+        status,
+        roots_scanned: 3,
+        failed_roots: status === "partial" ? ["inventory:HKCU"] : [],
+      },
+    });
+    await mount();
+    act(() => software().setCheckupOpen(true));
+    const dialog = within(screen.getByRole("dialog", { name: i18n.t().checkupTitle }));
+    fireEvent.click(dialog.getByRole("button", { name: i18n.t().checkupRunOrphan }));
+
+    await waitFor(() => expect(software().checkupOrphanCount).toBe(1));
+    const row = dialog.getByText(i18n.t().checkupStepOrphan).parentElement;
+    expect(row?.textContent).toContain(status === "complete" ? "✓" : "○");
+    expect(row?.textContent).toContain(status === "complete" ? "1" : status === "partial" ? "1+" : "—");
+    expect(Boolean(dialog.queryByText(i18n.t().checkupOrphanFound(1)))).toBe(status === "complete");
+    if (status === "partial") expect(dialog.getByText("inventory:HKCU")).toBeTruthy();
+    if (status === "unknown") expect(dialog.getByText(i18n.t().scanCompletenessUnknown)).toBeTruthy();
+  });
+
   it("reopens the safety card on More instead of only setting hidden state", async () => {
     await mount();
     await nav("more");
@@ -451,6 +486,71 @@ describe("App orchestration", () => {
     expect(software().selectedPaths.size).toBe(0);
   });
 
+  it.each([true, false])("exports review rounds from the real report rescan button (automatic=%s)", async (automatic) => {
+    native.showRealSoftwarePage = true;
+    saveRescanAfterUninstall(automatic);
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const blobs: Blob[] = [];
+    vi.stubGlobal("crypto", { subtle: { digest: async () => new ArrayBuffer(32) } });
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:review-audit"; }
+      static revokeObjectURL() {}
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await mount();
+    await analyzeDemo();
+    act(() => software().onCleanup());
+    await waitFor(() => expect(software()).toMatchObject({ report, scanning: false, dryRunning: false }));
+    expect(native.analyze).toHaveBeenCalledTimes(automatic ? 2 : 1);
+
+    const rescan = async (count: number) => {
+      fireEvent.click(screen.getByRole("button", { name: i18n.t().reportRescanApp }));
+      await waitFor(() => {
+        expect(native.analyze).toHaveBeenCalledTimes(count);
+        expect(software().scanning).toBe(false);
+      });
+    };
+    if (!automatic) await rescan(2);
+    await rescan(3);
+
+    const readExport = async (count: number) => {
+      fireEvent.click(screen.getByRole("button", { name: i18n.t().auditExportJson }));
+      await waitFor(() => expect(blobs).toHaveLength(count));
+      const exported = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") resolve(reader.result);
+          else reject(new Error("Expected a text audit report"));
+        };
+        reader.onerror = reject;
+        reader.readAsText(blobs[count - 1]!);
+      });
+      return JSON.parse(exported);
+    };
+    expect(await readExport(1)).toMatchObject({ review_rounds: 2, review_converged: true });
+    native.analyze.mockRejectedValueOnce("rescan denied");
+    await rescan(4);
+    expect(await readExport(2)).toMatchObject({
+      review_rounds: 3,
+      review_converged: null,
+      review_unavailable_reason: "incomplete",
+    });
+    if (!automatic) {
+      const previousSession = reviewSessionFor(report);
+      act(() => software().listForceClean(demo));
+      await waitFor(() => {
+        expect(native.fullCleanup).toHaveBeenCalledTimes(2);
+        expect(reviewSessionFor(report)).not.toBe(previousSession);
+      });
+      expect(await readExport(3)).toMatchObject({
+        review_rounds: 0,
+        review_converged: null,
+        review_unavailable_reason: "insufficient",
+      });
+    }
+  });
+
   it.each(["empty", "remaining", "failed", "cancelled"] as const)("preserves cleanup results through a slow %s rescan without selecting stale targets", async (state) => {
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     await mount();
@@ -470,7 +570,10 @@ describe("App orchestration", () => {
     await waitFor(() => expect(software().scanning).toBe(false));
     expect(software().report).toEqual(report);
     expect(software().selectedPaths.size).toBe(0);
-    if (state === "failed" || state === "cancelled") expect(software().scan).toBeNull();
+    if (state === "failed" || state === "cancelled") {
+      expect(software().scan).toBeNull();
+      expect(reviewVerdictFor(reviewSessionFor(report)).state).toBe("incomplete_round");
+    }
     else expect(software().scan?.items.length).toBe(state === "empty" ? 0 : scan.items.length);
     if (state === "remaining") {
       act(() => software().setSelectedPaths(new Set([scan.items[0]!.path])));

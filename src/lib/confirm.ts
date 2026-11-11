@@ -24,8 +24,10 @@ export type ConfirmOptions = {
 export type ConfirmResult = { ok: boolean; checked: boolean };
 
 type Listener = () => void;
+type ConfirmRequest = ConfirmOptions & { id: number };
 
-let current: ConfirmOptions | null = null;
+let nextId = 0;
+let current: ConfirmRequest | null = null;
 let currentChecked = false;
 let resolver: ((r: ConfirmResult) => void) | null = null;
 const listeners = new Set<Listener>();
@@ -34,15 +36,15 @@ function emit() {
   for (const l of listeners) l();
 }
 
-function publish(opts: ConfirmOptions | null): Promise<ConfirmResult> {
+function publish(opts: ConfirmOptions): Promise<ConfirmResult> {
   if (resolver) {
     const prev = resolver;
     resolver = null;
     prev({ ok: false, checked: false });
   }
-  currentChecked = opts?.checkbox?.defaultChecked ?? false;
+  currentChecked = opts.checkbox?.defaultChecked ?? false;
   return new Promise((resolve) => {
-    current = opts;
+    current = { ...opts, id: ++nextId };
     resolver = resolve;
     emit();
   });
@@ -58,7 +60,8 @@ export function requestConfirmEx(opts: ConfirmOptions): Promise<ConfirmResult> {
   return publish(opts);
 }
 
-export function setConfirmChecked(v: boolean) {
+export function setConfirmChecked(v: boolean, requestId?: number) {
+  if (requestId !== undefined && current?.id !== requestId) return;
   currentChecked = v;
 }
 
@@ -66,7 +69,8 @@ export function getConfirmChecked(): boolean {
   return currentChecked;
 }
 
-export function settleConfirm(ok: boolean) {
+export function settleConfirm(ok: boolean, requestId?: number) {
+  if (requestId !== undefined && current?.id !== requestId) return;
   const checked = ok ? currentChecked : false;
   const r = resolver;
   current = null;
@@ -75,7 +79,7 @@ export function settleConfirm(ok: boolean) {
   r?.({ ok, checked });
 }
 
-export function getConfirm(): ConfirmOptions | null {
+export function getConfirm(): ConfirmRequest | null {
   return current;
 }
 

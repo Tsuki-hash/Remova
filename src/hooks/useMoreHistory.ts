@@ -55,11 +55,12 @@ export function useMoreHistory(onError: (msg: string) => void) {
       const sequence = ++loadSequence.current;
       setHistoryMutating(true);
       try {
-        await api.deleteHistory([id]);
+        const removed = await api.deleteHistory([id]);
         const h = await api.history();
         if (sequence !== loadSequence.current) return;
         setHistory(h);
-        toast.success(L.historyDeleted);
+        if (removed > 0) toast.success(L.historyDeleted);
+        else toast.info(L.historyDeleteNoMatch);
       } catch (e) {
         if (sequence === loadSequence.current) onError(formatError(e));
       } finally {

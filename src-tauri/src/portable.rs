@@ -41,7 +41,7 @@ fn claimed_by_install(exe_path: &str, install_roots: &[String]) -> bool {
 
 /// Scan firewall rules for live executables no install record claims.
 pub fn scan_portable_candidates() -> PortableScanResult {
-    let apps = crate::apps::scan_installed_apps();
+    let apps = crate::apps::scan_installed_inventory();
     let roots: Vec<String> = apps
         .iter()
         .map(|a| a.install_location.trim().to_string())

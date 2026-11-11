@@ -23,7 +23,10 @@ function normalizeScan<T>(raw: { items: T[]; omitted: number; completeness?: Sca
 }
 
 export function normalizeOrphanScan(raw: OrphanScanResult | CleanupItem[] | null | undefined) {
-  return normalizeScan<CleanupItem>(raw);
+  return {
+    ...normalizeScan<CleanupItem>(raw),
+    cleanupAllowed: !Array.isArray(raw) && raw?.cleanup_allowed === true,
+  };
 }
 
 export function normalizeIdleScan(raw: IdleScanResult | IdleApp[] | null | undefined) {

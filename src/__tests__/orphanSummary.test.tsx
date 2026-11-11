@@ -18,6 +18,7 @@ vi.mock("../lib/api", () => ({ api: {
     reason: "fixture", evidence: [], shared: false, user_data: false, size_kb: 0,
   }], omitted: 0,
   completeness: { status: "complete", roots_scanned: 4, failed_roots: [] },
+  cleanup_allowed: true,
 })) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); setLang("zh"); });
@@ -73,6 +74,25 @@ it("a partial scan names the roots it could not read", async () => {
   render(<OrphanPage onLastReport={vi.fn()} />);
   expect(await screen.findByText(t().scanCompletenessPartial)).toBeTruthy();
   expect(screen.getByText("C:\\ProgramData\\Locked")).toBeTruthy();
+});
+
+it("keeps candidates visible but disables cleanup when their ownership is unverified", async () => {
+  const items: CleanupItem[] = [{
+    path: "fixture-dir", kind: "dir", score: 90, confidence: "confirmed", risk: "low",
+    reason: "fixture", evidence: [],
+  }];
+  vi.mocked(api.orphanScan).mockResolvedValueOnce({
+    items,
+    omitted: 0,
+    cleanup_allowed: false,
+    completeness: { status: "partial", roots_scanned: 3, failed_roots: ["inventory:HKCU"] },
+  });
+  render(<OrphanPage onLastReport={vi.fn()} />);
+  expect(await screen.findByText(t().orphanReadOnly)).toBeTruthy();
+  const candidate = screen.getByRole<HTMLInputElement>("checkbox", { name: items[0]!.path });
+  expect(candidate.disabled).toBe(true);
+  expect(candidate.checked).toBe(false);
+  expect(screen.queryByRole("button", { name: t().cleanup })).toBeNull();
 });
 
 it("keeps orphan statistics read-only and its existing selection action working", async () => {

@@ -380,6 +380,24 @@ fn collect_report(
     report
 }
 
+fn uninstall_inventory(
+    (rows, completeness): (
+        Vec<crate::apps::InstalledApp>,
+        crate::scan_contract::ScanCompleteness,
+    ),
+) -> Collected<crate::apps::InstalledApp> {
+    // AppX packages do not supply MSI uninstall records.
+    let mut failures: Vec<_> = completeness
+        .failed_roots
+        .into_iter()
+        .filter(|root| root != crate::apps::STORE_INVENTORY_ROOT)
+        .collect();
+    if completeness.status == crate::scan_contract::ScanStatus::Cancelled {
+        failures.push("scan:cancelled".into());
+    }
+    Collected { rows, failures }
+}
+
 /// Full read-only reconciliation. Unknown views supply positive evidence only.
 pub fn scan_msi_consistency() -> MsiConsistencyReport {
     if crate::scan_task::cancelled() {
@@ -389,13 +407,7 @@ pub fn scan_msi_consistency() -> MsiConsistencyReport {
         };
     }
     let mut report = collect_report(
-        || {
-            let (rows, completeness) = crate::apps::scan_installed_inventory_with_completeness();
-            Collected {
-                rows,
-                failures: completeness.failed_roots,
-            }
-        },
+        || uninstall_inventory(crate::apps::scan_installed_inventory_with_completeness()),
         crate::regscan::snapshot_names,
         msi_db_products,
         |location| {

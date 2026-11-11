@@ -19,7 +19,7 @@ import { useSizeEstimate } from "./hooks/useSizeEstimate";
 import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
 import { useCleanupHandlers } from "./hooks/useCleanupHandlers";
-import { useAnalyzeFlow } from "./hooks/useAnalyzeFlow";
+import { useAnalyzeFlow, type AnalyzeOptions } from "./hooks/useAnalyzeFlow";
 import { ScanProgressBar } from "./components/ScanProgressBar";
 import { useAppBoot, checkUpdateNow } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
@@ -35,6 +35,7 @@ import { ErrorBanner } from "./components/StatusBanners";
 import { ShellStatus, ShellFooter } from "./components/ShellChrome";
 import { exportHtmlReport } from "./lib/exportHtmlReport";
 import { loadRescanAfterUninstall } from "./lib/rescanPref";
+import { reviewSessionFor, startReportReview } from "./lib/rescanRounds";
 import { type CloseMode } from "./lib/closeMode";
 import {
   useCallback,
@@ -94,6 +95,7 @@ export default function App() {
   } = core;
   const currentReport = useRef<CleanupReport | FullCleanupReport | null>(null);
   const coreSetReport = useCallback((value: CleanupReport | FullCleanupReport | null) => {
+    if (value && "deleted" in value && !value.dry_run) startReportReview(value);
     currentReport.current = value;
     rawSetReport(value);
   }, [rawSetReport]);
@@ -117,6 +119,7 @@ export default function App() {
     setUpdateInfo,
     checkupOpen,
     checkupOrphanCount,
+    checkupOrphanCompleteness,
     uninstallStage,
     setUninstallStage,
     showDetail,
@@ -234,7 +237,7 @@ export default function App() {
   const analyzeRef = useRef<
     (
       app: InstalledApp,
-      opts?: { fromUninstall?: boolean; afterCleanup?: boolean; keepReport?: boolean },
+      opts?: AnalyzeOptions,
     ) => Promise<boolean>
   >(() => Promise.resolve(false));
   const scanUiState = useScanUiState();
@@ -283,10 +286,14 @@ export default function App() {
   }, [coreSetApps, coreSetError]);
 
   const onAfterCleanup = useCallback(
-    (app: InstalledApp) => {
+    (app: InstalledApp, report: FullCleanupReport) => {
  // re-analyze after cleanup when user preference is on.
       if (!loadRescanAfterUninstall()) return;
-      void analyzeRef.current(app, { fromUninstall: true, afterCleanup: true });
+      void analyzeRef.current(app, {
+        fromUninstall: true,
+        afterCleanup: true,
+        reviewSession: reviewSessionFor(report),
+      });
     },
     [],
   );
@@ -605,7 +612,7 @@ export default function App() {
     [startUninstall],
   );
   const listAnalyze = useCallback(
-    (a: InstalledApp, opts?: { afterCleanup?: boolean; keepReport?: boolean }) => {
+    (a: InstalledApp, opts?: AnalyzeOptions) => {
       if (scanning) return;
       void analyze(a, opts);
     },
@@ -708,6 +715,7 @@ export default function App() {
     checkup,
     checkupOpen,
     checkupOrphanCount,
+    checkupOrphanCompleteness,
     checkupOrphanBusy,
     checkupScanStatus,
     batchIndex,

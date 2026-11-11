@@ -12,7 +12,7 @@ import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
 import { downloadAudit } from "../lib/exportAuditReport";
-import { reviewRoundsFor, reviewVerdictFor } from "../lib/rescanRounds";
+import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
@@ -56,9 +56,9 @@ export function ReportPanel({
   const [auditBusy, setAuditBusy] = useState(false);
   const exportAudit = async (format: "json" | "md", summaryOnly: boolean) => {
     if (!("deleted" in report) || report.dry_run) return;
-    const key = report.app_key ?? report.app_name;
-    const rounds = reviewRoundsFor(key);
-    const verdict = reviewVerdictFor(key);
+    const session = reviewSessionFor(report);
+    const rounds = session?.rounds.length ?? 0;
+    const verdict = reviewVerdictFor(session);
     // "Fewer than two rounds" and "a round failed" are different answers; the
     // export must say which one applies instead of one generic unknown.
     const verdictText =

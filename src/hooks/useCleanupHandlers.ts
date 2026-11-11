@@ -14,7 +14,6 @@ import {
   riskTierLabel,
 } from "../lib/decision";
 import { appKey, scanMatchesApp } from "../lib/appKey";
-import { startReviewSession } from "../lib/rescanRounds";
 import { runBatchCleanup } from "../lib/batchEngine";
 import { cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
@@ -225,9 +224,6 @@ export function useCleanupHandlers({
       busyRef.current = true;
     }
     const items = scan.items.filter((it) => selectedPaths.has(it.path));
-    // Each cleanup run owns its review rounds; an earlier cleanup of the same
-    // app must not lend its rounds to this run's convergence verdict.
-    startReviewSession(appKey(selected));
     verifySeqRef.current += 1;
     setDryRunning(true);
     let afterCleanup: { app: InstalledApp; report: FullCleanupReport } | null = null;

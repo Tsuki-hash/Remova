@@ -2,6 +2,8 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { useDialogFocus } from "../lib/useDialogFocus";
+import { LEGACY_SCAN } from "../lib/scopedScan";
+import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 
 export type CheckupStats = {
@@ -33,6 +35,12 @@ export function CheckupPanel({
   onOpenOrphans: () => void;
 }) {
   const L = t();
+  const completeness = orphanCompleteness ?? LEGACY_SCAN;
+  const orphanComplete = orphanCount !== null && completeness.status === "complete";
+  const orphanValue = orphanCount === null
+    ? orphanScanning ? "…" : "—"
+    : orphanComplete ? String(orphanCount)
+      : completeness.status === "partial" ? `${orphanCount}+` : "—";
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocus(true, dialogRef);
   useEffect(() => {
@@ -92,15 +100,8 @@ export function CheckupPanel({
             { label: L.checkupStepRecent, value: String(stats.recent), ok: true },
             {
               label: L.checkupStepOrphan,
-              value:
-                orphanCount === null
-                  ? orphanScanning
-                    ? "…"
-                    : "—"
-                  : (orphanCompleteness?.status ?? "complete") === "complete"
-                    ? String(orphanCount)
-                    : `${orphanCount}+`,
-              ok: orphanCount !== null && (orphanCompleteness?.status ?? "complete") === "complete",
+              value: orphanValue,
+              ok: orphanComplete,
             },
           ].map((row) => (
             <div
@@ -124,7 +125,8 @@ export function CheckupPanel({
           ))}
         </div>
         {scanStatus}
-        {orphanCount !== null && orphanCount > 0 && (
+        {orphanCount !== null && <ScanCompletenessNotice completeness={completeness} />}
+        {orphanComplete && orphanCount > 0 && (
           <div
             style={{
               marginTop: 10,

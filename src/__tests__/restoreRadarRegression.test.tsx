@@ -5,7 +5,7 @@ import { useMoreRestore } from "../hooks/useMoreRestore";
 import { RestorePanel } from "../components/RestorePanel";
 import { DiskRadarPanel } from "../components/DiskRadarPanel";
 import { IdleRadarPanel } from "../components/IdleRadarPanel";
-import { t, formatSize } from "../i18n";
+import { t, formatSize, setLang } from "../i18n";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 
@@ -15,7 +15,7 @@ const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.f
 vi.mock("../lib/api", () => ({ api: native }));
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), info: vi.fn(), error: vi.fn() } }));
-afterEach(cleanup);
+afterEach(() => { cleanup(); setLang("zh"); });
 beforeEach(() => {
   vi.clearAllMocks();
   native.backupSessions.mockResolvedValue([{ name: "older-backup", size_kb: 1, created_at: "", sealed: true }]);
@@ -121,7 +121,44 @@ it("names the selected backup and reports skipped or failed rows without a succe
   expect(native.restoreSessionByName).toHaveBeenCalledWith("older-backup");
   expect(toast.success).not.toHaveBeenCalled();
   expect(toast.info).toHaveBeenCalledWith(t().restoreIncomplete);
-  expect(result.current.restoreMsgs.join(" ")).not.toMatch(/skipped|restore failed|denied/);
+  expect(result.current.restoreMsgs).toEqual([
+    `${t().restoreDone}: file`,
+    `${t().restoreSkippedProtectedTarget}: protected`,
+    `${t().restoreFileFailed}: broken: denied`,
+  ]);
+});
+
+it.each(["zh", "en"] as const)("keeps backup verification and cancellation reasons in %s", async (lang) => {
+  setLang(lang);
+  const L = t();
+  const unknownReason = "skipped unreadable backup stream: C:\\backup\\future-file";
+  native.restoreSessionByName.mockResolvedValue([
+    "restored C:\\data\\first.txt",
+    "skipped modified backup entry (digest mismatch): demo/file.txt",
+    "skipped backup directory too large to verify: demo",
+    "skipped unrecorded backup file: demo/unexpected.txt",
+    "skipped backup directory with missing recorded file: demo/missing.txt",
+    "restore cancelled",
+    "restore cancelled before remaining PATH entries",
+    "restore cancelled before remaining registry imports",
+    unknownReason,
+  ]);
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  await act(async () => { await result.current.runRestore(); });
+  expect(result.current.restoreMsgs).toEqual([
+    `${L.restoreDone}: C:\\data\\first.txt`,
+    `${L.restoreSkippedDigestMismatch}: demo/file.txt`,
+    `${L.restoreSkippedVerificationLimit}: demo`,
+    `${L.restoreSkippedUnrecordedFile}: demo/unexpected.txt`,
+    `${L.restoreSkippedIncompleteDirectory}: demo/missing.txt`,
+    L.restoreFilesCancelled,
+    L.restorePathCancelled,
+    L.restoreCancelled,
+    unknownReason,
+  ]);
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(toast.info).toHaveBeenCalledWith(L.restoreIncomplete);
 });
 
 it("localizes cancelled and failed registry import rows", async () => {

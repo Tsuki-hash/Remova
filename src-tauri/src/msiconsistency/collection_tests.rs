@@ -132,6 +132,21 @@ fn collection_preserves_two_distinct_product_identities() {
 }
 
 #[test]
+fn inventory_registry_failure_cannot_prove_an_uninstall_record_is_missing() {
+    use crate::scan_contract::{ScanCompleteness, ScanStatus};
+
+    let report = collect_report(
+        || uninstall_inventory((vec![], ScanCompleteness::partial(2, vec!["HKCU".into()]))),
+        snapshot,
+        database,
+        |_| None,
+    );
+    assert_eq!(report.completeness.status, ScanStatus::Partial);
+    assert_eq!(report.products[0].class, "inconclusive");
+    assert!(!report.products[0].has_uninstall_record);
+}
+
+#[test]
 fn source_notes_match_the_shared_consumer_fixture() {
     let fixtures: serde_json::Value = serde_json::from_str(include_str!(
         "../../../src/__tests__/fixtures/msi-source-notes.json"

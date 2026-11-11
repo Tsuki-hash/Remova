@@ -1,54 +1,22 @@
-import type { CleanupItem } from "../types";
-import { residueKey, type ConvergenceRound } from "./residueConvergence";
-
-/**
- * Review-round storage for the post-uninstall rescan (M4E.1): the two latest
- * rounds per app are kept so the report panel can state whether the residue
- * review converged. Recording happens in `useAnalyzeFlow` after each
- * post-uninstall rescan (`fromUninstall`), with `complete=false` marking a
- * scan that failed or was cancelled — an incomplete round can never converge.
- */
+import type { CleanupReport, FullCleanupReport } from "../types";
+import { compareConvergence, type ConvergenceRound } from "./residueConvergence";
 
 const MAX_ROUNDS = 3;
-const roundsByApp = new Map<string, ConvergenceRound[]>();
+export type ReviewSession = { readonly rounds: ConvergenceRound[] };
+const reviewByReport = new WeakMap<FullCleanupReport, ReviewSession>();
 
-/** The cleanup session each app's rounds belong to. */
-const sessionByApp = new Map<string, string>();
-
-/**
- * Bind the app to a cleanup session. Rounds recorded under a different session
- * are dropped: a new cleanup invalidates the previous convergence verdict,
- * which otherwise kept exporting `true` for a run nobody had reviewed.
- */
-export function beginReviewSession(appKey: string, sessionId: string): void {
-  const key = appKey.trim() || "(unknown)";
-  if (sessionByApp.get(key) === sessionId) return;
-  sessionByApp.set(key, sessionId);
-  roundsByApp.delete(key);
+/** Each cleanup report owns its evidence even when a later run has the same app key. */
+export function startReportReview(report: FullCleanupReport): void {
+  reviewByReport.set(report, { rounds: [] });
 }
 
-/**
- * Open a fresh review session for one cleanup run. Every cleanup entry point
- * calls this before it starts, so rounds recorded by an earlier cleanup can
- * never combine with this one into a "converged" verdict.
- */
-export function startReviewSession(appKey: string): void {
-  beginReviewSession(appKey, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+export function reviewSessionFor(report: CleanupReport | FullCleanupReport): ReviewSession | undefined {
+  return "deleted" in report ? reviewByReport.get(report) : undefined;
 }
 
-export function recordReviewRound(
-  appKey: string,
-  items: CleanupItem[],
-  complete: boolean,
-): void {
-  const key = appKey.trim() || "(unknown)";
-  const rounds = roundsByApp.get(key) ?? [];
-  rounds.push({ items, complete });
-  roundsByApp.set(key, rounds.slice(-MAX_ROUNDS));
-}
-
-export function reviewRoundsFor(appKey: string): number {
-  return (roundsByApp.get(appKey.trim()) ?? []).length;
+export function recordReviewRound(session: ReviewSession, round: ConvergenceRound): void {
+  session.rounds.push(round);
+  if (session.rounds.length > MAX_ROUNDS) session.rounds.shift();
 }
 
 /** Why a convergence verdict is unavailable, when it is. */
@@ -63,29 +31,9 @@ export type ReviewVerdict =
  * and "a round failed or was cancelled" are different situations and must not
  * collapse into one "fewer than two rounds" message.
  */
-export function reviewVerdictFor(appKey: string): ReviewVerdict {
-  const rounds = roundsByApp.get(appKey.trim()) ?? [];
-  if (rounds.some((r) => !r.complete)) return { state: "incomplete_round" };
-  if (rounds.length < 2) return { state: "insufficient_rounds", rounds: rounds.length };
-  const [a, b] = rounds.slice(-2);
-  const ka = new Set(a!.items.map(residueKey));
-  const kb = new Set(b!.items.map(residueKey));
-  if (ka.size !== kb.size) return { state: "diverged" };
-  for (const key of ka) {
-    if (!kb.has(key)) return { state: "diverged" };
-  }
-  return { state: "converged" };
-}
-
-export function reviewConvergedFor(appKey: string): boolean | null {
-  const verdict = reviewVerdictFor(appKey);
-  if (verdict.state === "converged") return true;
-  if (verdict.state === "diverged") return false;
-  return null;
-}
-
-/** Test hook: clear every recorded round. */
-export function resetReviewRounds(): void {
-  roundsByApp.clear();
-  sessionByApp.clear();
+export function reviewVerdictFor(session: ReviewSession | undefined): ReviewVerdict {
+  const { rounds, converged, incompleteRounds } = compareConvergence(session?.rounds ?? []);
+  if (incompleteRounds) return { state: "incomplete_round" };
+  if (converged === null) return { state: "insufficient_rounds", rounds };
+  return { state: converged ? "converged" : "diverged" };
 }

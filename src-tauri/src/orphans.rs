@@ -180,6 +180,9 @@ pub struct OrphanScanResult {
     pub omitted: u32,
     #[serde(default)]
     pub completeness: crate::scan_contract::ScanCompleteness,
+    /// Read-only when an incomplete ownership inventory could hide an owner.
+    #[serde(default)]
+    pub cleanup_allowed: bool,
 }
 
 fn orphan_roots() -> Vec<std::path::PathBuf> {
@@ -319,53 +322,51 @@ fn extended_roots() -> Vec<std::path::PathBuf> {
     }
 }
 
-pub fn scan_orphans(installed: &[InstalledApp]) -> OrphanScanResult {
+pub fn scan_orphans(
+    installed: &[InstalledApp],
+    inventory: &crate::scan_contract::ScanCompleteness,
+    extended: bool,
+) -> OrphanScanResult {
     if crate::scan_task::cancelled() {
         return OrphanScanResult {
             items: Vec::new(),
             omitted: 0,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(0),
+            cleanup_allowed: false,
         };
     }
-    // load ignore rules once (was per candidate in the loop).
-    let ignore = crate::ignore::load();
-    let roots = orphan_roots();
-    scan_orphans_in_roots(installed, &ignore, roots)
-}
-
-/// Opt-in extended audit: standard roots plus every other local fixed drive's
-/// top-level directories. Still bounded — candidates are top-level dirs and
-/// the shape probe decides what becomes a row — but the scope is wider and is
-/// reported as such (`roots_scanned` covers every added drive root).
-pub fn scan_orphans_extended(installed: &[InstalledApp]) -> OrphanScanResult {
-    if crate::scan_task::cancelled() {
-        return OrphanScanResult {
-            items: Vec::new(),
-            omitted: 0,
-            completeness: crate::scan_contract::ScanCompleteness::cancelled(0),
-        };
-    }
+    // Load ignore rules once. An opt-in audit adds fixed-drive roots and home dot-directories.
     let ignore = crate::ignore::load();
     let mut roots = orphan_roots();
-    roots.extend(extended_roots());
-    let home_dotdirs: Vec<std::path::PathBuf> = roots
-        .iter()
-        .filter(|r| {
-            r.file_name()
-                .map(|n| n.to_string_lossy().starts_with('.'))
-                .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
-    scan_orphans_in_roots_with(installed, &ignore, roots, &home_dotdirs)
+    let mut home_dotdirs = Vec::new();
+    if extended {
+        roots.extend(extended_roots());
+        home_dotdirs.extend(
+            roots
+                .iter()
+                .filter(|r| {
+                    r.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                })
+                .cloned(),
+        );
+    }
+    scan_orphans_in_roots_with(installed, &ignore, roots, &home_dotdirs, inventory)
 }
 
+#[cfg(test)]
 fn scan_orphans_in_roots(
     installed: &[InstalledApp],
     ignore: &crate::ignore::IgnoreList,
     roots: Vec<std::path::PathBuf>,
 ) -> OrphanScanResult {
-    scan_orphans_in_roots_with(installed, ignore, roots, &[])
+    scan_orphans_in_roots_with(
+        installed,
+        ignore,
+        roots,
+        &[],
+        &crate::scan_contract::ScanCompleteness::complete(),
+    )
 }
 
 /// `home_dotdirs` lists roots whose candidates are shared-vendor tooling —
@@ -376,7 +377,11 @@ fn scan_orphans_in_roots_with(
     ignore: &crate::ignore::IgnoreList,
     roots: Vec<std::path::PathBuf>,
     home_dotdirs: &[std::path::PathBuf],
+    inventory: &crate::scan_contract::ScanCompleteness,
 ) -> OrphanScanResult {
+    use crate::scan_contract::ScanStatus;
+
+    let cleanup_allowed = inventory.status == ScanStatus::Complete;
     let mut out = Vec::new();
     // Normalize each installed app once instead of once per candidate.
     let match_index = build_match_index(installed);
@@ -385,7 +390,14 @@ fn scan_orphans_in_roots_with(
     // made the reported subset depend on `read_dir` order, and stopped the scan
     // early on a machine whose first root happened to be full of leftovers.
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    let mut failed_roots = Vec::new();
+    let mut failed_roots: Vec<_> = inventory
+        .failed_roots
+        .iter()
+        .map(|root| format!("inventory:{root}"))
+        .collect();
+    if !cleanup_allowed && failed_roots.is_empty() {
+        failed_roots.push("inventory".into());
+    }
     let mut roots_scanned = 0u32;
     for root in roots {
         if !crate::scan_task::checkpoint("files", candidates.len()) {
@@ -393,6 +405,7 @@ fn scan_orphans_in_roots_with(
                 items: out,
                 omitted: 0,
                 completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+                cleanup_allowed: false,
             };
         }
         let rd = match std::fs::read_dir(&root) {
@@ -411,6 +424,7 @@ fn scan_orphans_in_roots_with(
                     items: out,
                     omitted: 0,
                     completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+                    cleanup_allowed: false,
                 };
             }
             let e = match e {
@@ -489,6 +503,7 @@ fn scan_orphans_in_roots_with(
                 items: out,
                 omitted,
                 completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+                cleanup_allowed: false,
             };
         }
         // The expensive shape probe runs only for what the cap keeps.
@@ -594,6 +609,7 @@ fn scan_orphans_in_roots_with(
             items: out,
             omitted,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+            cleanup_allowed: false,
         };
     }
     // Orphan rows otherwise bypass the app analyzer's service-bound marking.
@@ -604,10 +620,13 @@ fn scan_orphans_in_roots_with(
             items: out,
             omitted,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
+            cleanup_allowed: false,
         };
     }
     crate::scanner::fill_item_buckets(&mut out, "");
-    remember_orphan_items(&out);
+    // Replace the previous allow-list too: an older complete scan cannot
+    // authorize a request after this scan encountered unreadable owners.
+    remember_orphan_items(if cleanup_allowed { &out } else { &[] });
     let completeness = if failed_roots.is_empty() {
         crate::scan_contract::ScanCompleteness {
             status: crate::scan_contract::ScanStatus::Complete,
@@ -621,6 +640,7 @@ fn scan_orphans_in_roots_with(
         items: out,
         omitted,
         completeness,
+        cleanup_allowed,
     }
 }
 
@@ -809,6 +829,7 @@ mod tests {
             &crate::ignore::IgnoreList::default(),
             vec![vendor.clone()],
             &[vendor],
+            &crate::scan_contract::ScanCompleteness::complete(),
         );
         assert_eq!(result.items.len(), 1, "must reach the production scanner");
         let item = result.items[0].clone();
@@ -835,6 +856,36 @@ mod tests {
             !was_recent_orphan_item(&item),
             "new snapshot replaces old paths"
         );
+    }
+
+    #[test]
+    fn incomplete_owner_inventory_keeps_orphans_read_only_and_retires_prior_authorization() {
+        use crate::scan_contract::{ScanCompleteness, ScanStatus};
+
+        let _guard = crate::scan_allow::test_lock();
+        let root = crate::test_support::TempDir::new("orphan_inventory");
+        let candidate = root.subdir("Candidate");
+        std::fs::write(candidate.join("app.exe"), b"fixture").unwrap();
+        let ignore = crate::ignore::IgnoreList::default();
+        let roots = vec![root.path().to_path_buf()];
+        let complete = scan_orphans_in_roots(&[], &ignore, roots.clone());
+        assert!(complete.cleanup_allowed);
+        assert_eq!(complete.items.len(), 1);
+        assert!(was_recent_orphan_item(&complete.items[0]));
+
+        let partial = scan_orphans_in_roots_with(
+            &[],
+            &ignore,
+            roots,
+            &[],
+            &ScanCompleteness::partial(3, vec!["HKCU".into()]),
+        );
+        assert!(!partial.cleanup_allowed);
+        assert_eq!(partial.completeness.status, ScanStatus::Partial);
+        assert_eq!(partial.completeness.failed_roots, ["inventory:HKCU"]);
+        assert_eq!(partial.items.len(), 1);
+        assert!(!was_recent_orphan_item(&partial.items[0]));
+        assert!(!was_recent_orphan_item(&complete.items[0]));
     }
 
     #[test]
@@ -892,8 +943,8 @@ mod tests {
     #[test]
     fn scan_orphans_runs() {
         let _guard = crate::scan_allow::test_lock();
-        let apps = crate::apps::scan_installed_inventory();
-        let items = scan_orphans(&apps).items;
+        let (apps, inventory) = crate::apps::scan_installed_inventory_with_completeness();
+        let items = scan_orphans(&apps, &inventory, false).items;
         for it in &items {
             assert_eq!(it.kind, ItemKind::Dir);
             assert!(it.path.len() > 3);

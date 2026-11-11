@@ -85,6 +85,7 @@ export type OrphanScanResult = {
   items: CleanupItem[];
   omitted: number;
   completeness: ScanCompleteness;
+  cleanup_allowed?: boolean;
 };
 export type IdleScanResult = { items: IdleApp[]; omitted: number };
 

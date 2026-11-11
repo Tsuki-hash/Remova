@@ -153,6 +153,8 @@ describe("seal failure guidance", () => {
     expect(formatError("seal:legacy_manual_restore_only")).toContain("手工导出");
     expect(formatError("seal:v2_bad_mac")).toContain("保留备份");
     expect(formatError("seal:key_lost")).toContain("勿删除或重建密钥");
+    expect(formatError("seal:file_manifest_mismatch")).toContain("无法核验备份清单");
+    expect(formatError("seal:hash_read: seal:file_manifest_too_large")).toContain("超出校验上限");
   });
 });
 

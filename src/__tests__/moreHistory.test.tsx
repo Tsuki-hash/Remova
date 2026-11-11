@@ -141,6 +141,22 @@ describe("useMoreHistory", () => {
     expect(toast.success).toHaveBeenCalledOnce();
   });
 
+  it("refreshes a zero-row deletion without reporting success", async () => {
+    const row = { id: "L1", app_name: "Demo", deleted: 1, failed: 0, skipped: 0, delayed: 0, aborted: false, dry_run: false, backup_dir: "", created_at: "1" };
+    const error = vi.fn();
+    const { result } = renderHook(() => useMoreHistory(error));
+    vi.mocked(api.history).mockResolvedValueOnce([row]);
+    await act(async () => { await result.current.loadHistory(); });
+    vi.mocked(api.deleteHistory).mockResolvedValueOnce(0);
+    vi.mocked(api.history).mockResolvedValueOnce([]);
+    await act(async () => { await result.current.deleteHistory(row.id); });
+
+    expect(result.current.history).toEqual([]);
+    expect(toast.info).toHaveBeenCalledExactlyOnceWith(t().historyDeleteNoMatch);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("downloads CSV and releases its URL and temporary anchor", async () => {
     vi.mocked(api.exportHistoryCsv).mockResolvedValueOnce("name,count\nDemo,1");
     const create = vi.fn(() => "blob:csv"), revoke = vi.fn();

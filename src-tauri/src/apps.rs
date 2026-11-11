@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -22,10 +22,8 @@ type RecentApp = (u64, Instant, InstalledApp);
 type RecentApps = HashMap<String, RecentApp>;
 static SCANNED_RECENT: OnceLock<Mutex<RecentApps>> = OnceLock::new();
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
-/// Set when any uninstall hive could not be opened. A partial inventory must
-/// not replace the trusted generation or authorize cleanup from a short list.
-static INVENTORY_INCOMPLETE: AtomicBool = AtomicBool::new(false);
 const MAX_RECENT_APPS: usize = 8192;
+pub(crate) const STORE_INVENTORY_ROOT: &str = "Store";
 /// A post-uninstall analysis normally follows within seconds. Keeping an
 /// identity for an hour covers slow sessions without pinning it forever.
 const RECENT_APP_TTL: Duration = Duration::from_secs(60 * 60);
@@ -247,7 +245,10 @@ pub mod trust_test_support {
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_PATH_NOT_FOUND,
+    ERROR_SUCCESS, WIN32_ERROR,
+};
 #[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryInfoKeyW, HKEY,
@@ -274,16 +275,20 @@ pub struct InstalledApp {
 
 /// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
 pub fn scan_installed_apps() -> Vec<InstalledApp> {
-    let mut out = scan_installed_inventory();
-    let complete = !INVENTORY_INCOMPLETE.load(Ordering::SeqCst);
+    let (mut out, completeness) = scan_installed_inventory_with_completeness();
     let ignore = crate::ignore::load();
     filter_visible_apps(&mut out, &ignore);
-    // Fail closed: one unreadable hive makes the list partial. Replacing trust
-    // with it would drop every app from that hive until a full scan succeeds.
-    if complete {
-        remember_scan(&out);
-    }
+    remember_complete_inventory(&out, &completeness);
     out
+}
+
+fn remember_complete_inventory(
+    apps: &[InstalledApp],
+    completeness: &crate::scan_contract::ScanCompleteness,
+) {
+    if completeness.status == crate::scan_contract::ScanStatus::Complete {
+        remember_scan(apps);
+    }
 }
 
 pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::ignore::IgnoreList) {
@@ -300,19 +305,9 @@ pub(crate) fn scan_installed_inventory() -> Vec<InstalledApp> {
     scan_installed_inventory_with_completeness().0
 }
 
-/// Inventory plus the completeness of *this* call. The process-wide flag used
-/// to be the only record, so one caller's partial read leaked into another
-/// request; the returned status is local and each caller decides what it can
-/// prove with the rows it received.
+/// Inventory plus the completeness of this call.
 pub(crate) fn scan_installed_inventory_with_completeness(
 ) -> (Vec<InstalledApp>, crate::scan_contract::ScanCompleteness) {
-    INVENTORY_INCOMPLETE.store(false, Ordering::SeqCst);
-    let mut out: Vec<InstalledApp> = Vec::new();
-    let mut failed_roots: Vec<String> = Vec::new();
-    let mut roots_scanned = 0u32;
-    if crate::scan_task::cancelled() {
-        return (out, crate::scan_contract::ScanCompleteness::cancelled(0));
-    }
     #[cfg(windows)]
     {
         let sources: [(&str, HKEY, &str, REG_SAM_FLAGS); 3] = [
@@ -335,40 +330,65 @@ pub(crate) fn scan_installed_inventory_with_completeness(
                 KEY_WOW64_64KEY,
             ),
         ];
-        for (alias, hive, sub, access) in sources {
-            if crate::scan_task::cancelled() {
-                return (
-                    out,
-                    crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
-                );
-            }
-            if collect_uninstall(hive, sub, access, alias, &mut out) {
-                roots_scanned += 1;
-            } else {
-                INVENTORY_INCOMPLETE.store(true, Ordering::SeqCst);
-                failed_roots.push(alias.to_string());
-            }
-        }
-        // Merge Store/MSIX packages (WinRT). Dedup after sort by name.
+        let roots = sources.map(|source| (source.0, Some(source)));
+        collect_inventory(
+            roots.into_iter().chain([(STORE_INVENTORY_ROOT, None)]),
+            |source, out| {
+                if let Some((alias, hive, sub, access)) = source {
+                    collect_uninstall(hive, sub, access, alias, out).is_ok()
+                } else {
+                    let (apps, complete) = crate::storeapps::scan_store_apps_with_completeness();
+                    out.extend(apps);
+                    complete
+                }
+            },
+        )
+    }
+    #[cfg(not(windows))]
+    (
+        Vec::new(),
+        crate::scan_contract::ScanCompleteness::complete(),
+    )
+}
+
+#[cfg(any(windows, test))]
+fn collect_inventory<T>(
+    sources: impl IntoIterator<Item = (&'static str, T)>,
+    mut collect: impl FnMut(T, &mut Vec<InstalledApp>) -> bool,
+) -> (Vec<InstalledApp>, crate::scan_contract::ScanCompleteness) {
+    use crate::scan_contract::{ScanCompleteness, ScanStatus};
+
+    let mut out = Vec::new();
+    let mut failed_roots = Vec::new();
+    let mut roots_scanned = 0;
+    for (alias, source) in sources {
         if crate::scan_task::cancelled() {
-            return (
-                out,
-                crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
-            );
+            return (out, ScanCompleteness::cancelled(roots_scanned));
         }
-        out.extend(crate::storeapps::scan_store_apps());
+        let complete = collect(source, &mut out);
+        if crate::scan_task::cancelled() {
+            return (out, ScanCompleteness::cancelled(roots_scanned));
+        }
+        if complete {
+            roots_scanned += 1;
+        } else {
+            failed_roots.push(alias.to_string());
+        }
     }
     dedup_same_products(&mut out);
-    let completeness = if failed_roots.is_empty() {
-        crate::scan_contract::ScanCompleteness {
-            status: crate::scan_contract::ScanStatus::Complete,
+    let status = match (failed_roots.is_empty(), roots_scanned) {
+        (true, _) => ScanStatus::Complete,
+        (false, 0) => ScanStatus::Failed,
+        (false, _) => ScanStatus::Partial,
+    };
+    (
+        out,
+        ScanCompleteness {
+            status,
             roots_scanned,
             failed_roots,
-        }
-    } else {
-        crate::scan_contract::ScanCompleteness::partial(roots_scanned, failed_roots)
-    };
-    (out, completeness)
+        },
+    )
 }
 
 /// Sort by lowercase name and merge same-product twins within one hive class.
@@ -499,7 +519,7 @@ fn collect_uninstall(
     access: REG_SAM_FLAGS,
     alias: &str,
     out: &mut Vec<InstalledApp>,
-) -> bool {
+) -> Result<(), WIN32_ERROR> {
     unsafe {
         let mut root = HKEY::default();
         let sub_w = to_wide(sub);
@@ -510,14 +530,18 @@ fn collect_uninstall(
             KEY_READ | access,
             &mut root,
         );
+        if matches!(st, ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND) {
+            // A root which does not exist, e.g. HKCU on a clean profile, is empty.
+            return Ok(());
+        }
         if st != ERROR_SUCCESS {
-            return false;
+            return Err(st);
         }
 
         let mut count = 0u32;
         let mut max_sub = 0u32;
         let mut max_val = 0u32;
-        let _ = RegQueryInfoKeyW(
+        let status = RegQueryInfoKeyW(
             root,
             windows::core::PWSTR::null(),
             None,
@@ -532,10 +556,12 @@ fn collect_uninstall(
             None,
         );
 
-        for i in 0..count {
-            if crate::scan_task::cancelled() {
-                break;
-            }
+        if status != ERROR_SUCCESS {
+            let _ = RegCloseKey(root);
+            return Err(status);
+        }
+
+        let result = collect_uninstall_entries(count, out, |i| {
             let mut name_buf = vec![0u16; (max_sub as usize) + 2];
             let mut name_len = name_buf.len() as u32;
             let st = RegEnumKeyExW(
@@ -549,17 +575,37 @@ fn collect_uninstall(
                 None,
             );
             if st != ERROR_SUCCESS {
-                continue;
+                return Err(st);
             }
             name_buf.truncate(name_len as usize);
             let key_name = String::from_utf16_lossy(&name_buf);
-            if let Some(app) = read_uninstall_entry(hive, sub, access, alias, &key_name, max_val) {
-                out.push(app);
+            read_uninstall_entry(hive, sub, access, alias, &key_name, max_val)
+        });
+        let _ = RegCloseKey(root);
+        result
+    }
+}
+
+#[cfg(windows)]
+fn collect_uninstall_entries(
+    count: u32,
+    out: &mut Vec<InstalledApp>,
+    mut read: impl FnMut(u32) -> Result<Option<InstalledApp>, WIN32_ERROR>,
+) -> Result<(), WIN32_ERROR> {
+    let mut first_error = None;
+    for i in 0..count {
+        if crate::scan_task::cancelled() {
+            break;
+        }
+        match read(i) {
+            Ok(Some(app)) => out.push(app),
+            Ok(None) => {}
+            Err(error) => {
+                first_error.get_or_insert(error);
             }
         }
-        let _ = RegCloseKey(root);
-        true
     }
+    first_error.map_or(Ok(()), Err)
 }
 
 #[cfg(windows)]
@@ -570,13 +616,13 @@ unsafe fn read_uninstall_entry(
     alias: &str,
     key_name: &str,
     max_val: u32,
-) -> Option<InstalledApp> {
+) -> Result<Option<InstalledApp>, WIN32_ERROR> {
     let path = format!(r"{}\{}", sub, key_name);
     let path_w = to_wide(&path);
     let mut hk = HKEY::default();
     let st = RegOpenKeyExW(hive, PCWSTR(path_w.as_ptr()), 0, KEY_READ | access, &mut hk);
     if st != ERROR_SUCCESS {
-        return None;
+        return Err(st);
     }
 
     let mut display = String::new();
@@ -629,12 +675,13 @@ unsafe fn read_uninstall_entry(
                 Some(data.as_mut_ptr()),
                 Some(&mut data_len),
             );
-            if st != ERROR_SUCCESS {
-                n += 1; // skip this value; keep enumerating the rest
-                continue;
-            }
-        } else if st != ERROR_SUCCESS {
+        }
+        if st == ERROR_NO_MORE_ITEMS {
             break;
+        }
+        if st != ERROR_SUCCESS {
+            let _ = RegCloseKey(hk);
+            return Err(st);
         }
         n += 1;
         let name = String::from_utf16_lossy(&vname[..vname_len as usize]);
@@ -660,14 +707,14 @@ unsafe fn read_uninstall_entry(
     let _ = RegCloseKey(hk);
 
     if display.trim().is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let registry_key = format!(
         r"{}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{}",
         alias, key_name
     );
-    Some(InstalledApp {
+    Ok(Some(InstalledApp {
         name: display,
         version,
         publisher,
@@ -679,7 +726,7 @@ unsafe fn read_uninstall_entry(
         estimated_size_kb: size_kb,
         install_date,
         display_icon,
-    })
+    }))
 }
 
 /// Normalize common InstallDate registry formats to `YYYY-MM-DD`.
@@ -1042,6 +1089,99 @@ mod tests {
     }
 
     #[test]
+    fn an_interleaved_inventory_cannot_publish_another_requests_partial_rows() {
+        use crate::scan_contract::ScanStatus;
+
+        let _trust = trust_test_support::guard();
+        let complete_app = sample_app("Complete inventory app", "", "complete.exe");
+        let partial_app = sample_app("Partial inventory app", "", "partial.exe");
+        let (rows, partial) = collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
+            if ok {
+                // Complete a different request while this one still owns a failed root.
+                let (complete_rows, complete) = collect_inventory([("HKCU", ())], |(), rows| {
+                    rows.push(complete_app.clone());
+                    true
+                });
+                remember_complete_inventory(&complete_rows, &complete);
+                rows.push(partial_app.clone());
+            }
+            ok
+        });
+        assert_eq!(partial.status, ScanStatus::Partial);
+        assert_eq!(partial.failed_roots, ["HKCU"]);
+        assert_eq!(rows.len(), 1);
+        remember_complete_inventory(&rows, &partial);
+
+        let current = scanned_current().lock().unwrap();
+        assert!(current.contains_key(&app_key(&complete_app)));
+        assert!(!current.contains_key(&app_key(&partial_app)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_uninstall_entry_marks_its_root_partial_without_discarding_other_rows() {
+        use crate::scan_contract::ScanStatus;
+        use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
+
+        let (rows, inventory) =
+            collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
+                if ok {
+                    return true;
+                }
+                collect_uninstall_entries(3, rows, |index| match index {
+                    0 => Ok(None), // A readable subkey with no display name.
+                    1 => Err(ERROR_ACCESS_DENIED),
+                    _ => Ok(Some(sample_app("Readable sibling", "", "sibling.exe"))),
+                })
+                .is_ok()
+            });
+        assert_eq!(inventory.status, ScanStatus::Partial);
+        assert_eq!(inventory.roots_scanned, 1);
+        assert_eq!(inventory.failed_roots, ["HKCU"]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Readable sibling");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_optional_uninstall_root_is_empty_but_a_vanished_child_is_an_error() {
+        let subkey = format!(
+            r"Software\RemovaInventoryFixture-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let mut rows = Vec::new();
+        assert_eq!(
+            collect_uninstall(
+                HKEY_CURRENT_USER,
+                &subkey,
+                KEY_WOW64_64KEY,
+                "HKCU",
+                &mut rows
+            ),
+            Ok(())
+        );
+        assert!(rows.is_empty());
+        let entry = unsafe {
+            read_uninstall_entry(
+                HKEY_CURRENT_USER,
+                &subkey,
+                KEY_WOW64_64KEY,
+                "HKCU",
+                "child",
+                64,
+            )
+        };
+        assert!(matches!(
+            entry,
+            Err(ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND)
+        ));
+    }
+
+    #[test]
     fn broken_install_requires_msi_and_a_missing_directory() {
         let guid = "{11111111-1111-1111-1111-111111111111}";
         let msi = format!(r#"MsiExec.exe /X{guid}"#);
@@ -1225,6 +1365,7 @@ mod tests {
                 256,
             )
         }
+        .expect("component registry key is readable")
         .expect("component must retain ownership without uninstall commands");
         assert_eq!(owner.install_location, r"C:\Vendor\OwnedComponent");
         assert!(owner.uninstall_string.is_empty());
@@ -1277,7 +1418,8 @@ mod tests {
                 256,
             )
         }
-        .expect("the sized entry is readable");
+        .expect("the sized entry is readable")
+        .expect("the sized entry has a display name");
         assert_eq!(entry.estimated_size_kb, 4096);
     }
 

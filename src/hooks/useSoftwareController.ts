@@ -5,6 +5,7 @@ import type {
   FullCleanupReport,
   IgnoreSuggestion,
   InstalledApp,
+  ScanCompleteness,
   ScanResult,
 } from "../types";
 import type { CategoryId, SortCol } from "../lib/categories";
@@ -35,10 +36,7 @@ export type SoftwareControllerInput = {
   selectApp: (a: InstalledApp) => void;
   toggleMulti: (key: string) => void;
   listStartUninstall: (a: InstalledApp) => void;
-  listAnalyze: (
-    a: InstalledApp,
-    opts?: { afterCleanup?: boolean; keepReport?: boolean },
-  ) => void;
+  listAnalyze: SoftwarePageProps["listAnalyze"];
   listForceClean: (a: InstalledApp) => void;
   listIgnoreApp: (a: InstalledApp) => void;
   listIgnorePublisher: (a: InstalledApp) => void;
@@ -74,6 +72,7 @@ export type SoftwareControllerInput = {
   checkup: { total: number; large: number; recent: number };
   checkupOpen: boolean;
   checkupOrphanCount: number | null;
+  checkupOrphanCompleteness: ScanCompleteness | null;
   checkupOrphanBusy: boolean;
   checkupScanStatus?: ReactNode;
   batchIndex: number;
@@ -215,6 +214,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         checkupOpen: input.checkupOpen,
         setCheckupOpen: shell.setCheckupOpen,
         checkupOrphanCount: input.checkupOrphanCount,
+        checkupOrphanCompleteness: input.checkupOrphanCompleteness,
         checkupOrphanBusy: input.checkupOrphanBusy,
         checkupScanStatus: input.checkupScanStatus,
         checkupOrphanScan: input.checkupOrphanScan,
@@ -310,6 +310,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.checkup,
       input.checkupOpen,
       input.checkupOrphanCount,
+      input.checkupOrphanCompleteness,
       input.checkupOrphanBusy,
       input.checkupScanStatus,
       input.batchIndex,

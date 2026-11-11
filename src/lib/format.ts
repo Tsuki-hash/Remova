@@ -94,6 +94,8 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   if (raw.includes("seal:")) {
     if (raw.includes("requires_admin")) return L.errSealAdmin;
     if (raw.includes("seal:legacy_manual_restore_only")) return L.errSealLegacy;
+    if (raw.includes("seal:file_manifest_too_large")) return L.errSealManifestTooLarge;
+    if (raw.includes("seal:file_manifest_")) return L.errSealManifestInvalid;
     return L.errSealInvalid;
   }
   const elev = raw.match(/^elevate:(denied|cancelled|not_found|failed):(\d+)/);

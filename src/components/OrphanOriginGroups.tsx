@@ -24,7 +24,7 @@ export function OrphanOriginGroups({
 }: {
   groups: OriginGroup[];
   selectedPaths: Set<string>;
-  onToggle: (path: string) => void;
+  onToggle?: (path: string) => void;
   onToggleMany?: (paths: string[], select: boolean) => void;
 }) {
   const L = t();
@@ -79,14 +79,15 @@ export function OrphanOriginGroups({
                         alignItems: "flex-start",
                         flex: 1,
                         minWidth: 0,
-                        cursor: "pointer",
+                        cursor: onToggle ? "pointer" : undefined,
                         color: "var(--muted)",
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={selectedPaths.has(it.path)}
-                        onChange={() => onToggle(it.path)}
+                        disabled={!onToggle}
+                        onChange={() => onToggle?.(it.path)}
                         aria-label={it.path}
                         style={{ marginTop: 2, accentColor: "var(--accent)" }}
                       />

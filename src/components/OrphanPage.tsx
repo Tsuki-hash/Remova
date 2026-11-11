@@ -44,6 +44,7 @@ export function OrphanPage({
   const [items, setItems] = useState<CleanupItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cleanupAllowed, setCleanupAllowed] = useState(false);
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const [omitted, setOmitted] = useState(0);
   const [completeness, setCompleteness] = useState<import("../types").ScanCompleteness>({
@@ -76,6 +77,7 @@ export function OrphanPage({
     setBusy(true);
     setItems(null);
     setSelected(new Set());
+    setCleanupAllowed(false);
     setLastScanCount(null);
     setOmitted(0);
     setCompleteness({ status: "unknown", roots_scanned: 0, failed_roots: ["not_scanned"] });
@@ -86,8 +88,10 @@ export function OrphanPage({
         (id: number) => api.orphanScan(id, extended),
         (r) => normalizeOrphanScan(r).items.length,
       );
-      const { items: list, omitted: leftOut, completeness } = normalizeOrphanScan(raw);
+      if (!isCurrentScanRound(round)) return;
+      const { items: list, omitted: leftOut, completeness, cleanupAllowed } = normalizeOrphanScan(raw);
       setCompleteness(completeness);
+      setCleanupAllowed(cleanupAllowed);
       // Convergence rounds: only complete scans feed the comparator; an
       // incomplete scan cannot prove the next sweep would not surface more.
       const complete = completeness.status === "complete";
@@ -97,20 +101,19 @@ export function OrphanPage({
       setConverged(conv.converged);
       setOmitted(leftOut);
       setItems(list);
-      setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
-      const s = summarizeLeftovers(list);
+      if (cleanupAllowed) setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
       setLastScanCount(list.length);
-      // "Nothing found" is only a fact when the scan itself was complete; a
-      // partial/cancelled/failed scan gets its own notice, not a clean verdict.
-      if (!quiet && list.length === 0 && completeness.status === "complete") {
-        toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
-      } else if (!quiet && list.length === 0) {
-        toast.info(L.scanCompletenessPartial, { channel: ORPHAN_CHANNEL });
-      } else if (!quiet)
-        toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
-          channel: ORPHAN_CHANNEL,
-          ttl: 3000,
-        });
+      if (!quiet && complete) {
+        if (list.length === 0) {
+          toast.info(L.orphanScanEmpty, { channel: ORPHAN_CHANNEL });
+        } else {
+          const s = summarizeLeftovers(list);
+          toast.success(L.orphanScanDone(s.total, s.suggest, s.keep), {
+            channel: ORPHAN_CHANNEL,
+            ttl: 3000,
+          });
+        }
+      }
     } catch (e) {
       if (!isCurrentScanRound(round)) return;
       if (scanCancelled(e)) {
@@ -138,7 +141,7 @@ export function OrphanPage({
   }, []);
 
   const cleanSelected = async () => {
-    if (!items || selected.size === 0 || busy) return;
+    if (!cleanupAllowed || !items || selected.size === 0 || busy) return;
     const picked = items.filter((it) => selected.has(it.path));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
@@ -194,7 +197,7 @@ export function OrphanPage({
   };
 
   const selectAll = () => {
-    if (!items || busy) return;
+    if (!cleanupAllowed || !items || busy) return;
     const paths = items.filter((it) => bucketItem(it) !== "keep").map((it) => it.path);
     setSelected((prev) => {
       const n = new Set(prev);
@@ -239,6 +242,9 @@ export function OrphanPage({
         </div>
         <ScanProgressBar progress={progress} onCancel={cancel} />
         <ScanCompletenessNotice completeness={completeness} />
+        {items && !cleanupAllowed && (
+          <div style={css.muted} role="note">{L.orphanReadOnly}</div>
+        )}
         {convergenceRounds >= 2 && converged === true && (
           <div style={{ ...css.muted, fontSize: 12 }} role="status">
             {L.orphanConverged}
@@ -262,7 +268,7 @@ export function OrphanPage({
           style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
         >
           <LeftoverSummaryBar summary={summary} scanning={busy} />
-          {items.length > 0 && (
+          {items.length > 0 && cleanupAllowed && (
             <div
               style={{
                 display: "flex",
@@ -314,15 +320,15 @@ export function OrphanPage({
               <OrphanOriginGroups
                 groups={groups}
                 selectedPaths={selected}
-                onToggle={(path) =>
+                onToggle={cleanupAllowed ? (path) =>
                   setSelected((s) => {
                     const n = new Set(s);
                     if (n.has(path)) n.delete(path);
                     else n.add(path);
                     return n;
-                  })
+                  }) : undefined
                 }
-                onToggleMany={toggleMany}
+                onToggleMany={cleanupAllowed ? toggleMany : undefined}
               />
             )}
           </div>

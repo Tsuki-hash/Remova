@@ -11,6 +11,8 @@ import type { CategoryId, SortCol } from "../lib/categories";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import { findReportApp, scanMatchesApp } from "../lib/appKey";
 import { shouldRescanAfterUninstall } from "../lib/cleanupFeedback";
+import { reviewSessionFor } from "../lib/rescanRounds";
+import type { AnalyzeOptions } from "../hooks/useAnalyzeFlow";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
 import type { VerifyRow } from "../lib/api";
@@ -87,7 +89,7 @@ export type SoftwarePageProps = {
   listStartUninstall: (a: InstalledApp) => void;
   listAnalyze: (
     a: InstalledApp,
-    opts?: { afterCleanup?: boolean; keepReport?: boolean },
+    opts?: AnalyzeOptions,
   ) => void;
   listForceClean: (a: InstalledApp) => void;
   listIgnoreApp: (a: InstalledApp) => void;
@@ -147,7 +149,7 @@ export type SoftwarePageProps = {
   checkupOpen: boolean;
   setCheckupOpen: (v: boolean) => void;
   checkupOrphanCount: number | null;
-  checkupOrphanCompleteness?: import("../types").ScanCompleteness | null;
+  checkupOrphanCompleteness: import("../types").ScanCompleteness | null;
   checkupOrphanBusy: boolean;
   checkupScanStatus?: ReactNode;
   checkupOrphanScan: () => void;
@@ -292,11 +294,11 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           residualScan={{ scanning: p.scanning, count: p.residualFromUninstall ? p.scan?.items.length : undefined }}
           onRescan={
             reportApp
-              ? () =>
-                  p.listAnalyze(
-                    reportApp,
-                    rescanAfterUninstall ? { afterCleanup: true } : { keepReport: true },
-                  )
+              ? () => p.listAnalyze(reportApp, {
+                  afterCleanup: rescanAfterUninstall,
+                  keepReport: true,
+                  reviewSession: reviewSessionFor(report),
+                })
               : undefined
           }
           rescanBusy={p.scanning}

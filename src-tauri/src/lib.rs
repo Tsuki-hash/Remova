@@ -931,12 +931,8 @@ async fn scan_orphan_leftovers(
     tauri::async_runtime::spawn_blocking(move || {
         scan_task::run_scoped(id, "orphan", || {
             scan_task::checkpoint("registry", 0);
-            let installed = apps::scan_installed_inventory();
-            if extended {
-                orphans::scan_orphans_extended(&installed)
-            } else {
-                orphans::scan_orphans(&installed)
-            }
+            let (installed, inventory) = apps::scan_installed_inventory_with_completeness();
+            orphans::scan_orphans(&installed, &inventory, extended)
         })
     })
     .await

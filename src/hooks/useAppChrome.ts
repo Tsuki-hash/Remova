@@ -262,7 +262,7 @@ export function useAppChrome({
         checkupBusyRef.current = false;
       }
     })();
-  }, [setCheckupOrphanCount, checkupRunReadOnly]);
+  }, [setCheckupOrphanCount, setCheckupOrphanCompleteness, checkupRunReadOnly]);
 
   return {
     checkupOrphanBusy,

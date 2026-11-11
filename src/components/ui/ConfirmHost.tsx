@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from "react";
 import { t } from "../../i18n";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import {
@@ -8,6 +8,8 @@ import {
   settleConfirm,
   subscribeConfirm,
 } from "../../lib/confirm";
+
+type HoldInput = { pointerId: number } | { key: string };
 
 function HoldButton({
   label,
@@ -23,46 +25,58 @@ function HoldButton({
   onDone: () => void;
 }) {
   const [progress, setProgress] = useState(0);
-  const [holding, setHolding] = useState(false);
+  const [hold, setHold] = useState<HoldInput | null>(null);
+  const activeHold = useRef<HoldInput | null>(null);
   /** Set when a keyboard hold was released before the bar filled. */
   const [keyAborted, setKeyAborted] = useState(false);
-  /** True while a keyboard-initiated hold is still outstanding. */
-  const keyHeld = useRef(false);
+
+  function startHold(input: HoldInput) {
+    if (activeHold.current) return;
+    activeHold.current = input;
+    setKeyAborted(false);
+    setHold(input);
+  }
+
+  const cancelHold = useCallback(() => {
+    activeHold.current = null;
+    setHold(null);
+    setProgress(0);
+  }, []);
+
+  function endPointerHold(event: PointerEvent<HTMLButtonElement>) {
+    const input = activeHold.current;
+    if (input && "pointerId" in input && input.pointerId === event.pointerId) cancelHold();
+  }
 
   useEffect(() => {
-    if (!holding) return;
+    if (!hold) return;
     const start = performance.now();
     let raf = 0;
-    const cancelHold = () => {
-      keyHeld.current = false;
-      setHolding(false);
-      setProgress(0);
-      cancelAnimationFrame(raf);
-    };
+    let current = true;
     const onVis = () => {
       if (document.visibilityState !== "visible") cancelHold();
     };
     window.addEventListener("blur", cancelHold);
     document.addEventListener("visibilitychange", onVis);
     const tick = (now: number) => {
+      if (!current || activeHold.current !== hold) return;
       const p = Math.min(1, (now - start) / holdMs);
-      setProgress(p);
       if (p >= 1) {
-        keyHeld.current = false;
-        setHolding(false);
-        setProgress(0);
+        cancelHold();
         onDone();
         return;
       }
+      setProgress(p);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => {
+      current = false;
       window.removeEventListener("blur", cancelHold);
       document.removeEventListener("visibilitychange", onVis);
       cancelAnimationFrame(raf);
     };
-  }, [holding, holdMs, onDone]);
+  }, [hold, holdMs, onDone, cancelHold]);
 
   const base: CSSProperties = {
     height: 36,
@@ -98,32 +112,35 @@ function HoldButton({
       style={base}
       disabled={disabled}
       aria-keyshortcuts="Enter Space"
-      onPointerDown={() => {
-        if (holdMs > 0 && !disabled) { keyHeld.current = false; setHolding(true); }
+      onPointerDown={(e) => {
+        if (holdMs > 0 && !disabled && e.isPrimary && e.button === 0) {
+          startHold({ pointerId: e.pointerId });
+        }
       }}
-      onPointerUp={() => setHolding(false)}
-      onPointerLeave={() => setHolding(false)}
+      onPointerUp={endPointerHold}
+      onPointerMove={(e) => {
+        if ((e.buttons & 1) === 0) endPointerHold(e);
+      }}
+      onPointerLeave={endPointerHold}
       // A cancelled pointer or a focus change means the user is no longer
       // deliberately holding this button; finishing the countdown anyway would
       // turn "press and hold" into "press once, walk away".
-      onPointerCancel={() => { keyHeld.current = false; setHolding(false); }}
-      onLostPointerCapture={() => { keyHeld.current = false; setHolding(false); }}
-      onBlur={() => { keyHeld.current = false; setHolding(false); }}
+      onPointerCancel={endPointerHold}
+      onLostPointerCapture={endPointerHold}
+      onBlur={cancelHold}
       onKeyDown={(e) => {
         if (holdMs > 0 && !disabled && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
-          keyHeld.current = true;
-          setKeyAborted(false);
-          if (!holding) setHolding(true);
+          if (!e.repeat) startHold({ key: e.key });
         }
       }}
       onKeyUp={(e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
+        const input = activeHold.current;
+        if (!input || !("key" in input) || input.key !== e.key) return;
         // Releasing before the bar fills is a real, reportable outcome — never a
         // silent no-op the user has to guess at.
-        if (keyHeld.current) setKeyAborted(true);
-        keyHeld.current = false;
-        setHolding(false);
+        setKeyAborted(true);
+        cancelHold();
       }}
       onClick={() => {
         if (holdMs <= 0 && !disabled) onDone();
@@ -143,7 +160,7 @@ function HoldButton({
         />
       )}
       <span style={{ position: "relative" }}>
-        {holdMs > 0 && holding
+        {holdMs > 0 && hold
           ? t().confirmHoldHint
           : holdMs > 0
             ? t().confirmHoldStart
@@ -160,13 +177,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
   useDialogFocus(true, dialogRef);
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
   const [checked, setChecked] = useState(getConfirmChecked());
- // Re-seed when a new dialog replaces a pending one without unmount.
-  useEffect(() => {
-    setChecked(getConfirmChecked());
-  }, [opts]);
-  useEffect(() => {
-    setConfirmChecked(checked);
-  }, [checked]);
+  const confirm = useCallback(() => settleConfirm(true, opts.id), [opts.id]);
   return (
     <div
       role="dialog"
@@ -218,7 +229,10 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
           <input
             type="checkbox"
             checked={checked}
-            onChange={(e) => setChecked(e.target.checked)}
+            onChange={(e) => {
+              setChecked(e.target.checked);
+              setConfirmChecked(e.target.checked, opts.id);
+            }}
             style={{ marginTop: 2, accentColor: "var(--accent)" }}
           />
           <span style={{ lineHeight: 1.45 }}>{opts.checkbox.label}</span>
@@ -248,7 +262,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
             fontSize: 13,
             cursor: "pointer",
           }}
-          onClick={() => settleConfirm(false)}
+          onClick={() => settleConfirm(false, opts.id)}
         >
           {opts.cancelLabel || L.cancel}
         </button>
@@ -256,7 +270,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
           label={opts.confirmLabel || L.confirmOk}
           holdMs={holdMs}
           danger={opts.danger}
-          onDone={() => settleConfirm(true)}
+          onDone={confirm}
         />
       </div>
     </div>
@@ -270,7 +284,7 @@ export function ConfirmHost() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        settleConfirm(false);
+        settleConfirm(false, opts.id);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -292,10 +306,10 @@ export function ConfirmHost() {
         backdropFilter: "blur(2px)",
       }}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) settleConfirm(false);
+        if (e.target === e.currentTarget) settleConfirm(false, opts.id);
       }}
     >
-      <ConfirmBody opts={opts} />
+      <ConfirmBody key={opts.id} opts={opts} />
     </div>
   );
 }
