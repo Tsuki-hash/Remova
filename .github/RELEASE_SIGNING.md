@@ -1,16 +1,14 @@
 # Release signing
 
-Updater signing is optional but explicit. The 1.4.0 release is published
-unsigned/manual by maintainer decision (see `RELEASE-STATUS.md`); the workflow sets
-`ALLOW_UNSIGNED_RELEASE=true` only for the exact `v1.4.0` tag so an intentional unsigned
-release is distinguishable from a missing-key misconfiguration. Later releases need
-an explicit `ALLOW_UNSIGNED_RELEASE=true` repository variable; the bypass is not
-inherited. When updater keys are configured, every stable
-release must carry Tauri updater signatures. Windows Authenticode signing through
-SignPath is optional and disabled by default. These signatures serve different
-purposes: the updater signature authenticates the downloaded update; Authenticode
-identifies the Windows publisher. Without Authenticode, Windows may show unknown-publisher
-or SmartScreen warnings even though the updater verifies the download.
+The repository configures application updates and Windows Authenticode independently.
+
+| Release mode | Repository settings |
+|---|---|
+| Manual download, unsigned Windows installers | `ALLOW_UNSIGNED_RELEASE=true`, updater signing settings absent, and SignPath disabled. |
+| Manual download, Authenticode-signed Windows installers | `ALLOW_UNSIGNED_RELEASE=true`, updater signing settings absent, and SignPath enabled and configured. |
+| Signed application updates | `UPDATER_ENABLED=true` and all three updater signing settings. SignPath is optional. |
+
+The legacy `v1.4.0` tag supplies its own manual-download allowance. Later tags use the repository policy above. Authenticode identifies the Windows publisher. An updater signature authenticates an update downloaded by Remova. With no Authenticode signature, Windows can show publisher or SmartScreen warnings.
 
 ## Required updater settings
 
@@ -18,6 +16,7 @@ In GitHub repository **Settings → Secrets and variables → Actions**, configu
 
 | Kind | Name | Value |
 | --- | --- | --- |
+| Variable | `UPDATER_ENABLED` | `true` after the update dependencies and release policy are reviewed |
 | Variable | `TAURI_UPDATER_PUBLIC_KEY` | Entire contents of `updater.key.pub` |
 | Secret | `TAURI_SIGNING_PRIVATE_KEY` | Entire contents of the matching `updater.key` |
 | Secret | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Non-empty password for the encrypted key |
@@ -63,8 +62,23 @@ unsigned Windows binaries after SignPath has been enabled.
 6. Generate Tauri signatures for the final installers and verify them against the
    same public key embedded in the application. Generate `latest.json` only after
    both installers pass verification.
-7. Complete smoke checks and portable packaging. Upload artifacts into a draft
-   GitHub Release, then publish it once the upload succeeds.
+7. Complete smoke checks and portable packaging. The tag workflow uploads the packages, checksums, SBOM and any updater assets to a draft GitHub Release.
+8. Download the draft attachments into one folder and run the [isolated acceptance suite](../scripts/acceptance/README.md) on them. Keep the four summaries with their evidence files. Review the package hashes, SBOM, applicable license notices, publication mode and [recovery guide](../RECOVERY.md).
+9. Produce the approval input using the approved tag, the exact commit and the four acceptance summaries:
+
+   ```powershell
+   $summaries = @(
+       'D:/acceptance/win10-client/acceptance-summary.json'
+       'D:/acceptance/win10-elevated/acceptance-summary.json'
+       'D:/acceptance/win11-client/acceptance-summary.json'
+       'D:/acceptance/win11-elevated/acceptance-summary.json'
+   )
+   $approval = & ./scripts/release-approval.ps1 -Tag v1.4.1 -Commit $commit `
+       -BundleDir 'D:/candidate' -Acceptance $summaries -Reviewed
+   gh workflow run publish-release.yml --ref main -f tag=v1.4.1 -f "approval=$approval"
+   ```
+
+   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the tag, actual attachment bytes and approval against the draft before publishing. Approval input contains only digests, the tag and commit. Keep observations and screenshots with the private acceptance records.
 
 The NSIS update manifest uses the custom target `windows-x86_64-nsis`.
 MSI and portable users retain manual updates. Existing releases cannot be overwritten.

@@ -78,7 +78,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 - **磁盘雷达**：只读查看哪些目录占空间；总览为各根合计置顶、子目录按体积排序（系统盘最多 24 行、其他盘与下钻最多 12 行），未能测完的目录标注 `≥` 下限和已检查条目数，下钻列表标注「还有 N 项未显示」，系统盘总览注明仅统计五个已知根  
 - **C 盘空间体检**：概览（卷容量、目录链接与死链）、清理与迁移（处置清单，可清理项置顶并可勾选清理，迁移候选交给目录迁移）、组件存储（WinSxS DISM 只读分析）
 - **可再生缓存清理**：仅限固定布局（更新下载缓存、临时目录、崩溃转储等），确认时明示不创建备份；只删内容、目录保留，被占用文件如实跳过  
-- **目录迁移（junction）**：把目录整体迁往其他盘——计划 → 复制（逐文件校验）→ 切换（失败自动回滚）→ 收尾（确认后删备份）；随时可一键回滚  
+- **目录迁移（junction）**：从空目标开始复制，切换前逐文件核对，已有目标文件会保留。切换后可在目标与备份一致时回滚。收尾只删除已验证有一致副本的备份，删除后无法回滚。
 - **全局 CLI 包**：npm / pnpm / yarn 全局包只读清单；npm 包可在确认后删除（先整包导出到安全备份）  
 - **系统痕迹与便携应用**：ConsentStore 孤儿授权与便携应用候选的只读报告（不过安全评估的类别一律不落地）  
 - 历史时间线、CSV 导出、安装监控  
@@ -90,9 +90,9 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 前往 **[Releases](https://github.com/Tsuki-hash/Remova/releases)** 下载最新版本：
 
-> 应用内更新未启用（未配置 updater 公钥）；升级一律以 Release 页面手动下载为准。若 Release 未提供 Authenticode 签名，请用同页 `SHA256SUMS.txt` 校验安装包。配置更新公钥后，Release 会额外提供 `latest.json` 与 `.sig`（应用内更新器清单及其签名文件）；未配置时不会生成，MSI 安装也不接入自动更新，以手动下载为准。
+> 当前使用手动下载更新，请核对 Release 同页的 `SHA256SUMS.txt`。每次发布附带 `SBOM.cdx.json`，列出 Windows x64 的 Rust 正常依赖图和 npm 生产依赖。
 >
-> 发布模式：未配置 updater 密钥时，Release 走「未签名 / 手动更新」模式，只发布 NSIS / MSI / 便携包与 `SHA256SUMS.txt`，不生成 `latest.json` 与 `.sig`；三项密钥齐全时才生成并校验更新签名资产。每次发布都附带 `SBOM.cdx.json`（CycloneDX 1.5 软件物料清单，覆盖二进制的 Rust 依赖与随包的 npm 生产依赖），可用于核对发布成分。
+> Authenticode 标识 Windows 发布者，由 SignPath 单独配置。应用内更新须显式启用并提供三项更新器签名配置，才生成 `latest.json` 与 `.sig`。MSI 和便携版使用手动下载。发布配置见 [签名与发布说明](.github/RELEASE_SIGNING.md)。
 
 | 安装包 | 说明 |
 |---|---|
@@ -115,7 +115,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | 工具 | 版本 |
 |---|---|
 | Rust | ≥ 1.95 |
-| Node.js | 22 |
+| Node.js | 22.22.2+（22 系列）、24.15.0+（24 系列）或 26+ |
 | Windows | 10 / 11 |
 
 ### 命令

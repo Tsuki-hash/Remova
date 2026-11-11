@@ -2,9 +2,9 @@
 
 ## 1.4.1 (in development)
 
-- **Status**: code complete — the 1.4.1 cycle ships theme follow-system, a first-run safety card, scan elapsed time, a regrouped toolbox with a labelled search and no recent-tools section, a three-tab C: drive overview (junction ledger, pinned action list, regenerable-cache cleanup and gated directory-migration hand-off, DISM analysis), an npm/pnpm/yarn global-package inventory with an npm removal gate, read-only system-trace and portable-app reports, unified primary/destructive action buttons, and a GitHub-API rate-limit fallback for update checks. Version is frozen at 1.4.1 (maintainer decision). Real-machine acceptance is the remaining gate before tagging; signing must be decided before any tag is pushed.
+- **Status**: 1.4.1 is in development. The version remains 1.4.1. Configure the release mode before creating the candidate draft. Final acceptance and approval are required before publishing.
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
-- **Signing**: the unsigned-release exception was scoped to the exact `v1.4.0` tag. Any later release needs either the `ALLOW_UNSIGNED_RELEASE=true` repository variable or configured signing (SignPath variables are reserved in the workflow). This decision must be made before tagging.
+- **Signing and publication**: manual-download releases after 1.4.0 require `ALLOW_UNSIGNED_RELEASE=true`, including when Authenticode is enabled. A tag run produces a draft. Maintainers publish separately after reviewing the exact draft attachments, isolation matrix and SBOM. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
 - **Updater**: in-app updates stay disabled. The upstream `tauri-plugin-updater` still depends on a `zip` version with open advisories, so update assets are not produced; upgrades remain manual downloads verified via `SHA256SUMS.txt`.
 - **SBOM**: every release attaches a CycloneDX SBOM (Cargo + production npm dependencies) alongside the installers, continuing the practice introduced in 1.4.0.
 

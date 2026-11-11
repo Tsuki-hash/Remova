@@ -73,7 +73,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 - **Disk radar**: a read-only view of what takes the space; the overview pins each root's total ahead of size-ranked children (24 rows on the system drive, 12 elsewhere and when drilling down), unfinished directories show a `>=` floor with the entries checked, drill-down lists note “N more not shown”, and the system-drive overview states it covers the five known roots only  
 - **C: drive space checkup**: overview (volume shape and junction ledger with dead links), cleanup & migration (action list with cleanable rows pinned and selectable, migration candidates handed off), and component store (read-only WinSxS DISM analysis)
 - **Regenerable cache cleanup**: fixed layouts only (update downloads, temp dirs, crash dumps…), no backup by design; contents removed, directories kept, locked files reported honestly  
-- **Directory migration (junction)**: move a folder to another drive — plan → copy (per-file diff) → cutover (auto-rollback) → finish (confirm to drop the backup); rollback available at every step  
+- **Directory migration (junction)**: start with an empty destination, verify each file, then switch the original path to the destination. Rollback is available while the target and backup match. Finishing removes the verified backup and ends rollback.
 - **Global CLI packages**: read-only npm / pnpm / yarn inventory; npm packages can be removed after confirmation (exported to the safety backup first)  
 - **System traces & portable apps**: read-only report of orphaned ConsentStore entries and portable-app candidates (anything that did not pass the safety assessment is never landed in a cleanup)  
 - History timeline, CSV export, install monitor  
@@ -85,9 +85,9 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
-> In-app updates are not enabled (no updater public key is configured); always upgrade by downloading the new version from the Release page. If the Release has no Authenticode signature, verify the installer against `SHA256SUMS.txt` on the same page. When an updater public key is configured, the Release also provides `latest.json` and `.sig` (the updater manifest and its signature); without one they are not generated, and the MSI install is not wired into auto-update — download updates manually.
+> Download updates from the Release page and check `SHA256SUMS.txt` alongside the packages. Each release includes `SBOM.cdx.json` for the Windows x64 Rust dependency graph and npm production dependencies.
 >
-> Release modes: with no updater keys configured, the Release runs in unsigned/manual mode and publishes only the NSIS / MSI / portable artifacts plus `SHA256SUMS.txt`; no `latest.json` or `.sig` are produced. Updater signature assets are generated and verified only when all three updater settings are present. Every release also ships `SBOM.cdx.json`, a CycloneDX 1.5 software bill of materials covering the binary's Rust dependencies and the bundled npm production dependencies, so the release's contents can be audited.
+> Authenticode identifies the Windows publisher and is configured separately through SignPath. In-app updates require explicit enablement and all three updater signing settings before the workflow produces `latest.json` and `.sig`. MSI and portable builds use manual downloads. See the [release signing guide](.github/RELEASE_SIGNING.md).
 
 | Artifact | Notes |
 |---|---|
@@ -108,7 +108,7 @@ Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included
 | Tool | Version |
 |---|---|
 | Rust | ≥ 1.77.2 |
-| Node.js | 22 |
+| Node.js | 22.22.2+ within 22, 24.15.0+ within 24, or 26+ |
 | Windows | 10 / 11 |
 
 ### Commands

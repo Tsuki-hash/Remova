@@ -5,7 +5,7 @@
 | Tool | Version |
 |---|---|
 | Rust | ≥ 1.95 |
-| Node.js | 22 (CI uses 22) |
+| Node.js | 22.22.2+ within 22, 24.15.0+ within 24, or 26+ (CI uses Node 22) |
 | PowerShell | **7 (`pwsh`)** — `check-versions`, `check-commands`, `smoke:*`, `package-portable` are `.ps1` scripts and Windows PowerShell 5.1's `powershell.exe` is not a substitute |
 | Windows | 10/11 (backend is Windows-only) |
 
@@ -131,8 +131,11 @@ Folder ProgramData/RemovaSealKeys, protected for SYSTEM and Administrators only.
 A missing key in an existing store is an error, never automatic regeneration.
 RSEAL1 sessions remain available for inspection/manual export; automatic restore
 rejects them. Backup is one-shot per session and signs private staging snapshots,
-including path.json and only the selected registry import target. Ordinary file
-contents and rollback to earlier valid states are not covered by this seal.
+including path.json and only the selected registry import target. New sessions
+also bind the file and directory manifest to the seal. The verifier retains
+support for older RSEAL2 sessions. Those created without file digests provide
+integrity for the path map and system snapshots only. The seal does not protect
+against replay of an earlier valid state of the same session.
 Tests with a seals-root override use a compile-time test key; production has no
 key override, environment key, or generic signing IPC. Of the seven `#[ignore]`d
 tests, `copy_dir_refuses_file_swapped_to_symlink_after_enumeration` and
