@@ -583,6 +583,9 @@ fn publication_inventory(
         if depth > 64 || *left == 0 {
             return Err("backup publication inventory budget exceeded".into());
         }
+        if crate::executor::cleanup_cancelled() {
+            return Err("cleanup cancelled during backup".into());
+        }
         *left -= 1;
         let _pin = crate::fsutil::pin_target_readonly(path).map_err(|e| e.to_string())?;
         let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
@@ -670,6 +673,47 @@ fn verify_publication(
     Ok(())
 }
 
+#[cfg(windows)]
+pub(crate) fn publish_verified_stage(
+    private: &Path,
+    session: &Path,
+    map: &std::collections::BTreeMap<String, String>,
+    digests: &std::collections::BTreeMap<String, String>,
+    before_seal: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    use crate::path_seal::{
+        write_file_manifest, write_seal_with_manifest, FileManifest, FILE_MANIFEST_NAME,
+    };
+
+    let json = serde_json::to_vec_pretty(map).map_err(|e| e.to_string())?;
+    write_bytes_atomic(&private.join("files/path_map.json"), &json)?;
+    let mut inventory = publication_inventory(private)?;
+    let mut files = FileManifest::new();
+    for (path, digest) in &inventory {
+        if path.starts_with("files")
+            && path != Path::new("files")
+            && path != Path::new("files/path_map.json")
+        {
+            let key = path
+                .to_str()
+                .ok_or("backup file name is not valid Unicode")?;
+            files.insert(key.replace('\\', "/"), digest.clone());
+        }
+    }
+    let manifest_digest = write_file_manifest(private, &files)?;
+    drop(files);
+    inventory.insert(
+        PathBuf::from(FILE_MANIFEST_NAME),
+        Some(manifest_digest.clone()),
+    );
+
+    // A partial public session is left unsealed, so callers keep their sources.
+    publish_stage(private, session)?;
+    before_seal(session)?;
+    verify_publication(session, &inventory, map, digests)?;
+    write_seal_with_manifest(session, map, digests, manifest_digest)
+}
+
 fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<String>), String> {
     if crate::executor::cleanup_cancelled() {
         return Err("cleanup cancelled during backup".into());
@@ -721,27 +765,8 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     #[cfg(windows)]
     stage.verify_snapshots()?;
     let digests = crate::path_seal::collect_reg_digests(private)?;
-    let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    write_bytes_atomic(&private.join("files/path_map.json"), json.as_bytes())?;
-    let inventory = publication_inventory(private)?;
-    // Failure policy: abort before any source deletion; Stage::drop removes the
-    // private remainder. A partial public session is deliberately left unsealed
-    // for diagnosis, never re-inventoried and signed as an empty success.
-    publish_stage(private, session)?;
-    verify_publication(session, &inventory, &map, &digests)?;
-    // Bind every published payload file into the seal. Without this, a rewrite
-    // of `files/<entry>` between backup and restore was invisible to the seal
-    // and the modified bytes were restored as if authentic.
-    let file_digests: std::collections::BTreeMap<String, String> = inventory
-        .iter()
-        .filter_map(|(rel, digest)| {
-            let digest = digest.as_ref()?;
-            // `inventory` keys are already relative to the private stage root,
-            // so they start with `files/` or `registry/`.
-            Some((rel.to_string_lossy().replace('\\', "/"), digest.clone()))
-        })
-        .collect();
-    crate::path_seal::write_seal_with_files(session, &json, &map, &digests, Some(file_digests))?;
+    #[cfg(windows)]
+    publish_verified_stage(private, session, &map, &digests, |_| Ok(()))?;
     Ok((ok, fail, errors))
 }
 

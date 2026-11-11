@@ -210,8 +210,6 @@ fn backup_targets_with(
     #[cfg(windows)]
     {
         let stage = crate::path_seal::backup_stage()?;
-        let _session_pins =
-            crate::fsutil::create_dirs_pinned(&session.join("files")).map_err(|e| e.to_string())?;
         let mut map = std::collections::BTreeMap::new();
         std::fs::create_dir_all(stage.path().join("files")).map_err(|e| e.to_string())?;
         let mut index = 0;
@@ -235,14 +233,14 @@ fn backup_targets_with(
             }
         }
         stage.verify_snapshots()?;
-        let json = serde_json::to_vec_pretty(&map).map_err(|e| e.to_string())?;
-        crate::fsutil::write_bytes_atomic(&stage.path().join("files/path_map.json"), &json)
-            .map_err(|e| e.to_string())?;
-        crate::fsutil::copy_dir(&stage.path().join("files"), &session.join("files"))
-            .map_err(|e| e.to_string())?;
-        before_seal(session)?;
-        crate::path_seal::write_seal(session, "", &map, &std::collections::BTreeMap::new())?;
-        Ok(())
+        std::fs::create_dir(stage.path().join("registry")).map_err(|e| e.to_string())?;
+        crate::backup::publish_verified_stage(
+            stage.path(),
+            session,
+            &map,
+            &std::collections::BTreeMap::new(),
+            before_seal,
+        )
     }
 }
 
@@ -425,7 +423,14 @@ mod tests {
             assert_eq!(report.removed, ["@scope/good"]);
             let session = Path::new(&report.backup_dir);
             assert!(session.starts_with(tmp.path()));
-            assert!(crate::path_seal::verified_seal(session).is_ok());
+            let seal = crate::path_seal::verified_seal(session).unwrap();
+            let manifest = crate::path_seal::read_file_manifest(
+                session,
+                seal.file_manifest_digest
+                    .as_deref()
+                    .expect("npm payload seal"),
+            )
+            .unwrap();
             let map: std::collections::BTreeMap<String, String> = serde_json::from_slice(
                 &std::fs::read(session.join("files/path_map.json")).unwrap(),
             )
@@ -433,6 +438,7 @@ mod tests {
             // Restore only this fixture's shim bytes by the exported path map;
             // this is not a claim that the public restore IPC was executed.
             for (rel, original) in map {
+                assert!(manifest.contains_key(&format!("files/{rel}")));
                 if let Some(expected) = originals.get(&original) {
                     let bytes = std::fs::read(session.join("files").join(rel)).unwrap();
                     assert_eq!(&bytes, expected);

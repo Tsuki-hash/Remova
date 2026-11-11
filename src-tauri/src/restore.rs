@@ -5,12 +5,11 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
+mod payload;
+
 /// A single registry export larger than this is refused before it is read.
 const MAX_REGISTRY_EXPORT_BYTES: u64 = 64 * 1024 * 1024;
-/// Entries visited while checking one backed-up directory against the seal.
-/// A directory larger than this cannot be verified, so it is refused rather
-/// than restored on partial evidence.
-const DIR_VERIFY_BUDGET: usize = 200_000;
 /// Total registry bytes a single restore may hold in memory at once.
 const MAX_RESTORE_REGISTRY_BYTES: usize = 256 * 1024 * 1024;
 
@@ -116,88 +115,14 @@ fn restore_order(map: &std::collections::BTreeMap<String, String>) -> Vec<(&Stri
     ordered
 }
 
-/// Check one mapped backup entry against the seal's payload digests.
-///
-/// A file must match its recorded digest. A directory must contain exactly the
-/// recorded files, each unchanged: restoring a directory used to copy whatever
-/// was on disk, so a file added or rewritten inside it after sealing was written
-/// back as if it had been backed up.
-///
-/// Returns `Ok(Some(reason))` when the entry must be skipped, `Ok(None)` when it
-/// is covered, and `Err` when the evidence itself cannot be read.
-fn payload_refusal(
-    files: &std::collections::BTreeMap<String, String>,
-    rel: &str,
-    src: &Path,
-) -> Result<Option<String>, String> {
-    if !src.is_dir() {
-        let key = format!("files/{rel}");
-        let Some(expected) = files.get(&key) else {
-            return Ok(Some(format!(
-                "skipped backup entry with no recorded digest: {rel}"
-            )));
-        };
-        let actual = crate::path_seal::publication_file_digest(src)
-            .map_err(|e| format!("seal:file_digest: {e}"))?;
-        return Ok(if &actual == expected {
-            None
-        } else {
-            Some(format!(
-                "skipped modified backup entry (digest mismatch): {rel}"
-            ))
-        });
-    }
-
-    let prefix = format!("files/{rel}/");
-    let mut seen = 0usize;
-    let mut visited = 0usize;
-    let mut stack = vec![src.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        visited += 1;
-        if visited > DIR_VERIFY_BUDGET {
-            return Ok(Some(format!(
-                "skipped backup directory too large to verify: {rel}"
-            )));
-        }
-        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let nested = path
-                .strip_prefix(src)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let Some(expected) = files.get(&format!("{prefix}{nested}")) else {
-                return Ok(Some(format!(
-                    "skipped unrecorded backup file: {rel}/{nested}"
-                )));
-            };
-            let actual = crate::path_seal::publication_file_digest(&path)
-                .map_err(|e| format!("seal:file_digest: {e}"))?;
-            if &actual != expected {
-                return Ok(Some(format!(
-                    "skipped modified backup entry (digest mismatch): {rel}/{nested}"
-                )));
-            }
-            seen += 1;
-        }
-    }
-    // Every recorded file must still be present: a deleted file means the
-    // directory would be restored incomplete.
-    let recorded = files.keys().filter(|key| key.starts_with(&prefix)).count();
-    if seen != recorded {
-        return Ok(Some(format!(
-            "skipped backup directory with missing recorded file: {rel}"
-        )));
-    }
-    Ok(None)
+pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
+    restore_with_before_copy(session, |_| {})
 }
 
-pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
+fn restore_with_before_copy(
+    session: &Path,
+    mut before_copy: impl FnMut(&Path),
+) -> Result<Vec<String>, String> {
     // Restore is a destructive transaction too: it must not interleave with a
     // cleanup, and a pending 1641 reboot must finish before files are written
     // back into a half-uninstalled product directory.
@@ -214,6 +139,11 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         path_bytes,
         imports,
     } = validate_session(session)?;
+    #[cfg(windows)]
+    let authenticated = payload::Inventory::read(session, &seal)?
+        .filter(|_| !map.is_empty())
+        .map(|inventory| crate::path_seal::restore_stage().map(|stage| (inventory, stage)))
+        .transpose()?;
     let mut messages = vec![];
     // Consecutive files usually share a parent. Reuse its pins instead of
     // opening the whole ancestor chain again for every file.
@@ -223,10 +153,8 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
         crate::fsutil::DirResolvedPin,
     )> = None;
 
-    // Files via path_map.json
-    let map_path = session.join("files").join("path_map.json");
     let files_root = session.join("files");
-    if map_path.exists() {
+    if !map.is_empty() {
         // The backup map is keyed by a hash-shaped name, so its natural order
         // scatters files from the same destination directory. Sort by the
         // original path first so the parent-pin reuse below actually hits.
@@ -254,15 +182,6 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped missing backup entry: {rel}"));
                 continue;
             }
-            // When the seal carries payload digests, the bytes about to be
-            // written must be the ones that were backed up. A mapped entry whose
-            // contents are not covered by the seal is a tampered session.
-            if let Some(files) = &seal.file_digests {
-                if let Some(reason) = payload_refusal(files, rel, &src)? {
-                    messages.push(reason);
-                    continue;
-                }
-            }
             let dest = PathBuf::from(&original);
             // protected / unsafe destinations skip + warn — never abort sibling entries.
             if original.trim().is_empty()
@@ -289,6 +208,26 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped reparse backup entry: {rel}"));
                 continue;
             }
+            #[cfg(windows)]
+            let staged = if let Some((inventory, stage)) = &authenticated {
+                match inventory.stage(stage, &src, rel) {
+                    Ok(staged) => Some(staged),
+                    Err(_) if crate::executor::cleanup_cancelled() => {
+                        messages.push("restore cancelled".into());
+                        break;
+                    }
+                    Err(reason) => {
+                        messages.push(if reason.starts_with("skipped ") {
+                            reason
+                        } else {
+                            format!("restore failed for {original}: {reason}")
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             // The string gate above judges the *requested* path. Pin the actual
             // parent and re-run the gates on its by-handle resolved location:
             // a junction planted anywhere above the target can no longer divert
@@ -339,13 +278,27 @@ pub fn restore_session(session: &Path) -> Result<Vec<String>, String> {
                 messages.push(format!("skipped reparse restore target: {original}"));
                 continue;
             }
-            let copied = if src.is_dir() {
-                copy_dir(&src, &dest).map(|_| ())
-            } else {
-                // The parent is already pinned above; avoid re-opening it.
-                crate::fsutil::copy_file_no_reparse_pinned(&src, &dest).map(|_| ())
+            before_copy(&src);
+            let copy_legacy = || {
+                if src.is_dir() {
+                    copy_dir(&src, &dest).map(|_| ())
+                } else {
+                    // The parent is already pinned above; avoid re-opening it.
+                    crate::fsutil::copy_file_no_reparse_pinned(&src, &dest).map(|_| ())
+                }
             };
+            #[cfg(windows)]
+            let copied = match staged {
+                Some(staged) => staged.publish(&dest),
+                None => copy_legacy(),
+            };
+            #[cfg(not(windows))]
+            let copied = copy_legacy();
             if let Err(e) = copied {
+                if crate::executor::cleanup_cancelled() {
+                    messages.push("restore cancelled".into());
+                    break;
+                }
                 messages.push(format!("restore failed for {original}: {e}"));
                 continue;
             }
@@ -1951,18 +1904,9 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// A file added inside a backed-up directory after sealing must block that
-    /// directory: copying the tree as it stands would restore unbacked bytes.
-    #[test]
-    fn an_added_file_inside_a_backed_up_directory_is_refused() {
-        let root = std::env::temp_dir().join(format!("remova_restore_dir_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let _store = crate::path_seal::TestStore::new(root.join("seals"));
-        let source = root.join("source").join("app");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("a.txt"), b"backed up").unwrap();
-        let session = root.join("1700000000_dir");
-        fs::create_dir_all(&session).unwrap();
+    #[cfg(windows)]
+    fn back_up_fixture_directory(source: &Path, session: &Path) -> PathBuf {
+        fs::create_dir(session).unwrap();
         let item = crate::scanner::CleanupItem {
             path: source.to_string_lossy().into_owned(),
             kind: crate::scanner::ItemKind::Dir,
@@ -1979,15 +1923,27 @@ mod tests {
             size_capped: false,
             bucket: None,
         };
-        let (ok, fail, errors) = crate::backup::backup_items(std::slice::from_ref(&item), &session);
+        let (ok, fail, errors) = crate::backup::backup_items(&[item], session);
         assert_eq!((ok, fail), (1, 0), "{errors:?}");
-        // Find the published copy of the directory and inject a file.
-        let backed = fs::read_dir(session.join("files"))
+        fs::read_dir(session.join("files"))
             .unwrap()
             .flatten()
             .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .expect("the directory payload is published")
-            .path();
+            .path()
+    }
+
+    /// A file added inside a backed-up directory after sealing must block that
+    /// directory: copying the tree as it stands would restore unbacked bytes.
+    #[cfg(windows)]
+    #[test]
+    fn an_added_file_inside_a_backed_up_directory_is_refused() {
+        let root = crate::test_support::TempDir::new("restore-extra-member");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"backed up").unwrap();
+        let session = root.join("1700000000_dir");
+        let backed = back_up_fixture_directory(&source, &session);
         fs::write(backed.join("injected.txt"), b"not backed up").unwrap();
 
         let msgs = restore_session(&session).expect("the session itself is authentic");
@@ -1999,7 +1955,111 @@ mod tests {
             !source.join("injected.txt").exists(),
             "an unbacked file must never be written back"
         );
-        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_commits_only_staged_verified_bytes_if_the_source_changes() {
+        let root = crate::test_support::TempDir::new("restore-staged-race");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"authentic").unwrap();
+        let session = root.join("1700000000_dir");
+        let backed = back_up_fixture_directory(&source, &session);
+        fs::write(source.join("a.txt"), b"current destination").unwrap();
+
+        let msgs = restore_with_before_copy(&session, |public| {
+            assert_eq!(public, backed);
+            fs::write(public.join("a.txt"), b"tampered after verification").unwrap();
+            fs::write(public.join("injected.txt"), b"added after verification").unwrap();
+        })
+        .unwrap();
+
+        assert!(msgs.iter().any(|m| m.starts_with("restored ")), "{msgs:?}");
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"authentic");
+        assert!(!source.join("injected.txt").exists());
+        assert!(fs::read_dir(root.join("seals")).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("stage_")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn added_or_missing_empty_directories_are_refused_by_the_manifest() {
+        let root = crate::test_support::TempDir::new("restore-directory-manifest");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::create_dir(source.join("original-empty")).unwrap();
+        fs::write(source.join("a.txt"), b"authentic").unwrap();
+        let session = root.join("1700000000_dir");
+        let backed = back_up_fixture_directory(&source, &session);
+        fs::write(source.join("a.txt"), b"current destination").unwrap();
+        fs::create_dir(backed.join("added-empty")).unwrap();
+        let msgs = restore_session(&session).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("unrecorded backup directory")),
+            "{msgs:?}"
+        );
+        assert!(!source.join("added-empty").exists());
+        fs::remove_dir(backed.join("added-empty")).unwrap();
+        fs::remove_dir(backed.join("original-empty")).unwrap();
+        let msgs = restore_session(&session).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.contains("missing recorded file")),
+            "{msgs:?}"
+        );
+        assert_eq!(
+            fs::read(source.join("a.txt")).unwrap(),
+            b"current destination"
+        );
+    }
+
+    #[cfg(windows)]
+    fn large_manifest_roundtrip(file_count: usize) {
+        let root = crate::test_support::TempDir::new("restore-large-manifest");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        let file_name = |i| format!("{i:05}_long-but-ordinary-产品-payload-name.txt");
+        for i in 0..file_count {
+            fs::write(source.join(file_name(i)), b"x").unwrap();
+        }
+        let session = root.join("1700000000_dir");
+        back_up_fixture_directory(&source, &session);
+        let manifest_path = session.join(crate::path_seal::FILE_MANIFEST_NAME);
+        assert!(manifest_path.metadata().unwrap().len() > 128 * 1024);
+        let seal = crate::path_seal::verified_seal(&session).unwrap();
+        assert!(seal.file_digests.is_none() && seal.file_manifest_digest.is_some());
+        fs::remove_dir_all(&source).unwrap();
+        let msgs = restore_session(&session).unwrap();
+        assert!(msgs.iter().any(|m| m.starts_with("restored ")), "{msgs:?}");
+        assert_eq!(fs::read_dir(&source).unwrap().count(), file_count);
+        assert_eq!(
+            fs::read(source.join(file_name(file_count - 1))).unwrap(),
+            b"x"
+        );
+        fs::write(manifest_path, b"{}").unwrap();
+        fs::write(source.join(file_name(0)), b"must remain").unwrap();
+        assert_eq!(
+            restore_session(&session).unwrap_err(),
+            "seal:file_manifest_mismatch"
+        );
+        assert_eq!(fs::read(source.join(file_name(0))).unwrap(), b"must remain");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_manifest_for_1500_small_files_roundtrips_beyond_the_seal_limit() {
+        large_manifest_roundtrip(1500);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit large backup and restore capacity check using 10,000 temporary files"]
+    fn a_manifest_for_10000_small_files_roundtrips() {
+        large_manifest_roundtrip(10_000);
     }
 
     /// a recorded Machine scope without snapshot evidence must not

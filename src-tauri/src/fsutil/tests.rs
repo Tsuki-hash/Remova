@@ -454,6 +454,28 @@ fn copy_stream_failure_preserves_dest_and_leaves_no_tmp() {
 
 /// Successful replace is atomic: dest gets the new bytes, no tmp remains.
 #[test]
+fn copy_stream_cancellation_keeps_the_destination_and_removes_the_temporary_file() {
+    struct CancelAfterChunk;
+    impl std::io::Read for CancelAfterChunk {
+        fn read(&mut self, chunk: &mut [u8]) -> std::io::Result<usize> {
+            chunk.fill(b'x');
+            crate::executor::cancel_cleanup_operation();
+            Ok(chunk.len())
+        }
+    }
+
+    let tmp = crate::test_support::TempDir::new("cancel-atomic-copy");
+    let dest = tmp.path().join("destination");
+    std::fs::write(&dest, b"pre-existing").unwrap();
+    crate::executor::begin_cleanup_control();
+    let result = copy_stream_atomic(CancelAfterChunk, &dest);
+    crate::executor::begin_cleanup_control();
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+    assert_eq!(std::fs::read(&dest).unwrap(), b"pre-existing");
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn copy_stream_success_replaces_dest_without_tmp() {
     let tmp = unique_tmp("atomic_copy_ok");
     let dest = tmp.join("out.bin");

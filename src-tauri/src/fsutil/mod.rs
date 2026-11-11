@@ -114,6 +114,37 @@ pub fn pin_local_scan_path(path: &Path) -> std::io::Result<Vec<DirPin>> {
     Ok(pins)
 }
 
+pub(crate) fn local_directory_id(path: &Path) -> std::io::Result<(u32, u64)> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let pins = pin_local_scan_path(path)?;
+        let pin = pins
+            .last()
+            .ok_or_else(|| std::io::Error::other("empty path"))?;
+        if !pin_metadata(pin)?.is_dir() {
+            return Err(std::io::Error::other("expected a directory"));
+        }
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(pin.handle, &mut info) }
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        if index == 0 {
+            return Err(std::io::Error::other(
+                "volume did not report a file identity",
+            ));
+        }
+        Ok((info.dwVolumeSerialNumber, index))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err(std::io::Error::other("directory identity requires Windows"))
+    }
+}
+
 #[cfg(windows)]
 fn pin_metadata(pin: &DirPin) -> std::io::Result<std::fs::Metadata> {
     use std::os::windows::io::FromRawHandle;
@@ -213,7 +244,7 @@ fn open_relative(
     }
 }
 
-fn scan_path_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+pub(crate) fn scan_path_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
     let pins = pin_local_scan_path(path)?;
     pin_metadata(
         pins.last()
@@ -360,6 +391,21 @@ pub fn read_local_scan_text(path: &Path) -> std::io::Result<String> {
     )
 }
 
+/// Open an ordinary local file by its verified final handle, without reopening its path.
+#[cfg(windows)]
+pub(crate) fn open_local_regular_file(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::io::FromRawHandle;
+    let pins = pin_local_scan_path(path)?;
+    let pin = pins
+        .last()
+        .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
+    if !pin_metadata(pin)?.is_file() {
+        return Err(std::io::Error::other("not an ordinary local file"));
+    }
+    let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(pin.handle.0) });
+    file.try_clone()
+}
+
 fn read_pin_text(pin: &DirPin) -> std::io::Result<String> {
     #[cfg(windows)]
     {
@@ -385,6 +431,25 @@ fn read_pin_text(pin: &DirPin) -> std::io::Result<String> {
 
 /// Enumerate the opened directory object, never its potentially redirected path.
 fn relative_names(pin: &DirPin) -> std::io::Result<Vec<std::ffi::OsString>> {
+    relative_names_with_limit(pin, 20_000)
+}
+
+#[cfg(windows)]
+pub(crate) fn read_local_entry_names(
+    path: &Path,
+    limit: usize,
+) -> std::io::Result<Vec<std::ffi::OsString>> {
+    let pins = pin_local_scan_path(path)?;
+    let pin = pins
+        .last()
+        .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
+    relative_names_with_limit(pin, limit)
+}
+
+fn relative_names_with_limit(
+    pin: &DirPin,
+    limit: usize,
+) -> std::io::Result<Vec<std::ffi::OsString>> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
@@ -436,7 +501,7 @@ fn relative_names(pin: &DirPin) -> std::io::Result<Vec<std::ffi::OsString>> {
                 if name != "." && name != ".." {
                     names.push(name);
                 }
-                if names.len() > 20_000 {
+                if names.len() > limit {
                     return Err(std::io::Error::other("directory budget exceeded"));
                 }
                 if entry.NextEntryOffset == 0 {
@@ -455,7 +520,7 @@ fn relative_names(pin: &DirPin) -> std::io::Result<Vec<std::ffi::OsString>> {
     }
     #[cfg(not(windows))]
     {
-        let _ = pin;
+        let _ = (pin, limit);
         Err(std::io::Error::other("Windows handle required"))
     }
 }
@@ -683,11 +748,36 @@ fn copy_stream_atomic<R: std::io::Read>(mut reader: R, dest: &Path) -> std::io::
     // tmp file, tearing the restored/backed-up bytes.
     let (tmp, mut out) = create_atomic_tmp_with(|| atomic_tmp_path(dest))?;
     let result = (|| {
-        let n = std::io::copy(&mut reader, &mut out)?;
+        use std::io::Write;
+        let mut copied = 0u64;
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            if crate::executor::cleanup_cancelled() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "cleanup cancelled",
+                ));
+            }
+            let n = match reader.read(&mut chunk) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => result?,
+            };
+            if n == 0 {
+                break;
+            }
+            out.write_all(&chunk[..n])?;
+            copied += n as u64;
+        }
         out.sync_all()?;
+        if crate::executor::cleanup_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cleanup cancelled",
+            ));
+        }
         drop(out);
         rename_with_retry(&tmp, dest)?;
-        Ok(n)
+        Ok(copied)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -1306,6 +1396,18 @@ impl PinnedLocalDeleteTree {
         path: &Path,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
+        Self::collect_with(path, 20_000, after_open)
+    }
+
+    pub(crate) fn with_entry_limit(path: &Path, limit: usize) -> std::io::Result<Self> {
+        Self::collect_with(path, limit, &mut |_| Ok(()))
+    }
+
+    fn collect_with(
+        path: &Path,
+        limit: usize,
+        after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<Self> {
         let _parents = pin_local_scan_path(
             path.parent()
                 .ok_or_else(|| std::io::Error::other("cannot delete a volume root"))?,
@@ -1324,12 +1426,14 @@ impl PinnedLocalDeleteTree {
             path: &Path,
             pin: DirPin,
             depth: usize,
+            remaining: &mut usize,
             objects: &mut Vec<(PathBuf, bool, DirPin)>,
             after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
         ) -> std::io::Result<bool> {
-            if depth > 128 || objects.len() >= 20_000 {
-                return Err(std::io::Error::other("package snapshot budget exceeded"));
+            if depth > 128 || *remaining == 0 {
+                return Err(std::io::Error::other("tree snapshot budget exceeded"));
             }
+            *remaining -= 1;
             let md = pin_metadata(&pin)?;
             if is_reparse_metadata(&md) || !(md.is_dir() || md.is_file()) {
                 return Err(std::io::Error::other(
@@ -1341,16 +1445,24 @@ impl PinnedLocalDeleteTree {
             // An empty object may have become a junction at this exact point.
             // Enumeration and every child open still use that object handle.
             if is_dir {
-                for name in relative_names(&pin)? {
+                for name in relative_names_with_limit(&pin, *remaining)? {
                     let child = open_relative(&pin, &name, 0x10081, false)?;
-                    collect(&path.join(name), child, depth + 1, objects, after_open)?;
+                    collect(
+                        &path.join(name),
+                        child,
+                        depth + 1,
+                        remaining,
+                        objects,
+                        after_open,
+                    )?;
                 }
             }
             // Postorder storage; removal consumes children before their parents.
             objects.push((path.into(), is_dir, pin));
             Ok(is_dir)
         }
-        let is_dir = collect(path, root, 0, &mut objects, after_open)?;
+        let mut remaining = limit;
+        let is_dir = collect(path, root, 0, &mut remaining, &mut objects, after_open)?;
         objects.reverse();
         Ok(Self {
             path: path.into(),
@@ -1378,6 +1490,90 @@ impl PinnedLocalDeleteTree {
             .find(|(p, dir, _)| p == path && !dir)
             .ok_or_else(|| std::io::Error::other("file not in held snapshot"))?;
         read_pin_text(pin)
+    }
+
+    /// Verify the counterpart of each held object. The returned read pins
+    /// keep the verified target files stable until the caller releases them.
+    #[cfg(windows)]
+    pub(crate) fn hold_verified_copy(
+        &self,
+        destination: &Path,
+        exact: bool,
+        mut compare: impl FnMut(std::fs::File, std::fs::File) -> std::io::Result<bool>,
+    ) -> std::io::Result<Vec<DirPin>> {
+        use std::os::windows::io::FromRawHandle;
+        fn clone_file(pin: &DirPin) -> std::io::Result<std::fs::File> {
+            let borrowed = std::mem::ManuallyDrop::new(unsafe {
+                std::fs::File::from_raw_handle(pin.handle.0)
+            });
+            borrowed.try_clone()
+        }
+
+        let mut pins = pin_local_scan_path(destination)?;
+        let target_root_index = pins.len() - 1;
+        let mut positions = std::collections::BTreeMap::new();
+        let mut children = std::collections::BTreeMap::new();
+        for (path, is_dir, backup) in &self.objects {
+            if path != &self.path {
+                let parent_path = path
+                    .parent()
+                    .ok_or_else(|| std::io::Error::other("missing snapshot parent"))?;
+                if exact {
+                    *children.entry(parent_path).or_insert(0) += 1;
+                }
+                let parent = positions
+                    .get(parent_path)
+                    .copied()
+                    .ok_or_else(|| std::io::Error::other("missing snapshot parent"))?;
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| std::io::Error::other("missing entry name"))?;
+                pins.push(
+                    open_relative(&pins[parent], name, 0x81, false).map_err(|err| {
+                        std::io::Error::other(format!("{}: {err}", path.display()))
+                    })?,
+                );
+            }
+            let index = pins
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| std::io::Error::other("missing target snapshot"))?;
+            let target = &pins[index];
+            let metadata = pin_metadata(target)?;
+            let same_type = if *is_dir {
+                metadata.is_dir()
+            } else {
+                metadata.is_file()
+            };
+            if is_reparse_metadata(&metadata)
+                || !same_type
+                || !compare(clone_file(backup)?, clone_file(target)?)?
+            {
+                return Err(std::io::Error::other(format!(
+                    "{}: target entry differs",
+                    path.display()
+                )));
+            }
+            if *is_dir {
+                positions.insert(path.clone(), index);
+            }
+        }
+        if exact {
+            for (directory, index) in positions {
+                let expected = children.get(directory.as_path()).copied().unwrap_or(0);
+                let actual = relative_names_with_limit(&pins[index], expected + 1)?.len();
+                if actual != expected {
+                    return Err(std::io::Error::other(format!(
+                        "{}: target directory entries differ",
+                        directory.display()
+                    )));
+                }
+            }
+        }
+        // The target objects are still held. Release the ancestors above the
+        // target so a sibling rename (migration rollback) can open its parent.
+        pins.drain(..target_root_index);
+        Ok(pins)
     }
 
     /// Copy the exact held file handles, never reopening a source pathname.

@@ -18,7 +18,14 @@ const MAX_PROTECTED_BLOB: usize = 256 * 1024;
 #[cfg(windows)]
 mod key;
 #[cfg(windows)]
+mod manifest;
+#[cfg(windows)]
 mod v2;
+
+#[cfg(windows)]
+pub(crate) use manifest::{
+    read_file_manifest, write_file_manifest, FileManifest, FILE_MANIFEST_NAME,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PathMapSeal {
@@ -36,6 +43,9 @@ pub struct PathMapSeal {
     /// `None` for seals written before this field existed.
     #[serde(default)]
     pub file_digests: Option<BTreeMap<String, String>>,
+    /// Authenticated digest of the external file manifest for newly written seals.
+    #[serde(default)]
+    pub file_manifest_digest: Option<String>,
 }
 
 pub(crate) fn normalize_target(s: &str) -> String {
@@ -223,6 +233,7 @@ fn map_digest_of(path_map: &BTreeMap<String, String>) -> String {
 }
 
 /// Persist a DPAPI-protected seal for `path_map` and registry export digests of `session`.
+#[cfg(test)]
 pub fn write_seal(
     session: &Path,
     _map_json: &str,
@@ -234,6 +245,7 @@ pub fn write_seal(
 
 /// Seal including the digest of every published payload file. Restore uses this
 /// to prove the bytes it writes back are the ones that were backed up.
+#[cfg(test)]
 pub fn write_seal_with_files(
     session: &Path,
     _map_json: &str,
@@ -241,14 +253,39 @@ pub fn write_seal_with_files(
     reg_digests: &BTreeMap<String, String>,
     file_digests: Option<BTreeMap<String, String>>,
 ) -> Result<(), String> {
+    write_seal_inner(session, path_map, reg_digests, file_digests, None)
+}
+
+#[cfg(windows)]
+pub(crate) fn write_seal_with_manifest(
+    session: &Path,
+    path_map: &BTreeMap<String, String>,
+    reg_digests: &BTreeMap<String, String>,
+    manifest_digest: String,
+) -> Result<(), String> {
+    // Refuse to publish a seal for a missing, changed or malformed manifest.
+    // The verified handle denies writes and renames until the seal is published.
+    let (_, _manifest_pin) = manifest::open_verified_manifest(session, &manifest_digest)?;
+    write_seal_inner(session, path_map, reg_digests, None, Some(manifest_digest))
+}
+
+fn write_seal_inner(
+    session: &Path,
+    path_map: &BTreeMap<String, String>,
+    reg_digests: &BTreeMap<String, String>,
+    file_digests: Option<BTreeMap<String, String>>,
+    file_manifest_digest: Option<String>,
+) -> Result<(), String> {
     let name = session_name_of(session).ok_or("seal: bad session name")?;
     #[cfg(windows)]
     let blob = {
         let store = key::load(true)?;
-        v2::encode_blob(
-            &store.key,
-            &v2::payload_with_files(&name, path_map, reg_digests.clone(), file_digests.clone())?,
-        )?
+        let mut payload =
+            v2::payload_with_files(&name, path_map, reg_digests.clone(), file_digests.clone())?;
+        payload
+            .file_manifest_digest
+            .clone_from(&file_manifest_digest);
+        v2::encode_blob(&store.key, &payload)?
     };
     #[cfg(not(windows))]
     let blob: Vec<u8> = return Err("seal:windows_required".into());
@@ -287,6 +324,8 @@ pub fn write_seal_with_files(
             || !map_matches(&verified, path_map)
             || verified.targets != targets
             || &verified.reg_digests != reg_digests
+            || verified.file_digests != file_digests
+            || verified.file_manifest_digest != file_manifest_digest
         {
             return Err("seal:write_readback_mismatch".into());
         }
@@ -329,6 +368,7 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
             targets: seal.targets,
             reg_digests: seal.reg_digests,
             file_digests: seal.file_digests,
+            file_manifest_digest: seal.file_manifest_digest,
         })
     }
     #[cfg(not(windows))]
@@ -337,7 +377,7 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     }
 }
 
-/// Streaming publication-only receipt; never persisted in the RSEAL2 payload.
+/// Streaming receipt for the private backup tree and published contents.
 pub(crate) fn publication_file_digest(path: &Path) -> Result<String, String> {
     #[cfg(windows)]
     {
@@ -348,6 +388,23 @@ pub(crate) fn publication_file_digest(path: &Path) -> Result<String, String> {
         let _ = path;
         Err("seal:windows_required".into())
     }
+}
+
+/// Write one privately staged file and return the digest of the bytes written.
+#[cfg(windows)]
+pub(crate) fn stage_payload_file(source: &Path, target: &Path) -> Result<String, String> {
+    let source = crate::fsutil::open_local_regular_file(source).map_err(|e| e.to_string())?;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|e| e.to_string())?;
+    let digest = v2::digest_payload(source, &mut output)?;
+    if crate::executor::cleanup_cancelled() {
+        return Err("cleanup cancelled".into());
+    }
+    output.sync_all().map_err(|e| e.to_string())?;
+    Ok(digest)
 }
 
 pub(crate) fn map_matches(seal: &PathMapSeal, map: &BTreeMap<String, String>) -> bool {
@@ -372,6 +429,11 @@ impl BackupStage {
 #[cfg(windows)]
 pub(crate) fn backup_stage() -> Result<BackupStage, String> {
     Ok(BackupStage(key::load(true)?.stage()?))
+}
+
+#[cfg(windows)]
+pub(crate) fn restore_stage() -> Result<BackupStage, String> {
+    Ok(BackupStage(key::load(false)?.stage()?))
 }
 
 #[cfg(windows)]
@@ -407,8 +469,10 @@ pub fn collect_reg_digests(session: &Path) -> Result<BTreeMap<String, String>, S
     {
         let mut out = BTreeMap::new();
         if session.join("path.json").exists() {
-            let bytes = std::fs::read(session.join("path.json")).map_err(|e| e.to_string())?;
-            out.insert("path.json".into(), v2::sha256(&bytes)?);
+            out.insert(
+                "path.json".into(),
+                v2::sha256_file(&session.join("path.json"))?,
+            );
         }
         let root = session.join("registry");
         if !root.exists() {
@@ -424,10 +488,9 @@ pub fn collect_reg_digests(session: &Path) -> Result<BTreeMap<String, String>, S
                     .file_name()
                     .and_then(|n| n.to_str())
                     .ok_or("seal:bad_export_name")?;
-                let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
                 out.insert(
                     format!("registry/{}/{name}", folder.to_string_lossy()),
-                    v2::sha256(&bytes)?,
+                    v2::sha256_file(&file)?,
                 );
             }
         }
@@ -479,6 +542,7 @@ mod tests {
             targets: vec![],
             reg_digests: Default::default(),
             file_digests: None,
+            file_manifest_digest: None,
         };
         assert!(!map_matches(&seal, &map));
         seal.map_digest = map_digest_of(&map);
@@ -536,6 +600,7 @@ mod tests {
                 targets: vec![normalize_target(r"C:\Users\a\Documents\App\f")],
                 reg_digests: BTreeMap::new(),
                 file_digests: None,
+                file_manifest_digest: None,
             })
             .unwrap();
             std::fs::write(seal_path(&name), forged).unwrap();
@@ -628,6 +693,7 @@ mod tests {
                 targets: map.values().map(|s| normalize_target(s)).collect(),
                 reg_digests: BTreeMap::new(),
                 file_digests: None,
+                file_manifest_digest: None,
             };
             let mut legacy = b"RSEAL1".to_vec();
             legacy.extend(protect(&serde_json::to_vec(&old).unwrap()).unwrap());

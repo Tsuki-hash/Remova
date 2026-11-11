@@ -112,6 +112,9 @@ pub(super) struct Payload {
     /// pretending the bytes were verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) file_digests: Option<BTreeMap<String, String>>,
+    /// Digest of the independently bounded file and directory manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) file_manifest_digest: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -147,6 +150,7 @@ pub(super) fn payload_with_files(
         targets: targets.into_iter().collect(),
         reg_digests,
         file_digests,
+        file_manifest_digest: None,
     })
 }
 
@@ -212,6 +216,12 @@ fn verify_envelope(
     unhex(&parsed.map_digest)?;
     for value in parsed.reg_digests.values() {
         unhex(value)?;
+    }
+    if let Some(value) = &parsed.file_manifest_digest {
+        unhex(value)?;
+        if parsed.file_digests.is_some() {
+            return Err("seal:v2_conflicting_file_manifests".into());
+        }
     }
     let targets: BTreeSet<_> = parsed
         .targets
@@ -298,6 +308,7 @@ fn v2_dpapi_roundtrip_rejects_legacy_wrong_session_and_key() {
         targets: vec![super::normalize_target(r"C:\Vendor\产品")],
         reg_digests: BTreeMap::new(),
         file_digests: None,
+        file_manifest_digest: None,
     };
     let mut legacy = b"RSEAL1".to_vec();
     legacy.extend(super::protect(&serde_json::to_vec(&forged_v1).unwrap()).unwrap());
@@ -370,8 +381,30 @@ pub(super) fn sha256(bytes: &[u8]) -> Result<String, String> {
 }
 
 pub(super) fn sha256_file(path: &std::path::Path) -> Result<String, String> {
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    Ok(hex(&digest_reader(&mut file, None)?))
+    let file = crate::fsutil::open_local_regular_file(path).map_err(|e| e.to_string())?;
+    digest_payload(file, std::io::sink())
+}
+
+/// Hash exactly the bytes handed to the output and poll cancellation before every read.
+pub(super) fn digest_payload(
+    source: impl std::io::Read,
+    output: impl std::io::Write,
+) -> Result<String, String> {
+    struct PayloadReader<R, W>(R, W);
+    impl<R: std::io::Read, W: std::io::Write> std::io::Read for PayloadReader<R, W> {
+        fn read(&mut self, chunk: &mut [u8]) -> std::io::Result<usize> {
+            if crate::executor::cleanup_cancelled() {
+                return Err(std::io::Error::other("cleanup cancelled"));
+            }
+            let n = self.0.read(chunk)?;
+            self.1.write_all(&chunk[..n])?;
+            Ok(n)
+        }
+    }
+    Ok(hex(&digest_reader(
+        &mut PayloadReader(source, output),
+        None,
+    )?))
 }
 
 #[test]
@@ -381,4 +414,23 @@ fn sha256_streams_registry_exports_larger_than_envelope_limit() {
         sha256(&bytes).unwrap(),
         "4a3f0c0c213adea174f9a3d4c13177315b588bdb2e9c1012d3d0bf0453ca0f6a"
     );
+}
+
+#[test]
+fn payload_hash_and_copy_stop_after_the_current_chunk_when_cancelled() {
+    struct CancelAfterChunk;
+    impl std::io::Read for CancelAfterChunk {
+        fn read(&mut self, chunk: &mut [u8]) -> std::io::Result<usize> {
+            chunk.fill(b'a');
+            crate::executor::cancel_cleanup_operation();
+            Ok(chunk.len())
+        }
+    }
+
+    crate::executor::begin_cleanup_control();
+    let mut copied = Vec::new();
+    let result = digest_payload(CancelAfterChunk, &mut copied);
+    crate::executor::begin_cleanup_control();
+    assert!(result.unwrap_err().contains("cleanup cancelled"));
+    assert_eq!(copied.len(), 64 * 1024);
 }
