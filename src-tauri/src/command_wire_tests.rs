@@ -55,6 +55,20 @@ fn save_ai_config_wire_payload_binds_the_key_to_its_source() {
             "apiKey": key,
         }))
     };
+    let read_config = || {
+        let raw = std::fs::read_to_string(dir.path().join("ai-config.json")).expect("config file");
+        serde_json::from_str::<Value>(&raw).expect("valid config JSON")
+    };
+    #[cfg(windows)]
+    let assert_wrapped_key = || {
+        let config = read_config();
+        let key = config["api_key"].as_str().expect("saved key");
+        let wrapped = key
+            .strip_prefix("dpapi:")
+            .expect("key must be wrapped immediately");
+        assert!(!wrapped.is_empty() && wrapped.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(!key.contains("sk-old-secret"));
+    };
 
     let first = save(
         "openai",
@@ -63,6 +77,8 @@ fn save_ai_config_wire_payload_binds_the_key_to_its_source() {
     )
     .expect("first save must succeed");
     assert_eq!(first["has_api_key"], json!(true), "the key was stored");
+    #[cfg(windows)]
+    assert_wrapped_key();
 
     // Same provider, same normalized origin, key omitted: the stored key stays.
     let kept = save("openai", "https://api.example.test/v1/", None).expect("same-source save");
@@ -71,6 +87,8 @@ fn save_ai_config_wire_payload_binds_the_key_to_its_source() {
         json!(true),
         "same source keeps the key"
     );
+    #[cfg(windows)]
+    assert_wrapped_key();
 
     // Different origin, key omitted: the old key must not follow.
     let moved = save("openai", "https://other.example.test/v1", None).expect("new-origin save");
@@ -80,12 +98,7 @@ fn save_ai_config_wire_payload_binds_the_key_to_its_source() {
         "changing the origin must clear the old key"
     );
 
-    // Plaintext must never reach the config file.
-    let raw = std::fs::read_to_string(dir.path().join("ai-config.json")).expect("config file");
-    assert!(
-        !raw.contains("sk-old-secret"),
-        "the stored key must be DPAPI-encrypted, not plaintext"
-    );
+    assert_eq!(read_config()["api_key"], json!(""));
 }
 
 /// A wire payload with a valid app identity but a flipped safety flag is
