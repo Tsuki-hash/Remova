@@ -203,7 +203,7 @@ fn host_json() -> serde_json::Value {
 
 #[test]
 #[ignore = "performance baseline: run explicitly with --ignored in release mode"]
-fn p01_component_baseline() {
+fn component_baseline() {
     let root = crate::test_support::TempDir::new("perf_baseline");
     let fixture = root.path();
 

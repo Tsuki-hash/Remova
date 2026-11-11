@@ -62,6 +62,8 @@ test("rejects filenames and script references while ignoring local measurements"
     assert.match(blocked.stderr, /public file name/);
     assert.match(blocked.stderr, /sample\.ts:1:/);
     rmSync(publicFile);
+    writeFileSync(file, "export function p09_component_fixture() {}\n");
+    assert.match(check(root).stderr, /sample\.ts:1:/);
     writeFileSync(file, 'export const file = "startup-cold.json";\n');
     mkdirSync(join(root, "benchmarks", "runs"));
     writeFileSync(join(root, "benchmarks", "runs", name), "{}");

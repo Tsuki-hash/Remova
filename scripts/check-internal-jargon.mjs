@@ -28,7 +28,7 @@ const excluded = new Set([
 const idRe =
   /(?:^|[^A-Za-z0-9])(?:REV-[A-Z]+-\d+|R\d+-(?:[A-Z]+-)?\d+(?:\/[A-Z]+-\d+)?|R-R\d+-\d+|R\d+ P[0-3]-\d+|(?:FE|BE|SEC|SUP|UX|QA)-R\d+-\d+|FN-\d+|F-\d+|M-\d+|[Rr]ound[\s-]?\d+|CODE-\d+|ARCH-\d+|AR-\d+|SEC-\d+|PERF-\d+|FUNC-\d+|(?:CQ|UX|PF|TC|CD|FC)-\d+|NEW-[A-Z]|FE-P\d+[a-z]?|P0-\d|Q-[A-Z]\d+|S-R\d+-\d+|S-\d+|T-R\d+|F-R\d+|M\d+\+\d+|P[0-3]\b|[A-Z]-\d{1,2}(?=\s|:|,|\)|$)|\s-\d{1,2}(?=\s|:|$))/;
 
-const artifactReference = /(?:^|[^a-z0-9])(?:[a-z]-\d{2}[-_][a-z]|[a-z]-\d{2}\.(?:md|json|csv|txt)\b|p0\d-components\b|r\d+-[a-z]\d+\b)/i;
+const artifactReference = /(?:^|[^a-z0-9])(?:[a-z]-\d{2}[-_][a-z]|[a-z]-\d{2}\.(?:md|json|csv|txt)\b|p0\d[-_](?:component|startup|threshold)\w*\b|r\d+-[a-z]\d+\b)/i;
 
 function walk(dir, out) {
   let entries;
