@@ -97,6 +97,8 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 
 Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime. The NSIS and MSI installers use an embedded Microsoft bootstrapper to install a missing runtime online. Install the runtime before launching the portable ZIP. For offline use with any package, download the x64 Evergreen Standalone Installer on a connected computer, transfer it, and install the runtime before using Remova. [Microsoft WebView2 downloads](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
+NSIS installs Remova for the current user. Run setup or the uninstaller normally when installing, upgrading, or removing Remova; administrator elevation is not needed.
+
 Run Remova as administrator to clean machine-wide apps, the machine PATH, services and firewall rules, or to restore into protected directories. Without elevation, these items fail individually and report the reason.
 
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.

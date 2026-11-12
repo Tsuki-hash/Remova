@@ -1,7 +1,7 @@
 ; Based on the Tauri CLI v2.12.3 installer template, licensed under MIT.
 ; https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.3/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
 ; See scripts/license-sources/tauri-nsis-template-MIT.txt in this repository.
-; Local changes are confined to handling the WebView2 installer result.
+; Local changes cover WebView2 setup and per-user maintenance.
 Unicode true
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
@@ -79,7 +79,40 @@ Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
 Var WixMode
-Var OldMainBinaryName
+
+!macro RemovaRequireCurrentUserToken
+  ; Reject elevation before reading per-user installation state. A failed
+  ; token query also stops setup. TOKEN_QUERY = 8, TokenElevation = 20.
+  StrCpy $2 0
+  System::Call 'kernel32::GetCurrentProcess()p.r0'
+  System::Call 'advapi32::OpenProcessToken(p r0, i 8, *p .r1)i.r2'
+  ${If} $2 != 0
+    StrCpy $0 1
+    StrCpy $2 0
+    System::Call 'advapi32::GetTokenInformation(p r1, i 20, *i .r0, i 4, *i .r3)i.r2'
+    System::Call 'kernel32::CloseHandle(p r1)'
+    ${If} $2 != 0
+    ${AndIf} $0 = 0
+      Goto remova_current_user_allowed
+    ${EndIf}
+  ${EndIf}
+  MessageBox MB_ICONSTOP "$(removaCurrentUserOnly)" /SD IDOK
+  SetErrorLevel 5
+  Quit
+  remova_current_user_allowed:
+  ClearErrors
+!macroend
+
+!macro RemovaPrepareUserUninstall
+  Call ReadRemovaUserInstall
+  ${If} $4 == ""
+    BringToFront
+    MessageBox MB_ICONSTOP "$(removaInvalidPreviousInstall)" /SD IDOK
+    SetErrorLevel 5
+    Quit
+  ${EndIf}
+  StrCpy $R1 '$\"$4\uninstall.exe$\"'
+!macroend
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -357,8 +390,12 @@ Function PageLeaveReinstall
       ReadRegStr $R1 HKLM "$R6" "UninstallString"
       ExecWait '$R1' $0
     ${Else}
-      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-      ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
+      !if "${INSTALLMODE}" == "currentUser"
+        !insertmacro RemovaPrepareUserUninstall
+      !else
+        ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+        ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
+      !endif
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
@@ -489,8 +526,16 @@ FunctionEnd
 {{/each}}
 LangString removaWebView2StartError ${LANG_ENGLISH} "Could not prepare or start the WebView2 installer."
 LangString removaWebView2StartError ${LANG_SIMPCHINESE} "无法准备或启动 WebView2 安装程序。"
+LangString removaCurrentUserOnly ${LANG_ENGLISH} "Remova is installed for the current user. Run this program from a regular Windows session without administrator elevation."
+LangString removaCurrentUserOnly ${LANG_SIMPCHINESE} "Remova 按当前用户安装。请从普通 Windows 会话运行此程序，无需提升为管理员。"
+LangString removaInvalidPreviousInstall ${LANG_ENGLISH} "Remova could not verify the previous installation location. Check the installation folder before removing the previous version."
+LangString removaInvalidPreviousInstall ${LANG_SIMPCHINESE} "无法核对先前的 Remova 安装位置。请检查安装文件夹后再卸载旧版本。"
 
 Function .onInit
+  !if "${INSTALLMODE}" == "currentUser"
+    !insertmacro RemovaRequireCurrentUserToken
+  !endif
+
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -721,13 +766,6 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
   !endif
 
-  ; Remove old main binary if it doesn't match new main binary name
-  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
-  ${If} $OldMainBinaryName != ""
-  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
-    Delete "$INSTDIR\$OldMainBinaryName"
-  ${EndIf}
-
   ; Save current MAINBINARYNAME for future updates
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
 
@@ -788,6 +826,10 @@ Function .onInstSuccess
 FunctionEnd
 
 Function un.onInit
+  !if "${INSTALLMODE}" == "currentUser"
+    !insertmacro RemovaRequireCurrentUserToken
+  !endif
+
   !insertmacro SetContext
 
   !if "${INSTALLMODE}" == "both"
@@ -929,10 +971,58 @@ Section Uninstall
 SectionEnd
 
 Function RestorePreviousInstallLocation
-  ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+  !if "${INSTALLMODE}" == "currentUser"
+    Call ReadRemovaUserInstall
+  !else
+    ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+  !endif
   StrCmp $4 "" +2 0
     StrCpy $INSTDIR $4
 FunctionEnd
+
+!if "${INSTALLMODE}" == "currentUser"
+Function ReadRemovaUserInstall
+  Push $5
+  Push $6
+  Push $7
+  Push $8
+  ReadRegStr $4 HKCU "${MANUPRODUCTKEY}" ""
+  ReadRegStr $5 HKCU "${UNINSTKEY}" "UninstallString"
+
+  ; Use only the recorded Remova directory and fixed uninstaller basename.
+  ; Verify the stored command for consistency, then construct our own.
+  StrCpy $6 $4 2 1
+  StrCmp $6 ":\" 0 remova_user_install_invalid
+  StrLen $6 $4
+  IntCmp $6 3 remova_user_install_invalid remova_user_install_invalid
+  ${StrLoc} $6 "$4" '$\"' ">"
+  StrCmp $6 "" 0 remova_user_install_invalid
+  StrCpy $6 "$4\uninstall.exe"
+  StrCmp $5 '$\"$6$\"' 0 remova_user_install_invalid
+  IfFileExists "$4\${MAINBINARYNAME}.exe" 0 remova_user_install_invalid
+
+  ; Check the resolved path of the existing executable. A directory link,
+  ; a redirected executable, or a remote drive cannot supply the command.
+  StrCpy $7 -1
+  System::Call 'kernel32::CreateFileW(w r6, i 0, i 7, p 0, i 3, i 0, p 0)p.r7'
+  StrCmp $7 -1 remova_user_install_invalid
+  StrCpy $8 0
+  System::Call 'kernel32::GetFinalPathNameByHandleW(p r7, w .r5, i ${NSIS_MAX_STRLEN}, i 0)i.r8'
+  System::Call 'kernel32::CloseHandle(p r7)'
+  IntCmp $8 0 remova_user_install_invalid remova_user_install_invalid
+  IntCmp $8 ${NSIS_MAX_STRLEN} remova_user_install_invalid 0 remova_user_install_invalid
+  StrCmp $5 "\\?\$6" remova_user_install_done
+
+  remova_user_install_invalid:
+  StrCpy $4 ""
+  remova_user_install_done:
+  Pop $8
+  Pop $7
+  Pop $6
+  Pop $5
+  ClearErrors
+FunctionEnd
+!endif
 
 Function Skip
   Abort
@@ -946,25 +1036,15 @@ Function un.SkipIfPassive
 FunctionEnd
 
 Function CreateOrUpdateStartMenuShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
-  StrCpy $R0 0
-
-  !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
+  !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   Pop $0
   ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-    StrCpy $R0 1
+    Return
   ${EndIf}
 
-  !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
+  !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   Pop $0
   ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-    StrCpy $R0 1
-  ${EndIf}
-
-  ${If} $R0 = 1
     Return
   ${EndIf}
 
@@ -988,12 +1068,9 @@ Function CreateOrUpdateStartMenuShortcut
 FunctionEnd
 
 Function CreateOrUpdateDesktopShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
-  !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
+  !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   Pop $0
   ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Return
   ${EndIf}
 

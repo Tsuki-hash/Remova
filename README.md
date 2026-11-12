@@ -102,6 +102,8 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 Remova 需要 Windows 10 / 11（x64）和 Microsoft Edge WebView2 Runtime。运行时缺失时，NSIS 和 MSI 安装器会通过内置的 Microsoft 引导程序联网安装。便携版要求启动前已安装运行时。在离线环境使用任一安装包或便携版前，请在联网电脑下载 x64 Evergreen 独立安装程序，转到目标电脑安装运行时。[Microsoft WebView2 下载](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
+NSIS 为当前用户安装。安装、升级或卸载时，请直接运行安装程序或卸载程序，无需选择「以管理员身份运行」。
+
 清理系统级应用、Machine PATH、服务或防火墙规则，以及还原到受保护目录时，需要以管理员身份运行 Remova。普通权限下这些条目会逐条失败并报告原因。
 
 > **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。

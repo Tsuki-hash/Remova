@@ -186,6 +186,9 @@ jobs:
       - name: NSIS WebView2 failure regression
         shell: pwsh
         run: pwsh -NoProfile -File scripts/test-nsis-webview2.ps1
+      - name: NSIS per-user maintenance regression
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test-nsis-maintenance.ps1
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh
         run: |
