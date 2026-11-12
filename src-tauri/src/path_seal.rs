@@ -523,6 +523,10 @@ impl RestoreReceiptStore {
     ) -> std::io::Result<std::fs::File> {
         self.0.open_restore_receipt(name, writable, create)
     }
+
+    pub fn remove_receipts(&self, names: &std::collections::HashSet<String>) {
+        self.0.remove_restore_receipts(names);
+    }
 }
 
 #[cfg(windows)]

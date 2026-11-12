@@ -13,6 +13,25 @@ const ID_SIZE: usize = 24;
 const RECORD_SIZE: usize = KEY_SIZE + ID_SIZE;
 const MAX_BYTES: u64 = (RECORD_SIZE * MAX_PAYLOAD_NODES * 2) as u64;
 
+fn receipt_name(seal: &PathMapSeal, entry: &str) -> String {
+    map_digest(
+        format!(
+            "{}\n{}\n{}\n{entry}",
+            seal.session,
+            seal.map_digest,
+            seal.file_manifest_digest.as_deref().unwrap_or("")
+        )
+        .as_bytes(),
+    )
+}
+
+pub(super) fn remove_session_receipts(seal: &PathMapSeal, entries: impl Iterator<Item = String>) {
+    if let Ok(store) = RestoreReceiptStore::open() {
+        let names = entries.map(|entry| receipt_name(seal, &entry)).collect();
+        store.remove_receipts(&names);
+    }
+}
+
 pub(super) struct Receipts<'a> {
     seal: &'a PathMapSeal,
     store: OnceCell<Result<RestoreReceiptStore, String>>,
@@ -32,16 +51,7 @@ impl<'a> Receipts<'a> {
             .get_or_init(RestoreReceiptStore::open)
             .as_ref()
             .map_err(|error| io::Error::other(error.clone()))?;
-        let name = map_digest(
-            format!(
-                "{}\n{}\n{}\n{entry}",
-                self.seal.session,
-                self.seal.map_digest,
-                self.seal.file_manifest_digest.as_deref().unwrap_or("")
-            )
-            .as_bytes(),
-        );
-        store.receipt(&name, writable, create)
+        store.receipt(&receipt_name(self.seal, entry), writable, create)
     }
 
     pub(super) fn can_resume(

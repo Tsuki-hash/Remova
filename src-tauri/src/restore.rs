@@ -167,6 +167,10 @@ fn restore_with_before_copy(
         path_snapshot,
         imports,
     } = validate_session(session, crate::executor::cleanup_cancelled)?;
+    // Keep the verified backup available throughout publication, including
+    // while a different process tries to prune this session.
+    #[cfg(windows)]
+    let _session_pins = crate::fsutil::pin_local_scan_path(session).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     let authenticated = inventory
         .filter(|_| !map.is_empty())
@@ -1208,9 +1212,23 @@ fn remove_confirmed_session(path: &Path, expected: Option<SessionStatus>) -> Res
             crate::fsutil::remove_empty_backup_session(path).map_err(|error| error.to_string())
         }
         (SessionStatus::PendingVerification, None | Some(SessionStatus::Verified)) => {
+            #[cfg(windows)]
+            let mut receipt_inputs = None;
             crate::fsutil::remove_verified_backup_session(path, || {
-                validate_session(path, || false).map(|_| ())
-            })
+                let inputs = validate_session(path, || false)?;
+                #[cfg(windows)]
+                if inputs.inventory.is_some() && !inputs.map.is_empty() {
+                    receipt_inputs = Some((inputs.seal, inputs.map));
+                }
+                #[cfg(not(windows))]
+                let _ = inputs;
+                Ok(())
+            })?;
+            #[cfg(windows)]
+            if let Some((seal, map)) = receipt_inputs {
+                retry::remove_session_receipts(&seal, map.into_keys());
+            }
+            Ok(())
         }
         _ => Err("backup session status changed or could not be verified; files were kept".into()),
     }
@@ -2453,6 +2471,117 @@ mod tests {
                 .resumable,
             0
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removing_a_backup_reclaims_only_its_restore_receipts() {
+        let _env = crate::backup::lock_backup_env();
+        let root = crate::test_support::TempDir::new("restore-receipt-retention");
+        let backups = root.subdir("backups");
+        let _override = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &backups);
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let now = 1_800_000_000_u64;
+        let expired = format!("{}_expired", now - 8 * 24 * 3600);
+        let explicit = format!("{now}_explicit");
+        let retained = format!("{now}_retained");
+        let mut receipts = Vec::new();
+        for name in [&expired, &explicit, &retained] {
+            let source = root.subdir(&format!("target-{name}"));
+            fs::write(source.join("payload"), b"backup bytes").unwrap();
+            let session = backups.join(name);
+            let backed = back_up_fixture_directory(&source, &session);
+            fs::rename(&source, root.join(format!("original-{name}"))).unwrap();
+            assert!(matches!(
+                interrupt_fixture_directory(&session, &backed, &source, |_| {
+                    Err(std::io::Error::other("stop before completing the receipt"))
+                }),
+                Err(publish::Failure::PartialDirectory(_))
+            ));
+            let inputs = validate_session(&session, || false).unwrap();
+            receipts.push((inputs.seal, inputs.map.into_keys().next().unwrap()));
+        }
+        let has_receipt = |index: usize| {
+            let (seal, entry) = &receipts[index];
+            retry::Receipts::new(seal).open(entry, false, false).is_ok()
+        };
+        assert!((0..3).all(has_receipt));
+        let pins = crate::fsutil::pin_local_scan_path(&backups.join(&explicit)).unwrap();
+        assert!(delete_session_by_name(&explicit).is_err());
+        assert!(has_receipt(1));
+        drop(pins);
+        delete_session_by_name(&explicit).unwrap();
+        assert!(!has_receipt(1));
+        assert_eq!(prune_old_sessions_at(7, Some(now)), 1);
+        assert!(!has_receipt(0));
+        assert!(has_receipt(2));
+        assert_eq!(preview_by_name(&retained).unwrap().resumable, 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unpublished_restore_objects_disappear_when_the_publisher_exits() {
+        const CHILD: &str = "REMOVA_TEST_UNPUBLISHED_RESTORE_ROOT";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let path = PathBuf::from(path);
+            assert_eq!(path.parent(), Some(std::env::temp_dir().as_path()));
+            let _store = crate::path_seal::TestStore::new(path.join("seals"));
+            let session = path.join("1700000000_resume");
+            let inputs = validate_session(&session, || false).unwrap();
+            let entry = inputs.map.keys().next().unwrap();
+            let _ = interrupt_fixture_directory(
+                &session,
+                &session.join("files").join(entry),
+                &path.join("destination"),
+                |_| Ok(()),
+            );
+            panic!("child did not reach the requested publication checkpoint");
+        }
+
+        for checkpoint in [
+            "file-chunk",
+            "file-before-rename",
+            "directory-before-rename",
+        ] {
+            let root = crate::test_support::TempDir::new("restore-unpublished");
+            let _store = crate::path_seal::TestStore::new(root.join("seals"));
+            let target = root.subdir("destination");
+            let payload = vec![42; 128 * 1024];
+            fs::write(target.join("payload"), &payload).unwrap();
+            let keep = root.join(".remova-tmp-user");
+            fs::write(&keep, b"user file").unwrap();
+            let session = root.join("1700000000_resume");
+            let backed = back_up_fixture_directory(&target, &session);
+            fs::rename(&target, root.join("original-fixture")).unwrap();
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "restore::tests::unpublished_restore_objects_disappear_when_the_publisher_exits",
+                ])
+                .env(CHILD, root.path())
+                .env("REMOVA_TEST_RESTORE_PUBLICATION_CHECKPOINT", checkpoint)
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(23), "{checkpoint}");
+            if checkpoint.starts_with("file") {
+                assert_eq!(fs::read_dir(&target).unwrap().count(), 0, "{checkpoint}");
+            } else {
+                assert!(!target.exists(), "{checkpoint}");
+            }
+            let temporary_siblings: Vec<_> = fs::read_dir(root.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .filter(|name| name.to_string_lossy().starts_with(".remova-tmp-"))
+                .collect();
+            assert_eq!(temporary_siblings, [".remova-tmp-user"]);
+            assert_eq!(
+                restore_session(&session).unwrap(),
+                [format!("restored {}", target.display())]
+            );
+            assert_eq!(fs::read(target.join("payload")).unwrap(), payload);
+            assert_eq!(fs::read(backed.join("payload")).unwrap(), payload);
+            assert_eq!(fs::read(&keep).unwrap(), b"user file");
+        }
     }
 
     #[cfg(windows)]

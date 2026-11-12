@@ -365,6 +365,38 @@ pub(super) struct Stage {
     pin: Option<File>,
 }
 impl Store {
+    pub(super) fn remove_restore_receipts(&self, names: &std::collections::HashSet<String>) {
+        let Ok(entries) = fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(hash) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix("restore-"))
+                .and_then(|name| name.strip_suffix(".receipt"))
+                .filter(|hash| names.contains(*hash))
+            else {
+                continue;
+            };
+            // Share-none opens protect a journal held by another process.
+            let Ok(file) = self.open_restore_receipt(hash, true, false) else {
+                continue;
+            };
+            let info = FILE_DISPOSITION_INFO {
+                DeleteFile: true.into(),
+            };
+            let _ = unsafe {
+                SetFileInformationByHandle(
+                    HANDLE(file.as_raw_handle()),
+                    FileDispositionInfo,
+                    std::ptr::from_ref(&info).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                )
+            };
+        }
+    }
+
     pub(super) fn open_restore_receipt(
         &self,
         name: &str,

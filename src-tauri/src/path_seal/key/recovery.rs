@@ -4,29 +4,43 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MIN_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
-fn candidate(name: &str, now: SystemTime) -> bool {
-    let Some(rest) = name.strip_prefix("stage_") else {
-        return false;
+fn process_exited(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
     };
-    let Some((pid, stamp)) = rest.split_once('_') else {
-        return false;
-    };
+
+    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        Ok(handle) => {
+            let signalled = unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0;
+            let _ = unsafe { CloseHandle(handle) };
+            signalled
+        }
+        // A missing PID is conclusive. Access denied or PID reuse may mean
+        // the creator still owns this stage, so keep the normal age window.
+        Err(error) => error.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0),
+    }
+}
+
+fn candidate(name: &str, now: SystemTime) -> Option<Duration> {
+    let (pid, stamp) = name.strip_prefix("stage_")?.split_once('_')?;
     if pid.is_empty()
         || stamp.is_empty()
         || !pid.bytes().chain(stamp.bytes()).all(|b| b.is_ascii_digit())
     {
-        return false;
+        return None;
     }
-    if !pid.parse::<u32>().is_ok_and(|pid| pid > 0) {
-        return false;
+    let pid = pid.parse::<u32>().ok().filter(|pid| *pid > 0)?;
+    let stamp = stamp.parse::<u64>().ok()?;
+    let created = UNIX_EPOCH.checked_add(Duration::from_nanos(stamp))?;
+    let age = now.duration_since(created).ok()?;
+    if age >= MIN_AGE {
+        Some(MIN_AGE)
+    } else if process_exited(pid) {
+        Some(Duration::ZERO)
+    } else {
+        None
     }
-    let Ok(stamp) = stamp.parse::<u64>() else {
-        return false;
-    };
-    UNIX_EPOCH
-        .checked_add(Duration::from_nanos(stamp))
-        .and_then(|created| now.duration_since(created).ok())
-        .is_some_and(|age| age >= MIN_AGE)
 }
 
 fn verify_tree(path: &Path, depth: usize, remaining: &mut usize) -> Result<(), String> {
@@ -58,7 +72,7 @@ impl Store {
         }
         self.cleanup_at(SystemTime::now(), |path, delete_pin| {
             validate(delete_pin, true)?;
-            let mut remaining = 10_000;
+            let mut remaining = crate::path_seal::MAX_PAYLOAD_NODES * 2;
             for child in fs::read_dir(path).map_err(|_| "seal:stage_read")? {
                 verify_tree(
                     &child.map_err(|_| "seal:stage_read")?.path(),
@@ -80,13 +94,11 @@ impl Store {
         };
         // Private restore receipts share this store. Only abandoned stage
         // candidates count against the bound on staging recovery work.
-        for entry in entries
+        for (entry, minimum_age) in entries
             .flatten()
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| candidate(name, now))
+            .filter_map(|entry| {
+                let minimum_age = candidate(entry.file_name().to_str()?, now)?;
+                Some((entry, minimum_age))
             })
             .take(256)
         {
@@ -104,7 +116,7 @@ impl Store {
                     .created()
                     .ok()
                     .and_then(|created| now.duration_since(created).ok())
-                    .is_some_and(|age| age >= MIN_AGE)
+                    .is_some_and(|age| age >= minimum_age)
             {
                 continue;
             }
@@ -126,8 +138,13 @@ mod tests {
         use std::io::{BufRead, Write};
         use std::process::{Command, Stdio};
         const CHILD_PATH: &str = "REMOVA_STAGE_RECOVERY_CHILD_PATH";
-        if let Some(path) = std::env::var_os(CHILD_PATH) {
-            let _active = pin(Path::new(&path), true).unwrap();
+        const CHILD_STAMP: &str = "REMOVA_STAGE_RECOVERY_CHILD_STAMP";
+        if let Some(root) = std::env::var_os(CHILD_PATH) {
+            let stamp = std::env::var(CHILD_STAMP).unwrap().parse::<u64>().unwrap();
+            let stage = PathBuf::from(root).join(format!("stage_{}_{stamp}", std::process::id()));
+            fs::create_dir(&stage).unwrap();
+            let _active = pin(&stage, true).unwrap();
+            fs::write(stage.join("snapshot"), b"other process bytes").unwrap();
             println!("STAGE_PIN_READY");
             std::io::stdout().flush().unwrap();
             std::io::stdin().read_line(&mut String::new()).unwrap();
@@ -140,9 +157,6 @@ mod tests {
             std::process::id()
         ));
         let parents = crate::fsutil::create_dirs_pinned(&root).unwrap();
-        let stage = root.join(format!("stage_1_{stamp}"));
-        fs::create_dir(&stage).unwrap();
-        fs::write(stage.join("snapshot"), b"other process bytes").unwrap();
         for index in 0..256 {
             fs::write(
                 root.join(format!("restore-{index:064x}.receipt")),
@@ -169,17 +183,22 @@ mod tests {
                     "path_seal::key::recovery::tests::another_process_pin_preserves_the_entire_active_stage",
                     "--nocapture",
                 ])
-                .env(CHILD_PATH, &stage)
+                .env(CHILD_PATH, &root)
+                .env(CHILD_STAMP, stamp.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap(),
         );
+        let stage = root.join(format!("stage_{}_{stamp}", child.0.id()));
         let mut output = std::io::BufReader::new(child.0.stdout.take().unwrap());
         let ready = (&mut output)
             .lines()
             .any(|line| line.unwrap().contains("STAGE_PIN_READY"));
         assert!(ready, "child must actually acquire the native stage pin");
+        store.cleanup_at(SystemTime::now(), |_, _| {
+            panic!("a recently created stage cannot be cleaned while its creator lives")
+        });
         let now = created + MIN_AGE * 2;
         store.cleanup_at(now, |_, _| {
             panic!("active stage must never reach verification")
@@ -196,7 +215,7 @@ mod tests {
             .write_all(b"release\n")
             .unwrap();
         assert!(child.0.wait().unwrap().success());
-        store.cleanup_at(now, |_, _| Ok(()));
+        store.cleanup_at(SystemTime::now(), |_, _| Ok(()));
         assert!(!stage.exists(), "inactive stage must become recoverable");
         assert!(root.join(format!("restore-{:064x}.receipt", 0)).is_file());
         drop(parents);
@@ -218,7 +237,10 @@ mod tests {
             _pins: vec![],
         };
         let now = created + MIN_AGE * 2;
-        let future = now.duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let future = (now + Duration::from_secs(1))
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let aged = root.join(format!("stage_1_{stamp}"));
         let active_path = root.join(format!("stage_2_{stamp}"));
         let fresh = root.join(format!("stage_3_{future}"));
@@ -270,19 +292,19 @@ mod tests {
     }
 
     #[test]
-    fn only_aged_stage_names_are_candidates() {
+    fn only_valid_past_stage_names_are_candidates() {
         let now = UNIX_EPOCH + MIN_AGE + Duration::from_nanos(1000);
-        assert!(candidate("stage_1_1000", now));
+        assert_eq!(candidate("stage_1_1000", now), Some(MIN_AGE));
         for name in [
             "seal.key",
             "initialized.v2",
             "stage_0_1",
-            "stage_1_2000",
+            "stage_1_90000000000000",
             "stage_1_-1",
             "stage_1_1_extra",
             "stage_4294967296_1",
         ] {
-            assert!(!candidate(name, now), "{name}");
+            assert_eq!(candidate(name, now), None, "{name}");
         }
     }
 

@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 use windows::core::PWSTR;
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows::Wdk::Storage::FileSystem::{
-    FileRenameInformation, NtCreateFile, NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE,
-    FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
-    FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS,
+    FileDispositionInformationEx, FileRenameInformation, NtCreateFile, NtSetInformationFile,
+    FILE_CREATE, FILE_DELETE_ON_CLOSE, FILE_DIRECTORY_FILE, FILE_DISPOSITION_INFORMATION_EX,
+    FILE_DISPOSITION_ON_CLOSE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+    FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_DISPOSITION,
+    NTCREATEFILE_CREATE_OPTIONS,
 };
 use windows::Win32::Foundation::{
     HANDLE, NTSTATUS, STATUS_NO_SUCH_FILE, STATUS_OBJECT_NAME_COLLISION,
@@ -133,7 +135,7 @@ fn create_file(parent: &impl AsRawHandle, name: &OsStr) -> io::Result<File> {
         READ_ENTRY | FILE_WRITE_DATA.0 | DELETE.0,
         FILE_SHARE_NONE,
         FILE_CREATE,
-        FILE_NON_DIRECTORY_FILE,
+        NTCREATEFILE_CREATE_OPTIONS(FILE_NON_DIRECTORY_FILE.0 | FILE_DELETE_ON_CLOSE.0),
     )
 }
 
@@ -174,6 +176,24 @@ fn commit_file(file: &File, name: &OsStr) -> io::Result<()> {
     }
 }
 
+fn keep_published_entry(file: &File) -> io::Result<()> {
+    let info = FILE_DISPOSITION_INFORMATION_EX {
+        Flags: FILE_DISPOSITION_ON_CLOSE,
+    };
+    let mut status = IO_STATUS_BLOCK::default();
+    // Remove the on-close flag only after the exclusive handle has renamed
+    // the fully prepared object. A process exit before this point is safe to retry.
+    nt_result(unsafe {
+        NtSetInformationFile(
+            HANDLE(file.as_raw_handle()),
+            &mut status,
+            std::ptr::from_ref(&info).cast(),
+            std::mem::size_of_val(&info) as u32,
+            FileDispositionInformationEx,
+        )
+    })
+}
+
 pub(super) fn discard_temporary_file(file: &File) {
     let info = FILE_DISPOSITION_INFO {
         DeleteFile: true.into(),
@@ -198,6 +218,13 @@ fn check_cancelled() -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn stop_at_test_checkpoint(name: &str) {
+    if std::env::var("REMOVA_TEST_RESTORE_PUBLICATION_CHECKPOINT").as_deref() == Ok(name) {
+        std::process::exit(23);
+    }
 }
 
 fn temporary_file(parent: &impl AsRawHandle, target: &OsStr) -> io::Result<File> {
@@ -236,12 +263,17 @@ fn write_new_file(source: &Path, parent: &impl AsRawHandle, name: &OsStr) -> io:
                 break;
             }
             temporary.write_all(&chunk[..count])?;
+            #[cfg(test)]
+            stop_at_test_checkpoint("file-chunk");
         }
         temporary.sync_all()?;
         crate::fsutil::reject_named_data_streams(&source)?;
         crate::fsutil::reject_named_data_streams(&temporary)?;
         check_cancelled()?;
-        commit_file(&temporary, name)
+        #[cfg(test)]
+        stop_at_test_checkpoint("file-before-rename");
+        commit_file(&temporary, name)?;
+        keep_published_entry(&temporary)
     })();
     if result.is_err() {
         discard_temporary_file(&temporary);
@@ -270,7 +302,7 @@ fn claim_directory(
             READ_ENTRY | DELETE.0,
             FILE_SHARE_READ,
             FILE_CREATE,
-            FILE_DIRECTORY_FILE,
+            NTCREATEFILE_CREATE_OPTIONS(FILE_DIRECTORY_FILE.0 | FILE_DELETE_ON_CLOSE.0),
         ) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             result => result?,
@@ -279,8 +311,10 @@ fn claim_directory(
             let key = directory_key(relative)?;
             journal.remember(key, &directory)?;
             check_cancelled()?;
+            #[cfg(test)]
+            stop_at_test_checkpoint("directory-before-rename");
             commit_file(&directory, name)?;
-            Ok(())
+            keep_published_entry(&directory)
         })();
         if let Err(error) = result {
             // Only the unpublished object we created can be disposed. If a
