@@ -332,6 +332,22 @@ it("refreshes the preview after an interruption and confirms a resumable directo
   }));
 });
 
+it.each(["zh", "en"] as const)("shows separate guidance for restore conflicts and unreadable targets in %s", async lang => {
+  setLang(lang);
+  const { result } = renderVisibleRestore();
+  await act(async () => { await result.current.loadRestore(); });
+  native.restoreSessionByName.mockResolvedValueOnce([
+    "restore directory kept conflicts: 3 · folder/a · folder/b · … (+1)",
+    "restore could not read targets: 2 · folder/locked · folder/denied",
+  ]);
+  await act(async () => { await result.current.runRestore(); });
+  expect(result.current.restoreMsgs).toEqual([
+    t().restoreDirectoryConflicts + ": 3 · folder/a · folder/b · … (+1)",
+    t().restoreTargetsUnreadable + ": 2 · folder/locked · folder/denied",
+  ]);
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
 it("preserves backups on deletion cancellation or failure", async () => {
   const error = vi.fn();
   const { result } = renderVisibleRestore(error);

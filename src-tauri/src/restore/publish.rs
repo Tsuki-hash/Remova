@@ -34,9 +34,35 @@ use windows::Win32::System::IO::IO_STATUS_BLOCK;
 #[derive(Debug)]
 pub(super) enum Failure {
     Occupied,
+    TargetUnreadable(io::Error),
     PartialDirectory(io::Error),
-    DirectoryConflicts { count: usize, first: PathBuf },
+    DirectoryIssues {
+        conflicts: Issues,
+        unreadable: Issues,
+    },
     Io(io::Error),
+}
+
+#[derive(Debug, Default)]
+pub(super) struct Issues {
+    pub(super) count: usize,
+    pub(super) examples: Vec<PathBuf>,
+}
+
+impl Issues {
+    fn add(&mut self, relative: &Path) {
+        self.count += 1;
+        if self.examples.len() < 5 {
+            self.examples.push(relative.to_owned());
+        }
+    }
+}
+
+fn type_conflict(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::AlreadyExists | io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory
+    )
 }
 
 impl From<io::Error> for Failure {
@@ -374,18 +400,12 @@ struct DirectoryRestore<F> {
     journal: Journal,
     left: usize,
     retained: Vec<(File, File)>,
-    conflicts: usize,
-    first_conflict: Option<PathBuf>,
+    conflicts: Issues,
+    unreadable: Issues,
     after_file: F,
 }
 
 impl<F: FnMut(&Path) -> io::Result<()>> DirectoryRestore<F> {
-    fn conflict(&mut self, relative: &Path) {
-        self.conflicts += 1;
-        self.first_conflict
-            .get_or_insert_with(|| relative.to_owned());
-    }
-
     fn write_contents(
         &mut self,
         source: &Path,
@@ -413,15 +433,23 @@ impl<F: FnMut(&Path) -> io::Result<()>> DirectoryRestore<F> {
                     Ok(existing) if self.journal.owns(&key, &existing)? => existing,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         match claim_directory(&directory, &name, &relative, &mut self.journal) {
-                            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                                self.conflict(&relative);
+                            Err(error) if type_conflict(&error) => {
+                                self.conflicts.add(&relative);
                                 continue;
                             }
                             result => result?,
                         }
                     }
-                    _ => {
-                        self.conflict(&relative);
+                    Ok(_) => {
+                        self.conflicts.add(&relative);
+                        continue;
+                    }
+                    Err(error) => {
+                        if type_conflict(&error) {
+                            self.conflicts.add(&relative);
+                        } else {
+                            self.unreadable.add(&relative);
+                        }
                         continue;
                     }
                 };
@@ -443,18 +471,18 @@ impl<F: FnMut(&Path) -> io::Result<()>> DirectoryRestore<F> {
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                             return Err(error)
                         }
-                        _ => self.conflict(&relative),
+                        Ok(false) => self.conflicts.add(&relative),
+                        Err(_) => self.unreadable.add(&relative),
                     },
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         match write_new_file(&child, &directory, &name) {
                             Ok(()) => (self.after_file)(&relative)?,
-                            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                                self.conflict(&relative)
-                            }
+                            Err(error) if type_conflict(&error) => self.conflicts.add(&relative),
                             Err(error) => return Err(error),
                         }
                     }
-                    Err(_) => self.conflict(&relative),
+                    Err(error) if type_conflict(&error) => self.conflicts.add(&relative),
+                    Err(_) => self.unreadable.add(&relative),
                 }
             }
         }
@@ -583,7 +611,8 @@ pub(super) fn publish_directory(
             let directory = claim_directory(parent, name, root, &mut journal)?;
             (directory, journal)
         }
-        Err(_) => return Err(Failure::Occupied),
+        Err(error) if type_conflict(&error) => return Err(Failure::Occupied),
+        Err(error) => return Err(Failure::TargetUnreadable(error)),
     };
     if !journal.owns(&key, &directory)? {
         return Err(io::Error::other("restore directory identity changed").into());
@@ -592,16 +621,16 @@ pub(super) fn publish_directory(
         journal,
         left: crate::path_seal::MAX_PAYLOAD_NODES - 1,
         retained: Vec::new(),
-        conflicts: 0,
-        first_conflict: None,
+        conflicts: Issues::default(),
+        unreadable: Issues::default(),
         after_file,
     };
     run.write_contents(source, directory, root, 0)
         .map_err(Failure::PartialDirectory)?;
-    if let Some(first) = run.first_conflict {
-        return Err(Failure::DirectoryConflicts {
-            count: run.conflicts,
-            first,
+    if run.conflicts.count > 0 || run.unreadable.count > 0 {
+        return Err(Failure::DirectoryIssues {
+            conflicts: run.conflicts,
+            unreadable: run.unreadable,
         });
     }
     run.journal.finish();
@@ -714,8 +743,8 @@ mod tests {
             journal: Journal::open(receipt, File::create(root.join("lock")).unwrap()).unwrap(),
             left: 1,
             retained: Vec::new(),
-            conflicts: 0,
-            first_conflict: None,
+            conflicts: Issues::default(),
+            unreadable: Issues::default(),
             after_file: |_: &Path| Ok(()),
         };
         run.write_contents(&source, directory, Path::new(""), 0)

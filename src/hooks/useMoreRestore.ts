@@ -22,6 +22,7 @@ const restoreResultPrefixes = [
   ["restore directory may be incomplete: ", "restoreDirectoryIncomplete", false],
   ["restore directory interrupted: ", "restoreDirectoryInterrupted", false],
   ["restore directory kept conflicts: ", "restoreDirectoryConflicts", false],
+  ["restore could not read targets: ", "restoreTargetsUnreadable", false],
   ["restore failed for ", "restoreFileFailed", false],
   ["skipped existing restore target: ", "restoreTargetOccupied", false],
   ["skipped backup entry with no recorded digest: ", "restoreSkippedNoDigest", false],

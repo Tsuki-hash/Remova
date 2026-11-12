@@ -322,7 +322,16 @@ fn restore_with_before_copy(
             let source = staged.path();
             // The publisher checks occupied directories against the private
             // receipt and always uses no-replace publication for new entries.
-            if dest.try_exists().unwrap_or(true) {
+            let target_exists = match dest.try_exists() {
+                Ok(exists) => exists,
+                Err(error) => {
+                    messages.push(format!(
+                        "restore could not read targets: 1 · {original}: {error}"
+                    ));
+                    continue;
+                }
+            };
+            if target_exists {
                 #[cfg(windows)]
                 let directory = crate::fsutil::local_scan_is_dir(source);
                 #[cfg(not(windows))]
@@ -346,14 +355,40 @@ fn restore_with_before_copy(
                     Err(publish::Failure::Occupied) => {
                         messages.push(format!("skipped existing restore target: {original}"));
                     }
+                    Err(publish::Failure::TargetUnreadable(error)) => {
+                        messages.push(format!(
+                            "restore could not read targets: 1 · {original}: {error}"
+                        ));
+                    }
                     Err(publish::Failure::PartialDirectory(error)) => messages.push(format!(
                         "restore directory interrupted: {original}: {error}"
                     )),
-                    Err(publish::Failure::DirectoryConflicts { count, first }) => {
-                        messages.push(format!(
-                            "restore directory kept conflicts: {count} · {}",
-                            dest.join(first).display(),
-                        ))
+                    Err(publish::Failure::DirectoryIssues {
+                        conflicts,
+                        unreadable,
+                    }) => {
+                        for (label, issues) in [
+                            ("restore directory kept conflicts", conflicts),
+                            ("restore could not read targets", unreadable),
+                        ] {
+                            if issues.count == 0 {
+                                continue;
+                            }
+                            let mut paths: Vec<_> = issues
+                                .examples
+                                .iter()
+                                .map(|path| dest.join(path).display().to_string())
+                                .collect();
+                            let omitted = issues.count - paths.len();
+                            if omitted > 0 {
+                                paths.push(format!("… (+{omitted})"));
+                            }
+                            messages.push(format!(
+                                "{label}: {} · {}",
+                                issues.count,
+                                paths.join(" · ")
+                            ));
+                        }
                     }
                     Err(publish::Failure::Io(error)) => {
                         if !crate::executor::cleanup_cancelled() {
@@ -2471,6 +2506,75 @@ mod tests {
                 .resumable,
             0
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_reports_multiple_conflicts_separately_from_unreadable_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = crate::test_support::TempDir::new("restore-issue-details");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let target = root.subdir("destination");
+        let conflicts: Vec<_> = (0..7).map(|n| format!("changed-{n}")).collect();
+        for name in conflicts
+            .iter()
+            .map(String::as_str)
+            .chain(["a-match", "denied", "locked", "missing"])
+        {
+            fs::write(target.join(name), b"original").unwrap();
+        }
+        let session = root.join("1700000000_resume");
+        let backed = back_up_fixture_directory(&target, &session);
+        fs::rename(&target, root.join("original-fixture")).unwrap();
+        assert!(matches!(
+            interrupt_fixture_directory(&session, &backed, &target, |_| {
+                Err(std::io::Error::other("stop after first file"))
+            }),
+            Err(publish::Failure::PartialDirectory(_))
+        ));
+        fs::write(target.join("a-match"), b"original").unwrap();
+        for name in &conflicts {
+            fs::write(target.join(name), b"user edited").unwrap();
+        }
+        let denied = target.join("denied");
+        let locked = target.join("locked");
+        fs::write(&denied, b"user denied").unwrap();
+        fs::write(&locked, b"user locked").unwrap();
+        let exclusive = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&locked)
+            .unwrap();
+        let icacls = |operation: &str, grant: &str| {
+            let output = Command::new("icacls")
+                .arg(&denied)
+                .args([operation, grant])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        };
+        icacls("/deny", "*S-1-1-0:(RD)");
+        let result = restore_session(&session);
+        icacls("/remove:d", "*S-1-1-0");
+        drop(exclusive);
+        let rows = result.unwrap();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(
+            rows[0].starts_with("restore directory kept conflicts: 7"),
+            "{rows:?}"
+        );
+        assert_eq!(rows[0].matches("changed-").count(), 5);
+        assert!(rows[0].contains("… (+2)"));
+        assert!(
+            rows[1].starts_with("restore could not read targets: 2"),
+            "{rows:?}"
+        );
+        assert!(rows[1].contains("denied") && rows[1].contains("locked"));
+        assert!(rows.iter().all(|row| !row.contains("a-match")));
+        assert_eq!(fs::read(target.join("missing")).unwrap(), b"original");
+        assert_eq!(fs::read(&denied).unwrap(), b"user denied");
+        assert_eq!(fs::read(&locked).unwrap(), b"user locked");
+        assert_eq!(fs::read(backed.join("denied")).unwrap(), b"original");
     }
 
     #[cfg(windows)]
