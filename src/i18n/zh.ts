@@ -356,6 +356,7 @@ export const dict = {
     batchOk: "成功",
     batchFailed: "失败",
     batchReboot: "待重启",
+    batchNotRun: "未执行",
     batchSkipped: "已跳过",
     batchSkippedNone: "无残留跳过",
     batchSkippedCancelled: "已取消跳过",

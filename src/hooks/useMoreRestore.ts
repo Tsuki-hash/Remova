@@ -77,7 +77,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [cancelRequested, setCancelRequested] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
-  const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewVisible, setPreviewVisibility] = useState(false);
   const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -86,6 +86,21 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const operation = useRef(false);
   const activeRestore = useRef<{ id: string; cancelling: boolean } | null>(null);
   const previewSequence = useRef(0);
+  const pendingConfirmation = useRef<{ id: string; cancelled: boolean; settled: boolean } | null>(null);
+
+  const cancelPendingConfirmation = useCallback(() => {
+    const pending = pendingConfirmation.current;
+    if (!pending || pending.cancelled) return;
+    pending.cancelled = true;
+    if (!pending.settled) void api.cancelRestorePreview(pending.id).catch(() => {});
+  }, []);
+
+  const setPreviewVisible = useCallback((visible: boolean) => {
+    if (!visible) cancelPendingConfirmation();
+    setPreviewVisibility(visible);
+  }, [cancelPendingConfirmation]);
+
+  useEffect(() => cancelPendingConfirmation, [cancelPendingConfirmation]);
 
   useEffect(() => {
     const sequence = ++previewSequence.current;
@@ -150,6 +165,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       operation.current = true;
       setRestoreBusy(true);
       const L = t();
+      let deleted = false;
       try {
         const ok = await requestConfirm({
           title: L.deleteSession,
@@ -159,15 +175,22 @@ export function useMoreRestore(onError: (msg: string) => void) {
         });
         if (!ok) return;
         await api.deleteBackupSession(name, status);
+        deleted = true;
+        const remaining = sessions.filter(session => session.name !== name);
+        setSessions(remaining);
+        setRestorePick(cur => cur === name ? remaining.find(canPreviewBackup)?.name ?? "" : cur);
         const list = await api.backupSessions();
         const restorable = list.filter(canPreviewBackup);
         setSessions(list);
+        setRestoreLoadError(null);
         setRestorePick(cur => {
           if (cur === name) return restorable[0]?.name ?? "";
           return restorable.some(session => session.name === cur) ? cur : "";
         });
       } catch (e) {
-        onError(formatError(e));
+        const error = formatError(e);
+        if (deleted) setRestoreLoadError(error);
+        onError(error);
       } finally {
         operation.current = false;
         setRestoreBusy(false);
@@ -181,14 +204,17 @@ export function useMoreRestore(onError: (msg: string) => void) {
     if (!restorePick || operation.current) return;
     operation.current = true;
     setRestoreBusy(true);
+    const pending = { id: crypto.randomUUID(), cancelled: false, settled: false };
+    pendingConfirmation.current = pending;
     try {
       // Invalidate any older preview still in flight for this same selection.
       ++previewSequence.current;
       setPreviewLoading(true);
       let preview: RestorePreview;
       try {
-        preview = await api.previewRestore(restorePick, crypto.randomUUID());
+        preview = await api.previewRestore(restorePick, pending.id);
       } catch (error) {
+        if (pending.cancelled) return;
         // A failed pre-confirm preview owns its own surface (alert + retry);
         // the restore-result block must stay reserved for a confirmed run.
         setRestorePreview(null);
@@ -196,8 +222,10 @@ export function useMoreRestore(onError: (msg: string) => void) {
         toast.error(formatError(error));
         return;
       } finally {
-        setPreviewLoading(false);
+        pending.settled = true;
+        if (!pending.cancelled) setPreviewLoading(false);
       }
+      if (pending.cancelled) return;
       setRestorePreview(preview);
       setPreviewError(null);
       const ok = await requestConfirm({
@@ -208,7 +236,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
         confirmLabel: L.restoreRun,
         danger: true,
       });
-      if (!ok) return;
+      if (!ok || pending.cancelled) return;
+      pendingConfirmation.current = null;
       const id = crypto.randomUUID();
       activeRestore.current = { id, cancelling: false };
       setRestoreResult(null);
@@ -231,6 +260,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         toast.error(formatError(e));
       }
     } finally {
+      if (pendingConfirmation.current === pending) pendingConfirmation.current = null;
       activeRestore.current = null;
       setRunningRestore(null);
       setCancelRequested(false);

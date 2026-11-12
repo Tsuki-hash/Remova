@@ -9,6 +9,7 @@ import {
   cleanupAccomplishedSomething,
   cleanupNothingText,
   cleanupOutcomeText,
+  hasHistorySaveWarning,
   isLegacyHistoryWarning,
 } from "../lib/cleanupFeedback";
 import { toast } from "../lib/toast";
@@ -50,9 +51,11 @@ export async function runBatchCleanup(
   cb.onShowSummary(false);
   const results: BatchItemResult[] = [];
   const okKeys = new Set<string>();
+  let nextIndex = 0;
+  let rebootPending = false;
   try {
-    for (let i = 0; i < queue.length; i++) {
-      if (cb.cancelRef.current) break;
+    while (nextIndex < queue.length && !cb.cancelRef.current) {
+      const i = nextIndex++;
       const app = queue[i];
       if (!app) continue;
       const key = appKey(app);
@@ -112,17 +115,15 @@ export async function runBatchCleanup(
         restore_point: loadRestorePointPref(),
           cleanup_source: "uninstall",
         });
-        const historyWarning = report.history_save_failed || report.errors.some(isLegacyHistoryWarning)
-          ? L.cleanupHistorySaveFailed
-          : "";
-        const record = (result: BatchItemResult) => results.push({
-          ...result,
-          detail: [result.detail, historyWarning].filter(Boolean).join(" "),
-        });
+        const historyWarning = hasHistorySaveWarning(report) ? L.cleanupHistorySaveFailed : undefined;
+        const record = (result: BatchItemResult) => results.push(
+          historyWarning ? { ...result, historyWarning } : result,
+        );
         officialDone ||= runOfficial && report.uninstall_ok;
         // A 1641 (or the global pending gate) means the machine is about to
         // restart. Do not start another app's uninstall/delete in this batch.
         if (report.reboot_pending) {
+          rebootPending = true;
           const appOfficialDone = runOfficial && report.uninstall_ok;
           const gateWarning = report.reboot_gate_persisted === false ? L.rebootGateNotPersisted : "";
           record({
@@ -230,9 +231,19 @@ export async function runBatchCleanup(
         });
       }
     }
+    for (const app of queue.slice(nextIndex)) {
+      if (!app) continue;
+      const key = appKey(app);
+      results.push({
+        key,
+        name: app.name,
+        status: "not_run",
+        detail: rebootPending ? L.batchReboot : L.batchCancelled,
+        officialDone: skipOfficialKeys.has(key),
+      });
+    }
     cb.onResults([...results]);
-    const cancelled = cb.cancelRef.current;
-    toast.info(cancelled ? L.batchCancelled : L.batchDone);
+    if (!rebootPending) toast.info(cb.cancelRef.current ? L.batchCancelled : L.batchDone);
     cb.onDoneKeys([...okKeys]);
     cb.onShowSummary(true);
   } finally {

@@ -161,6 +161,47 @@ it("focuses tool search after closing restore opened from another page", async (
 const vaultSession = (name: string) => ({ name, size_kb: 2, created_at: "", sealed: true, status: "verified" as const });
 const vaultPreview = (name: string) => ({ name, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] });
 
+it.each(["history", "other-page"] as const)("discards a fresh restore confirmation after leaving for %s", async (destination) => {
+  const L = t();
+  const name = "pending-confirmation";
+  let complete!: () => void;
+  vi.mocked(api.backupSessions).mockResolvedValue([vaultSession(name)]);
+  vi.mocked(api.previewRestore).mockResolvedValueOnce(vaultPreview(name))
+    .mockImplementationOnce(() => new Promise(resolve => { complete = () => resolve(vaultPreview(name)); }));
+  const page = mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  const restore = await screen.findByRole("button", { name: L.restoreRun });
+  await waitFor(() => expect(restore).toHaveProperty("disabled", false));
+  fireEvent.click(restore);
+  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledTimes(2));
+  const operation = vi.mocked(api.previewRestore).mock.calls[1]![1];
+  if (destination === "history") fireEvent.click(screen.getByText(L.history).closest("button")!);
+  else page.rerender(<Toolbox visible={false} />);
+  await waitFor(() => expect(api.cancelRestorePreview).toHaveBeenCalledWith(operation));
+  await act(async () => complete());
+  expect(screen.queryByRole("dialog", { name: L.restore })).toBeNull();
+  expect(api.restoreSessionByName).not.toHaveBeenCalled();
+});
+
+it("removes a deleted backup immediately and offers reload when the inventory read fails", async () => {
+  const L = t();
+  const name = "deleted-backup";
+  vi.mocked(api.backupSessions).mockResolvedValueOnce([vaultSession(name)])
+    .mockRejectedValueOnce(new Error("inventory read failed"));
+  vi.mocked(api.previewRestore).mockResolvedValue(vaultPreview(name));
+  vi.mocked(api.deleteBackupSession).mockResolvedValue(undefined);
+  mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  fireEvent.click(await screen.findByRole("button", { name: `${L.deleteSession}: ${name}` }));
+  await screen.findByRole("dialog", { name: L.deleteSession });
+  await act(async () => settleConfirm(true));
+  const reload = await screen.findByRole("button", { name: L.manageReload });
+  expect(screen.queryByRole("radio", { name: new RegExp(name) })).toBeNull();
+  fireEvent.click(reload);
+  await waitFor(() => expect(api.backupSessions).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.queryByRole("button", { name: L.manageReload })).toBeNull());
+});
+
 it.each(["Escape", "Cancel"] as const)("restores focus after dismissing restore confirmation with %s", async (method) => {
   const L = t();
   const name = "backup-for-restore";

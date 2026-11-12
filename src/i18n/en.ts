@@ -355,6 +355,7 @@ export const dict: EnDict = {
     batchOk: "OK",
     batchFailed: "Failed",
     batchReboot: "Reboot pending",
+    batchNotRun: "Not run",
     batchSkipped: "Skipped",
     batchSkippedNone: "No leftovers",
     batchSkippedCancelled: "Cancelled",

@@ -7,6 +7,10 @@ export function isLegacyHistoryWarning(error: string): boolean {
   return error.startsWith("cleanup history could not be saved:");
 }
 
+export function hasHistorySaveWarning(report: { history_save_failed?: boolean; errors: string[] }): boolean {
+  return report.history_save_failed === true || report.errors.some(isLegacyHistoryWarning);
+}
+
 /**
  * Headline for a finished cleanup. A 3–7 second toast that only names
  * deleted/failed hides the skipped and reboot-delayed counts, so all four

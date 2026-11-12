@@ -1,4 +1,5 @@
 import type { FullCleanupReport } from "../types";
+import { hasHistorySaveWarning } from "./cleanupFeedback";
 
 /**
  * Reduce every user-profile prefix to a placeholder. Applied recursively.
@@ -63,6 +64,7 @@ function summarizeReport(report: FullCleanupReport) {
     reboot_pending: report.reboot_pending,
     reboot_gate_persisted: report.reboot_gate_persisted,
     restore_point_ok: report.restore_point_ok,
+    history_save_failed: hasHistorySaveWarning(report),
     error_count: report.errors.length,
   };
 }
@@ -146,6 +148,7 @@ export function buildAuditMarkdown(
     `- Uninstall: ${markdownUninstallStatus[uninstallStatus(report)]}${r.dry_run ? " (dry run)" : ""}`,
     `- Deleted: ${r.deleted} · Failed: ${r.failed} · Skipped: ${r.skipped}${r.delayed ? ` · Reboot-delayed: ${r.delayed}` : ""}`,
     `- Backup: ${backupStatus}${backupLocation}`,
+    ...(hasHistorySaveWarning(report) ? ["- Cleanup history could not be saved."] : []),
     reviewLine(reviewRounds, reviewConverged, reviewReason),
     "",
   ];

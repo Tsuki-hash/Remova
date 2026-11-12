@@ -1,12 +1,13 @@
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 
-export type BatchStatus = "ok" | "failed" | "skipped" | "reboot";
+export type BatchStatus = "ok" | "failed" | "skipped" | "reboot" | "not_run";
 export type BatchItemResult = {
   key: string;
   name: string;
   status: BatchStatus;
   detail: string;
+  historyWarning?: string;
   /** Preserved across residual retries, including later analyze failures. */
   officialDone?: boolean;
 };
@@ -86,7 +87,8 @@ export function BatchSummaryPanel({
           {L.batchOk} {results.filter((r) => r.status === "ok").length} · {L.batchFailed}{" "}
           {results.filter((r) => r.status === "failed").length} · {L.batchReboot}{" "}
           {results.filter((r) => r.status === "reboot").length} · {L.batchSkipped}{" "}
-          {results.filter((r) => r.status === "skipped").length}
+          {results.filter((r) => r.status === "skipped").length} · {L.batchNotRun}{" "}
+          {results.filter((r) => r.status === "not_run").length}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           {results.some((r) => r.status === "failed") && (
@@ -121,10 +123,13 @@ export function BatchSummaryPanel({
                   ? L.batchFailed
                   : r.status === "reboot"
                     ? L.batchReboot
-                    : skippedLabel(r.detail, L)}
+                    : r.status === "not_run"
+                      ? L.batchNotRun
+                      : skippedLabel(r.detail, L)}
             </span>
             {r.name}
             {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}
+            {r.historyWarning ? <span style={css.muted}> · {r.historyWarning}</span> : null}
           </div>
         ))}
       </div>

@@ -71,6 +71,20 @@ describe("buildAuditJson", () => {
 });
 
 it.each([
+  { history_save_failed: true },
+  { errors: ["cleanup history could not be saved: private path"] },
+])("preserves cleanup history warnings in audit summaries (%j)", (over) => {
+  const input = report(over);
+  expect(buildAuditJson(input, 0, null, { summaryOnly: true }).report)
+    .toHaveProperty("history_save_failed", true);
+  for (const summaryOnly of [false, true]) {
+    expect(buildAuditMarkdown(input, 0, null, { summaryOnly }))
+      .toContain("- Cleanup history could not be saved.");
+  }
+  expect(buildAuditMarkdown(input, 0, null, { summaryOnly: true })).not.toContain("private path");
+});
+
+it.each([
   [{ uninstall_ok: true, uninstall_message: "cleanup cancelled", aborted: true }, "ok", "ok"],
   [{ uninstall_ok: false, uninstall_message: "skipped" }, "skipped", "skipped"],
   [{ uninstall_ok: false, uninstall_message: "no uninstall string" }, "skipped", "skipped"],

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScopedScanPanel } from "../components/ScopedScanPanel";
+import { BatchSummaryPanel } from "../components/BatchPanels";
 import { cleanupAccomplishedSomething, shouldRescanAfterUninstall, cleanupFeedback, cleanupNothingText } from "../lib/cleanupFeedback";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
@@ -63,6 +64,23 @@ it.each(["zh", "en"] as const)("reports backup refusal and all-skipped cleanup w
     cleanupFeedback(report({ deleted: 0, skipped: 1 }), L, "fixture");
     expect(toast.info).toHaveBeenCalledWith(L.cleanupOutcome(0, 0, 1, 0), { channel: "fixture" });
     expect(toast.success).not.toHaveBeenCalled();
+  } finally {
+    setLang("zh");
+  }
+});
+
+it.each(["zh", "en"] as const)("preserves the no-leftovers label alongside a history warning in %s", lang => {
+  setLang(lang);
+  try {
+    const L = t();
+    render(<BatchSummaryPanel results={[
+      { key: "a", name: "App A", status: "skipped", detail: "", historyWarning: L.cleanupHistorySaveFailed },
+      { key: "b", name: "App B", status: "not_run", detail: L.batchCancelled },
+    ]} onRetryFailed={vi.fn()} onDismiss={vi.fn()} />);
+    expect(screen.getByText(L.batchSkippedNone)).toBeTruthy();
+    expect(screen.getByText(`· ${L.cleanupHistorySaveFailed}`)).toBeTruthy();
+    expect(screen.getByText(L.batchNotRun)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: L.batchRetryFailed })).toBeNull();
   } finally {
     setLang("zh");
   }

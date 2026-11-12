@@ -24,6 +24,7 @@ vi.mock("../i18n", () => ({
     cleanupNothingRemoved: (s: number) => (s > 0 ? `refused ${s}` : "nothing to clean"),
     cleanupHistorySaveFailed: "history was not saved",
     batchCancelled: "cancelled",
+    batchReboot: "waiting for restart",
     batchDone: "done",
     backendBackupFailed: "backup stopped cleanup",
     backendDetailUnavailable: "diagnostic unavailable",
@@ -139,8 +140,9 @@ describe("runBatchCleanup", () => {
     const cb = makeCb();
     await runBatchCleanup([target], false, keyOf, cb);
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({
-      status, detail: expect.stringContaining("history was not saved"),
+      status, historyWarning: "history was not saved",
     });
+    if (empty) expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.detail).toBe("");
   });
 
   it.each([false, true])("keeps an empty residual abort distinct from a read failure (readFailed=%s)", async readFailed => {
@@ -259,6 +261,9 @@ describe("runBatchCleanup", () => {
     const last = cb.onResults.mock.calls.at(-1)?.[0]?.[0];
     expect(last?.status).toBe("reboot");
     expect(last?.officialDone).toBe(true);
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[1]).toMatchObject({
+      key: "Uninstall\\B", status: "not_run", detail: "waiting for restart",
+    });
   });
 
   it("fails the row instead of scanning untracked when the task cap rejects begin", async () => {
@@ -322,7 +327,7 @@ describe("runBatchCleanup", () => {
     await runBatchCleanup([app("D1"), app("D2")], true, keyOf, cb);
     expect(analyze).toHaveBeenCalledTimes(1);
     const lastResults = cb.onResults.mock.calls.at(-1)?.[0] ?? [];
-    expect(lastResults.length).toBeLessThanOrEqual(1);
+    expect(lastResults.map(({ status }: { status: string }) => status)).toEqual(["skipped", "not_run"]);
   });
 
   it("does not mark a global pending gate as officially uninstalled", async () => {
@@ -394,6 +399,7 @@ describe("runBatchCleanup", () => {
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
     expect(cb.onResults).toHaveBeenLastCalledWith([
       expect.objectContaining({ status: "skipped", detail: "cancelled", officialDone: false }),
+      expect.objectContaining({ status: "not_run", detail: "cancelled", officialDone: false }),
     ]);
   });
 
@@ -423,6 +429,7 @@ describe("runBatchCleanup", () => {
       expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
       expect(cb.onResults).toHaveBeenLastCalledWith([
         expect.objectContaining({ key: "Uninstall\\Window", status: "skipped", detail: "cancelled" }),
+        expect.objectContaining({ key: "Uninstall\\Second", status: "not_run", detail: "cancelled" }),
       ]);
       expect(cb.onShowSummary).toHaveBeenLastCalledWith(true);
       expect(cb.onSetBatching).toHaveBeenLastCalledWith(false);
