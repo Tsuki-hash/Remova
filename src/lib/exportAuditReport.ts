@@ -1,15 +1,6 @@
 import type { FullCleanupReport } from "../types";
 
 /**
- * M4E.7: user-triggered audit-evidence export. The JSON carries the cleanup
- * report plus a machine-checkable structure so a reviewer can re-derive the
- * verdict. Privacy: every `C:\Users\<name>\…` prefix is reduced to
- * `C:\Users\<user>\…` before anything leaves the webview, and the payload by
- * construction contains no `.npmrc` credentials (those never cross the IPC
- * boundary — see the CLI residue scanner).
- */
-
-/**
  * Reduce every user-profile prefix to a placeholder. Applied recursively.
  *
  * Covers what the first version missed: the profile segment is matched
@@ -44,6 +35,27 @@ export type AuditExportOptions = {
   includeUserPaths?: boolean;
 };
 
+function summarizeReport(report: FullCleanupReport) {
+  return {
+    dry_run: report.dry_run,
+    backup_present: Boolean(report.backup_dir),
+    backup_verified: report.backup_verified,
+    uninstall_ok: report.uninstall_ok,
+    deleted: report.deleted,
+    failed: report.failed,
+    skipped: report.skipped,
+    delayed: report.delayed,
+    reclaimed_kb: report.reclaimed_kb,
+    kept_kb: report.kept_kb,
+    delayed_kb: report.delayed_kb,
+    aborted: report.aborted,
+    reboot_pending: report.reboot_pending,
+    reboot_gate_persisted: report.reboot_gate_persisted,
+    restore_point_ok: report.restore_point_ok,
+    error_count: report.errors.length,
+  };
+}
+
 /** The exported shape: the report plus export metadata. */
 export function buildAuditJson(
   report: FullCleanupReport,
@@ -52,24 +64,23 @@ export function buildAuditJson(
   options: AuditExportOptions = {},
   reviewReason?: "insufficient" | "incomplete",
 ) {
-  const body = options.includeUserPaths ? report : (redactDeep(report) as FullCleanupReport);
-  const base = {
+  const summaryOnly = options.summaryOnly === true;
+  const body = summaryOnly
+    ? summarizeReport(report)
+    : options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport;
+  return {
     exported_at: new Date().toISOString(),
     kind: "remova-audit-report",
     version: 1,
     /** Verify: SHA-256 of `JSON.stringify(JSON.parse(text).report)` (compact
      * JS serialization, key insertion order). */
     report_sha256_recipe: "SHA-256 of JSON.stringify(JSON.parse(text).report)",
-    summary_only: options.summaryOnly === true,
+    summary_only: summaryOnly,
     review_rounds: reviewRounds,
     review_converged: reviewConverged,
     review_unavailable_reason: reviewReason,
     report: body,
   };
-  if (options.summaryOnly !== true) return base;
-  // Summary mode: counters and verdicts without per-item paths.
-  const { item_details: _details, ...rest } = base.report;
-  return { ...base, report: rest };
 }
 
 const REVIEW_TEXT = {
@@ -104,20 +115,22 @@ export function buildAuditMarkdown(
   options: AuditExportOptions = {},
   reviewReason?: "insufficient" | "incomplete",
 ): string {
-  const redact = options.includeUserPaths !== true;
-  const r = redact ? (redactDeep(report) as FullCleanupReport) : report;
+  const summaryOnly = options.summaryOnly === true;
+  const r = summaryOnly || options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport;
+  const backupStatus = !r.backup_dir ? "none" : r.backup_verified === true ? "verified" : "unverified";
+  const backupLocation = !summaryOnly && r.backup_dir ? ` · ${r.backup_dir}` : "";
   const head = [
-    `# Remova audit — ${r.app_name}`,
+    summaryOnly ? "# Remova audit summary" : `# Remova audit — ${r.app_name}`,
     "",
     `- Exported: ${new Date().toISOString()}`,
     `- Uninstall: ${r.uninstall_ok ? "ok" : "failed"}${r.dry_run ? " (dry run)" : ""}`,
     `- Deleted: ${r.deleted} · Failed: ${r.failed} · Skipped: ${r.skipped}${r.delayed ? ` · Reboot-delayed: ${r.delayed}` : ""}`,
-    `- Backup: ${r.backup_dir || "(none)"}`,
+    `- Backup: ${backupStatus}${backupLocation}`,
     reviewLine(reviewRounds, reviewConverged, reviewReason),
     "",
   ];
-  if (options.summaryOnly === true) {
-    return [...head, "_Summary mode: per-item paths omitted._"].join("\n");
+  if (summaryOnly) {
+    return head.join("\n");
   }
   const rows = (r.item_details || [])
     .map((d) => `| ${d.kind} | ${d.status} | ${d.path} | ${d.message} |`)
@@ -150,7 +163,8 @@ export async function downloadAudit(
   options: AuditExportOptions = {},
   reviewReason?: "insufficient" | "incomplete",
 ) {
-  const stem = (report.app_name || "app").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
+  const stem = options.summaryOnly ? "summary" :
+    (report.app_name || "app").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
   if (format === "md") {
     const md = buildAuditMarkdown(report, reviewRounds, reviewConverged, options, reviewReason);
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });

@@ -80,7 +80,7 @@ export function ReportPanel({
         verdictText,
       ),
       confirmLabel: L.auditExportGo,
-      checkbox: { label: L.auditExportIncludePaths, defaultChecked: false },
+      checkbox: summaryOnly ? undefined : { label: L.auditExportIncludePaths, defaultChecked: false },
     });
     if (!ok) return;
     setAuditBusy(true);

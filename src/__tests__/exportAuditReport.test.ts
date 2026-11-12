@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAuditJson, redactUserProfiles } from "../lib/exportAuditReport";
+import { buildAuditJson, buildAuditMarkdown, redactUserProfiles } from "../lib/exportAuditReport";
 import type { FullCleanupReport } from "../types";
 
 const report = (over: Partial<FullCleanupReport> = {}): FullCleanupReport => ({
@@ -51,6 +51,22 @@ describe("buildAuditJson", () => {
     expect(out.review_rounds).toBe(2);
     expect(out.review_converged).toBe(true);
     expect(out.kind).toBe("remova-audit-report");
+  });
+
+  it("keeps paths and raw errors out of summaries even with full paths enabled", () => {
+    const path = String.raw`D:\Relocated\private\data.bin`;
+    const input = report({
+      app_name: path, app_key: path, backup_dir: path, backup_verified: false,
+      uninstall_message: path, restore_point_msg: path, errors: [`${path}: delete failed`],
+    });
+    const options = { summaryOnly: true, includeUserPaths: true };
+    const summary = buildAuditJson(input, 0, null, options);
+    expect(summary.report).toMatchObject({ backup_present: true, backup_verified: false, error_count: 1 });
+    expect(JSON.stringify(summary)).not.toContain("Relocated");
+    expect(buildAuditMarkdown(input, 0, null, options)).not.toContain("Relocated");
+    expect(buildAuditMarkdown(input, 0, null)).toContain(`Backup: unverified · ${path}`);
+    expect(buildAuditMarkdown(report({ backup_verified: true }), 0, null)).toContain("Backup: verified");
+    expect(buildAuditJson(input, 0, null, { includeUserPaths: true }).report).toEqual(input);
   });
 });
 
