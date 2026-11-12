@@ -100,7 +100,9 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | `Remova_*_x64_zh-CN.msi` | MSI 安装程序（per-machine，仅中文向导；非管理员需 UAC 提权） |
 | `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
-系统要求：Windows 10 / 11（x64），以及 Microsoft Edge WebView2 Runtime（Windows 11 与多数 Windows 10 已内置；便携版不附带，缺失时需先安装）。NSIS 安装器在缺少 WebView2 时会联网下载；离线/内网环境请先从 [Microsoft 官网](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) 下载安装 WebView2，或改用已预装的 MSI/便携包。清理系统级应用、Machine PATH/服务/防火墙以及还原到受保护目录时，需要以管理员身份运行；普通权限下这些条目会逐条失败并报告原因。
+Remova 需要 Windows 10 / 11（x64）和 Microsoft Edge WebView2 Runtime。运行时缺失时，NSIS 和 MSI 安装器都会尝试联网下载，便携版则要求启动前已安装运行时。在离线环境使用任一安装包或便携版前，请在联网电脑下载 x64 Evergreen 独立安装程序，转到目标电脑安装运行时。[Microsoft WebView2 下载](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+
+清理系统级应用、Machine PATH、服务或防火墙规则，以及还原到受保护目录时，需要以管理员身份运行 Remova。普通权限下这些条目会逐条失败并报告原因。
 
 > **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。
 
@@ -149,7 +151,8 @@ npx tauri build
 - 分析和清理只使用最近一次服务端扫描的应用身份与路径；HKCU 与 HKLM 的同名记录不会合并，提权状态会拒绝 HKCU 应用的分析、卸载与清理。
 - 优先使用**仅预览**确认列表，再执行清理。
 - 备份是尽力而为，**不能替代系统备份**；备份目录使用私有 ACL（SYSTEM / Administrators / 当前用户）。
-- 带备份清理会保留备份完成后新建或变更的文件。发现备份格式无法保存的 NTFS 命名数据流时，操作会停止并保留原件。
+- 带备份清理会保留备份完成后新建或变更的文件。备份副本缺失、内容无法校验或源文件含有备份格式无法保存的 NTFS 命名数据流时，受影响的原件会保留。
+- 恢复会跳过已被文件或目录占用的路径。需要恢复这些条目时，先把现有内容移到安全位置再重试。
 - 1641 待重启期间所有清理与还原入口保持阻断；状态文件损坏时按“待重启”处理（fail-closed）。
 - 服务 / 计划任务默认视为高风险，且默认不勾选。
 

@@ -95,7 +95,9 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | `Remova_*_x64_zh-CN.msi` | MSI installer (per-machine, Chinese-only wizard; non-admin needs UAC elevation) |
 | `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
-Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime (included in Windows 11 and most Windows 10 installs; the portable build does not bundle it). The NSIS installer downloads WebView2 when it is missing, so offline networks must install WebView2 first (download from [Microsoft](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)) or use the MSI/portable build. Cleaning machine-wide apps, the machine PATH, services, firewall rules, or restoring into protected directories requires running Remova as administrator; without elevation these items fail individually and report the reason.
+Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime. Both installers download the runtime if it is missing. The portable ZIP requires it to be installed before launch. For offline use with any package, download the x64 Evergreen Standalone Installer on a connected computer, transfer it, and install the runtime before using Remova. [Microsoft WebView2 downloads](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+
+Run Remova as administrator to clean machine-wide apps, the machine PATH, services and firewall rules, or to restore into protected directories. Without elevation, these items fail individually and report the reason.
 
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 
@@ -142,7 +144,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
 - Analysis and cleanup use the latest server-side scan identity and paths. Same-name HKCU and HKLM entries are never merged; an elevated process refuses to analyze, uninstall or clean HKCU apps.
 - Prefer **dry-run** before cleaning.
 - Backups are best-effort and **not** a system backup substitute; the backup tree uses a private DACL (SYSTEM / Administrators / current user).
-- Cleanup with backup keeps files that changed or appeared after backup. If a file has a named NTFS data stream that the backup format cannot save, cleanup stops and keeps the original.
+- Cleanup with backup keeps files that changed or appeared after backup. It also keeps originals whose backup copies are missing or fail verification, and originals with named NTFS data streams the backup format cannot save.
+- Restore skips occupied file and directory paths. Move the existing contents to a safe location before retrying those items.
 - A pending 1641 reboot blocks every cleanup and restore entry; an unreadable gate file is treated as pending (fail-closed).
 - Services and scheduled tasks are treated as high risk and unchecked by default.
 
