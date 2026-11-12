@@ -100,7 +100,7 @@ export async function runBatchCleanup(
         // The scan may finish before the 250 ms cancel poll reaches the
         // backend. A cancelled analysis must never start destructive cleanup.
         if (cb.cancelRef.current) {
-          results.push({ key, name: app.name, status: "skipped", detail: L.batchCancelled, officialDone });
+          results.push({ key, name: app.name, status: "skipped", skipReason: "cancelled", detail: L.batchCancelled, officialDone });
           break;
         }
         const items = r.items.filter(defaultSelectable);
@@ -154,6 +154,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "skipped",
+            skipReason: "cancelled",
             detail: backendText(report.uninstall_message) || L.batchCancelled,
             officialDone,
           });
@@ -175,7 +176,7 @@ export async function runBatchCleanup(
           continue;
         }
         if (emptyResidual) {
-          record({ key, name: app.name, status: "skipped", detail: "" });
+          record({ key, name: app.name, status: "skipped", skipReason: "no-leftovers", detail: "" });
           okKeys.add(key);
           // Results are published once after the queue stops: spreading the
           // growing array on every app made the UI update quadratic.
@@ -202,6 +203,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "skipped",
+            skipReason: report.skipped > 0 ? "protected" : "no-leftovers",
             detail: cleanupNothingText(report, L),
             officialDone,
           });
@@ -215,6 +217,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "skipped",
+            skipReason: "cancelled",
             detail: L.batchCancelled,
             officialDone,
           });

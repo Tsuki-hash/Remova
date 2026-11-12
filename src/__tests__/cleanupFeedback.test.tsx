@@ -74,7 +74,7 @@ it.each(["zh", "en"] as const)("preserves the no-leftovers label alongside a his
   try {
     const L = t();
     render(<BatchSummaryPanel results={[
-      { key: "a", name: "App A", status: "skipped", detail: "", historyWarning: L.cleanupHistorySaveFailed },
+      { key: "a", name: "App A", status: "skipped", skipReason: "no-leftovers", detail: "", historyWarning: L.cleanupHistorySaveFailed },
       { key: "b", name: "App B", status: "not_run", detail: L.batchCancelled },
     ]} onRetryFailed={vi.fn()} onDismiss={vi.fn()} />);
     expect(screen.getByText(L.batchSkippedNone)).toBeTruthy();

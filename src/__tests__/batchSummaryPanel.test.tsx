@@ -7,18 +7,32 @@ import { cleanup, render, screen } from "@testing-library/react";
 // rendered for real here rather than through a mock.
 import { BatchSummaryPanel, BatchProgress } from "../components/BatchPanels";
 import type { BatchItemResult } from "../components/BatchPanels";
+import { setLang, t } from "../i18n";
 
 function results(): BatchItemResult[] {
   return [
     { key: "a", name: "Alpha", status: "ok", detail: "deleted 3" },
     { key: "b", name: "Beta", status: "failed", detail: "locked" },
-    { key: "c", name: "Gamma", status: "skipped", detail: "" },
+    { key: "c", name: "Gamma", status: "skipped", skipReason: "no-leftovers", detail: "" },
     { key: "d", name: "Delta", status: "reboot", detail: "reboot pending", officialDone: true },
   ];
 }
 
 describe("BatchSummaryPanel", () => {
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); setLang("zh"); });
+
+  it.each(["zh", "en"] as const)("uses the three skip reasons in %s independently of the detail text", lang => {
+    setLang(lang);
+    const L = t();
+    render(<BatchSummaryPanel results={[
+      { key: "a", name: "Alpha", status: "skipped", skipReason: "cancelled", detail: L.batchCancelled },
+      { key: "b", name: "Beta", status: "skipped", skipReason: "protected", detail: L.cleanupNothingRemoved(1) },
+      { key: "c", name: "Gamma", status: "skipped", skipReason: "no-leftovers", detail: L.cleanupNothingRemoved(0) },
+    ]} onRetryFailed={vi.fn()} onDismiss={vi.fn()} />);
+    expect(screen.getByText(L.batchSkippedCancelled)).toBeTruthy();
+    expect(screen.getByText(L.batchSkippedBlocked)).toBeTruthy();
+    expect(screen.getByText(L.batchSkippedNone)).toBeTruthy();
+  });
 
   it("counts a pending reboot separately from real failures", () => {
     const { container } = render(

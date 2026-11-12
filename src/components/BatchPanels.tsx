@@ -2,15 +2,15 @@ import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 
 export type BatchStatus = "ok" | "failed" | "skipped" | "reboot" | "not_run";
+type SkipReason = "cancelled" | "protected" | "no-leftovers";
 export type BatchItemResult = {
   key: string;
   name: string;
-  status: BatchStatus;
   detail: string;
   historyWarning?: string;
   /** Preserved across residual retries, including later analyze failures. */
   officialDone?: boolean;
-};
+} & ({ status: "skipped"; skipReason: SkipReason } | { status: Exclude<BatchStatus, "skipped"> });
 
 export function BatchProgress({
   index,
@@ -57,18 +57,6 @@ export function BatchProgress({
   );
 }
 
-/** A skipped row must say why it was skipped: cancelled, protected, or truly
- * clean. One shared "no leftovers" label hid all three behind the same word. */
-function skippedLabel(detail: string, L: ReturnType<typeof t>): string {
-  const text = detail.toLowerCase();
-  if (text.includes("cancel")) return L.batchSkippedCancelled;
-  if (text.includes("protect") || text.includes("not associated") || text.includes("refus")) {
-    return L.batchSkippedBlocked;
-  }
-  if (!detail.trim()) return L.batchSkippedNone;
-  return L.batchSkipped;
-}
-
 export function BatchSummaryPanel({
   results,
   onRetryFailed,
@@ -79,6 +67,11 @@ export function BatchSummaryPanel({
   onDismiss: () => void;
 }) {
   const L = t();
+  const skipLabels = {
+    cancelled: L.batchSkippedCancelled,
+    protected: L.batchSkippedBlocked,
+    "no-leftovers": L.batchSkippedNone,
+  };
   return (
     <div style={{ ...css.card, marginBottom: 12, padding: 12, fontSize: 13 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
@@ -117,15 +110,15 @@ export function BatchSummaryPanel({
                 marginRight: 8,
               }}
             >
-              {r.status === "ok"
-                ? L.batchOk
-                : r.status === "failed"
-                  ? L.batchFailed
-                  : r.status === "reboot"
-                    ? L.batchReboot
-                    : r.status === "not_run"
-                      ? L.batchNotRun
-                      : skippedLabel(r.detail, L)}
+              {r.status === "skipped"
+                ? skipLabels[r.skipReason]
+                : r.status === "ok"
+                  ? L.batchOk
+                  : r.status === "failed"
+                    ? L.batchFailed
+                    : r.status === "reboot"
+                      ? L.batchReboot
+                      : L.batchNotRun}
             </span>
             {r.name}
             {r.detail ? <span style={css.muted}> · {r.detail}</span> : null}

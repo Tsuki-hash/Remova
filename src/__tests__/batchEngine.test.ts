@@ -209,7 +209,7 @@ describe("runBatchCleanup", () => {
     fullCleanup.mockResolvedValue(report({ deleted: 0, failed: 0, skipped: 4, uninstall_ok: false }));
     const cb = makeCb();
     await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
-    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "skipped" });
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "skipped", skipReason: "protected" });
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.detail).toContain("refused 4");
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
   });
@@ -398,7 +398,7 @@ describe("runBatchCleanup", () => {
     expect(fullCleanup).not.toHaveBeenCalled();
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
     expect(cb.onResults).toHaveBeenLastCalledWith([
-      expect.objectContaining({ status: "skipped", detail: "cancelled", officialDone: false }),
+      expect.objectContaining({ status: "skipped", skipReason: "cancelled", detail: "cancelled", officialDone: false }),
       expect.objectContaining({ status: "not_run", detail: "cancelled", officialDone: false }),
     ]);
   });
