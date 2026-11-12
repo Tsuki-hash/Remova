@@ -508,7 +508,7 @@ mod tests {
         };
         let (ok, fail, errors) = crate::backup::backup_items(&[item], &session);
         assert_eq!((ok, fail), (1, 0), "{errors:?}");
-        fs::write(&source, b"changed").unwrap();
+        fs::remove_file(&source).unwrap();
         crate::restore::restore_session(&session).unwrap();
         assert_eq!(fs::read(&source).unwrap(), b"privileged native backup");
         fs::write(&source, b"standard token must not restore").unwrap();

@@ -22,9 +22,11 @@ mod manifest;
 #[cfg(windows)]
 mod v2;
 
+#[cfg(all(test, windows))]
+pub(crate) use manifest::read_file_manifest;
 #[cfg(windows)]
 pub(crate) use manifest::{
-    read_file_manifest, read_file_manifest_with_cancel, write_file_manifest, FileManifest,
+    open_verified_manifest, read_file_manifest_with_cancel, write_file_manifest, FileManifest,
     FILE_MANIFEST_NAME,
 };
 
@@ -366,12 +368,25 @@ pub fn load_seal(session: &Path) -> Option<PathMapSeal> {
 
 pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     let name = session_name_of(session).ok_or("seal:bad_session")?;
-    use std::io::Read;
     let file = std::fs::File::open(seal_path(&name)).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => "seal:missing",
         std::io::ErrorKind::PermissionDenied => "seal:read_requires_admin",
         _ => "seal:read",
     })?;
+    verified_seal_from_file(&name, &file)
+}
+
+#[cfg(windows)]
+pub(crate) fn hold_verified_seal(session: &Path) -> Result<(PathMapSeal, std::fs::File), String> {
+    let name = session_name_of(session).ok_or("seal:bad_session")?;
+    let file = crate::fsutil::open_local_regular_file(&seal_path(&name))
+        .map_err(|error| format!("seal:read: {error}"))?;
+    let seal = verified_seal_from_file(&name, &file)?;
+    Ok((seal, file))
+}
+
+fn verified_seal_from_file(name: &str, file: &std::fs::File) -> Result<PathMapSeal, String> {
+    use std::io::Read;
     let mut raw = vec![];
     file.take(MAX_PROTECTED_BLOB as u64 + 1)
         .read_to_end(&mut raw)
@@ -385,7 +400,7 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     #[cfg(windows)]
     {
         let store = key::load(false)?;
-        let seal = v2::verify_blob(&store.key, &name, &raw)?;
+        let seal = v2::verify_blob(&store.key, name, &raw)?;
         Ok(PathMapSeal {
             session: seal.session,
             map_digest: seal.map_digest,
@@ -397,6 +412,7 @@ pub(crate) fn verified_seal(session: &Path) -> Result<PathMapSeal, String> {
     }
     #[cfg(not(windows))]
     {
+        let _ = name;
         Err("seal:windows_required".into())
     }
 }
@@ -426,18 +442,34 @@ pub(crate) fn publication_reader_digest(reader: impl std::io::Read) -> Result<St
     v2::digest_payload(reader, std::io::sink())
 }
 
-/// Write one privately staged file and return the digest of the bytes written.
 #[cfg(windows)]
-pub(crate) fn stage_payload_file(source: &Path, target: &Path) -> Result<String, String> {
-    let source = crate::fsutil::open_local_regular_file(source).map_err(|e| e.to_string())?;
-    crate::fsutil::reject_named_data_streams(&source).map_err(|e| e.to_string())?;
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestoreStreams {
+    AuthenticatedDefault,
+    RefuseNamed,
+}
+
+/// Stage only the bytes read from the pinned unnamed stream and return their digest.
+#[cfg(windows)]
+pub(crate) fn stage_payload_file(
+    source: &std::fs::File,
+    target: &Path,
+    streams: RestoreStreams,
+) -> Result<String, String> {
+    let check_streams = || {
+        if streams == RestoreStreams::RefuseNamed {
+            crate::fsutil::reject_named_data_streams(source).map_err(|e| e.to_string())?;
+        }
+        Ok::<_, String>(())
+    };
+    check_streams()?;
     let mut output = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(target)
         .map_err(|e| e.to_string())?;
-    let digest = v2::digest_payload(&source, &mut output)?;
-    crate::fsutil::reject_named_data_streams(&source).map_err(|e| e.to_string())?;
+    let digest = v2::digest_payload(source, &mut output)?;
+    check_streams()?;
     if crate::executor::cleanup_cancelled() {
         return Err("cleanup cancelled".into());
     }
@@ -788,6 +820,7 @@ mod tests {
                     user_path: r"C:\Vendor\Tool".into(),
                     machine_path: String::new(),
                 }],
+                ..Default::default()
             };
             let bytes = serde_json::to_vec(&snap).unwrap();
             std::fs::write(sess.join("path.json"), &bytes).unwrap();
@@ -833,9 +866,14 @@ mod tests {
             assert!(inventory.contains_key("registry/App/value.reg"));
             write_seal(&sess, "", &BTreeMap::new(), &inventory).unwrap();
             std::fs::remove_file(reg.join("value.reg")).unwrap();
+            assert!(!reg_export_allowed(
+                &sess,
+                "registry/App/export.reg",
+                b"whole parent key"
+            ));
             assert_eq!(
                 crate::restore::restore_session(&sess).unwrap_err(),
-                "seal:registry_snapshot_mismatch"
+                "seal:registry_snapshot_missing"
             );
             std::fs::remove_dir_all(sess).unwrap();
         });

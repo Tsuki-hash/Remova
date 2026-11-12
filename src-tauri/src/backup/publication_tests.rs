@@ -241,6 +241,52 @@ fn oversized_seal_is_rejected_before_backup_publication() {
 
 #[test]
 #[cfg(windows)]
+fn oversized_registry_export_prevents_mixed_backup_publication_and_legacy_restore() {
+    let root = crate::test_support::TempDir::new("registry-capacity");
+    let _store = crate::path_seal::TestStore::new(root.join("seals"));
+    let stage = root.subdir("1700000000_stage");
+    let session = root.subdir("1700000001_mixed");
+    let source = root.join("retained.bin");
+    fs::write(&source, b"source stays available").unwrap();
+    fs::create_dir_all(stage.join("files")).unwrap();
+    fs::write(stage.join("files/payload.bin"), b"recoverable file").unwrap();
+    fs::create_dir_all(stage.join("registry/App")).unwrap();
+    let export = stage.join("registry/App/export.reg");
+    let export_file = fs::File::create(&export).unwrap();
+    export_file.set_len(64 * 1024 * 1024 + 1).unwrap();
+    drop(export_file);
+    let map = std::collections::BTreeMap::from([(
+        "payload.bin".to_string(),
+        source.to_string_lossy().into_owned(),
+    )]);
+    let digests = crate::path_seal::collect_reg_digests(&stage).unwrap();
+    let error = publish_verified_stage(&stage, &session, &map, &digests, |_| {
+        panic!("an oversized registry export must never reach publication")
+    })
+    .unwrap_err();
+    assert!(
+        error.contains("registry export too large to restore"),
+        "{error}"
+    );
+    assert_eq!(fs::read_dir(&session).unwrap().count(), 0);
+    assert!(crate::path_seal::verified_seal(&session).is_err());
+
+    // A previously published oversized session is still retained. Restore
+    // refuses the whole session before writing even its ordinary file.
+    let json = serde_json::to_string(&map).unwrap();
+    fs::write(stage.join("files/path_map.json"), &json).unwrap();
+    crate::path_seal::write_seal(&stage, &json, &map, &digests).unwrap();
+    let error = crate::restore::restore_session(&stage).unwrap_err();
+    assert!(
+        error.contains("registry export too large to restore"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"source stays available");
+    assert_eq!(fs::metadata(export).unwrap().len(), 64 * 1024 * 1024 + 1);
+}
+
+#[test]
+#[cfg(windows)]
 fn publication_faults_fail_backup_and_abort_real_pipeline_without_deleting_sources() {
     let _env = lock_backup_env();
     for fault in [

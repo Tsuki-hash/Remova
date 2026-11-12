@@ -23,6 +23,8 @@ const REJECTION_TEXT: Record<string, string> = {
   target_is_reparse: "migrateRejTargetReparse",
   target_not_empty: "migrateRejTargetNotEmpty",
   source_too_many_files: "migrateRejTooMany",
+  source_tree_too_deep: "migrateRejTreeTooDeep",
+  target_directory_permissions_differ: "migrateRejDirectoryPermissionsDiffer",
   source_unreadable: "migrateRejSourceUnreadable",
   source_hardlinks: "migrateRejHardlinks",
   source_not_local_fixed: "migrateRejSourceDrive",
@@ -336,6 +338,9 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           {plan.ok ? (
             <div role="status">
               {L.migratePlanOk(formatSize(plan.source_kb), String(plan.file_count), formatSize(plan.target_free_kb))}
+              {plan.root_permissions_pending && (
+                <div style={{ ...css.muted, fontSize: 12, marginTop: 2 }}>{L.migrateRootPermissionsPending}</div>
+              )}
               {plan.source_kb_capped && (
                 <div style={{ ...css.muted, fontSize: 12, marginTop: 2 }}>{L.migratePlanEstimate}</div>
               )}

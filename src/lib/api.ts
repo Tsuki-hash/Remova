@@ -102,6 +102,7 @@ export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
   existing: number; unavailable: number;
+  size_kb?: number | null;
   entries: { target: string; status: "available" | "existing" | "missing" | "blocked" }[];
 };
 

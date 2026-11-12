@@ -72,7 +72,7 @@ it("renders plan rejections in the user's language", async () => {
     source: "C:\\src",
     target: "D:\\dst",
     ok: false,
-    rejections: ["source_squirrel_updater", "made_up_code"],
+    rejections: ["source_squirrel_updater", "source_tree_too_deep", "target_directory_permissions_differ", "made_up_code"],
     source_kb: 0,
     source_kb_capped: false,
     file_count: 0,
@@ -87,16 +87,19 @@ it("renders plan rejections in the user's language", async () => {
   await waitFor(() =>
     expect(screen.getByText(L.migrateRejSquirrel)).toBeTruthy(),
   );
+  expect(screen.getByText(L.migrateRejTreeTooDeep)).toBeTruthy();
+  expect(screen.getByText(L.migrateRejDirectoryPermissionsDiffer)).toBeTruthy();
+  expect(api.migrateCopy).not.toHaveBeenCalled();
   // Unknown codes fall back to the raw code instead of disappearing.
   expect(screen.getByText("made_up_code")).toBeTruthy();
 });
 
-it("marks a capped size estimate as an estimate, never a confirmed figure", async () => {
+it("shows pending permissions and a capped size estimate in the plan", async () => {
   vi.mocked(api.migrateStatus).mockResolvedValue("idle");
   vi.mocked(api.migratePlan).mockResolvedValue({
     source: "C:\\src", target: "D:\\dst", ok: true, rejections: [],
     source_kb: 10, source_kb_capped: true, file_count: 2,
-    target_free_kb: 10_000_000, free_space_known: true,
+    target_free_kb: 10_000_000, free_space_known: true, root_permissions_pending: true,
   });
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
@@ -104,8 +107,8 @@ it("marks a capped size estimate as an estimate, never a confirmed figure", asyn
   fireEvent.click(await screen.findByRole("button", { name: L.migrateStart }));
   await waitFor(() => expect(api.migratePlan).toHaveBeenCalled());
   expect(await screen.findByText(L.migratePlanEstimate)).toBeTruthy();
-  // The feasibility line itself is still shown; the estimate rides below it.
   expect(screen.getByRole("status").textContent).toContain(L.migratePlanEstimate);
+  expect(screen.getByRole("status").textContent).toContain(L.migrateRootPermissionsPending);
 });
 
 it("reports a cutover IPC rejection and refreshes the state afterwards", async () => {

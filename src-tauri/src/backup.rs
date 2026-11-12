@@ -5,6 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
+mod published_files;
+#[cfg(windows)]
+pub(crate) use published_files::PublishedFiles;
+
 /// tmp + fsync + rename via the shared helper — a crash mid-write must not
 /// leave a half map/seal, and the tmp is pid/nonce-unique across processes.
 fn write_bytes_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -154,7 +159,7 @@ fn apply_private_acl_with_sid(_path: &Path, _sid: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-const SECURE_TREE_BUDGET: u32 = 1_000_000;
+pub(crate) const SECURE_TREE_BUDGET: u32 = 1_000_000;
 
 fn secure_tree(path: &Path, depth: u8, budget: &mut u32) -> std::io::Result<()> {
     let sid = current_user_sid_for_acl()?;
@@ -401,6 +406,8 @@ fn safe_name(path: &str) -> String {
 pub struct PathSnapshot {
     #[serde(default)]
     pub items: Vec<PathSnapshotItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cleanup_plan: Option<crate::regops::BackedPathPlan>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -415,61 +422,51 @@ pub struct PathSnapshotItem {
     pub machine_path: String,
 }
 
-fn path_snapshot_file(session: &Path) -> PathBuf {
-    session.join("path.json")
-}
-
-/// Snapshot a PATH leftover into the session. Never copies directories.
-fn backup_path_entry(item: &CleanupItem, session: &Path) -> Result<(), String> {
-    let entry = item.path.trim();
-    if entry.is_empty() {
+/// Capture both PATH values once for every entry in this cleanup operation.
+fn backup_path_entries(items: &[CleanupItem], session: &Path) -> Result<(), String> {
+    let entries: Vec<_> = items
+        .iter()
+        .filter(|item| matches!(item.kind, ItemKind::Path))
+        .map(|item| item.path.trim())
+        .collect();
+    if entries.is_empty() {
+        return Ok(());
+    }
+    if entries.iter().any(|entry| entry.is_empty()) {
         return Err(crate::error::backup_path_err("empty path entry").to_ipc());
     }
-    let user = crate::regops::read_path_scope_public("User")
+    let plan = crate::regops::BackedPathPlan::capture(&entries)
         .map_err(|e| crate::error::backup_path_err(e).to_ipc())?;
-    let machine = crate::regops::read_path_scope_public("Machine")
-        .map_err(|e| crate::error::backup_path_err(e).to_ipc())?;
-    let mut scopes = Vec::new();
-    if crate::regops::path_contains_entry(&user, entry) {
-        scopes.push("User".to_string());
-    }
-    if crate::regops::path_contains_entry(&machine, entry) {
-        scopes.push("Machine".to_string());
-    }
-
+    let [user_path, machine_path] = plan.expanded_scopes();
     let meta_dir = session.join("files").join("_path");
     fs::create_dir_all(&meta_dir).map_err(|e| e.to_string())?;
-    let meta = meta_dir.join(format!("{}.txt", safe_name(entry)));
-    // Atomic: a crash mid-backup must not leave a torn meta line.
-    write_bytes_atomic(&meta, entry.as_bytes())?;
-
-    let pj = path_snapshot_file(session);
-    let mut snap: PathSnapshot = fs::read_to_string(&pj)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-    // De-dupe by entry (normalized later on restore).
-    if !snap
-        .items
-        .iter()
-        .any(|i| i.entry.eq_ignore_ascii_case(entry))
-    {
-        snap.items.push(PathSnapshotItem {
-            entry: entry.to_string(),
-            scopes,
-            user_path: user,
-            machine_path: machine,
-        });
-        // Atomic: path.json is seal-digested — a torn write would poison the
-        // whole session on restore.
+    let mut seen = std::collections::HashSet::new();
+    let mut snapshots = Vec::new();
+    for entry in entries {
+        if !seen.insert(entry.to_ascii_lowercase()) {
+            continue;
+        }
+        let scopes = plan.entry_scopes(entry);
+        if scopes.is_empty() {
+            continue;
+        }
         write_bytes_atomic(
-            &pj,
-            serde_json::to_string_pretty(&snap)
-                .unwrap_or_default()
-                .as_bytes(),
+            &meta_dir.join(format!("{}.txt", safe_name(entry))),
+            entry.as_bytes(),
         )?;
+        snapshots.push(PathSnapshotItem {
+            entry: entry.into(),
+            scopes,
+            user_path: user_path.clone(),
+            machine_path: machine_path.clone(),
+        });
     }
-    Ok(())
+    let snapshot = PathSnapshot {
+        items: snapshots,
+        cleanup_plan: Some(plan),
+    };
+    let bytes = serde_json::to_vec_pretty(&snapshot).map_err(|error| error.to_string())?;
+    write_bytes_atomic(&session.join("path.json"), &bytes)
 }
 
 pub fn backup_item(item: &CleanupItem, session: &Path) -> Result<(), String> {
@@ -705,6 +702,14 @@ pub(crate) fn publish_verified_stage(
         write_file_manifest, write_seal_with_manifest, FileManifest, FILE_MANIFEST_NAME,
     };
 
+    // Count the actual imports named in the seal. In particular, a parent
+    // export retained beside a value.reg is for manual recovery only.
+    let mut registry_budget = crate::restore::RegistryRestoreBudget::default();
+    for rel in digests.keys().filter(|key| key.starts_with("registry/")) {
+        let file = crate::fsutil::open_local_regular_file(&private.join(rel))
+            .map_err(|err| err.to_string())?;
+        registry_budget.add(rel, file.metadata().map_err(|err| err.to_string())?.len())?;
+    }
     let json = serde_json::to_vec_pretty(map).map_err(|e| e.to_string())?;
     write_bytes_atomic(&private.join("files/path_map.json"), &json)?;
     let mut inventory = publication_inventory(private)?;
@@ -759,6 +764,7 @@ fn backup_batch(items: &[CleanupItem], session: &Path) -> Result<(u32, u32, Vec<
     let private: &Path = return Err("seal:windows_required".into());
     fs::create_dir_all(private.join("files")).map_err(|e| e.to_string())?;
     fs::create_dir_all(private.join("registry")).map_err(|e| e.to_string())?;
+    backup_path_entries(items, private)?;
     let mut map = std::collections::BTreeMap::new();
     let (mut ok, mut fail) = (0, 0);
     let mut errors = vec![];
@@ -798,7 +804,7 @@ fn backup_item_with_map(
     path_map: &mut std::collections::BTreeMap<String, String>,
 ) -> Result<(), String> {
     match item.kind {
-        ItemKind::Path => backup_path_entry(item, session),
+        ItemKind::Path => Ok(()), // staged together before any per-item backup
         ItemKind::Registry => {
             // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
             let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
@@ -867,6 +873,10 @@ fn backup_item_with_map(
             }
             // The view belongs inside the authenticated export bytes; an
             // unsigned sidecar could redirect a sealed backup to another hive view.
+            if !item.path.contains('|') {
+                let size = fs::metadata(&dest).map_err(|err| err.to_string())?.len();
+                crate::restore::RegistryRestoreBudget::default().add(&item.path, size)?;
+            }
             let raw = crate::restore::decode_reg_text(fs::read(&dest).map_err(|e| e.to_string())?)?;
             let text =
                 export_with_view(&raw, reg_view_flag(export_path).trim_start_matches("/reg:"))?;
@@ -1090,7 +1100,7 @@ mod tests {
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with("stage_")));
-        fs::write(&source, b"changed after backup").unwrap();
+        fs::remove_file(&source).unwrap();
         crate::regops::path_mock::install(r"C:\Other", r"C:\Windows");
         crate::restore::restore_session(&session).unwrap();
         assert_eq!(fs::read(&source).unwrap(), b"backup bytes");
@@ -1324,7 +1334,6 @@ mod tests {
             }
         }
         let _clear = ClearPath;
-        crate::regops::path_mock::install("", "");
         let tmp = std::env::temp_dir().join(format!("remova_path_bk_{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("files")).unwrap();
@@ -1351,9 +1360,9 @@ mod tests {
             size_capped: false,
             bucket: None,
         };
-        let mut map = std::collections::BTreeMap::new();
-        backup_item_with_map(&item, &tmp, &mut map).unwrap();
-        assert!(map.is_empty(), "PATH kind must not enter path_map");
+        crate::regops::path_mock::install(&item.path, "");
+        backup_path_entries(std::slice::from_ref(&item), &tmp).unwrap();
+        assert!(!tmp.join("files/path_map.json").exists());
         let pj = tmp.join("path.json");
         assert!(pj.exists(), "path.json snapshot missing");
         let raw = fs::read_to_string(&pj).unwrap();

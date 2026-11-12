@@ -193,6 +193,12 @@ mod tests {
             r"C:\Nonexistent\file.txt".to_string(),
         );
         std::fs::create_dir(sess.join("files")).unwrap();
+        std::fs::write(
+            sess.join("files/path_map.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(sess.join("files/abc_file.txt"), b"legacy backup fixture").unwrap();
         crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
         // List under the same override — the seal only verifies against this root.
         assert_eq!(

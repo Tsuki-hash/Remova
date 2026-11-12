@@ -10,7 +10,24 @@ pub(crate) use streams::reject_named_data_streams;
 #[cfg(windows)]
 mod cleanup_snapshot;
 #[cfg(windows)]
-pub(crate) use cleanup_snapshot::CleanupTreeIdentity;
+pub(crate) use cleanup_snapshot::{
+    remove_empty_backup_session, remove_verified_backup_session, CleanupTreeIdentity,
+};
+
+#[cfg(not(windows))]
+pub(crate) fn remove_empty_backup_session(_: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "backup session removal requires Windows",
+    ))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn remove_verified_backup_session(
+    _: &Path,
+    _: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    Err("backup session removal requires Windows".into())
+}
 
 /// Whether already-loaded metadata describes a reparse point. Callers that just
 /// stat'ed the entry must use this instead of a second `is_reparse_point` call.
@@ -127,9 +144,6 @@ pub fn pin_local_scan_path(path: &Path) -> std::io::Result<Vec<DirPin>> {
 pub(crate) fn local_directory_id(path: &Path) -> std::io::Result<(u32, u64)> {
     #[cfg(windows)]
     {
-        use windows::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-        };
         let pins = pin_local_scan_path(path)?;
         let pin = pins
             .last()
@@ -137,16 +151,7 @@ pub(crate) fn local_directory_id(path: &Path) -> std::io::Result<(u32, u64)> {
         if !pin_metadata(pin)?.is_dir() {
             return Err(std::io::Error::other("expected a directory"));
         }
-        let mut info = BY_HANDLE_FILE_INFORMATION::default();
-        unsafe { GetFileInformationByHandle(pin.handle, &mut info) }
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
-        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-        if index == 0 {
-            return Err(std::io::Error::other(
-                "volume did not report a file identity",
-            ));
-        }
-        Ok((info.dwVolumeSerialNumber, index))
+        pin.file_identity()
     }
     #[cfg(not(windows))]
     {
@@ -227,6 +232,9 @@ fn open_relative(
             )
         };
         if result.0 < 0 {
+            if result.0 as u32 == 0xc000_0043 {
+                return Err(std::io::Error::from_raw_os_error(32));
+            }
             let kind = match result.0 as u32 {
                 0xc0000034 | 0xc000003a | 0xc000000f => std::io::ErrorKind::NotFound,
                 _ => std::io::ErrorKind::Other,
@@ -405,7 +413,7 @@ pub fn read_local_scan_text(path: &Path) -> std::io::Result<String> {
 #[cfg(windows)]
 pub(crate) fn open_local_regular_file(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::windows::io::FromRawHandle;
-    let pins = pin_local_scan_path(path)?;
+    let pins = retry_file_operation(false, || pin_local_scan_path(path))?;
     let pin = pins
         .last()
         .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
@@ -803,16 +811,6 @@ fn copy_stream_atomic<R: std::io::Read>(
 }
 
 pub fn copy_file_no_reparse(src: &Path, dest: &Path) -> std::io::Result<u64> {
-    copy_file_no_reparse_impl(src, dest, true)
-}
-
-/// Copy into a directory tree the caller already pinned. Used by restore so a
-/// multi-file session does not re-open the whole ancestor chain per file.
-pub fn copy_file_no_reparse_pinned(src: &Path, dest: &Path) -> std::io::Result<u64> {
-    copy_file_no_reparse_impl(src, dest, false)
-}
-
-fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::io::Result<u64> {
     if crate::executor::cleanup_cancelled() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Interrupted,
@@ -850,11 +848,7 @@ fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::
         let parent = dest
             .parent()
             .ok_or_else(|| std::io::Error::other("missing copy parent"))?;
-        let _parent_pins = if pin_parent {
-            Some(create_dirs_pinned(parent)?)
-        } else {
-            None
-        };
+        let _parent_pins = create_dirs_pinned(parent)?;
         if is_reparse_point(dest) {
             return Err(std::io::Error::other(
                 "refusing reparse/directory copy destination",
@@ -865,7 +859,6 @@ fn copy_file_no_reparse_impl(src: &Path, dest: &Path, pin_parent: bool) -> std::
     }
     #[cfg(not(windows))]
     {
-        let _ = pin_parent;
         copy_stream_atomic(std::fs::File::open(src)?, dest, |_| Ok(()))
     }
 }
@@ -883,6 +876,23 @@ pub struct DirPin {
 }
 
 impl DirPin {
+    #[cfg(windows)]
+    pub(crate) fn file_identity(&self) -> std::io::Result<(u32, u64)> {
+        use windows::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(self.handle, &mut info) }
+            .map_err(std::io::Error::other)?;
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        if index == 0 {
+            return Err(std::io::Error::other(
+                "volume did not report a file identity",
+            ));
+        }
+        Ok((info.dwVolumeSerialNumber, index))
+    }
+
     #[cfg(windows)]
     pub(crate) fn check_data_streams(&self) -> std::io::Result<()> {
         streams::check(self.handle)
@@ -1399,6 +1409,9 @@ pub(crate) fn remove_tree_with_pin(p: &Path, mut pin: DirPin) -> std::io::Result
     }
 }
 
+/// Maximum depth of any object relative to the root of a held tree.
+pub(crate) const PINNED_TREE_MAX_DEPTH: usize = 128;
+
 /// An immutable, non-following snapshot held from authorization through backup
 /// and deletion. Unlike `remove_tree_with_pin` (whose final unlink is path based),
 /// this consumes the exact verified objects by handle. Windows only: the Unix
@@ -1450,6 +1463,17 @@ impl PinnedLocalDeleteTree {
             access,
             false,
         )?;
+        Self::collect_pinned_root(path, root, limit, access, _parents, after_open)
+    }
+
+    fn collect_pinned_root(
+        path: &Path,
+        root: DirPin,
+        limit: usize,
+        access: u32,
+        _parents: Vec<DirPin>,
+        after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<Self> {
         let mut objects = Vec::new();
         fn collect(
             path: &Path,
@@ -1460,7 +1484,7 @@ impl PinnedLocalDeleteTree {
             objects: &mut Vec<(PathBuf, bool, DirPin)>,
             after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
         ) -> std::io::Result<bool> {
-            if depth > 128 || *remaining == 0 {
+            if depth > PINNED_TREE_MAX_DEPTH || *remaining == 0 {
                 return Err(std::io::Error::other("tree snapshot budget exceeded"));
             }
             *remaining -= 1;
@@ -1531,6 +1555,36 @@ impl PinnedLocalDeleteTree {
         self.root_pin()
     }
 
+    /// Read the renamed directory through its original held root, including
+    /// when the path has changed and a second path-based open would race.
+    #[cfg(windows)]
+    pub(crate) fn resnapshot_renamed(&self, path: &Path, limit: usize) -> std::io::Result<Self> {
+        use std::os::windows::io::{FromRawHandle, IntoRawHandle};
+        let borrowed = std::mem::ManuallyDrop::new(unsafe {
+            std::fs::File::from_raw_handle(self.root_pin().handle.0)
+        });
+        let root = DirPin {
+            handle: windows::Win32::Foundation::HANDLE(borrowed.try_clone()?.into_raw_handle()),
+            guard: None,
+        };
+        Self::collect_pinned_root(path, root, limit, 0x30081, Vec::new(), &mut |_| Ok(()))
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn relative_identities(
+        &self,
+    ) -> std::io::Result<std::collections::BTreeMap<PathBuf, (u32, u64)>> {
+        self.objects
+            .iter()
+            .map(|(path, _, pin)| {
+                let relative = path
+                    .strip_prefix(&self.path)
+                    .map_err(std::io::Error::other)?;
+                Ok((relative.to_path_buf(), pin.file_identity()?))
+            })
+            .collect()
+    }
+
     pub(crate) fn contains_file(&self, path: &Path) -> bool {
         self.objects.iter().any(|(p, dir, _)| p == path && !dir)
     }
@@ -1586,7 +1640,7 @@ impl PinnedLocalDeleteTree {
                 if exact {
                     *children.entry(parent_path).or_insert(0) += 1;
                 }
-                let parent = positions
+                let (parent, _) = positions
                     .get(parent_path)
                     .copied()
                     .ok_or_else(|| std::io::Error::other("missing snapshot parent"))?;
@@ -1620,14 +1674,15 @@ impl PinnedLocalDeleteTree {
                 )));
             }
             if *is_dir {
-                positions.insert(path.clone(), index);
+                positions.insert(path.clone(), (index, backup));
             }
         }
         if exact {
-            for (directory, index) in positions {
+            for (directory, (index, backup)) in positions {
                 let expected = children.get(directory.as_path()).copied().unwrap_or(0);
-                let actual = relative_names_with_limit(&pins[index], expected + 1)?.len();
-                if actual != expected {
+                let backup_count = relative_names_with_limit(backup, expected + 1)?.len();
+                let target_count = relative_names_with_limit(&pins[index], expected + 1)?.len();
+                if backup_count != expected || target_count != expected {
                     return Err(std::io::Error::other(format!(
                         "{}: target directory entries differ",
                         directory.display()
@@ -2338,18 +2393,26 @@ fn create_atomic_tmp_with(
 /// replace atomic while surviving that scan window; every other error is
 /// returned immediately.
 fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
-    let mut delay = std::time::Duration::from_millis(5);
-    for attempt in 0..6 {
-        match std::fs::rename(from, to) {
-            Ok(()) => return Ok(()),
-            Err(error) if attempt < 5 && matches!(error.raw_os_error(), Some(5) | Some(32)) => {
-                std::thread::sleep(delay);
-                delay *= 2;
+    retry_file_operation(true, || std::fs::rename(from, to))
+}
+
+fn retry_file_operation<T>(
+    retry_access_denied: bool,
+    mut operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    for delay in [5, 10, 20, 40, 80, 160, 320] {
+        match operation() {
+            Err(error)
+                if cfg!(windows)
+                    && (error.raw_os_error() == Some(32)
+                        || (retry_access_denied && error.raw_os_error() == Some(5))) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
             }
-            Err(error) => return Err(error),
+            result => return result,
         }
     }
-    unreachable!("the loop returns on the last attempt")
+    operation()
 }
 
 /// Write bytes to a unique tmp sibling, fsync, then rename over `p` — a

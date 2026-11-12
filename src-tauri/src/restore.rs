@@ -7,18 +7,19 @@ use std::process::Command;
 
 #[cfg(windows)]
 mod payload;
+#[cfg(windows)]
+mod publish;
 
-/// A single registry export larger than this is refused before it is read.
-const MAX_REGISTRY_EXPORT_BYTES: u64 = 64 * 1024 * 1024;
-/// Total registry bytes a single restore may hold in memory at once.
-const MAX_RESTORE_REGISTRY_BYTES: usize = 256 * 1024 * 1024;
+mod registry_budget;
+pub(crate) use registry_budget::RegistryRestoreBudget;
+mod session_metadata;
 
 struct RestoreInputs {
     seal: crate::path_seal::PathMapSeal,
     #[cfg(windows)]
     inventory: Option<payload::Inventory>,
     map: std::collections::BTreeMap<String, String>,
-    path_bytes: Option<Vec<u8>>,
+    path_snapshot: Option<crate::backup::PathSnapshot>,
     imports: Vec<(PathBuf, PathBuf, String, &'static str)>,
 }
 
@@ -32,6 +33,8 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     // Authorize the whole session before any file, PATH or registry write.
     // Missing/legacy/invalid seals never enter an automatic restore path.
     let seal = crate::path_seal::verified_seal(session)?;
+    session_metadata::check_session_metadata(session, &seal)?;
+    let complete_manifest = seal.file_manifest_digest.is_some();
     #[cfg(windows)]
     let inventory = payload::Inventory::read(session, &seal, cancelled)?;
     let map_path = session.join("files/path_map.json");
@@ -45,8 +48,10 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
         return Err("seal:map_mismatch".into());
     }
     // Read and bind PATH bytes once, before restoring even a sibling file.
-    let path_bytes = if session.join("path.json").exists() {
-        let bytes = fs::read(session.join("path.json")).map_err(|e| e.to_string())?;
+    let path = session.join("path.json");
+    let path_recorded = seal.reg_digests.contains_key("path.json");
+    let path_bytes = if path_recorded || (!complete_manifest && path.exists()) {
+        let bytes = fs::read(path).map_err(|e| e.to_string())?;
         if !crate::path_seal::snapshot_matches(&seal, "path.json", &bytes) {
             return Err("seal:path_snapshot_mismatch".into());
         }
@@ -54,66 +59,67 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     } else {
         None
     };
-    if seal.reg_digests.contains_key("path.json") && path_bytes.is_none() {
-        return Err("seal:path_snapshot_missing".into());
-    }
+    let path_snapshot = path_bytes
+        .as_deref()
+        .map(serde_json::from_slice)
+        .transpose()
+        .map_err(|error| format!("seal:path_snapshot_json: {error}"))?;
     let mut imports = vec![];
-    let mut selected = std::collections::BTreeSet::new();
     // Every registry export is held in memory until the whole batch validates.
     // A bounded total keeps a bloated session from pinning memory inside the
     // cleanup lock; exceeding it fails closed rather than restoring partially.
-    let mut total_bytes = 0usize;
-    let reg_root = session.join("registry");
-    if reg_root.is_dir() {
-        for entry in fs::read_dir(&reg_root).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if let Some(target) = pick_import_target(&entry.path()) {
-                let rel = format!(
-                    "registry/{}/{}",
-                    entry.file_name().to_string_lossy(),
-                    target
-                        .file_name()
-                        .ok_or("seal:bad_export_name")?
-                        .to_string_lossy()
-                );
-                let size = fs::metadata(&target).map_err(|e| e.to_string())?.len();
-                if size > MAX_REGISTRY_EXPORT_BYTES {
-                    return Err(format!(
-                        "registry export too large to restore: {rel} ({size} bytes)"
-                    ));
-                }
-                total_bytes = total_bytes.saturating_add(size as usize);
-                if total_bytes > MAX_RESTORE_REGISTRY_BYTES {
-                    return Err(format!(
-                        "registry restore exceeds the total budget at {rel}; refusing the whole session"
-                    ));
-                }
-                let bytes = fs::read(&target).map_err(|e| e.to_string())?;
-                if !crate::path_seal::snapshot_matches(&seal, &rel, &bytes) {
-                    return Err("seal:registry_snapshot_mismatch".into());
-                }
-                selected.insert(rel);
-                let text = validate_reg_bytes(bytes)?;
-                let view = registry_import_view(&text)?;
-                imports.push((entry.path(), target, text, view));
-            }
-        }
-    }
+    let mut registry_budget = RegistryRestoreBudget::default();
     let recorded: std::collections::BTreeSet<_> = seal
         .reg_digests
         .keys()
         .filter(|key| key.starts_with("registry/"))
         .cloned()
         .collect();
-    if selected != recorded {
-        return Err("seal:registry_snapshot_missing".into());
+    // A complete inventory is the restore allowlist. Unrecorded exports can
+    // neither authorize imports nor make the recorded contents unrestorable.
+    let selected = if complete_manifest {
+        recorded.clone()
+    } else {
+        let mut selected = std::collections::BTreeSet::new();
+        let root = session.join("registry");
+        if root.is_dir() {
+            for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                if let Some(target) = pick_import_target(&entry.path()) {
+                    let filename = target.file_name().ok_or("seal:bad_export_name")?;
+                    selected.insert(format!(
+                        "registry/{}/{}",
+                        entry.file_name().to_string_lossy(),
+                        filename.to_string_lossy()
+                    ));
+                }
+            }
+        }
+        if !selected.is_subset(&recorded) {
+            return Err("seal:registry_snapshot_mismatch".into());
+        }
+        if selected != recorded {
+            return Err("seal:registry_snapshot_missing".into());
+        }
+        selected
+    };
+    for relative in selected {
+        let target = session.join(&relative);
+        let bytes = registry_budget.read(&relative, &target)?;
+        if !crate::path_seal::snapshot_matches(&seal, &relative, &bytes) {
+            return Err("seal:registry_snapshot_mismatch".into());
+        }
+        let text = validate_reg_bytes(bytes)?;
+        let view = registry_import_view(&text)?;
+        let entry = target.parent().ok_or("seal:bad_export_name")?.to_owned();
+        imports.push((entry, target, text, view));
     }
     Ok(RestoreInputs {
         seal,
         #[cfg(windows)]
         inventory,
         map,
-        path_bytes,
+        path_snapshot,
         imports,
     })
 }
@@ -147,7 +153,7 @@ fn restore_with_before_copy(
         #[cfg(windows)]
         inventory,
         map,
-        path_bytes,
+        path_snapshot,
         imports,
     } = validate_session(session, crate::executor::cleanup_cancelled)?;
     #[cfg(windows)]
@@ -267,7 +273,7 @@ fn restore_with_before_copy(
                     }
                 }
             }
-            let Some((_, _, pin)) = parent_pins.as_ref() else {
+            let Some((_, _pins, pin)) = parent_pins.as_ref() else {
                 messages.push(format!(
                     "skipped restore target without parent pins: {original}"
                 ));
@@ -289,38 +295,51 @@ fn restore_with_before_copy(
                 messages.push(format!("skipped reparse restore target: {original}"));
                 continue;
             }
-            before_copy(&src);
-            let copy_legacy = || {
-                if src.is_dir() {
-                    copy_dir(&src, &dest).map(|_| ())
-                } else {
-                    // The parent is already pinned above; avoid re-opening it.
-                    crate::fsutil::copy_file_no_reparse_pinned(&src, &dest).map(|_| ())
-                }
-            };
-            #[cfg(windows)]
-            let copied = match staged {
-                Some(staged) => staged.publish(&dest),
-                None => copy_legacy(),
-            };
-            #[cfg(not(windows))]
-            let copied = copy_legacy();
-            if let Err(e) = copied {
-                if crate::executor::cleanup_cancelled() {
-                    messages.push("restore cancelled".into());
-                    break;
-                }
-                messages.push(format!("restore failed for {original}: {e}"));
+            // Advisory only: a late creation after this check is still caught
+            // by the no-replace primitives. Directories are never merged.
+            if dest.try_exists().unwrap_or(true) {
+                messages.push(format!("skipped existing restore target: {original}"));
                 continue;
             }
-            messages.push(format!("restored {original}"));
+            before_copy(&src);
+            #[cfg(windows)]
+            {
+                let (Some(parent), Some(name)) = (_pins.last(), dest.file_name()) else {
+                    messages.push(format!(
+                        "skipped restore target without parent pins: {original}"
+                    ));
+                    continue;
+                };
+                let source = staged
+                    .as_ref()
+                    .map(payload::StagedPayload::path)
+                    .unwrap_or(&src);
+                match publish::publish(source, parent, name) {
+                    Ok(()) => messages.push(format!("restored {original}")),
+                    Err(publish::Failure::Occupied) => {
+                        messages.push(format!("skipped existing restore target: {original}"));
+                    }
+                    Err(publish::Failure::PartialDirectory(error)) => messages.push(format!(
+                        "restore directory may be incomplete: {original}: {error}"
+                    )),
+                    Err(publish::Failure::Io(error)) => {
+                        if !crate::executor::cleanup_cancelled() {
+                            messages.push(format!("restore failed for {original}: {error}"));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            messages.push(format!("restore failed for {original}: Windows required"));
+            if crate::executor::cleanup_cancelled() {
+                messages.push("restore cancelled".into());
+                break;
+            }
         }
     }
 
     // PATH leftovers (path.json) — merge missing segments back; never whole-env overwrite.
-    if let Some(bytes) = path_bytes {
-        let snap: crate::backup::PathSnapshot =
-            serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if let Some(snap) = path_snapshot {
         for it in &snap.items {
             // A cancel that landed while files were being restored must stop
             // before the environment is rewritten: PATH is machine state, not
@@ -720,10 +739,6 @@ fn reg_hive_to_remova(key: &str) -> Result<String, String> {
     Err(format!("reg import refused (unsupported hive): {k}"))
 }
 
-fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
-    crate::fsutil::copy_dir(src, dest)
-}
-
 /// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else User only.
 fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
     // a tampered `scopes` field must not unlock the system PATH —
@@ -833,6 +848,7 @@ pub struct RestorePreview {
     pub existing: usize,
     pub unavailable: usize,
     pub entries: Vec<RestorePreviewEntry>,
+    pub size_kb: Option<u64>,
 }
 
 /// Advisory, bounded preview. Authorization and snapshots are checked using
@@ -846,18 +862,13 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
     let inputs = validate_session(session, || false)?;
     let mut preview = RestorePreview {
         name: name.into(),
+        size_kb: crate::dirsize::walk_size_kb_unbudgeted(session),
         files: inputs.map.len(),
         registry: inputs.imports.len(),
         path_entries: inputs
-            .path_bytes
-            .as_deref()
-            .map(|bytes| {
-                serde_json::from_slice::<crate::backup::PathSnapshot>(bytes)
-                    .map(|snapshot| snapshot.items.len())
-            })
-            .transpose()
-            .map_err(|e| e.to_string())?
-            .unwrap_or(0),
+            .path_snapshot
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.items.len()),
         existing: 0,
         unavailable: 0,
         entries: vec![],
@@ -905,7 +916,9 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionInfo {
     pub name: String,
-    pub size_kb: u64,
+    /// Older consumers can still read the field. New lists defer directory size
+    /// until the selected session's preview.
+    pub size_kb: Option<u64>,
     pub created_at: String,
     /// Kept for callers that used the original restorable flag.
     pub sealed: bool,
@@ -916,41 +929,52 @@ pub struct SessionInfo {
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Verified,
+    PendingVerification,
     Unsealed,
     RequiresAdmin,
+    MissingMetadata,
+    Unknown,
     Invalid,
     Legacy,
 }
 
-fn dir_size_kb(p: &Path) -> u64 {
-    // bounded, reparse-safe walk — a huge or junction-planted session
-    // must not turn the listing path into an unbounded traversal. Uses the
-    // unbudgeted variant: the scan-time entry budget is per scan pass and its
-    // thread had no reason to still carry quota.
-    crate::dirsize::walk_size_kb_unbudgeted(p).unwrap_or(0)
-}
-
-/// A session is only restorable when its seal verifies. The seal is what binds
-/// the captured bytes to this session, so "directory exists" is not enough.
+/// Legacy name-only callers still expect these sessions to pass full preflight.
 fn session_is_sealed(dir: &Path) -> bool {
-    session_status(dir) == SessionStatus::Verified
+    validate_session(dir, || false).is_ok()
 }
 
 fn session_status(dir: &Path) -> SessionStatus {
-    let check = crate::path_seal::verified_seal(dir).and_then(|seal| {
-        #[cfg(windows)]
-        payload::Inventory::read(dir, &seal, || false)?;
-        #[cfg(not(windows))]
-        let _ = seal;
-        Ok(())
-    });
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() && !crate::fsutil::is_reparse_metadata(&meta) => {}
+        Ok(_) => return SessionStatus::Invalid,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return SessionStatus::RequiresAdmin
+        }
+        Err(_) => return SessionStatus::Unknown,
+    }
+    let check = crate::path_seal::verified_seal(dir)
+        .and_then(|seal| session_metadata::check_session_metadata(dir, &seal));
     match check.as_ref().map_err(String::as_str) {
-        Ok(_) => SessionStatus::Verified,
-        Err("seal:missing") => SessionStatus::Unsealed,
+        Ok(()) => SessionStatus::PendingVerification,
+        Err("seal:missing") => match session_metadata::is_empty_unsealed_session(dir) {
+            Ok(true) => SessionStatus::Unsealed,
+            Ok(false) => SessionStatus::MissingMetadata,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                SessionStatus::RequiresAdmin
+            }
+            Err(_) => SessionStatus::Unknown,
+        },
+        Err(
+            "seal:map_missing"
+            | "seal:file_manifest_missing"
+            | "seal:path_snapshot_missing"
+            | "seal:registry_snapshot_missing",
+        ) => SessionStatus::MissingMetadata,
         Err("seal:legacy_manual_restore_only") => SessionStatus::Legacy,
         Err("seal:key_unavailable_requires_admin" | "seal:read_requires_admin") => {
             SessionStatus::RequiresAdmin
         }
+        Err("seal:read" | "seal:metadata_unreadable") => SessionStatus::Unknown,
         Err(_) => SessionStatus::Invalid,
     }
 }
@@ -977,9 +1001,9 @@ fn list_session_info_at(root: &Path) -> Result<Vec<SessionInfo>, String> {
             let status = session_status(p);
             Some(SessionInfo {
                 name: name.clone(),
-                size_kb: dir_size_kb(p),
+                size_kb: None,
                 created_at: name.split('_').next().unwrap_or("").to_string(),
-                sealed: status == SessionStatus::Verified,
+                sealed: status == SessionStatus::PendingVerification,
                 status,
             })
         })
@@ -1026,7 +1050,7 @@ pub fn prune_old_sessions_at(days: u64, now_override: Option<u64>) -> usize {
                 .map(|d| d.as_secs() < cutoff)
                 .unwrap_or(false)
         };
-        if expired && crate::fsutil::remove_tree_no_reparse(&p).is_ok() {
+        if expired && is_session_name(&name) && remove_confirmed_session(&p, None).is_ok() {
             removed += 1;
         }
     }
@@ -1070,14 +1094,23 @@ pub fn delete_session_with_status(
     if !path.is_dir() {
         return Err("session not found".into());
     }
-    if let Some(expected) = expected {
-        if !matches!(expected, SessionStatus::Verified | SessionStatus::Unsealed)
-            || session_status(&path) != expected
-        {
-            return Err("backup session status changed; refresh and try again".into());
+    remove_confirmed_session(&path, expected)
+}
+
+/// Applies to explicit removal and retention. A missing seal cannot authorize
+/// deleting any payload and a sealed session must pass its full preflight.
+fn remove_confirmed_session(path: &Path, expected: Option<SessionStatus>) -> Result<(), String> {
+    match (session_status(path), expected) {
+        (SessionStatus::Unsealed, None | Some(SessionStatus::Unsealed)) => {
+            crate::fsutil::remove_empty_backup_session(path).map_err(|error| error.to_string())
         }
+        (SessionStatus::PendingVerification, None | Some(SessionStatus::Verified)) => {
+            crate::fsutil::remove_verified_backup_session(path, || {
+                validate_session(path, || false).map(|_| ())
+            })
+        }
+        _ => Err("backup session status changed or could not be verified; files were kept".into()),
     }
-    crate::fsutil::remove_tree_no_reparse(&path).map_err(|e| e.to_string())
 }
 
 /// Backup map keys are opaque `{digest}_{name}` tokens written by backup — one path segment only.
@@ -1367,7 +1400,6 @@ mod tests {
         fs::create_dir_all(&files).unwrap();
         let orig = tmp.join("orig\\file.txt");
         fs::create_dir_all(orig.parent().unwrap()).unwrap();
-        fs::write(&orig, b"hello").unwrap();
         let rel = "abc_file.txt";
         fs::write(files.join(rel), b"hello-backup").unwrap();
         let mut map = std::collections::BTreeMap::new();
@@ -1379,7 +1411,7 @@ mod tests {
         .unwrap();
         // every write-back needs a seal (same as production backup path).
         crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
-        // restore overwrites orig from backup
+        // Legacy sealed backups can still restore to a free destination.
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
@@ -1488,6 +1520,14 @@ mod tests {
         let preview = preview_session("sess", &sess).unwrap();
         assert_eq!(preview.files, 1);
         assert_eq!(preview.entries[0].status, "existing");
+        let rows = restore_session(&sess).unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with("skipped existing restore target: ")),
+            "{rows:?}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        fs::remove_file(&target).unwrap();
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
         assert_eq!(fs::read(&target).unwrap(), b"dd");
@@ -1624,6 +1664,7 @@ mod tests {
                 user_path: r"C:\vendor\tool;C:\Windows".into(),
                 machine_path: r"C:\Windows".into(),
             }],
+            ..Default::default()
         };
         fs::write(
             tmp.join("path.json"),
@@ -1656,7 +1697,6 @@ mod tests {
         fs::create_dir_all(&files).unwrap();
         let orig = tmp.join("orig\\file.txt");
         fs::create_dir_all(orig.parent().unwrap()).unwrap();
-        fs::write(&orig, b"hello").unwrap();
         let rel = "abc_file.txt";
         fs::write(files.join(rel), b"hello-backup").unwrap();
         let mut map = std::collections::BTreeMap::new();
@@ -1674,6 +1714,7 @@ mod tests {
                 user_path: String::new(),
                 machine_path: String::new(),
             }],
+            ..Default::default()
         };
         let path_bytes = serde_json::to_vec(&snap).unwrap();
         fs::write(sess.join("path.json"), &path_bytes).unwrap();
@@ -1958,11 +1999,13 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn back_up_fixture_directory(source: &Path, session: &Path) -> PathBuf {
-        fs::create_dir(session).unwrap();
-        let item = crate::scanner::CleanupItem {
+    fn restore_fixture_item(
+        source: &Path,
+        kind: crate::scanner::ItemKind,
+    ) -> crate::scanner::CleanupItem {
+        crate::scanner::CleanupItem {
             path: source.to_string_lossy().into_owned(),
-            kind: crate::scanner::ItemKind::Dir,
+            kind,
             score: 90,
             confidence: crate::scanner::Confidence::Confirmed,
             risk: crate::scanner::RiskLevel::Low,
@@ -1975,7 +2018,13 @@ mod tests {
             size_kb: None,
             size_capped: false,
             bucket: None,
-        };
+        }
+    }
+
+    #[cfg(windows)]
+    fn back_up_fixture_directory(source: &Path, session: &Path) -> PathBuf {
+        fs::create_dir(session).unwrap();
+        let item = restore_fixture_item(source, crate::scanner::ItemKind::Dir);
         let (ok, fail, errors) = crate::backup::backup_items(&[item], session);
         assert_eq!((ok, fail), (1, 0), "{errors:?}");
         fs::read_dir(session.join("files"))
@@ -1988,7 +2037,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn restore_refuses_named_streams_added_to_a_sealed_payload() {
+    fn restore_ignores_late_named_streams_and_checks_the_authenticated_default_stream() {
         let root = crate::test_support::TempDir::new("restore-named-streams");
         let _store = crate::path_seal::TestStore::new(root.join("seals"));
         let source = root.subdir("source");
@@ -1996,19 +2045,82 @@ mod tests {
         let session = root.join("1700000000_dir");
         let backed = back_up_fixture_directory(&source, &session);
         fs::write(backed.join("a.txt:FixtureMetadata"), b"unsealed stream").unwrap();
-        fs::remove_file(source.join("a.txt")).unwrap();
+        fs::remove_dir_all(&source).unwrap();
 
         let msgs = restore_session(&session).unwrap();
+        assert!(msgs.iter().any(|m| m.starts_with("restored ")), "{msgs:?}");
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"backed up");
+        assert!(!source.join("a.txt:FixtureMetadata").exists());
+        assert_eq!(
+            fs::read(backed.join("a.txt:FixtureMetadata")).unwrap(),
+            b"unsealed stream"
+        );
+
+        fs::remove_dir_all(&source).unwrap();
+        fs::write(backed.join("a.txt"), b"modified default stream").unwrap();
+        let msgs = restore_session(&session).unwrap();
         assert!(
-            msgs.iter().any(|m| m.contains("named data streams")),
+            msgs.iter().any(|m| m.contains("digest mismatch")),
             "{msgs:?}"
         );
-        assert!(!source.join("a.txt").exists());
+        assert!(!source.exists());
     }
 
     #[cfg(windows)]
     #[test]
-    fn a_changed_manifest_is_refused_by_the_list_preview_and_restore() {
+    fn legacy_directory_inventory_still_refuses_unrecorded_files_and_named_streams() {
+        let root = crate::test_support::TempDir::new("restore-legacy-inventory");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.join("source");
+        let session = root.subdir("1700000000_legacy");
+        let files = session.join("files");
+        let backed = files.join("payload");
+        fs::create_dir_all(&backed).unwrap();
+        let data = backed.join("a.txt");
+        fs::write(&data, b"backed up").unwrap();
+        let map = std::collections::BTreeMap::from([(
+            "payload".into(),
+            source.to_string_lossy().into_owned(),
+        )]);
+        fs::write(
+            files.join("path_map.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        let digests = std::collections::BTreeMap::from([(
+            "files/payload/a.txt".into(),
+            crate::path_seal::publication_file_digest(&data).unwrap(),
+        )]);
+        crate::path_seal::write_seal_with_files(
+            &session,
+            "",
+            &map,
+            &std::collections::BTreeMap::new(),
+            Some(digests),
+        )
+        .unwrap();
+
+        let extra = backed.join("injected.txt");
+        fs::write(&extra, b"unexpected").unwrap();
+        let rows = restore_session(&session).unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("unrecorded backup file")),
+            "{rows:?}"
+        );
+        fs::remove_file(extra).unwrap();
+        fs::write(backed.join("a.txt:FixtureMetadata"), b"unexpected stream").unwrap();
+        let rows = restore_session(&session).unwrap();
+        assert!(
+            rows.iter().any(|row| row.contains("named data streams")),
+            "{rows:?}"
+        );
+        assert!(!source.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_changed_manifest_is_deferred_by_listing_and_refused_before_restore_or_removal() {
         let _env = crate::backup::lock_backup_env();
         let root = crate::test_support::TempDir::new("restore-manifest-status");
         let _store = crate::path_seal::TestStore::new(root.join("seals"));
@@ -2020,7 +2132,7 @@ mod tests {
         let session = backup_root.join(name);
         back_up_fixture_directory(&source, &session);
         let manifest = session.join(crate::path_seal::FILE_MANIFEST_NAME);
-        assert_eq!(session_status(&session), SessionStatus::Verified);
+        assert_eq!(session_status(&session), SessionStatus::PendingVerification);
         assert!(preview_session(name, &session).is_ok());
 
         for bytes in [None, Some(b"{}".as_slice())] {
@@ -2029,8 +2141,15 @@ mod tests {
             } else {
                 fs::remove_file(&manifest).unwrap();
             }
-            assert_eq!(session_status(&session), SessionStatus::Invalid);
+            let status = if bytes.is_some() {
+                SessionStatus::PendingVerification
+            } else {
+                SessionStatus::MissingMetadata
+            };
+            assert_eq!(session_status(&session), status);
             assert!(list_session_names_at(&backup_root).unwrap().is_empty());
+            let rows = list_session_info_at(&backup_root).unwrap();
+            assert_eq!((rows[0].status, rows[0].size_kb), (status, None));
             assert!(preview_session(name, &session)
                 .unwrap_err()
                 .contains("file_manifest"));
@@ -2038,15 +2157,97 @@ mod tests {
                 .unwrap_err()
                 .contains("file_manifest"));
             assert!(delete_session_with_status(name, Some(SessionStatus::Unsealed)).is_err());
+            assert!(delete_session_with_status(name, Some(SessionStatus::Verified)).is_err());
+            assert!(delete_session_by_name(name).is_err());
             assert!(session.is_dir());
         }
     }
 
-    /// A file added inside a backed-up directory after sealing must block that
-    /// directory: copying the tree as it stands would restore unbacked bytes.
     #[cfg(windows)]
     #[test]
-    fn an_added_file_inside_a_backed_up_directory_is_refused() {
+    fn missing_backup_metadata_protects_payload_from_removal_and_retention() {
+        let _env = crate::backup::lock_backup_env();
+        let root = crate::test_support::TempDir::new("backup-session-protection");
+        let seals = root.subdir("seals");
+        let _store = crate::path_seal::TestStore::new(seals.clone());
+        let backups = root.subdir("Backup");
+        let _backup = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", &backups);
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"payload").unwrap();
+
+        let no_seal = "1700000000_no_seal";
+        let no_map = "1700000001_no_map";
+        let verified = "1700000002_complete";
+        for name in [no_seal, no_map, verified] {
+            back_up_fixture_directory(&source, &backups.join(name));
+        }
+        let empty = "1700000003_empty";
+        fs::create_dir_all(backups.join(empty).join("files")).unwrap();
+        fs::create_dir_all(backups.join(empty).join("registry")).unwrap();
+        let legacy = "1700000004_legacy";
+        fs::create_dir_all(backups.join(legacy).join("files")).unwrap();
+        fs::write(
+            backups.join(legacy).join("files/legacy.bin"),
+            b"legacy payload",
+        )
+        .unwrap();
+        fs::write(seals.join(format!("{legacy}.seal.json")), b"RSEAL1").unwrap();
+        fs::remove_file(seals.join(format!("{no_seal}.seal.json"))).unwrap();
+        fs::remove_file(backups.join(no_map).join("files/path_map.json")).unwrap();
+
+        let rows: std::collections::BTreeMap<_, _> = list_session_info()
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.name, row.status))
+            .collect();
+        assert_eq!(rows[no_seal], SessionStatus::MissingMetadata);
+        assert_eq!(rows[no_map], SessionStatus::MissingMetadata);
+        assert_eq!(rows[verified], SessionStatus::PendingVerification);
+        assert_eq!(rows[empty], SessionStatus::Unsealed);
+        assert_eq!(rows[legacy], SessionStatus::Legacy);
+        assert_eq!(preview_by_name(no_map).unwrap_err(), "seal:map_missing");
+        for name in [no_seal, no_map, legacy] {
+            assert!(delete_session_by_name(name).is_err());
+            assert!(delete_session_with_status(name, Some(SessionStatus::Unsealed)).is_err());
+            assert!(delete_session_with_status(name, Some(SessionStatus::Verified)).is_err());
+        }
+        assert_eq!(prune_old_sessions_at(7, Some(1_800_000_000)), 2);
+        for name in [no_seal, no_map, legacy] {
+            assert!(backups.join(name).is_dir());
+        }
+        for name in [verified, empty] {
+            assert!(!backups.join(name).exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn complete_session_restores_files_without_using_unrecorded_snapshots() {
+        let root = crate::test_support::TempDir::new("restore-recorded-only");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"recorded file").unwrap();
+        let session = root.join("1700000000_session");
+        back_up_fixture_directory(&source, &session);
+        fs::write(session.join("path.json"), b"unrecorded path").unwrap();
+        fs::create_dir_all(session.join("registry/extra")).unwrap();
+        fs::write(
+            session.join("registry/extra/export.reg"),
+            b"unrecorded registry bytes",
+        )
+        .unwrap();
+        let inputs = validate_session(&session, || false).unwrap();
+        assert!(inputs.path_snapshot.is_none());
+        assert!(inputs.imports.is_empty());
+        fs::remove_dir_all(&source).unwrap();
+        let rows = restore_session(&session).unwrap();
+        assert_eq!(rows, [format!("restored {}", source.display())]);
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"recorded file");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn manifest_restores_only_the_recorded_files_from_a_directory_with_extra_content() {
         let root = crate::test_support::TempDir::new("restore-extra-member");
         let _store = crate::path_seal::TestStore::new(root.join("seals"));
         let source = root.subdir("source");
@@ -2054,12 +2255,11 @@ mod tests {
         let session = root.join("1700000000_dir");
         let backed = back_up_fixture_directory(&source, &session);
         fs::write(backed.join("injected.txt"), b"not backed up").unwrap();
+        fs::remove_dir_all(&source).unwrap();
 
         let msgs = restore_session(&session).expect("the session itself is authentic");
-        assert!(
-            msgs.iter().any(|m| m.contains("unrecorded backup file")),
-            "the injected file must be named: {msgs:?}"
-        );
+        assert!(msgs.iter().any(|m| m.starts_with("restored ")), "{msgs:?}");
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"backed up");
         assert!(
             !source.join("injected.txt").exists(),
             "an unbacked file must never be written back"
@@ -2075,7 +2275,7 @@ mod tests {
         fs::write(source.join("a.txt"), b"authentic").unwrap();
         let session = root.join("1700000000_dir");
         let backed = back_up_fixture_directory(&source, &session);
-        fs::write(source.join("a.txt"), b"current destination").unwrap();
+        fs::remove_dir_all(&source).unwrap();
 
         let msgs = restore_with_before_copy(&session, |public| {
             assert_eq!(public, backed);
@@ -2096,7 +2296,159 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn added_or_missing_empty_directories_are_refused_by_the_manifest() {
+    fn a_late_directory_keeps_its_files_and_streams_until_moved_aside() {
+        let root = crate::test_support::TempDir::new("restore-late-directory");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let source = root.subdir("source");
+        fs::write(source.join("a.txt"), b"backed up").unwrap();
+        fs::create_dir(source.join("empty")).unwrap();
+        let session = root.join("1700000000_dir");
+        back_up_fixture_directory(&source, &session);
+        fs::remove_dir_all(&source).unwrap();
+        assert_eq!(
+            preview_session("1700000000_dir", &session)
+                .unwrap()
+                .existing,
+            0
+        );
+
+        let rows = restore_with_before_copy(&session, |_| {
+            fs::create_dir(&source).unwrap();
+            fs::write(source.join("a.txt"), b"created during restore").unwrap();
+            fs::write(source.join("a.txt:NewMetadata"), b"named stream").unwrap();
+        })
+        .unwrap();
+        assert_eq!(
+            rows,
+            [format!(
+                "skipped existing restore target: {}",
+                source.display()
+            )]
+        );
+        assert_eq!(
+            fs::read(source.join("a.txt")).unwrap(),
+            b"created during restore"
+        );
+        assert_eq!(
+            fs::read(source.join("a.txt:NewMetadata")).unwrap(),
+            b"named stream"
+        );
+        assert!(!source.join("empty").exists());
+
+        let preserved = root.join("preserved");
+        fs::rename(&source, &preserved).unwrap();
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!("restored {}", source.display())]
+        );
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"backed up");
+        assert!(source.join("empty").is_dir());
+        assert_eq!(
+            fs::read(preserved.join("a.txt:NewMetadata")).unwrap(),
+            b"named stream"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_preserves_an_occupied_file_and_continues_with_other_entries() {
+        use crate::scanner::ItemKind;
+        let root = crate::test_support::TempDir::new("restore-occupied-file");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let target = root.join("late.txt");
+        let sibling = root.join("sibling.txt");
+        let named = root.join("late.txt:NewMetadata");
+        fs::write(&target, b"backed up target").unwrap();
+        fs::write(&sibling, b"backed up sibling").unwrap();
+        let session = root.subdir("1700000000_files");
+        let items = [
+            restore_fixture_item(&target, ItemKind::File),
+            restore_fixture_item(&sibling, ItemKind::File),
+        ];
+        let (ok, failed, errors) = crate::backup::backup_items(&items, &session);
+        assert_eq!((ok, failed), (2, 0), "{errors:?}");
+        let regular_permissions = fs::metadata(&target).unwrap().permissions();
+        fs::remove_file(&target).unwrap();
+        fs::remove_file(&sibling).unwrap();
+
+        let mut first = true;
+        let rows = restore_with_before_copy(&session, |_| {
+            if std::mem::take(&mut first) {
+                fs::write(&target, b"new live file").unwrap();
+                fs::write(&named, b"keep this stream").unwrap();
+                let mut perms = fs::metadata(&target).unwrap().permissions();
+                perms.set_readonly(true);
+                fs::set_permissions(&target, perms).unwrap();
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                format!("skipped existing restore target: {}", target.display()),
+                format!("restored {}", sibling.display()),
+            ]
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"new live file");
+        assert_eq!(fs::read(&named).unwrap(), b"keep this stream");
+        assert_eq!(fs::read(&sibling).unwrap(), b"backed up sibling");
+        assert!(fs::metadata(&target).unwrap().permissions().readonly());
+        fs::set_permissions(&target, regular_permissions).unwrap();
+
+        // A directory at the original file's name is a conflict as well.
+        fs::rename(&target, root.join("preserved.txt")).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"existing directory contents").unwrap();
+        let rows = restore_session(&session).unwrap();
+        assert!(
+            rows.iter()
+                .all(|row| row.starts_with("skipped existing restore target: ")),
+            "{rows:?}"
+        );
+        assert_eq!(
+            fs::read(target.join("keep.txt")).unwrap(),
+            b"existing directory contents"
+        );
+        assert_eq!(
+            fs::read(root.join("preserved.txt:NewMetadata")).unwrap(),
+            b"keep this stream"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restore_does_not_write_through_a_parent_junction() {
+        let root = crate::test_support::TempDir::new("restore-parent-junction");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let parent = root.subdir("source");
+        let target = parent.join("a.txt");
+        fs::write(&target, b"backed up").unwrap();
+        let session = root.subdir("1700000000_file");
+        let item = restore_fixture_item(&target, crate::scanner::ItemKind::File);
+        let (ok, failed, errors) = crate::backup::backup_items(&[item], &session);
+        assert_eq!((ok, failed), (1, 0), "{errors:?}");
+        fs::remove_dir_all(&parent).unwrap();
+        let outside = root.subdir("outside");
+        let junction = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&parent)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(junction.status.success(), "{:?}", junction.stderr);
+        let rows = restore_session(&session).unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with("restore failed for ")),
+            "{rows:?}"
+        );
+        assert!(!outside.join("a.txt").exists());
+        fs::remove_dir(&parent).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn manifest_ignores_added_directories_but_refuses_missing_or_replaced_directories() {
         let root = crate::test_support::TempDir::new("restore-directory-manifest");
         let _store = crate::path_seal::TestStore::new(root.join("seals"));
         let source = root.subdir("source");
@@ -2104,26 +2456,48 @@ mod tests {
         fs::write(source.join("a.txt"), b"authentic").unwrap();
         let session = root.join("1700000000_dir");
         let backed = back_up_fixture_directory(&source, &session);
-        fs::write(source.join("a.txt"), b"current destination").unwrap();
+        fs::remove_dir_all(&source).unwrap();
         fs::create_dir(backed.join("added-empty")).unwrap();
+        fs::write(backed.join("added-empty/injected.txt"), b"unexpected").unwrap();
         let msgs = restore_session(&session).unwrap();
-        assert!(
-            msgs.iter()
-                .any(|m| m.contains("unrecorded backup directory")),
-            "{msgs:?}"
-        );
+        assert!(msgs.iter().any(|m| m.starts_with("restored ")), "{msgs:?}");
         assert!(!source.join("added-empty").exists());
-        fs::remove_dir(backed.join("added-empty")).unwrap();
+        assert!(source.join("original-empty").is_dir());
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"authentic");
+        fs::remove_dir_all(&source).unwrap();
         fs::remove_dir(backed.join("original-empty")).unwrap();
         let msgs = restore_session(&session).unwrap();
         assert!(
             msgs.iter().any(|m| m.contains("missing recorded file")),
             "{msgs:?}"
         );
-        assert_eq!(
-            fs::read(source.join("a.txt")).unwrap(),
-            b"current destination"
+        assert!(!source.exists());
+        fs::write(backed.join("original-empty"), b"wrong type").unwrap();
+        let msgs = restore_session(&session).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("type differs from the manifest")),
+            "{msgs:?}"
         );
+        assert!(!source.exists());
+
+        let replaced = backed.join("original-empty");
+        fs::remove_file(&replaced).unwrap();
+        let outside = root.subdir("outside");
+        let junction = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+            .args(["/c", "mklink", "/J"])
+            .arg(&replaced)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(junction.status.success(), "{:?}", junction.stderr);
+        let msgs = restore_session(&session).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.starts_with("restore failed for ")),
+            "{msgs:?}"
+        );
+        assert!(!source.exists());
+        fs::remove_dir(&replaced).unwrap();
     }
 
     #[cfg(windows)]

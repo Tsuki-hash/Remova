@@ -380,6 +380,14 @@ fn normalize_path_entry(s: &str) -> Option<String> {
     crate::fsutil::path_key(std::path::Path::new(s))
 }
 
+mod backed_path;
+pub(crate) use backed_path::{BackedPathPlan, BackedPathResult};
+
+fn path_segment_matches(segment: &str, expand: bool, needle: &str) -> bool {
+    normalize_path_entry(segment).as_deref() == Some(needle)
+        || (expand && normalize_path_entry(&expand_env_string(segment)).as_deref() == Some(needle))
+}
+
 /// True if PATH still contains this exact entry (verify checklist).
 pub fn scrub_path_entry_ok(entry: &str) -> bool {
     path_entry_presence(entry).unwrap_or(false)
@@ -734,14 +742,7 @@ pub fn scrub_path_entry(entry: &str) -> Result<bool, String> {
             let mut kept: Vec<&str> = Vec::new();
             let mut hit = false;
             for seg in raw.split(';') {
-                let expanded = if expand {
-                    expand_env_string(seg)
-                } else {
-                    seg.to_string()
-                };
-                if normalize_path_entry(&expanded) == Some(needle.clone())
-                    || normalize_path_entry(seg) == Some(needle.clone())
-                {
+                if path_segment_matches(seg, expand, &needle) {
                     hit = true;
                     continue;
                 }

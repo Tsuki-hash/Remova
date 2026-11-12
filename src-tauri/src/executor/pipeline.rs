@@ -16,7 +16,7 @@ use super::{
 enum BackupOutcome {
     Ready {
         backup_dir: String,
-        receipt: Option<BackupReceipt>,
+        receipt: Option<Box<BackupReceipt>>,
         restore_point_ok: bool,
         restore_point_msg: String,
     },
@@ -174,7 +174,7 @@ fn try_backup_phase(
             };
             BackupOutcome::Ready {
                 backup_dir,
-                receipt: Some(receipt),
+                receipt: Some(Box::new(receipt)),
                 restore_point_ok,
                 restore_point_msg,
             }
@@ -294,6 +294,7 @@ struct DeleteOutcome {
     failed: u32,
     skipped: u32,
     delayed: u32,
+    backup_unavailable: bool,
     errors: Vec<String>,
     details: Vec<ItemDetail>,
 }
@@ -317,6 +318,7 @@ fn delete_planned_items_with_native(
         Some(name) => crate::regops::delete_value(path, name),
         None => crate::regops::delete_key(path),
     };
+    let mut path_results = None;
     delete_planned_items_with_io(
         items,
         native_delete,
@@ -328,6 +330,24 @@ fn delete_planned_items_with_native(
         // object still matches the backup when Windows eventually removes it.
         &mut |path| receipt.is_none() && crate::sysops::schedule_delete_on_reboot(path),
         &mut delete_registry,
+        &mut |entry| {
+            if let Some(receipt) = receipt {
+                return path_results
+                    .get_or_insert_with(|| receipt.scrub_paths())
+                    .remove(entry.trim())
+                    .unwrap_or_default();
+            }
+            match crate::regops::scrub_path_entry(entry) {
+                Ok(removed) => crate::regops::BackedPathResult {
+                    removed,
+                    ..Default::default()
+                },
+                Err(error) => crate::regops::BackedPathResult {
+                    errors: vec![error],
+                    ..Default::default()
+                },
+            }
+        },
     )
 }
 
@@ -337,46 +357,48 @@ fn delete_planned_items_with_io(
     delete_fs: &mut impl FnMut(&Path) -> Result<(), FilesystemDeleteError>,
     schedule: &mut impl FnMut(&str) -> bool,
     delete_registry: &mut impl FnMut(&str, Option<&str>) -> Result<bool, String>,
+    scrub_path: &mut impl FnMut(&str) -> crate::regops::BackedPathResult,
 ) -> DeleteOutcome {
     let mut deleted = 0u32;
     let mut failed = 0u32;
     let mut skipped = 0u32;
     let mut delayed = 0u32;
+    let mut backup_unavailable = false;
     let mut errors = vec![];
     let mut details = vec![];
 
     for it in items {
         match it.kind {
-            ItemKind::Path => match crate::regops::scrub_path_entry(&it.path) {
-                Ok(true) => {
-                    deleted += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "deleted".into(),
-                        message: "PATH entry removed".into(),
-                    });
-                }
-                Ok(false) => {
-                    skipped += 1;
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "skipped".into(),
-                        message: "not found in PATH".into(),
-                    });
-                }
-                Err(e) => {
+            ItemKind::Path => {
+                let result = scrub_path(&it.path);
+                let (status, message) = if !result.errors.is_empty() {
                     failed += 1;
                     errors.push(format!("{}: path delete failed", it.path));
-                    details.push(ItemDetail {
-                        path: it.path.clone(),
-                        kind: "path".into(),
-                        status: "failed".into(),
-                        message: e,
-                    });
-                }
-            },
+                    ("failed", result.errors.join("; "))
+                } else if result.removed {
+                    deleted += 1;
+                    let message = if result.kept {
+                        "PATH entry removed in backed-up scope; unverified scopes kept"
+                    } else {
+                        "PATH entry removed"
+                    };
+                    ("deleted", message.into())
+                } else {
+                    skipped += 1;
+                    let message = if result.kept {
+                        "PATH scope could not be verified against backup; kept"
+                    } else {
+                        "not found in PATH"
+                    };
+                    ("skipped", message.into())
+                };
+                details.push(ItemDetail {
+                    path: it.path.clone(),
+                    kind: "path".into(),
+                    status: status.into(),
+                    message,
+                });
+            }
             ItemKind::Registry => {
                 let native = native_delete(&it.path);
                 let native_note = native.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
@@ -499,6 +521,18 @@ fn delete_planned_items_with_io(
                             message: format!("backup source could not be verified: {reason}"),
                         });
                     }
+                    Err(FilesystemDeleteError::BackupUnavailable(error)) => {
+                        backup_unavailable = true;
+                        skipped += 1;
+                        let message = format!("backup copy could not be verified: {error}");
+                        errors.push(format!("{}: {message}", it.path));
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "skipped".into(),
+                            message,
+                        });
+                    }
                     Err(FilesystemDeleteError::Io(error)) => {
                         // try schedule delete on reboot for locked files
                         if schedule(&it.path) {
@@ -529,6 +563,7 @@ fn delete_planned_items_with_io(
         failed,
         skipped,
         delayed,
+        backup_unavailable,
         errors,
         details,
     }
@@ -779,14 +814,17 @@ fn run_full_cleanup_before_delete(
     }
 
     before_delete();
-    let mut del =
-        delete_planned_items_with_native(&plan.allowed, &mut native_delete_note, receipt.as_ref());
-    // drop empty vendor/product shells left by the delete.
+    let mut del = delete_planned_items_with_native(
+        &plan.allowed,
+        &mut native_delete_note,
+        receipt.as_deref(),
+    );
+    // Keep unselected parent directories when cleanup requires a backup.
     let tokens: Vec<String> = [app.name.clone(), app.publisher.clone()]
         .into_iter()
         .filter(|t| !t.trim().is_empty())
         .collect();
-    for detail in del.details.iter_mut() {
+    for detail in del.details.iter_mut().filter(|_| receipt.is_none()) {
         if detail.status == "deleted" && detail.kind == "dir" {
             let removed =
                 crate::fsutil::prune_empty_ancestors(std::path::Path::new(&detail.path), &tokens);
@@ -872,7 +910,7 @@ fn run_full_cleanup_before_delete(
         app_key: crate::apps::app_key(app),
         dry_run: false,
         backup_dir,
-        backup_verified,
+        backup_verified: backup_verified && !del.backup_unavailable,
         uninstall_ok,
         uninstall_message,
         deleted: del.deleted,
@@ -1256,6 +1294,7 @@ mod tests {
             },
             &mut |_| false,
             &mut |_, _| Err("registry fixture denied".into()),
+            &mut |_| Default::default(),
         );
         assert_eq!(outcome.failed, 1);
         assert_eq!(outcome.details[0].path, failed_items[0].path);
@@ -1522,6 +1561,84 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn backed_path_pipeline_keeps_new_scope_and_restores_only_captured_entries() {
+        use crate::regops::path_mock;
+
+        let _backup_lock = crate::backup::lock_backup_env();
+        let fixture = crate::test_support::TempDir::new("backed-path-cleanup");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
+        let _store = crate::path_seal::TestStore::new(fixture.join("seals"));
+        let _path_lock = path_mock::lock_mock();
+        let first = r"C:\FixtureTools\DemoTool\bin";
+        let second = r"C:\FixtureTools\DemoTool\scripts";
+        let late = r"C:\FixtureTools\DemoTool\late";
+        let original_user = format!(r"C:\Windows;{first};{second}");
+        let current_machine = format!(r"C:\Windows;{first};{late}");
+        path_mock::install(&original_user, r"C:\Windows");
+        let app = crate::apps::InstalledApp {
+            name: "DemoTool".into(),
+            publisher: "FixtureVendor".into(),
+            version: "1.0".into(),
+            install_location: r"C:\FixtureTools\DemoTool".into(),
+            source: "HKLM64".into(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            registry_key: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let items = [first, second, late].map(|entry| CleanupItem {
+            path: entry.into(),
+            kind: ItemKind::Path,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "test".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        });
+        let report = run_full_cleanup_before_delete(
+            &app,
+            &items,
+            &FullCleanupOptions {
+                dry_run: false,
+                skip_official_uninstall: true,
+                backup_enabled: true,
+                restore_point: false,
+                cleanup_source: None,
+            },
+            || path_mock::install(&original_user, &current_machine),
+        );
+        assert!(report.backup_verified && !report.aborted, "{report:?}");
+        assert_eq!(
+            (report.deleted, report.skipped, report.failed),
+            (2, 1, 0),
+            "{report:?}"
+        );
+        assert_eq!(path_mock::get("User"), r"C:\Windows");
+        assert_eq!(path_mock::get("Machine"), current_machine);
+        let messages = crate::restore::restore_session(Path::new(&report.backup_dir)).unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.starts_with("restored PATH entry "))
+                .count(),
+            2,
+            "{messages:?}"
+        );
+        assert_eq!(path_mock::get("User"), original_user);
+        assert_eq!(path_mock::get("Machine"), current_machine);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn cleanup_with_backup_keeps_new_or_modified_objects() {
         let _backup_lock = crate::backup::lock_backup_env();
         let fixture = crate::test_support::TempDir::new("backup-delete-fixture");
@@ -1644,6 +1761,89 @@ mod tests {
         assert_eq!(std::fs::read(&stable).unwrap(), b"backed up bytes");
         assert_eq!(std::fs::read(&retained_child).unwrap(), b"backed up bytes");
 
+        let vault = fixture.join("Backup");
+        let sessions_before: Vec<_> = std::fs::read_dir(&vault)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        let corrupted = install.join("corrupted-backup.bin");
+        let missing = install.join("missing-backup.bin");
+        let replaced_copy = install.join("replaced-backup.bin");
+        let linked_copy = install.join("linked-backup.bin");
+        let other_file = fixture.join("other-file.bin");
+        let incomplete = install.join("incomplete-backup");
+        std::fs::create_dir(&incomplete).unwrap();
+        let child = incomplete.join("child.bin");
+        for path in [
+            &corrupted,
+            &missing,
+            &replaced_copy,
+            &linked_copy,
+            &other_file,
+            &child,
+        ] {
+            std::fs::write(path, b"original").unwrap();
+        }
+        let report = run_full_cleanup_before_delete(
+            &app,
+            &[
+                item(&corrupted, ItemKind::File),
+                item(&missing, ItemKind::File),
+                item(&replaced_copy, ItemKind::File),
+                item(&linked_copy, ItemKind::File),
+                item(&incomplete, ItemKind::Dir),
+                item(&stable, ItemKind::File),
+            ],
+            &opts,
+            || {
+                let files = std::fs::read_dir(&vault)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| !sessions_before.contains(path))
+                    .unwrap()
+                    .join("files");
+                let map_file = files.join("path_map.json");
+                let map: std::collections::BTreeMap<String, String> =
+                    serde_json::from_slice(&std::fs::read(&map_file).unwrap()).unwrap();
+                let copy = |source: &Path| {
+                    let (key, _) = map
+                        .iter()
+                        .find(|(_, path)| Path::new(path) == source)
+                        .unwrap();
+                    files.join(key)
+                };
+                assert!(std::fs::remove_file(map_file).is_err());
+                std::fs::write(copy(&corrupted), b"tampered").unwrap();
+                std::fs::remove_file(copy(&missing)).unwrap();
+                let replaced = copy(&replaced_copy);
+                std::fs::rename(&replaced, files.join("other.bin")).unwrap();
+                std::fs::write(replaced, b"replacement").unwrap();
+                let linked = copy(&linked_copy);
+                std::fs::remove_file(&linked).unwrap();
+                std::fs::hard_link(&other_file, &linked).unwrap();
+                std::fs::remove_file(copy(&incomplete).join("child.bin")).unwrap();
+            },
+        );
+        assert!(!report.aborted && !report.backup_verified, "{report:?}");
+        assert_eq!(
+            (report.deleted, report.skipped, report.delayed),
+            (1, 5, 0),
+            "{report:?}"
+        );
+        assert_eq!(report.errors.len(), 5, "{report:?}");
+        for path in [
+            &corrupted,
+            &missing,
+            &replaced_copy,
+            &linked_copy,
+            &other_file,
+            &child,
+        ] {
+            assert_eq!(std::fs::read(path).unwrap(), b"original");
+        }
+        assert!(!stable.exists());
+
+        std::fs::write(&stable, b"no backup requested").unwrap();
         opts.backup_enabled = false;
         let no_backup = run_full_cleanup(&app, &[item(&stable, ItemKind::File)], &opts);
         assert_eq!(no_backup.deleted, 1, "{no_backup:?}");

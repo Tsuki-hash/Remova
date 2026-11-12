@@ -2,7 +2,7 @@
 //!
 //! Four phases, each independently runnable and gate-checked:
 //!
-//! - Plan: admission and sizes, read-only.
+//! - Plan: admission and sizes. Writes only the audit ledger.
 //! - Copy: starts in an empty target and records the directory identities for
 //!   resume. Existing files must already match; a copy never replaces them.
 //! - Cutover: inside the destructive transaction lock — incremental top-up,
@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod finishing;
 mod receipt;
 #[cfg(windows)]
+mod rollback;
+#[cfg(windows)]
 mod security;
 #[cfg(windows)]
 mod streams;
@@ -30,6 +32,7 @@ const COPY_FILE_CAP: usize = 200_000;
 /// Plan-phase walk bound for the hardlink scan; beyond it the migration is
 /// refused rather than guessed about.
 const PLAN_FILE_CAP: u64 = 100_000;
+const SOURCE_TOO_DEEP: &str = "source_tree_too_deep";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationPlan {
@@ -49,6 +52,10 @@ pub struct MigrationPlan {
     /// of silently skipping the capacity check.
     #[serde(default = "default_true")]
     pub free_space_known: bool,
+    /// The target root does not exist yet or its permissions cannot be read.
+    /// Copy still verifies each destination directory before writing payloads.
+    #[serde(default)]
+    pub root_permissions_pending: bool,
 }
 
 fn default_true() -> bool {
@@ -137,6 +144,11 @@ fn lower(p: &Path) -> String {
         .to_string()
 }
 
+fn junction_points_to(source: &Path, target: &Path) -> bool {
+    let expected = lower(target).replace('/', "\\");
+    std::fs::read_link(source).is_ok_and(|resolved| lower(&resolved) == expected)
+}
+
 fn sibling_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
@@ -165,6 +177,19 @@ fn meta_is_reparse(md: &std::fs::Metadata) -> bool {
     #[cfg(not(windows))]
     {
         md.file_type().is_symlink()
+    }
+}
+
+fn meta_is_directory(md: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+        md.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        md.is_dir() || md.file_type().is_symlink()
     }
 }
 
@@ -400,12 +425,8 @@ fn check_admission(
     // Hardlinks anywhere in the source tree make a per-file copy lossy
     // (each link would become a private copy): refuse.
     if rej.is_empty() {
-        if let Some(count) = count_source_files(source) {
-            if count > PLAN_FILE_CAP {
-                rej.push("source_too_many_files".into());
-            }
-        } else {
-            rej.push("source_unreadable".into());
+        if let Err(reason) = count_source_files(source) {
+            rej.push(reason.into());
         }
     }
     if rej.is_empty() {
@@ -458,6 +479,8 @@ fn check_destructive(source: &Path, target: &Path, backup: &Path) -> Vec<String>
         Ok(md) => {
             if meta_is_reparse(&md) {
                 rej.push("target_is_reparse".into());
+            } else if !md.is_dir() {
+                rej.push("target_not_directory".into());
             }
         }
     }
@@ -475,25 +498,29 @@ fn check_destructive(source: &Path, target: &Path, backup: &Path) -> Vec<String>
 }
 
 /// Bounded file count of the source tree (reparse children not followed).
-fn count_source_files(root: &Path) -> Option<u64> {
-    let mut stack = vec![root.to_path_buf()];
+fn count_source_files(root: &Path) -> Result<u64, &'static str> {
+    let mut stack = vec![(root.to_path_buf(), 0)];
     let mut count: u64 = 0;
-    while let Some(dir) = stack.pop() {
-        let read = std::fs::read_dir(&dir).ok()?;
+    while let Some((dir, depth)) = stack.pop() {
+        let read = std::fs::read_dir(&dir).map_err(|_| "source_unreadable")?;
         for e in read {
             // A dropped entry would understate the count.
-            let e = e.ok()?;
+            let e = e.map_err(|_| "source_unreadable")?;
+            let child_depth = depth + 1;
+            if child_depth > crate::fsutil::PINNED_TREE_MAX_DEPTH {
+                return Err(SOURCE_TOO_DEEP);
+            }
             count += 1;
             if count > PLAN_FILE_CAP {
-                return Some(count);
+                return Err("source_too_many_files");
             }
             let p = e.path();
-            if !is_reparse(&p) && e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                stack.push(p);
+            if !is_reparse(&p) && e.file_type().map_err(|_| "source_unreadable")?.is_dir() {
+                stack.push((p, child_depth));
             }
         }
     }
-    Some(count)
+    Ok(count)
 }
 
 /// True when any regular file in the tree reports more than one link.
@@ -531,7 +558,7 @@ fn tree_has_hardlinks(root: &Path) -> Option<bool> {
     }
 }
 
-/// Phase 1: admission, sizes, free space. Read-only.
+/// Phase 1: admission, sizes, free space. Leaves both trees untouched.
 pub fn plan(source: &str, target: &str) -> MigrationPlan {
     let source = PathBuf::from(source.trim());
     let target = PathBuf::from(target.trim());
@@ -543,7 +570,19 @@ pub fn plan(source: &str, target: &str) -> MigrationPlan {
 fn plan_with_free(source: &Path, target: &Path, free: Option<i64>) -> MigrationPlan {
     let roots = crate::triage::roots_from_env();
     let resuming = receipt::Receipt::load(source, target).is_some();
-    let rejections = check_admission(source, target, &roots, resuming);
+    let mut rejections = check_admission(source, target, &roots, resuming);
+    let root_permissions_pending = if rejections.is_empty() {
+        match existing_root_permissions_match(source, target) {
+            Some(true) => false,
+            Some(false) => {
+                rejections.push("target_directory_permissions_differ".into());
+                false
+            }
+            None => true,
+        }
+    } else {
+        false
+    };
     let ok = rejections.is_empty();
     let (source_kb, source_kb_capped, file_count) = if ok {
         let (kb, capped) = crate::dirsize::walk_size_kb_capped(source);
@@ -561,6 +600,7 @@ fn plan_with_free(source: &Path, target: &Path, free: Option<i64>) -> MigrationP
         file_count,
         target_free_kb: free.unwrap_or(0),
         free_space_known: free.is_some(),
+        root_permissions_pending,
     };
     if ok {
         match free {
@@ -584,6 +624,20 @@ fn plan_with_free(source: &Path, target: &Path, free: Option<i64>) -> MigrationP
         if plan.ok { "ok" } else { "refused" },
     );
     plan
+}
+
+#[cfg(windows)]
+fn existing_root_permissions_match(source: &Path, target: &Path) -> Option<bool> {
+    let _source_path = crate::fsutil::pin_local_scan_path(source).ok()?;
+    let _target_path = crate::fsutil::pin_local_scan_path(target).ok()?;
+    let source = streams::open(source).ok()?;
+    let target = streams::open(target).ok()?;
+    security::directories_equal(&source, &target).ok()
+}
+
+#[cfg(not(windows))]
+fn existing_root_permissions_match(_: &Path, _: &Path) -> Option<bool> {
+    None
 }
 
 /// Copy bookkeeping: files written, reparse children skipped (recorded, not
@@ -680,7 +734,13 @@ fn copy_new_file(_source: &Path, _destination: &Path) -> Result<(), String> {
 }
 
 /// Recursively copy missing entries. Existing bytes are never replaced.
-fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result<(), String> {
+fn copy_tree(
+    from: &Path,
+    to: &Path,
+    rel: &str,
+    depth: usize,
+    state: &mut CopyState,
+) -> Result<(), String> {
     if copy_cancelled() {
         return Err("migrate:cancelled".into());
     }
@@ -717,6 +777,10 @@ fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result
             state.capped = true;
             return Ok(());
         }
+        let child_depth = depth + 1;
+        if child_depth > crate::fsutil::PINNED_TREE_MAX_DEPTH {
+            return Err(SOURCE_TOO_DEEP.into());
+        }
         let child_from = entry.path();
         let child_rel = if rel.is_empty() {
             entry.file_name().to_string_lossy().into_owned()
@@ -730,7 +794,7 @@ fn copy_tree(from: &Path, to: &Path, rel: &str, state: &mut CopyState) -> Result
         let child_to = to.join(entry.file_name());
         let is_dir = entry.file_type().map_err(|err| err.to_string())?.is_dir();
         if is_dir {
-            copy_tree(&child_from, &child_to, &child_rel, state)?;
+            copy_tree(&child_from, &child_to, &child_rel, child_depth, state)?;
         } else {
             state.files += 1;
             match std::fs::symlink_metadata(&child_to) {
@@ -762,6 +826,7 @@ fn compare_trees(a: &Path, b: &Path, allow_extra_in_b: bool) -> Result<Vec<Strin
     fn walk(
         root: &Path,
         rel: &Path,
+        depth: usize,
         out: &mut BTreeMap<PathBuf, Option<u64>>,
     ) -> Result<(), String> {
         let _pin = crate::fsutil::pin_target_readonly(root).map_err(|err| err.to_string())?;
@@ -774,6 +839,10 @@ fn compare_trees(a: &Path, b: &Path, allow_extra_in_b: bool) -> Result<Vec<Strin
                 return Err("migrate:cancelled".into());
             }
             let entry = entry.map_err(|e| format!("{}: {e}", rel.display()))?;
+            let child_depth = depth + 1;
+            if child_depth > crate::fsutil::PINNED_TREE_MAX_DEPTH {
+                return Err(SOURCE_TOO_DEEP.into());
+            }
             let child = entry.path();
             let child_rel = rel.join(entry.file_name());
             let metadata = std::fs::symlink_metadata(&child).map_err(|err| err.to_string())?;
@@ -788,15 +857,15 @@ fn compare_trees(a: &Path, b: &Path, allow_extra_in_b: bool) -> Result<Vec<Strin
                 metadata.is_file().then_some(metadata.len()),
             );
             if metadata.is_dir() {
-                walk(&child, &child_rel, out)?;
+                walk(&child, &child_rel, child_depth, out)?;
             }
         }
         Ok(())
     }
     let mut ma = BTreeMap::new();
     let mut mb = BTreeMap::new();
-    walk(a, Path::new(""), &mut ma)?;
-    walk(b, Path::new(""), &mut mb)?;
+    walk(a, Path::new(""), 0, &mut ma)?;
+    walk(b, Path::new(""), 0, &mut mb)?;
     let mut diffs = Vec::new();
     if !files_equal(a, b)? {
         diffs.push("root directory streams or permissions".into());
@@ -864,7 +933,7 @@ pub fn copy_phase(source: &str, target: &str) -> Result<MigrationCopyReport, Str
     };
     verify_existing_target(&source, &target)?;
     let mut state = CopyState::default();
-    copy_tree(&source, &target, "", &mut state)?;
+    copy_tree(&source, &target, "", 0, &mut state)?;
     if state.capped {
         return Err(format!(
             "copy stopped at the file cap ({}); rerun to continue",
@@ -1012,7 +1081,7 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
     begin_copy_run();
     let mut state = CopyState::default();
     if let Err(e) = verify_existing_target(&source_path, &target_path)
-        .and_then(|()| copy_tree(&source_path, &target_path, "", &mut state))
+        .and_then(|()| copy_tree(&source_path, &target_path, "", 0, &mut state))
     {
         return MigrationCutoverReport {
             ok: false,
@@ -1117,11 +1186,7 @@ pub fn finish(
     // The junction must be in place AND point at the stated target before the
     // backup may be dropped — the shape check rollback applies, because finish
     // is strictly more destructive.
-    if !is_reparse(&source_path)
-        || std::fs::read_link(&source_path)
-            .map(|t| lower(&t) != lower(&target_path))
-            .unwrap_or(true)
-    {
+    if !is_reparse(&source_path) || !junction_points_to(&source_path, &target_path) {
         return Err(
             "migration is not in the cutover state (junction missing or pointing elsewhere)".into(),
         );
@@ -1169,28 +1234,29 @@ fn finish_backup(_: &Path, _: &Path, _: &Path, _: &Path, _: bool) -> Result<(), 
 }
 
 #[cfg(windows)]
-fn hold_rollback_target(
-    backup: &Path,
-    target: &Path,
-) -> std::io::Result<Vec<crate::fsutil::DirPin>> {
-    let snapshot = crate::fsutil::PinnedLocalDeleteTree::with_security(backup, COPY_FILE_CAP)?;
-    begin_copy_run();
-    snapshot.hold_verified_copy(target, true, readers_equal)
-}
+use rollback::switch as rollback_backup;
 
 #[cfg(not(windows))]
-fn hold_rollback_target(
-    _backup: &Path,
-    _target: &Path,
-) -> std::io::Result<Vec<crate::fsutil::DirPin>> {
-    Err(std::io::Error::other(
-        "directory migration requires Windows",
-    ))
+fn rollback_backup(
+    _: &Path,
+    _: &Path,
+    _: &Path,
+    _: impl FnOnce(),
+) -> Result<(), (&'static str, String)> {
+    Err(("unsupported", "directory migration requires Windows".into()))
 }
 
 /// Undo a completed cutover: remove the junction (only a reparse point
 /// pointing at the target qualifies) and rename the backup back.
 pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
+    rollback_with(source, target, || {})
+}
+
+fn rollback_with(
+    source: &str,
+    target: &str,
+    after_verification: impl FnOnce(),
+) -> MigrationRollbackReport {
     // Exclusive like cutover/finish: removing the junction and renaming the
     // backup back must not interleave with another destructive entry.
     let _guard = crate::executor::CLEANUP_LOCK
@@ -1214,10 +1280,7 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
             message: Some("source is not a junction; nothing to roll back".into()),
         };
     }
-    if std::fs::read_link(&source_path)
-        .map(|t| lower(&t) != lower(&target_path))
-        .unwrap_or(true)
-    {
+    if !junction_points_to(&source_path, &target_path) {
         return MigrationRollbackReport {
             ok: false,
             message: Some("junction does not point at the stated target; refusing".into()),
@@ -1244,23 +1307,7 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
             message: Some(format!("refusing to roll back: {}", refused.join(","))),
         };
     }
-    let _verified_target = match hold_rollback_target(&backup, &target_path) {
-        Ok(pins) => pins,
-        Err(err) => {
-            ledger(source, target, "rollback", "verification_refused");
-            return MigrationRollbackReport {
-                ok: false,
-                message: Some(format!("migrate:rollback_conflict: {err}")),
-            };
-        }
-    };
-    if let Err(e) = std::fs::remove_dir(&source_path) {
-        return MigrationRollbackReport {
-            ok: false,
-            message: Some(format!("junction removal failed: {e}")),
-        };
-    }
-    match std::fs::rename(&backup, &source_path) {
+    match rollback_backup(&source_path, &backup, &target_path, after_verification) {
         Ok(()) => {
             ledger(source, target, "rollback", "ok");
             MigrationRollbackReport {
@@ -1268,39 +1315,21 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
                 message: None,
             }
         }
-        Err(e) => {
-            // The junction is already gone, so the original path no longer
-            // exists and a second rollback would be refused at the "source is
-            // not a junction" gate. Re-create the junction when the target is
-            // still intact: the user keeps working from the migrated location
-            // and the rollback entry stays retryable once the rename obstacle
-            // (an open handle, a transient ACL/IO error) clears.
-            let target_intact = target_path.is_dir() && !is_reparse(&target_path);
-            let recreated = target_intact && make_junction(&source_path, &target_path).is_ok();
-            if recreated {
-                ledger(
-                    source,
-                    target,
-                    "rollback",
-                    "rename_failed_junction_restored",
-                );
-                MigrationRollbackReport {
-                    ok: false,
-                    message: Some(format!(
-                        "backup rename failed ({e}); the junction was restored so the migrated data stays reachable and rollback can be retried"
-                    )),
-                }
-            } else {
-                ledger(source, target, "rollback", "rename_failed_manual");
-                MigrationRollbackReport {
-                    ok: false,
-                    message: Some(format!(
-                        "junction removed but the backup could not be renamed back: {e}; the backup remains at {} and needs manual recovery",
-                        backup.display()
-                    )),
-                }
+        Err((outcome, message)) => {
+            ledger(source, target, "rollback", outcome);
+            MigrationRollbackReport {
+                ok: false,
+                message: Some(message),
             }
         }
+    }
+}
+
+fn metadata_or_absent(path: &Path) -> std::io::Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
     }
 }
 
@@ -1308,12 +1337,31 @@ pub fn rollback(source: &str, target: &str) -> MigrationRollbackReport {
 pub fn state_of(source: &Path, target: &Path) -> MigrationState {
     let backup = backup_path(source);
     let pending = pending_path(source);
-    let bak = std::fs::symlink_metadata(&backup).is_ok();
-    let src = std::fs::symlink_metadata(source);
-    let src_reparse = src.as_ref().map(|_| is_reparse(source)).unwrap_or(false);
-    let src_plain = src.is_ok() && !src_reparse;
-    let tgt = std::fs::symlink_metadata(target).is_ok();
-    if std::fs::symlink_metadata(&pending).is_ok() {
+    let (Ok(src), Ok(tgt), Ok(bak), Ok(queued)) = (
+        metadata_or_absent(source),
+        metadata_or_absent(target),
+        metadata_or_absent(&backup),
+        metadata_or_absent(&pending),
+    ) else {
+        return MigrationState::Inconsistent;
+    };
+    if src
+        .as_ref()
+        .is_some_and(|metadata| !meta_is_directory(metadata))
+        || [&tgt, &bak, &queued]
+            .into_iter()
+            .flatten()
+            .any(|metadata| !metadata.is_dir() || meta_is_reparse(metadata))
+    {
+        return MigrationState::Inconsistent;
+    }
+    let src_reparse = src.as_ref().is_some_and(meta_is_reparse);
+    let src_plain = src.is_some() && !src_reparse;
+    let target_matches = tgt.is_some() && src_reparse && junction_points_to(source, target);
+    if src_reparse && !target_matches {
+        return MigrationState::Inconsistent;
+    }
+    if queued.is_some() {
         let matches_receipt = crate::fsutil::local_directory_id(&pending)
             .and_then(|backup_id| {
                 let target_id = crate::fsutil::local_directory_id(target)?;
@@ -1322,16 +1370,12 @@ pub fn state_of(source: &Path, target: &Path) -> MigrationState {
                 ))
             })
             .unwrap_or(false);
-        if !bak
-            && src_reparse
-            && matches_receipt
-            && std::fs::read_link(source).is_ok_and(|path| lower(&path) == lower(target))
-        {
+        if bak.is_none() && target_matches && matches_receipt {
             return MigrationState::CleanupPending;
         }
         return MigrationState::Inconsistent;
     }
-    match (src_plain, src_reparse, bak, tgt) {
+    match (src_plain, target_matches, bak.is_some(), tgt.is_some()) {
         (false, false, false, false) => MigrationState::Absent,
         // Plain source, no target yet (or rolled back with the target gone).
         (true, _, false, false) => MigrationState::Idle,
@@ -1451,7 +1495,7 @@ mod tests {
         // fixture's run so the copy proceeds to the target check.
         begin_copy_run();
         let mut state = CopyState::default();
-        let err = copy_tree(&source, &target, "", &mut state).unwrap_err();
+        let err = copy_tree(&source, &target, "", 0, &mut state).unwrap_err();
         assert!(
             err.contains("target reparse point refused"),
             "must refuse the linked target subtree: {err}"
@@ -1489,6 +1533,30 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(serde_json::to_value(state).unwrap(), fixture["states"][3]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn migration_state_requires_a_live_junction_to_the_requested_directory() {
+        let tmp = crate::test_support::TempDir::new("migration_status_targets");
+        let source = tmp.join("source");
+        let target = tmp.subdir("target");
+        let other = tmp.subdir("different-target");
+        let missing = tmp.join("missing");
+        let ordinary_file = tmp.join("file");
+        std::fs::write(&ordinary_file, b"fixture").unwrap();
+        mkjunction(&source, &target);
+
+        assert_eq!(state_of(&source, &target), MigrationState::Finished);
+        for incorrect in [&other, &missing, &ordinary_file] {
+            assert_eq!(state_of(&source, incorrect), MigrationState::Inconsistent);
+        }
+        std::fs::create_dir(backup_path(&source)).unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::CutOver);
+        assert_eq!(state_of(&source, &other), MigrationState::Inconsistent);
+
+        std::fs::remove_dir(&target).unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
     }
 
     fn seed_source(root: &Path) -> PathBuf {
@@ -1598,6 +1666,126 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn rollback_pins_the_verified_archive_and_junction_until_the_switch() {
+        let tmp = crate::test_support::TempDir::new("migration_rollback_identity");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        copy_phase(src, dst).unwrap();
+        assert!(cutover(src, dst).ok);
+        let backup = backup_path(&source);
+        let original = std::fs::read(backup.join("a.txt")).unwrap();
+        let result = rollback_with(src, dst, || {
+            assert!(std::fs::rename(&backup, tmp.join("displaced")).is_err());
+            assert!(std::fs::rename(&source, tmp.join("displaced-junction")).is_err());
+            assert!(std::fs::remove_dir(&source).is_err());
+        });
+        assert!(result.ok, "{result:?}");
+        assert!(!is_reparse(&source));
+        assert!(!backup.exists());
+        assert_eq!(std::fs::read(source.join("a.txt")).unwrap(), original);
+        assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), original);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rollback_restores_the_junction_when_the_archive_changes_at_the_switch() {
+        let tmp = crate::test_support::TempDir::new("migration_rollback_change");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        copy_phase(src, dst).unwrap();
+        assert!(cutover(src, dst).ok);
+        let backup = backup_path(&source);
+        let original = std::fs::read(target.join("a.txt")).unwrap();
+        let result = rollback_with(src, dst, || {
+            std::fs::write(backup.join("a.txt"), b"changed during rollback").unwrap();
+        });
+        assert!(!result.ok, "{result:?}");
+        let error = result.message.unwrap();
+        assert!(
+            error.contains("migrate:rollback_conflict:")
+                && error.contains("the junction was restored"),
+            "{error}"
+        );
+        assert_eq!(lower(&std::fs::read_link(&source).unwrap()), lower(&target));
+        assert_eq!(
+            std::fs::read(backup.join("a.txt")).unwrap(),
+            b"changed during rollback"
+        );
+        assert_eq!(std::fs::read(source.join("a.txt")).unwrap(), original);
+        assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), original);
+
+        std::fs::write(backup.join("a.txt"), &original).unwrap();
+        let late_empty = backup.join("late-empty");
+        let result = rollback_with(src, dst, || {
+            std::fs::create_dir(&late_empty).unwrap();
+        });
+        assert!(!result.ok, "{result:?}");
+        assert!(result
+            .message
+            .unwrap()
+            .contains("migrate:rollback_conflict:"));
+        assert!(late_empty.is_dir());
+        assert!(!target.join("late-empty").exists());
+        assert_eq!(lower(&std::fs::read_link(&source).unwrap()), lower(&target));
+
+        std::fs::remove_dir(&late_empty).unwrap();
+        let name = backup.join("a.txt");
+        let result = rollback_with(src, dst, || {
+            std::fs::remove_file(&name).unwrap();
+            std::fs::write(&name, &original).unwrap();
+        });
+        assert!(!result.ok, "{result:?}");
+        assert!(result
+            .message
+            .unwrap()
+            .contains("backup entry identities changed"));
+        assert_eq!(std::fs::read(name).unwrap(), original);
+        assert_eq!(lower(&std::fs::read_link(&source).unwrap()), lower(&target));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rollback_recovers_from_a_lock_acquired_after_verification() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let tmp = crate::test_support::TempDir::new("migration_rollback_late_lock");
+        let source = seed_source(tmp.path());
+        let target = tmp.join("tgt");
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        copy_phase(src, dst).unwrap();
+        assert!(cutover(src, dst).ok);
+        let backup = backup_path(&source);
+        let original = std::fs::read(target.join("a.txt")).unwrap();
+        let mut held = None;
+        let result = rollback_with(src, dst, || {
+            held = Some(
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(1)
+                    .open(backup.join("a.txt"))
+                    .unwrap(),
+            );
+        });
+        assert!(!result.ok, "{result:?}");
+        assert!(result
+            .message
+            .unwrap()
+            .contains("the junction was restored"));
+        assert_eq!(lower(&std::fs::read_link(&source).unwrap()), lower(&target));
+        assert_eq!(std::fs::read(backup.join("a.txt")).unwrap(), original);
+        assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), original);
+        drop(held);
+        assert!(rollback(src, dst).ok);
+        assert!(!is_reparse(&source));
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn full_lifecycle_copy_cutover_finish_and_rollback() {
         let tmp = crate::test_support::TempDir::new("migr-life");
         let src = seed_source(tmp.path());
@@ -1668,11 +1856,82 @@ mod tests {
         let target_parent = tmp.subdir("different_inheritance");
         grant_guest_read(&target_parent);
         let target = target_parent.join("tgt");
+        let matching = tmp.subdir("matching");
+        let matching_plan = plan(&source.to_string_lossy(), &matching.to_string_lossy());
+        assert!(matching_plan.ok);
+        assert!(!matching_plan.root_permissions_pending);
+        let missing_plan = plan(&source.to_string_lossy(), &target.to_string_lossy());
+        assert!(missing_plan.ok);
+        assert!(missing_plan.root_permissions_pending);
+        assert!(!target.exists(), "planning must not create the destination");
+
         let error = copy_phase(&source.to_string_lossy(), &target.to_string_lossy()).unwrap_err();
         assert!(error.contains("permissions"), "{error}");
-        assert!(std::fs::read_dir(target).unwrap().next().is_none());
+        assert!(std::fs::read_dir(&target).unwrap().next().is_none());
+        let mismatched_plan = plan(&source.to_string_lossy(), &target.to_string_lossy());
+        assert!(!mismatched_plan.ok);
+        assert_eq!(
+            mismatched_plan.rejections,
+            ["target_directory_permissions_differ"]
+        );
+        assert!(!mismatched_plan.root_permissions_pending);
         assert!(source.join("a.txt").is_file());
         assert!(!backup_path(&source).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn migration_applies_the_snapshot_depth_limit_before_cutover() {
+        let tmp = crate::test_support::TempDir::new("migration_depth_limit");
+        let source = tmp.subdir("source");
+        let target = tmp.join("target");
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        let mut deepest = PathBuf::new();
+        for _ in 1..crate::fsutil::PINNED_TREE_MAX_DEPTH {
+            deepest.push("n");
+            std::fs::create_dir(source.join(&deepest)).unwrap();
+        }
+        let accepted = deepest.join("data");
+        std::fs::write(source.join(&accepted), b"verified data").unwrap();
+        assert!(plan(src, dst).ok);
+        copy_phase(src, dst).unwrap();
+
+        // An added directory brings its child past the maximum object depth.
+        let too_deep = deepest.join("n");
+        std::fs::create_dir(source.join(&too_deep)).unwrap();
+        let late = source.join(&too_deep).join("late");
+        std::fs::write(&late, b"new data").unwrap();
+        let unused = tmp.join("unused");
+        let unused = unused.to_str().unwrap();
+        assert!(plan(src, unused)
+            .rejections
+            .iter()
+            .any(|r| r == SOURCE_TOO_DEEP));
+        assert!(copy_phase(src, unused)
+            .unwrap_err()
+            .contains(SOURCE_TOO_DEEP));
+        assert!(!Path::new(unused).exists());
+        let cut = cutover(src, dst);
+        assert!(!cut.ok, "{cut:?}");
+        assert!(cut.error.unwrap().contains(SOURCE_TOO_DEEP));
+        assert!(!is_reparse(&source));
+        assert!(!backup_path(&source).exists());
+        assert_eq!(std::fs::read(&late).unwrap(), b"new data");
+        assert_eq!(
+            std::fs::read(target.join(&accepted)).unwrap(),
+            b"verified data"
+        );
+
+        std::fs::remove_file(&late).unwrap();
+        std::fs::remove_dir(source.join(&too_deep)).unwrap();
+        let cut = cutover(src, dst);
+        assert!(cut.ok, "{cut:?}");
+        assert!(finish(src, dst, true).unwrap().removed_bak);
+        assert_eq!(
+            std::fs::read(source.join(&accepted)).unwrap(),
+            b"verified data"
+        );
     }
 
     #[cfg(windows)]
@@ -1742,6 +2001,10 @@ mod tests {
         let error = finish(&src, &dst, true).unwrap_err();
         assert!(error.starts_with("migrate:cleanup_pending:"), "{error}");
         assert_eq!(state_of(&source, &target), MigrationState::CleanupPending);
+        assert_eq!(
+            state_of(&source, &tmp.subdir("another-target")),
+            MigrationState::Inconsistent
+        );
         let pending = pending_path(&source);
         assert!(!backup_path(&source).exists());
         assert!(

@@ -5,7 +5,7 @@ import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t, type Strings } from "../i18n";
 import type { RestorePreview } from "../lib/api";
-import { backupSessionStatus, type BackupSession } from "../lib/backupSession";
+import { backupDeleteExpectation, canPreviewBackup, type BackupSession } from "../lib/backupSession";
 import { isNamedStreamRefusal } from "../lib/backendText";
 
 const restoreResultPrefixes = [
@@ -15,7 +15,9 @@ const restoreResultPrefixes = [
   ["PATH entry already present: ", "restoreAlreadyPresent", true],
   ["PATH restore failed for ", "restorePathFailed", false],
   ["registry import failed ", "restoreImportFailed", false],
+  ["restore directory may be incomplete: ", "restoreDirectoryIncomplete", false],
   ["restore failed for ", "restoreFileFailed", false],
+  ["skipped existing restore target: ", "restoreTargetOccupied", false],
   ["skipped backup entry with no recorded digest: ", "restoreSkippedNoDigest", false],
   ["skipped modified backup entry (digest mismatch): ", "restoreSkippedDigestMismatch", false],
   ["skipped backup directory too large to verify: ", "restoreSkippedVerificationLimit", false],
@@ -107,7 +109,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setRestoreLoadError(null);
     try {
       const list = await api.backupSessions();
-      const restorable = list.filter(session => backupSessionStatus(session) === "verified");
+      const restorable = list.filter(canPreviewBackup);
       setSessions(list);
       if (requestedName && !restorable.some(session => session.name === requestedName)) {
         setRestoreLoadError(t().restoreSessionMissing);
@@ -129,8 +131,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
       if (operation.current) return;
       const session = sessions.find(candidate => candidate.name === name);
       if (!session) return;
-      const status = backupSessionStatus(session);
-      if (status !== "verified" && status !== "unsealed") return;
+      const status = backupDeleteExpectation(session, restorePreview?.name === name);
+      if (!status) return;
       operation.current = true;
       setRestoreBusy(true);
       const L = t();
@@ -144,7 +146,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         if (!ok) return;
         await api.deleteBackupSession(name, status);
         const list = await api.backupSessions();
-        const restorable = list.filter(session => backupSessionStatus(session) === "verified");
+        const restorable = list.filter(canPreviewBackup);
         setSessions(list);
         setRestorePick(cur => {
           if (cur === name) return restorable[0]?.name ?? "";
@@ -157,7 +159,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         setRestoreBusy(false);
       }
     },
-    [onError, sessions],
+    [onError, restorePreview, sessions],
   );
 
   const runRestore = useCallback(async () => {
@@ -241,7 +243,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   }, []);
 
   const selectRestore = useCallback((name: string) => {
-    if (operation.current || !sessions.some(session => session.name === name && backupSessionStatus(session) === "verified")) return;
+    if (operation.current || !sessions.some(session => session.name === name && canPreviewBackup(session))) return;
     setRestoreLoadError(null);
     setRestorePick(name);
   }, [sessions]);

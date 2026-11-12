@@ -59,6 +59,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "backup session failed": L.backendBackupFailed, "backup failed": L.backendBackupFailed,
     "dry-run: official uninstaller not launched": L.backendDryRun,
     "[dry-run]": L.backendDryRun, "PATH entry removed": L.backendPathRemoved,
+    "PATH scope could not be verified against backup; kept": L.backendPathScopeKept,
+    "PATH entry removed in backed-up scope; unverified scopes kept": L.backendPathPartlyRemoved,
     "reparse point": L.backendReparse,
     "SRSetRestorePointW failed": L.restorePointFail, "not windows": L.backendUnsupported,
   };

@@ -135,6 +135,8 @@ it.each(["zh", "en"] as const)("keeps backup verification and cancellation reaso
   const unknownReason = "skipped unreadable backup stream: C:\\backup\\future-file";
   native.restoreSessionByName.mockResolvedValue([
     "restored C:\\data\\first.txt",
+    "skipped existing restore target: C:\\data\\late.txt",
+    "restore directory may be incomplete: C:\\data\\partial: cancelled",
     "skipped modified backup entry (digest mismatch): demo/file.txt",
     "skipped backup directory too large to verify: demo",
     "skipped unrecorded backup file: demo/unexpected.txt",
@@ -147,8 +149,13 @@ it.each(["zh", "en"] as const)("keeps backup verification and cancellation reaso
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
+  expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({
+    message: expect.stringContaining(lang === "zh" ? "现有文件和目录会保留" : "Existing files and directories will be kept"),
+  }));
   expect(result.current.restoreMsgs).toEqual([
     `${L.restoreDone}: C:\\data\\first.txt`,
+    `${L.restoreTargetOccupied}: C:\\data\\late.txt`,
+    `${L.restoreDirectoryIncomplete}: C:\\data\\partial: cancelled`,
     `${L.restoreSkippedDigestMismatch}: demo/file.txt`,
     `${L.restoreSkippedVerificationLimit}: demo`,
     `${L.restoreSkippedUnrecordedFile}: demo/unexpected.txt`,
@@ -385,12 +392,13 @@ it("lists unfinished backups without offering them for restore", async () => {
 it.each(["zh", "en"] as const)("shows unavailable backup reasons and only proven actions in %s", lang => {
   setLang(lang);
   const L = t();
-  const statuses: BackupSessionStatus[] = ["unsealed", "requires_admin", "invalid", "legacy"];
+  const statuses: BackupSessionStatus[] = ["unsealed", "requires_admin", "missing_metadata", "unknown", "invalid", "legacy"];
   const sessions = statuses.map(status => ({ name: status, status, size_kb: 1, created_at: "", sealed: false }));
   const onDelete = vi.fn();
   render(<RestorePanel sessions={sessions} pick="" setPick={vi.fn()} busy={false} msgs={[]}
     onRun={vi.fn()} onDelete={onDelete} onClose={vi.fn()} />);
-  for (const label of [L.restoreSessionUnsealed, L.restoreSessionRequiresAdmin, L.restoreSessionInvalid, L.restoreSessionLegacy]) {
+  for (const label of [L.restoreSessionUnsealed, L.restoreSessionRequiresAdmin, L.restoreSessionMissingMetadata,
+    L.restoreSessionUnknown, L.restoreSessionInvalid, L.restoreSessionLegacy]) {
     expect(screen.getByText(label)).toBeTruthy();
   }
   expect(screen.queryByText(L.restoreNoSessions)).toBeNull();
@@ -402,6 +410,27 @@ it.each(["zh", "en"] as const)("shows unavailable backup reasons and only proven
   for (const status of statuses.slice(1)) {
     expect(screen.queryByRole("button", { name: `${L.deleteSession}: ${status}` })).toBeNull();
   }
+});
+
+it("only exposes removal and size for a pending session after its own preview validates", () => {
+  const L = t();
+  const name = "pending-backup";
+  const props = {
+    sessions: [{ name, size_kb: null, created_at: "", sealed: true, status: "pending_verification" as const }],
+    pick: name, setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn(),
+  };
+  const view = render(<RestorePanel {...props} previewLoading />);
+  expect(screen.getByRole("radio")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: `${L.deleteSession}: ${name}` })).toBeNull();
+  expect(screen.getByText(L.restoreSessionPending)).toBeTruthy();
+  const preview = { name, size_kb: 64, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] };
+  view.rerender(<RestorePanel {...props} preview={{ ...preview, name: "another-session" }} />);
+  expect(screen.queryByRole("button", { name: `${L.deleteSession}: ${name}` })).toBeNull();
+  view.rerender(<RestorePanel {...props} preview={preview} />);
+  expect(screen.queryByText(L.restoreSessionPending)).toBeNull();
+  expect(screen.getByText(/64 KB/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: `${L.deleteSession}: ${name}` }));
+  expect(props.onDelete).toHaveBeenCalledWith(name);
 });
 
 it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {

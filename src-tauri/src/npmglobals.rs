@@ -262,11 +262,33 @@ fn remove_with_backup(
     let session = crate::backup::create_session("npm-globals")
         .map_err(|e| format!("backup session failed: {e}"))?;
     backup(&targets, &session).map_err(|e| format!("backup failed; npm packages kept: {e}"))?;
+    #[cfg(windows)]
+    let (seal, _seal_pin) = crate::path_seal::hold_verified_seal(&session)?;
+    #[cfg(windows)]
+    let copies = crate::backup::PublishedFiles::open(&session, &seal)?;
     let mut report = NpmCleanupReport {
         backup_dir: session.to_string_lossy().into_owned(),
         ..Default::default()
     };
     for target in targets {
+        // A package and all its shims need recoverable copies before any of
+        // them are removed. Keep the copies open for the entire group.
+        #[cfg(windows)]
+        let _held_copies = match target
+            .files
+            .iter()
+            .map(|tree| copies.hold(copies.key_for(tree.path())?))
+            .collect::<std::io::Result<Vec<_>>>()
+        {
+            Ok(held) => held,
+            Err(error) => {
+                report.failed.push(format!(
+                    "{}: backup copy could not be verified: {error}",
+                    target.name
+                ));
+                continue;
+            }
+        };
         let mut error = None;
         for file in target.files {
             if crate::executor::cleanup_cancelled() {
@@ -427,6 +449,32 @@ mod tests {
                 })
                 .unwrap_err();
             assert!(error.contains("copy:"), "{error}");
+            assert_eq!(
+                std::fs::read(nm.join("@scope/good/package.json")).unwrap(),
+                manifest_bytes
+            );
+            for (original, bytes) in &originals {
+                assert_eq!(std::fs::read(original).unwrap(), *bytes);
+            }
+            let report =
+                remove_with_backup(&prefix, &nm, &wanted("@scope/good"), |targets, session| {
+                    backup_targets(targets, session)?;
+                    let files = session.join("files");
+                    let map: std::collections::BTreeMap<String, String> = serde_json::from_slice(
+                        &std::fs::read(files.join("path_map.json")).unwrap(),
+                    )
+                    .unwrap();
+                    let shim = map
+                        .iter()
+                        .find(|(_, original)| Path::new(original) == prefix.join("tool.cmd"));
+                    let (key, _) = shim.expect("command shim is backed up");
+                    std::fs::remove_file(files.join(key)).unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            assert!(report.removed.is_empty());
+            assert_eq!(report.failed.len(), 1);
+            assert!(report.failed[0].contains("backup copy could not be verified"));
             assert_eq!(
                 std::fs::read(nm.join("@scope/good/package.json")).unwrap(),
                 manifest_bytes

@@ -206,6 +206,8 @@ export type MigrationPlan = {
   target_free_kb: number;
   /** false when the free-space query failed; the backend refuses the plan then */
   free_space_known: boolean;
+  /** Root directory permissions are deferred until copy. */
+  root_permissions_pending?: boolean;
 };
 export type MigrationCopyReport = {
   files: number;

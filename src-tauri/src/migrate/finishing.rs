@@ -10,25 +10,16 @@ use windows::Wdk::Storage::FileSystem::{
 };
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
-    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 
-use super::{lower, meta_is_reparse, readers_equal, receipt::Receipt, COPY_FILE_CAP};
+use super::{
+    junction_points_to, meta_is_directory, meta_is_reparse, readers_equal, receipt::Receipt,
+    COPY_FILE_CAP,
+};
 
-fn directory_id(pin: &DirPin) -> io::Result<(u32, u64)> {
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    unsafe { GetFileInformationByHandle(HANDLE(pin.as_raw_handle()), &mut info) }
-        .map_err(io::Error::other)?;
-    let id = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-    if id == 0 {
-        return Err(io::Error::other("volume did not report a file identity"));
-    }
-    Ok((info.dwVolumeSerialNumber, id))
-}
-
-fn rename_to_sibling(root: &DirPin, destination: &Path) -> io::Result<()> {
+pub(super) fn rename_to_sibling(root: &DirPin, destination: &Path) -> io::Result<()> {
     let name: Vec<_> = destination
         .file_name()
         .ok_or_else(|| io::Error::other("pending cleanup path has no name"))?
@@ -70,12 +61,19 @@ fn pin_junction(source: &Path, target: &Path) -> io::Result<(Vec<DirPin>, File)>
         .share_mode(FILE_SHARE_READ.0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(source)?;
-    if !meta_is_reparse(&junction.metadata()?)
-        || lower(&std::fs::read_link(source)?) != lower(target)
+    check_junction(&junction, source, target)?;
+    Ok((pins, junction))
+}
+
+pub(super) fn check_junction(junction: &File, source: &Path, target: &Path) -> io::Result<()> {
+    let metadata = junction.metadata()?;
+    if !meta_is_directory(&metadata)
+        || !meta_is_reparse(&metadata)
+        || !junction_points_to(source, target)
     {
         return Err(io::Error::other("junction missing or pointing elsewhere"));
     }
-    Ok((pins, junction))
+    Ok(())
 }
 
 fn stage(
@@ -86,8 +84,8 @@ fn stage(
 ) -> io::Result<((u32, u64), Vec<DirPin>)> {
     let mut snapshot = PinnedLocalDeleteTree::with_security(backup, COPY_FILE_CAP)?;
     let target_pins = snapshot.hold_verified_copy(target, false, readers_equal)?;
-    let archive_id = directory_id(snapshot.root_pin())?;
-    Receipt::prepare_cleanup(source, target, archive_id, directory_id(&target_pins[0])?)?;
+    let archive_id = snapshot.root_pin().file_identity()?;
+    Receipt::prepare_cleanup(source, target, archive_id, target_pins[0].file_identity()?)?;
     rename_to_sibling(snapshot.release_children_for_rename(), pending)?;
     Ok((archive_id, target_pins))
 }
@@ -102,8 +100,8 @@ fn verify_pending(
     if !Receipt::matches_cleanup(
         source,
         target,
-        directory_id(snapshot.root_pin())?,
-        directory_id(&target_pins[0])?,
+        snapshot.root_pin().file_identity()?,
+        target_pins[0].file_identity()?,
     ) {
         return Err(io::Error::other(
             "pending copy has no matching migration receipt",
@@ -118,7 +116,7 @@ fn restore_backup_name(pending: &Path, backup: &Path, archive_id: (u32, u64)) ->
         .ok_or_else(|| io::Error::other("pending cleanup path has no parent"))?;
     let _parents = crate::fsutil::pin_local_scan_path(parent)?;
     let root = crate::fsutil::pin_private_delete(pending)?;
-    if directory_id(&root)? != archive_id {
+    if root.file_identity()? != archive_id {
         return Err(io::Error::other("pending copy identity changed"));
     }
     rename_to_sibling(&root, backup)

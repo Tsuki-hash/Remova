@@ -327,6 +327,50 @@ fn atomic_write_publishes_and_leaves_no_tmp() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(windows)]
+#[test]
+fn backup_read_and_atomic_replace_retry_transient_sharing_conflicts() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let fixture = unique_tmp("sharing-conflict");
+    let target = fixture.join("data.bin");
+    fs::write(&target, b"original").unwrap();
+    let writer = fs::OpenOptions::new()
+        .write(true)
+        .share_mode(3)
+        .open(&target)
+        .unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            drop(writer);
+        });
+        assert_eq!(
+            open_local_regular_file(&target)
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .len(),
+            8
+        );
+    });
+
+    let reader = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&target)
+        .unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(210));
+            drop(reader);
+        });
+        write_bytes_atomic(&target, b"updated").unwrap();
+    });
+    assert_eq!(fs::read(&target).unwrap(), b"updated");
+    assert_eq!(fs::read_dir(fixture.path()).unwrap().count(), 1);
+}
+
 /// A fixture directory that removes itself on drop, including on panic.
 fn unique_tmp(tag: &str) -> crate::test_support::TempDir {
     crate::test_support::TempDir::new(&format!("fsutil_{tag}"))

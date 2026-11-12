@@ -39,7 +39,7 @@ pub(crate) fn write_file_manifest(
     Ok(digest)
 }
 
-pub(super) fn open_verified_manifest(
+pub(crate) fn open_verified_manifest(
     session: &Path,
     expected: &str,
     cancelled: impl Fn() -> bool,
@@ -60,6 +60,7 @@ pub(super) fn open_verified_manifest(
     Ok((entries, file))
 }
 
+#[cfg(test)]
 pub(crate) fn read_file_manifest(session: &Path, expected: &str) -> Result<FileManifest, String> {
     read_file_manifest_with_cancel(session, expected, crate::executor::cleanup_cancelled)
 }

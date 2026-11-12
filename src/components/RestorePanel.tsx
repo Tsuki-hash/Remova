@@ -1,7 +1,7 @@
 import { currentLang, formatSize, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { RestorePreview } from "../lib/api";
-import { backupSessionStatus, type BackupSession } from "../lib/backupSession";
+import { backupDeleteExpectation, backupSessionStatus, canPreviewBackup, type BackupSession } from "../lib/backupSession";
 
 export function RestorePanel({
   sessions,
@@ -45,14 +45,17 @@ export function RestorePanel({
   onClose: () => void;
 }) {
   const L = t();
-  const selectable = sessions.some(session => backupSessionStatus(session) === "verified");
-  const selected = sessions.some(session => session.name === pick && backupSessionStatus(session) === "verified");
+  const selectable = sessions.some(canPreviewBackup);
+  const selected = sessions.some(session => session.name === pick && canPreviewBackup(session));
   const selectedPreview = selected && preview?.name === pick ? preview : null;
   const canRestore = !busy && !loading && !loadError && !previewLoading && !previewError && Boolean(selectedPreview);
   const availability = {
     verified: "",
+    pending_verification: L.restoreSessionPending,
     unsealed: L.restoreSessionUnsealed,
     requires_admin: L.restoreSessionRequiresAdmin,
+    missing_metadata: L.restoreSessionMissingMetadata,
+    unknown: L.restoreSessionUnknown,
     invalid: L.restoreSessionInvalid,
     legacy: L.restoreSessionLegacy,
   };
@@ -97,13 +100,15 @@ export function RestorePanel({
           <div style={{ maxHeight: 220, overflow: "auto" }}>
             {sessions.map((s) => {
               const status = backupSessionStatus(s);
+              const verified = selectedPreview?.name === s.name;
+              const size = s.size_kb ?? (verified ? selectedPreview.size_kb : null);
               const date = /^\d{10}$/.test(s.created_at)
                 ? new Date(Number(s.created_at) * 1000).toLocaleString(currentLang() === "zh" ? "zh-CN" : "en-US")
                 : s.created_at || "—";
               const details = <span style={{ flex: 1, minWidth: 0 }}>
                 <span className="ell" style={{ display: "block" }} title={s.name}>{s.name}</span>
-                <span style={{ ...css.muted, fontSize: 12 }}>{L.restoreCreated}: {date} · {formatSize(s.size_kb)}</span>
-                {availability[status] && <span style={{ display: "block", color: "var(--warn-ink)" }}>{availability[status]}</span>}
+                <span style={{ ...css.muted, fontSize: 12 }}>{L.restoreCreated}: {date}{size != null && ` · ${formatSize(size)}`}</span>
+                {availability[status] && !verified && <span style={{ display: "block", color: status === "pending_verification" ? "var(--muted)" : "var(--warn-ink)" }}>{availability[status]}</span>}
               </span>;
               return (
               <div
@@ -116,7 +121,7 @@ export function RestorePanel({
                   borderBottom: "1px solid var(--border)",
                 }}
               >
-                {status === "verified" ? <label
+                {canPreviewBackup(s) ? <label
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -135,7 +140,7 @@ export function RestorePanel({
                   />
                   {details}
                 </label> : details}
-                {(status === "verified" || status === "unsealed") && <button
+                {backupDeleteExpectation(s, verified) && <button
                   style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger-text)" }}
                   disabled={busy}
                   aria-label={`${L.deleteSession}: ${s.name}`}
