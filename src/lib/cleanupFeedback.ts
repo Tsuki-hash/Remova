@@ -3,6 +3,10 @@ import type { Strings } from "../i18n";
 import { backendText, isNamedStreamRefusal } from "./backendText";
 import { toast } from "./toast";
 
+export function isLegacyHistoryWarning(error: string): boolean {
+  return error.startsWith("cleanup history could not be saved:");
+}
+
 /**
  * Headline for a finished cleanup. A 3–7 second toast that only names
  * deleted/failed hides the skipped and reboot-delayed counts, so all four

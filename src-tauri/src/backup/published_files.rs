@@ -1,11 +1,9 @@
-use crate::fsutil::{open_local_regular_file, PinnedLocalDeleteTree};
+use crate::fsutil::PinnedLocalDeleteTree;
 use crate::path_seal::{self, FileManifest, PathMapSeal};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
-
-const MAX_PATH_MAP_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Bind cleanup to the authenticated inventory and keep the on-disk
 /// metadata readable for a later restore.
@@ -22,16 +20,11 @@ impl PublishedFiles {
             .file_manifest_digest
             .as_deref()
             .ok_or("seal:missing_file_manifest")?;
-        let map_pin = open_local_regular_file(&session.join("files/path_map.json"))
-            .map_err(|error| error.to_string())?;
-        let mut bytes = Vec::new();
-        (&map_pin)
-            .take(MAX_PATH_MAP_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if bytes.len() as u64 > MAX_PATH_MAP_BYTES {
-            return Err("seal:path_map_too_large".into());
-        }
+        let (bytes, map_pin) = super::read_backup_metadata(
+            &session.join("files/path_map.json"),
+            "seal:path_map_too_large",
+            crate::executor::cleanup_cancelled,
+        )?;
         let map: BTreeMap<String, String> =
             serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
         if !path_seal::map_matches(seal, &map) {

@@ -348,6 +348,38 @@ pub(crate) fn sc_delete_service_checked(svc_name: &str, can_delete: impl FnOnce(
     matches!(out, Ok(o) if o.status.success())
 }
 
+pub(crate) const TASK_CACHE_ROOT: &str =
+    r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache";
+
+pub(crate) fn is_task_cache_tree_item(path: &str) -> bool {
+    crate::safety::normalize_hklm(path)
+        .starts_with(r"HKLM\SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\SCHEDULE\TASKCACHE\TREE\")
+}
+
+pub(crate) fn registered_cleanup_task(key: &str) -> Option<String> {
+    registered_cleanup_task_with(key, crate::regscan::read_string, |key| {
+        crate::regscan::snapshot_names(key).is_ok_and(|(children, _)| children.is_empty())
+    })
+}
+
+fn registered_cleanup_task_with(
+    key: &str,
+    read: impl Fn(&str, &str) -> Option<String>,
+    is_leaf: impl Fn(&str) -> bool,
+) -> Option<String> {
+    if !is_task_cache_tree_item(key) || key.contains('|') {
+        return None;
+    }
+    let id = read(key, "Id")?;
+    let guid = crate::shared::first_guid(&id)?;
+    if !id.eq_ignore_ascii_case(&guid) {
+        return None;
+    }
+    let name = crate::executor::task_full_name_from_reg_path(key);
+    let registered = read(&format!(r"{TASK_CACHE_ROOT}\Tasks\{guid}"), "Path")?;
+    (registered.eq_ignore_ascii_case(&name) && is_leaf(key)).then_some(name)
+}
+
 /// Best-effort: schtasks /delete for a task path or leaf name.
 /// Prefer full TaskCache tree remainder (`\Vendor\Foo\Task`) when provided.
 pub fn schtasks_delete(task_name: &str) -> bool {

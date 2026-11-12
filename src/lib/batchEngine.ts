@@ -9,6 +9,7 @@ import {
   cleanupAccomplishedSomething,
   cleanupNothingText,
   cleanupOutcomeText,
+  isLegacyHistoryWarning,
 } from "../lib/cleanupFeedback";
 import { toast } from "../lib/toast";
 import type { InstalledApp, ScanResult } from "../types";
@@ -111,13 +112,20 @@ export async function runBatchCleanup(
         restore_point: loadRestorePointPref(),
           cleanup_source: "uninstall",
         });
+        const historyWarning = report.history_save_failed || report.errors.some(isLegacyHistoryWarning)
+          ? L.cleanupHistorySaveFailed
+          : "";
+        const record = (result: BatchItemResult) => results.push({
+          ...result,
+          detail: [result.detail, historyWarning].filter(Boolean).join(" "),
+        });
         officialDone ||= runOfficial && report.uninstall_ok;
         // A 1641 (or the global pending gate) means the machine is about to
         // restart. Do not start another app's uninstall/delete in this batch.
         if (report.reboot_pending) {
           const appOfficialDone = runOfficial && report.uninstall_ok;
           const gateWarning = report.reboot_gate_persisted === false ? L.rebootGateNotPersisted : "";
-          results.push({
+          record({
             key,
             name: app.name,
             // Not a failure: either this uninstaller started a reboot, or a
@@ -139,9 +147,9 @@ export async function runBatchCleanup(
           break;
         }
         const emptyResidual = report.aborted && !items.length && !runOfficial
-          && report.uninstall_message === "no items" && !report.errors.length;
+          && report.uninstall_message === "no items" && report.errors.every(isLegacyHistoryWarning);
         if (report.aborted && cb.cancelRef.current) {
-          results.push({
+          record({
             key,
             name: app.name,
             status: "skipped",
@@ -154,7 +162,7 @@ export async function runBatchCleanup(
         }
         if ((report.aborted && !emptyResidual) || (runOfficial && !report.uninstall_ok)) {
  // backup/session abort must not look like success.
-          results.push({
+          record({
             key,
             name: app.name,
             status: "failed",
@@ -166,7 +174,7 @@ export async function runBatchCleanup(
           continue;
         }
         if (emptyResidual) {
-          results.push({ key, name: app.name, status: "skipped", detail: "" });
+          record({ key, name: app.name, status: "skipped", detail: "" });
           okKeys.add(key);
           // Results are published once after the queue stops: spreading the
           // growing array on every app made the UI update quadratic.
@@ -176,9 +184,9 @@ export async function runBatchCleanup(
         // so a run that deleted nothing is legible in the batch summary too.
         const detail = cleanupOutcomeText(report, L);
         if (report.failed > 0) {
-          results.push({ key, name: app.name, status: "failed", detail, officialDone });
+          record({ key, name: app.name, status: "failed", detail, officialDone });
         } else if (!items.length && report.uninstall_ok) {
-          results.push({
+          record({
             key,
             name: app.name,
             status: "ok",
@@ -189,7 +197,7 @@ export async function runBatchCleanup(
           // `failed === 0` counted the app as "processed" even when the
           // keep rules refused every hand-picked row. Report it as skipped so
           // the batch summary does not claim the app was cleaned.
-          results.push({
+          record({
             key,
             name: app.name,
             status: "skipped",
@@ -197,7 +205,7 @@ export async function runBatchCleanup(
             officialDone,
           });
         } else {
-          results.push({ key, name: app.name, status: "ok", detail });
+          record({ key, name: app.name, status: "ok", detail });
           okKeys.add(key);
         }
       } catch (e) {

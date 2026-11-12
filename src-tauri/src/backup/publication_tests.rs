@@ -241,6 +241,44 @@ fn oversized_seal_is_rejected_before_backup_publication() {
 
 #[test]
 #[cfg(windows)]
+fn registry_backup_preflights_the_same_import_the_vault_will_use() {
+    let fixture = crate::test_support::TempDir::new("registry-backup-preflight");
+    let _store = crate::path_seal::TestStore::new(fixture.join("seals"));
+    let stage = fixture.subdir("stage");
+    let session = fixture.subdir("1700000000_mixed");
+    let export = stage.join("registry/service/export.reg");
+    let source = fixture.join("original.bin");
+    fs::create_dir_all(export.parent().unwrap()).unwrap();
+    fs::create_dir_all(stage.join("files")).unwrap();
+    fs::write(stage.join("files/payload.bin"), b"saved file").unwrap();
+    fs::write(&source, b"retained source").unwrap();
+    let map = std::collections::BTreeMap::from([(
+        "payload.bin".into(),
+        source.to_string_lossy().into_owned(),
+    )]);
+    let service = r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\FixtureVendor";
+    let header = format!(
+        "Windows Registry Editor Version 5.00\r\n; Remova registry view: 64\r\n\r\n[{service}]\r\n"
+    );
+    let with_subkey = format!("{header}\r\n[{service}\\Parameters]\r\n\"Name\"=\"fixture\"\r\n");
+    fs::write(&export, crate::restore::encode_reg_text(&with_subkey)).unwrap();
+    let digests = crate::path_seal::collect_reg_digests(&stage).unwrap();
+    let err = publish_verified_stage(&stage, &session, &map, &digests, |_| {
+        panic!("an unrestorable snapshot must not reach publication")
+    })
+    .unwrap_err();
+    assert!(err.contains("only top-level service keys allowed"), "{err}");
+    assert_eq!(fs::read_dir(&session).unwrap().count(), 0);
+    assert_eq!(fs::read(source).unwrap(), b"retained source");
+
+    fs::write(&export, crate::restore::encode_reg_text(&header)).unwrap();
+    let digests = crate::path_seal::collect_reg_digests(&stage).unwrap();
+    publish_verified_stage(&stage, &session, &map, &digests, |_| Ok(())).unwrap();
+    assert!(crate::path_seal::verified_seal(&session).is_ok());
+}
+
+#[test]
+#[cfg(windows)]
 fn oversized_registry_export_prevents_mixed_backup_publication_and_legacy_restore() {
     let root = crate::test_support::TempDir::new("registry-capacity");
     let _store = crate::path_seal::TestStore::new(root.join("seals"));

@@ -772,8 +772,8 @@ fn muicache_matches(
 }
 
 pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<CleanupItem>) {
-    let root = r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree";
-    for top in crate::regscan::list_subkeys(root) {
+    let root = format!(r"{}\Tree", crate::regops::TASK_CACHE_ROOT);
+    for top in crate::regscan::list_subkeys(&root) {
         if crate::scan_task::cancelled() {
             break;
         }
@@ -790,7 +790,7 @@ pub(super) fn scan_scheduled_tasks(name_slugs: &[String], items: &mut Vec<Cleanu
         let strong = name_slugs
             .iter()
             .any(|n| n.len() >= 6 && super::name_boundary_hit(&top, n));
-        if !strong {
+        if !strong || crate::regops::registered_cleanup_task(&key_path).is_none() {
             continue;
         }
         let score = 45;

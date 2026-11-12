@@ -1151,3 +1151,24 @@ fn native_mutation_transport_never_spawns_without_a_spy() {
         std::ffi::OsString::from("must-never-be-launched")
     );
 }
+#[test]
+fn task_cache_cleanup_requires_a_matching_registered_task() {
+    let tree = format!(r"{}\Tree\Fixture", super::TASK_CACHE_ROOT);
+    let guid = "{00000000-0000-0000-0000-000000000001}";
+    let task = format!(r"{}\Tasks\{guid}", super::TASK_CACHE_ROOT);
+    let read = |registered: &str, leaf| {
+        super::registered_cleanup_task_with(
+            &tree,
+            |key, value| match (key, value) {
+                (key, "Id") if key == tree => Some(guid.into()),
+                (key, "Path") if key == task => Some(registered.into()),
+                _ => None,
+            },
+            |_| leaf,
+        )
+    };
+    assert_eq!(read(r"\Fixture", true).as_deref(), Some(r"\Fixture"));
+    assert!(read(r"\Other", true).is_none());
+    assert!(read(r"\Fixture", false).is_none());
+    assert!(super::registered_cleanup_task_with(&tree, |_, _| None, |_| true).is_none());
+}

@@ -403,6 +403,7 @@ export type FullCleanupReport = {
   reboot_gate_persisted?: boolean;
   restore_point_ok: boolean;
   restore_point_msg: string;
+  history_save_failed?: boolean;
   errors: string[];
   item_details: ItemDetail[];
 };

@@ -27,7 +27,7 @@ impl RegistryRestoreBudget {
         Ok(())
     }
 
-    pub(super) fn read(
+    pub(crate) fn read(
         &mut self,
         relative: &str,
         path: &Path,

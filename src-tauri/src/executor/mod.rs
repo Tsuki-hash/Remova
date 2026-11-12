@@ -195,6 +195,8 @@ pub struct FullCleanupReport {
     pub reboot_gate_persisted: bool,
     pub restore_point_ok: bool,
     pub restore_point_msg: String,
+    #[serde(default)]
+    pub history_save_failed: bool,
     pub errors: Vec<String>,
     pub item_details: Vec<ItemDetail>,
 }
@@ -229,6 +231,7 @@ mod tests {
             reboot_gate_persisted: true,
             restore_point_ok: false,
             restore_point_msg: "msg".into(),
+            history_save_failed: true,
             errors: vec!["e".into()],
             item_details: vec![ItemDetail {
                 path: "p".into(),
@@ -244,6 +247,7 @@ mod tests {
         assert_eq!(obj["reboot_gate_persisted"], serde_json::json!(true));
         assert_eq!(obj["aborted"], serde_json::json!(true));
         assert_eq!(obj["backup_verified"], serde_json::json!(true));
+        assert_eq!(obj["history_save_failed"], serde_json::json!(true));
         assert_eq!(obj["uninstall_ok"], serde_json::json!(true));
         assert_eq!(obj["uninstall_message"], serde_json::json!("ok"));
         assert_eq!(obj["deleted"], serde_json::json!(1));

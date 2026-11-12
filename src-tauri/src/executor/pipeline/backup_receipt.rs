@@ -6,9 +6,6 @@ use std::path::Path;
 #[cfg(windows)]
 use crate::scanner::ItemKind;
 
-#[cfg(windows)]
-const MAX_PATH_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024;
-
 pub(super) enum FilesystemDeleteError {
     Unverified(String),
     BackupUnavailable(io::Error),
@@ -78,16 +75,12 @@ impl BackupReceipt {
         let (seal, seal_pin) = crate::path_seal::hold_verified_seal(session)?;
         self.metadata_pins.push(seal_pin);
         if self.paths_selected {
-            let file = crate::fsutil::open_local_regular_file(&session.join("path.json"))
-                .map_err(|error| error.to_string())?;
-            let mut bytes = Vec::new();
-            (&file)
-                .take(MAX_PATH_SNAPSHOT_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            if bytes.len() as u64 > MAX_PATH_SNAPSHOT_BYTES
-                || !crate::path_seal::snapshot_matches(&seal, "path.json", &bytes)
-            {
+            let (bytes, file) = crate::backup::read_backup_metadata(
+                &session.join("path.json"),
+                "seal:path_snapshot_too_large",
+                crate::executor::cleanup_cancelled,
+            )?;
+            if !crate::path_seal::snapshot_matches(&seal, "path.json", &bytes) {
                 return Err("seal:path_snapshot_mismatch".into());
             }
             let snapshot: crate::backup::PathSnapshot =
@@ -229,7 +222,13 @@ mod tests {
         std::fs::create_dir(stage.join("files")).unwrap();
         std::fs::create_dir_all(stage.join("registry/App")).unwrap();
         let relative = "registry/App/export.reg";
-        std::fs::write(stage.join(relative), b"fixture bytes never imported").unwrap();
+        std::fs::write(
+            stage.join(relative),
+            crate::restore::encode_reg_text(
+                "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\ReceiptFixture]\r\n\"Example\"=\"fixture\"\r\n",
+            ),
+        )
+        .unwrap();
         let digests = crate::path_seal::collect_reg_digests(&stage).unwrap();
         let session = root.subdir("1700000000_receipt");
         crate::backup::publish_verified_stage(&stage, &session, &BTreeMap::new(), &digests, |_| {

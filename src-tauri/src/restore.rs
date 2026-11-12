@@ -42,8 +42,9 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     }
     let map_path = session.join("files/path_map.json");
     let map: std::collections::BTreeMap<String, String> = if map_path.exists() {
-        serde_json::from_slice(&fs::read(&map_path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?
+        let (bytes, _) =
+            crate::backup::read_backup_metadata(&map_path, "seal:path_map_too_large", &cancelled)?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?
     } else {
         std::collections::BTreeMap::new()
     };
@@ -54,7 +55,8 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     let path = session.join("path.json");
     let path_recorded = seal.reg_digests.contains_key("path.json");
     let path_bytes = if path_recorded || (!complete_manifest && path.exists()) {
-        let bytes = fs::read(path).map_err(|e| e.to_string())?;
+        let (bytes, _) =
+            crate::backup::read_backup_metadata(&path, "seal:path_snapshot_too_large", &cancelled)?;
         if !crate::path_seal::snapshot_matches(&seal, "path.json", &bytes) {
             return Err("seal:path_snapshot_mismatch".into());
         }
@@ -112,8 +114,7 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
         if !crate::path_seal::snapshot_matches(&seal, &relative, &bytes) {
             return Err("seal:registry_snapshot_mismatch".into());
         }
-        let text = validate_reg_bytes(bytes)?;
-        let view = registry_import_view(&text)?;
+        let (text, view) = validated_registry_import(bytes)?;
         let entry = target.parent().ok_or("seal:bad_export_name")?.to_owned();
         imports.push((entry, target, text, view));
     }
@@ -478,6 +479,12 @@ pub(crate) fn pick_import_target(entry_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+pub(crate) fn validated_registry_import(raw: Vec<u8>) -> Result<(String, &'static str), String> {
+    let text = validate_reg_bytes(raw)?;
+    let view = registry_import_view(&text)?;
+    Ok((text, view))
+}
+
 fn validate_reg_bytes(raw: Vec<u8>) -> Result<String, String> {
     // Whole-key exports come from `reg.exe export`, which writes UTF-16LE with a
     // BOM — a plain UTF-8 read fails outright and aborted the entire restore.
@@ -784,14 +791,18 @@ fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
 }
 
 pub fn list_sessions() -> Result<Vec<PathBuf>, String> {
-    let root = crate::backup::backup_root();
-    crate::backup::ensure_backup_tree_secured(&root)
-        .map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
-    list_sessions_at(&root)
+    list_sessions_at(&crate::backup::backup_root())
 }
 
 fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
+    match std::fs::symlink_metadata(root) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => return Err(crate::error::restore_err(e.to_string()).to_ipc()),
+    }
+    let _pins = crate::fsutil::pin_local_scan_path(root)
+        .map_err(|e| crate::error::restore_err(e.to_string()).to_ipc())?;
     let rd = match root.read_dir() {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
@@ -804,7 +815,7 @@ fn list_sessions_at(root: &Path) -> Result<Vec<PathBuf>, String> {
         let Ok(kind) = entry.file_type() else {
             continue;
         };
-        if kind.is_dir() {
+        if kind.is_dir() && !crate::fsutil::is_reparse_point(&entry.path()) {
             out.push(entry.path());
         }
     }

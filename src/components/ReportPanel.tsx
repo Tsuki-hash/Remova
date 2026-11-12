@@ -11,7 +11,7 @@ import { CleanupResultDetails } from "./CleanupResultDetails";
 import { DeepRegistryCheck } from "./DeepRegistryCheck";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
 import { backendText } from "../lib/backendText";
-import { cleanupAbortText } from "../lib/cleanupFeedback";
+import { cleanupAbortText, isLegacyHistoryWarning } from "../lib/cleanupFeedback";
 import { downloadAudit } from "../lib/exportAuditReport";
 import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
@@ -135,7 +135,7 @@ export function ReportPanel({
           </div>}
         </div>
       )}
-      {report.errors.some(error => error.startsWith("cleanup history could not be saved:")) && (
+      {(("history_save_failed" in report && report.history_save_failed) || report.errors.some(isLegacyHistoryWarning)) && (
         <div role="status" style={{ marginTop: 8, color: "var(--warn-ink)" }}>
           {L.cleanupHistorySaveFailed}
         </div>

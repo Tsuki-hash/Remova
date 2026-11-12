@@ -73,6 +73,7 @@ fn aborted_report(
         reboot_gate_persisted: true,
         restore_point_ok,
         restore_point_msg,
+        history_save_failed: false,
         errors,
         item_details: vec![],
     }
@@ -276,12 +277,14 @@ fn native_delete_checked(reg_path: &str, can_delete: &dyn Fn() -> bool) -> Optio
             },
         ));
     }
-    if key_norm
-        .starts_with(r"HKLM\SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\SCHEDULE\TASKCACHE\TREE\")
-    {
-        // Use the full task path from the TaskCache tree when possible.
-        let tn = task_full_name_from_reg_path(reg_path);
-        let native_ok = crate::regops::schtasks_delete(&tn);
+    if crate::regops::is_task_cache_tree_item(reg_path) {
+        let Some(tn) = crate::regops::registered_cleanup_task(reg_path) else {
+            return Some((
+                false,
+                "scheduled task registration could not be confirmed".into(),
+            ));
+        };
+        let native_ok = can_delete() && crate::regops::schtasks_delete(&tn);
         return Some((
             native_ok,
             if native_ok {
@@ -394,6 +397,12 @@ fn delete_registry_target(
     } else {
         (path, None)
     };
+    let task_cache_item = crate::regops::is_task_cache_tree_item(key);
+    if task_cache_item && value_name.is_some() {
+        return RegistryDelete::Kept(
+            "scheduled task cache values cannot be removed independently".into(),
+        );
+    }
     let note = match native(path, &|| matches!(verify(path), Ok(true))) {
         Some((true, note)) => return RegistryDelete::Deleted(note),
         Some((false, note)) => {
@@ -404,6 +413,9 @@ fn delete_registry_target(
         }
         None => String::new(),
     };
+    if task_cache_item {
+        return RegistryDelete::Kept(format!("scheduled task left unchanged: {note}"));
+    }
     match delete(key, value_name) {
         Ok(true) => RegistryDelete::Deleted(note),
         Ok(false) => RegistryDelete::Missing,
@@ -645,6 +657,7 @@ fn ignore_read_abort(
         reboot_gate_persisted: true,
         restore_point_ok: false,
         restore_point_msg: String::new(),
+        history_save_failed: false,
         errors: vec![error],
         item_details: vec![],
     }
@@ -694,6 +707,7 @@ fn run_full_cleanup_before_delete(
             reboot_gate_persisted: true,
             restore_point_ok: false,
             restore_point_msg: String::new(),
+            history_save_failed: false,
             errors: dry.errors,
             item_details: dry.item_details,
         };
@@ -952,6 +966,7 @@ fn run_full_cleanup_before_delete(
         reboot_gate_persisted,
         restore_point_ok,
         restore_point_msg,
+        history_save_failed: false,
         errors: del.errors,
         item_details: del.details,
     }
@@ -960,6 +975,25 @@ fn run_full_cleanup_before_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_scheduled_task_removal_never_falls_back_to_registry() {
+        let path = format!(r"{}\Tree\Fixture", crate::regops::TASK_CACHE_ROOT);
+        let outcome = delete_registry_target(
+            &path,
+            |_| Ok(true),
+            |_, _| Some((false, "task not found".into())),
+            |_, _| panic!("task cleanup reached registry deletion"),
+        );
+        assert!(matches!(outcome, RegistryDelete::Kept(_)));
+        let outcome = delete_registry_target(
+            &format!("{path}|Id"),
+            |_| Ok(true),
+            |_, _| panic!("task metadata reached task removal"),
+            |_, _| panic!("task metadata reached registry deletion"),
+        );
+        assert!(matches!(outcome, RegistryDelete::Kept(_)));
+    }
 
     #[test]
     fn changed_registry_target_never_reaches_either_delete_transport() {
@@ -1157,13 +1191,7 @@ mod tests {
             Some((true, format!("sc delete {name}: ok")))
         );
         let task = format!(r"\{name}\Task");
-        let task_key = format!(
-            r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree{task}"
-        );
-        assert_eq!(
-            native_delete_note(&task_key),
-            Some((true, format!("schtasks delete {task}: ok")))
-        );
+        assert!(crate::regops::schtasks_delete(&task));
         crate::regops::sc_set_service_running(name, true).unwrap();
         let calls = spy.calls();
         assert_eq!(calls.len(), 4);

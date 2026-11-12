@@ -22,6 +22,7 @@ vi.mock("../i18n", () => ({
     batchDetail: (d: number, f: number) => `del${d} fail${f}`,
     cleanupOutcome: (d: number, f: number, s: number, p: number) => `del${d} fail${f} skip${s} pend${p}`,
     cleanupNothingRemoved: (s: number) => (s > 0 ? `refused ${s}` : "nothing to clean"),
+    cleanupHistorySaveFailed: "history was not saved",
     batchCancelled: "cancelled",
     batchDone: "done",
     backendBackupFailed: "backup stopped cleanup",
@@ -122,6 +123,26 @@ beforeEach(() => {
 });
 
 describe("runBatchCleanup", () => {
+  it.each([
+    { empty: true, failed: 0, status: "skipped", errors: ["cleanup history could not be saved: read-only"] },
+    { empty: true, failed: 0, status: "skipped", errors: [] },
+    { empty: false, failed: 0, status: "ok", errors: [] },
+    { empty: false, failed: 1, status: "failed", errors: ["deletion failed"] },
+  ])("reports the history warning without changing the cleanup outcome (%j)", async ({ empty, failed, status, errors }) => {
+    const target = app("HistoryWarning");
+    analyze.mockResolvedValue(scan(target.name, empty ? [] : [item("fixture")]));
+    fullCleanup.mockResolvedValue(report({
+      aborted: empty, uninstall_ok: false, uninstall_message: empty ? "no items" : "skipped",
+      deleted: empty || failed > 0 ? 0 : 1, failed, errors,
+      history_save_failed: !errors.some(error => error.startsWith("cleanup history")),
+    }));
+    const cb = makeCb();
+    await runBatchCleanup([target], false, keyOf, cb);
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({
+      status, detail: expect.stringContaining("history was not saved"),
+    });
+  });
+
   it.each([false, true])("keeps an empty residual abort distinct from a read failure (readFailed=%s)", async readFailed => {
     const target = app("EmptyRetry");
     analyze.mockResolvedValue(scan("EmptyRetry", []));

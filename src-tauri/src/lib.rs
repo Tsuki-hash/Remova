@@ -819,9 +819,8 @@ async fn run_full_cleanup(
             report.dry_run,
             &report.backup_dir,
         ) {
-            let error = format!("cleanup history could not be saved: {error}");
-            eprintln!("{error}");
-            report.errors.push(error);
+            eprintln!("cleanup history could not be saved: {error}");
+            report.history_save_failed = true;
         }
         report
     })
