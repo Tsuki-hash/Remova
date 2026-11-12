@@ -18,11 +18,7 @@ pub(super) struct Receipt {
     cleanup_pending: bool,
 }
 
-fn receipt_path(_target: &Path, key: &str) -> io::Result<PathBuf> {
-    let digest = crate::path_seal::map_digest(key.as_bytes());
-    if digest.is_empty() {
-        return Err(io::Error::other("could not identify the copy target"));
-    }
+fn receipt_root(_target: &Path) -> io::Result<PathBuf> {
     #[cfg(test)]
     let root = _target
         .parent()
@@ -35,33 +31,60 @@ fn receipt_path(_target: &Path, key: &str) -> io::Result<PathBuf> {
         .join("migration-copies");
     #[cfg(all(not(windows), not(test)))]
     let root = return Err(io::Error::other("directory migration requires Windows"));
-    Ok(root.join(format!("{digest}.json")))
+    Ok(root)
+}
+
+fn receipt_filename(key: &str) -> String {
+    format!("{}.json", crate::path_seal::map_digest(key.as_bytes()))
+}
+
+fn comparison_key(path: &str) -> String {
+    lower(Path::new(path)).replace('/', "\\")
 }
 
 impl Receipt {
-    fn read(target: &Path) -> Option<Self> {
-        let key = lower(target);
-        let legacy = target.to_string_lossy().to_lowercase();
-        let mut keys = vec![
-            key.clone(),
-            legacy.trim_end_matches('\\').to_string(),
-            format!("{key}/"),
-        ];
-        keys.dedup();
-        keys.into_iter().find_map(|key| {
-            let path = receipt_path(target, &key).ok()?;
+    fn find(target: &Path, matches: impl Fn(&Self) -> bool) -> Option<Self> {
+        let root = receipt_root(target).ok()?;
+        let canonical = receipt_filename(&comparison_key(&target.to_string_lossy()));
+        let read = |path: &Path| {
             let mut saved: Self =
-                serde_json::from_str(&fsutil::read_local_scan_text(&path).ok()?).ok()?;
-            saved.source = lower(Path::new(&saved.source));
-            saved.target = lower(Path::new(&saved.target));
-            Some(saved)
-        })
+                serde_json::from_str(&fsutil::read_local_scan_text(path).ok()?).ok()?;
+            if path.file_name()? != std::ffi::OsStr::new(&receipt_filename(&saved.target)) {
+                return None;
+            }
+            saved.source = comparison_key(&saved.source);
+            saved.target = comparison_key(&saved.target);
+            matches(&saved).then_some(saved)
+        };
+        if let Some(saved) = read(&root.join(&canonical)) {
+            return Some(saved);
+        }
+
+        // Older versions hashed the spelling supplied by the caller, including
+        // any forward slashes. Discover that key without guessing its spelling.
+        let _pins = fsutil::pin_local_scan_path(&root).ok()?;
+        std::fs::read_dir(root)
+            .ok()?
+            .take(4096)
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let name = entry.file_name();
+                let (digest, extension) = name.to_str()?.rsplit_once('.')?;
+                if name == std::ffi::OsStr::new(&canonical)
+                    || extension != "json"
+                    || digest.len() != 64
+                    || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    return None;
+                }
+                read(&entry.path())
+            })
     }
 
     pub(super) fn new(source: &Path, target: &Path) -> io::Result<Self> {
         Ok(Self {
-            source: lower(source),
-            target: lower(target),
+            source: comparison_key(&source.to_string_lossy()),
+            target: comparison_key(&target.to_string_lossy()),
             source_id: fsutil::local_directory_id(source)?,
             target_id: fsutil::local_directory_id(target)?,
             complete: false,
@@ -78,11 +101,15 @@ impl Receipt {
         source_location: &Path,
         target: &Path,
     ) -> Option<Self> {
-        let saved = Self::read(target)?;
         let mut current = Self::new(source_location, target).ok()?;
-        current.source = lower(source);
-        current.complete = saved.complete;
-        (saved == current).then_some(saved)
+        current.source = comparison_key(&source.to_string_lossy());
+        Self::find(target, |saved| {
+            !saved.cleanup_pending
+                && saved.source == current.source
+                && saved.target == current.target
+                && saved.source_id == current.source_id
+                && saved.target_id == current.target_id
+        })
     }
 
     pub(super) fn prepare_cleanup(
@@ -92,8 +119,8 @@ impl Receipt {
         target_id: (u32, u64),
     ) -> io::Result<()> {
         Self {
-            source: lower(source),
-            target: lower(target),
+            source: comparison_key(&source.to_string_lossy()),
+            target: comparison_key(&target.to_string_lossy()),
             source_id,
             target_id,
             complete: true,
@@ -110,16 +137,18 @@ impl Receipt {
     ) -> bool {
         // The current junction path is stable across equivalent requests.
         // Older receipts may have used the spelling supplied by the caller.
-        let source = lower(source);
+        let source = comparison_key(&source.to_string_lossy());
         targets.into_iter().any(|target| {
-            Self::read(target).is_some_and(|receipt| {
+            let target_key = comparison_key(&target.to_string_lossy());
+            Self::find(target, |receipt| {
                 receipt.cleanup_pending
                     && receipt.complete
                     && receipt.source == source
-                    && receipt.target == lower(target)
+                    && receipt.target == target_key
                     && receipt.source_id == source_id
                     && receipt.target_id == target_id
             })
+            .is_some()
         })
     }
 
@@ -129,25 +158,25 @@ impl Receipt {
         target_id: (u32, u64),
         misplaced_id: (u32, u64),
     ) -> bool {
-        let source = lower(source);
+        let source = comparison_key(&source.to_string_lossy());
         targets.into_iter().any(|target| {
-            Self::read(target).is_some_and(|receipt| {
+            let target_key = comparison_key(&target.to_string_lossy());
+            Self::find(target, |receipt| {
                 receipt.cleanup_pending
                     && receipt.complete
                     && receipt.source == source
-                    && receipt.target == lower(target)
+                    && receipt.target == target_key
                     && receipt.target_id == target_id
                     && receipt.source_id != misplaced_id
             })
+            .is_some()
         })
     }
 
     pub(super) fn save(&self, target: &Path) -> io::Result<()> {
-        let path = receipt_path(target, &lower(target))?;
-        let _pins = fsutil::create_dirs_pinned(
-            path.parent()
-                .ok_or_else(|| io::Error::other("no receipt directory"))?,
-        )?;
+        let root = receipt_root(target)?;
+        let _pins = fsutil::create_dirs_pinned(&root)?;
+        let path = root.join(receipt_filename(&self.target));
         fsutil::write_bytes_atomic(&path, &serde_json::to_vec(self)?)
     }
 }

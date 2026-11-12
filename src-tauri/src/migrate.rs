@@ -1573,15 +1573,26 @@ mod tests {
         let current = receipts.join(filename(&key));
         let mut receipt: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&current).unwrap()).unwrap();
-        let legacy_key = format!("{key}/");
+        let legacy_key = format!("{}//", key.replace('\\', "/"));
         receipt["target"] = serde_json::Value::String(legacy_key.clone());
-        std::fs::write(
-            receipts.join(filename(&legacy_key)),
-            serde_json::to_vec(&receipt).unwrap(),
-        )
-        .unwrap();
-        std::fs::remove_file(current).unwrap();
+        let legacy = receipts.join(filename(&legacy_key));
+        std::fs::write(&legacy, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let valid = receipt.clone();
+        receipt["target"] = serde_json::Value::String(key);
+        receipt["target_id"] = serde_json::json!([0, 0]);
+        std::fs::write(&current, serde_json::to_vec(&receipt).unwrap()).unwrap();
 
+        assert_eq!(state_of(&source, &target), MigrationState::Copied);
+        receipt["target"] = serde_json::Value::String(legacy_key);
+        std::fs::write(&legacy, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Idle);
+        assert!(copy_phase(from, to).is_err());
+        assert!(!cutover(from, to).ok);
+        assert_eq!(std::fs::read(target.join("data")).unwrap(), b"fixture");
+
+        std::fs::write(&legacy, serde_json::to_vec(&valid).unwrap()).unwrap();
+        copy_phase(from, to).unwrap();
+        std::fs::write(&legacy, serde_json::to_vec(&receipt).unwrap()).unwrap();
         assert_eq!(state_of(&source, &target), MigrationState::Copied);
         assert!(cutover(from, to).ok);
         assert!(rollback(from, to).ok);
