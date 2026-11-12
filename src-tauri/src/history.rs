@@ -90,6 +90,46 @@ fn history_line(raw: &[u8]) -> &[u8] {
     line.strip_suffix(b"\r").unwrap_or(line)
 }
 
+struct HistoryReader {
+    reader: BufReader<fs::File>,
+    bytes: usize,
+    rows: usize,
+}
+
+impl HistoryReader {
+    fn open(file: fs::File) -> io::Result<Self> {
+        if file.metadata()?.len() > HISTORY_MAX_BYTES as u64 {
+            return Err(io::Error::other("history exceeds the retained size limit"));
+        }
+        Ok(Self {
+            reader: BufReader::new(file),
+            bytes: 0,
+            rows: 0,
+        })
+    }
+
+    fn next_line(&mut self, raw: &mut Vec<u8>) -> io::Result<bool> {
+        raw.clear();
+        let limit = HISTORY_MAX_BYTES - self.bytes + 1;
+        let count = self
+            .reader
+            .by_ref()
+            .take(limit as u64)
+            .read_until(b'\n', raw)?;
+        if count == 0 {
+            return Ok(false);
+        }
+        self.bytes += count;
+        self.rows += 1;
+        if self.bytes > HISTORY_MAX_BYTES || self.rows > HISTORY_MAX_ROWS {
+            return Err(io::Error::other(
+                "history exceeds the retained size or row limit",
+            ));
+        }
+        Ok(true)
+    }
+}
+
 /// Pin the history file's ancestor chain and refuse a reparse point. Every
 /// rewrite (append, compact, delete, clear) goes through this: a local user can
 /// pre-plant a junction under the shared ProgramData tree, and an elevated
@@ -318,19 +358,14 @@ fn read_history(limit: usize) -> Result<(Vec<HistoryEntry>, usize), String> {
     };
     // Keep only the newest rows and count each valid ID in file order, the
     // same way delete_by_ids does. Malformed bytes have no addressable ID.
-    let mut reader = std::io::BufReader::new(file);
+    let mut reader = HistoryReader::open(file).map_err(|e| format!("history read failed: {e}"))?;
     let mut raw = Vec::new();
     let mut ring = VecDeque::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
-    loop {
-        raw.clear();
-        if reader
-            .read_until(b'\n', &mut raw)
-            .map_err(|e| format!("history read failed: {e}"))?
-            == 0
-        {
-            break;
-        }
+    while reader
+        .next_line(&mut raw)
+        .map_err(|e| format!("history read failed: {e}"))?
+    {
         let line = history_line(&raw);
         if line.iter().all(|b| b.is_ascii_whitespace()) {
             continue;
@@ -381,26 +416,23 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(format!("history read failed: {e}")),
     };
+    let mut reader = HistoryReader::open(file).map_err(|e| format!("history read failed: {e}"))?;
     let (tmp, out) = crate::fsutil::create_atomic_tmp(&p).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(out);
-    let mut reader = std::io::BufReader::new(file);
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut removed = 0usize;
     // stream raw lines — a non-UTF-8 row (torn append) must pass
     // through untouched, not vanish along with unrelated rows.
     let mut raw: Vec<u8> = Vec::new();
     loop {
-        raw.clear();
-        let n = match reader.read_until(b'\n', &mut raw) {
-            Ok(n) => n,
+        match reader.next_line(&mut raw) {
+            Ok(true) => {}
+            Ok(false) => break,
             Err(error) => {
                 drop(w);
                 let _ = fs::remove_file(&tmp);
                 return Err(error.to_string());
             }
-        };
-        if n == 0 {
-            break;
         }
         let selected = std::str::from_utf8(history_line(&raw))
             .ok()
@@ -419,6 +451,7 @@ pub fn delete_by_ids(ids: &[String]) -> Result<usize, String> {
         }
     }
     if w.flush().and_then(|_| w.get_ref().sync_all()).is_err() {
+        drop(w);
         let _ = fs::remove_file(&tmp);
         return Err("history rewrite failed".into());
     }
@@ -467,6 +500,31 @@ fn unix_now_secs() -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+
+    #[test]
+    fn oversized_history_is_kept_when_reading_or_deleting_rows() {
+        let dir = crate::test_support::TempDir::new("bounded-history");
+        let _guard = super::use_history_dir(dir.path());
+        let path = super::history_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let row = row("fixture");
+        let id = format!("{}-0", super::line_hash(&row));
+        for bytes in [
+            format!("{row}\n{}", " ".repeat(super::HISTORY_MAX_BYTES)),
+            format!("{row}\n").repeat(super::HISTORY_MAX_ROWS + 1),
+        ] {
+            std::fs::write(&path, bytes.as_bytes()).unwrap();
+            assert!(super::load_checked(1).unwrap_err().contains("limit"));
+            assert!(super::delete_by_ids(std::slice::from_ref(&id))
+                .unwrap_err()
+                .contains("limit"));
+            assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
+            assert_eq!(
+                std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+                1
+            );
+        }
+    }
 
     fn row(app_name: &str) -> String {
         serde_json::to_string(&super::HistoryEntry {

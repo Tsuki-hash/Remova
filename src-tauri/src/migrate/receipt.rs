@@ -18,13 +18,13 @@ pub(super) struct Receipt {
     cleanup_pending: bool,
 }
 
-fn receipt_path(target: &Path) -> io::Result<PathBuf> {
-    let digest = crate::path_seal::map_digest(lower(target).as_bytes());
+fn receipt_path(_target: &Path, key: &str) -> io::Result<PathBuf> {
+    let digest = crate::path_seal::map_digest(key.as_bytes());
     if digest.is_empty() {
         return Err(io::Error::other("could not identify the copy target"));
     }
     #[cfg(test)]
-    let root = target
+    let root = _target
         .parent()
         .ok_or_else(|| io::Error::other("no fixture parent"))?
         .join("receipts");
@@ -39,6 +39,25 @@ fn receipt_path(target: &Path) -> io::Result<PathBuf> {
 }
 
 impl Receipt {
+    fn read(target: &Path) -> Option<Self> {
+        let key = lower(target);
+        let legacy = target.to_string_lossy().to_lowercase();
+        let mut keys = vec![
+            key.clone(),
+            legacy.trim_end_matches('\\').to_string(),
+            format!("{key}/"),
+        ];
+        keys.dedup();
+        keys.into_iter().find_map(|key| {
+            let path = receipt_path(target, &key).ok()?;
+            let mut saved: Self =
+                serde_json::from_str(&fsutil::read_local_scan_text(&path).ok()?).ok()?;
+            saved.source = lower(Path::new(&saved.source));
+            saved.target = lower(Path::new(&saved.target));
+            Some(saved)
+        })
+    }
+
     pub(super) fn new(source: &Path, target: &Path) -> io::Result<Self> {
         Ok(Self {
             source: lower(source),
@@ -59,8 +78,7 @@ impl Receipt {
         source_location: &Path,
         target: &Path,
     ) -> Option<Self> {
-        let path = receipt_path(target).ok()?;
-        let saved: Self = serde_json::from_str(&fsutil::read_local_scan_text(&path).ok()?).ok()?;
+        let saved = Self::read(target)?;
         let mut current = Self::new(source_location, target).ok()?;
         current.source = lower(source);
         current.complete = saved.complete;
@@ -94,23 +112,38 @@ impl Receipt {
         // Older receipts may have used the spelling supplied by the caller.
         let source = lower(source);
         targets.into_iter().any(|target| {
-            receipt_path(target)
-                .and_then(|path| fsutil::read_local_scan_text(&path))
-                .ok()
-                .and_then(|json| serde_json::from_str::<Self>(&json).ok())
-                .is_some_and(|receipt| {
-                    receipt.cleanup_pending
-                        && receipt.complete
-                        && receipt.source == source
-                        && receipt.target == lower(target)
-                        && receipt.source_id == source_id
-                        && receipt.target_id == target_id
-                })
+            Self::read(target).is_some_and(|receipt| {
+                receipt.cleanup_pending
+                    && receipt.complete
+                    && receipt.source == source
+                    && receipt.target == lower(target)
+                    && receipt.source_id == source_id
+                    && receipt.target_id == target_id
+            })
+        })
+    }
+
+    pub(super) fn finished_with_other_backup(
+        source: &Path,
+        targets: [&Path; 2],
+        target_id: (u32, u64),
+        misplaced_id: (u32, u64),
+    ) -> bool {
+        let source = lower(source);
+        targets.into_iter().any(|target| {
+            Self::read(target).is_some_and(|receipt| {
+                receipt.cleanup_pending
+                    && receipt.complete
+                    && receipt.source == source
+                    && receipt.target == lower(target)
+                    && receipt.target_id == target_id
+                    && receipt.source_id != misplaced_id
+            })
         })
     }
 
     pub(super) fn save(&self, target: &Path) -> io::Result<()> {
-        let path = receipt_path(target)?;
+        let path = receipt_path(target, &lower(target))?;
         let _pins = fsutil::create_dirs_pinned(
             path.parent()
                 .ok_or_else(|| io::Error::other("no receipt directory"))?,

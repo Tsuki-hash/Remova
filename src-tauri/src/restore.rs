@@ -145,13 +145,18 @@ fn restore_with_before_copy(
     // Restore is a destructive transaction too: it must not interleave with a
     // cleanup, and a pending 1641 reboot must finish before files are written
     // back into a half-uninstalled product directory.
-    let _guard = crate::executor::CLEANUP_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let cancelled = || crate::executor::scoped_cleanup_cancelled().unwrap_or(false);
+    let _guard = crate::executor::wait_for_cleanup_lock(cancelled)
+        .ok_or("restore cancelled before any changes")?;
+    if cancelled() {
+        return Err("restore cancelled before any changes".into());
+    }
     if crate::executor::reboot::any_pending() {
         return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
     }
-    crate::executor::begin_cleanup_control();
+    if crate::executor::scoped_cleanup_cancelled().is_none() {
+        crate::executor::begin_cleanup_control();
+    }
     let RestoreInputs {
         seal,
         #[cfg(windows)]
@@ -1335,6 +1340,36 @@ mod tests {
     fn restore_missing_session_errors() {
         let p = std::env::temp_dir().join("remova_no_such_session_xyz");
         assert!(restore_session(&p).is_err());
+    }
+
+    #[test]
+    fn a_cancelled_restore_leaves_the_cleanup_queue_before_the_lock_releases() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{mpsc, Arc};
+
+        let held = crate::executor::CLEANUP_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let flag = Arc::new(AtomicBool::new(false));
+        let worker_flag = flag.clone();
+        let (started, waiting) = mpsc::channel();
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let outcome = crate::executor::with_operation_cancellation(worker_flag, || {
+                started.send(()).unwrap();
+                restore_session(Path::new("unopened-restore-fixture"))
+            });
+            let _ = finished.send(outcome);
+        });
+        waiting.recv().unwrap();
+        flag.store(true, Ordering::Release);
+        let before_unlock = result.recv_timeout(std::time::Duration::from_millis(500));
+        drop(held);
+        worker.join().unwrap();
+        assert_eq!(
+            before_unlock.unwrap().unwrap_err(),
+            "restore cancelled before any changes"
+        );
     }
 
     /// `backup_batch` creates the session directory and then can return

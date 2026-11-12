@@ -124,7 +124,7 @@ use copy_operation::{cancelled as copy_cancelled, CANCELLED};
 fn lower(p: &Path) -> String {
     p.to_string_lossy()
         .to_lowercase()
-        .trim_end_matches('\\')
+        .trim_end_matches(['\\', '/'])
         .to_string()
 }
 
@@ -900,24 +900,11 @@ fn tree_diff(a: &Path, b: &Path) -> Result<Vec<String>, String> {
 /// destructive; re-runnable; cancellable; admitted server-side like every
 /// other phase — an IPC caller cannot aim the copier at arbitrary paths.
 fn copy_phase(source: &str, target: &str) -> Result<MigrationCopyReport, String> {
-    use std::sync::TryLockError;
-
     let source = PathBuf::from(source.trim());
     let target = PathBuf::from(target.trim());
     // Serialized with the destructive phases: a cutover must not interleave
     // with a copy still filling the target.
-    let _guard = loop {
-        if copy_cancelled() {
-            return Err(CANCELLED.into());
-        }
-        match crate::executor::CLEANUP_LOCK.try_lock() {
-            Ok(guard) => break guard,
-            Err(TryLockError::Poisoned(err)) => break err.into_inner(),
-            Err(TryLockError::WouldBlock) => {
-                std::thread::sleep(std::time::Duration::from_millis(25))
-            }
-        }
-    };
+    let _guard = crate::executor::wait_for_cleanup_lock(copy_cancelled).ok_or(CANCELLED)?;
     let roots = crate::triage::roots_from_env();
     let receipt = receipt::Receipt::load(&source, &target);
     let rejections = check_admission(&source, &target, &roots, receipt.is_some());
@@ -1446,18 +1433,27 @@ pub fn state_of(source: &Path, target: &Path) -> MigrationState {
         }
         return MigrationState::Inconsistent;
     }
-    if bak.is_none()
-        && linked_target.as_ref().is_some_and(|(linked, _)| {
-            let misplaced = source.with_file_name(".bak");
-            [linked.as_path(), target].into_iter().any(|target| {
-                receipt::Receipt::load_with_source_at(source, &misplaced, target)
-                    .is_some_and(|receipt| receipt.complete)
-            })
-        })
-    {
-        // Earlier versions could rename a source ending in a separator to a
-        // plain sibling named .bak. Preserve it for explicit recovery.
-        return MigrationState::Inconsistent;
+    if let (None, Some((linked, target_id))) = (&bak, &linked_target) {
+        let misplaced = source.with_file_name(".bak");
+        match metadata_or_absent(&misplaced) {
+            Ok(Some(metadata)) if meta_is_directory(&metadata) && !meta_is_reparse(&metadata) => {
+                let confirmed_unrelated =
+                    crate::fsutil::local_directory_id(&misplaced).is_ok_and(|id| {
+                        receipt::Receipt::finished_with_other_backup(
+                            source,
+                            [linked, target],
+                            *target_id,
+                            id,
+                        )
+                    });
+                if !confirmed_unrelated {
+                    // A legacy rollback copy may survive after its receipt becomes unavailable.
+                    return MigrationState::Inconsistent;
+                }
+            }
+            Err(_) => return MigrationState::Inconsistent,
+            _ => {}
+        }
     }
     match (src_plain, target_matches, bak.is_some(), tgt.is_some()) {
         (false, false, false, false) => MigrationState::Absent,
@@ -1530,11 +1526,12 @@ mod tests {
             let target = fixture.join(format!("{name}-target"));
             let entered = format!("{}{separator}", source.display());
             let destination = target.to_str().unwrap();
+            let copy_destination = format!("{destination}{separator}");
             let archive = fixture.join(format!("{name}.bak"));
             std::fs::write(source.join("data"), b"fixture").unwrap();
 
             assert!(plan(&entered, destination).ok);
-            copy_phase(&entered, destination).unwrap();
+            copy_phase(&entered, &copy_destination).unwrap();
             assert_eq!(
                 state_of(Path::new(&entered), &target),
                 MigrationState::Copied
@@ -1561,6 +1558,38 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn copy_with_a_legacy_forward_slash_receipt_can_continue() {
+        let fixture = crate::test_support::TempDir::new("migration_legacy_slash");
+        let source = fixture.subdir("source");
+        let target = fixture.join("target");
+        let from = source.to_str().unwrap();
+        let to = target.to_str().unwrap();
+        std::fs::write(source.join("data"), b"fixture").unwrap();
+        copy_phase(from, to).unwrap();
+
+        let key = lower(&target);
+        let receipts = fixture.join("receipts");
+        let filename = |key: &str| format!("{}.json", crate::path_seal::map_digest(key.as_bytes()));
+        let current = receipts.join(filename(&key));
+        let mut receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&current).unwrap()).unwrap();
+        let legacy_key = format!("{key}/");
+        receipt["target"] = serde_json::Value::String(legacy_key.clone());
+        std::fs::write(
+            receipts.join(filename(&legacy_key)),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(current).unwrap();
+
+        assert_eq!(state_of(&source, &target), MigrationState::Copied);
+        assert!(cutover(from, to).ok);
+        assert!(rollback(from, to).ok);
+        assert_eq!(std::fs::read(source.join("data")).unwrap(), b"fixture");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn a_misplaced_backup_with_a_matching_copy_receipt_is_preserved() {
         let fixture = crate::test_support::TempDir::new("migration_misplaced_archive");
         let source = fixture.subdir("source");
@@ -1578,6 +1607,12 @@ mod tests {
         assert!(finish(from, to, true).is_err());
         assert_eq!(std::fs::read(misplaced.join("data")).unwrap(), b"fixture");
         assert_eq!(std::fs::read(source.join("data")).unwrap(), b"fixture");
+
+        std::fs::rename(fixture.join("receipts"), fixture.join("offline-receipts")).unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(!rollback(from, to).ok);
+        assert!(finish(from, to, true).is_err());
+        assert_eq!(std::fs::read(misplaced.join("data")).unwrap(), b"fixture");
     }
 
     #[test]

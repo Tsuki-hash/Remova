@@ -49,12 +49,16 @@ pub fn cancel_cleanup_operation() {
     }
 }
 
-pub(crate) fn cleanup_cancelled() -> bool {
-    if let Some(cancelled) = OPERATION_CANCELLED.with(|flag| {
+pub(crate) fn scoped_cleanup_cancelled() -> Option<bool> {
+    OPERATION_CANCELLED.with(|flag| {
         flag.borrow()
             .as_ref()
             .map(|flag| flag.load(Ordering::Acquire))
-    }) {
+    })
+}
+
+pub(crate) fn cleanup_cancelled() -> bool {
+    if let Some(cancelled) = scoped_cleanup_cancelled() {
         return cancelled;
     }
     #[cfg(test)]
@@ -65,6 +69,22 @@ pub(crate) fn cleanup_cancelled() -> bool {
     {
         CLEANUP_CANCELLED.load(Ordering::SeqCst)
     }
+}
+
+pub(crate) fn wait_for_cleanup_lock(
+    cancelled: impl Fn() -> bool,
+) -> Option<std::sync::MutexGuard<'static, ()>> {
+    use std::sync::TryLockError;
+    while !cancelled() {
+        match CLEANUP_LOCK.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(error)) => return Some(error.into_inner()),
+            Err(TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    }
+    None
 }
 
 /// Use this request's cancellation while a blocking worker owns the operation.
