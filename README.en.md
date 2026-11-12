@@ -101,6 +101,8 @@ NSIS installs Remova for the current user. Run setup or the uninstaller normally
 
 Run Remova as administrator to clean machine-wide apps, the machine PATH, services and firewall rules, or to restore into protected directories. Without elevation, these items fail individually and report the reason.
 
+Automatic restore verifies the whole RSEAL2 backup session before writing. Run Remova elevated under the account that created the backup, on the same Windows installation.
+
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 
 ---
@@ -147,7 +149,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for conventions.
 - Prefer **dry-run** before cleaning.
 - Backups are best-effort and **not** a system backup substitute; the backup tree uses a private DACL (SYSTEM / Administrators / current user).
 - Cleanup with backup keeps files that changed or appeared after backup. It also keeps originals whose backup copies are missing or fail verification, and originals with named NTFS data streams the backup format cannot save.
-- Restore skips occupied file and directory paths. Move the existing contents to a safe location before retrying those items.
+- If the preview shows **Can resume**, choose the same backup to fill in missing items in directories Remova can verify it created. Existing files are kept. If the preview shows **Already exists**, including for a partial restore from an older version that cannot be identified, inspect the existing contents first. Move the conflicting items to a safe location before previewing again if you want to restore them to their original paths.
 - A pending 1641 reboot blocks every cleanup and restore entry; an unreadable gate file is treated as pending (fail-closed).
 - Services and scheduled tasks are treated as high risk and unchecked by default.
 

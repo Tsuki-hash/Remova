@@ -139,12 +139,9 @@ support for older RSEAL2 sessions. Those created without file digests provide
 integrity for the path map and system snapshots only. The seal does not protect
 against replay of an earlier valid state of the same session.
 Tests with a seals-root override use a compile-time test key; production has no
-key override, environment key, or generic signing IPC. Of the seven `#[ignore]`d
-tests, `copy_dir_refuses_file_swapped_to_symlink_after_enumeration` and
-`privileged_key_store_acl_and_missing_state_regression` run automatically in CI
-and Release; the rest are manual (see the Commands block for what each one
-mutates). A skipped test is not acceptance evidence — say so in the PR rather
-than letting the default suite imply coverage it does not have.
+key override, environment key, or generic signing IPC. The Commands section
+lists which ignored tests CI and Release run by name and which require manual
+execution. Report separately any test that was skipped.
 
 ## Build reproducibility (measured)
 
