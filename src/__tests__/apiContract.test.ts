@@ -40,6 +40,7 @@ const COMMAND_KEYS = [
   "cliGlobals",
   "removeNpmGlobals",
   "migratePlan",
+  "beginMigrateCopy",
   "migrateCopy",
   "migrateCutover",
   "migrateFinish",
@@ -176,6 +177,18 @@ describe("api IPC contract", () => {
       ["restore_session_by_name", { name: "session", operationId }],
       ["cancel_restore", { operationId }],
       ["delete_backup_session", { name: "unfinished", expectedStatus: "unsealed" }],
+    ]);
+  });
+
+  it("binds migration paths to the ID sent on copy and cancel", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(31).mockResolvedValueOnce({}).mockResolvedValueOnce(undefined);
+    const operationId = await api.beginMigrateCopy("C:\\source", "D:\\target");
+    await api.migrateCopy(operationId);
+    await api.cancelMigrateCopy(operationId);
+    expect(vi.mocked(invoke).mock.calls.slice(-3)).toEqual([
+      ["begin_migrate_copy", { source: "C:\\source", target: "D:\\target" }],
+      ["migrate_copy", { operationId: 31 }],
+      ["cancel_migrate_copy", { operationId: 31 }],
     ]);
   });
 });

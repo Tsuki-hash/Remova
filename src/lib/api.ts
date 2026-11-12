@@ -160,8 +160,10 @@ export const api = {
   /** Junction migration: plan / copy / cutover / finish / rollback. */
   migratePlan: (source: string, target: string) =>
     invoke<MigrationPlan>("migrate_plan", { source, target }),
-  migrateCopy: (source: string, target: string) =>
-    invoke<MigrationCopyReport>("migrate_copy", { source, target }),
+  beginMigrateCopy: (source: string, target: string) =>
+    invoke<number>("begin_migrate_copy", { source, target }),
+  migrateCopy: (operationId: number) =>
+    invoke<MigrationCopyReport>("migrate_copy", { operationId }),
   migrateCutover: (source: string, target: string) =>
     invoke<MigrationCutoverReport>("migrate_cutover", { source, target }),
   migrateFinish: (source: string, target: string, confirmed: boolean) =>
@@ -181,7 +183,7 @@ export const api = {
     invoke<ConsumerSearchResult>("find_project_consumers", { roots }),
   /** portable-app candidates (read-only cross-reference). */
   portableCandidates: () => invoke<PortableScanResult>("scan_portable_candidates"),
-  cancelMigrateCopy: () => invoke<void>("cancel_migrate_copy"),
+  cancelMigrateCopy: (operationId: number) => invoke<void>("cancel_migrate_copy", { operationId }),
   /** export then delete rule values (server re-verifies each orphan). */
   deleteFirewallRules: (valueNames: string[]) =>
     invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),

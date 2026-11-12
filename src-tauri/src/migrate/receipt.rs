@@ -77,21 +77,26 @@ impl Receipt {
 
     pub(super) fn matches_cleanup(
         source: &Path,
-        target: &Path,
+        targets: [&Path; 2],
         source_id: (u32, u64),
         target_id: (u32, u64),
     ) -> bool {
-        let saved = receipt_path(target)
-            .and_then(|path| fsutil::read_local_scan_text(&path))
-            .ok()
-            .and_then(|json| serde_json::from_str::<Self>(&json).ok());
-        saved.is_some_and(|receipt| {
-            receipt.cleanup_pending
-                && receipt.complete
-                && receipt.source == lower(source)
-                && receipt.target == lower(target)
-                && receipt.source_id == source_id
-                && receipt.target_id == target_id
+        // The current junction path is stable across equivalent requests.
+        // Older receipts may have used the spelling supplied by the caller.
+        let source = lower(source);
+        targets.into_iter().any(|target| {
+            receipt_path(target)
+                .and_then(|path| fsutil::read_local_scan_text(&path))
+                .ok()
+                .and_then(|json| serde_json::from_str::<Self>(&json).ok())
+                .is_some_and(|receipt| {
+                    receipt.cleanup_pending
+                        && receipt.complete
+                        && receipt.source == source
+                        && receipt.target == lower(target)
+                        && receipt.source_id == source_id
+                        && receipt.target_id == target_id
+                })
         })
     }
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Migration panel: plan refusals render, phases gate on the derived state,
 // and destructive phases confirm first.
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MigratePanel } from "../components/MigratePanel";
 import { api } from "../lib/api";
@@ -23,6 +23,7 @@ it("shares the canonical Rust state wire contract", () => {
 vi.mock("../lib/api", () => ({
   api: {
     migratePlan: vi.fn(),
+    beginMigrateCopy: vi.fn(),
     migrateCopy: vi.fn(),
     migrateCutover: vi.fn(),
     migrateFinish: vi.fn(),
@@ -38,6 +39,11 @@ vi.mock("../lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
+beforeEach(() => {
+  vi.mocked(api.beginMigrateCopy).mockResolvedValue(41);
+  vi.mocked(api.cancelMigrateCopy).mockResolvedValue(undefined);
+});
+
 afterEach(() => {
   cleanup();
   // mockReset (not clearAllMocks): mockResolvedValueOnce queues and mock
@@ -46,6 +52,7 @@ afterEach(() => {
   // restores every mock to its factory default implementation.
   for (const mock of [
     api.migratePlan,
+    api.beginMigrateCopy,
     api.migrateCopy,
     api.migrateCutover,
     api.migrateFinish,
@@ -101,6 +108,9 @@ it("shows pending permissions and a capped size estimate in the plan", async () 
     source_kb: 10, source_kb_capped: true, file_count: 2,
     target_free_kb: 10_000_000, free_space_known: true, root_permissions_pending: true,
   });
+  vi.mocked(api.migrateCopy).mockResolvedValue({
+    files: 2, source_kb: 10, files_capped: false, reparse_skipped: [],
+  });
   render(<MigratePanel onClose={vi.fn()} />);
   const L = t();
   type();
@@ -109,6 +119,7 @@ it("shows pending permissions and a capped size estimate in the plan", async () 
   expect(await screen.findByText(L.migratePlanEstimate)).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain(L.migratePlanEstimate);
   expect(screen.getByRole("status").textContent).toContain(L.migrateRootPermissionsPending);
+  await waitFor(() => expect(screen.getByLabelText(L.migrateSource)).toHaveProperty("disabled", false));
 });
 
 it("reports a cutover IPC rejection and refreshes the state afterwards", async () => {
@@ -193,7 +204,8 @@ it("the primary path starts from idle: plan ok enables the copy button", async (
   fireEvent.click(await screen.findByRole("button", { name: L.migrateStart }));
   // The wizard flows straight into the copy; wait for it to complete.
   await waitFor(() => expect(api.migrateCopy).toHaveBeenCalled());
-  await waitFor(() => expect(api.migrateCopy).toHaveBeenCalledWith("C:\\src", "D:\\dst"));
+  expect(api.beginMigrateCopy).toHaveBeenCalledWith("C:\\src", "D:\\dst");
+  expect(api.migrateCopy).toHaveBeenCalledWith(41);
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   // After the copy lands the derived state is "copied": cutover unlocks.
   await waitFor(() => {
@@ -296,7 +308,7 @@ it("rollback reports a restored source", async () => {
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith(L.migrateRollbackDone));
 });
 
-it("offers a working cancel while the copy runs and reports it as cancelled", async () => {
+it("reopens the same copy with its own cancel action until it settles", async () => {
   vi.mocked(api.migrateStatus).mockResolvedValue("idle");
   vi.mocked(api.migratePlan).mockResolvedValue({
     source: "C:\\src", target: "D:\\dst", ok: true,
@@ -310,15 +322,42 @@ it("offers a working cancel while the copy runs and reports it as cancelled", as
       }),
   );
   vi.mocked(api.cancelMigrateCopy).mockResolvedValue(undefined);
-  render(<MigratePanel onClose={vi.fn()} />);
+  const onClose = vi.fn();
+  const original = render(<MigratePanel onClose={onClose} />);
   type();
   fireEvent.click(await screen.findByRole("button", { name: t().migrateStart }));
-  // The cancel button exists exactly while the copy IPC is in flight, and the
-  // click reaches the backend despite the busy gate.
-  fireEvent.click(await screen.findByRole("button", { name: t().migrateCancelCopy }));
-  await waitFor(() => expect(api.cancelMigrateCopy).toHaveBeenCalled());
+  await screen.findByRole("button", { name: t().migrateCancelCopy });
+  fireEvent.click(screen.getByRole("button", { name: t().panelClose }));
+  expect(onClose).toHaveBeenCalledOnce();
+  original.unmount();
+
+  render(<MigratePanel onClose={vi.fn()} initialSource="C:\\different-source" />);
+  const source = screen.getByLabelText(t().migrateSource);
+  const target = screen.getByLabelText(t().migrateTarget);
+  expect(source).toHaveProperty("value", "C:\\src");
+  expect(target).toHaveProperty("value", "D:\\dst");
+  expect(source).toHaveProperty("disabled", true);
+  expect(target).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: t().migrateWorking })).toHaveProperty("disabled", true);
+  expect(api.beginMigrateCopy).toHaveBeenCalledOnce();
+  const cancel = screen.getByRole("button", { name: t().migrateCancelCopy });
+  fireEvent.click(cancel);
+  expect(api.cancelMigrateCopy).toHaveBeenCalledExactlyOnceWith(41);
+  expect(cancel).toHaveProperty("disabled", true);
   release();
   await waitFor(() => expect(toast.info).toHaveBeenCalledWith(t().migrateCancelled));
+  await waitFor(() => expect(source).toHaveProperty("disabled", false));
+
+  type("C:\\different-source", "D:\\different-target");
+  vi.mocked(api.beginMigrateCopy).mockResolvedValueOnce(42);
+  vi.mocked(api.migrateCopy).mockResolvedValueOnce({
+    files: 1, source_kb: 1, files_capped: false, reparse_skipped: [],
+  });
+  fireEvent.click(screen.getByRole("button", { name: t().migrateStart }));
+  await waitFor(() => expect(api.migrateCopy).toHaveBeenLastCalledWith(42));
+  expect(api.beginMigrateCopy).toHaveBeenLastCalledWith("C:\\different-source", "D:\\different-target");
+  await waitFor(() => expect(source).toHaveProperty("disabled", false));
+  expect(api.cancelMigrateCopy).toHaveBeenCalledExactlyOnceWith(41);
 });
 
 it("warns instead of pretending to be fresh when the state is inconsistent", async () => {

@@ -1,15 +1,11 @@
-use super::finishing::{check_junction, rename_to_sibling};
-use super::{is_reparse, make_junction, readers_equal, COPY_FILE_CAP};
+use super::finishing::rename_to_sibling;
+use super::junction::{Junction, Target};
+use super::{make_junction, COPY_FILE_CAP};
 use crate::fsutil::PinnedLocalDeleteTree;
-use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::windows::fs::OpenOptionsExt;
-use std::os::windows::io::AsRawHandle;
 use std::path::Path;
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
-    FileDispositionInfo, SetFileInformationByHandle, DELETE, FILE_DISPOSITION_INFO,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
 };
 
 type Failure = (&'static str, String);
@@ -21,13 +17,13 @@ fn verification_refused(err: io::Error) -> Failure {
     )
 }
 
-fn unlink_junction(junction: File) -> io::Result<()> {
+pub(super) fn unlink_junction(junction: Junction) -> io::Result<()> {
     let info = FILE_DISPOSITION_INFO {
         DeleteFile: true.into(),
     };
     unsafe {
         SetFileInformationByHandle(
-            HANDLE(junction.as_raw_handle()),
+            junction.handle(),
             FileDispositionInfo,
             (&info as *const FILE_DISPOSITION_INFO).cast(),
             std::mem::size_of_val(&info) as u32,
@@ -36,8 +32,12 @@ fn unlink_junction(junction: File) -> io::Result<()> {
     .map_err(io::Error::other)
 }
 
-fn restore_junction(source: &Path, target: &Path, backup: &Path, detail: &str) -> Failure {
-    if target.is_dir() && !is_reparse(target) && make_junction(source, target).is_ok() {
+fn restore_junction(source: &Path, target: &Target, backup: &Path, detail: &str) -> Failure {
+    let restored = make_junction(source, target.path()).is_ok()
+        && Junction::open(source, false)
+            .and_then(|junction| junction.verify_target(target))
+            .is_ok();
+    if restored {
         (
             "junction_restored",
             format!(
@@ -48,7 +48,7 @@ fn restore_junction(source: &Path, target: &Path, backup: &Path, detail: &str) -
     } else {
         (
             "junction_restore_failed",
-            format!("{detail}; the junction could not be restored. The backup remains at {} and the target remains at {}", backup.display(), target.display()),
+            format!("{detail}; the junction could not be verified after restoration. The backup remains at {} and the target remains at {}", backup.display(), target.path().display()),
         )
     }
 }
@@ -59,11 +59,11 @@ pub(super) fn switch(
     target: &Path,
     after_verification: impl FnOnce(),
 ) -> Result<(), Failure> {
-    super::begin_copy_run();
+    let target = Target::open(target).map_err(verification_refused)?;
     let mut archive = PinnedLocalDeleteTree::with_security(backup, COPY_FILE_CAP)
         .map_err(verification_refused)?;
-    let _verified_target = archive
-        .hold_verified_copy(target, true, readers_equal)
+    let _verified_target = target
+        .verify_copy(&archive, true)
         .map_err(verification_refused)?;
     let identities = archive
         .relative_identities()
@@ -71,25 +71,22 @@ pub(super) fn switch(
     // The held archive also pins the common parent of the backup and junction.
     // Open the link itself exclusively, with no competing handle that could
     // keep a delete pending after our handle closes.
-    let junction = OpenOptions::new()
-        .access_mode(DELETE.0 | FILE_READ_ATTRIBUTES.0)
-        .share_mode(0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
-        .open(source)
-        .map_err(|err| {
-            (
-                "junction_refused",
-                format!("junction could not be opened: {err}"),
-            )
-        })?;
-    check_junction(&junction, source, target)
+    let junction = Junction::open(source, true).map_err(|err| {
+        (
+            "junction_refused",
+            format!("junction could not be opened: {err}"),
+        )
+    })?;
+    let linked = junction
+        .verify_target(&target)
         .map_err(|err| ("junction_refused", err.to_string()))?;
 
     // NTFS refuses to rename a directory while descendants are open. Keep
     // the same archive root held, then recheck its descendants after the move.
     archive.release_children_for_rename();
     after_verification();
-    check_junction(&junction, source, target)
+    let _linked_now = junction
+        .verify_target(&target)
         .map_err(|err| ("junction_refused", err.to_string()))?;
     unlink_junction(junction).map_err(|err| {
         (
@@ -100,7 +97,7 @@ pub(super) fn switch(
     if let Err(err) = rename_to_sibling(archive.root_pin(), source) {
         return Err(restore_junction(
             source,
-            target,
+            &linked,
             backup,
             &format!("backup rename failed: {err}"),
         ));
@@ -112,7 +109,7 @@ pub(super) fn switch(
             if published.relative_identities()? != identities {
                 return Err(io::Error::other("backup entry identities changed"));
             }
-            let target_pins = published.hold_verified_copy(target, true, readers_equal)?;
+            let target_pins = target.verify_copy(&published, true)?;
             Ok((published, target_pins))
         });
     match checked {
@@ -123,10 +120,10 @@ pub(super) fn switch(
             if let Err(rename) = rename_to_sibling(archive.root_pin(), backup) {
                 return Err((
                     "backup_rename_restore_failed",
-                    format!("{detail}; could not restore the backup name ({rename}). The moved directory remains at {} and the verified target remains at {}", source.display(), target.display()),
+                    format!("{detail}; could not restore the backup name ({rename}). The moved directory remains at {} and the verified target remains at {}", source.display(), target.path().display()),
                 ));
             }
-            Err(restore_junction(source, target, backup, &detail))
+            Err(restore_junction(source, &linked, backup, &detail))
         }
     }
 }

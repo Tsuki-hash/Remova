@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -37,6 +37,26 @@ const REJECTION_TEXT: Record<string, string> = {
 
 const CLEANUP_PENDING_PREFIX = "migrate:cleanup_pending:";
 
+type MigrationOperation = {
+  source: string;
+  target: string;
+  copyId: number | null;
+  cancelRequested: boolean;
+};
+
+// An operation can outlive the panel or the entire More page.
+let activeMigration: MigrationOperation | null = null;
+const migrationListeners = new Set<() => void>();
+const getActiveMigration = () => activeMigration;
+function subscribeMigration(listener: () => void) {
+  migrationListeners.add(listener);
+  return () => { migrationListeners.delete(listener); };
+}
+function setActiveMigration(operation: MigrationOperation | null) {
+  activeMigration = operation;
+  for (const listener of migrationListeners) listener();
+}
+
 function rejectionText(L: ReturnType<typeof t>, code: string): string {
   const key = REJECTION_TEXT[code];
   return key ? (L[key as keyof typeof L] as string) : code;
@@ -50,24 +70,22 @@ function rejectionText(L: ReturnType<typeof t>, code: string): string {
  */
 export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => void; initialSource?: string }) {
   const L = t();
-  const [source, setSource] = useState(initialSource);
-  const [target, setTarget] = useState("");
+  const operation = useSyncExternalStore(subscribeMigration, getActiveMigration);
+  const [sourceInput, setSource] = useState(() => operation?.source ?? initialSource);
+  const [targetInput, setTarget] = useState(() => operation?.target ?? "");
+  const source = operation?.source ?? sourceInput;
+  const target = operation?.target ?? targetInput;
   const [plan, setPlan] = useState<MigrationPlan | null>(null);
   const [state, setState] = useState<MigrationState | null>(null);
-  const [busy, setBusy] = useState(false);
-  // True only while a migrateCopy IPC is actually in flight. The copy is the
-  // one phase the backend can abort (COPY_CANCEL), so the cancel button keys
-  // off it instead of the derived wizard state, which does not change until
-  // the copy settles.
-  const [copying, setCopying] = useState(false);
+  const busy = operation !== null;
+  const reopenedDuringOperation = useRef(busy);
   // Monotonic id for status probes: the probe runs on the blocking pool shared
   // with every scan, so a slow answer for an older path pair can arrive after
   // a newer one and must never overwrite its state.
   const statusGen = useRef(0);
-  const inFlight = useRef(false);
 
   const editPath = (setPath: (value: string) => void, value: string) => {
-    if (inFlight.current) return;
+    if (activeMigration) return;
     ++statusGen.current;
     setState(null);
     setPlan(null);
@@ -92,15 +110,20 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     return () => clearTimeout(timer);
   }, [source, target, refreshState]);
 
+  useEffect(() => {
+    if (!busy && reopenedDuringOperation.current) {
+      reopenedDuringOperation.current = false;
+      void refreshState(source, target);
+    }
+  }, [busy, source, target, refreshState]);
+
   const withBusy = async (work: () => Promise<void>) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
+    if (activeMigration) return;
+    setActiveMigration({ source, target, copyId: null, cancelRequested: false });
     try {
       await work();
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      setActiveMigration(null);
     }
   };
 
@@ -116,9 +139,11 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     }
     setPlan(plan);
     if (!plan.ok) return;
-    setCopying(true);
+    let copyId: number | null = null;
     try {
-      const r = await api.migrateCopy(source, target);
+      copyId = await api.beginMigrateCopy(source, target);
+      if (activeMigration) setActiveMigration({ ...activeMigration, copyId });
+      const r = await api.migrateCopy(copyId);
       toast.success(
         L.migrateCopyDone(r.files, formatSize(r.source_kb)),
         r.reparse_skipped.length ? { detail: L.migrateCopySkipped(r.reparse_skipped.length) } : undefined,
@@ -128,17 +153,26 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       // formatError would already localize it, hiding the token.
       const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
       if (raw === "migrate:cancelled") toast.info(L.migrateCancelled);
-      else toast.error(backendErrorText(formatError(e)));
+      else {
+        if (copyId !== null) void api.cancelMigrateCopy(copyId).catch(() => {});
+        toast.error(backendErrorText(formatError(e)));
+      }
     } finally {
-      setCopying(false);
+      if (activeMigration) setActiveMigration({ ...activeMigration, copyId: null });
     }
     await refreshState(source, target);
   };
 
   const cancelCopy = () => {
-    // Not gated by busy: the button exists precisely to interrupt the busy
-    // copy, so the click must reach the backend even while busy is true.
-    void api.cancelMigrateCopy().catch(() => {});
+    const operation = activeMigration;
+    if (!operation || operation.copyId === null || operation.cancelRequested) return;
+    const { copyId } = operation;
+    setActiveMigration({ ...operation, cancelRequested: true });
+    void api.cancelMigrateCopy(copyId).catch((e) => {
+      if (activeMigration?.copyId !== copyId) return;
+      setActiveMigration({ ...activeMigration, cancelRequested: false });
+      toast.error(backendErrorText(formatError(e)));
+    });
   };
 
   const confirmPaths = (message: string) => `${message}\n${L.migrateSource}: ${source}\n${L.migrateTarget}: ${target}`;
@@ -315,8 +349,8 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         {state === "cutover" && (
           <span style={{ ...css.muted, fontSize: 12 }}>{L.migrateFinishLater}</span>
         )}
-        {copying && (
-          <button type="button" style={{ ...css.btnGhost, height: 30 }} onClick={cancelCopy}>
+        {operation?.copyId != null && (
+          <button type="button" style={{ ...css.btnGhost, height: 30 }} disabled={operation.cancelRequested} onClick={cancelCopy}>
             {L.migrateCancelCopy}
           </button>
         )}

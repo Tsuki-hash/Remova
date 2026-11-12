@@ -161,7 +161,7 @@ pub(crate) fn local_directory_id(path: &Path) -> std::io::Result<(u32, u64)> {
 }
 
 #[cfg(windows)]
-fn pin_metadata(pin: &DirPin) -> std::io::Result<std::fs::Metadata> {
+pub(crate) fn pin_metadata(pin: &DirPin) -> std::io::Result<std::fs::Metadata> {
     use std::os::windows::io::FromRawHandle;
     let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(pin.handle.0) });
     file.metadata()
@@ -179,6 +179,16 @@ fn open_relative(
     parent: &DirPin,
     name: &std::ffi::OsStr,
     access: u32,
+    allow_reparse: bool,
+) -> std::io::Result<DirPin> {
+    open_relative_with_share(parent, name, access, 1, allow_reparse)
+}
+
+fn open_relative_with_share(
+    parent: &DirPin,
+    name: &std::ffi::OsStr,
+    access: u32,
+    share: u32,
     allow_reparse: bool,
 ) -> std::io::Result<DirPin> {
     #[cfg(windows)]
@@ -224,7 +234,7 @@ fn open_relative(
                 &mut status,
                 None,
                 FILE_FLAGS_AND_ATTRIBUTES(0),
-                FILE_SHARE_MODE(1),
+                FILE_SHARE_MODE(share),
                 FILE_OPEN,
                 NTCREATEFILE_CREATE_OPTIONS(0x0020_0000 | 0x20),
                 None,
@@ -255,11 +265,35 @@ fn open_relative(
     }
     #[cfg(not(windows))]
     {
-        let _ = (parent, name, access, allow_reparse);
+        let _ = (parent, name, access, share, allow_reparse);
         Err(std::io::Error::other(
             "handle-relative scanning requires Windows",
         ))
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn open_local_scan_leaf(
+    path: &Path,
+    access: u32,
+    share: u32,
+) -> std::io::Result<(Vec<DirPin>, DirPin)> {
+    validate_local_scan_path(path)?;
+    let parents = pin_local_scan_path(
+        path.parent()
+            .ok_or_else(|| std::io::Error::other("no path parent"))?,
+    )?;
+    let pin = open_relative_with_share(
+        parents
+            .last()
+            .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
+        path.file_name()
+            .ok_or_else(|| std::io::Error::other("no path name"))?,
+        access,
+        share,
+        true,
+    )?;
+    Ok((parents, pin))
 }
 
 pub(crate) fn scan_path_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
@@ -277,65 +311,73 @@ pub fn local_scan_is_dir(path: &Path) -> bool {
 pub fn read_local_scan_link(path: &Path) -> std::io::Result<PathBuf> {
     #[cfg(windows)]
     {
-        let pins = pin_local_scan_path(
-            path.parent()
-                .ok_or_else(|| std::io::Error::other("no parent"))?,
-        )?;
-        let link = open_relative(
-            pins.last().unwrap(),
-            path.file_name()
-                .ok_or_else(|| std::io::Error::other("no link name"))?,
-            0x81,
-            true,
-        )?;
-        let mut buffer = [0u8; 16384];
-        let mut returned = 0;
-        unsafe {
-            windows::Win32::System::IO::DeviceIoControl(
-                link.handle,
-                0x900a8,
-                None,
-                0,
-                Some(buffer.as_mut_ptr().cast()),
-                buffer.len() as u32,
-                Some(&mut returned),
-                None,
-            )
-        }
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-        let tag = u32::from_le_bytes(buffer[..4].try_into().unwrap());
-        let start = match tag {
-            0xa0000003 => 16,
-            0xa000000c => 20,
-            _ => return Err(std::io::Error::other("unknown reparse tag")),
-        };
-        let offset = u16::from_le_bytes(buffer[8..10].try_into().unwrap()) as usize;
-        let len = u16::from_le_bytes(buffer[10..12].try_into().unwrap()) as usize;
-        if !len.is_multiple_of(2) || start + offset + len > returned as usize {
-            return Err(std::io::Error::other("invalid reparse data"));
-        }
-        let units: Vec<u16> = buffer[start + offset..start + offset + len]
-            .chunks(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        let target = String::from_utf16(&units).map_err(std::io::Error::other)?;
-        // Normalize only a local NT DOS prefix; UNC stays a rejected remote form.
-        let target = if let Some(rest) = target.strip_prefix(r"\??\") {
-            if let Some(unc) = rest.strip_prefix(r"UNC\") {
-                format!(r"\\{unc}")
-            } else {
-                rest.to_string()
-            }
-        } else {
-            target
-        };
-        Ok(target.into())
+        let (_parents, link) = open_local_scan_leaf(path, 0x81, 1)?;
+        read_reparse_target(link.handle).map(|(_, path)| path)
     }
     #[cfg(not(windows))]
     {
         let _ = path;
         Err(std::io::Error::other("Windows handle required"))
     }
+}
+
+/// Read the kernel's substitute name from the already-open reparse object.
+#[cfg(windows)]
+pub(crate) fn read_reparse_target(
+    handle: windows::Win32::Foundation::HANDLE,
+) -> std::io::Result<(u32, PathBuf)> {
+    let mut buffer = [0u8; 16384];
+    let mut returned = 0;
+    unsafe {
+        windows::Win32::System::IO::DeviceIoControl(
+            handle,
+            0x900a8,
+            None,
+            0,
+            Some(buffer.as_mut_ptr().cast()),
+            buffer.len() as u32,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .map_err(std::io::Error::other)?;
+    let invalid = || std::io::Error::other("invalid reparse data");
+    let buffer = buffer.get(..returned as usize).ok_or_else(invalid)?;
+    if buffer.len() < 12 {
+        return Err(invalid());
+    }
+    let tag = u32::from_le_bytes(buffer[..4].try_into().unwrap());
+    let start = match tag {
+        0xa0000003 => 16,
+        0xa000000c => 20,
+        _ => return Err(std::io::Error::other("unknown reparse tag")),
+    };
+    let offset = u16::from_le_bytes(buffer[8..10].try_into().unwrap()) as usize;
+    let len = u16::from_le_bytes(buffer[10..12].try_into().unwrap()) as usize;
+    if !offset.is_multiple_of(2) || !len.is_multiple_of(2) {
+        return Err(invalid());
+    }
+    let units: Vec<u16> = buffer
+        .get(start + offset..start + offset + len)
+        .ok_or_else(invalid)?
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .copied()
+        .map(u16::from_le_bytes)
+        .collect();
+    let target = String::from_utf16(&units).map_err(std::io::Error::other)?;
+    // Normalize only a local NT DOS prefix; UNC stays a rejected remote form.
+    let target = if let Some(rest) = target.strip_prefix(r"\??\") {
+        if let Some(unc) = rest.strip_prefix(r"UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            rest.to_owned()
+        }
+    } else {
+        target
+    };
+    Ok((tag, target.into()))
 }
 
 fn validate_local_scan_path(path: &Path) -> std::io::Result<()> {
@@ -1444,9 +1486,26 @@ impl PinnedLocalDeleteTree {
         Self::collect_with(path, limit, 0x30081, &mut |_| Ok(()))
     }
 
+    #[cfg(windows)]
+    pub(crate) fn with_rename_security(path: &Path, limit: usize) -> std::io::Result<Self> {
+        // Rename only the held root. Descendants need read access for the
+        // comparison and never need DELETE permission.
+        Self::collect_with_root_access(path, limit, 0x30081, 0x20081, &mut |_| Ok(()))
+    }
+
     fn collect_with(
         path: &Path,
         limit: usize,
+        access: u32,
+        after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> std::io::Result<Self> {
+        Self::collect_with_root_access(path, limit, access, access, after_open)
+    }
+
+    fn collect_with_root_access(
+        path: &Path,
+        limit: usize,
+        root_access: u32,
         access: u32,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
@@ -1460,7 +1519,7 @@ impl PinnedLocalDeleteTree {
                 .ok_or_else(|| std::io::Error::other("empty handle chain"))?,
             path.file_name()
                 .ok_or_else(|| std::io::Error::other("invalid target"))?,
-            access,
+            root_access,
             false,
         )?;
         Self::collect_pinned_root(path, root, limit, access, _parents, after_open)
@@ -1680,9 +1739,11 @@ impl PinnedLocalDeleteTree {
         if exact {
             for (directory, (index, backup)) in positions {
                 let expected = children.get(directory.as_path()).copied().unwrap_or(0);
-                let backup_count = relative_names_with_limit(backup, expected + 1)?.len();
-                let target_count = relative_names_with_limit(&pins[index], expected + 1)?.len();
-                if backup_count != expected || target_count != expected {
+                let mut backup_names = relative_names_with_limit(backup, expected + 1)?;
+                let mut target_names = relative_names_with_limit(&pins[index], expected + 1)?;
+                backup_names.sort_unstable();
+                target_names.sort_unstable();
+                if backup_names.len() != expected || backup_names != target_names {
                     return Err(std::io::Error::other(format!(
                         "{}: target directory entries differ",
                         directory.display()

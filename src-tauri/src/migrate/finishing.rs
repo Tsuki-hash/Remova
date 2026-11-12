@@ -1,21 +1,17 @@
 use crate::fsutil::{DirPin, PinnedLocalDeleteTree};
-use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use windows::Wdk::Storage::FileSystem::{
     FileRenameInformation, NtSetInformationFile, FILE_RENAME_INFORMATION,
 };
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
-};
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 
 use super::{
-    junction_points_to, meta_is_directory, meta_is_reparse, readers_equal, receipt::Receipt,
+    junction::{Junction, Target},
+    receipt::Receipt,
     COPY_FILE_CAP,
 };
 
@@ -51,41 +47,18 @@ pub(super) fn rename_to_sibling(root: &DirPin, destination: &Path) -> io::Result
     .map_err(io::Error::other)
 }
 
-fn pin_junction(source: &Path, target: &Path) -> io::Result<(Vec<DirPin>, File)> {
-    let parent = source
-        .parent()
-        .ok_or_else(|| io::Error::other("junction has no parent"))?;
-    let pins = crate::fsutil::pin_local_scan_path(parent)?;
-    let junction = OpenOptions::new()
-        .access_mode(FILE_READ_ATTRIBUTES.0)
-        .share_mode(FILE_SHARE_READ.0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
-        .open(source)?;
-    check_junction(&junction, source, target)?;
-    Ok((pins, junction))
-}
-
-pub(super) fn check_junction(junction: &File, source: &Path, target: &Path) -> io::Result<()> {
-    let metadata = junction.metadata()?;
-    if !meta_is_directory(&metadata)
-        || !meta_is_reparse(&metadata)
-        || !junction_points_to(source, target)
-    {
-        return Err(io::Error::other("junction missing or pointing elsewhere"));
-    }
-    Ok(())
-}
-
 fn stage(
     source: &Path,
     backup: &Path,
     pending: &Path,
-    target: &Path,
+    target: &Target,
+    junction: &Junction,
 ) -> io::Result<((u32, u64), Vec<DirPin>)> {
     let mut snapshot = PinnedLocalDeleteTree::with_security(backup, COPY_FILE_CAP)?;
-    let target_pins = snapshot.hold_verified_copy(target, false, readers_equal)?;
+    let target_pins = target.verify_copy(&snapshot, false)?;
     let archive_id = snapshot.root_pin().file_identity()?;
-    Receipt::prepare_cleanup(source, target, archive_id, target_pins[0].file_identity()?)?;
+    let linked = junction.verify_target(target)?;
+    Receipt::prepare_cleanup(source, linked.path(), archive_id, target.receipt_id()?)?;
     rename_to_sibling(snapshot.release_children_for_rename(), pending)?;
     Ok((archive_id, target_pins))
 }
@@ -93,21 +66,23 @@ fn stage(
 fn verify_pending(
     source: &Path,
     pending: &Path,
-    target: &Path,
-) -> io::Result<(PinnedLocalDeleteTree, Vec<DirPin>)> {
+    target: &Target,
+    junction: &Junction,
+) -> io::Result<(PinnedLocalDeleteTree, Vec<DirPin>, Target)> {
     let snapshot = PinnedLocalDeleteTree::with_security(pending, COPY_FILE_CAP)?;
-    let target_pins = snapshot.hold_verified_copy(target, false, readers_equal)?;
+    let target_pins = target.verify_copy(&snapshot, false)?;
+    let linked = junction.verify_target(target)?;
     if !Receipt::matches_cleanup(
         source,
-        target,
+        [linked.path(), target.path()],
         snapshot.root_pin().file_identity()?,
-        target_pins[0].file_identity()?,
+        target.receipt_id()?,
     ) {
         return Err(io::Error::other(
             "pending copy has no matching migration receipt",
         ));
     }
-    Ok((snapshot, target_pins))
+    Ok((snapshot, target_pins, linked))
 }
 
 fn restore_backup_name(pending: &Path, backup: &Path, archive_id: (u32, u64)) -> io::Result<()> {
@@ -140,20 +115,24 @@ fn finish_with(
     staged: bool,
     after_stage: impl FnOnce(),
 ) -> Result<(), String> {
-    let _junction = pin_junction(source, target).map_err(|err| format!("finish refused: {err}"))?;
-    super::begin_copy_run();
+    let target = Target::open(target).map_err(|err| format!("finish refused: {err}"))?;
+    let junction = Junction::open(source, false).map_err(|err| format!("finish refused: {err}"))?;
+    let _linked = junction
+        .verify_target(&target)
+        .map_err(|err| format!("finish refused: {err}"))?;
     let staging = if staged {
         None
     } else {
         Some(
-            stage(source, backup, pending, target)
+            stage(source, backup, pending, &target, &junction)
                 .map_err(|err| format!("finish refused: {err}"))?,
         )
     };
     after_stage();
     // The original rollback copy has been committed for removal. Reopen and
     // verify the exact staged tree before deleting it, including on a retry.
-    let (snapshot, _target_pins) = match verify_pending(source, pending, target) {
+    let verified = verify_pending(source, pending, &target, &junction);
+    let (snapshot, _target_pins, _linked_now) = match verified {
         Ok(result) => result,
         Err(err) => {
             if let Some((archive_id, _)) = &staging {
@@ -163,12 +142,12 @@ fn finish_with(
                     ));
                 }
             }
-            return Err(cleanup_pending_error(pending, target, err));
+            return Err(cleanup_pending_error(pending, target.path(), err));
         }
     };
     snapshot
         .remove()
-        .map_err(|err| cleanup_pending_error(pending, target, err))
+        .map_err(|err| cleanup_pending_error(pending, target.path(), err))
 }
 
 fn cleanup_pending_error(pending: &Path, target: &Path, err: io::Error) -> String {

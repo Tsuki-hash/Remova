@@ -82,6 +82,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   if (raw === "cleanup cancelled") return L.batchCancelled;
   if (raw === "cleanup cancelled during backup") return L.backendCleanupCancelledBackup;
   if (raw === "migrate:cancelled") return L.migrateCancelled;
+  if (raw === "migrate:copy_busy") return L.migrateCopyBusy;
   if (raw === "migrate:copy_required") return L.migrateCopyRequired;
   if (raw.startsWith("migrate:copy_conflict: ")) return L.migrateCopyConflict(raw.slice("migrate:copy_conflict: ".length));
   if (raw.startsWith("migrate:rollback_conflict: ")) return L.migrateRollbackConflict(raw.slice("migrate:rollback_conflict: ".length));

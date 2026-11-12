@@ -1105,11 +1105,14 @@ async fn migrate_plan(source: String, target: String) -> Result<migrate::Migrati
 
 /// Junction migration phase 2: copy + per-file diff (non-destructive).
 #[tauri::command]
-async fn migrate_copy(
-    source: String,
-    target: String,
-) -> Result<migrate::MigrationCopyReport, String> {
-    tauri::async_runtime::spawn_blocking(move || migrate::copy_phase(&source, &target))
+fn begin_migrate_copy(source: String, target: String) -> Result<u32, String> {
+    migrate::copy_operation::begin(source, target)
+}
+
+#[tauri::command]
+async fn migrate_copy(operation_id: u32) -> Result<migrate::MigrationCopyReport, String> {
+    let operation = migrate::copy_operation::Operation::claim(operation_id)?;
+    tauri::async_runtime::spawn_blocking(move || operation.run())
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1177,11 +1180,10 @@ async fn scan_portable_candidates() -> Result<portable::PortableScanResult, Stri
         .map_err(|e| e.to_string())
 }
 
-/// Request cancellation of an in-flight migration copy pass.
+/// Cancel the specified queued or running migration copy.
 #[tauri::command]
-async fn cancel_migrate_copy() -> Result<(), String> {
-    migrate::request_copy_cancel();
-    Ok(())
+fn cancel_migrate_copy(operation_id: u32) -> Result<(), String> {
+    migrate::copy_operation::cancel(operation_id)
 }
 
 /// Remove npm global packages (Safety Vault backup first; admission strict).
@@ -1578,6 +1580,7 @@ pub fn run() {
         // `scan_cli_globals`
         // `remove_npm_globals`
         // `migrate_plan`
+        // `begin_migrate_copy`
         // `migrate_copy`
         // `migrate_cutover`
         // `migrate_finish`
@@ -1672,6 +1675,7 @@ pub fn run() {
             scan_cli_globals,
             remove_npm_globals,
             migrate_plan,
+            begin_migrate_copy,
             migrate_copy,
             migrate_cutover,
             migrate_finish,

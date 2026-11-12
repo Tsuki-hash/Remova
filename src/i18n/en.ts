@@ -228,6 +228,7 @@ export const dict: EnDict = {
     migrateRollbackFailed: "Rollback failed",
     migrateCancelled: "Migration cancelled",
     migrateCancelCopy: "Cancel copy",
+    migrateCopyBusy: "Too many migration copy requests are active. Try again when a copy ends.",
     migrateStateInconsistent:
       "Inconsistent migration state: the source, backup and target do not match any known phase. Inspect them manually before acting.",
     backendCleanupCancelledBackup: "The operation was cancelled during backup; nothing was changed",
