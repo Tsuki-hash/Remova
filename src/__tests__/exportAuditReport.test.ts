@@ -64,10 +64,42 @@ describe("buildAuditJson", () => {
     expect(summary.report).toMatchObject({ backup_present: true, backup_verified: false, error_count: 1 });
     expect(JSON.stringify(summary)).not.toContain("Relocated");
     expect(buildAuditMarkdown(input, 0, null, options)).not.toContain("Relocated");
-    expect(buildAuditMarkdown(input, 0, null)).toContain(`Backup: unverified · ${path}`);
+    expect(buildAuditMarkdown(input, 0, null)).toContain(`Backup: unverified · ${path.replaceAll("\\", "\\\\")}`);
     expect(buildAuditMarkdown(report({ backup_verified: true }), 0, null)).toContain("Backup: verified");
-    expect(buildAuditJson(input, 0, null, { includeUserPaths: true }).report).toEqual(input);
+    expect(buildAuditJson(input, 0, null, { includeUserPaths: true }).report).toEqual({ ...input, uninstall_status: "ok" });
   });
+});
+
+it.each([
+  [{ uninstall_ok: true, uninstall_message: "cleanup cancelled", aborted: true }, "ok", "ok"],
+  [{ uninstall_ok: false, uninstall_message: "skipped" }, "skipped", "skipped"],
+  [{ uninstall_ok: false, uninstall_message: "no uninstall string" }, "skipped", "skipped"],
+  [{ uninstall_ok: false, uninstall_message: "no items", aborted: true }, "skipped", "skipped"],
+  [{ uninstall_ok: false, uninstall_message: "backup failed", aborted: true }, "not_run", "not run"],
+  [{ uninstall_ok: false, uninstall_message: "system reboot pending; uninstall skipped", aborted: true }, "not_run", "not run"],
+  [{ uninstall_ok: false, dry_run: true }, "not_run", "not run (dry run)"],
+  [{ uninstall_ok: false, uninstall_message: "uninstaller exited with Some(1603)", aborted: true,
+    errors: ["official uninstaller failed; leftover cleanup skipped"] }, "failed", "failed"],
+] as const)("preserves the official uninstaller outcome for %j", (over, status, label) => {
+  const input = report({ ...over, ...("errors" in over ? { errors: [...over.errors] } : {}) } as Partial<FullCleanupReport>);
+  for (const summaryOnly of [false, true]) {
+    expect(buildAuditJson(input, 0, null, { summaryOnly }).report).toHaveProperty("uninstall_status", status);
+    expect(buildAuditMarkdown(input, 0, null, { summaryOnly })).toContain(`- Uninstall: ${label}\n`);
+  }
+});
+
+it("keeps pipes, newlines and markup in a single Markdown table row", () => {
+  const input = report({
+    app_name: "Example\r\n| injected",
+    item_details: [{ kind: "registry", status: "deleted", path: String.raw`HKCU\Software\Vendor|Entry`,
+      message: "First\r\n<script>alert(1)</script> & next\rline" }],
+  });
+  const output = buildAuditMarkdown(input, 0, null);
+  expect(output).toContain("# Remova audit — Example ↵ &#124; injected");
+  const row = output.split("\n").find(line => line.startsWith("| registry"));
+  expect(row?.split("|")).toHaveLength(6);
+  expect(row).toContain(String.raw`HKCU\\Software\\Vendor&#124;Entry`);
+  expect(row).toContain("First ↵ &lt;script&gt;alert(1)&lt;/script&gt; &amp; next ↵ line");
 });
 
 it("redacts profile names beyond the canonical Users spelling", async () => {

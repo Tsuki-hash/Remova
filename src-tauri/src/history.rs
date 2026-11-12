@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::{BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,9 +23,8 @@ pub struct HistoryEntry {
     pub created_at: String,
 }
 
-/// Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
-const HISTORY_SOFT_CAP: u64 = 2 * 1024 * 1024;
-const HISTORY_KEEP_LINES: usize = 2000;
+const HISTORY_MAX_BYTES: usize = 2 * 1024 * 1024;
+const HISTORY_MAX_ROWS: usize = 2000;
 
 #[cfg(test)]
 thread_local! {
@@ -118,31 +117,86 @@ fn resecure_history(p: &Path) {
     }
 }
 
-/// Rewrite `p` keeping only the newest `keep` non-empty lines. Streams the file
-/// one line at a time through a ring buffer — memory is O(keep), never O(file)
-/// (also removes the old unbounded whole-file read on oversize).
+fn history_requires_compaction(
+    reader: &mut BufReader<fs::File>,
+    incoming: usize,
+) -> io::Result<bool> {
+    let available = HISTORY_MAX_BYTES - incoming;
+    if reader.get_ref().metadata()?.len() > available as u64 {
+        return Ok(true);
+    }
+    let mut rows = 0;
+    let mut bytes = 0;
+    let mut complete = true;
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            return Ok(!complete);
+        }
+        rows += chunk.iter().filter(|&&byte| byte == b'\n').count();
+        bytes += chunk.len();
+        if rows >= HISTORY_MAX_ROWS || bytes > available {
+            return Ok(true);
+        }
+        complete = chunk.last() == Some(&b'\n');
+        let consumed = chunk.len();
+        reader.consume(consumed);
+    }
+}
+
+/// Publish the newest valid rows and the incoming row together. Limit both the
+/// retained tail and the buffer for any single row, including malformed rows.
 /// Caller must hold [`FILE_LOCK`].
-fn compact_keep_newest(p: &Path, keep: usize) -> std::io::Result<()> {
-    let file = fs::File::open(p)?;
-    let reader = std::io::BufReader::new(file);
-    let mut ring: VecDeque<String> = VecDeque::new();
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
+fn compact_with_append(
+    p: &Path,
+    mut reader: BufReader<fs::File>,
+    incoming: &str,
+) -> io::Result<()> {
+    let available = HISTORY_MAX_BYTES - (incoming.len() + 1);
+    let mut ring: VecDeque<Vec<u8>> = VecDeque::new();
+    let mut retained_bytes = 0;
+    let mut raw = Vec::new();
+    reader.rewind()?;
+    loop {
+        raw.clear();
+        if reader
+            .by_ref()
+            .take((available + 1) as u64)
+            .read_until(b'\n', &mut raw)?
+            == 0
+        {
+            break;
+        }
+        if raw.len() > available {
+            if raw.last() != Some(&b'\n') {
+                reader.skip_until(b'\n')?;
+            }
             continue;
         }
-        if ring.len() == keep {
-            ring.pop_front();
+        if raw.last() != Some(&b'\n') {
+            // A complete final JSON value may have no line terminator.
+            raw.push(b'\n');
         }
-        ring.push_back(line);
+        if raw.len() > available
+            || !std::str::from_utf8(history_line(&raw))
+                .is_ok_and(|line| serde_json::from_str::<HistoryEntry>(line).is_ok())
+        {
+            continue;
+        }
+        retained_bytes += raw.len();
+        ring.push_back(std::mem::take(&mut raw));
+        while ring.len() >= HISTORY_MAX_ROWS || retained_bytes > available {
+            retained_bytes -= ring.pop_front().unwrap().len();
+        }
     }
+    drop(reader);
     let (tmp, out) = crate::fsutil::create_atomic_tmp(p)?;
-    let result = (|| -> std::io::Result<()> {
+    let result = (|| -> io::Result<()> {
         let mut w = BufWriter::new(out);
         for l in &ring {
-            writeln!(w, "{l}")?;
+            w.write_all(l)?;
         }
-        w.flush()?;
+        writeln!(w, "{incoming}")?;
         w.into_inner()?.sync_all()?;
         fs::rename(&tmp, p)
     })();
@@ -164,9 +218,9 @@ pub fn append(
     aborted: bool,
     dry_run: bool,
     backup_dir: &str,
-) -> bool {
+) -> Result<(), String> {
     if dry_run {
-        return true;
+        return Ok(());
     }
     let entry = HistoryEntry {
         id: String::new(),
@@ -180,31 +234,36 @@ pub fn append(
         backup_dir: backup_dir.into(),
         created_at: unix_now_secs(),
     };
-    let line = match serde_json::to_string(&entry) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+    let line =
+        serde_json::to_string(&entry).map_err(|e| format!("cannot encode history row: {e}"))?;
+    let incoming = line.len() + 1;
+    if incoming > HISTORY_MAX_BYTES {
+        return Err("history row exceeds the history size limit".into());
+    }
     let p = history_path();
     let _g = lock_file();
     // The history file lives under the shared ProgramData tree. A local user can
     // pre-plant a junction there; writing through it from an elevated Remova
     // would append outside the intended directory. Pin the ancestor chain before
     // the reparse check so a swap after the check is refused.
-    let _pins = match pin_history_path(&p) {
-        Ok(pins) => pins,
-        Err(e) => {
-            eprintln!("cleanup history refused: {e}");
-            return false;
+    let _pins = pin_history_path(&p).map_err(|e| format!("history path refused: {e}"))?;
+    #[cfg(windows)]
+    let existing = crate::fsutil::open_local_regular_file(&p);
+    #[cfg(not(windows))]
+    let existing = fs::File::open(&p);
+    match existing {
+        Ok(file) => {
+            let mut reader = BufReader::new(file);
+            if history_requires_compaction(&mut reader, incoming)
+                .map_err(|e| format!("could not inspect history: {e}"))?
+            {
+                return compact_with_append(&p, reader, &line)
+                    .map_err(|e| format!("history compaction failed: {e}"));
+            }
         }
-    };
-    // Soft cap: compact when the log grows past 2 MiB (keep newest 2000 rows).
-    if let Ok(meta) = fs::metadata(&p) {
-        if meta.len() > HISTORY_SOFT_CAP {
-            // streaming compact — no whole-file read.
-            let _ = compact_keep_newest(&p, HISTORY_KEEP_LINES);
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("could not open history: {error}")),
     }
-    use std::io::Write;
     let mut opts = fs::OpenOptions::new();
     opts.create(true).append(true);
     #[cfg(windows)]
@@ -218,18 +277,14 @@ pub fn append(
         opts.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
         opts.share_mode(0x0000_0003); // FILE_SHARE_READ | FILE_SHARE_WRITE
     }
-    if let Ok(mut f) = opts.open(&p) {
-        // A failed write is a lost history row — report it, never claim success.
-        let wrote = writeln!(f, "{line}").is_ok();
-        if wrote {
-            if let Err(e) = crate::backup::secure_private_path(&p) {
-                eprintln!("cleanup history written but not made private: {e}");
-            }
-        }
-        drop(f);
-        return wrote;
+    let mut f = opts
+        .open(&p)
+        .map_err(|e| format!("could not open history: {e}"))?;
+    writeln!(f, "{line}").map_err(|e| format!("could not write history row: {e}"))?;
+    if let Err(e) = crate::backup::secure_private_path(&p) {
+        eprintln!("cleanup history written but not made private: {e}");
     }
-    false
+    Ok(())
 }
 
 /// Read the newest `limit` rows. A missing file is an empty history; an
@@ -413,6 +468,22 @@ fn unix_now_secs() -> String {
 mod tests {
     use std::collections::HashMap;
 
+    fn row(app_name: &str) -> String {
+        serde_json::to_string(&super::HistoryEntry {
+            id: String::new(),
+            app_name: app_name.into(),
+            deleted: 1,
+            failed: 0,
+            skipped: 0,
+            delayed: 0,
+            aborted: false,
+            dry_run: false,
+            backup_dir: String::new(),
+            created_at: "1".into(),
+        })
+        .unwrap()
+    }
+
     #[cfg(windows)]
     #[test]
     fn history_write_preserves_preexisting_temporary_file() {
@@ -441,11 +512,13 @@ mod tests {
     #[test]
     fn compact_keep_newest_preserves_preexisting_temporary_file() {
         use std::os::windows::fs::OpenOptionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("remova-r23-history-compact-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("history.jsonl");
-        std::fs::write(&path, "{\"id\":\"L1\"}\n{\"id\":\"L2\"}\n").unwrap();
+        let dir = crate::test_support::TempDir::new("history-compact-temp");
+        dir.subdir("Remova");
+        let _dir = super::use_history_dir(dir.path());
+        let path = super::history_path();
+        let previous = row("Previous");
+        // A valid unterminated last record forces the append to compact.
+        std::fs::write(&path, &previous).unwrap();
         let tmp = path.with_extension(format!("jsonl.{}.tmp", std::process::id()));
         std::fs::write(&tmp, "old partial").unwrap();
         // Deny writes to the pre-existing file.
@@ -454,11 +527,13 @@ mod tests {
             .share_mode(0x1 | 0x4)
             .open(&tmp)
             .unwrap();
-        super::compact_keep_newest(&path, 1).unwrap();
+        super::append("New", 1, 0, 0, 0, false, false, "").unwrap();
         assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "old partial");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"id\":\"L2\"}\n");
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with(&format!("{previous}\n")));
+        assert_eq!(super::load_checked(10).unwrap().len(), 2);
         drop(held);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -506,21 +581,90 @@ mod tests {
         assert_eq!(super::next_line_id(&mut fresh, "{\"app_name\":\"a\"}"), a0);
     }
 
-    /// streaming compact keeps only the newest N non-empty lines.
     #[test]
-    fn compact_keep_newest_keeps_tail() {
-        let tmp = std::env::temp_dir().join(format!("remova_hist_c_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let p = tmp.join("history.jsonl");
-        std::fs::write(&p, "l1\nl2\nl3\nl4\n\nl5\n").unwrap();
-        super::compact_keep_newest(&p, 3).unwrap();
-        let s = std::fs::read_to_string(&p).unwrap();
-        assert_eq!(s, "l3\nl4\nl5\n");
-        // Keeping more than present is a no-op.
-        super::compact_keep_newest(&p, 10).unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "l3\nl4\nl5\n");
-        let _ = std::fs::remove_dir_all(&tmp);
+    fn compact_discards_malformed_and_oversized_rows_and_respects_byte_limit() {
+        let dir = crate::test_support::TempDir::new("history-compact-bytes");
+        dir.subdir("Remova");
+        let _dir = super::use_history_dir(dir.path());
+        let path = super::history_path();
+        let older = row(&"A".repeat(super::HISTORY_MAX_BYTES / 2));
+        let newest_name = "B".repeat(super::HISTORY_MAX_BYTES / 2);
+        let newest = row(&newest_name);
+        let mut bytes = vec![0xff, b'\n'];
+        bytes.extend_from_slice(format!("{older}\n").as_bytes());
+        bytes.extend_from_slice(b"\xff\n");
+        bytes.extend(std::iter::repeat_n(b'x', super::HISTORY_MAX_BYTES + 1));
+        bytes.extend_from_slice(format!("\n{newest}\r\n{{invalid}}\n").as_bytes());
+        bytes.push(0xfe); // torn invalid UTF-8 tail without a terminator
+        std::fs::write(&path, bytes).unwrap();
+
+        super::append("New", 1, 0, 0, 0, false, false, "").unwrap();
+        let retained = std::fs::read(&path).unwrap();
+        assert!(retained.len() <= super::HISTORY_MAX_BYTES);
+        assert!(retained.starts_with(format!("{newest}\r\n").as_bytes()));
+        let rows = super::load_checked(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].app_name, "New");
+        assert_eq!(rows[1].app_name, newest_name);
+        assert!(super::append(
+            &"C".repeat(super::HISTORY_MAX_BYTES),
+            1,
+            0,
+            0,
+            0,
+            false,
+            false,
+            ""
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), retained);
+    }
+
+    #[test]
+    fn compact_respects_row_limit_below_byte_limit() {
+        let dir = crate::test_support::TempDir::new("history-compact-rows");
+        dir.subdir("Remova");
+        let _dir = super::use_history_dir(dir.path());
+        let path = super::history_path();
+        let mut previous = String::new();
+        for i in 0..super::HISTORY_MAX_ROWS {
+            previous.push_str(&row(&i.to_string()));
+            previous.push('\n');
+        }
+        assert!(previous.len() < super::HISTORY_MAX_BYTES);
+        std::fs::write(&path, previous).unwrap();
+
+        super::append("New", 1, 0, 0, 0, false, false, "").unwrap();
+        let rows = super::load_checked(super::HISTORY_MAX_ROWS + 1).unwrap();
+        assert_eq!(rows.len(), super::HISTORY_MAX_ROWS);
+        assert_eq!(rows[0].app_name, "New");
+        assert_eq!(rows[1].app_name, (super::HISTORY_MAX_ROWS - 1).to_string());
+        assert_eq!(rows.last().unwrap().app_name, "1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn compaction_failure_is_reported_and_keeps_prior_history() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = crate::test_support::TempDir::new("history-compact-refused");
+        dir.subdir("Remova");
+        let _dir = super::use_history_dir(dir.path());
+        let path = super::history_path();
+        let previous = row("Previous");
+        std::fs::write(&path, &previous).unwrap();
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2) // block the final rename
+            .open(&path)
+            .unwrap();
+
+        let error = super::append("New", 1, 0, 0, 0, false, false, "").unwrap_err();
+        assert!(error.starts_with("history compaction failed:"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), previous);
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
     }
 
     /// Disk round-trip under a temp PROGRAMDATA (does not touch the real history file).
@@ -534,9 +678,9 @@ mod tests {
         let p = super::history_path();
         assert!(p.starts_with(tmp.path()));
 
-        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
-        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
-        assert!(super::append("B", 2, 0, 0, 0, false, false, r"C:\b"));
+        super::append("A", 1, 0, 0, 0, false, false, r"C:\b").unwrap();
+        super::append("A", 1, 0, 0, 0, false, false, r"C:\b").unwrap();
+        super::append("B", 2, 0, 0, 0, false, false, r"C:\b").unwrap();
         let rows = super::load(10);
         assert_eq!(rows.len(), 3);
         assert_ne!(rows[0].id, rows[1].id, "identical rows need distinct ids");
@@ -554,7 +698,7 @@ mod tests {
     fn deletes_the_selected_occurrence_in_mixed_lf_and_crlf_history() {
         let tmp = crate::test_support::TempDir::new("history_mixed_endings");
         let _dir = super::use_history_dir(tmp.path());
-        assert!(super::append("First", 1, 0, 0, 0, false, false, ""));
+        super::append("First", 1, 0, 0, 0, false, false, "").unwrap();
         let path = super::history_path();
         let sample = std::fs::read_to_string(&path).unwrap();
         let row = sample.strip_suffix('\n').unwrap();
@@ -634,8 +778,8 @@ mod tests {
         let _dir = super::use_history_dir(tmp.path());
         let p = super::history_path();
 
-        assert!(super::append("A", 1, 0, 0, 0, false, false, r"C:\b"));
-        assert!(super::append("B", 2, 0, 0, 0, false, false, r"C:\b"));
+        super::append("A", 1, 0, 0, 0, false, false, r"C:\b").unwrap();
+        super::append("B", 2, 0, 0, 0, false, false, r"C:\b").unwrap();
         // Inject a torn non-UTF-8 line between the two good rows.
         let lines = std::fs::read(&p).unwrap();
         let split = lines.iter().position(|&b| b == b'\n').unwrap();

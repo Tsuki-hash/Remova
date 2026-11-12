@@ -1096,6 +1096,7 @@ export const dict: EnDict = {
     backendNativeDeleted: "System entry deleted",
     backendNativeDeleteFailed: "Could not delete the system entry; it may already be absent",
     backendTechnicalDetails: "Technical details",
+    cleanupHistorySaveFailed: "This cleanup could not be saved to history.",
     stageIdentify: "Identify install",
     stageOfficial: "Launch official uninstaller",
     stageScanLeftover: "Scan files & registry",

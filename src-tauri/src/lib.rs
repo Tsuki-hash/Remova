@@ -808,8 +808,8 @@ async fn run_full_cleanup(
     let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
     authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let report = executor::run_full_cleanup(&app, &items, &options);
-        if !history::append(
+        let mut report = executor::run_full_cleanup(&app, &items, &options);
+        if let Err(error) = history::append(
             &report.app_name,
             report.deleted,
             report.failed,
@@ -819,7 +819,9 @@ async fn run_full_cleanup(
             report.dry_run,
             &report.backup_dir,
         ) {
-            eprintln!("cleanup completed, but history append failed");
+            let error = format!("cleanup history could not be saved: {error}");
+            eprintln!("{error}");
+            report.errors.push(error);
         }
         report
     })

@@ -35,12 +35,23 @@ export type AuditExportOptions = {
   includeUserPaths?: boolean;
 };
 
+function uninstallStatus(report: FullCleanupReport) {
+  if (report.dry_run) return "not_run";
+  if (report.uninstall_ok) return "ok";
+  if (["skipped", "no items", "no uninstall string"].includes(report.uninstall_message)) return "skipped";
+  // The executor marks the official-uninstaller failure branch separately
+  // from early exits during backup, cancellation, or the reboot check.
+  if (report.aborted && !report.errors.includes("official uninstaller failed; leftover cleanup skipped")) return "not_run";
+  return "failed";
+}
+
 function summarizeReport(report: FullCleanupReport) {
   return {
     dry_run: report.dry_run,
     backup_present: Boolean(report.backup_dir),
     backup_verified: report.backup_verified,
     uninstall_ok: report.uninstall_ok,
+    uninstall_status: uninstallStatus(report),
     deleted: report.deleted,
     failed: report.failed,
     skipped: report.skipped,
@@ -65,9 +76,10 @@ export function buildAuditJson(
   reviewReason?: "insufficient" | "incomplete",
 ) {
   const summaryOnly = options.summaryOnly === true;
-  const body = summaryOnly
-    ? summarizeReport(report)
-    : options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport;
+  const body = summaryOnly ? summarizeReport(report) : {
+    ...(options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport),
+    uninstall_status: uninstallStatus(report),
+  };
   return {
     exported_at: new Date().toISOString(),
     kind: "remova-audit-report",
@@ -107,6 +119,14 @@ function reviewLine(
   return `- Review: ${converged ? REVIEW_TEXT.converged : REVIEW_TEXT.open} (${rounds} rounds)`;
 }
 
+const markdownUninstallStatus = { ok: "ok", failed: "failed", skipped: "skipped", not_run: "not run" };
+
+function markdownInline(value: string) {
+  return value.replace(/\r\n|[\r\n\u2028\u2029]/g, " ↵ ")
+    .replace(/[\\`#*_~[\]]/g, "\\$&")
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("|", "&#124;");
+}
+
 /** Markdown rendering of the same evidence (per-item rows in full mode). */
 export function buildAuditMarkdown(
   report: FullCleanupReport,
@@ -118,12 +138,12 @@ export function buildAuditMarkdown(
   const summaryOnly = options.summaryOnly === true;
   const r = summaryOnly || options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport;
   const backupStatus = !r.backup_dir ? "none" : r.backup_verified === true ? "verified" : "unverified";
-  const backupLocation = !summaryOnly && r.backup_dir ? ` · ${r.backup_dir}` : "";
+  const backupLocation = !summaryOnly && r.backup_dir ? ` · ${markdownInline(r.backup_dir)}` : "";
   const head = [
-    summaryOnly ? "# Remova audit summary" : `# Remova audit — ${r.app_name}`,
+    summaryOnly ? "# Remova audit summary" : `# Remova audit — ${markdownInline(r.app_name)}`,
     "",
     `- Exported: ${new Date().toISOString()}`,
-    `- Uninstall: ${r.uninstall_ok ? "ok" : "failed"}${r.dry_run ? " (dry run)" : ""}`,
+    `- Uninstall: ${markdownUninstallStatus[uninstallStatus(report)]}${r.dry_run ? " (dry run)" : ""}`,
     `- Deleted: ${r.deleted} · Failed: ${r.failed} · Skipped: ${r.skipped}${r.delayed ? ` · Reboot-delayed: ${r.delayed}` : ""}`,
     `- Backup: ${backupStatus}${backupLocation}`,
     reviewLine(reviewRounds, reviewConverged, reviewReason),
@@ -133,7 +153,7 @@ export function buildAuditMarkdown(
     return head.join("\n");
   }
   const rows = (r.item_details || [])
-    .map((d) => `| ${d.kind} | ${d.status} | ${d.path} | ${d.message} |`)
+    .map((d) => `| ${[d.kind, d.status, d.path, d.message].map(markdownInline).join(" | ")} |`)
     .join("\n");
   return [
     ...head,

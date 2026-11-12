@@ -135,6 +135,11 @@ export function ReportPanel({
           </div>}
         </div>
       )}
+      {report.errors.some(error => error.startsWith("cleanup history could not be saved:")) && (
+        <div role="status" style={{ marginTop: 8, color: "var(--warn-ink)" }}>
+          {L.cleanupHistorySaveFailed}
+        </div>
+      )}
       {"deleted" in report &&
       (report.reclaimed_kb || report.kept_kb || report.delayed_kb) ? (
         <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>

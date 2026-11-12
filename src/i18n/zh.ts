@@ -1077,6 +1077,7 @@ export const dict = {
     backendNativeDeleted: "已删除系统条目",
     backendNativeDeleteFailed: "无法删除系统条目，或条目已不存在",
     backendTechnicalDetails: "技术详情",
+    cleanupHistorySaveFailed: "本次清理未能写入历史记录。",
     stageIdentify: "识别安装信息",
     stageOfficial: "启动官方卸载程序",
     stageScanLeftover: "扫描文件与注册表",

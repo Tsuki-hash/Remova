@@ -33,6 +33,18 @@ it.each(["zh", "en"] as const)("separates official success from remaining scan s
   view.rerender(<ReportPanel {...props} report={{ ...report, aborted: true }} />);
   expect(screen.queryByRole("status")).toBeNull();
 });
+it.each(["zh", "en"] as const)("shows a history write warning alongside a successful cleanup in %s", lang => {
+  setLang(lang);
+  const error = "cleanup history could not be saved: history compaction failed: access denied";
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: true,
+    uninstall_message: "", deleted: 1, failed: 0, skipped: 0, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", errors: [error], item_details: [] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  expect(screen.getByText(t().uninstallOk)).toBeTruthy();
+  expect(screen.getByText(t().cleanupHistorySaveFailed).getAttribute("role")).toBe("status");
+  expect(screen.getByText(error).tagName).toBe("PRE");
+});
 it.each(["zh", "en"] as const)("separates pending reboot counts and never claims partial cleanup is complete in %s", lang => {
   setLang(lang);
   const base: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",
