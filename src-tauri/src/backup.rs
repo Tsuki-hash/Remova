@@ -353,8 +353,12 @@ pub fn create_session(app_name: &str) -> std::io::Result<PathBuf> {
 }
 
 fn reg_view_flag(key_path: &str) -> &'static str {
-    let low = key_path.to_uppercase().replace('/', "\\");
-    if low.starts_with("HKLM32\\") || low.contains("\\WOW6432NODE\\") {
+    // An explicit Wow6432Node is a path component in the selected view.
+    // Use the same view as the native reader and deleter.
+    if key_path
+        .split_once('\\')
+        .is_some_and(|(alias, _)| alias.eq_ignore_ascii_case("HKLM32"))
+    {
         "/reg:32"
     } else {
         "/reg:64"
@@ -400,6 +404,11 @@ fn safe_name(path: &str) -> String {
         name.trim_end_matches(['.', ' ']),
         crate::fsutil::fnv1a64(path)
     )
+}
+
+pub(crate) fn registry_restore_snapshot(path: &str, value: bool) -> String {
+    let filename = if value { "value.reg" } else { "export.reg" };
+    format!("registry/{}/{filename}", safe_name(path))
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -807,15 +816,15 @@ fn backup_item_with_map(
         ItemKind::Path => Ok(()), // staged together before any per-item backup
         ItemKind::Registry => {
             // Run/RunOnce values (`key|ValueName`): export the parent key so restore can recreate the value.
-            let export_path = if let Some((parent, _val)) = item.path.split_once('|') {
-                parent
+            let value = if item.path.contains('|') {
+                Some(crate::regops::split_value_path(&item.path).ok_or_else(|| {
+                    crate::error::backup_value_reg_err("invalid registry value path").to_ipc()
+                })?)
             } else {
-                item.path.as_str()
+                None
             };
-            let dest = session
-                .join("registry")
-                .join(safe_name(&item.path))
-                .join("export.reg");
+            let export_path = value.map_or(item.path.as_str(), |(parent, _)| parent);
+            let dest = session.join(registry_restore_snapshot(&item.path, false));
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
@@ -873,7 +882,7 @@ fn backup_item_with_map(
             }
             // The view belongs inside the authenticated export bytes; an
             // unsigned sidecar could redirect a sealed backup to another hive view.
-            if !item.path.contains('|') {
+            if value.is_none() {
                 let size = fs::metadata(&dest).map_err(|err| err.to_string())?.len();
                 crate::restore::RegistryRestoreBudget::default().add(&item.path, size)?;
             }
@@ -882,13 +891,16 @@ fn backup_item_with_map(
                 export_with_view(&raw, reg_view_flag(export_path).trim_start_matches("/reg:"))?;
             write_bytes_atomic(&dest, &crate::restore::encode_reg_text(&text))?;
             // Record the specific value name for Run items so restore knows what was targeted.
-            if let Some((key, vname)) = item.path.split_once('|') {
-                let dir = session.join("registry").join(safe_name(&item.path));
+            if let Some((key, vname)) = value {
+                let value_file = session.join(registry_restore_snapshot(&item.path, true));
+                let dir = value_file
+                    .parent()
+                    .ok_or("registry backup directory missing")?;
                 let meta = dir.join("value.txt");
                 write_bytes_atomic(&meta, item.path.as_bytes())
                     .map_err(|e| crate::error::backup_reg_err(e.to_string()).to_ipc())?;
                 // value.reg must succeed so restore can be single-value (not whole key).
-                match crate::regops::export_reg_value(key, vname, &dir.join("value.reg")) {
+                match crate::regops::export_reg_value(key, vname, &value_file) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Err(crate::error::backup_value_reg_err(format!(
@@ -1119,7 +1131,7 @@ mod tests {
     #[test]
     fn reg_view_flags() {
         assert_eq!(reg_view_flag(r"HKLM32\SOFTWARE\Foo"), "/reg:32");
-        assert_eq!(reg_view_flag(r"HKLM\SOFTWARE\WOW6432Node\Foo"), "/reg:32");
+        assert_eq!(reg_view_flag(r"HKLM\SOFTWARE\WOW6432Node\Foo"), "/reg:64");
         assert_eq!(reg_view_flag(r"HKCU\SOFTWARE\Foo"), "/reg:64");
     }
 

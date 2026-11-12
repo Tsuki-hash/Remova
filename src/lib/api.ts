@@ -233,7 +233,9 @@ export const api = {
   deleteHistory: (ids: string[]) => invoke<number>("delete_cleanup_history", { ids }),
   clearHistory: () => invoke("clear_cleanup_history"),
   backupSessions: () => invoke<BackupSession[]>("list_backup_sessions"),
-  previewRestore: (name: string) => invoke<RestorePreview>("preview_restore_session", { name }),
+  previewRestore: (name: string, operationId: string) =>
+    invoke<RestorePreview>("preview_restore_session", { name, operationId }),
+  cancelRestorePreview: (operationId: string) => invoke<boolean>("cancel_restore_preview", { operationId }),
   deleteBackupSession: (name: string, expectedStatus?: "verified" | "unsealed") =>
     invoke("delete_backup_session", { name, expectedStatus }),
   restoreSessionByName: (name: string, operationId?: string) =>

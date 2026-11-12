@@ -10,10 +10,14 @@ import { isNamedStreamRefusal } from "../lib/backendText";
 
 const restoreResultPrefixes = [
   ["restored PATH entry ", "restoreDone", true],
+  ["restored PATH scope: ", "restoreDone", true],
   ["restored ", "restoreDone", true],
   ["imported ", "restoreDone", true],
   ["PATH entry already present: ", "restoreAlreadyPresent", true],
+  ["PATH scope already matches backup: ", "restoreAlreadyPresent", true],
+  ["skipped changed PATH scope: ", "restorePathScopeChanged", false],
   ["PATH restore failed for ", "restorePathFailed", false],
+  ["PATH scope restore failed for ", "restorePathScopeFailed", false],
   ["registry import failed ", "restoreImportFailed", false],
   ["restore directory may be incomplete: ", "restoreDirectoryIncomplete", false],
   ["restore failed for ", "restoreFileFailed", false],
@@ -89,11 +93,20 @@ export function useMoreRestore(onError: (msg: string) => void) {
     setPreviewError(null);
     setPreviewLoading(!!restorePick && openRestore);
     if (restorePick && openRestore) {
-      void api.previewRestore(restorePick).then(preview => {
+      const id = crypto.randomUUID();
+      let settled = false;
+      void api.previewRestore(restorePick, id).then(preview => {
         if (current && sequence === previewSequence.current) setRestorePreview(preview);
       }).catch(error => {
         if (current && sequence === previewSequence.current) setPreviewError(formatError(error));
-      }).finally(() => { if (current && sequence === previewSequence.current) setPreviewLoading(false); });
+      }).finally(() => {
+        settled = true;
+        if (current && sequence === previewSequence.current) setPreviewLoading(false);
+      });
+      return () => {
+        current = false;
+        if (!settled) void api.cancelRestorePreview(id).catch(() => {});
+      };
     }
     return () => { current = false; };
   }, [restorePick, openRestore, previewTick]);
@@ -173,7 +186,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       setPreviewLoading(true);
       let preview: RestorePreview;
       try {
-        preview = await api.previewRestore(restorePick);
+        preview = await api.previewRestore(restorePick, crypto.randomUUID());
       } catch (error) {
         // A failed pre-confirm preview owns its own surface (alert + retry);
         // the restore-result block must stay reserved for a confirmed run.

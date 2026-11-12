@@ -370,6 +370,8 @@ export const dict: EnDict = {
     restoreSessionInvalid: "This backup could not be verified. Automatic restore is unavailable.",
     restoreSessionLegacy: "Older backup format. Inspect its files manually in the backup folder.",
     restorePathFailed: "PATH entry could not be restored",
+    restorePathScopeChanged: "PATH no longer matches the backed-up state. The current scope was kept",
+    restorePathScopeFailed: "PATH scope could not be restored",
     restoreSelect: "Select a session to restore",
     restorePreviewTitle: "Restore preview",
     restoreCreated: "Backed up",

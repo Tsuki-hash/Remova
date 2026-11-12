@@ -1,7 +1,10 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { currentLang, formatSize, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { RestorePreview } from "../lib/api";
 import { backupDeleteExpectation, backupSessionStatus, canPreviewBackup, type BackupSession } from "../lib/backupSession";
+
+type ActionFocus = { opener: HTMLButtonElement; nearby: string[] };
 
 export function RestorePanel({
   sessions,
@@ -40,11 +43,43 @@ export function RestorePanel({
   runningRestore?: string | null;
   cancelRequested?: boolean;
   onCancelRestore?: () => void;
-  onRun: () => void;
-  onDelete: (name: string) => void;
+  onRun: () => void | Promise<void>;
+  onDelete: (name: string) => void | Promise<void>;
   onClose: () => void;
 }) {
   const L = t();
+  const panel = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  const [actionFocus, setActionFocus] = useState<ActionFocus | null>(null);
+  useLayoutEffect(() => {
+    if (busy || !actionFocus) return;
+    setActionFocus(null);
+    const { opener, nearby } = actionFocus;
+    if (opener.ownerDocument.activeElement !== opener.ownerDocument.body) return;
+    if (opener.isConnected && !opener.disabled) {
+      opener.focus();
+      return;
+    }
+    const rows = new Map(Array.from(panel.current?.querySelectorAll<HTMLElement>("[data-backup-session]") ?? [],
+      (row) => [row.dataset.backupSession, row]));
+    for (const name of nearby) {
+      const control = rows.get(name)?.querySelector<HTMLElement>("input:enabled, button:enabled");
+      if (control) {
+        control.focus();
+        return;
+      }
+    }
+    title.current?.focus();
+  }, [actionFocus, busy]);
+
+  const actFrom = async (opener: HTMLButtonElement, action: () => void | Promise<void>, nearby: string[] = []) => {
+    try {
+      await action();
+    } finally {
+      setActionFocus({ opener, nearby });
+    }
+  };
+
   const selectable = sessions.some(canPreviewBackup);
   const selected = sessions.some(session => session.name === pick && canPreviewBackup(session));
   const selectedPreview = selected && preview?.name === pick ? preview : null;
@@ -63,15 +98,15 @@ export function RestorePanel({
   const previewEntries = [...(selectedPreview?.entries ?? [])]
     .sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
   return (
-    <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
+    <div ref={panel} style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 8 }}>
-        <strong>{L.safetyVaultTitle}</strong>
+        <h2 ref={title} tabIndex={-1} style={{ margin: 0, fontSize: "inherit" }}>{L.safetyVaultTitle}</h2>
         <span style={css.muted}>{L.safetyVaultHint}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
             style={{ ...css.btn, height: 32, opacity: canRestore ? 1 : 0.5 }}
             disabled={!canRestore}
-            onClick={onRun}
+            onClick={(event) => void actFrom(event.currentTarget, onRun)}
           >
             {L.restoreRun}
           </button>
@@ -98,7 +133,7 @@ export function RestorePanel({
         <>
           {selectable && <div style={{ ...css.muted, marginBottom: 6 }}>{L.restoreSelect}</div>}
           <div style={{ maxHeight: 220, overflow: "auto" }}>
-            {sessions.map((s) => {
+            {sessions.map((s, index) => {
               const status = backupSessionStatus(s);
               const verified = selectedPreview?.name === s.name;
               const size = s.size_kb ?? (verified ? selectedPreview.size_kb : null);
@@ -113,6 +148,7 @@ export function RestorePanel({
               return (
               <div
                 key={s.name}
+                data-backup-session={s.name}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -144,7 +180,10 @@ export function RestorePanel({
                   style={{ ...css.btnGhost, height: 26, padding: "0 8px", color: "var(--danger-text)" }}
                   disabled={busy}
                   aria-label={`${L.deleteSession}: ${s.name}`}
-                  onClick={() => onDelete(s.name)}
+                  onClick={(event) => {
+                    const nearby = [...sessions.slice(index + 1), ...sessions.slice(0, index).reverse()].map(({ name }) => name);
+                    void actFrom(event.currentTarget, () => onDelete(s.name), nearby);
+                  }}
                 >
                   {L.deleteSession}
                 </button>}

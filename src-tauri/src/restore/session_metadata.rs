@@ -48,7 +48,11 @@ fn snapshot_size(path: &Path, missing: &str) -> Result<u64, String> {
 
 /// Check the critical metadata named by the seal without parsing the manifest,
 /// opening registry contents, or enumerating any backed-up directory tree.
-pub(super) fn check_session_metadata(session: &Path, seal: &PathMapSeal) -> Result<(), String> {
+pub(super) fn check_session_metadata(
+    session: &Path,
+    seal: &PathMapSeal,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
     if !crate::path_seal::map_matches(seal, &Default::default()) {
         snapshot_size(&session.join("files/path_map.json"), "seal:map_missing")?;
     }
@@ -68,6 +72,9 @@ pub(super) fn check_session_metadata(session: &Path, seal: &PathMapSeal) -> Resu
         .keys()
         .filter(|key| key.starts_with("registry/"))
     {
+        if cancelled() {
+            return Err("restore cancelled before any changes".into());
+        }
         let (entry, file) = rel["registry/".len()..]
             .split_once('/')
             .ok_or("seal:bad_export_name")?;

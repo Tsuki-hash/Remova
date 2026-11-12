@@ -371,6 +371,8 @@ export const dict = {
     restoreSessionInvalid: "此备份未通过验证，无法自动还原。",
     restoreSessionLegacy: "旧格式备份，可到备份目录手动查看文件。",
     restorePathFailed: "PATH 条目未能还原",
+    restorePathScopeChanged: "PATH 状态与备份不匹配，已保留当前作用域",
+    restorePathScopeFailed: "PATH 作用域未能还原",
     restoreSelect: "选择要还原的会话",
     restorePreviewTitle: "还原预览",
     restoreCreated: "备份时间",

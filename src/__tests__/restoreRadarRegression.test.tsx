@@ -11,6 +11,7 @@ import { toast } from "../lib/toast";
 import type { BackupSessionStatus } from "../lib/backupSession";
 
 const native = vi.hoisted(() => ({ previewRestore: vi.fn(), backupSessions: vi.fn(), deleteBackupSession: vi.fn(), restoreSessionByName: vi.fn(), listLocalDrives: vi.fn(), listTopDirSizes: vi.fn(), listDirChildren: vi.fn(), openPath: vi.fn(), rankIdleApps: vi.fn(),
+  cancelRestorePreview: vi.fn(async (_operationId: string) => true),
   beginAssociationScan: vi.fn(async () => 201), cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null) }));
 vi.mock("../lib/api", () => ({ api: native }));
@@ -141,6 +142,9 @@ it.each(["zh", "en"] as const)("keeps backup verification and cancellation reaso
     "skipped backup directory too large to verify: demo",
     "skipped unrecorded backup file: demo/unexpected.txt",
     "skipped backup directory with missing recorded file: demo/missing.txt",
+    "skipped changed PATH scope: Machine",
+    "PATH scope restore failed for User: access denied",
+    "PATH restore failed for C:\\OldTool\\bin: access denied",
     "restore cancelled",
     "restore cancelled before remaining PATH entries",
     "restore cancelled before remaining registry imports",
@@ -160,6 +164,9 @@ it.each(["zh", "en"] as const)("keeps backup verification and cancellation reaso
     `${L.restoreSkippedVerificationLimit}: demo`,
     `${L.restoreSkippedUnrecordedFile}: demo/unexpected.txt`,
     `${L.restoreSkippedIncompleteDirectory}: demo/missing.txt`,
+    `${L.restorePathScopeChanged}: Machine`,
+    `${L.restorePathScopeFailed}: User: access denied`,
+    `${L.restorePathFailed}: C:\\OldTool\\bin: access denied`,
     L.restoreFilesCancelled,
     L.restorePathCancelled,
     L.restoreCancelled,
@@ -184,12 +191,22 @@ it("localizes cancelled and failed registry import rows", async () => {
 });
 
 it("only announces confirmed restore rows as complete", async () => {
-  native.restoreSessionByName.mockResolvedValue(["restored PATH entry tools", "PATH entry already present: present"]);
+  native.restoreSessionByName.mockResolvedValue([
+    "restored PATH entry tools",
+    "PATH entry already present: present",
+    "restored PATH scope: User",
+    "PATH scope already matches backup: Machine",
+  ]);
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(toast.success).toHaveBeenCalledWith(t().restoreDone);
-  expect(result.current.restoreMsgs).toEqual([`${t().restoreDone}: tools`, `${t().restoreAlreadyPresent}: present`]);
+  expect(result.current.restoreMsgs).toEqual([
+    `${t().restoreDone}: tools`,
+    `${t().restoreAlreadyPresent}: present`,
+    `${t().restoreDone}: User`,
+    `${t().restoreAlreadyPresent}: Machine`,
+  ]);
 });
 
 it("exposes backup loading failures with a retry action instead of the empty vault", async () => {
@@ -339,9 +356,27 @@ it("discards an old backup preview after selection changes", async () => {
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   const { result } = renderHook(() => useMoreRestore(vi.fn()));
   await act(async () => { await result.current.loadRestore(); });
+  const oldId = native.previewRestore.mock.calls.at(-1)?.[1];
   await act(async () => { result.current.setRestorePick("newer-backup"); });
+  expect(oldId).toBeTruthy();
+  expect(native.cancelRestorePreview).toHaveBeenCalledWith(oldId);
+  expect(native.previewRestore.mock.calls.at(-1)?.[1]).not.toBe(oldId);
   await act(async () => { finish({ name: "older-backup", files: 999, entries: [] }); });
   expect(result.current.restorePreview?.name).toBe("newer-backup");
+  expect(result.current.previewLoading).toBe(false);
+});
+
+it("cancels an unfinished backup preview when the vault closes", async () => {
+  let finish!: (preview: unknown) => void;
+  native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  await act(async () => { await result.current.loadRestore(); });
+  const id = native.previewRestore.mock.calls.at(-1)?.[1];
+  expect(id).toBeTruthy();
+  await act(async () => { result.current.closeRestore(); });
+  expect(native.cancelRestorePreview).toHaveBeenCalledWith(id);
+  await act(async () => { finish({ name: "closed", files: 99, entries: [] }); });
+  expect(result.current.restorePreview).toBeNull();
   expect(result.current.previewLoading).toBe(false);
 });
 

@@ -83,6 +83,7 @@ const COMMAND_KEYS = [
   "deleteBackupSession",
   "restoreSessionByName",
   "cancelRestore",
+  "cancelRestorePreview",
   "suggestIgnoreRules",
   "applyIgnoreSuggestions",
   "ignorePublisher",

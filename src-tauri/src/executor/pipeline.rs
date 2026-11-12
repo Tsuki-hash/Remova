@@ -239,7 +239,12 @@ pub fn service_name_from_reg_path(reg_path: &str) -> Option<String> {
 /// like `HKCU\x\...\Services\Spooler` drive `sc delete` at a REAL service or
 /// `schtasks /delete` at a system task; only normalized HKLM prefixes qualify.
 /// Returns `(native_ok, note)` when a native path applies, else None.
+#[cfg(test)]
 fn native_delete_note(reg_path: &str) -> Option<(bool, String)> {
+    native_delete_checked(reg_path, &|| true)
+}
+
+fn native_delete_checked(reg_path: &str, can_delete: &dyn Fn() -> bool) -> Option<(bool, String)> {
     // Native stop/delete is a KEY-shaped, TOP-LEVEL operation only:
     // - a value item (`Services\X|Start`) removes one value, never the whole
     //   service;
@@ -261,7 +266,7 @@ fn native_delete_note(reg_path: &str) -> Option<(bool, String)> {
         if !top_level {
             return None;
         }
-        let native_ok = crate::regops::sc_delete_service(&svc);
+        let native_ok = crate::regops::sc_delete_service_checked(&svc, can_delete);
         return Some((
             native_ok,
             if native_ok {
@@ -311,17 +316,12 @@ use crate::fsutil::is_reparse_point;
 /// through that was refused — and therefore never backed up — moments earlier.
 fn delete_planned_items_with_native(
     items: &[CleanupItem],
-    native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
+    native_delete: &mut impl FnMut(&str, &dyn Fn() -> bool) -> Option<(bool, String)>,
     receipt: Option<&BackupReceipt>,
 ) -> DeleteOutcome {
-    let mut delete_registry = |path: &str, value_name: Option<&str>| match value_name {
-        Some(name) => crate::regops::delete_value(path, name),
-        None => crate::regops::delete_key(path),
-    };
     let mut path_results = None;
     delete_planned_items_with_io(
         items,
-        native_delete,
         &mut |path| match receipt {
             Some(receipt) => receipt.delete(path),
             None => crate::fsutil::remove_tree_no_reparse(path).map_err(FilesystemDeleteError::Io),
@@ -329,7 +329,20 @@ fn delete_planned_items_with_native(
         // The Windows reboot queue records a path. It cannot enforce that the
         // object still matches the backup when Windows eventually removes it.
         &mut |path| receipt.is_none() && crate::sysops::schedule_delete_on_reboot(path),
-        &mut delete_registry,
+        &mut |path| {
+            delete_registry_target(
+                path,
+                |path| receipt.map_or(Ok(true), |receipt| receipt.verify_registry(path)),
+                &mut *native_delete,
+                |key, value| match (value, receipt) {
+                    (Some(_), Some(receipt)) => receipt
+                        .delete_registry_value(path)
+                        .ok_or("registry value receipt missing")?,
+                    (Some(name), None) => crate::regops::delete_value(key, name),
+                    (None, _) => crate::regops::delete_key(key),
+                },
+            )
+        },
         &mut |entry| {
             if let Some(receipt) = receipt {
                 return path_results
@@ -351,12 +364,59 @@ fn delete_planned_items_with_native(
     )
 }
 
+enum RegistryDelete {
+    Deleted(String),
+    Missing,
+    Kept(String),
+    Failed(String),
+}
+
+fn delete_registry_target(
+    path: &str,
+    verify: impl Fn(&str) -> Result<bool, String>,
+    native: impl FnOnce(&str, &dyn Fn() -> bool) -> Option<(bool, String)>,
+    delete: impl FnOnce(&str, Option<&str>) -> Result<bool, String>,
+) -> RegistryDelete {
+    let check = || match verify(path) {
+        Ok(true) => None,
+        Ok(false) => Some(RegistryDelete::Missing),
+        Err(reason) => Some(RegistryDelete::Kept(reason)),
+    };
+    // Verify before the native transport as well as before a fallback.
+    if let Some(outcome) = check() {
+        return outcome;
+    }
+    let (key, value_name) = if path.contains('|') {
+        let Some((key, name)) = crate::regops::split_value_path(path) else {
+            return RegistryDelete::Failed("registry value name must not be empty".into());
+        };
+        (key, Some(name))
+    } else {
+        (path, None)
+    };
+    let note = match native(path, &|| matches!(verify(path), Ok(true))) {
+        Some((true, note)) => return RegistryDelete::Deleted(note),
+        Some((false, note)) => {
+            if let Some(outcome) = check() {
+                return outcome;
+            }
+            note
+        }
+        None => String::new(),
+    };
+    match delete(key, value_name) {
+        Ok(true) => RegistryDelete::Deleted(note),
+        Ok(false) => RegistryDelete::Missing,
+        Err(_) if note.is_empty() => RegistryDelete::Failed("registry delete failed".into()),
+        Err(_) => RegistryDelete::Failed(format!("{note}; registry delete failed")),
+    }
+}
+
 fn delete_planned_items_with_io(
     items: &[CleanupItem],
-    native_delete: &mut impl FnMut(&str) -> Option<(bool, String)>,
     delete_fs: &mut impl FnMut(&Path) -> Result<(), FilesystemDeleteError>,
     schedule: &mut impl FnMut(&str) -> bool,
-    delete_registry: &mut impl FnMut(&str, Option<&str>) -> Result<bool, String>,
+    delete_registry: &mut impl FnMut(&str) -> RegistryDelete,
     scrub_path: &mut impl FnMut(&str) -> crate::regops::BackedPathResult,
 ) -> DeleteOutcome {
     let mut deleted = 0u32;
@@ -400,64 +460,31 @@ fn delete_planned_items_with_io(
                 });
             }
             ItemKind::Registry => {
-                let native = native_delete(&it.path);
-                let native_note = native.as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
-                // A successful native stop/delete removes the service (with
-                // its key) or the task registration itself — the follow-up
-                // registry delete would only fail "not found". That outcome
-                // is the SUCCESS it is, not a failed item.
-                let native_done = matches!(&native, Some((true, _)));
-                // `key|Value` must resolve to a non-empty value name; a trailing `|`
-                // must never fall through to deleting the whole key (Run root!).
-                let res: Result<bool, String> = if native_done {
-                    Ok(true)
-                } else if it.path.contains('|') {
-                    match crate::regops::split_value_path(&it.path) {
-                        Some((k, v)) => delete_registry(k, Some(v)),
-                        None => Err("registry value name must not be empty".into()),
-                    }
-                } else {
-                    delete_registry(&it.path, None)
-                };
-                match res {
-                    Ok(true) => {
+                let (status, message) = match delete_registry(&it.path) {
+                    RegistryDelete::Deleted(note) => {
                         deleted += 1;
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: "registry".into(),
-                            status: "deleted".into(),
-                            message: native_note,
-                        });
+                        ("deleted", note)
                     }
-                    // The uninstaller already removed it. Same family as the
-                    // File/Dir "path missing" rule, and the same outcome the
-                    // dry-run records — a row that is already gone is not a
-                    // failure the user has to act on.
-                    Ok(false) => {
+                    RegistryDelete::Missing => {
                         skipped += 1;
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: "registry".into(),
-                            status: "skipped".into(),
-                            message: "registry entry missing".into(),
-                        });
+                        ("skipped", "registry entry missing".into())
                     }
-                    Err(_) => {
+                    RegistryDelete::Kept(reason) => {
+                        skipped += 1;
+                        ("skipped", format!("registry source could not be verified against backup; kept: {reason}"))
+                    }
+                    RegistryDelete::Failed(message) => {
                         failed += 1;
-                        let msg = if native_note.is_empty() {
-                            "registry delete failed".to_string()
-                        } else {
-                            format!("{native_note}; registry delete failed")
-                        };
-                        errors.push(format!("{}: {msg}", it.path));
-                        details.push(ItemDetail {
-                            path: it.path.clone(),
-                            kind: "registry".into(),
-                            status: "failed".into(),
-                            message: msg,
-                        });
+                        errors.push(format!("{}: {message}", it.path));
+                        ("failed", message)
                     }
-                }
+                };
+                details.push(ItemDetail {
+                    path: it.path.clone(),
+                    kind: "registry".into(),
+                    status: status.into(),
+                    message,
+                });
             }
             _ => {
                 let p = Path::new(&it.path);
@@ -816,7 +843,7 @@ fn run_full_cleanup_before_delete(
     before_delete();
     let mut del = delete_planned_items_with_native(
         &plan.allowed,
-        &mut native_delete_note,
+        &mut native_delete_checked,
         receipt.as_deref(),
     );
     // Keep unselected parent directories when cleanup requires a backup.
@@ -933,6 +960,36 @@ fn run_full_cleanup_before_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_registry_target_never_reaches_either_delete_transport() {
+        let path = r"HKLM64\SYSTEM\CurrentControlSet\Services\VendorFixture";
+        let result = delete_registry_target(
+            path,
+            |_| Err("registry key or subtree changed".into()),
+            |_, _| panic!("native delete reached"),
+            |_, _| panic!("registry fallback reached"),
+        );
+        assert!(matches!(result, RegistryDelete::Kept(_)));
+        let changed = std::cell::Cell::new(false);
+        let result = delete_registry_target(
+            path,
+            |_| {
+                if changed.get() {
+                    Err("registry key was replaced".into())
+                } else {
+                    Ok(true)
+                }
+            },
+            |_, recheck| {
+                changed.set(true);
+                assert!(!recheck());
+                Some((false, "native cleanup stopped".into()))
+            },
+            |_, _| panic!("registry fallback reached"),
+        );
+        assert!(matches!(result, RegistryDelete::Kept(_)));
+    }
 
     #[test]
     fn report_totals_do_not_double_count_nested_paths() {
@@ -1266,7 +1323,7 @@ mod tests {
         let mut calls = 0;
         let native = delete_planned_items_with_native(
             &native_items,
-            &mut |_| {
+            &mut |_, _| {
                 calls += 1;
                 Some((true, "native service deleted".into()))
             },
@@ -1285,7 +1342,6 @@ mod tests {
         failed_items[0].path = locked.to_string_lossy().into_owned();
         let outcome = delete_planned_items_with_io(
             &failed_items,
-            &mut |_| None,
             &mut |_| {
                 Err(FilesystemDeleteError::Io(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
@@ -1293,7 +1349,7 @@ mod tests {
                 )))
             },
             &mut |_| false,
-            &mut |_, _| Err("registry fixture denied".into()),
+            &mut |_| RegistryDelete::Failed("registry fixture denied".into()),
             &mut |_| Default::default(),
         );
         assert_eq!(outcome.failed, 1);
@@ -1561,7 +1617,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn backed_path_pipeline_keeps_new_scope_and_restores_only_captured_entries() {
+    fn backed_path_pipeline_keeps_changed_scope_and_restores_only_captured_entries() {
         use crate::regops::path_mock;
 
         let _backup_lock = crate::backup::lock_backup_env();
@@ -1569,12 +1625,15 @@ mod tests {
         let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
         let _store = crate::path_seal::TestStore::new(fixture.join("seals"));
         let _path_lock = path_mock::lock_mock();
+        crate::regops::expand_mock::install(&[("FIXTURE_TOOL_DIR", r"C:\FixtureTools\DemoTool")]);
         let first = r"C:\FixtureTools\DemoTool\bin";
         let second = r"C:\FixtureTools\DemoTool\scripts";
         let late = r"C:\FixtureTools\DemoTool\late";
-        let original_user = format!(r"C:\Windows;{first};{second}");
-        let current_machine = format!(r"C:\Windows;{first};{late}");
-        path_mock::install(&original_user, r"C:\Windows");
+        let original_user =
+            format!(r"%FIXTURE_TOOL_DIR%\bin;C:\Windows;{second};C:\OtherTool\bin;");
+        let original_machine = format!(r"C:\Windows;{first}");
+        let current_machine = format!("{original_machine};{late}");
+        path_mock::install_expand(&original_user, &original_machine);
         let app = crate::apps::InstalledApp {
             name: "DemoTool".into(),
             publisher: "FixtureVendor".into(),
@@ -1614,7 +1673,7 @@ mod tests {
                 restore_point: false,
                 cleanup_source: None,
             },
-            || path_mock::install(&original_user, &current_machine),
+            || path_mock::install_expand(&original_user, &current_machine),
         );
         assert!(report.backup_verified && !report.aborted, "{report:?}");
         assert_eq!(
@@ -1622,18 +1681,17 @@ mod tests {
             (2, 1, 0),
             "{report:?}"
         );
-        assert_eq!(path_mock::get("User"), r"C:\Windows");
+        assert_eq!(path_mock::get("User"), r"C:\Windows;C:\OtherTool\bin;");
         assert_eq!(path_mock::get("Machine"), current_machine);
         let messages = crate::restore::restore_session(Path::new(&report.backup_dir)).unwrap();
         assert_eq!(
-            messages
-                .iter()
-                .filter(|message| message.starts_with("restored PATH entry "))
-                .count(),
-            2,
-            "{messages:?}"
+            messages,
+            [
+                "restored PATH scope: User",
+                "skipped changed PATH scope: Machine"
+            ]
         );
-        assert_eq!(path_mock::get("User"), original_user);
+        assert_eq!(path_mock::read_raw("User").unwrap(), (original_user, true));
         assert_eq!(path_mock::get("Machine"), current_machine);
     }
 
@@ -1903,7 +1961,7 @@ mod tests {
         // the "the uninstaller already took it" shape.
         let registry = crate::test_support::registry_mutations::Spy::new();
         crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
-        let outcome = delete_planned_items_with_native(&items, &mut |_| None, None);
+        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None);
         assert_eq!(
             (outcome.deleted, outcome.failed, outcome.skipped),
             (0, 0, 1)
@@ -1943,7 +2001,7 @@ mod tests {
             r"HKCU\SOFTWARE\RemovaNoSuchVendor",
             true,
         );
-        let value_outcome = delete_planned_items_with_native(&value_items, &mut |_| None, None);
+        let value_outcome = delete_planned_items_with_native(&value_items, &mut |_, _| None, None);
         assert_eq!(
             (
                 value_outcome.deleted,

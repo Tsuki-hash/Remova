@@ -1552,6 +1552,7 @@ pub fn run() {
         // `restore_session_by_name`
         // `cancel_restore`
         // `preview_restore_session`
+        // `cancel_restore_preview`
         // `list_startup_items`
         // `list_services`
         // `list_scheduled_tasks`
@@ -1647,6 +1648,7 @@ pub fn run() {
             commands::backup_cmd::restore_session_by_name,
             commands::backup_cmd::cancel_restore,
             commands::backup_cmd::preview_restore_session,
+            commands::backup_cmd::cancel_restore_preview,
             commands::manage_cmd::list_startup_items,
             commands::manage_cmd::list_services,
             commands::manage_cmd::list_scheduled_tasks,

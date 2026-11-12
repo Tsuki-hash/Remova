@@ -2,7 +2,7 @@
 
 use crate::restore;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 struct ActiveRestore {
     id: String,
@@ -11,16 +11,19 @@ struct ActiveRestore {
 
 static ACTIVE_RESTORE: Mutex<Option<ActiveRestore>> = Mutex::new(None);
 
+fn valid_operation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 struct RestoreOperation(Arc<AtomicBool>);
 
 impl RestoreOperation {
     fn register(id: String) -> Result<Self, String> {
-        if id.is_empty()
-            || id.len() > 64
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        {
+        if !valid_operation_id(&id) {
             return Err("invalid restore operation".into());
         }
         let mut active = ACTIVE_RESTORE.lock().unwrap_or_else(|e| e.into_inner());
@@ -95,16 +98,97 @@ pub fn cancel_restore(operation_id: String) -> bool {
     false
 }
 
+struct ActivePreview {
+    id: Option<String>,
+    cancelled: Arc<AtomicBool>,
+}
+
+static ACTIVE_PREVIEW: Mutex<Option<ActivePreview>> = Mutex::new(None);
+static PREVIEW_SLOT: OnceLock<Arc<tauri::async_runtime::Mutex<()>>> = OnceLock::new();
+
+struct PreviewOperation(Arc<AtomicBool>);
+
+impl PreviewOperation {
+    fn register(id: Option<String>) -> Result<Self, String> {
+        if id.as_deref().is_some_and(|id| !valid_operation_id(id)) {
+            return Err("invalid backup preview operation".into());
+        }
+        let mut current = ACTIVE_PREVIEW.lock().unwrap_or_else(|e| e.into_inner());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        if let Some(old) = current.replace(ActivePreview {
+            id,
+            cancelled: Arc::clone(&cancelled),
+        }) {
+            old.cancelled.store(true, Ordering::Release);
+        }
+        Ok(Self(cancelled))
+    }
+}
+
+impl Drop for PreviewOperation {
+    fn drop(&mut self) {
+        let mut current = ACTIVE_PREVIEW.lock().unwrap_or_else(|e| e.into_inner());
+        if current
+            .as_ref()
+            .is_some_and(|preview| Arc::ptr_eq(&preview.cancelled, &self.0))
+        {
+            *current = None;
+        }
+    }
+}
+
 #[tauri::command]
-pub async fn preview_restore_session(name: String) -> Result<restore::RestorePreview, String> {
-    tauri::async_runtime::spawn_blocking(move || restore::preview_by_name(&name))
-        .await
-        .map_err(|e| e.to_string())?
+pub fn cancel_restore_preview(operation_id: String) -> bool {
+    let current = ACTIVE_PREVIEW.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(preview) = current
+        .as_ref()
+        .filter(|p| p.id.as_deref() == Some(&operation_id))
+    {
+        preview.cancelled.store(true, Ordering::Release);
+        return true;
+    }
+    false
+}
+
+#[tauri::command]
+pub async fn preview_restore_session(
+    name: String,
+    operation_id: Option<String>,
+) -> Result<restore::RestorePreview, String> {
+    let operation = PreviewOperation::register(operation_id)?;
+    // Wait outside the blocking pool. Superseded requests never start a read.
+    let slot = Arc::clone(PREVIEW_SLOT.get_or_init(Default::default))
+        .lock_owned()
+        .await;
+    if operation.0.load(Ordering::Acquire) {
+        return Err(restore::PREVIEW_CANCELLED.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let _slot = slot;
+        restore::preview_by_name_with_cancel(&name, &operation.0)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
 mod tests {
     // Command-layer boundary coverage.
+
+    #[test]
+    fn obsolete_preview_cannot_cancel_or_clear_the_new_request() {
+        use super::*;
+        let first = PreviewOperation::register(Some("first-preview".into())).unwrap();
+        let second = PreviewOperation::register(Some("second-preview".into())).unwrap();
+        assert!(first.0.load(Ordering::Acquire));
+        assert!(!second.0.load(Ordering::Acquire));
+        drop(first);
+        assert!(!cancel_restore_preview("first-preview".into()));
+        assert!(cancel_restore_preview("second-preview".into()));
+        assert!(second.0.load(Ordering::Acquire));
+        drop(second);
+        assert!(!cancel_restore_preview("second-preview".into()));
+    }
 
     #[test]
     fn restore_cancellation_belongs_to_one_request_and_does_not_cancel_cleanup() {

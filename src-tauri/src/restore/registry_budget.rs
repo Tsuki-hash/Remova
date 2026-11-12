@@ -27,21 +27,39 @@ impl RegistryRestoreBudget {
         Ok(())
     }
 
-    pub(super) fn read(&mut self, relative: &str, path: &Path) -> Result<Vec<u8>, String> {
+    pub(super) fn read(
+        &mut self,
+        relative: &str,
+        path: &Path,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<u8>, String> {
+        check_cancelled(&cancelled)?;
         #[cfg(windows)]
         let file = crate::fsutil::open_local_regular_file(path);
         #[cfg(not(windows))]
         let file = File::open(path);
-        self.read_file(relative, file.map_err(|err| err.to_string())?)
+        self.read_file(relative, file.map_err(|err| err.to_string())?, cancelled)
     }
 
-    fn read_file(&mut self, relative: &str, file: File) -> Result<Vec<u8>, String> {
+    fn read_file(
+        &mut self,
+        relative: &str,
+        file: File,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<u8>, String> {
         let size = file.metadata().map_err(|err| err.to_string())?.len();
         self.add(relative, size)?;
-        let mut bytes = Vec::new();
-        file.take(size + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|err| err.to_string())?;
+        let mut bytes = Vec::with_capacity(size as usize);
+        let mut reader = file.take(size + 1);
+        let mut chunk = [0; 64 * 1024];
+        loop {
+            check_cancelled(&cancelled)?;
+            let count = reader.read(&mut chunk).map_err(|err| err.to_string())?;
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+        }
         if bytes.len() as u64 != size {
             return Err(format!("registry export changed while reading: {relative}"));
         }
@@ -49,9 +67,35 @@ impl RegistryRestoreBudget {
     }
 }
 
+fn check_cancelled(cancelled: impl FnOnce() -> bool) -> Result<(), String> {
+    if cancelled() {
+        Err("restore cancelled before any changes".into())
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_preview_stops_mid_export_without_reading_the_rest() {
+        let fixture = crate::test_support::TempDir::new("registry-preview-cancel");
+        let file = fixture.path().join("large.reg");
+        std::fs::File::create(&file)
+            .unwrap()
+            .set_len(1024 * 1024)
+            .unwrap();
+        let polls = std::cell::Cell::new(0);
+        let mut budget = RegistryRestoreBudget::default();
+        let result = budget.read("large.reg", &file, || {
+            polls.set(polls.get() + 1);
+            polls.get() >= 4
+        });
+        assert_eq!(result.unwrap_err(), "restore cancelled before any changes");
+        assert_eq!(polls.get(), 4);
+    }
 
     #[test]
     fn registry_budget_counts_only_accepted_exports_at_exact_boundaries() {

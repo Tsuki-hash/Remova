@@ -224,13 +224,13 @@ pub fn acquire_walk_slot() -> Option<WalkSlot> {
     // inherit that thread-local, so a scan's own walkers were all judged
     // foreground — the scan filled the reserved slots itself and squeezed real
     // background walks to fewer slots. The distinction is now explicit.
-    acquire_walk_slot_classified(!crate::scan_task::has_task(), None)
+    acquire_walk_slot_classified(!crate::scan_task::has_task(), || false)
 }
 
 /// Like [`acquire_walk_slot`], but the walk is unconditionally background —
 /// for walkers that a scan pass spawned directly and can classify themselves.
 pub fn acquire_walk_slot_background() -> Option<WalkSlot> {
-    acquire_walk_slot_classified(false, None)
+    acquire_walk_slot_classified(false, || false)
 }
 
 /// Cancellable background slot acquisition for workers without thread-local scan
@@ -238,12 +238,12 @@ pub fn acquire_walk_slot_background() -> Option<WalkSlot> {
 pub fn acquire_walk_slot_background_with_cancel(
     cancel: &crate::scan_task::CancelWatch,
 ) -> Option<WalkSlot> {
-    acquire_walk_slot_classified(false, Some(cancel))
+    acquire_walk_slot_classified(false, || cancel.cancelled())
 }
 
 fn acquire_walk_slot_classified(
     foreground: bool,
-    cancel: Option<&crate::scan_task::CancelWatch>,
+    cancelled: impl Fn() -> bool,
 ) -> Option<WalkSlot> {
     // A thread that already holds a slot must not take a second one: a worker
     // walks item after item under ONE slot, and its per-row walks are nested.
@@ -258,7 +258,7 @@ fn acquire_walk_slot_classified(
     }
     let mut backoff = std::time::Duration::from_millis(1);
     loop {
-        if cancel.is_some_and(|watch| watch.cancelled()) || crate::scan_task::cancelled() {
+        if cancelled() || crate::scan_task::cancelled() {
             if foreground {
                 FOREGROUND_WAITERS.fetch_sub(1, Ordering::SeqCst);
             }
@@ -422,8 +422,19 @@ const UNBUDGETED_DIR_CEILING: u64 = 20_000;
 /// For callers outside a scan pass (`restore::dir_size_kb`): thread reuse must
 /// not change the answer, and `scan_task::cancelled()` is a no-op off a scan
 /// thread, so the scan-time machinery can only make results worse here.
+#[cfg(test)]
 pub fn walk_size_kb_unbudgeted(root: &Path) -> Option<u64> {
-    let _slot = acquire_walk_slot();
+    walk_size_kb_unbudgeted_with_cancel(root, || false)
+}
+
+pub fn walk_size_kb_unbudgeted_with_cancel(
+    root: &Path,
+    cancelled: impl Fn() -> bool,
+) -> Option<u64> {
+    let _slot = acquire_walk_slot_classified(!crate::scan_task::has_task(), &cancelled);
+    if cancelled() {
+        return None;
+    }
     let meta = root.metadata().ok()?;
     if !meta.is_dir() {
         if meta.is_file() {
@@ -432,7 +443,7 @@ pub fn walk_size_kb_unbudgeted(root: &Path) -> Option<u64> {
         return None;
     }
     let seen = std::sync::atomic::AtomicU64::new(0);
-    let bytes = walk_unbudgeted_with(root, 0, &seen)?;
+    let bytes = walk_unbudgeted_with(root, 0, &seen, &cancelled)?;
     Some(bytes.div_ceil(1024))
 }
 
@@ -440,8 +451,10 @@ fn walk_unbudgeted_with(
     dir: &Path,
     depth: u32,
     seen: &std::sync::atomic::AtomicU64,
+    cancelled: &impl Fn() -> bool,
 ) -> Option<u64> {
-    if depth > MAX_WALK_DEPTH
+    if cancelled()
+        || depth > MAX_WALK_DEPTH
         || seen.load(std::sync::atomic::Ordering::Relaxed) >= UNBUDGETED_DIR_CEILING
     {
         return None;
@@ -449,6 +462,9 @@ fn walk_unbudgeted_with(
     let mut total: u64 = 0;
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries {
+        if cancelled() {
+            return None;
+        }
         let entry = entry.ok()?;
         if seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 > UNBUDGETED_DIR_CEILING {
             return None;
@@ -458,7 +474,12 @@ fn walk_unbudgeted_with(
             continue;
         }
         if meta.is_dir() {
-            total = total.saturating_add(walk_unbudgeted_with(&entry.path(), depth + 1, seen)?);
+            total = total.saturating_add(walk_unbudgeted_with(
+                &entry.path(),
+                depth + 1,
+                seen,
+                cancelled,
+            )?);
         } else if meta.is_file() {
             total = total.saturating_add(meta.len());
         }

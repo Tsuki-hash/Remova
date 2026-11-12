@@ -391,8 +391,8 @@ export function MorePage({
           runningRestore={rest.runningRestore}
           cancelRequested={rest.cancelRequested}
           onCancelRestore={() => void rest.cancelRestore()}
-          onRun={() => void rest.runRestore()}
-          onDelete={(name) => void rest.deleteSession(name)}
+          onRun={rest.runRestore}
+          onDelete={rest.deleteSession}
           onClose={() => {
             rest.closeRestore();
             tools.setOpenTool(null);

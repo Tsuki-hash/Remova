@@ -33,10 +33,13 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     // Authorize the whole session before any file, PATH or registry write.
     // Missing/legacy/invalid seals never enter an automatic restore path.
     let seal = crate::path_seal::verified_seal(session)?;
-    session_metadata::check_session_metadata(session, &seal)?;
+    session_metadata::check_session_metadata(session, &seal, &cancelled)?;
     let complete_manifest = seal.file_manifest_digest.is_some();
     #[cfg(windows)]
-    let inventory = payload::Inventory::read(session, &seal, cancelled)?;
+    let inventory = payload::Inventory::read(session, &seal, &cancelled)?;
+    if cancelled() {
+        return Err("restore cancelled before any changes".into());
+    }
     let map_path = session.join("files/path_map.json");
     let map: std::collections::BTreeMap<String, String> = if map_path.exists() {
         serde_json::from_slice(&fs::read(&map_path).map_err(|e| e.to_string())?)
@@ -105,7 +108,7 @@ fn validate_session(session: &Path, cancelled: impl Fn() -> bool) -> Result<Rest
     };
     for relative in selected {
         let target = session.join(&relative);
-        let bytes = registry_budget.read(&relative, &target)?;
+        let bytes = registry_budget.read(&relative, &target, &cancelled)?;
         if !crate::path_seal::snapshot_matches(&seal, &relative, &bytes) {
             return Err("seal:registry_snapshot_mismatch".into());
         }
@@ -338,31 +341,8 @@ fn restore_with_before_copy(
         }
     }
 
-    // PATH leftovers (path.json) — merge missing segments back; never whole-env overwrite.
     if let Some(snap) = path_snapshot {
-        for it in &snap.items {
-            // A cancel that landed while files were being restored must stop
-            // before the environment is rewritten: PATH is machine state, not
-            // just files this session owns.
-            if crate::executor::cleanup_cancelled() {
-                messages.push("restore cancelled before remaining PATH entries".into());
-                break;
-            }
-            let scopes = path_restore_scopes(it);
-            let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-            match crate::regops::restore_path_entry(&it.entry, &scope_refs) {
-                Ok(true) => messages.push(format!("restored PATH entry {}", it.entry)),
-                Ok(false) => messages.push(format!("PATH entry already present: {}", it.entry)),
-                // this used to `return Err(..)`, which threw away the real
-                // cause and abandoned everything after it — the registry import
-                // below never ran, so the filesystem was already modified while
-                // the registry never was, and a retry hit the same PATH failure
-                // forever. A per-entry failure is aggregated instead and the
-                // restore continues; the caller still sees the failures in
-                // `messages` and reports a non-clean result.
-                Err(e) => messages.push(format!("PATH restore failed for {}: {e}", it.entry)),
-            }
-        }
+        restore_path_snapshot(snap, &mut messages);
     }
 
     // Import only the exact authenticated and validated bytes captured above.
@@ -739,6 +719,41 @@ fn reg_hive_to_remova(key: &str) -> Result<String, String> {
     Err(format!("reg import refused (unsupported hive): {k}"))
 }
 
+fn restore_path_snapshot(snapshot: crate::backup::PathSnapshot, messages: &mut Vec<String>) {
+    if let Some(plan) = snapshot.cleanup_plan {
+        use crate::regops::BackedPathRestore;
+        messages.extend(plan.restore().into_iter().map(|result| match result {
+            BackedPathRestore::Restored(scope) => format!("restored PATH scope: {scope}"),
+            BackedPathRestore::AlreadyOriginal(scope) => {
+                format!("PATH scope already matches backup: {scope}")
+            }
+            BackedPathRestore::Preserved(scope) => format!("skipped changed PATH scope: {scope}"),
+            BackedPathRestore::Failed(scope, error) => {
+                format!("PATH scope restore failed for {scope}: {error}")
+            }
+            BackedPathRestore::Cancelled => {
+                "restore cancelled before remaining PATH entries".into()
+            }
+        }));
+        return;
+    }
+    // Old snapshots did not record a typed raw value or removal positions.
+    // Preserve their merge semantics and aggregate per-entry failures.
+    for item in &snapshot.items {
+        if crate::executor::cleanup_cancelled() {
+            messages.push("restore cancelled before remaining PATH entries".into());
+            break;
+        }
+        let scopes = path_restore_scopes(item);
+        let scope_refs: Vec<_> = scopes.iter().map(String::as_str).collect();
+        match crate::regops::restore_path_entry(&item.entry, &scope_refs) {
+            Ok(true) => messages.push(format!("restored PATH entry {}", item.entry)),
+            Ok(false) => messages.push(format!("PATH entry already present: {}", item.entry)),
+            Err(error) => messages.push(format!("PATH restore failed for {}: {error}", item.entry)),
+        }
+    }
+}
+
 /// Prefer scopes recorded at backup; fall back to PATH strings in the snapshot; else User only.
 fn path_restore_scopes(item: &crate::backup::PathSnapshotItem) -> Vec<String> {
     // a tampered `scopes` field must not unlock the system PATH —
@@ -854,15 +869,43 @@ pub struct RestorePreview {
 /// Advisory, bounded preview. Authorization and snapshots are checked using
 /// the same inputs as restore; file contents are not authenticated by the seal.
 /// Never create destination directories or stage/import registry data here.
-pub fn preview_by_name(name: &str) -> Result<RestorePreview, String> {
-    preview_session(name, &session_path(name)?)
+pub(crate) const PREVIEW_CANCELLED: &str = "backup preview cancelled";
+
+pub(crate) fn preview_by_name_with_cancel(
+    name: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<RestorePreview, String> {
+    use std::sync::atomic::Ordering::Acquire;
+    let is_cancelled = || cancelled.load(Acquire);
+    if is_cancelled() {
+        return Err(PREVIEW_CANCELLED.into());
+    }
+    let result = preview_session_with_cancel(name, &session_path(name)?, is_cancelled);
+    if is_cancelled() {
+        return Err(PREVIEW_CANCELLED.into());
+    }
+    result
 }
 
+#[cfg(test)]
+fn preview_by_name(name: &str) -> Result<RestorePreview, String> {
+    preview_by_name_with_cancel(name, &Default::default())
+}
+
+#[cfg(test)]
 fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String> {
-    let inputs = validate_session(session, || false)?;
+    preview_session_with_cancel(name, session, || false)
+}
+
+fn preview_session_with_cancel(
+    name: &str,
+    session: &Path,
+    cancelled: impl Fn() -> bool,
+) -> Result<RestorePreview, String> {
+    let inputs = validate_session(session, &cancelled)?;
     let mut preview = RestorePreview {
         name: name.into(),
-        size_kb: crate::dirsize::walk_size_kb_unbudgeted(session),
+        size_kb: crate::dirsize::walk_size_kb_unbudgeted_with_cancel(session, &cancelled),
         files: inputs.map.len(),
         registry: inputs.imports.len(),
         path_entries: inputs
@@ -874,6 +917,9 @@ fn preview_session(name: &str, session: &Path) -> Result<RestorePreview, String>
         entries: vec![],
     };
     for (rel, target) in inputs.map {
+        if cancelled() {
+            return Err(PREVIEW_CANCELLED.into());
+        }
         if !is_safe_map_rel(&rel) {
             return Err("seal:bad_backup_entry".into());
         }
@@ -953,7 +999,7 @@ fn session_status(dir: &Path) -> SessionStatus {
         Err(_) => return SessionStatus::Unknown,
     }
     let check = crate::path_seal::verified_seal(dir)
-        .and_then(|seal| session_metadata::check_session_metadata(dir, &seal));
+        .and_then(|seal| session_metadata::check_session_metadata(dir, &seal, || false));
     match check.as_ref().map_err(String::as_str) {
         Ok(()) => SessionStatus::PendingVerification,
         Err("seal:missing") => match session_metadata::is_empty_unsealed_session(dir) {

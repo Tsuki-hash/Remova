@@ -25,6 +25,8 @@ pub(super) struct BackupReceipt {
     metadata_pins: Vec<std::fs::File>,
     #[cfg(windows)]
     paths_selected: bool,
+    #[cfg(all(windows, not(test)))]
+    registry: BTreeMap<String, Result<crate::regops::RegistrySource, String>>,
     path_plan: Option<crate::regops::BackedPathPlan>,
 }
 
@@ -47,6 +49,18 @@ impl BackupReceipt {
             Self {
                 identities,
                 paths_selected: items.iter().any(|item| matches!(item.kind, ItemKind::Path)),
+                #[cfg(not(test))]
+                registry: items
+                    .iter()
+                    .filter(|item| matches!(item.kind, ItemKind::Registry))
+                    .map(|item| {
+                        let source =
+                            crate::regops::RegistrySource::capture(&item.path).and_then(|source| {
+                                source.ok_or("registry source was missing before backup".into())
+                            });
+                        (item.path.clone(), source)
+                    })
+                    .collect(),
                 ..Self::default()
             }
         }
@@ -109,6 +123,20 @@ impl BackupReceipt {
             }
             self.metadata_pins.push(file);
         }
+        #[cfg(not(test))]
+        for (target, receipt) in &mut self.registry {
+            if let Ok(source) = receipt {
+                let relative =
+                    crate::backup::registry_restore_snapshot(target, target.contains('|'));
+                if !seal
+                    .reg_digests
+                    .get(&relative)
+                    .is_some_and(|digest| source.matches_backup(digest))
+                {
+                    *receipt = Err("registry source could not be bound to its backup".into());
+                }
+            }
+        }
         self.files = Some(crate::backup::PublishedFiles::open(session, &seal)?);
         Ok(self)
     }
@@ -123,6 +151,30 @@ impl BackupReceipt {
             .as_ref()
             .map(crate::regops::BackedPathPlan::scrub)
             .unwrap_or_default()
+    }
+
+    #[cfg(all(windows, not(test)))]
+    pub(super) fn verify_registry(&self, path: &str) -> Result<bool, String> {
+        self.registry
+            .get(path)
+            .ok_or("no registry backup receipt")?
+            .as_ref()
+            .map_err(Clone::clone)?
+            .verify()
+    }
+
+    #[cfg(any(not(windows), test))]
+    pub(super) fn verify_registry(&self, _: &str) -> Result<bool, String> {
+        Err("no registry backup receipt".into())
+    }
+
+    pub(super) fn delete_registry_value(&self, path: &str) -> Option<Result<bool, String>> {
+        #[cfg(all(windows, not(test)))]
+        if let Some(Ok(source)) = self.registry.get(path) {
+            return source.delete_value(path);
+        }
+        let _ = path;
+        None
     }
 
     #[cfg(windows)]

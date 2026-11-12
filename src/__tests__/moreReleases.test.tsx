@@ -16,6 +16,7 @@ vi.mock("../lib/api", () => ({
     clearCorruptRebootGate: vi.fn().mockResolvedValue(true),
     backupSessions: vi.fn().mockResolvedValue([{ name: "newest", size_kb: 1, created_at: "2", sealed: true }, { name: "requested", size_kb: 1, created_at: "1", sealed: true }]),
     previewRestore: vi.fn(async (name: string) => ({ name, files: 0, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] })),
+    cancelRestorePreview: vi.fn(async () => true),
     restoreSessionByName: vi.fn() },
 }));
 
@@ -48,8 +49,8 @@ it("opens the Releases page from the help section header", async () => {
   fireEvent.click(await screen.findByRole("button", { name: t().openReleases }));
   await waitFor(() => expect(api.openPath).toHaveBeenCalledWith(RELEASES_URL));
   requestBackupSession("requested");
-  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledWith("requested"));
-  expect(api.previewRestore).not.toHaveBeenCalledWith("newest");
+  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledWith("requested", expect.any(String)));
+  expect(api.previewRestore).not.toHaveBeenCalledWith("newest", expect.any(String));
   expect(api.restoreSessionByName).not.toHaveBeenCalled();
 });
 

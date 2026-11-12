@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MorePage } from "../components/MorePage";
+import { ConfirmHost } from "../components/ui/ConfirmHost";
 import { useMoreRestore } from "../hooks/useMoreRestore";
 import { t } from "../i18n";
 import { requestBackupSession } from "../lib/backupSessionNavigation";
@@ -16,6 +17,8 @@ vi.mock("../lib/api", () => ({
     backupSessions: vi.fn().mockResolvedValue([]),
     history: vi.fn().mockResolvedValue([]),
     previewRestore: vi.fn(),
+    cancelRestorePreview: vi.fn(async () => true),
+    deleteBackupSession: vi.fn(),
     restoreSessionByName: vi.fn(),
     cancelRestore: vi.fn(),
   },
@@ -42,6 +45,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(api.backupSessions).mockReset().mockResolvedValue([]);
   vi.mocked(api.previewRestore).mockReset();
+  vi.mocked(api.deleteBackupSession).mockReset();
   vi.mocked(api.restoreSessionByName).mockReset();
   vi.mocked(api.cancelRestore).mockReset();
 });
@@ -49,7 +53,7 @@ afterEach(() => { settleConfirm(false); cleanup(); vi.clearAllMocks(); });
 
 function Toolbox({ visible = true }: { visible?: boolean }) {
   const restore = useMoreRestore(props.onError);
-  return visible && <MorePage {...props} restore={restore} />;
+  return <><ConfirmHost />{visible && <MorePage {...props} restore={restore} />}</>;
 }
 
 function mountMore() {
@@ -152,6 +156,56 @@ it("focuses tool search after closing restore opened from another page", async (
   close.focus();
   fireEvent.click(close);
   expect(document.activeElement).toBe(screen.getByLabelText(L.moreSearchTools));
+});
+
+const vaultSession = (name: string) => ({ name, size_kb: 2, created_at: "", sealed: true, status: "verified" as const });
+const vaultPreview = (name: string) => ({ name, files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 0, entries: [] });
+
+it.each(["Escape", "Cancel"] as const)("restores focus after dismissing restore confirmation with %s", async (method) => {
+  const L = t();
+  const name = "backup-for-restore";
+  vi.mocked(api.backupSessions).mockResolvedValue([vaultSession(name)]);
+  vi.mocked(api.previewRestore).mockResolvedValue(vaultPreview(name));
+  mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  const opener = await screen.findByRole("button", { name: L.restoreRun });
+  await waitFor(() => expect(opener).toHaveProperty("disabled", false));
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = await screen.findByRole("dialog", { name: L.restore });
+  if (method === "Escape") fireEvent.keyDown(dialog, { key: "Escape" });
+  else fireEvent.click(within(dialog).getByRole("button", { name: L.cancel }));
+  await waitFor(() => expect(document.activeElement).toBe(opener));
+  expect(api.restoreSessionByName).not.toHaveBeenCalled();
+});
+
+it.each(["neighbor", "empty", "failed", "moved"] as const)("returns keyboard focus after deleting a backup (%s)", async (outcome) => {
+  const L = t();
+  const name = "backup-to-delete";
+  const next = "backup-next";
+  const sessions = [vaultSession(name), ...(outcome === "empty" ? [] : [vaultSession(next)])];
+  vi.mocked(api.backupSessions).mockResolvedValueOnce(sessions).mockResolvedValue(sessions.slice(1));
+  vi.mocked(api.previewRestore).mockImplementation(async (session) => vaultPreview(session));
+  let finish!: () => void;
+  vi.mocked(api.deleteBackupSession).mockImplementation(() => new Promise<void>((resolve, reject) => {
+    finish = () => outcome === "failed" ? reject(new Error("Denied")) : resolve();
+  }));
+  mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  const opener = await screen.findByRole("button", { name: L.deleteSession + ": " + name });
+  opener.focus();
+  fireEvent.click(opener);
+  await screen.findByRole("dialog", { name: L.deleteSession });
+  await act(async () => settleConfirm(true));
+  await waitFor(() => expect(api.deleteBackupSession).toHaveBeenCalledWith(name, "verified"));
+  const search = screen.getByLabelText(L.moreSearchTools);
+  if (outcome === "moved") search.focus();
+  await act(async () => finish());
+  const focusTarget = outcome === "failed" ? opener
+    : outcome === "moved" ? search
+    : outcome === "empty" ? screen.getByText(L.safetyVaultTitle)
+    : screen.getByRole("radio", { name: new RegExp(next) });
+  expect(document.activeElement).toBe(focusTarget);
 });
 
 it.each(["partial", "failure", "cancel", "cancel before writes"] as const)("keeps a %s restore result across navigation", async outcome => {

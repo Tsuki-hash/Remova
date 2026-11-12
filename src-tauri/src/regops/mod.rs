@@ -317,7 +317,12 @@ pub fn sc_set_service_running(svc_name: &str, run: bool) -> Result<(), String> {
 }
 
 /// Best-effort: stop/delete Windows service via sc.exe.
+#[cfg(test)]
 pub fn sc_delete_service(svc_name: &str) -> bool {
+    sc_delete_service_checked(svc_name, || true)
+}
+
+pub(crate) fn sc_delete_service_checked(svc_name: &str, can_delete: impl FnOnce() -> bool) -> bool {
     if svc_name.is_empty() || svc_name.contains('\\') || svc_name.contains('"') {
         return false;
     }
@@ -333,6 +338,9 @@ pub fn sc_delete_service(svc_name: &str) -> bool {
     stop.args(["stop", svc_name]);
     hide_console(&mut stop);
     let _ = mutation_command_output(&mut stop);
+    if !can_delete() {
+        return false;
+    }
     let mut del = Command::new(&sc);
     del.args(["delete", svc_name]);
     hide_console(&mut del);
@@ -381,7 +389,11 @@ fn normalize_path_entry(s: &str) -> Option<String> {
 }
 
 mod backed_path;
-pub(crate) use backed_path::{BackedPathPlan, BackedPathResult};
+pub(crate) use backed_path::{BackedPathPlan, BackedPathRestore, BackedPathResult};
+#[cfg(windows)]
+mod backed_registry;
+#[cfg(all(windows, not(test)))]
+pub(crate) use backed_registry::RegistrySource;
 
 fn path_segment_matches(segment: &str, expand: bool, needle: &str) -> bool {
     normalize_path_entry(segment).as_deref() == Some(needle)
@@ -516,6 +528,19 @@ pub fn export_reg_value(
     value_name: &str,
     dest: &std::path::Path,
 ) -> Result<bool, String> {
+    validate_value_export(key_path, value_name)?;
+    let Some((bytes, typ)) = read_reg_value_bytes(key_path, value_name)? else {
+        return Ok(false);
+    };
+    let reg = encode_reg_value(key_path, value_name, &bytes, typ)?;
+    if let Some(p) = dest.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(dest, reg).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+fn validate_value_export(key_path: &str, value_name: &str) -> Result<(), String> {
     if value_name.trim().is_empty() {
         return Err("empty value name".into());
     }
@@ -523,13 +548,23 @@ pub fn export_reg_value(
     if value_name.contains('"') || value_name.contains('\n') || value_name.contains('\r') {
         return Err("unsafe value name".into());
     }
-    let (alias, rest) = key_path
+    let (_, rest) = key_path
         .split_once('\\')
         .ok_or_else(|| "bad key".to_string())?;
     // key rest is interpolated into `[...]` — reject injection chars.
     if rest.is_empty() || rest.contains(['\r', '\n', ']']) {
         return Err("unsafe key path".into());
     }
+    Ok(())
+}
+
+fn encode_reg_value(
+    key_path: &str,
+    value_name: &str,
+    native_bytes: &[u8],
+    native_type: u32,
+) -> Result<Vec<u8>, String> {
+    let (alias, rest) = key_path.split_once('\\').ok_or("bad key")?;
     let (hive, view) = match alias.to_uppercase().as_str() {
         "HKLM64" | "HKLM" => ("HKEY_LOCAL_MACHINE", "/reg:64"),
         "HKLM32" => ("HKEY_LOCAL_MACHINE", "/reg:32"),
@@ -537,9 +572,6 @@ pub fn export_reg_value(
         other => return Err(format!("unsupported hive {other}")),
     };
     let key_win = format!(r"{hive}\{rest}");
-    let Some((native_bytes, native_type)) = read_reg_value_bytes(key_path, value_name)? else {
-        return Ok(false);
-    };
     let value_name = value_name.replace('\\', "\\\\");
     let reg_type = match native_type {
         1 => "REG_SZ",
@@ -555,7 +587,6 @@ pub fn export_reg_value(
             "0x{:x}",
             u32::from_le_bytes(
                 native_bytes
-                    .as_slice()
                     .try_into()
                     .map_err(|_| "invalid DWORD length")?
             )
@@ -564,7 +595,6 @@ pub fn export_reg_value(
             "0x{:x}",
             u64::from_le_bytes(
                 native_bytes
-                    .as_slice()
                     .try_into()
                     .map_err(|_| "invalid QWORD length")?
             )
@@ -595,7 +625,7 @@ pub fn export_reg_value(
             // reg.exe text output joins items with spaces (lossy, type lost) —
             // read the raw UTF-16LE bytes and emit hex(7) so item structure
             // survives restore.
-            let mut payload = native_bytes.clone();
+            let mut payload = native_bytes.to_vec();
             while payload.ends_with(&[0, 0]) {
                 payload.truncate(payload.len() - 2);
             }
@@ -624,9 +654,8 @@ pub fn export_reg_value(
             } else {
                 "hex(1)"
             };
-            let bytes = &native_bytes;
             // registry strings arrive NUL-terminated — normalize to exactly one.
-            let mut core = bytes.as_slice();
+            let mut core = native_bytes;
             while core.len() >= 2 && core[core.len() - 2..] == [0, 0] {
                 core = &core[..core.len() - 2];
             }
@@ -646,11 +675,7 @@ pub fn export_reg_value(
         }
     };
     let reg = format!("Windows Registry Editor Version 5.00\r\n; Remova registry view: {}\r\n\r\n{key_reg}\r\n{body}\r\n", view.trim_start_matches("/reg:"));
-    if let Some(p) = dest.parent() {
-        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(dest, crate::restore::encode_reg_text(&reg)).map_err(|e| e.to_string())?;
-    Ok(true)
+    Ok(crate::restore::encode_reg_text(&reg))
 }
 
 /// Parse `reg query` output for a single value: locate the known-type token
@@ -864,6 +889,10 @@ pub(crate) mod path_mock {
     }
 
     pub fn read_raw(scope: &str) -> Result<(String, bool), String> {
+        Ok(read_present_raw(scope)?.unwrap_or((String::new(), false)))
+    }
+
+    pub(super) fn read_present_raw(scope: &str) -> Result<Option<(String, bool)>, String> {
         if *FAIL_READ.lock().unwrap_or_else(|e| e.into_inner())
             || FAIL_SCOPE_READ
                 .lock()
@@ -875,7 +904,18 @@ pub(crate) mod path_mock {
         }
         let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let map = guard.as_ref().expect("path mock not installed");
-        Ok(map.get(scope).cloned().unwrap_or((String::new(), false)))
+        Ok(map.get(scope).cloned())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn remove_value(scope: &str) {
+        require_scope();
+        STATE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+            .expect("path mock not installed")
+            .remove(scope);
     }
 
     pub fn write(scope: &str, value: &str, expand: bool) -> Result<(), String> {
@@ -1095,12 +1135,15 @@ fn read_path_scope_raw(scope: &str) -> Result<(String, bool), String> {
     // read Path straight from the registry — no PowerShell round-trip
     // (was two processes per analyze) and no OEM-codepage `from_utf8_lossy`
     // corruption of non-ASCII PATH entries.
-    let key = match scope {
-        "User" => r"HKCU\Environment",
-        "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
-    };
-    read_reg_value_raw_with_missing(key, "Path", true)
+    read_reg_value_raw_with_missing(path_scope_key(scope)?, "Path", true)
+}
+
+fn path_scope_key(scope: &str) -> Result<&'static str, String> {
+    match scope {
+        "User" => Ok(r"HKCU\Environment"),
+        "Machine" => Ok(r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        _ => Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
+    }
 }
 
 /// Raw Path text plus its type (`true` = REG_EXPAND_SZ). Write-back must
@@ -1225,7 +1268,6 @@ fn read_reg_value_bytes(
     key_path: &str,
     value_name: &str,
 ) -> Result<Option<(Vec<u8>, u32)>, String> {
-    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
     let (hive, sub, access) = parse(key_path).ok_or_else(|| "bad key".to_string())?;
     unsafe {
         let w = to_wide(&sub);
@@ -1239,7 +1281,17 @@ fn read_reg_value_bytes(
             return Ok(None);
         }
         opened.ok().map_err(|_| format!("open failed {key_path}"))?;
-        let vname = to_wide(value_name);
+        let result = read_open_reg_value(hk, value_name);
+        let _ = RegCloseKey(hk);
+        result.map_err(|error| format!("read value {key_path}!{value_name}: {error}"))
+    }
+}
+
+#[cfg(windows)]
+fn read_open_reg_value(hk: HKEY, value_name: &str) -> Result<Option<(Vec<u8>, u32)>, String> {
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_VALUE_TYPE};
+    unsafe {
+        let vname = to_wide_name(value_name)?;
         let mut typ = REG_VALUE_TYPE(0);
         let mut data = vec![0u8; 16 * 1024];
         let mut data_len = data.len() as u32;
@@ -1266,12 +1318,11 @@ fn read_reg_value_bytes(
                 );
             }
         }
-        let _ = RegCloseKey(hk);
         if st == ERROR_FILE_NOT_FOUND || st == ERROR_PATH_NOT_FOUND {
             return Ok(None);
         }
         if st != ERROR_SUCCESS {
-            return Err(format!("read value {key_path}!{value_name} failed"));
+            return Err(format!("Win32 {}", st.0));
         }
         data.truncate(data_len as usize);
         Ok(Some((data, typ.0)))
@@ -1401,24 +1452,24 @@ pub fn read_path_scope_public(scope: &str) -> Result<String, String> {
 }
 
 pub(crate) fn write_path_scope(scope: &str, value: &str, expand: bool) -> Result<(), String> {
+    validate_path_scope_value(value)?;
     #[cfg(test)]
     {
         if path_mock::active() {
             return path_mock::write(scope, value, expand);
         }
     }
+    write_path_value(path_scope_key(scope)?, value, expand)
+}
+
+fn validate_path_scope_value(value: &str) -> Result<(), String> {
     if value.encode_utf16().count() > 30_000 {
         return Err(crate::error::path_io_err(
             "PATH value exceeds the environment variable size limit".to_string(),
         )
         .to_ipc());
     }
-    let key = match scope {
-        "User" => r"HKCU\Environment",
-        "Machine" => r"HKLM64\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        _ => return Err(crate::error::path_io_err(format!("unknown Path scope {scope}")).to_ipc()),
-    };
-    write_path_value(key, value, expand)
+    crate::fsutil::validate_native_name(value)
 }
 
 fn write_path_value(key: &str, value: &str, expand: bool) -> Result<(), String> {
