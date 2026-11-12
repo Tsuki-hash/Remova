@@ -312,6 +312,26 @@ it("updates the selected backup after deletion and preserves selection when anot
   expect(result.current.restorePick).toBe("");
 });
 
+it("refreshes the preview after an interruption and confirms a resumable directory", async () => {
+  const { result } = renderVisibleRestore();
+  await act(async () => { await result.current.loadRestore(); });
+  const partial = { name: "older-backup", files: 1, registry: 0, path_entries: 0,
+    existing: 0, resumable: 1, unavailable: 0,
+    entries: [{ target: "folder", status: "resumable" }] };
+  native.restoreSessionByName.mockImplementationOnce(async () => {
+    native.previewRestore.mockResolvedValue(partial);
+    return ["restore directory interrupted: folder: fixture"];
+  });
+  await act(async () => { await result.current.runRestore(); });
+  await waitFor(() => expect(result.current.restorePreview?.resumable).toBe(1));
+  expect(result.current.restoreMsgs[0]).toContain(t().restoreDirectoryInterrupted);
+  native.restoreSessionByName.mockResolvedValueOnce(["restored folder"]);
+  await act(async () => { await result.current.runRestore(); });
+  expect(requestConfirm).toHaveBeenLastCalledWith(expect.objectContaining({
+    message: expect.stringContaining(t().restoreResumable(1)),
+  }));
+});
+
 it("preserves backups on deletion cancellation or failure", async () => {
   const error = vi.fn();
   const { result } = renderVisibleRestore(error);
@@ -488,18 +508,21 @@ it("refreshes conflict counts before confirmation and locks duplicate restore re
 it("shows restore target conflicts and missing entries while rejecting stale or failed previews", () => {
   const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000", sealed: true }],
     pick: "older-backup", setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
-  const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, unavailable: 2,
+  const preview = { name: "older-backup", files: 201, registry: 1, path_entries: 2, existing: 1, resumable: 1, unavailable: 2,
     entries: [{ target: "available-file", status: "available" as const }, { target: "existing-file", status: "existing" as const },
-      { target: "missing-file", status: "missing" as const }, { target: "blocked-file", status: "blocked" as const }] };
+      { target: "missing-file", status: "missing" as const }, { target: "blocked-file", status: "blocked" as const },
+      { target: "interrupted-directory", status: "resumable" as const }] };
   const view = render(<RestorePanel {...props} preview={preview} />);
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(false);
   expect(screen.getByText(t().restoreConflict(1))).toBeTruthy();
   expect(screen.getByText(t().restoreTargetMissing)).toBeTruthy();
-  expect(screen.getByText(t().restorePreviewLimited(4, 201))).toBeTruthy();
+  expect(screen.getByText(t().restorePreviewLimited(5, 201))).toBeTruthy();
+  expect(screen.getByText(t().restoreTargetResumable)).toBeTruthy();
+  expect(screen.getByText(t().restoreResumable(1))).toBeTruthy();
   expect(screen.getByText(t().restoreUnavailable(2))).toBeTruthy();
   expect(screen.getByText(t().restoreTargets).closest("details")?.open).toBe(true);
   expect(screen.getAllByRole("listitem").map(row => row.firstElementChild?.textContent))
-    .toEqual(["missing-file", "blocked-file", "existing-file", "available-file"]);
+    .toEqual(["missing-file", "blocked-file", "existing-file", "interrupted-directory", "available-file"]);
   view.rerender(<RestorePanel {...props} preview={{ ...preview, name: "other" }} />);
   expect(screen.getByRole("button", { name: t().restoreRun }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByText("existing-file")).toBeNull();

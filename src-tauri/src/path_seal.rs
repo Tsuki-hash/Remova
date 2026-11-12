@@ -507,6 +507,25 @@ pub(crate) fn restore_stage() -> Result<BackupStage, String> {
 }
 
 #[cfg(windows)]
+pub(crate) struct RestoreReceiptStore(key::Store);
+
+#[cfg(windows)]
+impl RestoreReceiptStore {
+    pub fn open() -> Result<Self, String> {
+        key::load(false).map(Self)
+    }
+
+    pub fn receipt(
+        &self,
+        name: &str,
+        writable: bool,
+        create: bool,
+    ) -> std::io::Result<std::fs::File> {
+        self.0.open_restore_receipt(name, writable, create)
+    }
+}
+
+#[cfg(windows)]
 pub(crate) fn cleanup_abandoned_stages() {
     if let Ok(store) = key::load(false) {
         store.cleanup_abandoned();

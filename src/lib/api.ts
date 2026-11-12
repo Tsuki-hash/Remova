@@ -101,9 +101,9 @@ export type VerifyRow = { path: string; kind: string; still_there: boolean; erro
 export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
-  existing: number; unavailable: number;
+  existing: number; resumable?: number; unavailable: number;
   size_kb?: number | null;
-  entries: { target: string; status: "available" | "existing" | "missing" | "blocked" }[];
+  entries: { target: string; status: "available" | "existing" | "resumable" | "missing" | "blocked" }[];
 };
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

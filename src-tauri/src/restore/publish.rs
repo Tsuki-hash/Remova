@@ -1,31 +1,37 @@
 //! Write an authenticated restore entry without replacing any live object.
 
+use super::retry::{directory_key, Journal, Receipts};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::MetadataExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use windows::core::PWSTR;
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows::Wdk::Storage::FileSystem::{
     FileRenameInformation, NtCreateFile, NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE,
-    FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
-    FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_OPTIONS,
+    FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
+    FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS,
 };
-use windows::Win32::Foundation::{HANDLE, NTSTATUS, STATUS_OBJECT_NAME_COLLISION, UNICODE_STRING};
+use windows::Win32::Foundation::{
+    HANDLE, NTSTATUS, STATUS_NO_SUCH_FILE, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND, UNICODE_STRING,
+};
 use windows::Win32::Storage::FileSystem::{
     FileDispositionInfo, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
     FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
-    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_NONE, FILE_SHARE_READ, FILE_WRITE_DATA,
-    SYNCHRONIZE,
+    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_MODE, FILE_SHARE_NONE, FILE_SHARE_READ,
+    FILE_WRITE_DATA, SYNCHRONIZE,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 
+#[derive(Debug)]
 pub(super) enum Failure {
     Occupied,
     PartialDirectory(io::Error),
+    DirectoryConflicts { count: usize, first: PathBuf },
     Io(io::Error),
 }
 
@@ -61,10 +67,28 @@ fn nt_result(status: NTSTATUS) -> io::Result<()> {
             "restore target already exists",
         ));
     }
+    if matches!(
+        status,
+        STATUS_OBJECT_NAME_NOT_FOUND | STATUS_OBJECT_PATH_NOT_FOUND | STATUS_NO_SUCH_FILE
+    ) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "restore target does not exist",
+        ));
+    }
     status.ok().map_err(io::Error::other)
 }
 
-fn create_entry(parent: &impl AsRawHandle, name: &OsStr, directory: bool) -> io::Result<File> {
+const READ_ENTRY: u32 = FILE_READ_DATA.0 | FILE_READ_ATTRIBUTES.0 | SYNCHRONIZE.0;
+
+fn relative_entry(
+    parent: &impl AsRawHandle,
+    name: &OsStr,
+    access: u32,
+    share: FILE_SHARE_MODE,
+    disposition: NTCREATEFILE_CREATE_DISPOSITION,
+    kind: NTCREATEFILE_CREATE_OPTIONS,
+) -> io::Result<File> {
     let mut name = relative_name(name)?;
     let length = (name.len() * 2) as u16;
     let unicode = UNICODE_STRING {
@@ -80,16 +104,6 @@ fn create_entry(parent: &impl AsRawHandle, name: &OsStr, directory: bool) -> io:
         Attributes: 0x40 | 0x1000,
         ..Default::default()
     };
-    let read = FILE_READ_DATA.0 | FILE_READ_ATTRIBUTES.0 | SYNCHRONIZE.0;
-    let (access, share, kind) = if directory {
-        (read, FILE_SHARE_READ, FILE_DIRECTORY_FILE)
-    } else {
-        (
-            read | FILE_WRITE_DATA.0 | DELETE.0,
-            FILE_SHARE_NONE,
-            FILE_NON_DIRECTORY_FILE,
-        )
-    };
     let mut handle = HANDLE::default();
     let mut status = IO_STATUS_BLOCK::default();
     nt_result(unsafe {
@@ -101,7 +115,7 @@ fn create_entry(parent: &impl AsRawHandle, name: &OsStr, directory: bool) -> io:
             None,
             FILE_ATTRIBUTE_NORMAL,
             share,
-            FILE_CREATE,
+            disposition,
             NTCREATEFILE_CREATE_OPTIONS(
                 kind.0 | FILE_OPEN_REPARSE_POINT.0 | FILE_SYNCHRONOUS_IO_NONALERT.0,
             ),
@@ -110,6 +124,28 @@ fn create_entry(parent: &impl AsRawHandle, name: &OsStr, directory: bool) -> io:
         )
     })?;
     Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+fn create_file(parent: &impl AsRawHandle, name: &OsStr) -> io::Result<File> {
+    relative_entry(
+        parent,
+        name,
+        READ_ENTRY | FILE_WRITE_DATA.0 | DELETE.0,
+        FILE_SHARE_NONE,
+        FILE_CREATE,
+        FILE_NON_DIRECTORY_FILE,
+    )
+}
+
+fn open_directory(parent: &impl AsRawHandle, name: &OsStr) -> io::Result<File> {
+    relative_entry(
+        parent,
+        name,
+        READ_ENTRY,
+        FILE_SHARE_READ,
+        FILE_OPEN,
+        FILE_DIRECTORY_FILE,
+    )
 }
 
 fn commit_file(file: &File, name: &OsStr) -> io::Result<()> {
@@ -138,7 +174,7 @@ fn commit_file(file: &File, name: &OsStr) -> io::Result<()> {
     }
 }
 
-fn discard_temporary_file(file: &File) {
+pub(super) fn discard_temporary_file(file: &File) {
     let info = FILE_DISPOSITION_INFO {
         DeleteFile: true.into(),
     };
@@ -176,7 +212,7 @@ fn temporary_file(parent: &impl AsRawHandle, target: &OsStr) -> io::Result<File>
         {
             continue;
         }
-        match create_entry(parent, name, false) {
+        match create_file(parent, name) {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             result => return result,
         }
@@ -213,38 +249,169 @@ fn write_new_file(source: &Path, parent: &impl AsRawHandle, name: &OsStr) -> io:
     result
 }
 
-fn write_new_directory_contents(
-    source: &Path,
-    directory: File,
-    left: &mut usize,
-    depth: usize,
-    retained: &mut Vec<(File, File)>,
-) -> io::Result<()> {
-    let guard = guard_restored_directory(&directory)?;
-    let source_pin = crate::fsutil::pin_target_readonly(source)?;
-    source_pin.check_data_streams()?;
-    for name in crate::fsutil::read_local_entry_names(source, *left)? {
+fn claim_directory(
+    parent: &impl AsRawHandle,
+    name: &OsStr,
+    relative: &Path,
+    journal: &mut Journal,
+) -> io::Result<File> {
+    for _ in 0..32 {
         check_cancelled()?;
-        if *left == 0 || depth >= 64 {
-            return Err(io::Error::other(
-                "restore directory exceeds verification limit",
-            ));
+        let temporary = crate::fsutil::atomic_tmp_path(Path::new(name));
+        let temporary_name = temporary
+            .file_name()
+            .expect("temporary directory has a name");
+        if temporary_name.eq_ignore_ascii_case(name) {
+            continue;
         }
-        *left -= 1;
-        let child = source.join(&name);
-        let metadata = crate::fsutil::scan_path_metadata(&child)?;
-        if metadata.is_dir() {
-            let dest = create_entry(&directory, &name, true)?;
-            write_new_directory_contents(&child, dest, left, depth + 1, retained)?;
-        } else {
-            write_new_file(&child, &directory, &name)?;
+        let directory = match relative_entry(
+            parent,
+            temporary_name,
+            READ_ENTRY | DELETE.0,
+            FILE_SHARE_READ,
+            FILE_CREATE,
+            FILE_DIRECTORY_FILE,
+        ) {
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            result => result?,
+        };
+        let result = (|| {
+            let key = directory_key(relative)?;
+            journal.remember(key, &directory)?;
+            check_cancelled()?;
+            commit_file(&directory, name)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            // Only the unpublished object we created can be disposed. If a
+            // late child makes it nonempty, leave it and its data intact.
+            discard_temporary_file(&directory);
+            return Err(error);
+        }
+        return Ok(directory);
+    }
+    Err(io::Error::other(
+        "restore temporary directory name collisions",
+    ))
+}
+
+fn matching_file(mut existing: File, source: &Path) -> io::Result<bool> {
+    let metadata = existing.metadata()?;
+    if crate::fsutil::is_reparse_metadata(&metadata) {
+        return Ok(false);
+    }
+    let mut source = crate::fsutil::open_local_regular_file(source)?;
+    if metadata.len() != source.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut expected = [0; 64 * 1024];
+    let mut actual = [0; 64 * 1024];
+    loop {
+        check_cancelled()?;
+        let count = source.read(&mut expected)?;
+        if count == 0 {
+            return Ok(true);
+        }
+        existing.read_exact(&mut actual[..count])?;
+        if actual[..count] != expected[..count] {
+            return Ok(false);
         }
     }
-    source_pin.check_data_streams()?;
-    // Keep the exact directory and its marker pinned after its recursion
-    // returns, until the whole restore entry has finished publishing.
-    retained.push((directory, guard));
-    Ok(())
+}
+
+struct DirectoryRestore<F> {
+    journal: Journal,
+    left: usize,
+    retained: Vec<(File, File)>,
+    conflicts: usize,
+    first_conflict: Option<PathBuf>,
+    after_file: F,
+}
+
+impl<F: FnMut(&Path) -> io::Result<()>> DirectoryRestore<F> {
+    fn conflict(&mut self, relative: &Path) {
+        self.conflicts += 1;
+        self.first_conflict
+            .get_or_insert_with(|| relative.to_owned());
+    }
+
+    fn write_contents(
+        &mut self,
+        source: &Path,
+        directory: File,
+        relative: &Path,
+        depth: usize,
+    ) -> io::Result<()> {
+        let guard = guard_restored_directory(&directory)?;
+        let source_pin = crate::fsutil::pin_target_readonly(source)?;
+        source_pin.check_data_streams()?;
+        for name in crate::fsutil::read_local_entry_names(source, self.left)? {
+            check_cancelled()?;
+            if self.left == 0 || depth >= 64 {
+                return Err(io::Error::other(
+                    "restore directory exceeds verification limit",
+                ));
+            }
+            self.left -= 1;
+            let child = source.join(&name);
+            let relative = relative.join(&name);
+            let metadata = crate::fsutil::scan_path_metadata(&child)?;
+            if metadata.is_dir() {
+                let key = directory_key(&relative)?;
+                let dest = match open_directory(&directory, &name) {
+                    Ok(existing) if self.journal.owns(&key, &existing)? => existing,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        match claim_directory(&directory, &name, &relative, &mut self.journal) {
+                            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                                self.conflict(&relative);
+                                continue;
+                            }
+                            result => result?,
+                        }
+                    }
+                    _ => {
+                        self.conflict(&relative);
+                        continue;
+                    }
+                };
+                if !self.journal.owns(&key, &dest)? {
+                    return Err(io::Error::other("restore directory identity changed"));
+                }
+                self.write_contents(&child, dest, &relative, depth + 1)?;
+            } else {
+                match relative_entry(
+                    &directory,
+                    &name,
+                    READ_ENTRY,
+                    FILE_SHARE_READ,
+                    FILE_OPEN,
+                    FILE_NON_DIRECTORY_FILE,
+                ) {
+                    Ok(existing) => match matching_file(existing, &child) {
+                        Ok(true) => {}
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                            return Err(error)
+                        }
+                        _ => self.conflict(&relative),
+                    },
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        match write_new_file(&child, &directory, &name) {
+                            Ok(()) => (self.after_file)(&relative)?,
+                            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                                self.conflict(&relative)
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Err(_) => self.conflict(&relative),
+                }
+            }
+        }
+        source_pin.check_data_streams()?;
+        // Keep the exact object and its marker pinned through publication.
+        self.retained.push((directory, guard));
+        Ok(())
+    }
 }
 
 fn guard_restored_directory(directory: &File) -> io::Result<File> {
@@ -267,22 +434,87 @@ pub(super) fn publish(
     source: &Path,
     parent: &impl AsRawHandle,
     name: &OsStr,
+    receipts: &Receipts<'_>,
+    entry: &str,
 ) -> Result<(), Failure> {
     check_cancelled()?;
     if crate::fsutil::scan_path_metadata(source)?.is_dir() {
-        let directory = create_entry(parent, name, true)?;
-        let mut left = crate::path_seal::MAX_PAYLOAD_NODES - 1;
-        let mut retained = Vec::new();
-        write_new_directory_contents(source, directory, &mut left, 0, &mut retained)
-            .map_err(Failure::PartialDirectory)
+        publish_directory(source, parent, name, receipts, entry, |_| Ok(()))
     } else {
         write_new_file(source, parent, name).map_err(Failure::from)
     }
 }
 
+pub(super) fn publish_directory(
+    source: &Path,
+    parent: &impl AsRawHandle,
+    name: &OsStr,
+    receipts: &Receipts<'_>,
+    entry: &str,
+    after_file: impl FnMut(&Path) -> io::Result<()>,
+) -> Result<(), Failure> {
+    let root = Path::new("");
+    let key = directory_key(root)?;
+    let (directory, journal) = match open_directory(parent, name) {
+        Ok(directory) => {
+            let file = match receipts.open(entry, true, false) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Err(Failure::Occupied)
+                }
+                result => result?,
+            };
+            let journal = Journal::open(file)?;
+            if !journal.owns(&key, &directory)? {
+                return Err(Failure::Occupied);
+            }
+            (directory, journal)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let file = receipts.open(entry, true, true)?;
+            let mut journal = Journal::open(file)?;
+            let directory = claim_directory(parent, name, root, &mut journal)?;
+            (directory, journal)
+        }
+        Err(_) => return Err(Failure::Occupied),
+    };
+    if !journal.owns(&key, &directory)? {
+        return Err(io::Error::other("restore directory identity changed").into());
+    }
+    let mut run = DirectoryRestore {
+        journal,
+        left: crate::path_seal::MAX_PAYLOAD_NODES - 1,
+        retained: Vec::new(),
+        conflicts: 0,
+        first_conflict: None,
+        after_file,
+    };
+    run.write_contents(source, directory, root, 0)
+        .map_err(Failure::PartialDirectory)?;
+    if let Some(first) = run.first_conflict {
+        return Err(Failure::DirectoryConflicts {
+            count: run.conflicts,
+            first,
+        });
+    }
+    run.journal.finish();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_directory(parent: &impl AsRawHandle, name: &OsStr) -> File {
+        relative_entry(
+            parent,
+            name,
+            READ_ENTRY,
+            FILE_SHARE_READ,
+            FILE_CREATE,
+            FILE_DIRECTORY_FILE,
+        )
+        .unwrap()
+    }
 
     fn set_junction(path: &Path, target: &Path) -> io::Result<()> {
         use std::os::windows::fs::OpenOptionsExt;
@@ -338,7 +570,7 @@ mod tests {
         let outside = root.subdir("outside");
         let pins = crate::fsutil::pin_local_scan_path(root.path()).unwrap();
         let parent = pins.last().unwrap();
-        let unguarded = create_entry(parent, OsStr::new("unguarded"), true).unwrap();
+        let unguarded = create_directory(parent, OsStr::new("unguarded"));
         let unguarded_path = root.join("unguarded");
         set_junction(&unguarded_path, &outside).unwrap();
         assert!(crate::fsutil::is_reparse_point(&unguarded_path));
@@ -346,7 +578,7 @@ mod tests {
         drop(unguarded);
         std::fs::remove_dir(unguarded_path).unwrap();
 
-        let guarded = create_entry(parent, OsStr::new("guarded"), true).unwrap();
+        let guarded = create_directory(parent, OsStr::new("guarded"));
         let guarded_path = root.join("guarded");
         let guard = guard_restored_directory(&guarded).unwrap();
         assert!(set_junction(&guarded_path, &outside).is_err());
@@ -363,14 +595,28 @@ mod tests {
         let source = root.subdir("source");
         std::fs::create_dir(source.join("empty-child")).unwrap();
         let pins = crate::fsutil::pin_local_scan_path(root.path()).unwrap();
-        let directory = create_entry(pins.last().unwrap(), OsStr::new("restored"), true).unwrap();
-        let mut retained = Vec::new();
-        write_new_directory_contents(&source, directory, &mut 1, 0, &mut retained).unwrap();
+        let directory = create_directory(pins.last().unwrap(), OsStr::new("restored"));
+        let receipt = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(root.join("receipt"))
+            .unwrap();
+        let mut run = DirectoryRestore {
+            journal: Journal::open(receipt).unwrap(),
+            left: 1,
+            retained: Vec::new(),
+            conflicts: 0,
+            first_conflict: None,
+            after_file: |_: &Path| Ok(()),
+        };
+        run.write_contents(&source, directory, Path::new(""), 0)
+            .unwrap();
         let child = root.join("restored/empty-child");
-        assert_eq!(retained.len(), 2);
+        assert_eq!(run.retained.len(), 2);
         assert!(set_junction(&child, &outside).is_err());
         assert!(!crate::fsutil::is_reparse_point(&child));
-        drop(retained);
+        drop(run);
         assert_eq!(std::fs::read_dir(&child).unwrap().count(), 0);
         assert_eq!(std::fs::read_dir(root.join("restored")).unwrap().count(), 1);
         assert_eq!(std::fs::read_dir(outside).unwrap().count(), 0);
@@ -381,7 +627,7 @@ mod tests {
         let root = crate::test_support::TempDir::new("restore-late-child");
         let pins = crate::fsutil::pin_local_scan_path(root.path()).unwrap();
         let parent = pins.last().unwrap();
-        let directory = create_entry(parent, OsStr::new("restored"), true).unwrap();
+        let directory = create_directory(parent, OsStr::new("restored"));
         let child = OsStr::new("child.txt");
         let mut staged = temporary_file(&directory, child).unwrap();
         staged.write_all(b"backed-up bytes").unwrap();
@@ -414,6 +660,53 @@ mod tests {
         );
         eprintln!(
             "copy volumes {:?} -> {:?}",
+            source.components().next(),
+            root.components().next()
+        );
+    }
+
+    #[test]
+    fn directory_retry_reads_from_a_separate_volume_when_the_workspace_is_on_one() {
+        let root = crate::test_support::TempDir::new("restore-directory-volume");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let seal = crate::path_seal::PathMapSeal {
+            session: "1700000000_volume".into(),
+            map_digest: "test".into(),
+            targets: Vec::new(),
+            reg_digests: Default::default(),
+            file_digests: None,
+            file_manifest_digest: None,
+        };
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("windows");
+        let pins = crate::fsutil::pin_local_scan_path(root.path()).unwrap();
+        let parent = pins.last().unwrap();
+        let name = OsStr::new("restored");
+        let first = publish_directory(
+            &source,
+            parent,
+            name,
+            &Receipts::new(&seal),
+            "volume",
+            |_| {
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "fixture interruption",
+                ))
+            },
+        );
+        assert!(
+            matches!(first, Err(Failure::PartialDirectory(_))),
+            "{first:?}"
+        );
+        publish(&source, parent, name, &Receipts::new(&seal), "volume").unwrap();
+        for file in ["installer.nsi", "installer-hooks.nsh"] {
+            assert_eq!(
+                std::fs::read(root.join("restored").join(file)).unwrap(),
+                std::fs::read(source.join(file)).unwrap()
+            );
+        }
+        eprintln!(
+            "directory retry volumes {:?} -> {:?}",
             source.components().next(),
             root.components().next()
         );

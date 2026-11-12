@@ -3,7 +3,7 @@ use crate::path_seal::FileManifest;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;
-use std::os::windows::io::FromRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
@@ -59,11 +59,11 @@ pub(crate) fn remove_empty_backup_session(path: &Path) -> io::Result<()> {
     tree.remove_backed_up()
 }
 
-fn object_identity(pin: &DirPin) -> io::Result<ObjectIdentity> {
+pub(crate) fn object_identity(object: &impl AsRawHandle) -> io::Result<ObjectIdentity> {
     let mut info = FILE_ID_INFO::default();
     unsafe {
         GetFileInformationByHandleEx(
-            pin.handle,
+            windows::Win32::Foundation::HANDLE(object.as_raw_handle()),
             FileIdInfo,
             (&mut info as *mut FILE_ID_INFO).cast(),
             std::mem::size_of::<FILE_ID_INFO>() as u32,

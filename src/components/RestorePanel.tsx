@@ -94,7 +94,9 @@ export function RestorePanel({
     invalid: L.restoreSessionInvalid,
     legacy: L.restoreSessionLegacy,
   };
-  const statusOrder = { missing: 0, blocked: 0, existing: 1, available: 2 };
+  const statusOrder = { missing: 0, blocked: 0, existing: 1, resumable: 2, available: 3 };
+  const targetLabels = { missing: L.restoreTargetMissing, blocked: L.restoreTargetBlocked,
+    existing: L.restoreTargetExisting, resumable: L.restoreTargetResumable, available: L.restoreTargetAvailable };
   const previewEntries = [...(selectedPreview?.entries ?? [])]
     .sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
   return (
@@ -201,9 +203,10 @@ export function RestorePanel({
           </div> : selectedPreview && <>
             <p style={{ margin: "8px 0" }}>{L.restorePreviewSummary(selectedPreview.files, selectedPreview.registry, selectedPreview.path_entries)}</p>
             {selectedPreview.existing > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreConflict(selectedPreview.existing)}</p>}
+            {!!selectedPreview.resumable && <p style={css.muted}>{L.restoreResumable(selectedPreview.resumable)}</p>}
             {selectedPreview.unavailable > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreUnavailable(selectedPreview.unavailable)}</p>}
             <p style={{ ...css.muted, fontSize: 12, lineHeight: 1.5, margin: "6px 0" }}>{L.restorePreviewHint}</p>
-            <details open={selectedPreview.existing > 0 || selectedPreview.unavailable > 0} style={{ marginTop: 8 }}>
+            <details open={selectedPreview.existing > 0 || !!selectedPreview.resumable || selectedPreview.unavailable > 0} style={{ marginTop: 8 }}>
               <summary style={{ cursor: "pointer" }}>{L.restoreTargets}</summary>
               {selectedPreview.entries.length < selectedPreview.files && <p style={css.muted}>{L.restorePreviewLimited(selectedPreview.entries.length, selectedPreview.files)}</p>}
               <ul style={{ listStyle: "none", margin: "6px 0", padding: 0, maxHeight: 220, overflow: "auto" }}>
@@ -211,7 +214,7 @@ export function RestorePanel({
                   borderLeft: entry.status === "available" ? undefined : "3px solid var(--warn-ink)", background: entry.status === "available" ? undefined : "var(--surface-2)" }}>
                   <span style={{ flex: "1 1 240px", overflowWrap: "anywhere", fontFamily: "var(--mono)", fontSize: 12 }}>{entry.target}</span>
                   <span style={{ color: entry.status === "available" ? "var(--muted)" : "var(--warn-ink)", fontWeight: entry.status === "available" ? 400 : 650 }}>
-                    {entry.status === "existing" ? L.restoreTargetExisting : entry.status === "missing" ? L.restoreTargetMissing : entry.status === "blocked" ? L.restoreTargetBlocked : L.restoreTargetAvailable}
+                    {targetLabels[entry.status]}
                   </span>
                 </li>)}
               </ul>

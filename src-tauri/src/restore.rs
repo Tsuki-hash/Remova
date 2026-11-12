@@ -9,6 +9,8 @@ use std::process::Command;
 mod payload;
 #[cfg(windows)]
 mod publish;
+#[cfg(windows)]
+mod retry;
 
 mod registry_budget;
 pub(crate) use registry_budget::RegistryRestoreBudget;
@@ -170,6 +172,8 @@ fn restore_with_before_copy(
         .filter(|_| !map.is_empty())
         .map(|inventory| crate::path_seal::restore_stage().map(|stage| (inventory, stage)))
         .transpose()?;
+    #[cfg(windows)]
+    let receipts = retry::Receipts::new(&seal);
     let mut messages = vec![];
     // Consecutive files usually share a parent. Reuse its pins instead of
     // opening the whole ancestor chain again for every file.
@@ -304,11 +308,22 @@ fn restore_with_before_copy(
                 messages.push(format!("skipped reparse restore target: {original}"));
                 continue;
             }
-            // Advisory only: a late creation after this check is still caught
-            // by the no-replace primitives. Directories are never merged.
+            #[cfg(windows)]
+            let source = staged
+                .as_ref()
+                .map(payload::StagedPayload::path)
+                .unwrap_or(&src);
+            // The publisher checks occupied directories against the private
+            // receipt and always uses no-replace publication for new entries.
             if dest.try_exists().unwrap_or(true) {
-                messages.push(format!("skipped existing restore target: {original}"));
-                continue;
+                #[cfg(windows)]
+                let directory = crate::fsutil::local_scan_is_dir(source);
+                #[cfg(not(windows))]
+                let directory = false;
+                if !directory {
+                    messages.push(format!("skipped existing restore target: {original}"));
+                    continue;
+                }
             }
             before_copy(&src);
             #[cfg(windows)]
@@ -319,18 +334,20 @@ fn restore_with_before_copy(
                     ));
                     continue;
                 };
-                let source = staged
-                    .as_ref()
-                    .map(payload::StagedPayload::path)
-                    .unwrap_or(&src);
-                match publish::publish(source, parent, name) {
+                match publish::publish(source, parent, name, &receipts, rel) {
                     Ok(()) => messages.push(format!("restored {original}")),
                     Err(publish::Failure::Occupied) => {
                         messages.push(format!("skipped existing restore target: {original}"));
                     }
                     Err(publish::Failure::PartialDirectory(error)) => messages.push(format!(
-                        "restore directory may be incomplete: {original}: {error}"
+                        "restore directory interrupted: {original}: {error}"
                     )),
+                    Err(publish::Failure::DirectoryConflicts { count, first }) => {
+                        messages.push(format!(
+                            "restore directory kept conflicts: {count} · {}",
+                            dest.join(first).display(),
+                        ))
+                    }
                     Err(publish::Failure::Io(error)) => {
                         if !crate::executor::cleanup_cancelled() {
                             messages.push(format!("restore failed for {original}: {error}"));
@@ -877,6 +894,7 @@ pub struct RestorePreview {
     pub registry: usize,
     pub path_entries: usize,
     pub existing: usize,
+    pub resumable: usize,
     pub unavailable: usize,
     pub entries: Vec<RestorePreviewEntry>,
     pub size_kb: Option<u64>,
@@ -919,6 +937,8 @@ fn preview_session_with_cancel(
     cancelled: impl Fn() -> bool,
 ) -> Result<RestorePreview, String> {
     let inputs = validate_session(session, &cancelled)?;
+    #[cfg(windows)]
+    let receipts = retry::Receipts::new(&inputs.seal);
     let mut preview = RestorePreview {
         name: name.into(),
         size_kb: crate::dirsize::walk_size_kb_unbudgeted_with_cancel(session, &cancelled),
@@ -929,6 +949,7 @@ fn preview_session_with_cancel(
             .as_ref()
             .map_or(0, |snapshot| snapshot.items.len()),
         existing: 0,
+        resumable: 0,
         unavailable: 0,
         entries: vec![],
     };
@@ -960,13 +981,22 @@ fn preview_session_with_cancel(
             {
                 "blocked"
             } else if dest.try_exists().unwrap_or(true) {
+                #[cfg(windows)]
+                let resumable = receipts.can_resume(&rel, dest, &cancelled);
+                #[cfg(not(windows))]
+                let resumable = false;
                 // An unreadable destination is reported as a conflict, never
                 // as a free target — restore rechecks before writing.
-                "existing"
+                if resumable {
+                    "resumable"
+                } else {
+                    "existing"
+                }
             } else {
                 "available"
             };
         preview.existing += usize::from(status == "existing");
+        preview.resumable += usize::from(status == "resumable");
         preview.unavailable += usize::from(status == "blocked" || status == "missing");
         if preview.entries.len() < 200 {
             preview.entries.push(RestorePreviewEntry { target, status });
@@ -2125,6 +2155,272 @@ mod tests {
             .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .expect("the directory payload is published")
             .path()
+    }
+
+    #[cfg(windows)]
+    fn interrupt_fixture_directory(
+        session: &Path,
+        backed: &Path,
+        target: &Path,
+        after_file: impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<(), publish::Failure> {
+        let inputs = validate_session(session, || false).unwrap();
+        let stage = crate::path_seal::restore_stage().unwrap();
+        let entry = backed.file_name().unwrap().to_str().unwrap();
+        let verified = inputs
+            .inventory
+            .unwrap()
+            .stage(&stage, backed, entry)
+            .unwrap();
+        let parents = crate::fsutil::pin_local_scan_path(target.parent().unwrap()).unwrap();
+        publish::publish_directory(
+            verified.path(),
+            parents.last().unwrap(),
+            target.file_name().unwrap(),
+            &retry::Receipts::new(&inputs.seal),
+            entry,
+            after_file,
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_directory_retries_preserve_changed_files_and_foreign_subtrees() {
+        use std::io::{Error, ErrorKind};
+        let root = crate::test_support::TempDir::new("restore-interrupted-dir");
+        let seals = root.join("seals");
+        let _store = crate::path_seal::TestStore::new(seals.clone());
+        let target = root.subdir("destination");
+        fs::create_dir(target.join("nested")).unwrap();
+        fs::create_dir(target.join("other")).unwrap();
+        for name in [
+            "a.txt",
+            "b.txt",
+            "nested/c.txt",
+            "nested/d.txt",
+            "other/e.txt",
+        ] {
+            fs::write(target.join(name), name.as_bytes()).unwrap();
+        }
+        let session = root.join("1700000000_resume");
+        let backed = back_up_fixture_directory(&target, &session);
+        fs::rename(&target, root.join("original-fixture")).unwrap();
+        let cancel = interrupt_fixture_directory(&session, &backed, &target, |_| {
+            Err(Error::new(ErrorKind::Interrupted, "fixture cancellation"))
+        });
+        assert!(
+            matches!(&cancel, Err(publish::Failure::PartialDirectory(e)) if e.kind() == ErrorKind::Interrupted),
+            "{cancel:?}"
+        );
+        let preview = preview_session("1700000000_resume", &session).unwrap();
+        assert_eq!((preview.existing, preview.resumable), (0, 1));
+        assert_eq!(preview.entries[0].status, "resumable");
+        assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"a.txt");
+        assert!(!target.join("b.txt").exists());
+
+        fs::write(target.join("a.txt"), b"user edited").unwrap();
+        fs::write(target.join("a.txt:UserNote"), b"keep stream").unwrap();
+        fs::write(target.join("user.txt"), b"added between attempts").unwrap();
+        let receipt = fs::read_dir(&seals)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "receipt"))
+            .unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&receipt)
+            .unwrap()
+            .write_all(b"torn record")
+            .unwrap();
+        let fault = interrupt_fixture_directory(&session, &backed, &target, |relative| {
+            if relative == Path::new("nested/c.txt") {
+                return Err(Error::other("fixture write failure"));
+            }
+            Ok(())
+        });
+        assert!(
+            matches!(&fault, Err(publish::Failure::PartialDirectory(e)) if e.to_string() == "fixture write failure"),
+            "{fault:?}"
+        );
+        assert_eq!(fs::read(target.join("b.txt")).unwrap(), b"b.txt");
+        assert!(!target.join("nested/d.txt").exists());
+
+        fs::rename(target.join("nested"), root.join("preserved-nested")).unwrap();
+        fs::create_dir(target.join("nested")).unwrap();
+        fs::write(target.join("nested/own.txt"), b"replacement directory").unwrap();
+        let outside = root.subdir("outside");
+        fs::write(outside.join("keep.txt"), b"outside directory").unwrap();
+        assert!(Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(target.join("other"))
+            .arg(&outside)
+            .status()
+            .unwrap()
+            .success());
+        let rows = restore_session(&session).unwrap();
+        assert!(
+            rows[0].starts_with("restore directory kept conflicts: 3"),
+            "{rows:?}"
+        );
+        assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"user edited");
+        assert_eq!(
+            fs::read(target.join("a.txt:UserNote")).unwrap(),
+            b"keep stream"
+        );
+        assert!(!target.join("nested/d.txt").exists());
+        assert!(!outside.join("e.txt").exists());
+        assert_eq!(fs::read(backed.join("a.txt")).unwrap(), b"a.txt");
+        assert_eq!(
+            fs::read(backed.join("nested/d.txt")).unwrap(),
+            b"nested/d.txt"
+        );
+
+        fs::rename(target.join("a.txt"), root.join("preserved-a.txt")).unwrap();
+        fs::rename(target.join("nested"), root.join("preserved-replacement")).unwrap();
+        fs::remove_dir(target.join("other")).unwrap(); // the fixture junction only
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!("restored {}", target.display())]
+        );
+        assert_eq!(
+            fs::read(target.join("nested/d.txt")).unwrap(),
+            b"nested/d.txt"
+        );
+        assert_eq!(
+            fs::read(target.join("other/e.txt")).unwrap(),
+            b"other/e.txt"
+        );
+        assert_eq!(
+            fs::read(target.join("user.txt")).unwrap(),
+            b"added between attempts"
+        );
+        assert_eq!(
+            fs::read(root.join("preserved-a.txt:UserNote")).unwrap(),
+            b"keep stream"
+        );
+        assert_eq!(
+            fs::read(root.join("preserved-replacement/own.txt")).unwrap(),
+            b"replacement directory"
+        );
+        assert_eq!(
+            fs::read(outside.join("keep.txt")).unwrap(),
+            b"outside directory"
+        );
+        assert!(!receipt.exists());
+        assert_eq!(
+            preview_session("1700000000_resume", &session)
+                .unwrap()
+                .resumable,
+            0
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_partial_directory_can_resume_after_the_publisher_process_exits() {
+        const CHILD: &str = "REMOVA_TEST_CRASHED_DIRECTORY_RESTORE";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let path = PathBuf::from(path);
+            assert_eq!(path.parent(), Some(std::env::temp_dir().as_path()));
+            let _store = crate::path_seal::TestStore::new(path.join("seals"));
+            let session = path.join("1700000000_resume");
+            let inputs = validate_session(&session, || false).unwrap();
+            let entry = inputs.map.keys().next().unwrap();
+            let _ = interrupt_fixture_directory(
+                &session,
+                &session.join("files").join(entry),
+                &path.join("destination"),
+                |_| std::process::exit(23),
+            );
+            panic!("the child did not reach the first file");
+        }
+
+        let root = crate::test_support::TempDir::new("restore-crashed-dir");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let target = root.subdir("destination");
+        fs::write(target.join("a.txt"), b"first").unwrap();
+        fs::write(target.join("b.txt"), b"second").unwrap();
+        let session = root.join("1700000000_resume");
+        let backed = back_up_fixture_directory(&target, &session);
+        let other_session = root.join("1700000001_other");
+        back_up_fixture_directory(&target, &other_session);
+        fs::rename(&target, root.join("original-fixture")).unwrap();
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "restore::tests::a_partial_directory_can_resume_after_the_publisher_process_exits",
+            ])
+            .env(CHILD, root.path())
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(23));
+        assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"first");
+        assert!(!target.join("b.txt").exists());
+        assert_eq!(
+            preview_session("1700000001_other", &other_session)
+                .unwrap()
+                .existing,
+            1
+        );
+        assert_eq!(
+            restore_session(&other_session).unwrap(),
+            [format!(
+                "skipped existing restore target: {}",
+                target.display()
+            )]
+        );
+        assert!(!target.join("b.txt").exists());
+
+        assert_eq!(
+            preview_session("1700000000_resume", &session)
+                .unwrap()
+                .resumable,
+            1
+        );
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!("restored {}", target.display())]
+        );
+        assert_eq!(fs::read(target.join("b.txt")).unwrap(), b"second");
+        fs::rename(&target, root.join("finished")).unwrap();
+        assert!(matches!(
+            interrupt_fixture_directory(&session, &backed, &target, |_| Err(
+                std::io::Error::other("fixture interruption")
+            )),
+            Err(publish::Failure::PartialDirectory(_))
+        ));
+        let partial = root.join("partial");
+        fs::rename(&target, &partial).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep.txt"), b"different root").unwrap();
+        assert_eq!(
+            preview_session("1700000000_resume", &session)
+                .unwrap()
+                .existing,
+            1
+        );
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!(
+                "skipped existing restore target: {}",
+                target.display()
+            )]
+        );
+        assert_eq!(
+            fs::read(target.join("keep.txt")).unwrap(),
+            b"different root"
+        );
+        assert!(!target.join("b.txt").exists());
+        fs::rename(&target, root.join("other-root")).unwrap();
+        // Reclaim the missing path. The crashed attempt and the other root stay intact.
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!("restored {}", target.display())]
+        );
+        assert_eq!(fs::read(target.join("b.txt")).unwrap(), b"second");
+        assert_eq!(fs::read(backed.join("b.txt")).unwrap(), b"second");
+        assert_eq!(fs::read(partial.join("a.txt")).unwrap(), b"first");
     }
 
     #[cfg(windows)]

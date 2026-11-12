@@ -78,15 +78,19 @@ impl Store {
         let Ok(entries) = fs::read_dir(&self.root) else {
             return;
         };
-        for entry in entries.take(256).flatten() {
+        // Private restore receipts share this store. Only abandoned stage
+        // candidates count against the bound on staging recovery work.
+        for entry in entries
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| candidate(name, now))
+            })
+            .take(256)
+        {
             let path = entry.path();
-            if !entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| candidate(name, now))
-            {
-                continue;
-            }
             // Request DELETE before even reading children. An active Stage denies this
             // sharing request, including when another process holds its staging pin.
             let Ok(delete_pin) = crate::fsutil::pin_private_delete(&path) else {
@@ -139,6 +143,13 @@ mod tests {
         let stage = root.join(format!("stage_1_{stamp}"));
         fs::create_dir(&stage).unwrap();
         fs::write(stage.join("snapshot"), b"other process bytes").unwrap();
+        for index in 0..256 {
+            fs::write(
+                root.join(format!("restore-{index:064x}.receipt")),
+                b"retry state",
+            )
+            .unwrap();
+        }
         let store = Store {
             key: Zeroizing::new([0; 32]),
             root: root.clone(),
@@ -187,6 +198,7 @@ mod tests {
         assert!(child.0.wait().unwrap().success());
         store.cleanup_at(now, |_, _| Ok(()));
         assert!(!stage.exists(), "inactive stage must become recoverable");
+        assert!(root.join(format!("restore-{:064x}.receipt", 0)).is_file());
         drop(parents);
         fs::remove_dir_all(root).unwrap();
     }

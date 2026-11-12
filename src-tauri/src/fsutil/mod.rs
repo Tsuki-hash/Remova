@@ -11,7 +11,8 @@ pub(crate) use streams::reject_named_data_streams;
 mod cleanup_snapshot;
 #[cfg(windows)]
 pub(crate) use cleanup_snapshot::{
-    remove_empty_backup_session, remove_verified_backup_session, CleanupTreeIdentity,
+    object_identity, remove_empty_backup_session, remove_verified_backup_session,
+    CleanupTreeIdentity,
 };
 
 #[cfg(not(windows))]

@@ -20,6 +20,8 @@ const restoreResultPrefixes = [
   ["PATH scope restore failed for ", "restorePathScopeFailed", false],
   ["registry import failed ", "restoreImportFailed", false],
   ["restore directory may be incomplete: ", "restoreDirectoryIncomplete", false],
+  ["restore directory interrupted: ", "restoreDirectoryInterrupted", false],
+  ["restore directory kept conflicts: ", "restoreDirectoryConflicts", false],
   ["restore failed for ", "restoreFileFailed", false],
   ["skipped existing restore target: ", "restoreTargetOccupied", false],
   ["skipped backup entry with no recorded digest: ", "restoreSkippedNoDigest", false],
@@ -232,6 +234,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         title: L.restore,
         message: [L.restoreConfirm(restorePick),
           preview.existing ? L.restoreConflict(preview.existing) : "",
+          preview.resumable ? L.restoreResumable(preview.resumable) : "",
           preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
         confirmLabel: L.restoreRun,
         danger: true,
@@ -261,6 +264,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       }
     } finally {
       if (pendingConfirmation.current === pending) pendingConfirmation.current = null;
+      if (activeRestore.current) setPreviewTick(v => v + 1);
       activeRestore.current = null;
       setRunningRestore(null);
       setCancelRequested(false);

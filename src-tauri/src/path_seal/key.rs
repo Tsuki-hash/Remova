@@ -365,6 +365,54 @@ pub(super) struct Stage {
     pin: Option<File>,
 }
 impl Store {
+    pub(super) fn open_restore_receipt(
+        &self,
+        name: &str,
+        writable: bool,
+        create: bool,
+    ) -> std::io::Result<File> {
+        if name.len() != 64 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(std::io::Error::other("invalid restore receipt name"));
+        }
+        let fixture = cfg!(test) && self._pins.is_empty();
+        let path = wide(&self.root.join(format!("restore-{name}.receipt")))
+            .map_err(std::io::Error::other)?;
+        let descriptor = (create && !fixture)
+            .then(|| descriptor(false))
+            .transpose()
+            .map_err(std::io::Error::other)?;
+        let attributes = descriptor.as_ref().map(|sd| SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0 .0,
+            bInheritHandle: false.into(),
+        });
+        let handle = unsafe {
+            CreateFileW(
+                PCWSTR(path.as_ptr()),
+                restore_receipt_access(writable),
+                if writable {
+                    FILE_SHARE_MODE(0)
+                } else {
+                    FILE_SHARE_READ
+                },
+                attributes.as_ref().map(std::ptr::from_ref),
+                if create { OPEN_ALWAYS } else { OPEN_EXISTING },
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        }
+        .map_err(|error| std::io::Error::from_raw_os_error(error.code().0 & 0xffff))?;
+        let file = unsafe { File::from_raw_handle(handle.0) };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || crate::fsutil::is_reparse_metadata(&metadata) {
+            return Err(std::io::Error::other("invalid restore receipt object"));
+        }
+        if !fixture {
+            validate(&file, true).map_err(std::io::Error::other)?;
+        }
+        Ok(file)
+    }
+
     pub fn stage(self) -> Result<Stage, String> {
         self.cleanup_abandoned();
         let n = std::time::SystemTime::now()
@@ -391,6 +439,14 @@ impl Store {
             _store: self,
             pin: Some(pin),
         })
+    }
+}
+
+fn restore_receipt_access(writable: bool) -> u32 {
+    if writable {
+        (FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE).0
+    } else {
+        FILE_GENERIC_READ.0
     }
 }
 impl Stage {
@@ -506,11 +562,42 @@ mod tests {
             size_capped: false,
             bucket: None,
         };
-        let (ok, fail, errors) = crate::backup::backup_items(&[item], &session);
+        let (ok, fail, errors) = crate::backup::backup_items(std::slice::from_ref(&item), &session);
         assert_eq!((ok, fail), (1, 0), "{errors:?}");
         fs::remove_file(&source).unwrap();
         crate::restore::restore_session(&session).unwrap();
         assert_eq!(fs::read(&source).unwrap(), b"privileged native backup");
+        let directory = public.join("native-directory");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("child.txt"), b"privileged directory restore").unwrap();
+        let directory_session = public.join("1700000001_directory");
+        fs::create_dir(&directory_session).unwrap();
+        let directory_item = crate::scanner::CleanupItem {
+            path: directory.to_string_lossy().into_owned(),
+            kind: crate::scanner::ItemKind::Dir,
+            ..item
+        };
+        let (ok, fail, errors) = crate::backup::backup_items(&[directory_item], &directory_session);
+        assert_eq!((ok, fail), (1, 0), "{errors:?}");
+        fs::rename(&directory, public.join("preserved-directory")).unwrap();
+        assert_eq!(
+            crate::restore::restore_session(&directory_session).unwrap(),
+            [format!("restored {}", directory.display())]
+        );
+        assert_eq!(
+            fs::read(directory.join("child.txt")).unwrap(),
+            b"privileged directory restore"
+        );
+
+        let receipt_name = "b".repeat(64);
+        let receipt_path = root.join(format!("restore-{receipt_name}.receipt"));
+        let mut receipt = store
+            .open_restore_receipt(&receipt_name, true, true)
+            .unwrap();
+        receipt.write_all(b"private restore receipt").unwrap();
+        receipt.sync_all().unwrap();
+        drop(receipt);
+        assert_eq!(fs::read(&receipt_path).unwrap(), b"private restore receipt");
         fs::write(&source, b"standard token must not restore").unwrap();
         publish(&root, "publish_sentinel", b"first").unwrap();
         assert!(publish(&root, "publish_sentinel", b"second").is_err());
@@ -570,6 +657,8 @@ mod tests {
         // Same user, admin SID disabled and privileges stripped. Check ACLs
         // directly, rather than relying on the elevated process's open pins.
         assert!(fs::read(root.join("seal.key")).is_err());
+        assert!(fs::read(&receipt_path).is_err());
+        assert!(fs::write(&receipt_path, b"invalid receipt").is_err());
         assert!(crate::restore::restore_session(&session).is_err());
         assert_eq!(
             fs::read(&source).unwrap(),
