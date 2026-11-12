@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $temp = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $root = Join-Path $temp "remova-release-approval-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $root | Out-Null
+$approvalScripts = Join-Path $root 'scripts'
 $releaseMetadata = @{ name = 'Remova 1.4.1'; body = "Release notes`nLine two"; prerelease = $false; make_latest = 'true' }
 
 function Must-Refuse([scriptblock]$Action, [string]$Reason) {
@@ -149,7 +150,7 @@ function Test-PublishDraft(
             $original[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
             [Environment]::SetEnvironmentVariable($key, $overrides[$key], 'Process')
         }
-        $publish = "$PSScriptRoot/publish-release-draft.ps1"
+        $publish = "$approvalScripts/publish-release-draft.ps1"
         switch ($Scenario) {
             'success' { & $publish 6>&1 | Out-Null }
             'unauthorized' { Must-Refuse { & $publish } 'requires a repository maintainer or administrator' }
@@ -178,6 +179,34 @@ function Test-PublishDraft(
 }
 
 try {
+    # These small attachments contain fixture bytes. Replace only the
+    # extraction adapter; the real approval and publication logic runs below.
+    $acceptanceScripts = Join-Path $approvalScripts 'acceptance'
+    New-Item -ItemType Directory -Path $acceptanceScripts -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $root 'benchmarks') | Out-Null
+    Copy-Item -LiteralPath @("$PSScriptRoot/release-approval.ps1", "$PSScriptRoot/publish-release-draft.ps1") -Destination $approvalScripts
+    Copy-Item -LiteralPath @(
+        "$PSScriptRoot/acceptance/acceptance-common.ps1"
+        "$PSScriptRoot/acceptance/performance-common.ps1"
+        "$PSScriptRoot/acceptance/measure-components.ps1"
+    ) -Destination $acceptanceScripts
+    Copy-Item -LiteralPath "$PSScriptRoot/../benchmarks/performance-thresholds.md" -Destination (Join-Path $root 'benchmarks')
+    @'
+param($Artifacts, $CandidateVersion, $SevenZip, $WixDark, [switch]$ExecutableOnly)
+. "$PSScriptRoot/acceptance-common.ps1"
+if (!$ExecutableOnly) { throw 'Unexpected extraction mode.' }
+$identity = Get-AcceptanceArtifacts $Artifacts $CandidateVersion
+$reference = [ordered]@{}
+foreach ($channel in $identity.artifacts.Keys) {
+    $asset = $identity.artifacts[$channel]
+    $path = Join-Path $Artifacts $asset.name
+    $exe = if ($channel -ceq 'portable') { Get-PortableExeHash $path $asset.sha256 }
+        else { (Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() }
+    $reference[$channel] = @{ package_sha256 = $asset.sha256; executable_sha256 = $exe }
+}
+$reference | ConvertTo-Json -Depth 3
+'@ | Set-Content -LiteralPath (Join-Path $acceptanceScripts 'get-package-exe-reference.ps1')
+
     $launchFixture = New-Item -ItemType Directory -Path (Join-Path $root 'launch')
     Test-LaunchObservation $launchFixture.FullName
     $tag = 'v1.4.1'
@@ -207,7 +236,7 @@ try {
     }
     Set-Content -LiteralPath (Join-Path $bundle.FullName 'SHA256SUMS.txt') -Value $sums
     Set-Content -LiteralPath (Join-Path $bundle.FullName 'SBOM.cdx.json') -Value '{"bomFormat":"CycloneDX","metadata":{"component":{"version":"1.4.1"}},"components":[{"name":"fixture"}]}'
-    $exeHashes = [ordered]@{ nsis = 'a' * 64; msi = 'b' * 64; portable = $portableExeHash }
+    $exeHashes = [ordered]@{ nsis = $artifacts.nsis.sha256; msi = $artifacts.msi.sha256; portable = $portableExeHash }
     $reference = [ordered]@{}
     $launches = [ordered]@{}
     foreach ($channel in $names.Keys) {
@@ -288,7 +317,7 @@ try {
             $file
         }
     }
-    $check = "$PSScriptRoot/release-approval.ps1"
+    $check = "$approvalScripts/release-approval.ps1"
     $params = @{ Tag = $tag; Commit = $commit; BundleDir = $bundle.FullName }
     $metadataPath = Join-Path $root 'release-metadata.json'
     $releaseMetadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath
@@ -332,7 +361,20 @@ try {
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
     Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'different nsis package'
     $reference.nsis.package_sha256 = $artifacts.nsis.sha256
+    $reference.nsis.executable_sha256 = $exeHashes.msi
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
+    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'reference used a different nsis executable'
+    $reference.nsis.executable_sha256 = $exeHashes.nsis
+    $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
+    $signed.executables.msi = $exeHashes.portable
+    $differentExecutable = [Text.Encoding]::UTF8.GetBytes(($signed | ConvertTo-Json -Depth 7 -Compress))
+    $wrongExecutableApproval = @{
+        payload = [Convert]::ToBase64String($differentExecutable)
+        signature = [Convert]::ToBase64String($rsa.SignData($differentExecutable,
+            [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pss))
+    } | ConvertTo-Json -Compress
+    Must-Refuse { & $check @params -ApprovalJson $wrongExecutableApproval -PublicKeyPem $publicKey } 'approval used a different msi executable'
+    $signed.executables.msi = $exeHashes.msi
     if ($signed.performance.executable_sha256 -cne $portableExeHash -or
         $signed.performance.startup_sha256 -cne (Get-FileHash -LiteralPath $startupPath).Hash.ToLowerInvariant() -or
         $signed.performance.components_sha256 -cne (Get-FileHash -LiteralPath $componentsPath).Hash.ToLowerInvariant()) {

@@ -100,7 +100,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 | `Remova_*_x64_zh-CN.msi` | MSI 安装程序（per-machine，仅中文向导；非管理员需 UAC 提权） |
 | `Remova_*_x64-portable.zip` | 便携版 zip，解压即用 |
 
-Remova 需要 Windows 10 / 11（x64）和 Microsoft Edge WebView2 Runtime。运行时缺失时，NSIS 和 MSI 安装器都会尝试联网下载，便携版则要求启动前已安装运行时。在离线环境使用任一安装包或便携版前，请在联网电脑下载 x64 Evergreen 独立安装程序，转到目标电脑安装运行时。[Microsoft WebView2 下载](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+Remova 需要 Windows 10 / 11（x64）和 Microsoft Edge WebView2 Runtime。运行时缺失时，NSIS 和 MSI 安装器会通过内置的 Microsoft 引导程序联网安装。便携版要求启动前已安装运行时。在离线环境使用任一安装包或便携版前，请在联网电脑下载 x64 Evergreen 独立安装程序，转到目标电脑安装运行时。[Microsoft WebView2 下载](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
 清理系统级应用、Machine PATH、服务或防火墙规则，以及还原到受保护目录时，需要以管理员身份运行 Remova。普通权限下这些条目会逐条失败并报告原因。
 

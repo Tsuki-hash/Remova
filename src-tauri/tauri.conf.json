@@ -58,7 +58,7 @@
     "shortDescription": "Windows deep uninstall & leftover cleaner",
     "longDescription": "Uninstall apps with official uninstaller, then scan and clean leftovers safely with backups.",
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "webviewInstallMode": { "type": "embedBootstrapper" },
       "nsis": {
         "installerHooks": "windows/installer-hooks.nsh",
         "installMode": "currentUser",

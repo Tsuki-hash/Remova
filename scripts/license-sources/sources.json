@@ -1,5 +1,21 @@
 {
   "files": {
+    "nsis-3.13-COPYING.txt": {
+      "name": "COPYING",
+      "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip"
+    },
+    "nsis-tauri-utils-MIT.txt": {
+      "name": "LICENSE_MIT",
+      "url": "https://raw.githubusercontent.com/tauri-apps/nsis-tauri-utils/nsis_tauri_utils-v0.5.3/LICENSE_MIT"
+    },
+    "nsis-tauri-utils-Apache-2.0.txt": {
+      "name": "LICENSE_APACHE-2.0",
+      "url": "https://raw.githubusercontent.com/tauri-apps/nsis-tauri-utils/nsis_tauri_utils-v0.5.3/LICENSE_APACHE-2.0"
+    },
+    "wix-3.14.1-LICENSE.txt": {
+      "name": "LICENSE.TXT",
+      "url": "https://raw.githubusercontent.com/wixtoolset/wix3/b40e9a32c24033e11b77baf2c91a704382f898ed/LICENSE.TXT"
+    },
     "dropbox-BSD-3-Clause.txt": {
       "name": "LICENSE",
       "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE"
@@ -57,6 +73,29 @@
       "url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/5baf71a47292d8490f0ba3d53f15224e55c48327/LICENSE_APACHE-2.0"
     }
   },
+  "installers": [
+    {
+      "name": "NSIS 3.13 runtime stub, LZMA module and plugins",
+      "channel": "NSIS",
+      "license": "zlib/libpng and CPL-1.0 with the LZMA exception",
+      "source": "https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/nsis-3.13-src.tar.bz2/download",
+      "documents": [{ "file": "nsis-3.13-COPYING.txt" }]
+    },
+    {
+      "name": "nsis_tauri_utils 0.5.3",
+      "channel": "NSIS",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/tauri-apps/nsis-tauri-utils/tree/nsis_tauri_utils-v0.5.3",
+      "documents": [{ "file": "nsis-tauri-utils-MIT.txt" }, { "file": "nsis-tauri-utils-Apache-2.0.txt" }]
+    },
+    {
+      "name": "WiX Toolset 3.14.1 UI resources and custom action (WixUIWixca)",
+      "channel": "MSI",
+      "license": "MS-RL",
+      "source": "https://github.com/wixtoolset/wix3/tree/b40e9a32c24033e11b77baf2c91a704382f898ed",
+      "documents": [{ "file": "wix-3.14.1-LICENSE.txt" }]
+    }
+  ],
   "packages": {
     "cargo:alloc-stdlib@0.2.4": {
       "documents": [

@@ -34,6 +34,8 @@
     Set-Content -Encoding utf8 'D:/acceptance/package-exe-reference.json'
 ```
 
+`release-approval.ps1` 在签批与发布验证时也会重新解包同一批附件。签批机的提取工具若位于非默认路径，可为该脚本指定 `-SevenZip` 和 `-WixDark`。
+
 ```powershell
 # 1. 确认是隔离 VM 并接受风险（脚本会二次确认）
 $env:REMOVA_ACCEPTANCE_ISOLATED_VM = "1"
@@ -108,13 +110,14 @@ pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -Can
 
 每个 fixture 必须自建、可清理，且不得指向真实用户目录或系统目录。
 
-普通用户的 NSIS 路径还可用以下矩阵脚本复验。先用应用产生非空 AI 设置和测试清理历史，并关闭 Remova。候选 EXE 摘要取自同一批候选构建的主程序，例如便携包内的 `Remova.exe`。脚本断言实际 EXE 版本、候选 EXE SHA-256、安装位置、WebView2 导航是否就绪和夹具字节是否保留。
+普通用户的 NSIS 路径还可用以下矩阵脚本复验。先用应用产生非空 AI 设置和测试清理历史，并关闭 Remova。使用同一批附件生成的 `package-exe-reference.json` 中 `nsis.executable_sha256`。脚本断言实际 EXE 版本、候选 EXE SHA-256、安装位置、WebView2 导航是否就绪和夹具字节是否保留。
 
 ```powershell
+$reference = Get-Content -Raw 'D:/acceptance/package-exe-reference.json' | ConvertFrom-Json
 pwsh -NoProfile -File scripts/acceptance/run-install-matrix.ps1 `
   -Installer140 D:\stable\Remova_1.4.0_x64-setup.exe `
   -Installer141 D:\artifacts\Remova_1.4.1_x64-setup.exe `
-  -InstallDir D:\vm-fixture\Remova -CandidateExeSha256 "<候选 EXE SHA-256>" `
+  -InstallDir D:\vm-fixture\Remova -CandidateExeSha256 $reference.nsis.executable_sha256 `
   -Out D:\acceptance\nsis-matrix -ConfirmReplaceInstalledApp
 ```
 

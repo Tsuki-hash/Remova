@@ -17,7 +17,7 @@ Find it. Explain it. Remove it. Restore it.
 [![CI](https://img.shields.io/github/actions/workflow/status/Tsuki-hash/Remova/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Tsuki-hash/Remova/actions)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.77%2B-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.95%2B-000000?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
 
 </div>
 
@@ -95,7 +95,7 @@ Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/rele
 | `Remova_*_x64_zh-CN.msi` | MSI installer (per-machine, Chinese-only wizard; non-admin needs UAC elevation) |
 | `Remova_*_x64-portable.zip` | Portable zip — unzip and run |
 
-Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime. Both installers download the runtime if it is missing. The portable ZIP requires it to be installed before launch. For offline use with any package, download the x64 Evergreen Standalone Installer on a connected computer, transfer it, and install the runtime before using Remova. [Microsoft WebView2 downloads](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+Requires Windows 10 / 11 (x64) and the Microsoft Edge WebView2 Runtime. The NSIS and MSI installers use an embedded Microsoft bootstrapper to install a missing runtime online. Install the runtime before launching the portable ZIP. For offline use with any package, download the x64 Evergreen Standalone Installer on a connected computer, transfer it, and install the runtime before using Remova. [Microsoft WebView2 downloads](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
 Run Remova as administrator to clean machine-wide apps, the machine PATH, services and firewall rules, or to restore into protected directories. Without elevation, these items fail individually and report the reason.
 
@@ -109,7 +109,7 @@ Run Remova as administrator to clean machine-wide apps, the machine PATH, servic
 
 | Tool | Version |
 |---|---|
-| Rust | ≥ 1.77.2 |
+| Rust | ≥ 1.95 |
 | Node.js | 22.22.2+ within 22, 24.15.0+ within 24, or 26+ |
 | Windows | 10 / 11 |
 

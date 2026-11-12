@@ -35,6 +35,14 @@ function within(directory, file) {
 export async function collectNoticeInputs(root, metadata, reachable, npm) {
   const supplementDir = path.join(root, "scripts", "license-sources");
   const supplements = JSON.parse(await readFile(path.join(supplementDir, "sources.json"), "utf8"));
+  async function readSupplement(source) {
+    const file = supplements.files[source.file];
+    return {
+      name: file.name,
+      source: source.url ?? file.url,
+      text: await readNotice(path.join(supplementDir, within(supplementDir, source.file))),
+    };
+  }
   const cargo = metadata.packages
     .filter((pkg) => pkg.source && reachable.has(`${pkg.name}@${pkg.version}`))
     .map((pkg) => ({
@@ -54,7 +62,7 @@ export async function collectNoticeInputs(root, metadata, reachable, npm) {
     return { ecosystem: "npm", name, version, license: pkg.license, directory };
   }));
 
-  return Promise.all([...cargo, ...installed].map(async (pkg) => {
+  const packages = await Promise.all([...cargo, ...installed].map(async (pkg) => {
     const key = `${pkg.ecosystem}:${pkg.name}@${pkg.version}`;
     const extra = supplements.packages[key];
     const paths = new Set(await noticeFiles(pkg.directory));
@@ -70,22 +78,22 @@ export async function collectNoticeInputs(root, metadata, reachable, npm) {
       }
     }
     for (const source of extra?.documents ?? []) {
-      const file = supplements.files[source.file];
-      documents.push({
-        name: file.name,
-        source: source.url ?? file.url,
-        text: await readNotice(path.join(supplementDir, within(supplementDir, source.file))),
-      });
+      documents.push(await readSupplement(source));
     }
     if (!documents.length) throw new Error(`No license or copyright text for ${key}; add the upstream notice for this version.`);
     if (!pkg.license && !pkg.licenseFile) throw new Error(`No license metadata for ${key}`);
     return { key, license: pkg.license ?? "See package license file", documents, source: extra?.source };
   }));
+  const installers = await Promise.all(supplements.installers.map(async (installer) => ({
+    ...installer,
+    documents: await Promise.all(installer.documents.map(readSupplement)),
+  })));
+  return { packages, installers };
 }
 
-export function renderNotices(components, inputs) {
+export function renderNotices(components, { packages, installers }) {
   const byKey = new Map();
-  for (const input of inputs) {
+  for (const input of packages) {
     const existing = byKey.get(input.key);
     if (existing && JSON.stringify(existing) !== JSON.stringify(input)) {
       throw new Error(`Conflicting license notices for ${input.key}`);
@@ -94,10 +102,7 @@ export function renderNotices(components, inputs) {
   }
 
   const texts = new Map();
-  const entries = components.map(({ name, version, purl }) => {
-    const ecosystem = purl.startsWith("pkg:npm/") ? "npm" : "cargo";
-    const notice = byKey.get(`${ecosystem}:${name}@${version}`);
-    if (!notice) throw new Error(`Missing license notice for ${purl}`);
+  function formatEntry(label, notice) {
     const links = notice.documents.map((doc) => {
       const digest = hash(doc.text);
       texts.set(digest, doc.text);
@@ -105,8 +110,16 @@ export function renderNotices(components, inputs) {
       return `[\`${doc.name}\`](#text-${digest})${provenance}`;
     });
     const source = notice.source ? ` [Corresponding source](${notice.source}).` : "";
-    return `- ${name} ${version} (${purl}) — ${notice.license}. ${links.join(", ")}.${source}`;
+    return `- ${label} — ${notice.license}. ${links.join(", ")}.${source}`;
+  }
+  const entries = components.map(({ name, version, purl }) => {
+    const ecosystem = purl.startsWith("pkg:npm/") ? "npm" : "cargo";
+    const notice = byKey.get(`${ecosystem}:${name}@${version}`);
+    if (!notice) throw new Error(`Missing license notice for ${purl}`);
+    return formatEntry(`${name} ${version} (${purl})`, notice);
   });
+  const installerEntries = installers.map((installer) =>
+    formatEntry(`${installer.name} (${installer.channel})`, installer));
 
   const blocks = [...texts].sort(([a], [b]) => byName(a, b)).flatMap(([digest, text]) => {
     const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
@@ -124,6 +137,12 @@ export function renderNotices(components, inputs) {
     "## Components",
     "",
     ...entries,
+    "",
+    "## Windows installer components",
+    "",
+    ...installerEntries,
+    "",
+    "The MSI and NSIS installers also include the Microsoft Edge WebView2 Evergreen Bootstrapper for online runtime installation. [Microsoft WebView2 distribution and downloads](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).",
     "",
     "## License and notice texts",
     "",

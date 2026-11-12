@@ -24,6 +24,16 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - name: Prepare read-only MSI extraction
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'remova-release-wix'
+          Invoke-WebRequest 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile $archive
+          $expected = '6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31'
+          if ((Get-FileHash -LiteralPath $archive).Hash -ine $expected) { throw 'WiX archive checksum mismatch.' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $tools
+          "RELEASE_WIX_DARK=$(Join-Path $tools 'dark.exe')" >> $env:GITHUB_ENV
       - name: Verify and publish the reviewed draft
         shell: pwsh
         env:

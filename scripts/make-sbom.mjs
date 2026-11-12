@@ -182,7 +182,7 @@ async function main() {
       if (content !== current.replaceAll("\r\n", "\n")) {
         throw new Error("Third-party notices are stale. Run node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md and review the changes.");
       }
-      console.log(`Third-party notices OK (${inputs.length} components)`);
+      console.log(`Third-party notices OK (${inputs.packages.length} application components, ${inputs.installers.length} installer notices)`);
     }
     if (noticesIdx > -1) {
       await writeFile(path.resolve(process.argv[noticesIdx + 1]), content, "utf8");

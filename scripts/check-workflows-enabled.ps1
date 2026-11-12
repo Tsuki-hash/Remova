@@ -18,11 +18,11 @@ param([string]$Repo = "")
 
 $ErrorActionPreference = "Stop"
 
-# Every workflow that must be live for a release to be trustworthy. `paths` is the
-# file the workflow is defined in, so a rename is caught too.
+# Every workflow required to build and publish a release.
 $required = @(
-  @{ Name = "CI";      Paths = @(".github/workflows/ci.yml") }
-  @{ Name = "Release"; Paths = @(".github/workflows/release.yml") }
+  @{ Name = "CI"; Path = ".github/workflows/ci.yml" }
+  @{ Name = "Release"; Path = ".github/workflows/release.yml" }
+  @{ Name = "Publish release draft"; Path = ".github/workflows/publish-release.yml" }
 )
 
 $mustVerify = $env:CI -ceq 'true' -or -not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)
@@ -45,9 +45,8 @@ $endpoint = if ($Repo) { "repos/$Repo/actions/workflows" } else { "repos/{owner}
 
 $raw = & gh api $endpoint
 if ($LASTEXITCODE -ne 0) {
-  # Keep the message to one line: gh's own usage text is 100+ lines and buries the cause.
-  $first = (($raw | Out-String) -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
-  Write-Host "SKIP: could not list workflows ($first)"
+  if ($mustVerify) { throw 'GitHub API failed to list workflows.' }
+  Write-Host 'SKIP: GitHub API failed to list workflows.'
   exit 0
 }
 $workflows = ($raw | Out-String | ConvertFrom-Json).workflows
@@ -55,26 +54,13 @@ $workflows = ($raw | Out-String | ConvertFrom-Json).workflows
 $disabled = @()
 $missing = @()
 foreach ($want in $required) {
-  $found = @($workflows | Where-Object { $_.name -eq $want.Name })
-  if ($found.Count -eq 0) {
-    # A workflow absent remotely usually means the file was never pushed; report it
-    # rather than treating "no workflow" as "nothing to check".
-    $missing += $want.Name
+  $found = @($workflows | Where-Object { $_.name -ceq $want.Name -and $_.path -ceq $want.Path })
+  if ($found.Count -ne 1) {
+    $missing += "$($want.Name) ($($want.Path))"
     continue
   }
   foreach ($w in $found) {
     if ($w.state -ne "active") { $disabled += "$($w.Name) ($($w.state))" }
-  }
-}
-
-# A local workflow file with no remote counterpart is the same defect seen from the
-# other side: the gate looks configured but will never run.
-foreach ($want in $required) {
-  foreach ($rel in $want.Paths) {
-    if (Test-Path $rel) {
-      $remote = @($workflows | Where-Object { $_.path -ieq $rel })
-      if ($remote.Count -eq 0) { $missing += "$rel (not registered remotely)" }
-    }
   }
 }
 
@@ -91,5 +77,5 @@ if ($missing.Count -gt 0 -or $disabled.Count -gt 0) {
   Write-Error "workflow state check failed (disabled=$($disabled.Count) missing=$($missing.Count))."
 }
 
-Write-Host "OK: CI and Release workflows are active ($($workflows.Count) workflows on the remote)."
+Write-Host 'OK: CI, Release and Publish release draft workflows are active.'
 exit 0

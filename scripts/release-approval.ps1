@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^v\d+\.\d+\.\d+$')][string]$Tag,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Commit,
     [Parameter(Mandatory)][string]$BundleDir,
+    [string]$SevenZip,
+    [string]$WixDark = $env:RELEASE_WIX_DARK,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string[]]$Acceptance,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$PackageExeReference,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$Startup,
@@ -91,16 +93,39 @@ $sbom = Get-Content -LiteralPath (Join-Path $BundleDir 'SBOM.cdx.json') -Raw | C
 if ($sbom.bomFormat -cne 'CycloneDX' -or $sbom.metadata.component.version -cne $version -or !$sbom.components.Count) {
     throw 'SBOM does not identify the candidate version and its components.'
 }
-$exeHash = Get-PortableExeHash (Join-Path $BundleDir $names.portable) $hashes[$names.portable]
+function Get-ReviewedExecutables {
+    if (!$SevenZip) {
+        $SevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+        if (!$SevenZip) { $SevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
+    }
+    if (!$WixDark) { $WixDark = Join-Path $env:LOCALAPPDATA 'tauri/WixTools314/dark.exe' }
+    $extracted = & "$PSScriptRoot/acceptance/get-package-exe-reference.ps1" -Artifacts $BundleDir `
+        -CandidateVersion $version -SevenZip $SevenZip -WixDark $WixDark -ExecutableOnly |
+        ConvertFrom-Json -AsHashtable
+    Assert-SameKeys $extracted.Keys $names.Keys 'Extracted package executables'
+    foreach ($channel in $names.Keys) {
+        if ($extracted[$channel].package_sha256 -cne $hashes[$names[$channel]] -or
+            $extracted[$channel].executable_sha256 -cnotmatch '^[a-f0-9]{64}$') {
+            throw "The $channel executable was not extracted from the reviewed attachment."
+        }
+    }
+    $extracted
+}
 $sha256 = [Security.Cryptography.HashAlgorithmName]::SHA256
 $pss = [Security.Cryptography.RSASignaturePadding]::Pss
 
 if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
     if (!$Reviewed) { throw 'Review the recorded observations, SBOM, release mode and recovery instructions first.' }
+    $extracted = Get-ReviewedExecutables
+    $exeHash = $extracted.portable.executable_sha256
     $packageIdentity = [ordered]@{}
     foreach ($channel in $names.Keys) { $packageIdentity[$channel] = @{ sha256 = $hashes[$names[$channel]] } }
     $executables = Read-AcceptanceExecutableReference $PackageExeReference $packageIdentity
-    if ($executables.portable -cne $exeHash) { throw 'The executable reference used a different portable executable.' }
+    foreach ($channel in $names.Keys) {
+        if ($executables[$channel] -cne $extracted[$channel].executable_sha256) {
+            throw "The executable reference used a different $channel executable."
+        }
+    }
     $metadata = Get-Content -LiteralPath $ReleaseMetadataPath -Raw | ConvertFrom-Json -AsHashtable
     Assert-SameKeys $metadata.Keys @('name', 'body', 'prerelease', 'make_latest') 'Release metadata'
     if ($metadata.name -isnot [string] -or [string]::IsNullOrWhiteSpace($metadata.name) -or
@@ -227,10 +252,16 @@ foreach ($hash in $approval.executables.Values) {
         throw 'Invalid approved package executable digest.'
     }
 }
-if ($approval.executables.portable -cne $exeHash) { throw 'The approval used a different portable executable.' }
 Assert-SameKeys $approval.assets.Keys $hashes.Keys 'Approved attachments'
 foreach ($name in $hashes.Keys) {
     if ($approval.assets[$name] -cne $hashes[$name]) { throw "The draft attachment changed: $name." }
+}
+$extracted = Get-ReviewedExecutables
+$exeHash = $extracted.portable.executable_sha256
+foreach ($channel in $names.Keys) {
+    if ($approval.executables[$channel] -cne $extracted[$channel].executable_sha256) {
+        throw "The approval used a different $channel executable."
+    }
 }
 Assert-SameKeys $approval.performance.Keys @('startup_sha256', 'components_sha256', 'executable_sha256') 'Approved performance evidence'
 foreach ($key in @('startup_sha256', 'components_sha256')) {
