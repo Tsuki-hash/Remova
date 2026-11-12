@@ -183,6 +183,9 @@ jobs:
       - run: npm ci
       # The tauri build runs beforeBuildCommand (npm run build) itself.
       - run: npx tauri build
+      - name: NSIS WebView2 failure regression
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/test-nsis-webview2.ps1
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh
         run: |

@@ -1,5 +1,9 @@
 {
   "files": {
+    "tauri-nsis-template-MIT.txt": {
+      "name": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-v2.12.3/LICENSE-MIT"
+    },
     "nsis-3.13-COPYING.txt": {
       "name": "COPYING",
       "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip"
@@ -74,6 +78,13 @@
     }
   },
   "installers": [
+    {
+      "name": "Tauri CLI 2.12.3 NSIS installer template",
+      "channel": "NSIS",
+      "license": "MIT",
+      "source": "https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.3/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi",
+      "documents": [{ "file": "tauri-nsis-template-MIT.txt" }]
+    },
     {
       "name": "NSIS 3.13 runtime stub, LZMA module and plugins",
       "channel": "NSIS",
