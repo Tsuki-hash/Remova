@@ -146,9 +146,12 @@ fn junction_target(source: &Path, target: &Path) -> std::io::Result<(PathBuf, (u
 }
 
 fn sibling_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_os_string();
+    let Some(name) = path.file_name() else {
+        return path.join(suffix);
+    };
+    let mut name = name.to_os_string();
     name.push(suffix);
-    name.into()
+    path.with_file_name(name)
 }
 
 fn backup_path(source: &Path) -> PathBuf {
@@ -996,10 +999,14 @@ fn make_junction(link: &Path, target: &Path) -> Result<(), String> {
     // std quotes each arg for cmd.exe, so spaces and cmd metacharacters inside
     // the paths stay literal (the args array never re-parses through a shell).
     // Real-machine confirmation of odd path shapes lives in ACCEPTANCE H8.
+    // mklink treats a trailing forward slash as part of a switch. The
+    // admitted paths both name directories below a drive root.
+    let link = link.to_str().ok_or("invalid junction path")?;
+    let target = target.to_str().ok_or("invalid junction target")?;
     let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
         .args(["/c", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
+        .arg(link.trim_end_matches(['\\', '/']))
+        .arg(target.trim_end_matches(['\\', '/']))
         .output()
         .map_err(|e| e.to_string())?;
     if status.status.success() {
@@ -1141,7 +1148,7 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
         error: None,
     };
     let source_root = snapshot.release_children_for_rename();
-    if let Err(e) = finishing::rename_to_sibling(source_root, &backup) {
+    if let Err(e) = finishing::rename_to_sibling(source_root, &source_path, &backup) {
         report.error = Some(format!(
             "rename failed (a handle may be open, including your terminal's working directory): {e}"
         ));
@@ -1150,7 +1157,7 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
     }
     if let Err(e) = make_junction(&source_path, &target_path) {
         report.error = Some(format!("junction creation failed: {e}"));
-        match finishing::rename_to_sibling(source_root, &source_path) {
+        match finishing::rename_to_sibling(source_root, &backup, &source_path) {
             Ok(()) => report.rolled_back = true,
             Err(e2) => {
                 report.error = Some(format!(
@@ -1180,7 +1187,7 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
         report.error = Some(format!("write-through probe failed: {e}"));
         let restored = junction
             .and_then(rollback::unlink_junction)
-            .and_then(|()| finishing::rename_to_sibling(source_root, &source_path));
+            .and_then(|()| finishing::rename_to_sibling(source_root, &backup, &source_path));
         match restored {
             Ok(()) => report.rolled_back = true,
             Err(e2) => {
@@ -1439,6 +1446,19 @@ pub fn state_of(source: &Path, target: &Path) -> MigrationState {
         }
         return MigrationState::Inconsistent;
     }
+    if bak.is_none()
+        && linked_target.as_ref().is_some_and(|(linked, _)| {
+            let misplaced = source.with_file_name(".bak");
+            [linked.as_path(), target].into_iter().any(|target| {
+                receipt::Receipt::load_with_source_at(source, &misplaced, target)
+                    .is_some_and(|receipt| receipt.complete)
+            })
+        })
+    {
+        // Earlier versions could rename a source ending in a separator to a
+        // plain sibling named .bak. Preserve it for explicit recovery.
+        return MigrationState::Inconsistent;
+    }
     match (src_plain, target_matches, bak.is_some(), tgt.is_some()) {
         (false, false, false, false) => MigrationState::Absent,
         // Plain source, no target yet (or rolled back with the target gone).
@@ -1500,6 +1520,65 @@ fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn trailing_separators_keep_the_backup_beside_the_source() {
+        let fixture = crate::test_support::TempDir::new("migration_trailing_separator");
+        for (name, separator, roll_back) in [("first", '\\', true), ("second", '/', false)] {
+            let source = fixture.subdir(name);
+            let target = fixture.join(format!("{name}-target"));
+            let entered = format!("{}{separator}", source.display());
+            let destination = target.to_str().unwrap();
+            let archive = fixture.join(format!("{name}.bak"));
+            std::fs::write(source.join("data"), b"fixture").unwrap();
+
+            assert!(plan(&entered, destination).ok);
+            copy_phase(&entered, destination).unwrap();
+            assert_eq!(
+                state_of(Path::new(&entered), &target),
+                MigrationState::Copied
+            );
+            let report = cutover(&entered, destination);
+            assert!(report.ok, "{report:?}");
+            assert_eq!(Path::new(&report.backup), archive);
+            assert_eq!(std::fs::read(archive.join("data")).unwrap(), b"fixture");
+            assert!(!fixture.join(".bak").exists());
+            assert_eq!(state_of(&source, &target), MigrationState::CutOver);
+
+            if roll_back {
+                assert!(rollback(&entered, destination).ok);
+                assert!(!is_reparse(&source));
+            } else {
+                assert!(finish(&entered, destination, true).unwrap().removed_bak);
+                assert_eq!(state_of(&source, &target), MigrationState::Finished);
+            }
+            assert!(!archive.exists());
+            assert_eq!(std::fs::read(source.join("data")).unwrap(), b"fixture");
+            assert_eq!(std::fs::read(target.join("data")).unwrap(), b"fixture");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_misplaced_backup_with_a_matching_copy_receipt_is_preserved() {
+        let fixture = crate::test_support::TempDir::new("migration_misplaced_archive");
+        let source = fixture.subdir("source");
+        let target = fixture.join("target");
+        let misplaced = fixture.join(".bak");
+        let from = source.to_str().unwrap();
+        let to = target.to_str().unwrap();
+        std::fs::write(source.join("data"), b"fixture").unwrap();
+        copy_phase(from, to).unwrap();
+        std::fs::rename(&source, &misplaced).unwrap();
+        mkjunction(&source, &target);
+
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(!rollback(from, to).ok);
+        assert!(finish(from, to, true).is_err());
+        assert_eq!(std::fs::read(misplaced.join("data")).unwrap(), b"fixture");
+        assert_eq!(std::fs::read(source.join("data")).unwrap(), b"fixture");
+    }
 
     #[test]
     fn migration_state_wire_matches_frontend_fixture() {

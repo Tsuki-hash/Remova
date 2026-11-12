@@ -94,7 +94,7 @@ pub(super) fn switch(
             format!("junction removal failed: {err}"),
         )
     })?;
-    if let Err(err) = rename_to_sibling(archive.root_pin(), source) {
+    if let Err(err) = rename_to_sibling(archive.root_pin(), backup, source) {
         return Err(restore_junction(
             source,
             &linked,
@@ -117,7 +117,7 @@ pub(super) fn switch(
         Err(err) => {
             let detail =
                 format!("migrate:rollback_conflict: backup changed during the move: {err}");
-            if let Err(rename) = rename_to_sibling(archive.root_pin(), backup) {
+            if let Err(rename) = rename_to_sibling(archive.root_pin(), source, backup) {
                 return Err((
                     "backup_rename_restore_failed",
                     format!("{detail}; could not restore the backup name ({rename}). The moved directory remains at {} and the verified target remains at {}", source.display(), target.path().display()),

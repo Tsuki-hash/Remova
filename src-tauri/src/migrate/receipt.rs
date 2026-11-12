@@ -51,9 +51,18 @@ impl Receipt {
     }
 
     pub(super) fn load(source: &Path, target: &Path) -> Option<Self> {
+        Self::load_with_source_at(source, source, target)
+    }
+
+    pub(super) fn load_with_source_at(
+        source: &Path,
+        source_location: &Path,
+        target: &Path,
+    ) -> Option<Self> {
         let path = receipt_path(target).ok()?;
         let saved: Self = serde_json::from_str(&fsutil::read_local_scan_text(&path).ok()?).ok()?;
-        let mut current = Self::new(source, target).ok()?;
+        let mut current = Self::new(source_location, target).ok()?;
+        current.source = lower(source);
         current.complete = saved.complete;
         (saved == current).then_some(saved)
     }

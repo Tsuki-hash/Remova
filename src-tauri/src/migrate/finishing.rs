@@ -15,7 +15,14 @@ use super::{
     COPY_FILE_CAP,
 };
 
-pub(super) fn rename_to_sibling(root: &DirPin, destination: &Path) -> io::Result<()> {
+pub(super) fn rename_to_sibling(
+    root: &DirPin,
+    source: &Path,
+    destination: &Path,
+) -> io::Result<()> {
+    if source.parent().is_none() || source.parent() != destination.parent() {
+        return Err(io::Error::other("rename destination must be a sibling"));
+    }
     let name: Vec<_> = destination
         .file_name()
         .ok_or_else(|| io::Error::other("pending cleanup path has no name"))?
@@ -59,7 +66,7 @@ fn stage(
     let archive_id = snapshot.root_pin().file_identity()?;
     let linked = junction.verify_target(target)?;
     Receipt::prepare_cleanup(source, linked.path(), archive_id, target.receipt_id()?)?;
-    rename_to_sibling(snapshot.release_children_for_rename(), pending)?;
+    rename_to_sibling(snapshot.release_children_for_rename(), backup, pending)?;
     Ok((archive_id, target_pins))
 }
 
@@ -94,7 +101,7 @@ fn restore_backup_name(pending: &Path, backup: &Path, archive_id: (u32, u64)) ->
     if root.file_identity()? != archive_id {
         return Err(io::Error::other("pending copy identity changed"));
     }
-    rename_to_sibling(&root, backup)
+    rename_to_sibling(&root, pending, backup)
 }
 
 pub(super) fn finish(
