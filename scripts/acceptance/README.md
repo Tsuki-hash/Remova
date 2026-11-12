@@ -26,7 +26,7 @@
 
 ## 2. 运行方式
 
-在用于审查发行附件的 Windows 机器上，用可信的 7-Zip 和 WiX 3 `dark.exe` 生成可执行文件参考摘要。脚本只解包，不运行或安装任何渠道。把生成的 JSON 随同一批附件交给各验收环境和签批人。
+在用于审查发行附件的 Windows 机器上，切换到候选提交，用可信的 7-Zip 和 WiX 3 `dark.exe` 生成可执行文件参考摘要。脚本只解包，并逐字节核对三种包内的 `LICENSE` 和 `THIRD-PARTY-NOTICES.md`。把生成的 JSON 随同一批附件交给各验收环境和签批人。
 
 ```powershell
 ./scripts/acceptance/get-package-exe-reference.ps1 -Artifacts 'D:/artifacts' -CandidateVersion 1.4.1 `

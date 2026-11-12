@@ -172,6 +172,9 @@ jobs:
         run: cargo fetch --locked
         working-directory: src-tauri
 
+      - name: verify distribution license notices
+        run: node scripts/make-sbom.mjs --check-notices
+
       - name: cargo fmt
         run: cargo fmt --check
         working-directory: src-tauri
@@ -367,6 +370,33 @@ jobs:
         shell: pwsh
         run: npm run smoke:portable
 
+      # docs/ is no longer committed, so a curated per-release notes file cannot reach the runner.
+      # The tag's own CHANGELOG section is the published text; a missing section fails the job here
+      # instead of silently falling back to GitHub auto notes (which read like a raw commit list).
+      - name: build Release body from CHANGELOG
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/extract-release-notes.ps1
+
+      - name: generate artifact checksums
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/make-checksums.ps1
+
+      - name: verify packaged executables and licenses
+        shell: pwsh
+        env:
+          CANDIDATE_VERSION: ${{ steps.signing-config.outputs.version }}
+        run: |
+          $bundle = 'src-tauri/target/release/bundle'
+          $flat = (New-Item -ItemType Directory -Path '.release-signing/packaged').FullName
+          Copy-Item -Path "$bundle/nsis/*-setup.exe", "$bundle/msi/*.msi", "$bundle/portable/*.zip", "$bundle/SHA256SUMS.txt" -Destination $flat
+          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) { $sevenZip = Join-Path $env:ProgramFiles '7-Zip/7z.exe' }
+          $wixDark = Join-Path $env:LOCALAPPDATA 'tauri/WixTools314/dark.exe'
+          & scripts/acceptance/get-package-exe-reference.ps1 -Artifacts $flat -CandidateVersion $env:CANDIDATE_VERSION -SevenZip $sevenZip -WixDark $wixDark | Out-Null
+
+      - name: generate dependency sbom
+        run: node scripts/make-sbom.mjs
+
       - name: upload NSIS installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -380,20 +410,6 @@ jobs:
           name: Remova-MSI
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
-
-      # docs/ is no longer committed, so a curated per-release notes file cannot reach the runner.
-      # The tag's own CHANGELOG section is the published text; a missing section fails the job here
-      # instead of silently falling back to GitHub auto notes (which read like a raw commit list).
-      - name: build Release body from CHANGELOG
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/extract-release-notes.ps1
-
-      - name: generate artifact checksums
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/make-checksums.ps1
-
-      - name: generate dependency sbom
-        run: node scripts/make-sbom.mjs
 
       - name: create GitHub release draft
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.4.1

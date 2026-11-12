@@ -41,6 +41,9 @@ cargo bench
 # Run from the repository root: the script resolves both lockfiles itself.
 # From src-tauri use `node ../scripts/make-sbom.mjs`.
 node scripts/make-sbom.mjs
+node scripts/make-sbom.mjs --check-notices
+# Regenerate and review when changing release dependencies.
+node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md
 
 # Dependency audit: cargo audit (cargo-audit) and npm audit. CI runs both as
 # release gates: `cargo audit` in src-tauri and `npm audit --omit=dev

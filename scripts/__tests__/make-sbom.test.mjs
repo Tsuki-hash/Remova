@@ -58,7 +58,8 @@ test("generates an sbom from the repository lockfiles", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "sbom-"));
   try {
     const out = path.join(dir, "SBOM.cdx.json");
-    execFileSync(process.execPath, [path.resolve(import.meta.dirname, "..", "make-sbom.mjs"), "--out", out], {
+    const generatedNotices = path.join(dir, "THIRD-PARTY-NOTICES.md");
+    execFileSync(process.execPath, [path.resolve(import.meta.dirname, "..", "make-sbom.mjs"), "--out", out, "--notices", generatedNotices, "--check-notices"], {
       cwd: path.resolve(import.meta.dirname, "..", ".."),
     });
     const sbom = JSON.parse(readFileSync(out, "utf8"));
@@ -71,9 +72,14 @@ test("generates an sbom from the repository lockfiles", () => {
     for (const name of ["linux-raw-sys", "wasi", "windows_aarch64_msvc", "windows_i686_gnu"]) {
       assert.ok(!names.has(name), `${name} is outside the Windows x64 release graph`);
     }
-    const notices = readFileSync(path.resolve(import.meta.dirname, "..", "..", "THIRD-PARTY-NOTICES.md"), "utf8");
+    const notices = readFileSync(generatedNotices, "utf8");
     const purls = [...notices.matchAll(/\((pkg:[^)]+)\)/g)].map((match) => match[1]);
     assert.deepEqual(purls, sbom.components.map((c) => c.purl));
+    const titles = new Set([...notices.matchAll(/^### Text ([a-f0-9]{64})$/gm)].map((match) => match[1]));
+    for (const [, digest] of notices.matchAll(/\]\(#text-([a-f0-9]{64})\)/g)) assert.ok(titles.has(digest));
+    assert.match(notices, /^- ring 0\.17\.14 .*Apache-2\.0 AND ISC.*`LICENSE-other-bits`.*`third_party\/fiat\/LICENSE`/m);
+    assert.match(notices, /^- webview2-com-sys 0\.38\.2 .*`Microsoft\.Web\.WebView2 1\.0\.3650\.58 NOTICE\.txt`/m);
+    assert.match(notices, /^- selectors 0\.36\.1 .*MPL-2\.0.*\[Corresponding source\]/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

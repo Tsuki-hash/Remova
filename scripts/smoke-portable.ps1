@@ -27,6 +27,16 @@ try {
       Write-Error "smoke-portable FAILED: zip missing $required. Entries: $($names -join ', ')"
     }
   }
+  foreach ($required in @("LICENSE", "THIRD-PARTY-NOTICES.md")) {
+    $entries = @($archive.Entries | Where-Object { $_.FullName -ieq $required })
+    if ($entries.Count -ne 1) { throw "smoke-portable FAILED: expected one $required at the root." }
+    $expected = (Get-FileHash -LiteralPath (Join-Path $root $required) -Algorithm SHA256).Hash
+    $stream = $entries[0].Open()
+    try {
+      $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream))
+      if ($actual -cne $expected) { throw "smoke-portable FAILED: contents differ for $required." }
+    } finally { $stream.Dispose() }
+  }
   $portableEntry = $archive.Entries | Where-Object { $_.Name -eq "PORTABLE.txt" } | Select-Object -First 1
   $reader = New-Object System.IO.StreamReader($portableEntry.Open())
   try { $portableText = $reader.ReadToEnd() } finally { $reader.Dispose() }

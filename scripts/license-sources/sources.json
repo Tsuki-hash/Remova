@@ -1,0 +1,203 @@
+{
+  "files": {
+    "dropbox-BSD-3-Clause.txt": {
+      "name": "LICENSE",
+      "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE"
+    },
+    "defmt-MIT.txt": {
+      "name": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT"
+    },
+    "defmt-Apache-2.0.txt": {
+      "name": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE"
+    },
+    "Mozilla-MPL-2.0.txt": {
+      "name": "MPL-2.0",
+      "url": "https://www.mozilla.org/media/MPL/2.0/index.f75d2927d3c1.txt"
+    },
+    "unic-MIT.txt": {
+      "name": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    },
+    "unic-Apache-2.0.txt": {
+      "name": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    "unic-COPYRIGHT.md": {
+      "name": "COPYRIGHT.md",
+      "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/COPYRIGHT.md"
+    },
+    "unicode-10-ReadMe.txt": {
+      "name": "Unicode 10.0.0 UCD ReadMe.txt",
+      "url": "https://raw.githubusercontent.com/open-i18n/data-unicode-ucd/2a2044479b3c4915ef4213adf1dfd6236dba24c8/data/ReadMe.txt"
+    },
+    "Unicode-DFS-2016.txt": {
+      "name": "Unicode-DFS-2016",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/Unicode-DFS-2016.txt"
+    },
+    "webview2-rs-MIT.txt": {
+      "name": "LICENSE",
+      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE"
+    },
+    "webview2-sdk-LICENSE.txt": {
+      "name": "Microsoft.Web.WebView2 1.0.3650.58 LICENSE.txt",
+      "url": "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3650.58/License"
+    },
+    "webview2-sdk-NOTICE.txt": {
+      "name": "Microsoft.Web.WebView2 1.0.3650.58 NOTICE.txt",
+      "url": "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3650.58"
+    },
+    "updater-MIT.txt": {
+      "name": "LICENSE_MIT",
+      "url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/5baf71a47292d8490f0ba3d53f15224e55c48327/LICENSE_MIT"
+    },
+    "updater-Apache-2.0.txt": {
+      "name": "LICENSE_APACHE-2.0",
+      "url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/5baf71a47292d8490f0ba3d53f15224e55c48327/LICENSE_APACHE-2.0"
+    }
+  },
+  "packages": {
+    "cargo:alloc-stdlib@0.2.4": {
+      "documents": [
+        {
+          "file": "dropbox-BSD-3-Clause.txt"
+        }
+      ]
+    },
+    "cargo:defmt-parser@1.0.0": {
+      "documents": [
+        {
+          "file": "defmt-MIT.txt"
+        },
+        {
+          "file": "defmt-Apache-2.0.txt"
+        }
+      ]
+    },
+    "cargo:selectors@0.36.1": {
+      "documents": [
+        {
+          "file": "Mozilla-MPL-2.0.txt"
+        }
+      ],
+      "source": "https://static.crates.io/crates/selectors/selectors-0.36.1.crate"
+    },
+    "cargo:unic-char-property@0.9.0": {
+      "documents": [
+        {
+          "file": "unic-MIT.txt"
+        },
+        {
+          "file": "unic-Apache-2.0.txt"
+        },
+        {
+          "file": "unic-COPYRIGHT.md"
+        }
+      ]
+    },
+    "cargo:unic-char-range@0.9.0": {
+      "documents": [
+        {
+          "file": "unic-MIT.txt"
+        },
+        {
+          "file": "unic-Apache-2.0.txt"
+        },
+        {
+          "file": "unic-COPYRIGHT.md"
+        }
+      ]
+    },
+    "cargo:unic-common@0.9.0": {
+      "documents": [
+        {
+          "file": "unic-MIT.txt"
+        },
+        {
+          "file": "unic-Apache-2.0.txt"
+        },
+        {
+          "file": "unic-COPYRIGHT.md"
+        }
+      ]
+    },
+    "cargo:unic-ucd-ident@0.9.0": {
+      "documents": [
+        {
+          "file": "unic-MIT.txt",
+          "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT"
+        },
+        {
+          "file": "unic-Apache-2.0.txt",
+          "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-APACHE"
+        },
+        {
+          "file": "unic-COPYRIGHT.md",
+          "url": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/COPYRIGHT.md"
+        },
+        {
+          "file": "unicode-10-ReadMe.txt"
+        },
+        {
+          "file": "Unicode-DFS-2016.txt"
+        }
+      ]
+    },
+    "cargo:unic-ucd-version@0.9.0": {
+      "documents": [
+        {
+          "file": "unic-MIT.txt"
+        },
+        {
+          "file": "unic-Apache-2.0.txt"
+        },
+        {
+          "file": "unic-COPYRIGHT.md"
+        }
+      ]
+    },
+    "cargo:webview2-com@0.38.2": {
+      "documents": [
+        {
+          "file": "webview2-rs-MIT.txt"
+        }
+      ]
+    },
+    "cargo:webview2-com-macros@0.8.1": {
+      "documents": [
+        {
+          "file": "webview2-rs-MIT.txt",
+          "url": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE"
+        }
+      ]
+    },
+    "cargo:webview2-com-sys@0.38.2": {
+      "input": {
+        "path": "x64/WebView2LoaderStatic.lib",
+        "sha256": "0659b741bde6348d4c4a6ec4ceb9af50e3d0048ed9cd3c8659bccbb61fde55ee"
+      },
+      "documents": [
+        {
+          "file": "webview2-rs-MIT.txt"
+        },
+        {
+          "file": "webview2-sdk-LICENSE.txt"
+        },
+        {
+          "file": "webview2-sdk-NOTICE.txt"
+        }
+      ]
+    },
+    "npm:@tauri-apps/plugin-updater@2.12.0": {
+      "documents": [
+        {
+          "file": "updater-MIT.txt"
+        },
+        {
+          "file": "updater-Apache-2.0.txt"
+        }
+      ]
+    }
+  }
+}

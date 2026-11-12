@@ -6,11 +6,12 @@
 // reaches the bundle. Deterministic: components are sorted and the serial
 // number is a stable SHA-256 over the component list, so the same tree
 // always produces the same SBOM bytes.
-// Usage: node scripts/make-sbom.mjs [--out <path>] [--notices <path>]
+// Usage: node scripts/make-sbom.mjs [--out <path>] [--notices <path> | --check-notices]
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { collectNoticeInputs, renderNotices } from "./third-party-notices.mjs";
 
 const RELEASE_TARGET = "x86_64-pc-windows-msvc";
 
@@ -81,14 +82,18 @@ export function reachableCargoNames(metadata) {
 }
 
 /** Production packages of a package-lock.json (v3 "packages" map), {name, version}. */
-export function parsePackageLock(lock) {
+export function productionNpmPackages(lock) {
   const out = [];
   for (const [pkgPath, entry] of Object.entries(lock.packages ?? {})) {
     if (pkgPath === "" || entry.dev || entry.devOptional || !entry.version) continue;
     const name = pkgPath.split("node_modules/").pop();
-    if (name) out.push({ name, version: entry.version });
+    if (name) out.push({ name, version: entry.version, packagePath: pkgPath });
   }
   return out;
+}
+
+export function parsePackageLock(lock) {
+  return productionNpmPackages(lock).map(({ name, version }) => ({ name, version }));
 }
 
 /** Deterministic CycloneDX 1.5 document for the given components. */
@@ -158,32 +163,35 @@ async function main() {
     }),
   );
   const reachable = reachableCargoNames(metadata);
+  const lock = JSON.parse(lockText);
   const sbom = buildSbom({
     productName: "Remova",
     productVersion: JSON.parse(pkg).version,
     cargo: parseCargoLock(cargoText)
       .filter((c) => reachable.has(`${c.name}@${c.version}`))
       .map((c) => ({ ...c, ecosystem: "cargo" })),
-    npm: parsePackageLock(JSON.parse(lockText)).map((c) => ({ ...c, ecosystem: "npm" })),
+    npm: parsePackageLock(lock).map((c) => ({ ...c, ecosystem: "npm" })),
   });
+  const noticesIdx = process.argv.indexOf("--notices");
+  const checkNotices = process.argv.includes("--check-notices");
+  if (noticesIdx > -1 || checkNotices) {
+    const inputs = await collectNoticeInputs(root, metadata, reachable, productionNpmPackages(lock));
+    const content = renderNotices(sbom.components, inputs);
+    if (checkNotices) {
+      const current = await readFile(path.join(root, "THIRD-PARTY-NOTICES.md"), "utf8");
+      if (content !== current.replaceAll("\r\n", "\n")) {
+        throw new Error("Third-party notices are stale. Run node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md and review the changes.");
+      }
+      console.log(`Third-party notices OK (${inputs.length} components)`);
+    }
+    if (noticesIdx > -1) {
+      await writeFile(path.resolve(process.argv[noticesIdx + 1]), content, "utf8");
+    }
+  }
+  if (checkNotices && outIdx < 0 && noticesIdx < 0) return;
   await mkdir(path.dirname(out), { recursive: true });
   await writeFile(out, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
   console.log(`SBOM OK: ${out} (${sbom.components.length} components)`);
-  const noticesIdx = process.argv.indexOf("--notices");
-  if (noticesIdx > -1) {
-    const header = [
-      "# Third-party notices",
-      "",
-      "This list records the Windows x64 Rust dependency graph and npm production dependencies for Remova. Each component retains its upstream license.",
-      "",
-      "Regenerate from the repository root with `node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md`.",
-      "",
-      "## Components",
-      "",
-    ];
-    const components = sbom.components.map((c) => `- ${c.name} ${c.version} (${c.purl})`);
-    await writeFile(path.resolve(process.argv[noticesIdx + 1]), [...header, ...components, ""].join("\n"), "utf8");
-  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
