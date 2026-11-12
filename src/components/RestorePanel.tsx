@@ -83,7 +83,8 @@ export function RestorePanel({
   const selectable = sessions.some(canPreviewBackup);
   const selected = sessions.some(session => session.name === pick && canPreviewBackup(session));
   const selectedPreview = selected && preview?.name === pick ? preview : null;
-  const canRestore = !busy && !loading && !loadError && !previewLoading && !previewError && Boolean(selectedPreview);
+  const canRestore = !busy && !loading && !loadError && !previewLoading && !previewError && !!selectedPreview
+    && (!selectedPreview.manual_file_restore || selectedPreview.registry > 0 || selectedPreview.path_entries > 0);
   const availability = {
     verified: "",
     pending_verification: L.restoreSessionPending,
@@ -94,8 +95,8 @@ export function RestorePanel({
     invalid: L.restoreSessionInvalid,
     legacy: L.restoreSessionLegacy,
   };
-  const statusOrder = { missing: 0, blocked: 0, existing: 1, resumable: 2, available: 3 };
-  const targetLabels = { missing: L.restoreTargetMissing, blocked: L.restoreTargetBlocked,
+  const statusOrder = { missing: 0, blocked: 0, unverified: 0, existing: 1, resumable: 2, available: 3 };
+  const targetLabels = { missing: L.restoreTargetMissing, blocked: L.restoreTargetBlocked, unverified: L.restoreTargetUnverified,
     existing: L.restoreTargetExisting, resumable: L.restoreTargetResumable, available: L.restoreTargetAvailable };
   const previewEntries = [...(selectedPreview?.entries ?? [])]
     .sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
@@ -204,7 +205,9 @@ export function RestorePanel({
             <p style={{ margin: "8px 0" }}>{L.restorePreviewSummary(selectedPreview.files, selectedPreview.registry, selectedPreview.path_entries)}</p>
             {selectedPreview.existing > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreConflict(selectedPreview.existing)}</p>}
             {!!selectedPreview.resumable && <p style={css.muted}>{L.restoreResumable(selectedPreview.resumable)}</p>}
-            {selectedPreview.unavailable > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreUnavailable(selectedPreview.unavailable)}</p>}
+            {selectedPreview.manual_file_restore
+              ? <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreManualFiles}</p>
+              : selectedPreview.unavailable > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreUnavailable(selectedPreview.unavailable)}</p>}
             <p style={{ ...css.muted, fontSize: 12, lineHeight: 1.5, margin: "6px 0" }}>{L.restorePreviewHint}</p>
             <details open={selectedPreview.existing > 0 || !!selectedPreview.resumable || selectedPreview.unavailable > 0} style={{ marginTop: 8 }}>
               <summary style={{ cursor: "pointer" }}>{L.restoreTargets}</summary>

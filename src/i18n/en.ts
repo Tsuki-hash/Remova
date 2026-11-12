@@ -383,6 +383,8 @@ export const dict: EnDict = {
     restoreTargetExisting: "Already exists",
     restoreTargetMissing: "Backup missing",
     restoreTargetBlocked: "Unavailable",
+    restoreTargetUnverified: "Manual copy only",
+    restoreManualFiles: "This backup has no file checksums. To recover files, inspect the backup and copy the files you need to a separate folder. Verified PATH and registry snapshots can still be restored here.",
     restoreTargetAvailable: "Pending restore checks",
     restoreTargetResumable: "Can resume",
     restoreResumable: (n: number) => `${n} interrupted directory restore(s) can resume. Existing files will be kept.`,

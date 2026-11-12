@@ -384,6 +384,8 @@ export const dict = {
     restoreTargetExisting: "已存在",
     restoreTargetMissing: "备份缺失",
     restoreTargetBlocked: "不可用",
+    restoreTargetUnverified: "仅可手工复制",
+    restoreManualFiles: "此备份没有文件校验值。请检查备份，把需要的文件复制到单独的文件夹。通过校验的 PATH 和注册表快照仍可在此还原。",
     restoreTargetAvailable: "待核验还原",
     restoreTargetResumable: "可继续还原",
     restoreResumable: (n: number) => `${n} 个中断的目录可以继续还原，现有文件会保留。`,

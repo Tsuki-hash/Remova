@@ -235,7 +235,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
         message: [L.restoreConfirm(restorePick),
           preview.existing ? L.restoreConflict(preview.existing) : "",
           preview.resumable ? L.restoreResumable(preview.resumable) : "",
-          preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
+          preview.manual_file_restore ? L.restoreManualFiles : preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
         confirmLabel: L.restoreRun,
         danger: true,
       });

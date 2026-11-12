@@ -848,7 +848,11 @@ mod tests {
                 "seal:path_snapshot_mismatch"
             );
             let inventory = BTreeMap::from([("path.json".into(), map_digest(&bytes))]);
-            write_seal(&sess, "", &map, &inventory).unwrap();
+            let files = BTreeMap::from([(
+                "files/file.txt".into(),
+                publication_file_digest(&sess.join("files/file.txt")).unwrap(),
+            )]);
+            write_seal_with_files(&sess, "", &map, &inventory, Some(files)).unwrap();
             std::fs::write(sess.join("path.json"), b"tampered").unwrap();
             assert_eq!(
                 crate::restore::restore_session(&sess).unwrap_err(),

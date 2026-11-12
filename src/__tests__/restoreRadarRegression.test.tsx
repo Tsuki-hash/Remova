@@ -549,6 +549,20 @@ it("does not let an older preview erase a fresh validation failure for the same 
   expect(native.restoreSessionByName).not.toHaveBeenCalled();
 });
 
+it("explains manual file recovery and permits independently verified snapshots", () => {
+  const props = { sessions: [{ name: "older-backup", size_kb: 1, created_at: "1700000000", sealed: true }],
+    pick: "older-backup", setPick: vi.fn(), busy: false, msgs: [], onRun: vi.fn(), onDelete: vi.fn(), onClose: vi.fn() };
+  const preview = { name: "older-backup", files: 1, registry: 0, path_entries: 0,
+    existing: 0, unavailable: 1, manual_file_restore: true,
+    entries: [{ target: "folder", status: "unverified" as const }] };
+  const view = render(<RestorePanel {...props} preview={preview} />);
+  expect(screen.getByText(t().restoreManualFiles)).toBeTruthy();
+  expect(screen.getByText(t().restoreTargetUnverified)).toBeTruthy();
+  expect(screen.getByRole("button", { name: t().restoreRun })).toHaveProperty("disabled", true);
+  view.rerender(<RestorePanel {...props} preview={{ ...preview, registry: 1 }} />);
+  expect(screen.getByRole("button", { name: t().restoreRun })).toHaveProperty("disabled", false);
+});
+
 it("locks selection and deletion during confirmation and releases the lock on cancellation", async () => {
   native.backupSessions.mockResolvedValueOnce(["older-backup", "other"].map(name =>
     ({ name, size_kb: 1, created_at: "", sealed: true })));

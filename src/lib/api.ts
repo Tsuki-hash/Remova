@@ -102,8 +102,9 @@ export type AssociationScanProgress = { stage: string; found: number };
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
   existing: number; resumable?: number; unavailable: number;
+  manual_file_restore?: boolean;
   size_kb?: number | null;
-  entries: { target: string; status: "available" | "existing" | "resumable" | "missing" | "blocked" }[];
+  entries: { target: string; status: "available" | "existing" | "resumable" | "missing" | "blocked" | "unverified" }[];
 };
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

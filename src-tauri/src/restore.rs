@@ -200,6 +200,16 @@ fn restore_with_before_copy(
                 ))
                 .to_ipc());
             }
+            #[cfg(windows)]
+            let Some((inventory, stage)) = &authenticated
+            else {
+                // Older seals authorize destinations and registry/PATH snapshots.
+                // A destination alone does not authenticate any file bytes.
+                messages.push(format!(
+                    "skipped backup entry with no recorded digest: {rel}"
+                ));
+                continue;
+            };
             let src = files_root.join(rel.as_str());
             // Defense-in-depth: joined source must stay under files_root.
             if !src.starts_with(&files_root) {
@@ -239,24 +249,20 @@ fn restore_with_before_copy(
                 continue;
             }
             #[cfg(windows)]
-            let staged = if let Some((inventory, stage)) = &authenticated {
-                match inventory.stage(stage, &src, rel) {
-                    Ok(staged) => Some(staged),
-                    Err(_) if crate::executor::cleanup_cancelled() => {
-                        messages.push("restore cancelled".into());
-                        break;
-                    }
-                    Err(reason) => {
-                        messages.push(if reason.starts_with("skipped ") {
-                            reason
-                        } else {
-                            format!("restore failed for {original}: {reason}")
-                        });
-                        continue;
-                    }
+            let staged = match inventory.stage(stage, &src, rel) {
+                Ok(staged) => staged,
+                Err(_) if crate::executor::cleanup_cancelled() => {
+                    messages.push("restore cancelled".into());
+                    break;
                 }
-            } else {
-                None
+                Err(reason) => {
+                    messages.push(if reason.starts_with("skipped ") {
+                        reason
+                    } else {
+                        format!("restore failed for {original}: {reason}")
+                    });
+                    continue;
+                }
             };
             // The string gate above judges the *requested* path. Pin the actual
             // parent and re-run the gates on its by-handle resolved location:
@@ -309,10 +315,7 @@ fn restore_with_before_copy(
                 continue;
             }
             #[cfg(windows)]
-            let source = staged
-                .as_ref()
-                .map(payload::StagedPayload::path)
-                .unwrap_or(&src);
+            let source = staged.path();
             // The publisher checks occupied directories against the private
             // receipt and always uses no-replace publication for new entries.
             if dest.try_exists().unwrap_or(true) {
@@ -896,12 +899,13 @@ pub struct RestorePreview {
     pub existing: usize,
     pub resumable: usize,
     pub unavailable: usize,
+    pub manual_file_restore: bool,
     pub entries: Vec<RestorePreviewEntry>,
     pub size_kb: Option<u64>,
 }
 
 /// Advisory, bounded preview. Authorization and snapshots are checked using
-/// the same inputs as restore; file contents are not authenticated by the seal.
+/// the same inputs as restore. Individual payload bytes are checked at restore time.
 /// Never create destination directories or stage/import registry data here.
 pub(crate) const PREVIEW_CANCELLED: &str = "backup preview cancelled";
 
@@ -939,6 +943,10 @@ fn preview_session_with_cancel(
     let inputs = validate_session(session, &cancelled)?;
     #[cfg(windows)]
     let receipts = retry::Receipts::new(&inputs.seal);
+    #[cfg(windows)]
+    let manual_file_restore = !inputs.map.is_empty() && inputs.inventory.is_none();
+    #[cfg(not(windows))]
+    let manual_file_restore = false;
     let mut preview = RestorePreview {
         name: name.into(),
         size_kb: crate::dirsize::walk_size_kb_unbudgeted_with_cancel(session, &cancelled),
@@ -951,6 +959,7 @@ fn preview_session_with_cancel(
         existing: 0,
         resumable: 0,
         unavailable: 0,
+        manual_file_restore,
         entries: vec![],
     };
     for (rel, target) in inputs.map {
@@ -962,42 +971,44 @@ fn preview_session_with_cancel(
         }
         let source = session.join("files").join(&rel);
         let dest = Path::new(&target);
-        let status =
-            if crate::fsutil::is_reparse_point(&source) || crate::fsutil::is_reparse_point(dest) {
-                "blocked"
-            } else if !source.try_exists().unwrap_or(false) {
-                // Stat errors (unplugged drive, denying ACL) degrade to
-                // "missing" — same swallow-as-absent semantics as the
-                // restore loop's `src.exists()` skip, so one unreadable
-                // entry never disables the whole preview.
-                "missing"
-            } else if !crate::safety::is_safe_restore_target(dest)
-                || crate::safety::looks_like_sync_conflict(&target)
-                || inputs
-                    .seal
-                    .targets
-                    .binary_search(&crate::path_seal::normalize_target(&target))
-                    .is_err()
-            {
-                "blocked"
-            } else if dest.try_exists().unwrap_or(true) {
-                #[cfg(windows)]
-                let resumable = receipts.can_resume(&rel, dest, &cancelled);
-                #[cfg(not(windows))]
-                let resumable = false;
-                // An unreadable destination is reported as a conflict, never
-                // as a free target — restore rechecks before writing.
-                if resumable {
-                    "resumable"
-                } else {
-                    "existing"
-                }
+        let status = if manual_file_restore {
+            "unverified"
+        } else if crate::fsutil::is_reparse_point(&source) || crate::fsutil::is_reparse_point(dest)
+        {
+            "blocked"
+        } else if !source.try_exists().unwrap_or(false) {
+            // Stat errors (unplugged drive, denying ACL) degrade to
+            // "missing" — same swallow-as-absent semantics as the
+            // restore loop's `src.exists()` skip, so one unreadable
+            // entry never disables the whole preview.
+            "missing"
+        } else if !crate::safety::is_safe_restore_target(dest)
+            || crate::safety::looks_like_sync_conflict(&target)
+            || inputs
+                .seal
+                .targets
+                .binary_search(&crate::path_seal::normalize_target(&target))
+                .is_err()
+        {
+            "blocked"
+        } else if dest.try_exists().unwrap_or(true) {
+            #[cfg(windows)]
+            let resumable = receipts.can_resume(&rel, dest, &cancelled);
+            #[cfg(not(windows))]
+            let resumable = false;
+            // An unreadable destination is reported as a conflict, never
+            // as a free target — restore rechecks before writing.
+            if resumable {
+                "resumable"
             } else {
-                "available"
-            };
+                "existing"
+            }
+        } else {
+            "available"
+        };
         preview.existing += usize::from(status == "existing");
         preview.resumable += usize::from(status == "resumable");
-        preview.unavailable += usize::from(status == "blocked" || status == "missing");
+        preview.unavailable += usize::from(matches!(status, "blocked" | "missing" | "unverified"));
         if preview.entries.len() < 200 {
             preview.entries.push(RestorePreviewEntry { target, status });
         }
@@ -1509,6 +1520,25 @@ mod tests {
         crate::fsutil::remove_tree_no_reparse(&root).unwrap();
     }
 
+    fn seal_file_fixture(
+        session: &Path,
+        map: &std::collections::BTreeMap<String, String>,
+        snapshots: &std::collections::BTreeMap<String, String>,
+        files: &[&str],
+    ) {
+        let digests = files
+            .iter()
+            .map(|name| {
+                let relative = format!("files/{name}");
+                let digest =
+                    crate::path_seal::publication_file_digest(&session.join(&relative)).unwrap();
+                (relative, digest)
+            })
+            .collect();
+        crate::path_seal::write_seal_with_files(session, "", map, snapshots, Some(digests))
+            .unwrap();
+    }
+
     #[test]
     fn restore_file_roundtrip() {
         let tmp = std::env::temp_dir().join(format!("remova_restore_rt_{}", std::process::id()));
@@ -1531,9 +1561,8 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        // every write-back needs a seal (same as production backup path).
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
-        // Legacy sealed backups can still restore to a free destination.
+        // The older inline digest format remains restorable.
+        seal_file_fixture(&sess, &map, &Default::default(), &[rel]);
         let msgs = restore_session(&sess).unwrap();
         assert!(msgs.iter().any(|m| m.contains("restored")), "{msgs:?}");
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
@@ -1586,7 +1615,12 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        seal_file_fixture(
+            &sess,
+            &map,
+            &Default::default(),
+            &["aaa_fresh.txt", "abc_file.txt"],
+        );
         let preview = preview_session("sess", &sess).unwrap();
         assert_eq!(preview.files, 207);
         assert_eq!(preview.entries.len(), 200);
@@ -1638,7 +1672,7 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        seal_file_fixture(&sess, &map, &Default::default(), &[rel]);
         let preview = preview_session("sess", &sess).unwrap();
         assert_eq!(preview.files, 1);
         assert_eq!(preview.entries[0].status, "existing");
@@ -1683,7 +1717,7 @@ mod tests {
             serde_json::to_string(&map).unwrap(),
         )
         .unwrap();
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        seal_file_fixture(&sess, &map, &Default::default(), &[rel]);
         let preview = preview_session("sess", &sess).unwrap();
         assert_eq!(preview.files, 1);
         assert_eq!(preview.entries[0].status, "existing");
@@ -1718,8 +1752,8 @@ mod tests {
         assert!(restore_session(&sess).unwrap_err().contains("seal:missing"));
         assert!(!dest.exists(), "unsealed target must not be written");
 
-        // Sealed → restore proceeds.
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        // A seal with a matching file digest allows restore.
+        seal_file_fixture(&sess, &map, &Default::default(), &["abc_f.txt"]);
         assert!(
             crate::path_seal::target_sealed(&sess, &map, &dest.to_string_lossy()),
             "seal must accept the recorded target"
@@ -1845,7 +1879,7 @@ mod tests {
             "path.json".to_string(),
             crate::path_seal::map_digest(&path_bytes),
         );
-        crate::path_seal::write_seal(&sess, "", &map, &digests).unwrap();
+        seal_file_fixture(&sess, &map, &digests, &[rel]);
 
         // Force every PATH read to fail so restore_path_entry errors per
         // scope. The mock must be INSTALLED (not merely cleared): with no mock
@@ -1867,6 +1901,21 @@ mod tests {
             "the PATH failure must be aggregated with its entry and real cause: {msgs:?}"
         );
         assert_eq!(fs::read_to_string(&orig).unwrap(), "hello-backup");
+        // An older seal without file digests can still verify the PATH snapshot.
+        fs::remove_file(&orig).unwrap();
+        crate::path_seal::write_seal(&sess, "", &map, &digests).unwrap();
+        let msgs = restore_session(&sess).unwrap();
+        assert!(
+            msgs.iter()
+                .any(|m| m.starts_with("skipped backup entry with no recorded digest: ")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains(r"PATH restore failed for C:\RemovaNoSuchVendor\bin")),
+            "{msgs:?}"
+        );
+        assert!(!orig.exists());
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -2054,7 +2103,7 @@ mod tests {
         .unwrap();
         // The seal authenticates the map, so the skip below comes from the
         // protected-target gate, not from a missing seal.
-        crate::path_seal::write_seal(&sess, "", &map, &std::collections::BTreeMap::new()).unwrap();
+        seal_file_fixture(&sess, &map, &Default::default(), &["evil.txt", "keep.txt"]);
         let msgs = restore_session(&sess).expect("the session is authenticated");
         assert!(
             msgs.iter()
@@ -2155,6 +2204,96 @@ mod tests {
             .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .expect("the directory payload is published")
             .path()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_seal_without_file_digests_cannot_restore_files_or_resume_a_directory() {
+        use std::collections::BTreeMap;
+        let root = crate::test_support::TempDir::new("restore-manual-files");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let session = root.join("1700000000_legacy");
+        let source = session.join("files/directory");
+        let target = root.join("directory");
+        let absent_parent = root.join("absent-parent");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("a.txt"), b"original first").unwrap();
+        fs::write(source.join("z.txt"), b"original last").unwrap();
+        fs::write(session.join("files/single.txt"), b"single file").unwrap();
+        let map = BTreeMap::from([
+            ("directory".into(), target.to_string_lossy().into_owned()),
+            (
+                "single.txt".into(),
+                absent_parent
+                    .join("single.txt")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ]);
+        fs::write(
+            session.join("files/path_map.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        crate::path_seal::write_seal(&session, "", &map, &BTreeMap::new()).unwrap();
+        let rows = restore_session(&session).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|row| row.starts_with("skipped backup entry with no recorded digest: ")));
+        assert!(!target.exists());
+        assert!(!absent_parent.exists());
+
+        // Reproduce a directory left partially restored by a previous build.
+        let inputs = validate_session(&session, || false).unwrap();
+        let receipts = retry::Receipts::new(&inputs.seal);
+        let pins = crate::fsutil::pin_local_scan_path(root.path()).unwrap();
+        let result = publish::publish_directory(
+            &source,
+            pins.last().unwrap(),
+            target.file_name().unwrap(),
+            &receipts,
+            "directory",
+            |_| Err(std::io::Error::other("fixture interruption")),
+        );
+        assert!(
+            matches!(result, Err(publish::Failure::PartialDirectory(_))),
+            "{result:?}"
+        );
+        drop(pins);
+        assert!(receipts.can_resume("directory", &target, || false));
+        fs::write(target.join("a.txt"), b"user edited").unwrap();
+        fs::write(source.join("z.txt"), b"changed after seal").unwrap();
+        fs::write(source.join("added.txt"), b"added after seal").unwrap();
+
+        let preview = preview_session("1700000000_legacy", &session).unwrap();
+        assert!(preview.manual_file_restore);
+        assert_eq!(
+            (preview.resumable, preview.existing, preview.unavailable),
+            (0, 0, 2)
+        );
+        assert!(preview
+            .entries
+            .iter()
+            .all(|entry| entry.status == "unverified"));
+        assert_eq!(restore_session(&session).unwrap(), rows);
+        assert!(!absent_parent.exists());
+        assert!(!target.join("z.txt").exists());
+        assert!(!target.join("added.txt").exists());
+        assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"user edited");
+        assert_eq!(fs::read(source.join("a.txt")).unwrap(), b"original first");
+        assert_eq!(
+            fs::read(source.join("z.txt")).unwrap(),
+            b"changed after seal"
+        );
+        assert_eq!(
+            fs::read(source.join("added.txt")).unwrap(),
+            b"added after seal"
+        );
+        assert_eq!(
+            fs::read(session.join("files/single.txt")).unwrap(),
+            b"single file"
+        );
     }
 
     #[cfg(windows)]
