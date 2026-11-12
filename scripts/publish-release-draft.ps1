@@ -43,6 +43,16 @@ function Get-AttachmentIdentity($Draft) {
     $Draft.assets | Sort-Object id | Select-Object id, name, digest, state | ConvertTo-Json -Compress
 }
 
+function Test-PublicationMetadata($Draft, $Approved) {
+    if ($Draft.name -cne $Approved.name -or $Draft.body -isnot [string] -or
+        $Draft.prerelease -isnot [bool] -or $Draft.prerelease -ne $Approved.prerelease) {
+        return $false
+    }
+    $bodyBytes = [Text.Encoding]::UTF8.GetBytes($Draft.body)
+    $bodyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bodyBytes)).ToLowerInvariant()
+    return $bodyHash -ceq $Approved.body_sha256
+}
+
 $commit = Get-TagCommit
 $draft = Get-Draft
 $identity = Get-AttachmentIdentity $draft
@@ -52,11 +62,23 @@ New-Item -ItemType Directory -Path $download | Out-Null
 gh release download $tag --repo $repository --pattern '*' --dir $download
 if ($LASTEXITCODE -ne 0) { throw 'Could not download the draft attachments.' }
 
-& "$PSScriptRoot/release-approval.ps1" -Tag $tag -Commit $commit -BundleDir $download `
+$publication = & "$PSScriptRoot/release-approval.ps1" -Tag $tag -Commit $commit -BundleDir $download `
     -ApprovalJson $env:APPROVAL_JSON -PublicKeyPem $env:RELEASE_APPROVAL_PUBLIC_KEY
+if (!(Test-PublicationMetadata $draft $publication)) { throw 'The draft metadata does not match the signed approval.' }
 $current = Get-Draft
-if ($current.id -ne $draft.id -or (Get-AttachmentIdentity $current) -cne $identity -or (Get-TagCommit) -cne $commit) {
+if ($current.id -ne $draft.id -or (Get-AttachmentIdentity $current) -cne $identity -or
+    !(Test-PublicationMetadata $current $publication) -or (Get-TagCommit) -cne $commit) {
     throw 'The release draft or tag changed during verification.'
 }
-Invoke-GitHub @('--method', 'PATCH', "repos/$repository/releases/$($draft.id)", '-F', 'draft=false', '--silent')
+# Send the approved values in the publish request itself, so a concurrent edit
+# to the title, notes or release flags cannot become the published text.
+$request = Join-Path $download 'publish-request.json'
+@{
+    name = $publication.name
+    body = $draft.body
+    prerelease = $publication.prerelease
+    make_latest = $publication.make_latest
+    draft = $false
+} | ConvertTo-Json -Compress | Set-Content -LiteralPath $request -Encoding utf8NoBOM
+Invoke-GitHub @('--method', 'PATCH', "repos/$repository/releases/$($draft.id)", '--input', $request, '--silent')
 Write-Host "Published verified release $tag."

@@ -50,11 +50,16 @@ test("acceptance records a passing bundle and rejects missing, changed, skipped 
   const script = mockRunner(root, "run-acceptance.ps1", fakeWindows + String.raw`
 function Read-Host([string]$Prompt) {
     switch -Regex ($Prompt) {
+        'full path of the (nsis|msi|portable) executable' { "C:\fixture\$($Matches[1])\remova.exe"; break }
         'Observed' { if ($env:TEST_ACCEPTANCE_SKIP) { 'skip' } else { 'PASS' }; break }
         'Describe' { 'Observed the expected result with a disposable fixture'; break }
         'Path to' { $env:TEST_ACCEPTANCE_EVIDENCE; break }
         default { throw "Unexpected prompt: $Prompt" }
     }
+}
+function Get-AcceptanceLaunchObservation($Path, $Version, $ExpectedSha256) {
+    if ($env:TEST_ACCEPTANCE_UNREADY) { throw 'The process did not show the enabled Software navigation button.' }
+    @{ path = $Path; version = $Version; sha256 = $ExpectedSha256; pid = 4321; uia_ready = $true }
 }
 `);
   const artifacts = join(root, "artifacts");
@@ -67,26 +72,38 @@ function Read-Host([string]$Prompt) {
   };
   writeFileSync(join(artifacts, "SBOM.cdx.json"), "{}");
   writeFileSync(join(artifacts, "SHA256SUMS.txt"), names.map((name) => sha(name) + "  " + name).join("\n"));
+  const channels = ["nsis", "msi", "portable"];
+  const reference = join(root, "package-exe-reference.json");
+  writeFileSync(reference, JSON.stringify(Object.fromEntries(channels.map((channel, index) => [channel, {
+    package_sha256: sha(names[index]), executable_sha256: sha(channel),
+  }]))));
   const evidence = join(root, "evidence.txt");
   writeFileSync(evidence, "Fixture observation");
-  for (const mode of ["client", "elevated", "missing", "wrong", "skip", "no-evidence"]) {
+  for (const mode of ["client", "elevated", "missing", "wrong", "skip", "no-evidence", "no-ui"]) {
     makePackages(mode);
     const out = join(root, mode);
     const suite = mode === "elevated" ? mode : "client";
     const result = run(script, ["-Suite", suite, "-Artifacts", artifacts, "-Out", out,
-      "-CandidateCommit", commit, "-CandidateVersion", "1.4.1"], {
+      "-CandidateCommit", commit, "-CandidateVersion", "1.4.1", "-PackageExeReference", reference], {
       TEST_ACCEPTANCE_ELEVATED: suite === "elevated" ? "1" : "",
       TEST_ACCEPTANCE_SKIP: mode === "skip" ? "1" : "",
       TEST_ACCEPTANCE_EVIDENCE: mode === "no-evidence" ? "" : evidence,
+      TEST_ACCEPTANCE_UNREADY: mode === "no-ui" ? "1" : "",
     });
     const passed = mode === "client" || mode === "elevated";
     assert.equal(result.status, passed ? 0 : 1, mode + "\n" + resultText(result));
     const report = readJson(join(out, readdirSync(out)[0], "acceptance-summary.json"));
     assert.equal(report.passed, passed);
     assert.equal(report.candidate_commit, commit);
+    assert.equal(report.schema_version, 2);
+    if (mode === "no-ui") assert.match(report.error, /enabled Software navigation/);
     if (passed) {
       assert.equal(report.checks.length, suite === "client" ? 35 : 24);
       assert.equal(report.artifacts.nsis.sha256, sha(names[0]));
+      assert.deepEqual(Object.keys(report.executables), channels);
+      for (const channel of channels) assert.deepEqual(report.executables[channel], {
+        path: `C:\\fixture\\${channel}\\remova.exe`, version: "1.4.1", sha256: sha(channel), pid: 4321, uia_ready: true,
+      });
       assert.equal(report.checks.find(({ id }) => id === "nsis-first-launch").evidence.sha256, sha("Fixture observation"));
     }
   }
@@ -157,7 +174,7 @@ test("the performance gate requires six limits, matching identities and three re
   const componentsFile = join(root, "components.json");
   const limitFile = join(root, "thresholds.md");
   const thresholdText = readFileSync(thresholds, "utf8");
-  const environment = { machine_sha256: "e".repeat(64), os_version: "10.0.26200", architecture: "x64", webview2_version: "143.0.1.1" };
+  const environment = { machine_sha256: "e".repeat(64), os_version: "10.0.26200", architecture: "x64", webview2_version: "143.0.1.1", elevated: false };
   const common = { schema_version: 1, candidate_commit: commit, sha256: exeSha, environment, thresholds_sha256: sha(thresholdText) };
   const startup = { ...common, kind: "remova-startup", measurement_mode: "cold", runs: [1, 2, 3].map((run) => ({
     run, boot_sha256: String(run).repeat(64), ready_observed: true, startup_ms: 100, working_set_mb: 10,
@@ -180,6 +197,10 @@ test("the performance gate requires six limits, matching identities and three re
     ["different-commit", 2, (s, c) => { c.candidate_commit = "f".repeat(40); }],
     ["different-exe", 2, (s, c) => { c.sha256 = "f".repeat(64); }],
     ["different-machine", 2, (s, c) => { c.environment.machine_sha256 = "f".repeat(64); }],
+    ["different-elevation", 2, (s, c) => { c.environment.elevated = true; }],
+    ["missing-elevation", 2, (s) => { delete s.environment.elevated; }],
+    ["elevation-must-be-boolean", 2, (s, c) => { c.environment.elevated = "false"; }],
+    ["both-elevated", 0, (s, c) => { s.environment.elevated = c.environment.elevated = true; }],
     ["empty-limits", 2, () => ""],
     ["duplicate-limit", 2, () => thresholdText + "\n| Duplicate | backup_ms | 60000 |\n"],
   ];

@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $temp = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $root = Join-Path $temp "remova-release-approval-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $root | Out-Null
+$releaseMetadata = @{ name = 'Remova 1.4.1'; body = "Release notes`nLine two"; prerelease = $false; make_latest = 'true' }
 
 function Must-Refuse([scriptblock]$Action, [string]$Reason) {
     try { & $Action | Out-Null } catch {
@@ -11,6 +12,39 @@ function Must-Refuse([scriptblock]$Action, [string]$Reason) {
         throw
     }
     throw "Expected refusal: $Reason"
+}
+
+function Test-LaunchObservation([string]$FixtureRoot) {
+    if (-not $IsWindows) { return }
+    $exe = Join-Path $FixtureRoot 'Remova.exe'
+    Copy-Item -LiteralPath ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) -Destination $exe
+    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion
+    $digest = (Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant()
+    $state = @{ actualPath = $exe; ready = $true; running = $false; starts = 0; closed = 0 }
+    function Get-Process { if ($state.running) { @{ Id = 17 } } }
+    function Start-Process([string]$FilePath, [switch]$PassThru) {
+        if (!$PassThru -or $FilePath -ine $exe) { throw 'Unexpected launch request' }
+        $state.starts++
+        @{ Id = 4321; HasExited = $false; MainModule = @{ FileName = $state.actualPath } }
+    }
+    function Wait-RemovaUiReady($Process) { $Process.Id -eq 4321 -and $state.ready }
+    function Close-RemovaTestProcess($Process) { if ($Process.Id -eq 4321) { $state.closed++ } }
+
+    $observed = Get-AcceptanceLaunchObservation $exe $version $digest
+    if ($observed.path -ine $exe -or $observed.version -cne $version -or $observed.sha256 -cne $digest -or
+        $observed.pid -ne 4321 -or !$observed.uia_ready -or $state.starts -ne 1 -or $state.closed -ne 1) {
+        throw 'The launch observation did not record the verified executable and readiness.'
+    }
+    Must-Refuse { Get-AcceptanceLaunchObservation $exe $version ('f' * 64) } 'does not match the reviewed package'
+    $state.running = $true
+    Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest } 'Close existing Remova processes'
+    if ($state.starts -ne 1) { throw 'A stale or already running executable was launched.' }
+    $state.running = $false
+    $state.actualPath = Join-Path $FixtureRoot 'other\Remova.exe'
+    Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest } 'running process did not match'
+    $state.ready = $false
+    Must-Refuse { Get-AcceptanceLaunchObservation $exe $version $digest } 'did not show the enabled Software navigation button'
+    if ($state.closed -ne $state.starts) { throw 'An unsuccessful launch was not closed.' }
 }
 
 function Test-PublishDraft(
@@ -57,17 +91,28 @@ function Test-PublishDraft(
             }
             "api|repos/$fixtureRepository/releases?per_page=100|--paginate|--slurp" {
                 $state.drafts++
-                $draft = @{ id = $fixtureRelease; draft = $true; tag_name = $fixtureTag; assets = $assets }
+                $draft = @{ id = $fixtureRelease; draft = $true; tag_name = $fixtureTag; assets = $assets
+                    name = $releaseMetadata.name; body = $releaseMetadata.body; prerelease = $releaseMetadata.prerelease }
+                if ($Scenario -eq 'wrong-approved-title') { $draft.name += ' changed' }
                 if ($state.drafts -eq 2) {
                     if ($Scenario -eq 'asset-changed') { $assets[0].id += 100 }
                     if ($Scenario -eq 'draft-replaced') { $draft.id++ }
+                    if ($Scenario -eq 'title-changed') { $draft.name += ' changed' }
+                    if ($Scenario -eq 'body-changed') { $draft.body += ' changed' }
+                    if ($Scenario -eq 'prerelease-changed') { $draft.prerelease = $true }
                 }
                 $earlier = @{ id = 42; draft = $false; tag_name = 'v1.4.0'; assets = @() }
                 return ConvertTo-Json -InputObject @(@($earlier), @($draft)) -Depth 7 -Compress
             }
-            "api|--method|PATCH|repos/$fixtureRepository/releases/$fixtureRelease|-F|draft=false|--silent" {
+            "api|--method|PATCH|repos/$fixtureRepository/releases/$fixtureRelease|--input|$(Join-Path $fixtureTemp "reviewed-release-$fixtureRelease/publish-request.json")|--silent" {
                 if ($state.commits -ne 2 -or $state.drafts -ne 2 -or $state.downloads -ne 1) {
                     throw 'The release was patched before verification completed.'
+                }
+                $request = Get-Content -LiteralPath $args[5] -Raw | ConvertFrom-Json -AsHashtable
+                if ($request.draft -ne $false -or $request.name -cne $releaseMetadata.name -or
+                    $request.body -cne $releaseMetadata.body -or $request.prerelease -ne $releaseMetadata.prerelease -or
+                    $request.make_latest -cne $releaseMetadata.make_latest) {
+                    throw 'Publication did not send the approved metadata.'
                 }
                 $state.patches++
                 return
@@ -110,6 +155,7 @@ function Test-PublishDraft(
             'unauthorized' { Must-Refuse { & $publish } 'requires a repository maintainer or administrator' }
             'no-key' { Must-Refuse { & $publish } 'Configure the RELEASE_APPROVAL_PUBLIC_KEY' }
             'unsigned' { Must-Refuse { & $publish } 'signed release approval is required' }
+            'wrong-approved-title' { Must-Refuse { & $publish } 'metadata does not match the signed approval' }
             default { Must-Refuse { & $publish } 'changed during verification' }
         }
     } finally {
@@ -123,6 +169,7 @@ function Test-PublishDraft(
         'unauthorized' { '1/0/0/0/0' }
         'no-key' { '0/0/0/0/0' }
         'unsigned' { '1/1/1/1/0' }
+        'wrong-approved-title' { '1/1/1/1/0' }
         'tag-changed' { '1/2/2/1/0' }
         default { '1/1/2/1/0' }
     }
@@ -131,6 +178,8 @@ function Test-PublishDraft(
 }
 
 try {
+    $launchFixture = New-Item -ItemType Directory -Path (Join-Path $root 'launch')
+    Test-LaunchObservation $launchFixture.FullName
     $tag = 'v1.4.1'
     $commit = 'a' * 40
     $bundle = New-Item -ItemType Directory -Path (Join-Path $root 'bundle')
@@ -158,6 +207,16 @@ try {
     }
     Set-Content -LiteralPath (Join-Path $bundle.FullName 'SHA256SUMS.txt') -Value $sums
     Set-Content -LiteralPath (Join-Path $bundle.FullName 'SBOM.cdx.json') -Value '{"bomFormat":"CycloneDX","metadata":{"component":{"version":"1.4.1"}},"components":[{"name":"fixture"}]}'
+    $exeHashes = [ordered]@{ nsis = 'a' * 64; msi = 'b' * 64; portable = $portableExeHash }
+    $reference = [ordered]@{}
+    $launches = [ordered]@{}
+    foreach ($channel in $names.Keys) {
+        $reference[$channel] = @{ package_sha256 = $artifacts[$channel].sha256; executable_sha256 = $exeHashes[$channel] }
+        $launches[$channel] = @{ path = "C:\fixture\$channel\remova.exe"; version = '1.4.1';
+            sha256 = $exeHashes[$channel]; pid = 4321; uia_ready = $true }
+    }
+    $referencePath = Join-Path $root 'package-exe-reference.json'
+    $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
 
     $thresholdPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'benchmarks/performance-thresholds.md'
     $thresholds = Get-PerformanceThresholds $thresholdPath
@@ -171,6 +230,7 @@ try {
             os_version = '10.0.26200'
             architecture = 'x64'
             webview2_version = '1.2.3.4'
+            elevated = $false
         }
     }
     $startup = $performanceIdentity + @{
@@ -203,7 +263,7 @@ try {
             $log = Join-Path $dir.FullName 'observations.txt'
             Set-Content -LiteralPath $log -Value 'fixture observation'
             $summary = [ordered]@{
-                schema_version = 1
+                schema_version = 2
                 kind = 'remova-acceptance'
                 candidate_commit = $commit
                 candidate_version = '1.4.1'
@@ -215,6 +275,7 @@ try {
                 webview2_version = '1.2.3.4'
                 executor = 'fixture'
                 artifacts = $artifacts
+                executables = $launches
                 passed = $true
                 checks = @(Get-AcceptanceChecks $suite | ForEach-Object {
                     @{ id = $_.id; actual = 'observed'; status = 'pass'; evidence = @{
@@ -229,9 +290,12 @@ try {
     }
     $check = "$PSScriptRoot/release-approval.ps1"
     $params = @{ Tag = $tag; Commit = $commit; BundleDir = $bundle.FullName }
-    $prepare = @{ Startup = $startupPath; Components = $componentsPath; PrivateKeyPath = $privateKey; Reviewed = $true }
+    $metadataPath = Join-Path $root 'release-metadata.json'
+    $releaseMetadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath
+    $prepare = @{ Startup = $startupPath; Components = $componentsPath; ReleaseMetadataPath = $metadataPath
+        PackageExeReference = $referencePath; PrivateKeyPath = $privateKey; Reviewed = $true }
     $approval = & $check @params @prepare -Acceptance $evidence
-    & $check @params -ApprovalJson $approval -PublicKeyPem $publicKey
+    $null = & $check @params -ApprovalJson $approval -PublicKeyPem $publicKey
     Must-Refuse { & $check @params @prepare -Acceptance $evidence[0..2] } 'Acceptance matrix'
     Must-Refuse { & $check @params -ApprovalJson '{}' -PublicKeyPem $publicKey } 'signed release approval is required'
     $wrongCommit = $params.Clone()
@@ -245,6 +309,30 @@ try {
 
     $envelope = $approval | ConvertFrom-Json -AsHashtable
     $signed = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json -AsHashtable
+    foreach ($channel in $names.Keys) {
+        if ($signed.executables[$channel] -cne $exeHashes[$channel]) { throw "Approval did not bind the $channel executable." }
+    }
+    $originalSummary = Get-Content -Raw -LiteralPath $evidence[0]
+    foreach ($scenario in @('old-build', 'other-channel', 'missing-ui', 'old-version', 'relative-path', 'missing-executable')) {
+        $observed = $originalSummary | ConvertFrom-Json -AsHashtable
+        switch ($scenario) {
+            'old-build' { $observed.executables.nsis.sha256 = 'f' * 64 }
+            'other-channel' { $observed.executables.nsis.sha256 = $exeHashes.msi }
+            'missing-ui' { $observed.executables.nsis.uia_ready = $false }
+            'old-version' { $observed.executables.nsis.version = '1.4.0' }
+            'relative-path' { $observed.executables.nsis.path = 'remova.exe' }
+            'missing-executable' { $observed.executables.Remove('nsis') }
+        }
+        $observed | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidence[0]
+        $reason = if ($scenario -ceq 'missing-executable') { 'Acceptance executables' } else { 'Invalid nsis executable identity or UI readiness' }
+        Must-Refuse { & $check @params @prepare -Acceptance $evidence } $reason
+    }
+    Set-Content -LiteralPath $evidence[0] -Value $originalSummary -NoNewline
+    $reference.nsis.package_sha256 = 'f' * 64
+    $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
+    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'different nsis package'
+    $reference.nsis.package_sha256 = $artifacts.nsis.sha256
+    $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
     if ($signed.performance.executable_sha256 -cne $portableExeHash -or
         $signed.performance.startup_sha256 -cne (Get-FileHash -LiteralPath $startupPath).Hash.ToLowerInvariant() -or
         $signed.performance.components_sha256 -cne (Get-FileHash -LiteralPath $componentsPath).Hash.ToLowerInvariant()) {
@@ -274,7 +362,8 @@ try {
     Test-PublishDraft 'unauthorized' 'write' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'no-key' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unsigned' 'maintain' $commit $bundle.FullName ($signed | ConvertTo-Json -Depth 7 -Compress) $publicKey $root
-    foreach ($scenario in 'asset-changed', 'draft-replaced', 'tag-changed') {
+    foreach ($scenario in 'asset-changed', 'draft-replaced', 'tag-changed', 'wrong-approved-title',
+        'title-changed', 'body-changed', 'prerelease-changed') {
         Test-PublishDraft $scenario 'admin' $commit $bundle.FullName $approval $publicKey $root
     }
     Write-Host 'Draft publication fixture passed the maintainer, permission, changed-asset, replaced-draft and changed-tag checks.'

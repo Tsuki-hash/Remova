@@ -5,6 +5,7 @@ param(
     [ValidateSet('client', 'elevated')][string]$Suite,
     [string]$Artifacts = $env:REMOVA_ACCEPTANCE_ARTIFACTS,
     [string]$Out = $env:REMOVA_ACCEPTANCE_OUT,
+    [Parameter(Mandatory = $true)][string]$PackageExeReference,
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit,
     [Parameter(Mandatory = $true)]
@@ -36,7 +37,7 @@ $runName = '{0}-{1}-{2}-{3}' -f $windows.family, $Suite, (Get-Date -Format 'yyyy
 $runDir = Join-Path $Out $runName
 New-Item -ItemType Directory -Path $runDir | Out-Null
 $summary = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     kind = 'remova-acceptance'
     candidate_commit = $CandidateCommit.ToLowerInvariant()
     candidate_version = $CandidateVersion
@@ -49,6 +50,7 @@ $summary = [ordered]@{
     host_model = $hostModel
     executor = $env:USERNAME
     artifacts = $identity.artifacts
+    executables = [ordered]@{}
     checks = $records
     passed = $false
 }
@@ -57,7 +59,13 @@ try {
     if (@($records | Where-Object { $_.status -ne 'pass' }).Count) {
         throw 'The candidate packages do not match the release checksums.'
     }
+    $expectedExecutables = Read-AcceptanceExecutableReference $PackageExeReference $identity.artifacts
     foreach ($check in $manual) {
+        if ($check.id -match '^(nsis|msi|portable)-first-launch$') {
+            $channel = $Matches[1]
+            $exePath = Read-Host "$($check.expected). Close any running Remova, then enter the full path of the $channel executable for the UI readiness check"
+            $summary.executables[$channel] = Get-AcceptanceLaunchObservation $exePath $CandidateVersion $expectedExecutables[$channel]
+        }
         $status = Read-Host "$($check.id): $($check.expected). Observed PASS, FAIL or skip"
         $actual = ''
         $path = ''
@@ -91,7 +99,8 @@ try {
     if (@($finalIdentity.checks | Where-Object { $_.status -ne 'pass' }).Count) {
         throw 'The candidate checksums changed during acceptance.'
     }
-    $summary.passed = $records.Count -eq ($identity.checks.Count + $manual.Count) -and
+    $summary.passed = $summary.executables.Count -eq $expectedExecutables.Count -and
+        $records.Count -eq ($identity.checks.Count + $manual.Count) -and
         @($records | Where-Object { $_.status -ne 'pass' }).Count -eq 0
 } catch {
     $summary.error = $_.Exception.Message

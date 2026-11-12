@@ -44,6 +44,7 @@ function Get-PerformanceEnvironment {
         os_version = $windows.version
         architecture = $windows.architecture
         webview2_version = Get-AcceptanceWebViewVersion
+        elevated = Test-AcceptanceElevated
     }
 }
 
@@ -57,6 +58,7 @@ function Assert-PerformanceIdentity($Record, [string]$Kind, [string]$Commit, [st
     if ($Record.environment.machine_sha256 -notmatch '^[0-9a-f]{64}$' -or
         $Record.environment.os_version -notmatch '^10\.0\.[0-9]+(\.[0-9]+)?$' -or
         $Record.environment.architecture -cne 'x64' -or
+        $Record.environment.elevated -isnot [bool] -or
         $Record.environment.webview2_version -notmatch '^[1-9]\d*\.\d+\.\d+\.\d+$') {
         throw "The $Kind evidence lacks a supported measurement environment."
     }

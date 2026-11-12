@@ -83,6 +83,86 @@ function Get-AcceptanceArtifacts([string]$Directory, [string]$Version) {
     [pscustomobject]@{ artifacts = $artifacts; checks = @($checks) }
 }
 
+function Read-AcceptanceExecutableReference([string]$Path, $Artifacts) {
+    $reference = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -AsHashtable
+    $channels = @('nsis', 'msi', 'portable')
+    if ($reference -isnot [Collections.IDictionary] -or $reference.Count -ne $channels.Count -or
+        (Compare-Object @($reference.Keys) $channels -CaseSensitive)) {
+        throw 'The executable reference must identify all three package channels.'
+    }
+    $digests = [ordered]@{}
+    foreach ($channel in $channels) {
+        $entry = $reference[$channel]
+        if ($entry -isnot [Collections.IDictionary] -or $entry.Count -ne 2 -or
+            $entry.package_sha256 -isnot [string] -or $entry.package_sha256 -cne $Artifacts[$channel].sha256 -or
+            $entry.executable_sha256 -isnot [string] -or $entry.executable_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            $entry.executable_sha256 -cmatch '^0+$') {
+            throw "Invalid executable reference or different $channel package."
+        }
+        $digests[$channel] = $entry.executable_sha256
+    }
+    $digests
+}
+
+function Get-PortableExeHash([string]$Path, [string]$ArchiveHash) {
+    $file = [IO.File]::Open((Resolve-Path -LiteralPath $Path).Path, 'Open', 'Read', 'Read')
+    try {
+        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($file)).ToLowerInvariant() -cne $ArchiveHash) {
+            throw 'The portable attachment changed during verification.'
+        }
+        $file.Position = 0
+        $archive = [IO.Compression.ZipArchive]::new($file, 'Read', $true)
+        try {
+            $entries = @($archive.Entries | Where-Object { $_.FullName -ieq 'remova.exe' })
+            if ($entries.Count -ne 1 -or $entries[0].Length -le 0) {
+                throw 'The portable archive must contain one nonempty remova.exe at its root.'
+            }
+            $exe = $entries[0].Open()
+            try { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($exe)).ToLowerInvariant() }
+            finally { $exe.Dispose() }
+        } finally { $archive.Dispose() }
+    } finally { $file.Dispose() }
+}
+
+function Test-AcceptanceExecutableVersion([string]$Observed, [string]$Expected) {
+    $Observed -cin @($Expected, "$Expected.0")
+}
+
+function Test-AcceptanceExecutablePath([string]$Path) {
+    $Path -match '^[a-z]:[\\/](?:.*[\\/])?remova\.exe$' -and $Path -notmatch '[\\/]\.\.?[\\/]'
+}
+
+function Get-AcceptanceLaunchObservation([string]$Path, [string]$Version, [string]$ExpectedSha256) {
+    if (-not (Test-AcceptanceExecutablePath $Path)) {
+        throw 'Enter the full path of the installed or extracted remova.exe.'
+    }
+    if (Get-Process -Name Remova -ErrorAction SilentlyContinue) {
+        throw 'Close existing Remova processes before observing this executable.'
+    }
+    $path = (Get-Item -LiteralPath $Path).FullName
+    $pin = [IO.File]::Open($path, 'Open', 'Read', 'Read')
+    try {
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($pin)).ToLowerInvariant()
+        $productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductVersion
+        if ($hash -cne $ExpectedSha256 -or -not (Test-AcceptanceExecutableVersion $productVersion $Version)) {
+            throw 'The executable does not match the reviewed package reference or candidate version.'
+        }
+        $process = Start-Process -FilePath $path -PassThru
+        try {
+            if (-not (Wait-RemovaUiReady $process)) { throw 'The process did not show the enabled Software navigation button.' }
+            $actualPath = $process.MainModule.FileName
+            if ($process.HasExited -or $actualPath -ine $path) { throw 'The running process did not match the selected executable.' }
+            [ordered]@{
+                path = $actualPath
+                version = $productVersion
+                sha256 = $hash
+                pid = $process.Id
+                uia_ready = $true
+            }
+        } finally { Close-RemovaTestProcess $process }
+    } finally { $pin.Dispose() }
+}
+
 function New-AcceptanceObservation($Check, [string]$Status, [string]$Actual, [string]$EvidencePath) {
     $status = $Status.Trim().ToLowerInvariant()
     $record = [ordered]@{

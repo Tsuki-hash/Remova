@@ -26,6 +26,14 @@
 
 ## 2. 运行方式
 
+在用于审查发行附件的 Windows 机器上，用可信的 7-Zip 和 WiX 3 `dark.exe` 生成可执行文件参考摘要。脚本只解包，不运行或安装任何渠道。把生成的 JSON 随同一批附件交给各验收环境和签批人。
+
+```powershell
+./scripts/acceptance/get-package-exe-reference.ps1 -Artifacts 'D:/artifacts' -CandidateVersion 1.4.1 `
+    -SevenZip 'C:/Program Files/7-Zip/7z.exe' -WixDark 'C:/Tools/WiX/bin/dark.exe' |
+    Set-Content -Encoding utf8 'D:/acceptance/package-exe-reference.json'
+```
+
 ```powershell
 # 1. 确认是隔离 VM 并接受风险（脚本会二次确认）
 $env:REMOVA_ACCEPTANCE_ISOLATED_VM = "1"
@@ -34,13 +42,18 @@ $env:REMOVA_ACCEPTANCE_OUT        = "D:\acceptance"  # 结果输出目录
 
 # 2. 用候选构建记录里的完整提交 SHA 替换占位符
 $candidateCommit = "<候选提交的 40 位 SHA>"
-pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite client -CandidateCommit $candidateCommit -CandidateVersion 1.4.1
+$packageExeReference = 'D:/acceptance/package-exe-reference.json'
+pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite client -CandidateCommit $candidateCommit `
+    -CandidateVersion 1.4.1 -PackageExeReference $packageExeReference
 
 # 3. 另开管理员 PowerShell，使用相同的包和候选身份运行
-pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -CandidateCommit $candidateCommit -CandidateVersion 1.4.1
+pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -CandidateCommit $candidateCommit `
+    -CandidateVersion 1.4.1 -PackageExeReference $packageExeReference
 ```
 
 在 Windows 10 和 11 上各留存两份摘要。脚本核对 `SHA256SUMS.txt` 中的三类发行包。按提示亲自执行各场景，输入观察结果和非空日志或截图路径。结果写入独立运行目录的 `acceptance-summary.json`，并附带与摘要哈希一致的证据副本。跳过、失败、缺包、错包或缺证据均不通过。
+
+到各渠道的首次启动检查时，先按该渠道的提示安装或解压候选包，并关闭已打开的 Remova。输入该渠道 `remova.exe` 的完整路径。脚本启动并关闭这个实例，记录实际进程路径、产品版本、SHA-256、进程 ID，以及通过 UI Automation 观察到可用的「软件」按钮。程序摘要须与同一渠道的独立解包结果一致。此后重新打开同一程序完成手工功能检查。
 
 ---
 

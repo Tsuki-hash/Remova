@@ -72,7 +72,7 @@ try {
     if (-not $Components) { throw 'Pass -Components explicitly, or measure the current commit with -Run.' }
     $componentRecord = Get-Content -LiteralPath $Components -Raw | ConvertFrom-Json
     Assert-PerformanceIdentity $componentRecord 'remova-components' $CandidateCommit $CandidateExeSha256 $threshold.sha256
-    foreach ($key in @('machine_sha256', 'os_version', 'architecture', 'webview2_version')) {
+    foreach ($key in @('machine_sha256', 'os_version', 'architecture', 'webview2_version', 'elevated')) {
         if ($componentRecord.environment.$key -cne $startupRecord.environment.$key) {
             throw "Component and startup environments differ for $key."
         }

@@ -93,8 +93,8 @@ The workflow stops if this variable is missing or the signature cannot be verifi
    same public key embedded in the application. Generate `latest.json` only after
    both installers pass verification.
 7. Complete smoke checks and portable packaging. The tag workflow uploads the packages, checksums, SBOM and any updater assets to a draft GitHub Release.
-8. Download the draft attachments into one folder and run the [isolated acceptance suite](../scripts/acceptance/README.md) on them. Keep the four summaries with their evidence files. Review the package hashes, SBOM, applicable license notices, publication mode and [recovery guide](../RECOVERY.md).
-9. Run the [performance gate](../benchmarks/performance-thresholds.md) against `remova.exe` from that portable ZIP. Keep the cold-start and component measurement JSON. Produce the signed approval input using the approved tag, exact commit and four acceptance summaries.
+8. Download the draft attachments into one folder and follow the [isolated acceptance suite](../scripts/acceptance/README.md). Generate the executable reference from these attachments before running acceptance. Keep the reference, the four summaries and their evidence files. Review the package hashes, SBOM, applicable license notices, publication mode and [recovery guide](../RECOVERY.md).
+9. Run the [performance gate](../benchmarks/performance-thresholds.md) against `remova.exe` from that portable ZIP. Keep the cold-start and component measurement JSON. Save the reviewed draft metadata as a JSON object with `name`, `body`, `prerelease` (Boolean), and `make_latest` (`"true"` or `"false"` as a string). Set `make_latest` to `"false"` for a prerelease. Produce the signed approval input using the approved tag, exact commit, four acceptance summaries and metadata.
 
    ```powershell
    $summaries = @(
@@ -105,13 +105,15 @@ The workflow stops if this variable is missing or the signature cannot be verifi
    )
    $approval = & ./scripts/release-approval.ps1 -Tag v1.4.1 -Commit $commit `
        -BundleDir 'D:/candidate' -Acceptance $summaries `
+       -PackageExeReference 'D:/acceptance/package-exe-reference.json' `
        -Startup 'D:/acceptance/performance/startup-cold.json' `
        -Components 'D:/acceptance/performance/components.json' `
+       -ReleaseMetadataPath 'D:/acceptance/release-metadata.json' `
        -PrivateKeyPath 'D:/private/remova-release-approval/approval-private.pem' -Reviewed
    gh workflow run publish-release.yml --ref main -f tag=v1.4.1 -f "approval=$approval"
    ```
 
-   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes and executable inside the downloaded portable ZIP before publishing. The signed payload contains the tag, commit and digests of the attachments and reviewed evidence. Keep the original evidence and observations with the private acceptance records.
+   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes, portable executable, title, notes and publication settings. Any change to the approved draft title, notes or prerelease setting requires a new approval. Keep the original evidence and observations with the acceptance records.
 
 The NSIS update manifest uses the custom target `windows-x86_64-nsis`.
 MSI and portable users retain manual updates. Existing releases cannot be overwritten.

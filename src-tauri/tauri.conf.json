@@ -38,6 +38,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
+    },
     "icon": [
       "icons/16x16.png",
       "icons/24x24.png",
