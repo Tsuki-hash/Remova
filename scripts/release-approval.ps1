@@ -1,4 +1,4 @@
-# Validate the reviewed artifacts and four acceptance runs, or verify an
+# Validate the reviewed artifacts and both local launch records, or verify an
 # approval against the actual draft attachments before they become public.
 [CmdletBinding(DefaultParameterSetName = 'Verify')]
 param(
@@ -7,10 +7,8 @@ param(
     [Parameter(Mandatory)][string]$BundleDir,
     [string]$SevenZip,
     [string]$WixDark = $env:RELEASE_WIX_DARK,
-    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string[]]$Acceptance,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string[]]$LaunchRecord,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$PackageExeReference,
-    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$Startup,
-    [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$Components,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$ReleaseMetadataPath,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][string]$PrivateKeyPath,
     [Parameter(Mandatory, ParameterSetName = 'Prepare')][switch]$Reviewed,
@@ -28,7 +26,7 @@ $names = [ordered]@{
 }
 $requiredAssets = @($names.Values) + @('SHA256SUMS.txt', 'SBOM.cdx.json')
 $updaterAssets = @('latest.json', "$($names.nsis).sig", "$($names.msi).sig")
-$matrix = @('windows-10/client', 'windows-10/elevated', 'windows-11/client', 'windows-11/elevated')
+$launchModes = @('client', 'elevated')
 
 function Assert-SameKeys($Actual, $Expected, [string]$Context) {
     if (@($Actual).Count -ne @($Expected).Count -or (Compare-Object @($Actual) @($Expected) -CaseSensitive)) {
@@ -38,27 +36,6 @@ function Assert-SameKeys($Actual, $Expected, [string]$Context) {
 
 function ConvertTo-Sha256Hex([byte[]]$Hash) {
     [Convert]::ToHexString($Hash).ToLowerInvariant()
-}
-
-function Open-ReviewFile([string]$Path) {
-    [IO.File]::Open((Resolve-Path -LiteralPath $Path).Path, 'Open', 'Read', 'Read')
-}
-
-function Get-PerformanceApproval([string]$ExeSha256) {
-    $startupFile = Open-ReviewFile $Startup
-    try {
-        $componentsFile = Open-ReviewFile $Components
-        try {
-            & "$PSScriptRoot/acceptance/measure-components.ps1" -Startup $Startup -Components $Components `
-                -CandidateCommit $Commit -CandidateExeSha256 $ExeSha256
-            if ($LASTEXITCODE -ne 0) { throw 'The candidate did not pass the cold-start performance gate.' }
-            [ordered]@{
-                startup_sha256 = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($startupFile))
-                components_sha256 = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($componentsFile))
-                executable_sha256 = $ExeSha256
-            }
-        } finally { $componentsFile.Dispose() }
-    } finally { $startupFile.Dispose() }
 }
 
 function Import-ApprovalKey($Rsa, [string]$Pem, [bool]$Private) {
@@ -117,7 +94,6 @@ $pss = [Security.Cryptography.RSASignaturePadding]::Pss
 if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
     if (!$Reviewed) { throw 'Review the recorded observations, SBOM, release mode and recovery instructions first.' }
     $extracted = Get-ReviewedExecutables
-    $exeHash = $extracted.portable.executable_sha256
     $packageIdentity = [ordered]@{}
     foreach ($channel in $names.Keys) { $packageIdentity[$channel] = @{ sha256 = $hashes[$names[$channel]] } }
     $executables = Read-AcceptanceExecutableReference $PackageExeReference $packageIdentity
@@ -142,77 +118,44 @@ if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
         make_latest = $metadata.make_latest
     }
     $verified = [ordered]@{}
-    foreach ($file in $Acceptance) {
-        $summaryBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $file).Path)
-        $summary = [Text.Encoding]::UTF8.GetString($summaryBytes).TrimStart([char]0xFEFF) | ConvertFrom-Json -AsHashtable
-        $key = "$($summary.os_family)/$($summary.suite)"
-        if ($key -cnotin $matrix -or $verified.Contains($key)) { throw "Unexpected or duplicate acceptance run for $key." }
-        if ($summary.schema_version -ne 2 -or $summary.kind -cne 'remova-acceptance' -or
-            $summary.passed -isnot [bool] -or !$summary.passed -or
-            $summary.candidate_commit -cne $Commit -or $summary.candidate_version -cne $version -or
-            $summary.architecture -cne 'x64' -or $summary.elevated -isnot [bool] -or
-            $summary.elevated -ne ($summary.suite -ceq 'elevated') -or
-            $summary.os_version -notmatch '^10\.0\.(\d+)(?:\.\d+)?$' -or
-            (($summary.os_family -ceq 'windows-11') -ne ([int]$Matches[1] -ge 22000)) -or
-            [string]::IsNullOrWhiteSpace($summary.webview2_version) -or
-            [string]::IsNullOrWhiteSpace($summary.executor)) {
-            throw "Invalid acceptance result for $key."
+    $machine = $null
+    foreach ($file in $LaunchRecord) {
+        $recordBytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $file).Path)
+        $record = [Text.Encoding]::UTF8.GetString($recordBytes).TrimStart([char]0xFEFF) | ConvertFrom-Json -AsHashtable
+        $environment = $record.environment
+        $launch = $record.executable
+        if ($record.schema_version -ne 1 -or $record.kind -cne 'remova-release-launch' -or
+            $record.candidate_commit -cne $Commit -or $record.candidate_version -cne $version -or
+            $environment.elevated -isnot [bool] -or $environment.architecture -cne 'x64' -or
+            $environment.machine_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            $environment.os_version -notmatch '^10\.0\.\d+(?:\.\d+)?$' -or
+            $environment.webview2_version -notmatch '^[1-9]\d*\.\d+\.\d+\.\d+$') {
+            throw 'Invalid local launch record or candidate identity.'
         }
-        Assert-SameKeys $summary.artifacts.Keys $names.Keys "Acceptance artifacts for $key"
-        Assert-SameKeys $summary.executables.Keys $names.Keys "Acceptance executables for $key"
-        foreach ($channel in $names.Keys) {
-            $name = $names[$channel]
-            $observed = $summary.artifacts[$channel]
-            if ($observed.name -cne $name -or $observed.sha256 -cne $hashes[$name]) {
-                throw "Acceptance used a different $channel package for $key."
-            }
-            $launched = $summary.executables[$channel]
-            if ($launched -isnot [Collections.IDictionary] -or $launched.Count -ne 5 -or
-                $launched.path -isnot [string] -or -not (Test-AcceptanceExecutablePath $launched.path) -or
-                $launched.version -isnot [string] -or -not (Test-AcceptanceExecutableVersion $launched.version $version) -or
-                $launched.sha256 -isnot [string] -or $launched.sha256 -cne $executables[$channel] -or
-                ($launched.pid -isnot [int] -and $launched.pid -isnot [long]) -or $launched.pid -le 0 -or
-                $launched.uia_ready -isnot [bool] -or -not $launched.uia_ready) {
-                throw "Invalid $channel executable identity or UI readiness for $key."
-            }
+        $mode = if ($environment.elevated) { 'elevated' } else { 'client' }
+        if ($verified.Contains($mode)) { throw "Duplicate local launch record for $mode." }
+        if ($machine -and $machine -cne $environment.machine_sha256) {
+            throw 'Both local launches must use the same Windows machine.'
         }
-        $checks = @{}
-        foreach ($check in $summary.checks) {
-            if ($checks.ContainsKey($check.id)) { throw "Duplicate acceptance check in $key." }
-            $checks[$check.id] = $check
+        $machine = $environment.machine_sha256
+        if ($launch -isnot [Collections.IDictionary] -or $launch.Count -ne 5 -or
+            $launch.path -isnot [string] -or !(Test-AcceptanceExecutablePath $launch.path) -or
+            $launch.version -isnot [string] -or !(Test-AcceptanceExecutableVersion $launch.version $version) -or
+            $launch.sha256 -cne $executables.portable -or
+            ($launch.pid -isnot [int] -and $launch.pid -isnot [long]) -or $launch.pid -le 0 -or
+            $launch.uia_ready -isnot [bool] -or !$launch.uia_ready) {
+            throw "Invalid portable executable identity or UI readiness for $mode."
         }
-        $required = @(Get-AcceptanceChecks $summary.suite)
-        Assert-SameKeys $checks.Keys @($required.id) "Acceptance checks for $key"
-        foreach ($check in $required) {
-            $result = $checks[$check.id]
-            if ($result.status -cne 'pass' -or [string]::IsNullOrWhiteSpace($result.actual) -or
-                ($check.requires_evidence -and
-                    ([string]::IsNullOrWhiteSpace($result.evidence.name) -or
-                     $result.evidence.sha256 -cnotmatch '^[a-f0-9]{64}$'))) {
-                throw "Missing successful observation or evidence for $($check.id) in $key."
-            }
-            if ($check.requires_evidence) {
-                $name = $result.evidence.name
-                if ($name -cne [IO.Path]::GetFileName($name)) { throw 'Evidence must be stored beside its summary.' }
-                $evidence = Get-Item -LiteralPath (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $file).Path) $name)
-                if ($evidence.PSIsContainer -or !$evidence.Length -or
-                    (Get-FileHash -LiteralPath $evidence.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $result.evidence.sha256) {
-                    throw "Evidence changed for $($check.id) in $key."
-                }
-            }
-        }
-        $verified[$key] = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($summaryBytes))
+        $verified[$mode] = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData($recordBytes))
     }
-    Assert-SameKeys $verified.Keys $matrix 'Acceptance matrix'
-    $performance = Get-PerformanceApproval $exeHash
+    Assert-SameKeys $verified.Keys $launchModes 'Local launch records'
     $approval = [ordered]@{
-        schema_version = 4
+        schema_version = 5
         tag = $Tag
         commit = $Commit
         assets = $hashes
-        acceptance = $verified
+        launches = $verified
         executables = $executables
-        performance = $performance
         publication = $publication
     } | ConvertTo-Json -Depth 5 -Compress
     $bytes = [Text.Encoding]::UTF8.GetBytes($approval)
@@ -238,13 +181,15 @@ try {
     if (!$rsa.VerifyData($bytes, $signature, $sha256, $pss)) { throw 'Invalid release approval signature.' }
 } finally { $rsa.Dispose() }
 $approval = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable
-Assert-SameKeys $approval.Keys @('schema_version', 'tag', 'commit', 'assets', 'acceptance', 'executables', 'performance', 'publication') 'Signed approval'
-if ($approval.schema_version -ne 4 -or $approval.tag -cne $Tag -or $approval.commit -cne $Commit) {
+Assert-SameKeys $approval.Keys @('schema_version', 'tag', 'commit', 'assets', 'launches', 'executables', 'publication') 'Signed approval'
+if ($approval.schema_version -ne 5 -or $approval.tag -cne $Tag -or $approval.commit -cne $Commit) {
     throw 'Approval belongs to a different release or commit.'
 }
-Assert-SameKeys $approval.acceptance.Keys $matrix 'Approved acceptance matrix'
-foreach ($hash in $approval.acceptance.Values) {
-    if ($hash -cnotmatch '^[a-f0-9]{64}$' -or $hash -cmatch '^0+$') { throw 'Invalid acceptance record digest.' }
+Assert-SameKeys $approval.launches.Keys $launchModes 'Approved local launches'
+foreach ($hash in $approval.launches.Values) {
+    if ($hash -isnot [string] -or $hash -cnotmatch '^[a-f0-9]{64}$' -or $hash -cmatch '^0+$') {
+        throw 'Invalid local launch record digest.'
+    }
 }
 Assert-SameKeys $approval.executables.Keys $names.Keys 'Approved package executables'
 foreach ($hash in $approval.executables.Values) {
@@ -257,20 +202,10 @@ foreach ($name in $hashes.Keys) {
     if ($approval.assets[$name] -cne $hashes[$name]) { throw "The draft attachment changed: $name." }
 }
 $extracted = Get-ReviewedExecutables
-$exeHash = $extracted.portable.executable_sha256
 foreach ($channel in $names.Keys) {
     if ($approval.executables[$channel] -cne $extracted[$channel].executable_sha256) {
         throw "The approval used a different $channel executable."
     }
-}
-Assert-SameKeys $approval.performance.Keys @('startup_sha256', 'components_sha256', 'executable_sha256') 'Approved performance evidence'
-foreach ($key in @('startup_sha256', 'components_sha256')) {
-    if ($approval.performance[$key] -cnotmatch '^[a-f0-9]{64}$' -or $approval.performance[$key] -cmatch '^0+$') {
-        throw 'Invalid performance record digest.'
-    }
-}
-if ($approval.performance.executable_sha256 -cne $exeHash) {
-    throw 'The approved performance evidence used a different portable executable.'
 }
 Assert-SameKeys $approval.publication.Keys @('name', 'body_sha256', 'prerelease', 'make_latest') 'Approved release metadata'
 if ($approval.publication.name -isnot [string] -or [string]::IsNullOrWhiteSpace($approval.publication.name) -or

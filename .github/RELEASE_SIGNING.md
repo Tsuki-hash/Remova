@@ -84,36 +84,44 @@ The workflow stops if this variable is missing or the signature cannot be verifi
 
 ## Release order
 
+For a manual download release, set `ALLOW_UNSIGNED_RELEASE=true` and leave the
+updater settings unset. Leave SignPath disabled for unsigned Windows packages.
+The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
+`SBOM.cdx.json`.
+
 1. Validate signing configuration, version and tests.
-2. Build the application with the updater public key embedded.
+2. Build the application. Embed the updater public key when the updater is enabled.
 3. If enabled, sign and verify the application through SignPath.
 4. Bundle the application into NSIS and MSI installers.
 5. If enabled, sign and verify the final installers through SignPath.
-6. Generate Tauri signatures for the final installers and verify them against the
-   same public key embedded in the application. Generate `latest.json` only after
-   both installers pass verification.
+6. For updater-enabled builds, generate Tauri signatures for the final installers
+   and verify them against the embedded public key before generating `latest.json`.
 7. Complete smoke checks and portable packaging. The tag workflow uploads the packages, checksums, SBOM and any updater assets to a draft GitHub Release.
-8. Download the draft attachments into one folder and follow the [isolated acceptance suite](../scripts/acceptance/README.md). Generate the executable reference from these attachments before running acceptance. Keep the reference, the four summaries and their evidence files. Review the package hashes, SBOM, applicable license notices, publication mode and [recovery guide](../RECOVERY.md).
-9. Run the [performance gate](../benchmarks/performance-thresholds.md) against `remova.exe` from that portable ZIP. Keep the cold-start and component measurement JSON. Save the reviewed draft metadata as a JSON object with `name`, `body`, `prerelease` (Boolean), and `make_latest` (`"true"` or `"false"` as a string). Set `make_latest` to `"false"` for a prerelease. Produce the signed approval input using the approved tag, exact commit, four acceptance summaries and metadata.
+8. Download the draft attachments together and generate the executable reference
+   with [the acceptance tools](../scripts/acceptance/README.md). Review the
+   checksums, SBOM, notices, publication mode and [recovery guide](../RECOVERY.md).
+   Extract `remova.exe` from the portable ZIP. On one Windows PC, record WebView2
+   readiness for this executable in a regular and an elevated PowerShell. Keep
+   both records and the executable reference.
+9. Save the reviewed draft metadata as JSON with `name`, `body`, `prerelease`
+   (Boolean) and `make_latest` (`"true"` or `"false"` as a string). Set
+   `make_latest` to `"false"` for a prerelease. Prepare the approval with the
+   tag, exact commit, both launch records and draft metadata.
 
    ```powershell
-   $summaries = @(
-       'D:/acceptance/win10-client/acceptance-summary.json'
-       'D:/acceptance/win10-elevated/acceptance-summary.json'
-       'D:/acceptance/win11-client/acceptance-summary.json'
-       'D:/acceptance/win11-elevated/acceptance-summary.json'
+   $launches = @(
+       'D:/acceptance/client-launch.json'
+       'D:/acceptance/elevated-launch.json'
    )
    $approval = & ./scripts/release-approval.ps1 -Tag v1.4.1 -Commit $commit `
-       -BundleDir 'D:/candidate' -Acceptance $summaries `
+       -BundleDir 'D:/candidate' -LaunchRecord $launches `
        -PackageExeReference 'D:/acceptance/package-exe-reference.json' `
-       -Startup 'D:/acceptance/performance/startup-cold.json' `
-       -Components 'D:/acceptance/performance/components.json' `
        -ReleaseMetadataPath 'D:/acceptance/release-metadata.json' `
        -PrivateKeyPath 'D:/private/remova-release-approval/approval-private.pem' -Reviewed
    gh workflow run publish-release.yml --ref main -f tag=v1.4.1 -f "approval=$approval"
    ```
 
-   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes, portable executable, title, notes and publication settings. Any change to the approved draft title, notes or prerelease setting requires a new approval. Keep the original evidence and observations with the acceptance records.
+   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes, executable digests for all three channels, title, notes and publication settings. Any change to the approved draft title, notes or prerelease setting requires a new approval. Keep the original launch records with the acceptance evidence.
 
 The NSIS update manifest uses the custom target `windows-x86_64-nsis`.
 MSI and portable users retain manual updates. Existing releases cannot be overwritten.
@@ -133,9 +141,10 @@ EN: If a published release is found broken or malicious:
    release and the tag when the build must not be downloaded at all.
 2. **Announce**: pin an issue describing what is broken, which versions are
    affected, and what users of each channel (NSIS / MSI / portable) should do.
-3. **Checksums**: state explicitly whether the published `SHA256SUMS.txt` is
-   still trustworthy for unaffected artifacts; if the release was replaced,
-   regenerate and re-publish it with the new build.
+3. **Checksums and replacement version**. Record the original digests for
+   unaffected artifacts. For a metadata correction, verify that the attachment
+   bytes still match. Publish replacement binaries with a new version and tag,
+   fresh checksums and a new approval.
 4. **Downgrade guidance**: users may install an older release from the same
    Releases page. Remova does not ship an automatic rollback for the app
    itself — state the last known-good version and link it.
@@ -148,8 +157,8 @@ EN: If a published release is found broken or malicious:
    不可下载时连 tag 一并删除）。
 2. **公告**：置顶 issue 说明损坏内容、受影响版本，以及 NSIS / MSI / 便携包
    三类用户各自应采取的动作。
-3. **校验和口径**：明确说明 `SHA256SUMS.txt` 对未受影响产物是否仍然可信；
-   若重新发布，需随新构建重新生成并上传。
+3. **校验和与替代版本**。记录未受影响产物的原校验和。仅修正元数据时，核对附件字节一致。
+   若需替换安装包，用新版本和新标签重新构建，生成校验和并完成新签批。
 4. **降级指引**：用户可在 Releases 页下载旧版本。应用本身没有自动回滚——
    公告中给出最后已知可用版本并附链接。
 5. **复盘**：与用户相关的结论写入下一个版本的发布说明。

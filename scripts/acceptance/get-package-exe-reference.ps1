@@ -27,6 +27,20 @@ $base = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $scratch = Join-Path $base ('remova-package-exe-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 
+function Get-MsiWebView2Binary([xml]$Wix) {
+    $action = $Wix.SelectSingleNode("//*[local-name()='CustomAction' and @Id='InvokeBootstrapper']")
+    $binary = $Wix.SelectSingleNode("//*[local-name()='Binary' and @Id='MicrosoftEdgeWebview2Setup.exe']")
+    $schedule = $Wix.SelectNodes("//*[local-name()='InstallExecuteSequence']/*[local-name()='Custom' and @Action='InvokeBootstrapper']")
+    if (!$action -or !$binary -or $action.GetAttribute('BinaryKey') -cne $binary.GetAttribute('Id') -or
+        $action.GetAttribute('Execute') -cne 'deferred' -or $action.GetAttribute('Return') -cnotin @('', 'check') -or
+        $schedule.Count -ne 1 -or $schedule[0].GetAttribute('Before') -cne 'InstallFinalize' -or
+        ($schedule[0].InnerText -replace '\s', '') -cne 'NOT(REMOVEORINSTALLED_WEBVIEW2_VERSION)' -or
+        $Wix.SelectSingleNode("//*[local-name()='CustomAction' and @Id='DownloadAndInvokeBootstrapper']")) {
+        throw 'The MSI must schedule its embedded WebView2 bootstrapper when the runtime is missing and check the exit status.'
+    }
+    $binary
+}
+
 function Get-InstalledPackageExeHash([string]$Channel, [string]$Package, [string]$ExpectedHash) {
     $pin = [IO.File]::Open($Package, 'Open', 'Read', 'Read')
     try {
@@ -49,13 +63,7 @@ function Get-InstalledPackageExeHash([string]$Channel, [string]$Package, [string
             if ($LASTEXITCODE -ne 0) { throw 'WiX dark could not read the MSI installer.' }
             [xml]$wix = Get-Content -Raw -LiteralPath $wxs
             if (!$ExecutableOnly) {
-                $action = $wix.SelectSingleNode("//*[local-name()='CustomAction' and @Id='InvokeBootstrapper']")
-                $binary = $wix.SelectSingleNode("//*[local-name()='Binary' and @Id='MicrosoftEdgeWebview2Setup.exe']")
-                if (!$action -or !$binary -or $action.GetAttribute('BinaryKey') -cne $binary.GetAttribute('Id') -or
-                    $action.GetAttribute('Return') -notin @('', 'check') -or
-                    $wix.SelectSingleNode("//*[local-name()='CustomAction' and @Id='DownloadAndInvokeBootstrapper']")) {
-                    throw 'The MSI must run its embedded WebView2 bootstrapper and check the exit status.'
-                }
+                $binary = Get-MsiWebView2Binary $wix
                 $bootstrapper = Get-ExtractedPackageFile $out ($binary.GetAttribute('SourceFile'))
                 $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper.FullName
                 if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo(

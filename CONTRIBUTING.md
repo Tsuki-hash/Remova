@@ -68,21 +68,20 @@ cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
 
 # Ignored tests: what actually runs, and what is manual.
 #
-# 7 tests in the tree carry `#[ignore]`. Only the two above run automatically —
-# CI (`ci.yml`) and Release (`release.yml`) each invoke them by name, because both
-# touch only temp dirs and an isolated ProgramData fixture. The other five are
-# NOT in either workflow and therefore have no automated execution record; they
-# are listed here with an owner command so "skipped" is a decision, not a gap.
-# `npm run check-versions` / `check-commands` do not cover them either.
+# The tree has 13 tests marked `#[ignore]`. CI runs five by name, including
+# the two fixture tests above and three read-only native checks. Release runs
+# the two fixture tests by name. The remaining eight cover optional capacity,
+# performance and explicitly enabled real-system fixtures. See each test's
+# ignore reason and the commands below before running one locally.
 #
 # | 测试 | 执行方式 | 它会动什么 |
 # | --- | --- | --- |
 # | `copy_dir_refuses_file_swapped_to_symlink_after_enumeration` | CI 自动 | 纯 temp dir；需要 symlink 特权或开发者模式 |
 # | `privileged_key_store_acl_and_missing_state_regression` | CI 自动 | 测试 seals-root 下的隔离 ProgramData ACL 夹具；需要提权 token |
-# | `startup_folder_approved_values_are_full_file_names` | 手动 | 只读；但**断言本机存在 StartupFolder 批准值**，没有文件夹启动项的机器（含 hosted runner）会失败 |
+# | `startup_folder_approved_values_are_full_file_names` | CI 自动 | 只读；CI 检查实际运行了这个用例 |
 # | `rename_value_refuses_existing_destination_without_changing_either` | 手动 | 往真实 HKCU Run 写/删带唯一前缀的临时值（RAII 清理）；需 `REMOVA_TEST_ALLOW_SYS_MUTATION=1` |
-# | `read_reg_path_value_reads_real_user_environment` | 手动 | 只读；原生读 `HKCU\Environment` 的 Path |
-# | `service_image_string_reads_real_image_paths` | 手动 | 只读；枚举 `HKLM64\SYSTEM\CurrentControlSet\Services` |
+# | `read_reg_path_value_reads_real_user_environment` | CI 自动 | 只读，原生读 `HKCU\Environment` 的 Path |
+# | `service_image_string_reads_real_image_paths` | CI 自动 | 只读，枚举 `HKLM64\SYSTEM\CurrentControlSet\Services` |
 # | `restore_point_nonfatal` | 手动 | **创建真实系统还原点**（名称 `Remova test`）；需 `REMOVA_TEST_ALLOW_SYS_MUTATION=1` |
 #
 #   real registry / real machine state (stock machines may lack the fixture):

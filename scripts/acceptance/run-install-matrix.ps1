@@ -44,8 +44,10 @@ function Test-MatrixAppLaunch([string]$Exe) {
 
 function Assert-MatrixInstall([string]$Step, [string]$Directory, [string]$Version, [string]$ExpectedExeSha = '') {
     $entry = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction SilentlyContinue
-    $actualLocation = if ($entry.InstallLocation) {
-        [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($entry.InstallLocation))
+    $location = [string]$entry.InstallLocation
+    if ($location -match '^"([^"]+)"$') { $location = $Matches[1] }
+    $actualLocation = if ($location -and $location -notmatch '"' -and [IO.Path]::IsPathFullyQualified($location)) {
+        [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($location))
     }
     Assert-MatrixResult "$Step-location" ($actualLocation -ieq $Directory) "registry=$actualLocation; expected=$Directory"
 

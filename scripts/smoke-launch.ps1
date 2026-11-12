@@ -1,34 +1,26 @@
-# Real launch smoke — start the built exe, verify it stays
-# alive for a few seconds (WebView2 init + shell), then kill it.
-# Requires: a release build (npm run tauri build) and WebView2 Runtime.
-# Note: the app registers a single-instance plugin — close any running Remova first.
-# Usage: pwsh -NoProfile -File scripts/smoke-launch.ps1
-$ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$exeCandidates = @(
-  (Join-Path $root "src-tauri\target\release\remova.exe"),
-  (Join-Path $root "src-tauri\target\release\Remova.exe")
+# The release executable must render its enabled Software navigation button.
+param(
+    [string]$ExePath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'src-tauri/target/release/remova.exe'),
+    [ValidateRange(100, 60000)][int]$TimeoutMs = 30000
 )
-$exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $exe) {
-  Write-Error "Build first: npm run tauri build. Looked for: $($exeCandidates -join ', ')"
-}
+$ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/acceptance/acceptance-common.ps1"
 
-$proc = Start-Process -FilePath $exe -PassThru
-try {
-  # Startup baseline: report (do not gate on) the time until the first window
-  # is idle — the UI-ready signal for a Win32 message loop.
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  try { $null = $proc.WaitForInputIdle(8000) } catch {}
-  $sw.Stop()
-  Write-Host ("startup: input idle after {0} ms" -f [int]$sw.ElapsedMilliseconds)
-  Start-Sleep -Seconds 8
-  if ($proc.HasExited) {
-    Write-Error "smoke-launch FAILED: process exited within 8s (code $($proc.ExitCode))"
-  }
-  Write-Host "smoke-launch OK: process alive after 8s (pid $($proc.Id))"
-} finally {
-  if (-not $proc.HasExited) {
-    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-  }
+$exe = (Get-Item -LiteralPath $ExePath).FullName
+if (Get-Process -Name Remova -ErrorAction SilentlyContinue) {
+    throw 'Close existing Remova processes before running the launch smoke test.'
 }
+$pin = [IO.File]::Open($exe, 'Open', 'Read', 'Read')
+try {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $proc = Start-Process -FilePath $exe -PassThru
+    try {
+        if (-not (Wait-RemovaUiReady $proc $TimeoutMs)) {
+            throw 'Launch smoke failed: the process did not show the enabled Software navigation button.'
+        }
+        if ($proc.HasExited -or $proc.MainModule.FileName -ine $exe) {
+            throw 'Launch smoke failed: the running process did not match the selected executable.'
+        }
+        Write-Host "Launch smoke passed: application UI ready after $($timer.ElapsedMilliseconds) ms."
+    } finally { Close-RemovaTestProcess $proc }
+} finally { $pin.Dispose() }

@@ -1,6 +1,5 @@
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/acceptance/acceptance-common.ps1"
-. "$PSScriptRoot/acceptance/performance-common.ps1"
 $temp = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $root = Join-Path $temp "remova-release-approval-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $root | Out-Null
@@ -183,14 +182,8 @@ try {
     # extraction adapter; the real approval and publication logic runs below.
     $acceptanceScripts = Join-Path $approvalScripts 'acceptance'
     New-Item -ItemType Directory -Path $acceptanceScripts -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $root 'benchmarks') | Out-Null
     Copy-Item -LiteralPath @("$PSScriptRoot/release-approval.ps1", "$PSScriptRoot/publish-release-draft.ps1") -Destination $approvalScripts
-    Copy-Item -LiteralPath @(
-        "$PSScriptRoot/acceptance/acceptance-common.ps1"
-        "$PSScriptRoot/acceptance/performance-common.ps1"
-        "$PSScriptRoot/acceptance/measure-components.ps1"
-    ) -Destination $acceptanceScripts
-    Copy-Item -LiteralPath "$PSScriptRoot/../benchmarks/performance-thresholds.md" -Destination (Join-Path $root 'benchmarks')
+    Copy-Item -LiteralPath "$PSScriptRoot/acceptance/acceptance-common.ps1" -Destination $acceptanceScripts
     @'
 param($Artifacts, $CandidateVersion, $SevenZip, $WixDark, [switch]$ExecutableOnly)
 . "$PSScriptRoot/acceptance-common.ps1"
@@ -238,94 +231,42 @@ $reference | ConvertTo-Json -Depth 3
     Set-Content -LiteralPath (Join-Path $bundle.FullName 'SBOM.cdx.json') -Value '{"bomFormat":"CycloneDX","metadata":{"component":{"version":"1.4.1"}},"components":[{"name":"fixture"}]}'
     $exeHashes = [ordered]@{ nsis = $artifacts.nsis.sha256; msi = $artifacts.msi.sha256; portable = $portableExeHash }
     $reference = [ordered]@{}
-    $launches = [ordered]@{}
     foreach ($channel in $names.Keys) {
         $reference[$channel] = @{ package_sha256 = $artifacts[$channel].sha256; executable_sha256 = $exeHashes[$channel] }
-        $launches[$channel] = @{ path = "C:\fixture\$channel\remova.exe"; version = '1.4.1';
-            sha256 = $exeHashes[$channel]; pid = 4321; uia_ready = $true }
     }
     $referencePath = Join-Path $root 'package-exe-reference.json'
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
 
-    $thresholdPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'benchmarks/performance-thresholds.md'
-    $thresholds = Get-PerformanceThresholds $thresholdPath
-    $performanceIdentity = @{
-        schema_version = 1
-        candidate_commit = $commit
-        sha256 = $portableExeHash
-        thresholds_sha256 = $thresholds.sha256
-        environment = @{
-            machine_sha256 = 'd' * 64
-            os_version = '10.0.26200'
-            architecture = 'x64'
-            webview2_version = '1.2.3.4'
-            elevated = $false
-        }
-    }
-    $startup = $performanceIdentity + @{
-        kind = 'remova-startup'
-        measurement_mode = 'cold'
-        runs = @(foreach ($number in 1..3) {
-            @{ run = $number; ready_observed = $true; boot_sha256 = [string]$number * 64;
-               startup_ms = $thresholds.limits.startup_worst_ms / 2;
-               working_set_mb = $thresholds.limits.idle_working_set_mb / 2 }
-        })
-    }
-    $components = $performanceIdentity + @{
-        kind = 'remova-components'
-        fixture = @{ walk_entries = 4040; analyze_files = 200; backup_bytes = 1GB }
-        metrics = @{
-            walk_worst_ms = $thresholds.limits.walk_worst_ms / 2
-            analyze_worst_ms = $thresholds.limits.analyze_worst_ms / 2
-            cancel_worst_ms = $thresholds.limits.cancel_worst_ms / 2
-            backup_ms = $thresholds.limits.backup_ms / 2
-        }
-    }
-    $startupPath = Join-Path $root 'startup.json'
-    $componentsPath = Join-Path $root 'components.json'
-    $startup | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $startupPath
-    $components | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $componentsPath
-
-    $evidence = foreach ($family in 'windows-10', 'windows-11') {
-        foreach ($suite in 'client', 'elevated') {
-            $dir = New-Item -ItemType Directory -Path (Join-Path $root "$family-$suite")
-            $log = Join-Path $dir.FullName 'observations.txt'
-            Set-Content -LiteralPath $log -Value 'fixture observation'
-            $summary = [ordered]@{
-                schema_version = 2
-                kind = 'remova-acceptance'
-                candidate_commit = $commit
-                candidate_version = '1.4.1'
-                os_family = $family
-                os_version = if ($family -eq 'windows-10') { '10.0.19045' } else { '10.0.26200' }
+    $evidence = foreach ($mode in @('client', 'elevated')) {
+        $record = @{
+            schema_version = 1
+            kind = 'remova-release-launch'
+            candidate_commit = $commit
+            candidate_version = '1.4.1'
+            environment = @{
+                machine_sha256 = 'd' * 64
+                os_version = '10.0.26200'
                 architecture = 'x64'
-                suite = $suite
-                elevated = $suite -eq 'elevated'
                 webview2_version = '1.2.3.4'
-                executor = 'fixture'
-                artifacts = $artifacts
-                executables = $launches
-                passed = $true
-                checks = @(Get-AcceptanceChecks $suite | ForEach-Object {
-                    @{ id = $_.id; actual = 'observed'; status = 'pass'; evidence = @{
-                        name = 'observations.txt'; sha256 = (Get-FileHash -LiteralPath $log).Hash.ToLowerInvariant()
-                    } }
-                })
+                elevated = $mode -eq 'elevated'
             }
-            $file = Join-Path $dir.FullName 'acceptance-summary.json'
-            $summary | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $file
-            $file
+            executable = @{ path = 'C:\fixture\remova.exe'; version = '1.4.1';
+                sha256 = $portableExeHash; pid = 4321; uia_ready = $true }
         }
+        $file = Join-Path $root "$mode-launch.json"
+        $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $file
+        $file
     }
     $check = "$approvalScripts/release-approval.ps1"
     $params = @{ Tag = $tag; Commit = $commit; BundleDir = $bundle.FullName }
     $metadataPath = Join-Path $root 'release-metadata.json'
     $releaseMetadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath
-    $prepare = @{ Startup = $startupPath; Components = $componentsPath; ReleaseMetadataPath = $metadataPath
+    $prepare = @{ ReleaseMetadataPath = $metadataPath
         PackageExeReference = $referencePath; PrivateKeyPath = $privateKey; Reviewed = $true }
-    $approval = & $check @params @prepare -Acceptance $evidence
+    $approval = & $check @params @prepare -LaunchRecord $evidence
     $null = & $check @params -ApprovalJson $approval -PublicKeyPem $publicKey
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence[0..2] } 'Acceptance matrix'
+    Must-Refuse { & $check @params @prepare -LaunchRecord $evidence[0] } 'Local launch records'
+    Must-Refuse { & $check @params @prepare -LaunchRecord @($evidence[0], $evidence[0]) } 'Duplicate local launch record'
     Must-Refuse { & $check @params -ApprovalJson '{}' -PublicKeyPem $publicKey } 'signed release approval is required'
     $wrongCommit = $params.Clone()
     $wrongCommit.Commit = 'b' * 40
@@ -342,28 +283,41 @@ $reference | ConvertTo-Json -Depth 3
         if ($signed.executables[$channel] -cne $exeHashes[$channel]) { throw "Approval did not bind the $channel executable." }
     }
     $originalSummary = Get-Content -Raw -LiteralPath $evidence[0]
-    foreach ($scenario in @('old-build', 'other-channel', 'missing-ui', 'old-version', 'relative-path', 'missing-executable')) {
+    foreach ($scenario in @('old-build', 'other-channel', 'missing-ui', 'old-version', 'relative-path',
+        'missing-executable', 'other-machine', 'other-commit', 'not-a-token')) {
         $observed = $originalSummary | ConvertFrom-Json -AsHashtable
+        $reason = 'Invalid portable executable identity or UI readiness'
         switch ($scenario) {
-            'old-build' { $observed.executables.nsis.sha256 = 'f' * 64 }
-            'other-channel' { $observed.executables.nsis.sha256 = $exeHashes.msi }
-            'missing-ui' { $observed.executables.nsis.uia_ready = $false }
-            'old-version' { $observed.executables.nsis.version = '1.4.0' }
-            'relative-path' { $observed.executables.nsis.path = 'remova.exe' }
-            'missing-executable' { $observed.executables.Remove('nsis') }
+            'old-build' { $observed.executable.sha256 = 'f' * 64 }
+            'other-channel' { $observed.executable.sha256 = $exeHashes.msi }
+            'missing-ui' { $observed.executable.uia_ready = $false }
+            'old-version' { $observed.executable.version = '1.4.0' }
+            'relative-path' { $observed.executable.path = 'remova.exe' }
+            'missing-executable' { $observed.Remove('executable') }
+            'other-machine' {
+                $observed.environment.machine_sha256 = 'f' * 64
+                $reason = 'same Windows machine'
+            }
+            'other-commit' {
+                $observed.candidate_commit = 'b' * 40
+                $reason = 'Invalid local launch record or candidate identity'
+            }
+            'not-a-token' {
+                $observed.environment.elevated = 'false'
+                $reason = 'Invalid local launch record or candidate identity'
+            }
         }
-        $observed | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidence[0]
-        $reason = if ($scenario -ceq 'missing-executable') { 'Acceptance executables' } else { 'Invalid nsis executable identity or UI readiness' }
-        Must-Refuse { & $check @params @prepare -Acceptance $evidence } $reason
+        $observed | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $evidence[0]
+        Must-Refuse { & $check @params @prepare -LaunchRecord $evidence } $reason
     }
     Set-Content -LiteralPath $evidence[0] -Value $originalSummary -NoNewline
     $reference.nsis.package_sha256 = 'f' * 64
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'different nsis package'
+    Must-Refuse { & $check @params @prepare -LaunchRecord $evidence } 'different nsis package'
     $reference.nsis.package_sha256 = $artifacts.nsis.sha256
     $reference.nsis.executable_sha256 = $exeHashes.msi
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'reference used a different nsis executable'
+    Must-Refuse { & $check @params @prepare -LaunchRecord $evidence } 'reference used a different nsis executable'
     $reference.nsis.executable_sha256 = $exeHashes.nsis
     $reference | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $referencePath
     $signed.executables.msi = $exeHashes.portable
@@ -375,30 +329,17 @@ $reference | ConvertTo-Json -Depth 3
     } | ConvertTo-Json -Compress
     Must-Refuse { & $check @params -ApprovalJson $wrongExecutableApproval -PublicKeyPem $publicKey } 'approval used a different msi executable'
     $signed.executables.msi = $exeHashes.msi
-    if ($signed.performance.executable_sha256 -cne $portableExeHash -or
-        $signed.performance.startup_sha256 -cne (Get-FileHash -LiteralPath $startupPath).Hash.ToLowerInvariant() -or
-        $signed.performance.components_sha256 -cne (Get-FileHash -LiteralPath $componentsPath).Hash.ToLowerInvariant()) {
-        throw 'The approval did not bind both measurement files and the packaged executable.'
+    $recordHashes = @(foreach ($file in $evidence) { (Get-FileHash -LiteralPath $file).Hash.ToLowerInvariant() })
+    if ($signed.launches.client -cne $recordHashes[0] -or $signed.launches.elevated -cne $recordHashes[1]) {
+        throw 'The approval did not bind both local launch records.'
     }
-    $signed.performance.executable_sha256 = 'f' * 64
+    $signed.launches.client = '0' * 64
     $modifiedBytes = [Text.Encoding]::UTF8.GetBytes(($signed | ConvertTo-Json -Depth 7 -Compress))
     $envelope.payload = [Convert]::ToBase64String($modifiedBytes)
     Must-Refuse { & $check @params -ApprovalJson ($envelope | ConvertTo-Json -Compress) -PublicKeyPem $publicKey } 'Invalid release approval signature'
     $envelope.signature = [Convert]::ToBase64String($rsa.SignData($modifiedBytes,
         [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pss))
-    Must-Refuse { & $check @params -ApprovalJson ($envelope | ConvertTo-Json -Compress) -PublicKeyPem $publicKey } 'different portable executable'
-
-    $startup.measurement_mode = 'warm'
-    $startup | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $startupPath
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'did not pass the cold-start performance gate'
-    $startup.measurement_mode = 'cold'
-    $startup.runs[0].startup_ms = $thresholds.limits.startup_worst_ms + 1
-    $startup | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $startupPath
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'did not pass the cold-start performance gate'
-    $startup.runs[0].startup_ms = $thresholds.limits.startup_worst_ms / 2
-    $startup.sha256 = 'f' * 64
-    $startup | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $startupPath
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'did not pass the cold-start performance gate'
+    Must-Refuse { & $check @params -ApprovalJson ($envelope | ConvertTo-Json -Compress) -PublicKeyPem $publicKey } 'Invalid local launch record digest'
 
     Test-PublishDraft 'success' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unauthorized' 'write' $commit $bundle.FullName $approval $publicKey $root
@@ -412,10 +353,7 @@ $reference | ConvertTo-Json -Depth 3
 
     Add-Content -LiteralPath (Join-Path $bundle.FullName 'SBOM.cdx.json') -Value ' '
     Must-Refuse { & $check @params -ApprovalJson $approval -PublicKeyPem $publicKey } 'draft attachment changed'
-    $log = Join-Path (Split-Path -Parent $evidence[0]) 'observations.txt'
-    Add-Content -LiteralPath $log -Value 'changed after review'
-    Must-Refuse { & $check @params @prepare -Acceptance $evidence } 'Evidence changed'
-    Write-Host 'Release approval passed the complete matrix, missing-run, wrong-approval, changed-asset and changed-evidence checks.'
+    Write-Host 'Release approval passed the local launches, missing-run, wrong-approval, changed-asset and changed-record checks.'
 } finally {
     if ($rsa) { $rsa.Dispose() }
     $resolved = (Resolve-Path -LiteralPath $root).Path

@@ -1,6 +1,22 @@
-# 一次性 Windows VM 验收套件
+# Windows 发行验收与专项检查
 
-本套件用于完成终审报告中必须由隔离真机提供的证据：
+## 发版本机启动记录
+
+从同一批待发布附件生成 `package-exe-reference.json`，解压便携包。用同一台 Windows 电脑，先在普通 PowerShell 运行以下命令，再在管理员 PowerShell 将 `-Mode` 改为 `elevated`、输出改为 `elevated-launch.json`。每次运行前关闭已有 Remova。脚本会检查实际进程身份和 WebView2 导航就绪，并关闭该实例。
+
+```powershell
+$reference = Get-Content -Raw 'D:/acceptance/package-exe-reference.json' | ConvertFrom-Json
+$commit = '<候选提交的 40 位 SHA>'
+pwsh -NoProfile -File scripts/acceptance/record-launch.ps1 `
+    -ExePath 'D:/candidate/portable/remova.exe' -CandidateCommit $commit -CandidateVersion 1.4.1 `
+    -ExpectedExeSha256 $reference.portable.executable_sha256 -Mode client -Out 'D:/acceptance/client-launch.json'
+```
+
+将两份记录交给 `release-approval.ps1 -LaunchRecord`。发布签批会重新提取三渠道主程序并核对附件、候选提交和批准的发布信息。以下虚拟机矩阵和性能检查可按需要单独执行。
+
+## 一次性 Windows VM 专项
+
+本套件用于在隔离环境专项验证以下场景：
 
 - **凭据与授权**：凭据绑定、重定向、孤儿授权分类与权限矩阵
 - **安装矩阵**：安装 / 升级 / 降级 / 回滚与关键路径
