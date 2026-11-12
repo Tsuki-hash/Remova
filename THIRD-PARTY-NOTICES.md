@@ -10,8 +10,8 @@ Regenerate from the repository root after installing the locked dependencies wit
 
 - adler2 2.0.1 (pkg:cargo/adler2@2.0.1) — 0BSD OR MIT OR Apache-2.0. [`LICENSE-0BSD`](#text-861399f8c21c042b110517e76dc6b63a2b334276c8cf17412fc3c8908ca8dc17), [`LICENSE-APACHE`](#text-8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - aho-corasick 1.1.5 (pkg:cargo/aho-corasick@1.1.5) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
-- alloc-no-stdlib 2.0.4 (pkg:cargo/alloc-no-stdlib@2.0.4) — BSD-3-Clause. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae).
-- alloc-stdlib 0.2.4 (pkg:cargo/alloc-stdlib@0.2.4) — BSD-3-Clause. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae) ([upstream](https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE)).
+- alloc-no-stdlib 3.0.0 (pkg:cargo/alloc-no-stdlib@3.0.0) — BSD-3-Clause. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae).
+- alloc-stdlib 0.3.0 (pkg:cargo/alloc-stdlib@0.3.0) — BSD-3-Clause. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae) ([upstream](https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE)).
 - anyhow 1.0.104 (pkg:cargo/anyhow@1.0.104) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - atomic-waker 1.1.2 (pkg:cargo/atomic-waker@1.1.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3), [`LICENSE-THIRD-PARTY`](#text-6226d0632e2e1a80c23597e964da9812ae193c535fe058154afb034e94167aa5).
 - base64 0.22.1 (pkg:cargo/base64@0.22.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7).
@@ -21,8 +21,8 @@ Regenerate from the repository root after installing the locked dependencies wit
 - bitflags 1.3.2 (pkg:cargo/bitflags@1.3.2) — MIT/Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb).
 - bitflags 2.13.2 (pkg:cargo/bitflags@2.13.2) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb).
 - block-buffer 0.10.4 (pkg:cargo/block-buffer@0.10.4) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5), [`LICENSE-MIT`](#text-d5c22aa3118d240e877ad41c5d9fa232f9c77d757d4aac0c2f943afc0a95e0ef).
-- brotli-decompressor 5.0.3 (pkg:cargo/brotli-decompressor@5.0.3) — BSD-3-Clause/MIT. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae).
-- brotli 8.0.4 (pkg:cargo/brotli@8.0.4) — BSD-3-Clause AND MIT. [`LICENSE.BSD-3-Clause`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae), [`LICENSE.MIT`](#text-3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94).
+- brotli-decompressor 6.3.1 (pkg:cargo/brotli-decompressor@6.3.1) — BSD-3-Clause/MIT. [`LICENSE`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae).
+- brotli 9.1.1 (pkg:cargo/brotli@9.1.1) — BSD-3-Clause AND MIT. [`LICENSE.BSD-3-Clause`](#text-c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae), [`LICENSE.MIT`](#text-3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94).
 - bs58 0.5.1 (pkg:cargo/bs58@0.5.1) — MIT/Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-42d3bf7e7d4d49d72c0555d14ed99c3ee7ce9ce3cbffbc38bbafe8c103f50969).
 - bytemuck 1.25.2 (pkg:cargo/bytemuck@1.25.2) — Zlib OR Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-e3ba223bb1423f0aad8c3dfce0fe3148db48926d41e6fbc3afbbf5ff9e1c89cb), [`LICENSE-MIT`](#text-9df9ba60a11af705f2e451b53762686e615d86f76b169cf075c3237730dbd7e2), [`LICENSE-ZLIB`](#text-84b34dd7608f7fb9b17bd588a6bf392bf7de504e2716f024a77d89f1b145a151).
 - byteorder-lite 0.1.0 (pkg:cargo/byteorder-lite@0.1.0) — Unlicense OR MIT. [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
@@ -31,6 +31,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - camino 1.2.5 (pkg:cargo/camino@1.2.5) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - cargo_metadata 0.19.2 (pkg:cargo/cargo_metadata@0.19.2) — MIT. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - cargo-platform 0.1.9 (pkg:cargo/cargo-platform@0.1.9) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
+- cfb 0.14.0 (pkg:cargo/cfb@0.14.0) — MIT. [`LICENSE`](#text-ebaac853b53fec0ed475796f533ce676912a4df9ad9d8a621fa76d5060591e10).
 - cfb 0.7.3 (pkg:cargo/cfb@0.7.3) — MIT. [`LICENSE`](#text-ebaac853b53fec0ed475796f533ce676912a4df9ad9d8a621fa76d5060591e10).
 - cfg-if 1.0.4 (pkg:cargo/cfg-if@1.0.4) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397).
 - chrono 0.4.45 (pkg:cargo/chrono@0.4.45) — MIT OR Apache-2.0. [`LICENSE.txt`](#text-946c9835d8034d24404f8cfec5f4654cee5dad17e944afc3d06d742cf2882831).
@@ -40,10 +41,9 @@ Regenerate from the repository root after installing the locked dependencies wit
 - crossbeam-channel 0.5.17 (pkg:cargo/crossbeam-channel@0.5.17) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab), [`LICENSE-THIRD-PARTY`](#text-b16db96b93b1d7cf7bea533f572091ec6bca3234fbe0a83038be772ff391a44c).
 - crossbeam-utils 0.8.23 (pkg:cargo/crossbeam-utils@0.8.23) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab).
 - crypto-common 0.1.7 (pkg:cargo/crypto-common@0.1.7) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5), [`LICENSE-MIT`](#text-3521672491a3479422d5fe1aca6645dd2984090f85da6e5205abfb18fb7a6897).
-- cssparser-macros 0.6.1 (pkg:cargo/cssparser-macros@0.6.1) — MPL-2.0. [`LICENSE`](#text-fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85).
-- cssparser 0.36.0 (pkg:cargo/cssparser@0.36.0) — MPL-2.0. [`LICENSE`](#text-fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85).
-- ctor-proc-macro 0.0.7 (pkg:cargo/ctor-proc-macro@0.0.7) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae), [`LICENSE-MIT`](#text-bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3).
-- ctor 0.8.0 (pkg:cargo/ctor@0.8.0) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae), [`LICENSE-MIT`](#text-bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3).
+- cssparser-macros 0.7.1 (pkg:cargo/cssparser-macros@0.7.1) — MPL-2.0. [`LICENSE`](#text-fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85).
+- cssparser 0.37.0 (pkg:cargo/cssparser@0.37.0) — MPL-2.0. [`LICENSE`](#text-fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85).
+- ctor 1.0.13 (pkg:cargo/ctor@1.0.13) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae), [`LICENSE-MIT`](#text-bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3).
 - darling_core 0.24.1 (pkg:cargo/darling_core@0.24.1) — MIT. [`LICENSE`](#text-8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6).
 - darling_macro 0.24.1 (pkg:cargo/darling_macro@0.24.1) — MIT. [`LICENSE`](#text-8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6).
 - darling 0.24.1 (pkg:cargo/darling@0.24.1) — MIT. [`LICENSE`](#text-8ea93490d74a5a1b1af3ff71d786271b3f1e5f0bea79ac16e02ec533cef040d6).
@@ -55,14 +55,12 @@ Regenerate from the repository root after installing the locked dependencies wit
 - derive_more 2.1.1 (pkg:cargo/derive_more@2.1.1) — MIT. [`LICENSE`](#text-8a35369f3ca263b3c62fbb5032947e53b6bfebc6c8a4d1bb982de1c069f6fba5).
 - digest 0.10.7 (pkg:cargo/digest@0.10.7) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5), [`LICENSE-MIT`](#text-9e0dfd2dd4173a530e238cb6adb37aa78c34c6bc7444e0e10c1ab5d8881f63ba).
 - dirs-sys 0.5.0 (pkg:cargo/dirs-sys@0.5.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9), [`LICENSE-MIT`](#text-6a2e0ade09a7d5f816f11566fee2b151b32235a7fad52b41d49cce96f833c1a9).
-- dirs 6.0.0 (pkg:cargo/dirs@6.0.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9), [`LICENSE-MIT`](#text-6a2e0ade09a7d5f816f11566fee2b151b32235a7fad52b41d49cce96f833c1a9).
+- dirs 7.0.0 (pkg:cargo/dirs@7.0.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-d3174ad63e721d4c9dccb8ad4320848992d314369bc46319720b5802c9153fe9), [`LICENSE-MIT`](#text-6a2e0ade09a7d5f816f11566fee2b151b32235a7fad52b41d49cce96f833c1a9).
 - displaydoc 0.2.7 (pkg:cargo/displaydoc@0.2.7) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
-- dom_query 0.27.0 (pkg:cargo/dom_query@0.27.0) — MIT. [`LICENSE`](#text-7554701d1e74fc434f68c522b1dd743c8c16d816a4b761b5213f367b898884c8).
+- dom_query 0.28.0 (pkg:cargo/dom_query@0.28.0) — MIT. [`LICENSE`](#text-7554701d1e74fc434f68c522b1dd743c8c16d816a4b761b5213f367b898884c8).
 - dpi 0.1.2 (pkg:cargo/dpi@0.1.2) — Apache-2.0 AND MIT. [`LICENSE`](#text-6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a), [`LICENSE-LIBM-MIT`](#text-9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997).
 - dtoa-short 0.3.5 (pkg:cargo/dtoa-short@0.3.5) — MPL-2.0. [`LICENSE`](#text-1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5).
 - dtoa 1.0.11 (pkg:cargo/dtoa@1.0.11) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
-- dtor-proc-macro 0.0.6 (pkg:cargo/dtor-proc-macro@0.0.6) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae), [`LICENSE-MIT`](#text-bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3).
-- dtor 0.3.0 (pkg:cargo/dtor@0.3.0) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae), [`LICENSE-MIT`](#text-bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3).
 - dunce 1.0.5 (pkg:cargo/dunce@1.0.5) — CC0-1.0 OR MIT-0 OR Apache-2.0. [`LICENSE`](#text-a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499).
 - dyn-clone 1.0.20 (pkg:cargo/dyn-clone@1.0.20) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - equivalent 1.0.2 (pkg:cargo/equivalent@1.0.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-7365cc8878a1d7ce155a58c4ca09c3d7a6be413efa5334a80ea842912b669349).
@@ -89,7 +87,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - hashbrown 0.17.1 (pkg:cargo/hashbrown@0.17.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-ff8f68cb076caf8cefe7a6430d4ac086ce6af2ca8ce2c4e5a2004d4552ef52a2).
 - heck 0.5.0 (pkg:cargo/heck@0.5.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0).
 - hex 0.4.3 (pkg:cargo/hex@0.4.3) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08), [`LICENSE-MIT`](#text-f7bdb3426d045cd50efd4953026e3eb5a83d0199f458a075602611b9344da5b9).
-- html5ever 0.38.0 (pkg:cargo/html5ever@0.38.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-86dd7f026f916daf7511e39951ad8ea8cf55a8db67ae64060dacf829761c18f3).
+- html5ever 0.39.0 (pkg:cargo/html5ever@0.39.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-86dd7f026f916daf7511e39951ad8ea8cf55a8db67ae64060dacf829761c18f3).
 - http-body-util 0.1.5 (pkg:cargo/http-body-util@0.1.5) — MIT. [`LICENSE`](#text-248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab).
 - http-body 1.1.0 (pkg:cargo/http-body@1.1.0) — MIT. [`LICENSE`](#text-248378d0a3383c173fb925f17141b88e71580b3ba17ddc6ac3d2a344683232ab).
 - http 1.5.0 (pkg:cargo/http@1.5.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-8bb1b50b0e5c9399ae33bd35fab2769010fa6c14e8860c729a52295d84896b7a), [`LICENSE-MIT`](#text-dc91f8200e4b2a1f9261035d4c18c33c246911a6c0f7b543d75347e61b249cff).
@@ -97,7 +95,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - hyper-rustls 0.27.10 (pkg:cargo/hyper-rustls@0.27.10) — Apache-2.0 OR ISC OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-ISC`](#text-7cfafc877eccc46c0e346ccbaa5c51bb6b894d2b818e617d970211e232785ad4), [`LICENSE-MIT`](#text-709e3175b4212f7b13aa93971c9f62ff8c69ec45ad8c6532a7e0c41d7a7d6f8c).
 - hyper-util 0.1.20 (pkg:cargo/hyper-util@0.1.20) — MIT. [`LICENSE`](#text-9e0a97848ea543aef745c98e84fde696a9a3e0735538f6daefdd3cb1942effc1).
 - hyper 1.11.1 (pkg:cargo/hyper@1.11.1) — MIT. [`LICENSE`](#text-2d01890414494742ba4a509fcec8efa40f6d8be22cbd72be7cff08d6fda4ec89).
-- ico 0.5.0 (pkg:cargo/ico@0.5.0) — MIT. [`LICENSE`](#text-41ca90213441b294e7517d5858f0cc85bc12e19ec044001b45bc213de461d33b).
+- ico 0.6.0 (pkg:cargo/ico@0.6.0) — MIT. [`LICENSE`](#text-41ca90213441b294e7517d5858f0cc85bc12e19ec044001b45bc213de461d33b).
 - icu_collections 2.3.0 (pkg:cargo/icu_collections@2.3.0) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - icu_locale_core 2.3.0 (pkg:cargo/icu_locale_core@2.3.0) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - icu_normalizer_data 2.3.0 (pkg:cargo/icu_normalizer_data@2.3.0) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
@@ -112,20 +110,21 @@ Regenerate from the repository root after installing the locked dependencies wit
 - indexmap 1.9.3 (pkg:cargo/indexmap@1.9.3) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055).
 - indexmap 2.14.2 (pkg:cargo/indexmap@2.14.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-ecc269ef87fd38a1d98e30bfac9ba964a9dbd9315c3770fed98d4d7cb5882055).
 - infer 0.19.0 (pkg:cargo/infer@0.19.0) — MIT. [`LICENSE`](#text-270b0d81891aa44c7e8726cf9432dade9556a01c848bacd2f3ef839c9c1a1859).
+- infer 0.22.0 (pkg:cargo/infer@0.22.0) — MIT. [`LICENSE`](#text-270b0d81891aa44c7e8726cf9432dade9556a01c848bacd2f3ef839c9c1a1859).
 - ipnet 2.12.2 (pkg:cargo/ipnet@2.12.2) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-87d9feb9238c6bd8e0024fc4733b06cff036f89f36d93b7df1c8a0549bbb7a5b), [`LICENSE-MIT`](#text-47dc9ff29128ddfb4d6a0435383c9f89120bc374dbcc1dd00b933a0b28aa7865).
 - itoa 1.0.18 (pkg:cargo/itoa@1.0.18) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - jiff-core 0.1.0 (pkg:cargo/jiff-core@0.1.0) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
 - jiff-tzdb-platform 0.1.3 (pkg:cargo/jiff-tzdb-platform@0.1.3) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
 - jiff-tzdb 0.1.8 (pkg:cargo/jiff-tzdb@0.1.8) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
 - jiff 0.2.35 (pkg:cargo/jiff@0.2.35) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
-- json-patch 3.0.1 (pkg:cargo/json-patch@3.0.1) — MIT/Apache-2.0. [`LICENSE-APACHE`](#text-b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1), [`LICENSE-MIT`](#text-87f7527b1066337751f7f4d717089bf514ff8f7ee7d66c4c5b891b09e744ec11).
-- jsonptr 0.6.3 (pkg:cargo/jsonptr@0.6.3) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-2cf31f2ae7f3feba667d50fc1d4d21ecf217703c04c3068b83c9a73b6dde723a), [`LICENSE-MIT`](#text-2bc107bdc18a74263d20bdefdb8073e17bc1a01b6b374dc5835683a33ee5ba7d).
-- keyboard-types 0.7.0 (pkg:cargo/keyboard-types@0.7.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-769f80b5bcb42ed0af4e4d2fd74e1ac9bf843cb80c5a29219d1ef3544428a6bb), [`LICENSE-MIT`](#text-31dbbab009f1b2e59a1622d5955dfafc38ebe834000215b49d954c6f85fe927c).
+- json-patch 4.2.0 (pkg:cargo/json-patch@4.2.0) — MIT/Apache-2.0. [`LICENSE-APACHE`](#text-b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1), [`LICENSE-MIT`](#text-87f7527b1066337751f7f4d717089bf514ff8f7ee7d66c4c5b891b09e744ec11).
+- jsonptr 0.7.1 (pkg:cargo/jsonptr@0.7.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-2cf31f2ae7f3feba667d50fc1d4d21ecf217703c04c3068b83c9a73b6dde723a), [`LICENSE-MIT`](#text-2bc107bdc18a74263d20bdefdb8073e17bc1a01b6b374dc5835683a33ee5ba7d).
+- keyboard-types 0.8.3 (pkg:cargo/keyboard-types@0.8.3) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-769f80b5bcb42ed0af4e4d2fd74e1ac9bf843cb80c5a29219d1ef3544428a6bb), [`LICENSE-MIT`](#text-31dbbab009f1b2e59a1622d5955dfafc38ebe834000215b49d954c6f85fe927c).
 - libc 0.2.189 (pkg:cargo/libc@0.2.189) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-123a331b5dbf04c30097fa43b8f858bc85df671fe776de498d01f3d6b7c1f69e).
 - litemap 0.8.3 (pkg:cargo/litemap@0.8.3) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - lock_api 0.4.14 (pkg:cargo/lock_api@0.4.14) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5).
 - log 0.4.34 (pkg:cargo/log@0.4.34) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb).
-- markup5ever 0.38.0 (pkg:cargo/markup5ever@0.38.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-86dd7f026f916daf7511e39951ad8ea8cf55a8db67ae64060dacf829761c18f3).
+- markup5ever 0.39.0 (pkg:cargo/markup5ever@0.39.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-86dd7f026f916daf7511e39951ad8ea8cf55a8db67ae64060dacf829761c18f3).
 - memchr 2.8.3 (pkg:cargo/memchr@2.8.3) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
 - mime 0.3.17 (pkg:cargo/mime@0.3.17) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-df9cfd06d8a44d9a671eadd39ffd97f166481da015a30f45dfd27886209c5922).
 - minisign-verify 0.2.5 (pkg:cargo/minisign-verify@0.2.5) — MIT. [`LICENSE`](#text-42c8695fbc468866d9756be99af0ba4e37d733f8daa3c8827c8d80b8bec1b2f9).
@@ -133,7 +132,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - miniz_oxide 0.9.1 (pkg:cargo/miniz_oxide@0.9.1) — MIT OR Zlib OR Apache-2.0. [`LICENSE`](#text-4108245a1f2df9d4e94df8abed5b4ba0759bb2f9b40a6b939f1be141077ae50b), [`LICENSE-APACHE.md`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT.md`](#text-799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d), [`LICENSE-ZLIB.md`](#text-0a54e647fe54104658b5e563c04c6f9edf251710e47bce692e0bd990a4ddaa39).
 - mio 1.2.3 (pkg:cargo/mio@1.2.3) — MIT. [`LICENSE`](#text-07919255c7e04793d8ea760d6c2ce32d19f9ff02bdbdde3ce90b1e1880929a9b).
 - moxcms 0.8.1 (pkg:cargo/moxcms@0.8.1) — BSD-3-Clause OR Apache-2.0. [`LICENSE-APACHE.md`](#text-90bf2d659c43045111b65c733ab2a6d4cbcb422a098368c8c58a9ba3db4ed0c5), [`LICENSE.md`](#text-2aa92cada6431e75615e3fe6cb1a9082c98f777d48ae1c087c0da0e37f7b8bff).
-- muda 0.19.3 (pkg:cargo/muda@0.19.3) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-2ab5537b8c0cb1d475e2145b6a7994b04e7c71e6e5bd836f7f9c47c221a5ad9a), [`LICENSE.spdx`](#text-b99f9d43803f2ac979c50949df630bd8eeaf2fcd1b9fdb9093710d70f5dfb63d).
+- muda 0.20.0 (pkg:cargo/muda@0.20.0) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-2ab5537b8c0cb1d475e2145b6a7994b04e7c71e6e5bd836f7f9c47c221a5ad9a), [`LICENSE.spdx`](#text-b99f9d43803f2ac979c50949df630bd8eeaf2fcd1b9fdb9093710d70f5dfb63d).
 - new_debug_unreachable 1.0.6 (pkg:cargo/new_debug_unreachable@1.0.6) — MIT. [`LICENSE-MIT`](#text-f7715d38a3fa1b4ac97c5729740752505a39cb92ee83ab5b102aeb5eaa7cdea4).
 - num-conv 0.2.2 (pkg:cargo/num-conv@0.2.2) — MIT OR Apache-2.0. [`LICENSE-Apache`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-e2e245f2b566d0bfafb0f6a04c16b82d710c4e6e7d799e39bb4ef6e541b85b98).
 - num-traits 0.2.19 (pkg:cargo/num-traits@0.2.19) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb).
@@ -176,7 +175,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - schemars 0.9.0 (pkg:cargo/schemars@0.9.0) — MIT. [`LICENSE`](#text-1954992a2b32e8a2af24a4c11b726902e344c1934b947a77f04d404908f8db30).
 - schemars 1.2.2 (pkg:cargo/schemars@1.2.2) — MIT. [`LICENSE`](#text-1954992a2b32e8a2af24a4c11b726902e344c1934b947a77f04d404908f8db30).
 - scopeguard 1.2.0 (pkg:cargo/scopeguard@1.2.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-fb77f0a9c53e473abe5103c8632ef9f0f2874d4fb3f17cb2d8c661aab9cee9d7).
-- selectors 0.36.1 (pkg:cargo/selectors@0.36.1) — MPL-2.0. [`MPL-2.0`](#text-3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04) ([upstream](https://www.mozilla.org/media/MPL/2.0/index.f75d2927d3c1.txt)). [Corresponding source](https://static.crates.io/crates/selectors/selectors-0.36.1.crate).
+- selectors 0.38.0 (pkg:cargo/selectors@0.38.0) — MPL-2.0. [`MPL-2.0`](#text-3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04) ([upstream](https://www.mozilla.org/media/MPL/2.0/index.f75d2927d3c1.txt)). [Corresponding source](https://static.crates.io/crates/selectors/selectors-0.38.0.crate).
 - semver 1.0.28 (pkg:cargo/semver@1.0.28) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - serde_core 1.0.229 (pkg:cargo/serde_core@1.0.229) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - serde_derive_internals 0.29.1 (pkg:cargo/serde_derive_internals@0.29.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
@@ -206,20 +205,18 @@ Regenerate from the repository root after installing the locked dependencies wit
 - syn 3.0.5 (pkg:cargo/syn@3.0.5) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - sync_wrapper 1.0.2 (pkg:cargo/sync_wrapper@1.0.2) — Apache-2.0. [`LICENSE`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594).
 - synstructure 0.13.2 (pkg:cargo/synstructure@0.13.2) — MIT. [`LICENSE`](#text-219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59).
-- tao 0.35.3 (pkg:cargo/tao@0.35.3) — Apache-2.0. [`LICENSE`](#text-6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a), [`LICENSE.spdx`](#text-02b6448337b757772d90e5f31caaa0f9e6afaad2221c01771d0a3deaa4d4196c).
-- tauri-codegen 2.6.3 (pkg:cargo/tauri-codegen@2.6.3) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
-- tauri-macros 2.6.3 (pkg:cargo/tauri-macros@2.6.3) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tao 0.37.2 (pkg:cargo/tao@0.37.2) — Apache-2.0. [`LICENSE`](#text-6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a), [`LICENSE.spdx`](#text-02b6448337b757772d90e5f31caaa0f9e6afaad2221c01771d0a3deaa4d4196c).
+- tauri-codegen 2.7.4 (pkg:cargo/tauri-codegen@2.7.4) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tauri-macros 2.7.4 (pkg:cargo/tauri-macros@2.7.4) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
 - tauri-plugin-single-instance 2.4.4 (pkg:cargo/tauri-plugin-single-instance@2.4.4) — Apache-2.0 OR MIT. [`LICENSE.spdx`](#text-eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef), [`LICENSE_APACHE-2.0`](#text-0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9), [`LICENSE_MIT`](#text-b7f455413bfe5f9d7da501a4468d4c5f866a432c325947e98cc9535e8b26cd6d).
 - tauri-plugin-updater 2.12.0 (pkg:cargo/tauri-plugin-updater@2.12.0) — Apache-2.0 OR MIT. [`LICENSE.spdx`](#text-eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef), [`LICENSE_APACHE-2.0`](#text-0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9), [`LICENSE_MIT`](#text-89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607).
-- tauri-runtime-wry 2.11.4 (pkg:cargo/tauri-runtime-wry@2.11.4) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
-- tauri-runtime 2.11.3 (pkg:cargo/tauri-runtime@2.11.3) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
-- tauri-utils 2.9.3 (pkg:cargo/tauri-utils@2.9.3) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
-- tauri 2.11.5 (pkg:cargo/tauri@2.11.5) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tauri-runtime-wry 2.12.3 (pkg:cargo/tauri-runtime-wry@2.12.3) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tauri-runtime 2.12.2 (pkg:cargo/tauri-runtime@2.12.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tauri-utils 2.10.2 (pkg:cargo/tauri-utils@2.10.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- tauri 2.12.5 (pkg:cargo/tauri@2.12.5) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
 - tempfile 3.27.0 (pkg:cargo/tempfile@3.27.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36).
 - tendril 0.5.1 (pkg:cargo/tendril@0.5.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-60a7062291b01ba068f300612cdbdc20382ac1d4934f07bcdd7167c15299f309).
-- thiserror-impl 1.0.69 (pkg:cargo/thiserror-impl@1.0.69) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - thiserror-impl 2.0.20 (pkg:cargo/thiserror-impl@2.0.20) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
-- thiserror 1.0.69 (pkg:cargo/thiserror@1.0.69) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - thiserror 2.0.20 (pkg:cargo/thiserror@2.0.20) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - time-core 0.1.9 (pkg:cargo/time-core@0.1.9) — MIT OR Apache-2.0. [`LICENSE-Apache`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc).
 - time-macros 0.2.32 (pkg:cargo/time-macros@0.2.32) — MIT OR Apache-2.0. [`LICENSE-Apache`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc).
@@ -241,66 +238,57 @@ Regenerate from the repository root after installing the locked dependencies wit
 - tracing-attributes 0.1.31 (pkg:cargo/tracing-attributes@0.1.31) — MIT. [`LICENSE`](#text-898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1).
 - tracing-core 0.1.36 (pkg:cargo/tracing-core@0.1.36) — MIT. [`LICENSE`](#text-898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1), [`src/spin/LICENSE`](#text-58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79).
 - tracing 0.1.44 (pkg:cargo/tracing@0.1.44) — MIT. [`LICENSE`](#text-898b1ae9821e98daf8964c8d6c7f61641f5f5aa78ad500020771c0939ee0dea1).
-- tray-icon 0.24.2 (pkg:cargo/tray-icon@0.24.2) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-2ab5537b8c0cb1d475e2145b6a7994b04e7c71e6e5bd836f7f9c47c221a5ad9a), [`LICENSE.spdx`](#text-6c1e5d0ccf5e8951401cb964036ae664d52fc8d1148173b53bc54fc534f5d404).
+- tray-icon 0.25.1 (pkg:cargo/tray-icon@0.25.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-2ab5537b8c0cb1d475e2145b6a7994b04e7c71e6e5bd836f7f9c47c221a5ad9a), [`LICENSE.spdx`](#text-6c1e5d0ccf5e8951401cb964036ae664d52fc8d1148173b53bc54fc534f5d404).
 - try-lock 0.2.5 (pkg:cargo/try-lock@0.2.5) — MIT. [`LICENSE`](#text-c816a0749cdc6bf062a5111c159723de51b2bfac66a1dac2655abd9e6b1583eb).
 - typeid 1.0.3 (pkg:cargo/typeid@1.0.3) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - typenum 1.20.1 (pkg:cargo/typenum@1.20.1) — MIT OR Apache-2.0. [`LICENSE`](#text-db11fec9946737df39ca3898d9cd8c10ec6f6c3a884a6802b0ad0b81b4e8f23a), [`LICENSE-APACHE`](#text-516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406), [`LICENSE-MIT`](#text-a825bd853ab71619a4923d7b4311221427848070ff44d990da39b0b274c1683f).
-- unic-char-property 0.9.0 (pkg:cargo/unic-char-property@0.9.0) — MIT/Apache-2.0. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT)), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE)), [`COPYRIGHT.md`](#text-f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/COPYRIGHT.md)).
-- unic-char-range 0.9.0 (pkg:cargo/unic-char-range@0.9.0) — MIT/Apache-2.0. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT)), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE)), [`COPYRIGHT.md`](#text-f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/COPYRIGHT.md)).
-- unic-common 0.9.0 (pkg:cargo/unic-common@0.9.0) — MIT/Apache-2.0. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT)), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE)), [`COPYRIGHT.md`](#text-f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/COPYRIGHT.md)).
-- unic-ucd-ident 0.9.0 (pkg:cargo/unic-ucd-ident@0.9.0) — MIT/Apache-2.0. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT)), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-APACHE)), [`COPYRIGHT.md`](#text-f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/COPYRIGHT.md)), [`Unicode 10.0.0 UCD ReadMe.txt`](#text-7e9ff2ef4828f9119eea17ada0b35697106ed2885521bfa854b126cea910802e) ([upstream](https://raw.githubusercontent.com/open-i18n/data-unicode-ucd/2a2044479b3c4915ef4213adf1dfd6236dba24c8/data/ReadMe.txt)), [`Unicode-DFS-2016`](#text-1a33fc12a3abb0b3eb14db70e36ef1d0af51c93b1cc1f80f022c3bd406e9b874) ([upstream](https://raw.githubusercontent.com/spdx/license-list-data/v3.26.0/text/Unicode-DFS-2016.txt)).
-- unic-ucd-version 0.9.0 (pkg:cargo/unic-ucd-version@0.9.0) — MIT/Apache-2.0. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT)), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE)), [`COPYRIGHT.md`](#text-f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b) ([upstream](https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/COPYRIGHT.md)).
 - unicode-ident 1.0.24 (pkg:cargo/unicode-ident@1.0.24) — (MIT OR Apache-2.0) AND Unicode-3.0. [`LICENSE-APACHE`](#text-62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a), [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3), [`LICENSE-UNICODE`](#text-f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1).
 - unicode-segmentation 1.13.3 (pkg:cargo/unicode-segmentation@1.13.3) — MIT OR Apache-2.0. [`COPYRIGHT`](#text-23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d), [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0).
 - untrusted 0.9.0 (pkg:cargo/untrusted@0.9.0) — ISC. [`LICENSE.txt`](#text-7abd9b6960dcf7d4d0a48606a5b71bfe37d472db68d70637f3a58a56785f1621).
 - ureq 2.12.1 (pkg:cargo/ureq@2.12.1) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4), [`LICENSE-MIT`](#text-7e5886959f67f8c75063a9d55cd3cb08c5a8cbea9a944fa1df2d4ae038f53721), [`src/chunked/LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`src/chunked/LICENSE-MIT`](#text-5eda8c6538e7d543efe31ebad3fc0e66a7c4df056ddb901a5bdfbf5ef397e116).
 - url 2.5.8 (pkg:cargo/url@2.5.8) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5).
-- urlpattern 0.3.0 (pkg:cargo/urlpattern@0.3.0) — MIT. [`LICENSE`](#text-5cf1c9dc617e4cad7fa03181ff893601ad5243aa3be527ef39034e1cd6377676).
+- urlpattern 0.6.0 (pkg:cargo/urlpattern@0.6.0) — MIT. [`LICENSE`](#text-5cf1c9dc617e4cad7fa03181ff893601ad5243aa3be527ef39034e1cd6377676).
 - utf8_iter 1.0.4 (pkg:cargo/utf8_iter@1.0.4) — Apache-2.0 OR MIT. [`COPYRIGHT`](#text-c30152c94a6d75e021adbc52b3a52470366a46edb917e17deae3259251af244c), [`LICENSE-APACHE`](#text-cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30), [`LICENSE-MIT`](#text-3fa4ca83dcc9237839b1bdeb2e6d16bdfb5ec0c5ce42b24694d8bbf0dcbef72c).
 - uuid 1.26.1 (pkg:cargo/uuid@1.26.1) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-436bc5a105d8e57dcd8778730f3754f7bf39c14d2f530e4cde4bd2d17a83ec3d).
 - walkdir 2.5.0 (pkg:cargo/walkdir@2.5.0) — Unlicense/MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
 - want 0.3.1 (pkg:cargo/want@0.3.1) — MIT. [`LICENSE`](#text-a65f5d0a945d267751344c95665945b90c030ea107faf5c85d518929886187da).
 - web_atoms 0.2.6 (pkg:cargo/web_atoms@0.2.6) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-86dd7f026f916daf7511e39951ad8ea8cf55a8db67ae64060dacf829761c18f3).
+- web-time 1.1.0 (pkg:cargo/web-time@1.1.0) — MIT OR Apache-2.0. [`LICENSE-APACHE`](#text-54a744942eb3fa63a74d8d359989ed6962c04f3f10ff20cfa08ff8aa7efbe4e6), [`LICENSE-MIT`](#text-f428305bbf2e70fbd807af0f3c7ac1b7acfb95311640f451e9d2e48db6d7e96b).
 - webpki-roots 0.26.11 (pkg:cargo/webpki-roots@0.26.11) — CDLA-Permissive-2.0. [`LICENSE`](#text-e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8).
 - webpki-roots 1.0.10 (pkg:cargo/webpki-roots@1.0.10) — CDLA-Permissive-2.0. [`LICENSE`](#text-e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8).
 - webview2-com-macros 0.8.1 (pkg:cargo/webview2-com-macros@0.8.1) — MIT. [`LICENSE`](#text-0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73) ([upstream](https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE)).
-- webview2-com-sys 0.38.2 (pkg:cargo/webview2-com-sys@0.38.2) — MIT. [`LICENSE`](#text-0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73) ([upstream](https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE)), [`Microsoft.Web.WebView2 1.0.3650.58 LICENSE.txt`](#text-0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55) ([upstream](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3650.58/License)), [`Microsoft.Web.WebView2 1.0.3650.58 NOTICE.txt`](#text-106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90) ([upstream](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3650.58)).
-- webview2-com 0.38.2 (pkg:cargo/webview2-com@0.38.2) — MIT. [`LICENSE`](#text-0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73) ([upstream](https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE)).
+- webview2-com-sys 0.39.1 (pkg:cargo/webview2-com-sys@0.39.1) — MIT. [`LICENSE`](#text-0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73) ([upstream](https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE)), [`Microsoft.Web.WebView2 1.0.3800.47 LICENSE.txt`](#text-0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55) ([upstream](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3800.47/License)), [`Microsoft.Web.WebView2 1.0.3800.47 NOTICE.txt`](#text-106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90) ([upstream](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3800.47)).
+- webview2-com 0.39.1 (pkg:cargo/webview2-com@0.39.1) — MIT. [`LICENSE`](#text-0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73) ([upstream](https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE)).
 - winapi-util 0.1.11 (pkg:cargo/winapi-util@0.1.11) — Unlicense OR MIT. [`COPYING`](#text-01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f), [`LICENSE-MIT`](#text-cb3c929a05e6cbc9de9ab06a4c57eeb60ca8c724bef6c138c87d3a577e27aa14), [`UNLICENSE`](#text-7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c).
-- window-vibrancy 0.6.0 (pkg:cargo/window-vibrancy@0.6.0) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-617b85f62a4f1b6a62d3d9f28f6d7003b7f68a70b7675a8174bbcc68401ac62d), [`LICENSE.spdx`](#text-7ccef0d35e8507fa02d7e904a5277d62723f9ec576d52f6a865cab7b4dbf12ad).
+- window-vibrancy 0.8.1 (pkg:cargo/window-vibrancy@0.8.1) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-617b85f62a4f1b6a62d3d9f28f6d7003b7f68a70b7675a8174bbcc68401ac62d), [`LICENSE.spdx`](#text-7ccef0d35e8507fa02d7e904a5277d62723f9ec576d52f6a865cab7b4dbf12ad).
 - windows_x86_64_msvc 0.52.6 (pkg:cargo/windows_x86_64_msvc@0.52.6) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows_x86_64_msvc 0.53.1 (pkg:cargo/windows_x86_64_msvc@0.53.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-collections 0.2.0 (pkg:cargo/windows-collections@0.2.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows-collections 0.3.2 (pkg:cargo/windows-collections@0.3.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-core 0.58.0 (pkg:cargo/windows-core@0.58.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-core 0.61.2 (pkg:cargo/windows-core@0.61.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-future 0.2.1 (pkg:cargo/windows-future@0.2.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows-core 0.62.2 (pkg:cargo/windows-core@0.62.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows-future 0.3.2 (pkg:cargo/windows-future@0.3.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-implement 0.58.0 (pkg:cargo/windows-implement@0.58.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-implement 0.60.2 (pkg:cargo/windows-implement@0.60.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-interface 0.58.0 (pkg:cargo/windows-interface@0.58.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-interface 0.59.3 (pkg:cargo/windows-interface@0.59.3) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-link 0.1.3 (pkg:cargo/windows-link@0.1.3) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-link 0.2.1 (pkg:cargo/windows-link@0.2.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-numerics 0.2.0 (pkg:cargo/windows-numerics@0.2.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows-numerics 0.3.1 (pkg:cargo/windows-numerics@0.3.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-registry 0.6.1 (pkg:cargo/windows-registry@0.6.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-result 0.2.0 (pkg:cargo/windows-result@0.2.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-result 0.3.4 (pkg:cargo/windows-result@0.3.4) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-result 0.4.1 (pkg:cargo/windows-result@0.4.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-strings 0.1.0 (pkg:cargo/windows-strings@0.1.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-strings 0.4.2 (pkg:cargo/windows-strings@0.4.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-strings 0.5.1 (pkg:cargo/windows-strings@0.5.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-sys 0.52.0 (pkg:cargo/windows-sys@0.52.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-sys 0.59.0 (pkg:cargo/windows-sys@0.59.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-sys 0.60.2 (pkg:cargo/windows-sys@0.60.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-sys 0.61.2 (pkg:cargo/windows-sys@0.61.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-targets 0.52.6 (pkg:cargo/windows-targets@0.52.6) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-targets 0.53.5 (pkg:cargo/windows-targets@0.53.5) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows-threading 0.1.0 (pkg:cargo/windows-threading@0.1.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows-threading 0.2.1 (pkg:cargo/windows-threading@0.2.1) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows-version 0.1.7 (pkg:cargo/windows-version@0.1.7) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - windows 0.58.0 (pkg:cargo/windows@0.58.0) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
-- windows 0.61.3 (pkg:cargo/windows@0.61.3) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
+- windows 0.62.2 (pkg:cargo/windows@0.62.2) — MIT OR Apache-2.0. [`license-apache-2.0`](#text-c16f8dcf1a368b83be78d826ea23de4079fe1b4469a0ab9ee20563f37ff3d44b), [`license-mit`](#text-c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383).
 - winnow 1.0.4 (pkg:cargo/winnow@1.0.4) — MIT. [`LICENSE-MIT`](#text-cb5aedb296c5246d1f22e9099f925a65146f9f0d6b4eebba97fd27a6cdbbab2d).
 - writeable 0.6.4 (pkg:cargo/writeable@0.6.4) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
-- wry 0.55.1 (pkg:cargo/wry@0.55.1) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-ef88893533af22ffbb68ceef0724ba1389518df26165a34f3c99ad30b884df4f), [`LICENSE.spdx`](#text-26235c41e314fb0da35b33b2bb5bcbc4dd523839f8eeca52efcd43586f441fb5).
+- wry 0.57.2 (pkg:cargo/wry@0.57.2) — Apache-2.0 OR MIT. [`LICENSE-APACHE`](#text-a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2), [`LICENSE-MIT`](#text-ef88893533af22ffbb68ceef0724ba1389518df26165a34f3c99ad30b884df4f), [`LICENSE.spdx`](#text-26235c41e314fb0da35b33b2bb5bcbc4dd523839f8eeca52efcd43586f441fb5).
 - yoke-derive 0.8.2 (pkg:cargo/yoke-derive@0.8.2) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - yoke 0.8.3 (pkg:cargo/yoke@0.8.3) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - zerofrom-derive 0.1.7 (pkg:cargo/zerofrom-derive@0.1.7) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
@@ -315,7 +303,7 @@ Regenerate from the repository root after installing the locked dependencies wit
 - zmij 1.0.23 (pkg:cargo/zmij@1.0.23) — MIT. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - @tanstack/react-virtual 3.14.12 (pkg:npm/%40tanstack/react-virtual@3.14.12) — MIT. [`LICENSE`](#text-a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7).
 - @tanstack/virtual-core 3.17.10 (pkg:npm/%40tanstack/virtual-core@3.17.10) — MIT. [`LICENSE`](#text-a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7).
-- @tauri-apps/api 2.11.1 (pkg:npm/%40tauri-apps/api@2.11.1) — Apache-2.0 OR MIT. [`LICENSE_APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE_MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d).
+- @tauri-apps/api 2.12.4 (pkg:npm/%40tauri-apps/api@2.12.4) — Apache-2.0 OR MIT. [`LICENSE-APACHE-2.0`](#text-0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594), [`LICENSE-MIT`](#text-9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d), [`LICENSE.spdx`](#text-5e834fe9788c524210deda859c46a550ffa5aa0cba9ea0572f0d81120e97c008).
 - @tauri-apps/plugin-updater 2.12.0 (pkg:npm/%40tauri-apps/plugin-updater@2.12.0) — MIT OR Apache-2.0. [`LICENSE.spdx`](#text-eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef), [`LICENSE_MIT`](#text-89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607) ([upstream](https://raw.githubusercontent.com/tauri-apps/plugins-workspace/5baf71a47292d8490f0ba3d53f15224e55c48327/LICENSE_MIT)), [`LICENSE_APACHE-2.0`](#text-0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9) ([upstream](https://raw.githubusercontent.com/tauri-apps/plugins-workspace/5baf71a47292d8490f0ba3d53f15224e55c48327/LICENSE_APACHE-2.0)).
 - react-dom 19.3.0 (pkg:npm/react-dom@19.3.0) — MIT. [`LICENSE`](#text-da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93).
 - react 19.3.0 (pkg:npm/react@19.3.0) — MIT. [`LICENSE`](#text-da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93).
@@ -1671,33 +1659,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-### Text 1a33fc12a3abb0b3eb14db70e36ef1d0af51c93b1cc1f80f022c3bd406e9b874
-
-```text
-UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE
-
-Unicode Data Files include all data files under the directories http://www.unicode.org/Public/, http://www.unicode.org/reports/, http://www.unicode.org/cldr/data/, http://source.icu-project.org/repos/icu/, and http://www.unicode.org/utility/trac/browser/.
-
-Unicode Data Files do not include PDF online code charts under the directory http://www.unicode.org/Public/.
-
-Software includes any source code published in the Unicode Standard or under the directories http://www.unicode.org/Public/, http://www.unicode.org/reports/, http://www.unicode.org/cldr/data/, http://source.icu-project.org/repos/icu/, and http://www.unicode.org/utility/trac/browser/.
-
-NOTICE TO USER: Carefully read the following legal agreement. BY DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING UNICODE INC.'S DATA FILES ("DATA FILES"), AND/OR SOFTWARE ("SOFTWARE"), YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
-
-COPYRIGHT AND PERMISSION NOTICE
-
-Copyright © 1991-2016 Unicode, Inc. All rights reserved. Distributed under the Terms of Use in http://www.unicode.org/copyright.html.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of the Unicode data files and any associated documentation (the "Data Files") or Unicode software and any associated documentation (the "Software") to deal in the Data Files or Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, and/or sell copies of the Data Files or Software, and to permit persons to whom the Data Files or Software are furnished to do so, provided that either
-
-     (a) this copyright and permission notice appear with all copies of the Data Files or Software, or
-     (b) this copyright and permission notice appear in associated Documentation.
-
-THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA FILES OR SOFTWARE.
-
-Except as contained in this notice, the name of a copyright holder shall not be used in advertising or otherwise to promote the sale, use or other dealings in these Data Files or Software without prior written authorization of the copyright holder.
 ```
 
 ### Text 1c1020fa10a6bf318717e82c911bcc54ebdfb9bb280460ae332bcb2f82f57fbe
@@ -4812,6 +4773,212 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### Text 54a744942eb3fa63a74d8d359989ed6962c04f3f10ff20cfa08ff8aa7efbe4e6
+
+```text
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2023 dAxpeDDa
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
 ### Text 5734ed989dfca1f625b40281ee9f4530f91b2411ec01cb748223e7eb87e201ab
 
 ```text
@@ -4972,6 +5139,31 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### Text 5e834fe9788c524210deda859c46a550ffa5aa0cba9ea0572f0d81120e97c008
+
+```text
+SPDXVersion: SPDX-2.1
+DataLicense: CC0-1.0
+PackageName: tauri
+DataFormat: SPDXRef-1
+PackageSupplier: Organization: The Tauri Programme in the Commons Conservancy
+PackageHomePage: https://tauri.app
+PackageLicenseDeclared: Apache-2.0
+PackageLicenseDeclared: MIT
+PackageCopyrightText: 2019-2025, The Tauri Programme in the Commons Conservancy
+PackageSummary: <text>Tauri is a rust project that enables developers to make secure
+and small desktop applications using a web frontend.
+                </text>
+PackageComment: <text>The package includes the following libraries; see
+Relationship information.
+                </text>
+Created: 2019-05-20T09:00:00Z
+PackageDownloadLocation: git://github.com/tauri-apps/tauri
+PackageDownloadLocation: git+https://github.com/tauri-apps/tauri.git
+PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
+Creator: Person: Daniel Thompson-Yvetot
 ```
 
 ### Text 5eda8c6538e7d543efe31ebad3fc0e66a7c4df056ddb901a5bdfbf5ef397e116
@@ -7064,25 +7256,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-### Text 7e9ff2ef4828f9119eea17ada0b35697106ed2885521bfa854b126cea910802e
-
-```text
-# Unicode Character Database
-# Date: 2017-06-18, 23:32:00 GMT [KW]
-# © 2017 Unicode®, Inc.
-# For terms of use, see http://www.unicode.org/terms_of_use.html
-#
-# For documentation, see the following:
-# NamesList.html
-# UAX #38, "Unicode Han Database (Unihan)"
-# UAX #44, "Unicode Character Database."
-#
-# The UAXes can be accessed at http://www.unicode.org/versions/Unicode10.0.0/
-
-This directory contains the final data files
-for the Unicode Character Database, for Version 10.0.0 of the Unicode Standard.
 ```
 
 ### Text 8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90
@@ -13774,6 +13947,32 @@ Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 ```
 
+### Text f428305bbf2e70fbd807af0f3c7ac1b7acfb95311640f451e9d2e48db6d7e96b
+
+```text
+MIT License
+
+Copyright (c) 2023 dAxpeDDa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### Text f51ac2c59a222f7476ce507ca879960e2b64ea64bb2786eefdbeb7b0b538d1b7
 
 ```text
@@ -13802,24 +14001,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-```
-
-### Text f5c342c49f3ac804f3e8e7bb62a8040a44c50d47bb36902b1abd13f66a1adf8b
-
-```text
-* Copyright 2011-2015 The Rust Project developers.
-* Copyright 2013-2016 The rust-url developers.
-* Copyright 2015-2017 The Servo Project developers.
-* Copyright 2017 The UNIC Project developers.
-
-See [AUTHORS](AUTHORS) for the list of developers.
-
-Licensed under the Apache License, Version 2.0
-([LICENSE-APACHE](LICENSE-APACHE) or
-<http://www.apache.org/licenses/LICENSE-2.0>) or the MIT license
-([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>), at your
-option.  All files in the project carrying such notice may not be copied,
-modified, or distributed except according to those terms.
 ```
 
 ### Text f7715d38a3fa1b4ac97c5729740752505a39cb92ee83ab5b102aeb5eaa7cdea4

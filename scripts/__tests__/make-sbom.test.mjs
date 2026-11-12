@@ -78,8 +78,11 @@ test("generates an sbom from the repository lockfiles", () => {
     const titles = new Set([...notices.matchAll(/^### Text ([a-f0-9]{64})$/gm)].map((match) => match[1]));
     for (const [, digest] of notices.matchAll(/\]\(#text-([a-f0-9]{64})\)/g)) assert.ok(titles.has(digest));
     assert.match(notices, /^- ring 0\.17\.14 .*Apache-2\.0 AND ISC.*`LICENSE-other-bits`.*`third_party\/fiat\/LICENSE`/m);
-    assert.match(notices, /^- webview2-com-sys 0\.38\.2 .*`Microsoft\.Web\.WebView2 1\.0\.3650\.58 NOTICE\.txt`/m);
-    assert.match(notices, /^- selectors 0\.36\.1 .*MPL-2\.0.*\[Corresponding source\]/m);
+    const componentLines = notices.split("\n");
+    const loaderNotice = componentLines.find((line) => line.startsWith("- webview2-com-sys "));
+    assert.match(loaderNotice ?? "", /^- webview2-com-sys 0\.39\.1 .*`Microsoft\.Web\.WebView2 1\.0\.3800\.47 NOTICE\.txt`/);
+    const selectorsNotice = componentLines.find((line) => line.startsWith("- selectors "));
+    assert.match(selectorsNotice ?? "", /^- selectors 0\.38\.0 .*MPL-2\.0.*\[Corresponding source\]/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
