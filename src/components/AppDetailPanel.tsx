@@ -130,7 +130,7 @@ export function AppDetailPanel({
           >
             {L.openLocation}
           </button>
-          <div ref={menuRef} style={{ position: "relative" }}>
+          <div style={{ position: "relative" }}>
             <button
               ref={menuBtnRef}
               style={{ ...css.btnGhost, height: 38, width: 32, padding: 0 }}
@@ -144,6 +144,7 @@ export function AppDetailPanel({
             </button>
             {menuOpen && (
               <div
+                ref={menuRef}
                 role="menu"
                 style={{
                   position: "absolute",

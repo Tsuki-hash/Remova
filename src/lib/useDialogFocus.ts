@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 export const dialogLayer = {
+  popup: 8000,
   overview: 8500,
   confirm: 8600,
   closeChoice: 8700,
@@ -18,6 +19,7 @@ type Dialog = {
 };
 
 const dialogs: Dialog[] = [];
+const popupMenus = new Map<HTMLElement, HTMLElement | null>();
 let pageFocus: HTMLElement | null = null;
 
 function topDialog() {
@@ -64,10 +66,26 @@ function containFocus(event: FocusEvent) {
   }
 }
 
-function setCovered(dialog: Dialog, covered: boolean) {
-  dialog.element.toggleAttribute("inert", covered);
-  if (covered) dialog.element.setAttribute("aria-hidden", "true");
-  else dialog.element.removeAttribute("aria-hidden");
+function setCovered(element: HTMLElement, covered: boolean) {
+  element.toggleAttribute("inert", covered);
+  if (covered) element.setAttribute("aria-hidden", "true");
+  else element.removeAttribute("aria-hidden");
+}
+
+function updatePopupMenus() {
+  const top = topDialog();
+  for (const [menu, trigger] of popupMenus) {
+    setCovered(menu, Boolean(top && !top.element.contains(menu) && !top.element.contains(trigger)));
+  }
+}
+
+export function registerPopupMenu(menu: HTMLElement, trigger: HTMLElement | null) {
+  popupMenus.set(menu, trigger);
+  updatePopupMenus();
+  return () => {
+    popupMenus.delete(menu);
+    setCovered(menu, false);
+  };
 }
 
 export function useDialogFocus(
@@ -93,19 +111,21 @@ export function useDialogFocus(
     dialogs.push(dialog);
     if (topDialog() === dialog) {
       focusDialog(dialog);
-      if (previous) setCovered(previous, true);
+      if (previous) setCovered(previous.element, true);
     } else {
-      setCovered(dialog, true);
+      setCovered(dialog.element, true);
     }
+    updatePopupMenus();
 
     return () => {
       const wasTop = topDialog() === dialog;
       dialogs.splice(dialogs.indexOf(dialog), 1);
-      setCovered(dialog, false);
+      setCovered(dialog.element, false);
       if (!wasTop) return;
       const next = topDialog();
+      updatePopupMenus();
       if (next) {
-        setCovered(next, false);
+        setCovered(next.element, false);
         focusDialog(next, dialog.previousFocus);
       } else {
         window.removeEventListener("keydown", handleKeyDown, true);

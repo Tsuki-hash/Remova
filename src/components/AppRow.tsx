@@ -8,6 +8,7 @@ import { cssStyles as css } from "../styles";
 import { AppIcon } from "./AppIcon";
 import { prettyAppName, prettyPublisher } from "../lib/format";
 import { decisionChips, type DecisionChip } from "../lib/decision";
+import { dialogLayer } from "../lib/useDialogFocus";
 
 function chipStyle(c: DecisionChip) {
   if (c.tone === "accent") return { ...css.chipAccent, fontFamily: "inherit" as const };
@@ -93,7 +94,7 @@ function RowMenu({
  // shared focus management — open lands on the first item,
  // arrows roam, Escape restores focus to the trigger, outside click closes.
   usePopupMenu({
-    open,
+    open: open && pos !== null,
     menuRef,
     triggerRef: btnRef,
     onClose: (restoreFocus) => {
@@ -145,7 +146,7 @@ function RowMenu({
               position: "fixed",
               top: pos.top,
               left: pos.left,
-              zIndex: 10000,
+              zIndex: dialogLayer.popup,
               minWidth: pos.minWidth,
               background: "var(--surface-elevated)",
               border: "1px solid var(--border)",

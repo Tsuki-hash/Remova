@@ -1,4 +1,5 @@
-import { useEffect, type RefObject } from "react";
+import { useLayoutEffect, type RefObject } from "react";
+import { registerPopupMenu } from "../lib/useDialogFocus";
 
 /**
  * shared popup-menu focus behavior (single source for the
@@ -20,23 +21,26 @@ export function usePopupMenu({
   triggerRef: RefObject<HTMLElement | null>;
   onClose: (restoreFocus: boolean) => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const trigger = triggerRef.current;
+    if (!open || !menu) return;
+    const unregister = registerPopupMenu(menu, trigger);
+    const covered = () => menu.hasAttribute("inert");
     const items = (): HTMLButtonElement[] =>
-      Array.from(
-        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-      );
-    items()[0]?.focus();
+      Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    if (!covered()) items()[0]?.focus();
     const onDoc = (e: MouseEvent) => {
-      if (
-        menuRef.current?.contains(e.target as Node) ||
-        triggerRef.current?.contains(e.target as Node)
-      ) {
-        return;
-      }
+      if (covered() || menu.contains(e.target as Node) || trigger?.contains(e.target as Node)) return;
       onClose(false);
     };
+    const blockCoveredClick = (event: MouseEvent) => {
+      if (!covered()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (covered() || e.defaultPrevented) return;
       if (e.key === "Escape" || e.key === "Tab") {
  // Tab must not leave focus outside an open menu — close and restore.
         e.preventDefault();
@@ -60,10 +64,13 @@ export function usePopupMenu({
       }
     };
     document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
+    menu.addEventListener("click", blockCoveredClick, true);
+    menu.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
+      menu.removeEventListener("click", blockCoveredClick, true);
+      menu.removeEventListener("keydown", onKey);
+      unregister();
     };
  // The effect owns the open-lifecycle only; onClose is captured at open time.
  // eslint-disable-next-line react-hooks/exhaustive-deps

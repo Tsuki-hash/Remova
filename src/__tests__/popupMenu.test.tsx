@@ -19,7 +19,7 @@ it("focuses and roams menu items with wrapping arrows and Home/End", () => {
   const first = screen.getByText("first"), last = screen.getByText("last");
   expect(document.activeElement).toBe(first);
   for (const [key, target] of [["ArrowUp", last], ["ArrowDown", first], ["End", last], ["Home", first], ["ArrowDown", last]] as const) {
-    fireEvent.keyDown(window, { key });
+    fireEvent.keyDown(document.activeElement!, { key });
     expect(document.activeElement).toBe(target);
   }
 });
@@ -27,7 +27,7 @@ it("focuses and roams menu items with wrapping arrows and Home/End", () => {
 it.each(["Escape", "Tab"])("closes %s with a focus-restoration request", key => {
   const close = vi.fn();
   render(<Menu open close={close} />);
-  expect(fireEvent.keyDown(window, { key, cancelable: true })).toBe(false);
+  expect(fireEvent.keyDown(document.activeElement!, { key, cancelable: true })).toBe(false);
   expect(close).toHaveBeenCalledExactlyOnceWith(true);
 });
 
