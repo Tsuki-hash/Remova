@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from "react";
 import { t } from "../../i18n";
 import { dialogLayer, useDialogFocus } from "../../lib/useDialogFocus";
 import {
@@ -173,6 +173,7 @@ function HoldButton({
 
 function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>> }) {
   const L = t();
+  const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocus(true, dialogRef, dialogLayer.confirm, () => settleConfirm(false, opts.id));
   const holdMs = opts.danger && (opts.holdMs ?? 600) > 0 ? (opts.holdMs ?? 600) : 0;
@@ -183,6 +184,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
       role="dialog"
       aria-modal="true"
       aria-label={opts.title}
+      aria-describedby={opts.message ? descriptionId : undefined}
       tabIndex={-1}
       ref={dialogRef}
       style={{
@@ -204,6 +206,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
       <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>{opts.title}</div>
       {opts.message && (
         <div
+          id={descriptionId}
           style={{
             fontSize: 13,
             lineHeight: 1.55,

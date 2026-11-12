@@ -27,6 +27,12 @@ beforeEach(() => {
   native.openPath.mockResolvedValue(undefined);
 });
 
+function renderVisibleRestore(onError: (message: string) => void = vi.fn()) {
+  const hook = renderHook(() => useMoreRestore(onError));
+  act(() => hook.result.current.setPreviewVisible(true));
+  return hook;
+}
+
 it.each(["disk", "idle"] as const)("rejects a late successful %s result after cancellation", async mode => {
   const scan = mode === "disk" ? native.listTopDirSizes : native.rankIdleApps;
   let finish!: (rows: []) => void;
@@ -116,7 +122,7 @@ it("keeps restore failures beyond the twentieth row in a bounded scroll area", (
 
 it("names the selected backup and reports skipped or failed rows without a success toast", async () => {
   native.restoreSessionByName.mockResolvedValue(["restored file", "skipped protected restore target: protected", "restore failed for broken: denied"]);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: t().restoreConfirm("older-backup") }));
@@ -150,7 +156,7 @@ it.each(["zh", "en"] as const)("keeps backup verification and cancellation reaso
     "restore cancelled before remaining registry imports",
     unknownReason,
   ]);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({
@@ -181,7 +187,7 @@ it("localizes cancelled and failed registry import rows", async () => {
     "restore cancelled before remaining registry imports",
     "registry import failed HKLM\\X: reg import failed",
   ]);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(result.current.restoreMsgs).toEqual([
@@ -197,7 +203,7 @@ it("only announces confirmed restore rows as complete", async () => {
     "restored PATH scope: User",
     "PATH scope already matches backup: Machine",
   ]);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(toast.success).toHaveBeenCalledWith(t().restoreDone);
@@ -211,7 +217,7 @@ it("only announces confirmed restore rows as complete", async () => {
 
 it("exposes backup loading failures with a retry action instead of the empty vault", async () => {
   native.backupSessions.mockRejectedValueOnce(new Error("failed"));
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   const retry = vi.fn();
   render(<RestorePanel sessions={[]} pick="" setPick={() => {}} busy={false} msgs={[]} loadError={result.current.restoreLoadError} onReload={retry} onRun={() => {}} onDelete={() => {}} onClose={() => {}} />);
@@ -293,7 +299,7 @@ it("updates the selected backup after deletion and preserves selection when anot
   const newer = { ...older, name: "newer-backup" };
   native.backupSessions.mockResolvedValueOnce([older, newer]);
   native.deleteBackupSession.mockResolvedValue(undefined);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   native.backupSessions.mockResolvedValueOnce([newer]);
   await act(async () => { await result.current.deleteSession(older.name); });
@@ -308,7 +314,7 @@ it("updates the selected backup after deletion and preserves selection when anot
 
 it("preserves backups on deletion cancellation or failure", async () => {
   const error = vi.fn();
-  const { result } = renderHook(() => useMoreRestore(error));
+  const { result } = renderVisibleRestore(error);
   await act(async () => { await result.current.loadRestore(); });
   vi.mocked(requestConfirm).mockResolvedValueOnce(false);
   await act(async () => { await result.current.deleteSession("older-backup"); });
@@ -322,7 +328,7 @@ it("preserves backups on deletion cancellation or failure", async () => {
 
 it("reports rejected restore IPC and releases busy state so it can be retried", async () => {
   native.restoreSessionByName.mockRejectedValueOnce("denied");
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   await act(async () => { await result.current.runRestore(); });
   expect(result.current.restoreBusy).toBe(false);
@@ -338,7 +344,7 @@ it("selects the requested backup by identity and never falls back to the newest 
   native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2", sealed: true },
     { name: "requested", size_kb: 1, created_at: "1", sealed: true }]);
   const onError = vi.fn();
-  const { result } = renderHook(() => useMoreRestore(onError));
+  const { result } = renderVisibleRestore(onError);
   await act(async () => { await result.current.loadRestore("requested"); });
   expect(result.current.restorePick).toBe("requested");
   native.backupSessions.mockResolvedValueOnce([{ name: "newest", size_kb: 1, created_at: "2", sealed: true }]);
@@ -354,7 +360,7 @@ it("discards an old backup preview after selection changes", async () => {
     ({ name, size_kb: 1, created_at: "", sealed: true })));
   let finish!: (preview: unknown) => void;
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   const oldId = native.previewRestore.mock.calls.at(-1)?.[1];
   await act(async () => { result.current.setRestorePick("newer-backup"); });
@@ -369,7 +375,7 @@ it("discards an old backup preview after selection changes", async () => {
 it("cancels an unfinished backup preview when the vault closes", async () => {
   let finish!: (preview: unknown) => void;
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   const id = native.previewRestore.mock.calls.at(-1)?.[1];
   expect(id).toBeTruthy();
@@ -381,7 +387,7 @@ it("cancels an unfinished backup preview when the vault closes", async () => {
 });
 
 it("rejects a failed fresh preview before confirmation or any restore write", async () => {
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
   await act(async () => { await result.current.runRestore(); });
@@ -393,7 +399,7 @@ it("rejects a failed fresh preview before confirmation or any restore write", as
 });
 
 it("retries only the preview after a preview failure", async () => {
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   expect(native.backupSessions).toHaveBeenCalledOnce();
   native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
@@ -413,7 +419,7 @@ it("lists unfinished backups without offering them for restore", async () => {
     { name: "aborted", size_kb: 1, created_at: "", sealed: false, status: "unsealed" },
     { name: "good", size_kb: 1, created_at: "", sealed: true },
   ]);
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   expect(result.current.sessions.map(s => s.name)).toEqual(["aborted", "good"]);
   expect(result.current.restorePick).toBe("good");
@@ -469,7 +475,7 @@ it("only exposes removal and size for a pending session after its own preview va
 });
 
 it("refreshes conflict counts before confirmation and locks duplicate restore requests", async () => {
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   native.previewRestore.mockResolvedValueOnce({ name: "older-backup", existing: 2, unavailable: 1, entries: [] });
   native.restoreSessionByName.mockResolvedValueOnce(["restored file"]);
@@ -509,7 +515,7 @@ it("shows restore target conflicts and missing entries while rejecting stale or 
 it("does not let an older preview erase a fresh validation failure for the same backup", async () => {
   let finish!: (preview: unknown) => void;
   native.previewRestore.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   native.previewRestore.mockRejectedValueOnce("seal:map_mismatch");
   await act(async () => { await result.current.runRestore(); });
@@ -525,7 +531,7 @@ it("locks selection and deletion during confirmation and releases the lock on ca
     ({ name, size_kb: 1, created_at: "", sealed: true })));
   let cancel!: (ok: boolean) => void;
   vi.mocked(requestConfirm).mockImplementationOnce(() => new Promise(resolve => { cancel = resolve; }));
-  const { result } = renderHook(() => useMoreRestore(vi.fn()));
+  const { result } = renderVisibleRestore();
   await act(async () => { await result.current.loadRestore(); });
   let pending!: Promise<void>;
   await act(async () => { pending = result.current.runRestore(); });

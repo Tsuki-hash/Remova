@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -40,6 +40,7 @@ const CLEANUP_PENDING_PREFIX = "migrate:cleanup_pending:";
 type MigrationOperation = {
   source: string;
   target: string;
+  copying: boolean;
   copyId: number | null;
   cancelRequested: boolean;
 };
@@ -77,6 +78,9 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   const target = operation?.target ?? targetInput;
   const [plan, setPlan] = useState<MigrationPlan | null>(null);
   const [state, setState] = useState<MigrationState | null>(null);
+  const [actionFocus, setActionFocus] = useState<HTMLButtonElement | null>(null);
+  const primaryAction = useRef<HTMLButtonElement>(null);
+  const title = useRef<HTMLElement>(null);
   const busy = operation !== null;
   const reopenedDuringOperation = useRef(busy);
   // Monotonic id for status probes: the probe runs on the blocking pool shared
@@ -117,13 +121,28 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     }
   }, [busy, source, target, refreshState]);
 
-  const withBusy = async (work: () => Promise<void>) => {
+  useLayoutEffect(() => {
+    if (busy || !actionFocus) return;
+    setActionFocus(null);
+    const doc = actionFocus.ownerDocument;
+    if (doc.activeElement !== doc.body) return;
+    if (actionFocus.isConnected && !actionFocus.disabled) {
+      actionFocus.focus();
+    } else if (primaryAction.current && !primaryAction.current.disabled) {
+      primaryAction.current.focus();
+    } else {
+      title.current?.focus();
+    }
+  }, [actionFocus, busy]);
+
+  const withBusy = async (opener: HTMLButtonElement, work: () => Promise<void>) => {
     if (activeMigration) return;
-    setActiveMigration({ source, target, copyId: null, cancelRequested: false });
+    setActiveMigration({ source, target, copying: false, copyId: null, cancelRequested: false });
     try {
       await work();
     } finally {
       setActiveMigration(null);
+      setActionFocus(opener);
     }
   };
 
@@ -139,6 +158,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     }
     setPlan(plan);
     if (!plan.ok) return;
+    if (activeMigration) setActiveMigration({ ...activeMigration, copying: true });
     let copyId: number | null = null;
     try {
       copyId = await api.beginMigrateCopy(source, target);
@@ -267,7 +287,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.migrateTitle}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.migrateTitle}</strong>
+        <strong ref={title} tabIndex={-1}>{L.migrateTitle}</strong>
         <span style={css.muted}>{L.migrateHint}</span>
         <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onClose} aria-label={L.panelClose}>
           <CloseGlyph />
@@ -291,7 +311,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         const steps = [L.stepPlan, L.stepCopy, L.stepCutover, L.stepFinish];
         // The current step is the action the user takes NEXT: after a copy
         // the cutover is next; after a cutover the finish is next.
-        const idx = state === "cutover" || cleanupPending ? 3 : state === "copied" ? 2 : state === "finished" ? 4 : 0;
+        const idx = operation?.copying ? 1 : state === "cutover" || cleanupPending ? 3 : state === "copied" ? 2 : state === "finished" ? 4 : 0;
         return (
           <ol aria-label={L.migrateTitle} style={{ display: "flex", gap: 6, flexWrap: "wrap", listStyle: "none", margin: "8px 0", padding: 0 }}>
             {steps.map((label, i) => {
@@ -324,13 +344,14 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6, justifyContent: "flex-end" }}>
         <button
+          ref={primaryAction}
           type="button"
           style={{ ...css.btn, height: 34, opacity: busy ? 0.5 : 1 }}
           disabled={busy || !source.trim() || !target.trim() || state === "finished"}
-          onClick={() => {
-            if (state === "copied") void withBusy(runCutover);
-            else if (state === "cutover" || cleanupPending) void withBusy(runFinish);
-            else void withBusy(startMigration);
+          onClick={({ currentTarget }) => {
+            if (state === "copied") void withBusy(currentTarget, runCutover);
+            else if (state === "cutover" || cleanupPending) void withBusy(currentTarget, runFinish);
+            else void withBusy(currentTarget, startMigration);
           }}
         >
           {busy
@@ -342,7 +363,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
                 : state === "cutover" ? L.migrateFinish : L.migrateStart}
         </button>
         {state === "cutover" && (
-          <button type="button" style={{ ...css.btnGhost, height: 34 }} disabled={busy} onClick={() => void withBusy(runRollback)}>
+          <button type="button" style={{ ...css.btnGhost, height: 34 }} disabled={busy} onClick={({ currentTarget }) => void withBusy(currentTarget, runRollback)}>
             {L.migrateRollback}
           </button>
         )}

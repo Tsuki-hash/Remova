@@ -77,6 +77,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
   const [cancelRequested, setCancelRequested] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [openRestore, setOpenRestore] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
   const [restoreLoadError, setRestoreLoadError] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -91,8 +92,8 @@ export function useMoreRestore(onError: (msg: string) => void) {
     let current = true;
     setRestorePreview(null);
     setPreviewError(null);
-    setPreviewLoading(!!restorePick && openRestore);
-    if (restorePick && openRestore) {
+    setPreviewLoading(!!restorePick && openRestore && previewVisible);
+    if (restorePick && openRestore && previewVisible) {
       const id = crypto.randomUUID();
       let settled = false;
       void api.previewRestore(restorePick, id).then(preview => {
@@ -109,7 +110,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
       };
     }
     return () => { current = false; };
-  }, [restorePick, openRestore, previewTick]);
+  }, [restorePick, openRestore, previewVisible, previewTick]);
 
   const loadRestore = useCallback(async (requestedName?: string) => {
     if (operation.current) return;
@@ -295,6 +296,7 @@ export function useMoreRestore(onError: (msg: string) => void) {
     deleteSession,
     runRestore,
     retryPreview,
+    setPreviewVisible,
     closeRestore,
   };
 }

@@ -117,6 +117,12 @@ export function MorePage({
     void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
   }, [requestedBackup, loadRestore, openFromTrigger, restoreBusy, restoreLoading]);
   const openTool = tools.openTool;
+  const setPreviewVisible = rest.setPreviewVisible;
+  useEffect(() => {
+    if (openTool !== "restore") return;
+    setPreviewVisible(true);
+    return () => setPreviewVisible(false);
+  }, [openTool, setPreviewVisible]);
   const panelRef = useRef<HTMLDivElement>(null);
   const hasMonitorDiff = Boolean(monitorDiff);
   // `badge: L.badgeNew` used to stay lit for as long as `lastReport` was

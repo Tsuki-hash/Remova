@@ -254,3 +254,33 @@ it.each(["partial", "failure", "cancel", "cancel before writes"] as const)("keep
   if (outcome === "cancel") expect(screen.getByText(new RegExp(L.restoreFilesCancelled))).toBeTruthy();
   if (outcome === "cancel before writes") expect(screen.getByText(L.restoreCancelledBeforeChanges)).toBeTruthy();
 });
+
+it.each(["history", "other-page"] as const)("cancels a pending backup preview when switching to %s", async (destination) => {
+  const name = "pending-backup";
+  const L = t();
+  vi.mocked(api.backupSessions).mockResolvedValue([vaultSession(name)]);
+  let complete!: () => void;
+  vi.mocked(api.previewRestore)
+    .mockImplementationOnce(() => new Promise(resolve => { complete = () => resolve(vaultPreview(name)); }))
+    .mockResolvedValue(vaultPreview(name));
+  const page = mountMore();
+  fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledOnce());
+  const operation = vi.mocked(api.previewRestore).mock.calls[0]![1];
+  if (destination === "history") {
+    fireEvent.click(screen.getByText(L.history).closest("button")!);
+  } else {
+    page.rerender(<Toolbox visible={false} />);
+  }
+  expect(screen.queryByRole("region", { name: L.restorePreviewTitle })).toBeNull();
+  await waitFor(() => expect(api.cancelRestorePreview).toHaveBeenCalledWith(operation));
+  await act(async () => complete());
+  expect(api.cancelRestorePreview).toHaveBeenCalledOnce();
+  expect(api.cancelRestore).not.toHaveBeenCalled();
+  if (destination === "history") {
+    fireEvent.click(screen.getByText(L.restore).closest("button")!);
+  } else {
+    page.rerender(<Toolbox />);
+  }
+  await waitFor(() => expect(api.previewRestore).toHaveBeenCalledTimes(2));
+});
