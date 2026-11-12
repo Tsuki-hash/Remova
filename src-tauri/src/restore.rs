@@ -2475,6 +2475,73 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn a_full_restore_receipt_keeps_current_directory_ids_and_can_resume() {
+        let root = crate::test_support::TempDir::new("restore-receipt-cap");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let target = root.subdir("destination");
+        fs::create_dir(target.join("a")).unwrap();
+        fs::create_dir(target.join("b")).unwrap();
+        fs::create_dir(target.join("c")).unwrap();
+        for name in ["a/first", "b/second", "c/third"] {
+            fs::write(target.join(name), name).unwrap();
+        }
+        let session = root.join("1700000000_resume");
+        let backed = back_up_fixture_directory(&target, &session);
+        fs::rename(&target, root.join("original-fixture")).unwrap();
+        assert!(matches!(
+            interrupt_fixture_directory(&session, &backed, &target, |relative| {
+                if relative == Path::new("b").join("second") {
+                    return Err(std::io::Error::other("interrupted after two directories"));
+                }
+                Ok(())
+            }),
+            Err(publish::Failure::PartialDirectory(_))
+        ));
+        let inputs = validate_session(&session, || false).unwrap();
+        let entry = inputs.map.keys().next().unwrap();
+        let receipts = retry::Receipts::new(&inputs.seal);
+        // Pad the receipt with identities that cannot match any directory.
+        let file = receipts.open(entry, true, false).unwrap();
+        file.set_len(retry::MAX_BYTES + 100).unwrap();
+        drop(file);
+        fs::rename(target.join("b"), root.join("original-b")).unwrap();
+        fs::create_dir(target.join("b")).unwrap();
+        fs::write(target.join("b/keep"), b"user directory").unwrap();
+        assert_eq!(
+            preview_session("1700000000_resume", &session)
+                .unwrap()
+                .resumable,
+            1
+        );
+        let result = restore_session(&session).unwrap();
+        assert!(
+            result[0].starts_with("restore directory kept conflicts: 1"),
+            "{result:?}"
+        );
+        assert_eq!(fs::read(target.join("a/first")).unwrap(), b"a/first");
+        assert_eq!(fs::read(target.join("c/third")).unwrap(), b"c/third");
+        assert_eq!(fs::read(target.join("b/keep")).unwrap(), b"user directory");
+        assert!(!target.join("b/second").exists());
+        assert!(
+            receipts
+                .open(entry, false, false)
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .len()
+                < 4096
+        );
+        fs::rename(target.join("b"), root.join("user-b")).unwrap();
+        assert_eq!(
+            restore_session(&session).unwrap(),
+            [format!("restored {}", target.display())]
+        );
+        assert_eq!(fs::read(target.join("b/second")).unwrap(), b"b/second");
+        assert_eq!(fs::read(backed.join("b/second")).unwrap(), b"b/second");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn removing_a_backup_reclaims_only_its_restore_receipts() {
         let _env = crate::backup::lock_backup_env();
         let root = crate::test_support::TempDir::new("restore-receipt-retention");

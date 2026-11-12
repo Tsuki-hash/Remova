@@ -1,6 +1,7 @@
 //! Write an authenticated restore entry without replacing any live object.
 
-use super::retry::{directory_key, Journal, Receipts};
+use super::retry::{directory_key, DirectoryRecord, Journal, Receipts};
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -18,8 +19,9 @@ use windows::Wdk::Storage::FileSystem::{
     NTCREATEFILE_CREATE_OPTIONS,
 };
 use windows::Win32::Foundation::{
-    HANDLE, NTSTATUS, STATUS_NO_SUCH_FILE, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND, UNICODE_STRING,
+    HANDLE, NTSTATUS, STATUS_FILE_IS_A_DIRECTORY, STATUS_NOT_A_DIRECTORY, STATUS_NO_SUCH_FILE,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
+    STATUS_REPARSE_POINT_ENCOUNTERED, UNICODE_STRING,
 };
 use windows::Win32::Storage::FileSystem::{
     FileDispositionInfo, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
@@ -76,6 +78,21 @@ fn nt_result(status: NTSTATUS) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "restore target does not exist",
+        ));
+    }
+    if matches!(
+        status,
+        STATUS_NOT_A_DIRECTORY | STATUS_REPARSE_POINT_ENCOUNTERED
+    ) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "restore path has a different type",
+        ));
+    }
+    if status == STATUS_FILE_IS_A_DIRECTORY {
+        return Err(io::Error::new(
+            io::ErrorKind::IsADirectory,
+            "restore path has a different type",
         ));
     }
     status.ok().map_err(io::Error::other)
@@ -464,6 +481,47 @@ fn guard_restored_directory(directory: &File) -> io::Result<File> {
     Ok(guard)
 }
 
+fn collect_owned_directories(
+    source: &Path,
+    directory: &File,
+    relative: &Path,
+    journal: &Journal,
+    live: &mut BTreeSet<DirectoryRecord>,
+    left: &mut usize,
+) -> io::Result<()> {
+    let Some(record) = journal.owned_record(&directory_key(relative)?, directory)? else {
+        return Ok(());
+    };
+    live.insert(record);
+    for name in crate::fsutil::read_local_entry_names(source, *left)? {
+        check_cancelled()?;
+        *left -= 1;
+        let child = source.join(&name);
+        if !crate::fsutil::scan_path_metadata(&child)?.is_dir() {
+            continue;
+        }
+        match open_directory(directory, &name) {
+            Ok(target) => {
+                collect_owned_directories(
+                    &child,
+                    &target,
+                    &relative.join(&name),
+                    journal,
+                    live,
+                    left,
+                )?;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn publish(
     source: &Path,
     parent: &impl AsRawHandle,
@@ -491,21 +549,37 @@ pub(super) fn publish_directory(
     let key = directory_key(root)?;
     let (directory, journal) = match open_directory(parent, name) {
         Ok(directory) => {
-            let file = match receipts.open(entry, true, false) {
+            let mut journal = match receipts.open_writer(entry, false) {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Err(Failure::Occupied)
                 }
                 result => result?,
             };
-            let journal = Journal::open(file)?;
             if !journal.owns(&key, &directory)? {
                 return Err(Failure::Occupied);
+            }
+            if journal.needs_compaction() {
+                let mut live = BTreeSet::new();
+                collect_owned_directories(
+                    source,
+                    &directory,
+                    root,
+                    &journal,
+                    &mut live,
+                    &mut (crate::path_seal::MAX_PAYLOAD_NODES - 1),
+                )?;
+                journal = journal.compact(receipts, entry, live)?;
             }
             (directory, journal)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let file = receipts.open(entry, true, true)?;
-            let mut journal = Journal::open(file)?;
+            let mut journal = receipts.open_writer(entry, true)?;
+            if journal.needs_compaction()
+                && open_directory(parent, name)
+                    .is_err_and(|err| err.kind() == io::ErrorKind::NotFound)
+            {
+                journal.reset()?;
+            }
             let directory = claim_directory(parent, name, root, &mut journal)?;
             (directory, journal)
         }
@@ -637,7 +711,7 @@ mod tests {
             .open(root.join("receipt"))
             .unwrap();
         let mut run = DirectoryRestore {
-            journal: Journal::open(receipt).unwrap(),
+            journal: Journal::open(receipt, File::create(root.join("lock")).unwrap()).unwrap(),
             left: 1,
             retained: Vec::new(),
             conflicts: 0,

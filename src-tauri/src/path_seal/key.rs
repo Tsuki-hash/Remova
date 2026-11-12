@@ -371,16 +371,19 @@ impl Store {
         };
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let Some(hash) = name
+            let Some((hash, extension)) = name
                 .to_str()
                 .and_then(|name| name.strip_prefix("restore-"))
-                .and_then(|name| name.strip_suffix(".receipt"))
-                .filter(|hash| names.contains(*hash))
+                .and_then(|name| name.rsplit_once('.'))
+                .filter(|(hash, extension)| {
+                    names.contains(*hash) && matches!(*extension, "receipt" | "lock")
+                })
             else {
                 continue;
             };
-            // Share-none opens protect a journal held by another process.
-            let Ok(file) = self.open_restore_receipt(hash, true, false) else {
+            // Share-none opens protect both journals and writer locks in use.
+            let path = self.root.join(format!("restore-{hash}.{extension}"));
+            let Ok(file) = self.open_receipt_file(&path, true, OPEN_EXISTING) else {
                 continue;
             };
             let info = FILE_DISPOSITION_INFO {
@@ -403,13 +406,29 @@ impl Store {
         writable: bool,
         create: bool,
     ) -> std::io::Result<File> {
-        if name.len() != 64 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(std::io::Error::other("invalid restore receipt name"));
-        }
+        let filename = restore_receipt_filename(name)?;
+        self.open_receipt_file(
+            &self.root.join(filename),
+            writable,
+            if create { OPEN_ALWAYS } else { OPEN_EXISTING },
+        )
+    }
+
+    pub(super) fn lock_restore_receipt(&self, name: &str) -> std::io::Result<File> {
+        let filename = restore_receipt_filename(name)?;
+        let path = self.root.join(filename).with_extension("lock");
+        self.open_receipt_file(&path, true, OPEN_ALWAYS)
+    }
+
+    fn open_receipt_file(
+        &self,
+        path: &Path,
+        writable: bool,
+        disposition: FILE_CREATION_DISPOSITION,
+    ) -> std::io::Result<File> {
         let fixture = cfg!(test) && self._pins.is_empty();
-        let path = wide(&self.root.join(format!("restore-{name}.receipt")))
-            .map_err(std::io::Error::other)?;
-        let descriptor = (create && !fixture)
+        let path = wide(path).map_err(std::io::Error::other)?;
+        let descriptor = (disposition != OPEN_EXISTING && !fixture)
             .then(|| descriptor(false))
             .transpose()
             .map_err(std::io::Error::other)?;
@@ -423,12 +442,12 @@ impl Store {
                 PCWSTR(path.as_ptr()),
                 restore_receipt_access(writable),
                 if writable {
-                    FILE_SHARE_MODE(0)
+                    FILE_SHARE_NONE
                 } else {
                     FILE_SHARE_READ
                 },
                 attributes.as_ref().map(std::ptr::from_ref),
-                if create { OPEN_ALWAYS } else { OPEN_EXISTING },
+                disposition,
                 FILE_FLAG_OPEN_REPARSE_POINT,
                 None,
             )
@@ -443,6 +462,32 @@ impl Store {
             validate(&file, true).map_err(std::io::Error::other)?;
         }
         Ok(file)
+    }
+
+    /// Call with the writer lock held and the old receipt handle closed.
+    pub(super) fn replace_restore_receipt(
+        &self,
+        name: &str,
+        stage: &Path,
+        write: impl FnOnce(&mut File) -> std::io::Result<()>,
+    ) -> std::io::Result<File> {
+        let target = self.root.join(restore_receipt_filename(name)?);
+        let temporary = stage.join("receipt");
+        let mut file = self.open_receipt_file(&temporary, true, CREATE_NEW)?;
+        write(&mut file)?;
+        file.sync_all()?;
+        drop(file);
+        let from = wide(&temporary).map_err(std::io::Error::other)?;
+        let to = wide(&target).map_err(std::io::Error::other)?;
+        unsafe {
+            MoveFileExW(
+                PCWSTR(from.as_ptr()),
+                PCWSTR(to.as_ptr()),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        }
+        .map_err(std::io::Error::other)?;
+        self.open_receipt_file(&target, true, OPEN_EXISTING)
     }
 
     pub fn stage(self) -> Result<Stage, String> {
@@ -472,6 +517,13 @@ impl Store {
             pin: Some(pin),
         })
     }
+}
+
+fn restore_receipt_filename(name: &str) -> std::io::Result<String> {
+    if name.len() != 64 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(std::io::Error::other("invalid restore receipt name"));
+    }
+    Ok(format!("restore-{name}.receipt"))
 }
 
 fn restore_receipt_access(writable: bool) -> u32 {

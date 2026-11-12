@@ -527,6 +527,19 @@ impl RestoreReceiptStore {
     pub fn remove_receipts(&self, names: &std::collections::HashSet<String>) {
         self.0.remove_restore_receipts(names);
     }
+
+    pub fn lock_receipt(&self, name: &str) -> std::io::Result<std::fs::File> {
+        self.0.lock_restore_receipt(name)
+    }
+
+    pub fn replace_receipt(
+        &self,
+        name: &str,
+        write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+    ) -> std::io::Result<std::fs::File> {
+        let stage = restore_stage().map_err(std::io::Error::other)?;
+        self.0.replace_restore_receipt(name, stage.path(), write)
+    }
 }
 
 #[cfg(windows)]
