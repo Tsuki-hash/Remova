@@ -6,6 +6,8 @@ use crate::safety::{
     allow_manage_reg_write, allow_manage_service_write, is_allowed_startup_approved_key,
 };
 
+pub(crate) mod presentation;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ManageItem {
     pub name: String,
@@ -19,13 +21,19 @@ pub struct ManageItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_run: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_service: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_action: Option<presentation::TaskAction>,
 }
 
 fn manage_row(name: String, detail: String, location: String, enabled: bool) -> ManageItem {
@@ -160,7 +168,8 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                     enabled,
                 );
                 it.kind = Some("startup".into());
-                it.source_label = Some("Registry".into());
+                it.path = presentation::command_path(&vdata);
+                it.display_icon = it.path.clone();
                 it
             });
         }
@@ -205,8 +214,9 @@ pub fn list_startup_items() -> Vec<ManageItem> {
                     enabled,
                 );
                 it.kind = Some("startup".into());
-                it.source_label = Some("Startup folder".into());
-                it.path = Some(path.display().to_string());
+                let (target, icon) = presentation::startup_file(&path);
+                it.path = target.or_else(|| Some(path.display().to_string()));
+                it.display_icon = icon;
                 it
             });
         }
@@ -277,21 +287,12 @@ fn list_auto_services() -> Vec<ManageItem> {
             if start != 2 {
                 continue;
             }
-            let display_name = crate::regscan::read_string(&path, "DisplayName")
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| svc.clone());
             out.push({
-                let mut it = manage_row(
-                    display_name,
-                    format!("Service auto-start · {svc}"),
-                    format!("SVC::{svc}"),
-                    true,
-                );
+                let mut it = manage_row(svc.clone(), String::new(), format!("SVC::{svc}"), true);
+                presentation::fill_service(&mut it, &path, svc_type);
                 it.kind = Some("startup".into());
-                it.source_label = Some("Service".into());
                 it.running = Some(running_services.contains(&svc.to_ascii_lowercase()));
                 it.start_type = Some("auto".into());
-                it.path = Some(svc.clone());
                 it
             });
         }
@@ -340,7 +341,6 @@ fn list_packaged_startup_with(
                 enabled,
             );
             it.kind = Some("startup".into());
-            it.source_label = Some("Store".into());
             it
         });
     }
@@ -355,11 +355,11 @@ fn resolve_packaged_display_name(value_name: &str) -> Option<String> {
     );
     // AppId may be a GUID path under SystemAppData\{pfn}\{AppId}
     let key = format!(r"{root}\{app_id}");
-    if let Some(d) = crate::regscan::read_string(&key, "DisplayName").filter(|s| !s.is_empty()) {
+    if let Some(d) = presentation::read_label(&key, "DisplayName") {
         return Some(d);
     }
     // Some images store DisplayName on the package root.
-    if let Some(d) = crate::regscan::read_string(&root, "DisplayName").filter(|s| !s.is_empty()) {
+    if let Some(d) = presentation::read_label(&root, "DisplayName") {
         return Some(d);
     }
     None
@@ -470,26 +470,14 @@ pub fn list_services() -> Vec<ManageItem> {
             let start = crate::regscan::read_dword(&path, "Start").unwrap_or(3);
             // 2=auto, 3=manual, 4=disabled
             let enabled = start != 4;
-            let display_name = crate::regscan::read_string(&path, "DisplayName")
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| svc.clone());
-            let desc = crate::regscan::read_string(&path, "Description")
-                .filter(|s| !s.is_empty())
-                .unwrap_or_default();
             let start_label = start_type_label(start);
-            let detail = if desc.is_empty() {
-                display_name.clone()
-            } else {
-                desc.chars().take(160).collect()
-            };
             let running = running_names.contains(&svc.to_lowercase());
             out.push({
-                let mut it = manage_row(svc.clone(), detail, path.clone(), enabled);
+                let mut it = manage_row(svc.clone(), String::new(), path.clone(), enabled);
+                presentation::fill_service(&mut it, &path, svc_type);
                 it.kind = Some("service".into());
                 it.running = Some(running);
                 it.start_type = Some(start_label.to_string());
-                it.path = Some(path);
-                it.source_label = Some(display_name);
                 it
             });
         }
@@ -557,19 +545,20 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         // Skip header; positional columns are locale-stable in /fo CSV /v:
         // 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment
         let _ = lines.next();
+        let records = task_csv_records(lines);
         const IDX_TASK: usize = 1;
         const IDX_STATUS: usize = 3;
         const IDX_RUN: usize = 8;
         const IDX_COMMENT: usize = 10;
-        for line in lines {
+        for line in records {
             if !crate::scan_task::checkpoint("tasks", items.len()) {
                 return items;
             }
-            let cols = split_csv_line(line);
+            let cols = split_csv_line(&line);
             let Some(name) = cols.get(IDX_TASK).cloned() else {
                 continue;
             };
-            if name.is_empty() || name.eq_ignore_ascii_case("taskname") {
+            if !name.starts_with('\\') || name.ends_with('\\') {
                 continue;
             }
             let lower = name.to_lowercase();
@@ -578,21 +567,18 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
                 continue;
             }
             let status = cols.get(IDX_STATUS).cloned().unwrap_or_default();
-            let run = cols.get(IDX_RUN).cloned().unwrap_or_default();
-            let comment = cols.get(IDX_COMMENT).cloned().unwrap_or_default();
+            let run = cols.get(IDX_RUN).map(String::as_str).unwrap_or_default();
+            let comment = cols
+                .get(IDX_COMMENT)
+                .map(String::as_str)
+                .unwrap_or_default();
             let next_run = cols.get(2).cloned().unwrap_or_default();
             let last_run = cols.get(5).cloned().unwrap_or_default();
             let enabled = task_status_enabled(&status);
-            let detail = if !comment.is_empty() && comment != "N/A" {
-                comment.chars().take(120).collect()
-            } else if !run.is_empty() && run != "N/A" {
-                run.chars().take(120).collect()
-            } else {
-                status.clone()
-            };
             let location = name.clone();
             items.push({
-                let mut it = manage_row(name, detail, location, enabled);
+                let mut it = manage_row(name, String::new(), location, enabled);
+                presentation::fill_task(&mut it, run, comment);
                 it.kind = Some("task".into());
                 it.next_run = Some(next_run).filter(|s| !s.is_empty() && s != "N/A");
                 it.last_run = Some(last_run).filter(|s| !s.is_empty() && s != "N/A");
@@ -600,12 +586,35 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
             });
         }
         items.sort_by_key(|a| a.name.to_lowercase());
-        items.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+        items.dedup_by(|later, first| {
+            if !later.name.eq_ignore_ascii_case(&first.name) {
+                return false;
+            }
+            // Verbose CSV repeats a task row for each registered action.
+            presentation::mark_multiple_task_actions(first);
+            true
+        });
         items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
         // arm write-side allow-list from this listing.
         remember_scheduled_task_names(items.iter().map(|it| it.name.clone()));
         items
     }
+}
+
+#[cfg(windows)]
+fn task_csv_records(mut lines: std::str::Lines<'_>) -> impl Iterator<Item = String> + '_ {
+    std::iter::from_fn(move || {
+        let mut record = lines.next()?.to_owned();
+        let mut quoted = record.bytes().filter(|byte| *byte == b'"').count() % 2 != 0;
+        // Task comments can contain line breaks. Escaped quote pairs leave parity unchanged.
+        while quoted {
+            let next = lines.next()?;
+            record.push('\n');
+            record.push_str(next);
+            quoted ^= next.bytes().filter(|byte| *byte == b'"').count() % 2 != 0;
+        }
+        Some(record)
+    })
 }
 
 /// Decode console output that may be UTF-8 or OEM code page (schtasks on zh-CN).
@@ -969,6 +978,18 @@ mod tests {
         assert_eq!(cols[0], r"C:\a");
         assert_eq!(cols[1], r#"say "hi""#);
         assert_eq!(cols[2], "x");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn task_csv_keeps_multiline_comments_in_their_own_record() {
+        let csv = "\"PC\",\"\\Vendor\\First\",\"line one\r\nline \"\"two\"\"\"\r\n\"PC\",\"\\Vendor\\Second\",\"Next\"";
+        let rows: Vec<_> = super::task_csv_records(csv.lines())
+            .map(|line| super::split_csv_line(&line))
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][2], "line one\nline \"two\"");
+        assert_eq!(rows[1][1], r"\Vendor\Second");
     }
 
     #[test]

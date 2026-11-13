@@ -528,8 +528,11 @@ export type ManageItem = {
   running?: boolean | null;
   /** Service Start type only. */
   start_type?: ManageStartType | null;
-  /** Startup source: registry / folder / store / service. */
-  source_label?: string | null;
+  /** Visible label. The name above stays the service ID or full task path. */
+  display_name?: string | null;
+  display_icon?: string | null;
+  system_service?: boolean | null;
+  task_action?: { kind: "program"; program: string; script_host: boolean } | { kind: "multiple" } | null;
   last_run?: string | null;
   next_run?: string | null;
   path?: string | null;

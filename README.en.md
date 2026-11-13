@@ -41,7 +41,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | **Safety Vault** | **Optional** backup before clean (unchecked by default); 7-day retention; open existing backups from report/history |
 | **Verified clean** | Post-clean checklist (paths / registry / PATH) |
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin |
-| **System-item semantics** | Startup items = enabled/disabled; services split running state from start type (stopped ≠ disabled); scheduled tasks show last/next run |
+| **System-item details** | Startup items and services show readable names, sources and available icons. Services show run state and start type separately. Select a scheduled task to see its program, full task path and run times. |
 | AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
 
 > Brand: calm, professional, reversible — not a “PC manager”.
@@ -63,11 +63,13 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 ### Clean & backup
 - Dry-run first; real clean can opt into a safety backup (**unchecked by default**)  
-- A system restore point is attempted before cleaning; turn it off under More  
+- Remova attempts to create a system restore point before cleaning. Turn this off under Settings & help.
 - Shared runtimes (VC++ / .NET, …) unchecked by default  
 - Backup root: `%PROGRAMDATA%\Remova\Backup\`
 
-### More tools
+### Toolbox
+
+Restore Backup and Cleanup History are at the top. Browse the remaining tools by purpose or use search.
 - Orphans page, startup / services / scheduled tasks; broken MSI records and orphan firewall rules  
 - Installer & updater caches, specialty caches, and the idle-app radar note “N more not shown” on their main lists (cache cleanup also lists the locations it could not read)  
 - **Disk radar**: a read-only view of what takes the space; the overview pins each root's total ahead of size-ranked children (24 rows on the system drive, 12 elsewhere and when drilling down), unfinished directories show a `>=` floor with the entries checked, drill-down lists note “N more not shown”, and the system-drive overview states it covers the five known roots only  

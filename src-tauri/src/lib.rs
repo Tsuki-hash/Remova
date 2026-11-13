@@ -287,13 +287,16 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
 
 /// Return `data:image/png;base64,...` for the app icon, or null.
 #[tauri::command]
-async fn app_icon_data(display_icon: Option<String>) -> Result<Option<String>, String> {
+async fn app_icon_data(
+    display_icon: Option<String>,
+    embedded_only: Option<bool>,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let raw = display_icon?;
         if raw.trim().is_empty() || !crate::fsutil::is_local_drive_path(&raw) {
             return None;
         }
-        let png = icon::extract_icon_png(&raw)?;
+        let png = icon::extract_icon_png(&raw, embedded_only.unwrap_or(false))?;
         use base64_light::*;
         Some(format!("data:image/png;base64,{}", b64_encode(&png)))
     })

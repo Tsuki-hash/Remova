@@ -532,27 +532,31 @@ pub(super) fn scan_services(
 /// Executable path from a service `ImagePath` (quotes and arguments stripped).
 /// Environment variables are expanded first: third-party services may use
 /// `%ProgramFiles%`, and an unresolved `%VAR%` cannot be matched safely.
-fn service_image_exe(image: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn service_image_exe(image: &str) -> Option<std::path::PathBuf> {
     let expanded = crate::regops::expand_env_string(image.trim());
-    let expanded = expanded.trim();
-    if expanded.is_empty() || expanded.contains('%') {
+    if expanded.contains('%') {
         return None;
     }
-    let exe = if let Some(rest) = expanded.strip_prefix('"') {
-        rest.split('"').next()?
+    image_exe_token(&expanded).map(std::path::PathBuf::from)
+}
+
+pub(crate) fn image_exe_token(command: &str) -> Option<&str> {
+    let command = command.trim();
+    let exe = if let Some(rest) = command.strip_prefix('"') {
+        rest.split_once('"')?.0
     } else {
         // Unquoted ImagePath values with spaces are legal. Cut at the first
         // `.exe` that ends the token, so `C:\Program Files\Vendor\svc.exe -k`
         // keeps the whole executable path.
-        match exe_token_end(expanded) {
-            Some(end) => &expanded[..end],
-            None => expanded.split_whitespace().next()?,
+        match exe_token_end(command) {
+            Some(end) => &command[..end],
+            None => command.split_whitespace().next()?,
         }
     };
     if exe.len() <= 3 {
         return None;
     }
-    Some(std::path::PathBuf::from(exe))
+    Some(exe)
 }
 
 fn exe_token_end(s: &str) -> Option<usize> {

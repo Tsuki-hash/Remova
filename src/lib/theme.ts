@@ -41,7 +41,7 @@ export function resolveTheme(pref: ThemePreference): Theme {
   return pref === "system" ? systemTheme() : pref;
 }
 
-export type NavId = "software" | "startup" | "services" | "tasks" | "orphans" | "more";
+export type NavId = "software" | "startup" | "services" | "tasks" | "orphans" | "more" | "settings";
 
 /** Always open on the software list (main uninstall path); do not restore last tab. */
 export function loadNav(): NavId {

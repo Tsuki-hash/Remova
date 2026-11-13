@@ -884,8 +884,10 @@ export default function App() {
               onError={core.setError}
             />
           )}
-          {nav === "more" && (
+          {(nav === "more" || nav === "settings") && (
             <MorePage
+              key={nav}
+              settingsOnly={nav === "settings"}
               restore={restore}
               selected={selected}
               monitoring={monitoring}

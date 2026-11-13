@@ -3,7 +3,7 @@ import { navSubtitle, navTitle } from "../lib/appNav";
 import { dict as zh } from "../i18n/zh";
 import type { NavId } from "../lib/theme";
 
-const allNav: NavId[] = ["software", "startup", "services", "tasks", "orphans", "more"];
+const allNav: NavId[] = ["software", "startup", "services", "tasks", "orphans", "more", "settings"];
 
 describe("navTitle", () => {
   it("maps every nav id to a non-empty dictionary label", () => {

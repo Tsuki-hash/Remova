@@ -3,7 +3,7 @@
 // (call counts, observer options, element overflow) rather than wall-clock time,
 // which is exactly what made the defects invisible before.
 import { readFileSync } from "node:fs";
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAppFilter } from "../hooks/useAppFilter";
 import { useAppChrome } from "../hooks/useAppChrome";
@@ -239,11 +239,8 @@ describe("long manage rows are clipped instead of overlapping", () => {
       if (!found) throw new Error("row not rendered");
       return found;
     });
-    expect(row.style.overflow).toBe("hidden");
-    // The text column and the status column clip too, so a three-line task
-    // description cannot push its siblings out of the 72px row.
-    const columns = Array.from(row.children).filter(el => (el as HTMLElement).style.overflow === "hidden");
-    expect(columns.length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/Acme Backup Task/)).toBeTruthy();
+    expect(row.style.height).toBe("62px");
+    expect(row.querySelectorAll(".remova-task-summary .ell")).toHaveLength(2);
+    expect(row.textContent).toMatch(/Acme Backup Task/);
   });
 });

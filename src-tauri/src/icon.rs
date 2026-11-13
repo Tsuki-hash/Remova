@@ -72,9 +72,29 @@ fn icon_source_extension_ok(path: &str) -> bool {
 /// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
 /// Uses the Known Folder LocalAppData `\Remova\icons\{hash}.png` as disk cache
 /// (key includes source fingerprint).
-pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
+pub fn extract_icon_png(raw_display_icon: &str, embedded_only: bool) -> Option<Vec<u8>> {
+    let (path, index) = parse_display_icon(raw_display_icon);
+    if path.is_empty()
+        || !icon_source_extension_ok(&path)
+        || !crate::fsutil::is_local_drive_path(&path)
+    {
+        return None;
+    }
+    #[cfg(windows)]
+    let _pins = if embedded_only {
+        Some(crate::fsutil::pin_local_scan_path(std::path::Path::new(&path)).ok()?)
+    } else {
+        None
+    };
     let dir = icon_cache_dir();
-    let cache_file = dir.as_ref().map(|d| d.join(cache_key(raw_display_icon)));
+    let cache_file = dir.as_ref().map(|dir| {
+        let key = cache_key(raw_display_icon);
+        dir.join(if embedded_only {
+            format!("embedded-{key}")
+        } else {
+            key
+        })
+    });
     if let (Some(_), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
         if cache_file.is_file() {
             if let Ok(bytes) = std::fs::read(cache_file) {
@@ -85,14 +105,7 @@ pub fn extract_icon_png(raw_display_icon: &str) -> Option<Vec<u8>> {
             }
         }
     }
-    let (path, index) = parse_display_icon(raw_display_icon);
-    if path.is_empty()
-        || !crate::fsutil::is_local_drive_path(&path)
-        || !icon_source_extension_ok(&path)
-    {
-        return None;
-    }
-    let png = extract_from_path(&path, index)?;
+    let png = extract_from_path(&path, index, embedded_only)?;
     if let (Some(dir), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
         let _ = std::fs::create_dir_all(dir);
         // tmp + rename: a crash mid-write must not leave a torn PNG that would
@@ -137,12 +150,12 @@ fn prune_stale_cache(dir: &std::path::Path, keep: &std::path::Path) {
 }
 
 #[cfg(not(windows))]
-fn extract_from_path(_path: &str, _index: i32) -> Option<Vec<u8>> {
+fn extract_from_path(_path: &str, _index: i32, _embedded_only: bool) -> Option<Vec<u8>> {
     None
 }
 
 #[cfg(windows)]
-fn extract_from_path(path: &str, index: i32) -> Option<Vec<u8>> {
+fn extract_from_path(path: &str, index: i32, embedded_only: bool) -> Option<Vec<u8>> {
     use std::path::Path;
     use windows::core::PCWSTR;
     use windows::Win32::UI::Shell::{
@@ -173,6 +186,8 @@ fn extract_from_path(path: &str, index: i32) -> Option<Vec<u8>> {
         }
         let hicon = if count > 0 && !large.is_invalid() {
             large
+        } else if embedded_only {
+            return None;
         } else {
             // Fallback: shell file icon (works for many non-PE paths)
             let mut shfi: SHFILEINFOW = std::mem::zeroed();
@@ -352,7 +367,8 @@ mod tests {
     #[test]
     fn extract_shell32_icon() {
         let dll = crate::regops::sys_tool("shell32.dll");
-        let bytes = super::extract_from_path(&dll, 0).expect("system shell icon must extract");
+        let bytes =
+            super::extract_from_path(&dll, 0, true).expect("system shell icon must extract");
         assert!(looks_like_png(&bytes));
     }
 

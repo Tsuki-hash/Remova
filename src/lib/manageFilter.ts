@@ -2,8 +2,10 @@
 
 export type ManageLike = {
   name: string;
+  display_name?: string | null;
   detail?: string;
   location?: string;
+  system_service?: boolean | null;
 };
 
 const MICROSOFT_TOKENS = [
@@ -42,10 +44,11 @@ const SYSTEM_LOC_MARKERS = [
  * (avoids hiding third-party tools that merely mention Windows).
  */
 export function looksMicrosoft(it: ManageLike): boolean {
+  if (it.system_service === true) return true;
   const name = (it.name || "").toLowerCase();
   const detail = (it.detail || "").toLowerCase();
   const loc = (it.location || "").replace(/\//g, "\\").toLowerCase();
-  const blob = `${name}\n${detail}`;
+  const blob = [name, it.display_name?.toLowerCase(), detail].join("\n");
 
   if (MICROSOFT_TOKENS.some((t) => blob.includes(t))) return true;
   if (SYSTEM_LOC_MARKERS.some((m) => loc.includes(m))) return true;

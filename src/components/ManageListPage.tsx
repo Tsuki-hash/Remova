@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import { ToolGlyph } from "./ToolIcons";
+import { AppIcon } from "./AppIcon";
 import { cssStyles as css } from "../styles";
 import { formatError, isAccessDeniedError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
@@ -12,6 +13,7 @@ import { looksMicrosoft } from "../lib/manageFilter";
 import type { ManageItem } from "../types";
 import { ScanProgressBar } from "./ScanProgressBar";
 import { useListViewportHeight } from "../hooks/useListViewportHeight";
+import { taskName, TaskWorkspace } from "./TaskWorkspace";
 
 export type ManagePageTab = ManageTabId;
 
@@ -41,12 +43,35 @@ async function ensureElevatedForManage(): Promise<boolean> {
 }
 
 function startupSourceLabel(it: ManageItem, L: ReturnType<typeof t>) {
-  if (it.source_label) return it.source_label;
   const loc = it.location || "";
   if (loc.startsWith("PACKAGED::")) return L.manageSourceStore;
   if (loc.startsWith("SVC::")) return L.manageSourceService;
   if (loc.startsWith("FOLDER::")) return L.manageSourceFolder;
   return L.manageSourceRegistry;
+}
+
+function displayName(it: ManageItem) {
+  return it.display_name || it.name;
+}
+
+function entrySubtitle(it: ManageItem, tab: ManagePageTab, L: ReturnType<typeof t>) {
+  const filename = it.path?.split(/[\\/]/).pop();
+  const service = tab === "services" || it.location.startsWith("SVC::");
+  if (service) {
+    const source = tab === "startup" ? L.manageSourceService : it.system_service ? L.manageSystemService : L.manageService;
+    const id = it.display_name && it.display_name !== it.name ? it.name : "";
+    return [source, id, !it.detail && filename].filter(Boolean).join(" · ");
+  }
+  return [startupSourceLabel(it, L), filename && filename !== it.name ? filename : null]
+    .filter(Boolean).join(" · ");
+}
+
+function entryGlyph(it: ManageItem, tab: ManagePageTab) {
+  if (it.system_service) return "system-service";
+  if (tab === "services" || it.location.startsWith("SVC::")) return "services";
+  if (it.location.startsWith("FOLDER::")) return "folder";
+  if (it.location.startsWith("PACKAGED::")) return "installers";
+  return "startup";
 }
 
 function startTypeLabel(it: ManageItem, L: ReturnType<typeof t>) {
@@ -85,6 +110,7 @@ export function ManageListPage({
   const [q, setQ] = useState("");
   const [onlyOn, setOnlyOn] = useState(true);
   const [hideMicrosoft, setHideMicrosoft] = useState(tab === "services");
+  const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useListViewportHeight(scrollRef);
 
@@ -95,16 +121,17 @@ export function ManageListPage({
   }, [tab]);
 
   const setEnabled = async (item: ManageItem, nextEnabled: boolean) => {
+    const name = tab === "tasks" ? taskName(item) : displayName(item);
     if (!(await ensureElevatedForManage())) {
       return;
     }
     if (!nextEnabled) {
       const message =
         tab === "services"
-          ? L.confirmDisableServiceVsStop(item.name)
+          ? L.confirmDisableServiceVsStop(name)
           : tab === "tasks"
-            ? L.confirmDisableTask(item.name)
-            : L.confirmDisableStartup(item.name);
+            ? L.confirmDisableTask(item.location)
+            : L.confirmDisableStartup(name);
       const ok = await requestConfirm({
         title: L.manageDisable,
         message,
@@ -121,7 +148,10 @@ export function ManageListPage({
       } else {
         await api.setTaskEnabled(item.name, nextEnabled);
       }
-      toast.success(nextEnabled ? L.manageEnabledDone(item.name) : L.manageDisabledDone(item.name));
+      toast.success(nextEnabled ? L.manageEnabledDone(name) : L.manageDisabledDone(name));
+      if (tab === "tasks" && document.activeElement?.closest(".remova-task-detail")) {
+        searchRef.current?.focus({ preventScroll: true });
+      }
       await reload();
     } catch (e) {
       const msg = formatError(e);
@@ -141,14 +171,14 @@ export function ManageListPage({
     if (run) {
       const ok = await requestConfirm({
         title: L.manageStartBtn,
-        message: L.confirmStartService(item.name),
+        message: L.confirmStartService(displayName(item)),
         confirmLabel: L.manageStartBtn,
       });
       if (!ok) return;
     } else {
       const ok = await requestConfirm({
         title: L.manageStop,
-        message: L.confirmStopService(item.name),
+        message: L.confirmStopService(displayName(item)),
         confirmLabel: L.manageStop,
         danger: true,
       });
@@ -156,7 +186,7 @@ export function ManageListPage({
     }
     try {
       await api.setServiceRunning(item.name, run);
-      toast.success(run ? L.manageStartDone(item.name) : L.manageStopDone(item.name));
+      toast.success(run ? L.manageStartDone(displayName(item)) : L.manageStopDone(displayName(item)));
       await reload();
     } catch (e) {
       const msg = formatError(e);
@@ -174,23 +204,25 @@ export function ManageListPage({
       if (onlyOn && !it.enabled && !(tab === "services" && it.running)) return false;
       if (hideMicrosoft && looksMicrosoft(it)) return false;
       if (!needle) return true;
-      return (
-        it.name.toLowerCase().includes(needle) ||
-        (it.detail || "").toLowerCase().includes(needle) ||
-        (it.location || "").toLowerCase().includes(needle)
-      );
+      const program = it.task_action?.kind === "program" ? it.task_action.program : "";
+      return [it.display_name, it.name, it.detail, it.path, it.location, program]
+        .some((value) => value?.toLowerCase().includes(needle));
     });
   }, [items, q, onlyOn, hideMicrosoft, tab]);
 
   const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
+    count: tab === "tasks" ? 0 : rows.length,
+    getScrollElement: () => tab === "tasks" ? null : scrollRef.current,
     estimateSize: () => ROW_H,
     overscan: 10,
   });
+  const emptyLabel = !busy && (!progress || progress.status === "complete")
+    ? (q.trim() || onlyOn || hideMicrosoft ? L.emptySearch : L.emptyList)
+    : undefined;
 
   return (
-    <div style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <div className={tab === "tasks" ? "remova-tasks" : undefined}
+      style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <div
         style={{
           display: "flex",
@@ -202,15 +234,19 @@ export function ManageListPage({
           flexWrap: "wrap",
         }}
       >
-        <strong style={{ fontSize: 13, fontWeight: 600 }}>{title}</strong>
-        <span style={css.chip}>
-          {busy && items.length === 0
-            ? "…"
-            : `${rows.length}${rows.length !== items.length ? ` / ${items.length}` : ""}`}
-        </span>
+        {tab !== "tasks" && <>
+          <strong style={{ fontSize: 13, fontWeight: 600 }}>{title}</strong>
+          <span style={css.chip}>
+            {busy && items.length === 0
+              ? "…"
+              : `${rows.length}${rows.length !== items.length ? ` / ${items.length}` : ""}`}
+          </span>
+        </>}
         <input
-          style={{ ...css.input, maxWidth: 240, height: 34, flex: "0 1 240px" }}
-          aria-label={L.search}
+          ref={searchRef}
+          style={{ ...css.input, maxWidth: tab === "tasks" ? 380 : 240, height: 34,
+            flex: tab === "tasks" ? "1 1 240px" : "0 1 240px", minWidth: 0 }}
+          aria-label={tab === "tasks" ? L.manageTaskSearch : L.search}
           placeholder={
             tab === "startup"
               ? L.searchStartup
@@ -247,7 +283,7 @@ export function ManageListPage({
           {L.manageReload}
         </button>
       </div>
-      <div
+      {tab !== "tasks" && <div
         style={{
           padding: "10px 18px",
           fontSize: 12,
@@ -258,18 +294,20 @@ export function ManageListPage({
           flexShrink: 0,
         }}
       >
-        {tab === "startup" ? L.startupHint : tab === "services" ? L.servicesHint : L.tasksHint}
-      </div>
+        {tab === "startup" ? L.startupHint : L.servicesHint}
+      </div>}
       <div title={busy ? L.loadingManage : undefined}>
         <ScanProgressBar progress={progress} onCancel={cancel} />
       </div>
-      <div
+      {tab === "tasks" ? (
+        <TaskWorkspace rows={rows} scrollRef={scrollRef} busy={busy} emptyLabel={emptyLabel} onSetEnabled={setEnabled} />
+      ) : <div
         ref={scrollRef}
         style={{ ...css.scroll, padding: "4px 8px", position: "relative" }}
       >
-        {!busy && rows.length === 0 && (!progress || progress.status === "complete") && (
+        {emptyLabel && rows.length === 0 && (
           <div style={{ ...css.muted, padding: 28, textAlign: "center" as const }}>
-            {q.trim() || onlyOn || hideMicrosoft ? L.emptySearch : L.emptyList}
+            {emptyLabel}
           </div>
         )}
         {rows.length > 0 && (
@@ -277,6 +315,9 @@ export function ManageListPage({
             {virtualizer.getVirtualItems().map((vr) => {
               const it = rows[vr.index];
               if (!it) return null;
+              const name = displayName(it);
+              const subtitle = entrySubtitle(it, tab, L);
+              const description = (tab === "services" || it.location.startsWith("SVC::")) && it.detail;
               const statusTone = it.enabled ? "var(--ok-ink)" : "var(--muted)";
               return (
                 <div
@@ -295,61 +336,32 @@ export function ManageListPage({
                     padding: "0 10px",
                     borderBottom: "1px solid var(--border)",
                     boxSizing: "border-box",
-                    // performance fix: rows are a fixed 72px. Without a clip, three-line
-                    // task text and wrapped service details grew past the row and
-                    // overlapped the rows above and below it.
+                    // Keep the description and metadata inside the virtual row.
                     overflow: "hidden",
                   }}
                 >
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 10,
-                      background: "var(--surface-2)",
-                      color: "var(--muted)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: 14,
-                      flexShrink: 0,
-                    }}
-                  >
-                    <ToolGlyph
-                      name={tab === "startup" ? "startup" : tab === "services" ? "services" : "tasks"}
-                    />
-                  </div>
+                  <AppIcon displayIcon={it.display_icon || ""} name={name} embeddedOnly
+                    fallback={<ToolGlyph name={entryGlyph(it, tab)} />} />
                   <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                     <div
                       style={{ fontWeight: 600, fontSize: 13 }}
                       className="ell"
-                      title={it.name}
+                      title={name}
                     >
-                      {it.name}
+                      {name}
                     </div>
-                    <div
-                      style={{ ...css.muted, fontSize: 11.5, wordBreak: "break-all" }}
-                      className="ell"
-                      title={`${it.detail || ""}\n${it.location || ""}`}
-                    >
-                      {tab === "startup"
-                        ? startupSourceLabel(it, L)
-                        : tab === "services"
-                          ? [
-                              it.source_label || it.name,
-                              `${L.manageStartType}: ${startTypeLabel(it, L)}`,
-                              it.path || it.detail || it.location,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")
-                          : it.detail || it.location}
-                    </div>
-                    {tab === "tasks" && (
-                      <div style={{ ...css.muted, fontSize: 11 }} className="ell">
-                        {L.manageLastRun}: {it.last_run || L.manageNoLastRun}
-                        {" · "}
-                        {L.manageNextRun}: {it.next_run || L.manageNoLastRun}
+                    {description && (
+                      <div style={{ ...css.muted, fontSize: 11.5 }} className="ell" title={description}>
+                        {description}
                       </div>
                     )}
+                    <div
+                      style={{ ...css.muted, fontSize: 11.5 }}
+                      className="ell"
+                      title={[subtitle, it.path, it.location].filter(Boolean).join("\n")}
+                    >
+                      {subtitle}
+                    </div>
                   </div>
                   <div
                     style={{
@@ -391,18 +403,6 @@ export function ManageListPage({
                         </span>
                       </>
                     )}
-                    {tab === "tasks" && (
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: statusTone,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {enabledLabel(it, L)}
-                      </span>
-                    )}
                   </div>
                   <div
                     style={{
@@ -421,8 +421,8 @@ export function ManageListPage({
                           color: it.running ? "var(--danger-text)" : "var(--accent)",
                         }}
                         disabled={busy}
-                        title={it.running ? L.confirmStopService(it.name) : L.confirmStartService(it.name)}
-                        aria-label={`${it.running ? L.manageStop : L.manageStartBtn}: ${it.name}`}
+                        title={it.running ? L.confirmStopService(name) : L.confirmStartService(name)}
+                        aria-label={`${it.running ? L.manageStop : L.manageStartBtn}: ${name}`}
                         onClick={() => void setRunning(it, !it.running)}
                       >
                         {it.running ? L.manageStop : L.manageStartBtn}
@@ -436,12 +436,8 @@ export function ManageListPage({
                         color: it.enabled ? "var(--muted)" : "var(--accent)",
                       }}
                       disabled={busy}
-                      aria-label={`${it.enabled ? L.manageDisable : L.manageEnable}: ${it.name}`}
-                      title={
-                        tab === "services" && it.enabled
-                          ? L.confirmDisableServiceVsStop(it.name)
-                          : undefined
-                      }
+                      aria-label={`${it.enabled ? L.manageDisable : L.manageEnable}: ${name}`}
+                      title={tab === "services" && it.enabled ? L.confirmDisableServiceVsStop(name) : undefined}
                       onClick={() => void setEnabled(it, !it.enabled)}
                     >
                       {it.enabled ? L.manageDisable : L.manageEnable}
@@ -452,7 +448,7 @@ export function ManageListPage({
             })}
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

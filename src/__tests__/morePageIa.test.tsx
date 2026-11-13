@@ -63,39 +63,18 @@ function mountMore() {
 it("groups the toolbox into the new sections and offers a search", async () => {
   mountMore();
   const L = t();
-  // The search is labelled and explains itself with example keywords.
-  expect(screen.getByText(L.moreSearchLabel)).toBeTruthy();
   expect(screen.getByLabelText(L.moreSearchTools)).toBeTruthy();
   expect(screen.getByPlaceholderText(L.moreSearchToolsHint)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionInstallHealth)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionSpace)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionTraces)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionHelp)).toBeTruthy();
-  // The trace section carries the firewall card.
+  expect(screen.getByRole("button", { name: L.restore })).toHaveProperty("dataset", expect.objectContaining({ primary: "true" }));
+  expect(screen.getByRole("button", { name: L.history })).toHaveProperty("dataset", expect.objectContaining({ quick: "true" }));
+  expect(screen.queryByRole("button", { name: L.versionCheck })).toBeNull();
   expect(screen.getByText(L.firewallTitle)).toBeTruthy();
-  // The toolbox renders exactly the five fixed sections (plus the close-mode
-  // helper). This pin is structural, not a string match: sections that were
-  // removed ("进阶", "最近使用") must stay gone whatever wording a revival
-  // would use, so every rendered section title must come from the known set.
-  const knownTitles: string[] = [
-    L.moreSectionCommon,
-    L.moreSectionInstallHealth,
+  expect(screen.getAllByRole("heading", { level: 2 }).map((el) => el.textContent)).toEqual([
     L.moreSectionSpace,
+    L.moreSectionInstallHealth,
+    L.toolboxFileTools,
     L.moreSectionTraces,
-    L.moreSectionHelp,
-    L.closeMode,
-  ];
-  const sectionTitles = Array.from(
-    document.querySelectorAll("section.remova-tool-section > header > span:first-child"),
-  ).map((el) => el.textContent);
-  expect(sectionTitles.filter((title) => !knownTitles.includes(title ?? ""))).toEqual([]);
-  for (const fixed of knownTitles.slice(0, 5)) {
-    expect(
-      sectionTitles.filter((title) => title === fixed),
-      `${fixed} must render exactly once`,
-    ).toHaveLength(1);
-  }
+  ]);
 });
 
 it("searching hides non-matching cards, reports the count and can be cleared", async () => {
@@ -104,14 +83,14 @@ it("searching hides non-matching cards, reports the count and can be cleared", a
   const search = screen.getByLabelText(L.moreSearchTools);
   fireEvent.change(search, { target: { value: L.firewallTitle } });
   expect(screen.getByText(L.firewallTitle)).toBeTruthy();
-  expect(screen.queryByText(L.idleTitle)).toBeNull();
+  expect(screen.queryByText(L.toolboxIdle)).toBeNull();
   expect(screen.queryByText(L.moreSectionSpace)).toBeNull();
-  expect(screen.queryByText(L.moreSectionCommon)).toBeNull();
+  expect(screen.queryByText(L.restore)).toBeNull();
   expect(screen.getByRole("status").textContent).toBe(L.moreSearchResults(1));
   // Clearing brings every section back.
   fireEvent.click(screen.getByRole("button", { name: L.moreSearchClear }));
   expect(screen.getByText(L.moreSectionSpace)).toBeTruthy();
-  expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
+  expect(screen.getByText(L.restore)).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
 });
 
@@ -126,7 +105,7 @@ it("shows an explicit empty state when nothing matches", async () => {
   // Escape clears the query as well.
   fireEvent.keyDown(screen.getByLabelText(L.moreSearchTools), { key: "Escape" });
   expect(screen.queryByText(L.moreSearchEmpty)).toBeNull();
-  expect(screen.getByText(L.moreSectionCommon)).toBeTruthy();
+  expect(screen.getByText(L.restore)).toBeTruthy();
 });
 
 it.each([

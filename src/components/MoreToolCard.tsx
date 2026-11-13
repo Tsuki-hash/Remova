@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
 export type ToolId =
@@ -35,68 +34,40 @@ export type ToolItem = {
   desc: string;
   icon: ToolIconName;
   action: () => void;
-  accent?: boolean;
   badge?: string;
   disabled?: boolean;
-};
-
-export const cardBase: CSSProperties = {
-  width: "100%",
-  textAlign: "left",
-  border: "1px solid var(--border)",
-  background: "var(--surface)",
-  color: "var(--fg)",
-  borderRadius: 12,
-  padding: "18px 16px",
-  cursor: "pointer",
-  display: "flex",
-  gap: 12,
-  alignItems: "flex-start",
-  transition: "border-color .12s, box-shadow .12s, background .12s",
 };
 
 export function ToolCard({
   item,
   active,
+  quick = false,
+  primary = false,
 }: {
   item: ToolItem;
   active: boolean;
+  quick?: boolean;
+  primary?: boolean;
 }) {
   return (
     <button
       disabled={item.disabled}
       className="remova-tool-card"
+      data-quick={quick || undefined}
+      data-primary={primary || undefined}
       type="button"
+      title={quick ? undefined : item.desc}
+      aria-label={item.title}
+      aria-description={item.badge ? `${item.desc} · ${item.badge}` : item.desc}
       aria-expanded={active}
       aria-controls={active ? "remova-more-tool-panel" : undefined}
       onClick={item.action}
-      style={{
-        ...cardBase,
-        cursor: item.disabled ? "not-allowed" : "pointer",
-        borderColor: active ? "var(--accent)" : "var(--border)",
-        background: active ? "var(--accent-soft)" : "var(--surface)",
-        boxShadow: "none",
-      }}
     >
-      <span
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: 10,
-          background: item.accent ? "var(--accent-soft)" : "var(--surface-2)",
-          color: item.accent ? "var(--accent)" : "var(--muted)",
-          display: "grid",
-          placeItems: "center",
-          fontSize: 16,
-          fontWeight: 600,
-          flexShrink: 0,
-        }}
-        aria-hidden
-      >
-        <ToolGlyph name={item.icon} />
+      <span className="remova-tool-icon" aria-hidden>
+        <ToolGlyph name={item.icon} size={quick ? 33 : 23} />
       </span>
-      <span style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <span className="remova-tool-label">
+        <span className="remova-tool-name">
           <span style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</span>
           {item.badge && (
             <span
@@ -113,8 +84,8 @@ export function ToolCard({
               {item.badge}
             </span>
           )}
-        </div>
-        <div style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.45 }}>{item.desc}</div>
+        </span>
+        {quick && <span className="remova-tool-description">{item.desc}</span>}
       </span>
       <span style={{ color: "var(--muted)", fontSize: 14, alignSelf: "center" }} aria-hidden>
         ›

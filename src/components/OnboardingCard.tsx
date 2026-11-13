@@ -24,7 +24,7 @@ export function markOnboarded() {
 /**
  * One-time, non-blocking safety-model card above the software list. Three
  * principles only; the full story lives in the features themselves. Reopenable
- * from More → help without clearing the persisted flag.
+ * from Settings & help without clearing the persisted flag.
  */
 export function OnboardingCard({ onClose }: { onClose: () => void }) {
   const L = t();

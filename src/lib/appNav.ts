@@ -16,6 +16,8 @@ export function navTitle(nav: NavId, L: Strings): string {
       return L.navOrphans;
     case "more":
       return L.toolboxTitle;
+    case "settings":
+      return L.moreSectionHelp;
   }
 }
 

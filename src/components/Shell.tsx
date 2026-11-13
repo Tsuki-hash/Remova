@@ -5,12 +5,13 @@ import { WindowControls } from "./WindowControls";
 import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
 const NAV_ICONS: Record<NavId, ToolIconName> = {
-  software: "toolcache",
+  software: "apps",
   startup: "startup",
   services: "services",
   tasks: "tasks",
-  orphans: "orphan",
-  more: "history",
+  orphans: "cleanup",
+  more: "toolbox",
+  settings: "settings",
 };
 
 export function Sidebar({
@@ -23,98 +24,38 @@ export function Sidebar({
   collapsed: boolean;
 }) {
   const L = t();
-  const items: { id: NavId; label: string }[] = [
-    { id: "software", label: L.navSoftware },
-    { id: "startup", label: L.navStartup },
-    { id: "services", label: L.navServices },
-    { id: "tasks", label: L.navTasks },
-    { id: "orphans", label: L.navOrphans },
-    { id: "more", label: L.navMore },
-  ];
+  const button = (id: NavId, label: string) => (
+    <button
+      type="button"
+      onClick={() => onNav(id)}
+      aria-label={label}
+      aria-current={nav === id ? "page" : undefined}
+    >
+      <ToolGlyph name={NAV_ICONS[id]} size={20} filled={nav === id && (id === "software" || id === "startup" || id === "services")} />
+      <span className="remova-navigation-label">{label}</span>
+    </button>
+  );
 
   return (
     <nav
       className="remova-navigation"
-      aria-label={t().navRegion}
-      style={{
-        width: collapsed ? 64 : 200,
-        flexShrink: 0,
-        background: "var(--surface)",
-        borderRight: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        padding: "18px 12px",
-        gap: 6,
-        transition: "width .15s ease",
-      }}
+      aria-label={L.navRegion}
+      data-collapsed={collapsed || undefined}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: collapsed ? "6px 0 24px" : "6px 8px 24px",
-          minWidth: 0,
-        }}
-      >
-        <img
-          src="/logo.png"
-          alt=""
-          width={32}
-          height={32}
-          style={{ display: "block", width: 32, height: 32, flexShrink: 0 }}
-        />
-        {!collapsed && (
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 650, fontSize: 16, letterSpacing: -0.3 }}>Remova</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>{L.subtitle}</div>
-          </div>
-        )}
+      <div className="remova-navigation-brand">
+        <img src="/logo.png" alt="" width={32} height={32} />
+        {!collapsed && <strong>Remova</strong>}
       </div>
-
-      {items.map((it) => {
-        const active = nav === it.id;
-        return (
-          <button
-            key={it.id}
-            onClick={() => onNav(it.id)}
-            title={it.label}
-            aria-label={collapsed ? it.label : undefined}
-            aria-current={active ? "page" : undefined}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              width: "100%",
-              border: "none",
-              borderRadius: 10,
-              padding: collapsed ? "12px 0" : "12px 14px",
-              color: active ? "var(--accent-text)" : "var(--muted)",
-              background: active ? "var(--accent-soft)" : "transparent",
-              fontWeight: active ? 650 : 500,
-              fontSize: 14,
-              cursor: "pointer",
-              justifyContent: collapsed ? "center" : "flex-start",
-              position: "relative",
-              textAlign: "left" as const,
-            }}
-          >
-            <span
-              style={{
-                width: 20,
-                height: 20,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: active ? 1 : 0.75,
-              }}
-            >
-              <ToolGlyph name={NAV_ICONS[it.id]} />
-            </span>
-            {!collapsed && <span className="ell">{it.label}</span>}
-          </button>
-        );
-      })}
+      {button("software", L.navSoftware)}
+      <div className="remova-navigation-group" role="group" aria-label={L.navSystemGroup}>
+        {!collapsed && <span className="remova-navigation-caption" aria-hidden>{L.navSystemGroup}</span>}
+        {button("startup", L.navStartup)}
+        {button("services", L.navServices)}
+        {button("tasks", L.navTasks)}
+        {button("orphans", L.navOrphans)}
+      </div>
+      <div className="remova-navigation-tools">{button("more", L.navMore)}</div>
+      <div className="remova-navigation-bottom">{button("settings", L.moreSectionHelp)}</div>
     </nav>
   );
 }
@@ -138,8 +79,13 @@ export function Shell({
   footer?: ReactNode;
   children: ReactNode;
 }) {
+  const maintenance = nav === "more" || nav === "settings" || nav === "tasks";
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
+    <div
+      className="remova-shell"
+      data-maintenance={maintenance || undefined}
+      style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}
+    >
       <SidebarNav nav={nav} onNav={onNav} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <header
@@ -156,7 +102,7 @@ export function Shell({
           }}
         >
           <div style={{ minWidth: 0, flex: 1 }} data-tauri-drag-region>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 650, letterSpacing: -0.4 }} data-tauri-drag-region>
+            <h1 style={{ margin: 0, fontSize: maintenance ? 26 : 22, fontWeight: 650, letterSpacing: -0.4 }} data-tauri-drag-region>
               {title}
             </h1>
             <div
@@ -198,6 +144,7 @@ export function Shell({
           </div>
         </header>
         <main
+          className="remova-workspace"
           style={{
             flex: 1,
             minHeight: 0,

@@ -31,6 +31,7 @@ import type { useMoreRestore } from "../hooks/useMoreRestore";
 import { useMoreTools } from "../hooks/useMoreTools";
 
 export function MorePage({
+  settingsOnly = false,
   restore: rest,
   selected,
   monitoring,
@@ -52,6 +53,7 @@ export function MorePage({
   onAiEnabledChange,
   onIgnoreListsChange,
 }: {
+  settingsOnly?: boolean;
   restore: ReturnType<typeof useMoreRestore>;
   selected: InstalledApp | null;
   monitoring: boolean;
@@ -74,7 +76,7 @@ export function MorePage({
   onIgnoreListsChange?: (lists: IgnoreLists) => void;
 }) {
   const L = t();
-  const tools = useMoreTools({ selected, onGoSoftware, initialTool: rest.openRestore ? "restore" : null });
+  const tools = useMoreTools({ selected, onGoSoftware, initialTool: !settingsOnly && rest.openRestore ? "restore" : null });
   const hist = useMoreHistory(onError);
   const [rebootGate, setRebootGate] = useState<string>("clear");
   const [filter, setFilter] = useState("");
@@ -82,6 +84,7 @@ export function MorePage({
   // the card directly starts from a clean form instead.
   const [migrateSeed, setMigrateSeed] = useState("");
   useEffect(() => {
+    if (settingsOnly) return;
     let alive = true;
     void api
       .rebootGateStatus()
@@ -94,7 +97,7 @@ export function MorePage({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [settingsOnly]);
   const resetRebootGate = async () => {
     try {
       await api.clearCorruptRebootGate();
@@ -110,12 +113,12 @@ export function MorePage({
   const { openFromTrigger } = tools;
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!requestedBackup || handledBackup.current === requestedBackup.id || restoreBusy || restoreLoading) return;
+    if (settingsOnly || !requestedBackup || handledBackup.current === requestedBackup.id || restoreBusy || restoreLoading) return;
     handledBackup.current = requestedBackup.id;
     // A backup opened from another page has no card opener in this toolbox.
     openFromTrigger("restore", { opener: searchRef.current });
     void loadRestore(requestedBackup.name).finally(() => clearBackupSessionRequest(requestedBackup.id));
-  }, [requestedBackup, loadRestore, openFromTrigger, restoreBusy, restoreLoading]);
+  }, [settingsOnly, requestedBackup, loadRestore, openFromTrigger, restoreBusy, restoreLoading]);
   const openTool = tools.openTool;
   const setPreviewVisible = rest.setPreviewVisible;
   useEffect(() => {
@@ -124,7 +127,7 @@ export function MorePage({
     return () => setPreviewVisible(false);
   }, [openTool, setPreviewVisible]);
   const panelRef = useRef<HTMLDivElement>(null);
-  const hasMonitorDiff = Boolean(monitorDiff);
+  const hasMonitorDiff = !settingsOnly && Boolean(monitorDiff);
   // `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
   // retained, so "new" stopped meaning anything. Show it once per session, on the
   // first report that arrives.
@@ -139,7 +142,17 @@ export function MorePage({
     panelRef.current?.focus({ preventScroll: true });
   }, [openTool, hasMonitorDiff]);
 
-  const common: ToolItem[] = [
+  const quick: ToolItem[] = [
+    {
+      id: "restore",
+      title: L.restore,
+      desc: L.restoreHint,
+      icon: "restore",
+      action: () => {
+        openFromTrigger("restore");
+        void rest.loadRestore();
+      },
+    },
     {
       id: "history",
       title: L.history,
@@ -149,16 +162,6 @@ export function MorePage({
  // Open the panel first so the click always has visible feedback.
         openFromTrigger("history");
         void hist.loadHistory();
-      },
-    },
-    {
-      id: "restore",
-      title: L.restore,
-      desc: L.restoreHint,
-      icon: "restore",
-      action: () => {
-        openFromTrigger("restore");
-        void rest.loadRestore();
       },
     },
     ...(lastReport
@@ -173,13 +176,6 @@ export function MorePage({
           },
         ]
       : []),
-    {
-      id: "ignore",
-      title: L.appWhitelist,
-      desc: L.appWhitelistHint,
-      icon: "whitelist",
-      action: () => tools.toggleTool("ignore"),
-    },
   ];
 
   const installHealth: ToolItem[] = [
@@ -187,7 +183,7 @@ export function MorePage({
       id: "broken",
       title: L.brokenInstallsTitle,
       desc: L.brokenInstallsHint,
-      icon: "report",
+      icon: "broken-link",
       action: () => tools.toggleTool("broken"),
     },
     {
@@ -204,7 +200,7 @@ export function MorePage({
       disabled: monitorSnapshotBusy,
       title: monitoring ? L.monitorStop : L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
-      icon: "monitor" as const,
+      icon: "target",
       action: () => {
         void onToggleMonitor();
         openFromTrigger("monitor");
@@ -218,27 +214,8 @@ export function MorePage({
       id: "diskoverview",
       title: L.diskOverviewTitle,
       desc: L.diskOverviewHint,
-      icon: "disk",
+      icon: "drive",
       action: () => tools.toggleTool("diskoverview"),
-    },
-    {
-      id: "cliglobals",
-      title: L.cliTitle,
-      desc: L.cliHint,
-      icon: "toolcache",
-      action: () => tools.toggleTool("cliglobals"),
-    },
-    {
-      id: "migrate",
-      title: L.migrateTitle,
-      desc: L.migrateHint,
-      icon: "disk",
-      // toggleTool, not setOpenTool: a second click on the open card closes
-      // the panel instead of silently keeping a stale form.
-      action: () => {
-        setMigrateSeed("");
-        tools.toggleTool("migrate");
-      },
     },
     {
       id: "diskradar",
@@ -251,12 +228,39 @@ export function MorePage({
       id: "toolcache",
       title: L.toolcacheTitle,
       desc: L.toolcacheHint,
-      icon: "toolcache",
+      icon: "cleanup",
       action: () => tools.toggleTool("toolcache"),
+    },
+  ];
+
+  const fileTools: ToolItem[] = [
+    {
+      id: "migrate",
+      title: L.toolboxMigrate,
+      desc: L.migrateHint,
+      icon: "migrate",
+      action: () => {
+        setMigrateSeed("");
+        tools.toggleTool("migrate");
+      },
+    },
+    {
+      id: "ignore",
+      title: L.appWhitelist,
+      desc: L.appWhitelistHint,
+      icon: "whitelist",
+      action: () => tools.toggleTool("ignore"),
+    },
+    {
+      id: "cliglobals",
+      title: L.toolboxCli,
+      desc: L.cliHint,
+      icon: "task-command",
+      action: () => tools.toggleTool("cliglobals"),
     },
     {
       id: "idle",
-      title: L.idleTitle,
+      title: L.toolboxIdle,
       desc: L.idleHint,
       icon: "idle",
       action: () => tools.toggleTool("idle"),
@@ -325,40 +329,28 @@ export function MorePage({
     },
   ];
 
-  // Filtering hides non-matching cards and the sections that become empty.
   const q = filter.trim().toLowerCase();
   const match = (it: ToolItem) =>
     !q || it.title.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q);
-  const trackedCommon = common.filter(match);
+  const trackedQuick = quick.filter(match);
   const trackedInstallHealth = installHealth.filter(match);
   const trackedSpace = space.filter(match);
+  const trackedFiles = fileTools.filter(match);
   const trackedTraces = traces.filter(match);
   const trackedHelp = help.filter(match);
-  const totalCards =
-    common.length + installHealth.length + space.length + traces.length + help.length;
-  const matchedCount =
-    trackedCommon.length +
-    trackedInstallHealth.length +
-    trackedSpace.length +
-    trackedTraces.length +
-    trackedHelp.length;
+  const matchedCount = [trackedQuick, trackedInstallHealth, trackedSpace, trackedFiles, trackedTraces, trackedHelp]
+    .reduce((count, group) => count + group.length, 0);
+  const renderTool = (item: ToolItem) => (
+    <ToolCard key={item.id} item={item} active={openTool === item.id} />
+  );
 
   return (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
- // Not a flex column: children default to shrink:1 and squash the top card.
-        display: "block",
-        overflow: "auto",
-        paddingRight: 2,
-      }}
-    >
+    <div className="remova-toolbox">
       <div
         ref={panelRef}
         id="remova-more-tool-panel"
         role="region"
-        aria-label={L.toolboxTitle}
+        aria-label={settingsOnly ? L.moreSectionHelp : L.toolboxTitle}
         tabIndex={-1}
         style={{ outline: "none" }}
       >
@@ -474,7 +466,7 @@ export function MorePage({
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
       {/* always render the monitor tool surface (not only after a diff arrives). */}
-      {(openTool === "monitor" || monitorDiff) && (
+      {(openTool === "monitor" || hasMonitorDiff) && (
         <MonitorPanel
           diff={monitorDiff ?? { added_files: [], added_reg_values: [] }}
           monitoring={monitoring}
@@ -488,7 +480,7 @@ export function MorePage({
         />
       )}
       </div>
-      {totalCards > 8 && (
+      {!settingsOnly && <>
         <div
           style={{
             display: "flex",
@@ -498,7 +490,6 @@ export function MorePage({
             marginBottom: 16,
           }}
         >
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>{L.moreSearchLabel}</span>
           <div
             style={{
               position: "relative",
@@ -568,22 +559,23 @@ export function MorePage({
             </span>
           )}
         </div>
-      )}
       {q && matchedCount === 0 && (
         <div style={{ ...css.muted, fontSize: 13, marginBottom: 16 }}>{L.moreSearchEmpty}</div>
       )}
-      {trackedCommon.length > 0 && (
-        <Section title={L.moreSectionCommon} hint={L.moreSectionCommonHint}>
-          {trackedCommon.map((c) => (
-            <ToolCard key={c.id} item={c} active={openTool === c.id} />
+      {trackedQuick.length > 0 && (
+        <div className="remova-tool-quick">
+          {trackedQuick.map((item) => (
+            <ToolCard key={item.id} item={item} active={openTool === item.id} quick primary={item.id === "restore"} />
           ))}
-        </Section>
+        </div>
+      )}
+      <div className="remova-tool-groups">
+      {trackedSpace.length > 0 && (
+        <Section title={L.moreSectionSpace}>{trackedSpace.map(renderTool)}</Section>
       )}
       {(trackedInstallHealth.length > 0 || (!q && rebootGate === "corrupt")) && (
-        <Section title={L.moreSectionInstallHealth} hint={L.moreSectionInstallHealthHint}>
-          {trackedInstallHealth.map((c) => (
-            <ToolCard key={c.id} item={c} active={openTool === c.id} />
-          ))}
+        <Section title={L.moreSectionInstallHealth}>
+          {trackedInstallHealth.map(renderTool)}
           {rebootGate === "corrupt" && (
             <div
               style={{ ...css.card, borderColor: "var(--warn-ink)", marginTop: 10 }}
@@ -603,25 +595,21 @@ export function MorePage({
           )}
         </Section>
       )}
-      {trackedSpace.length > 0 && (
-        <Section title={L.moreSectionSpace} hint={L.moreSectionSpaceHint}>
-          {trackedSpace.map((c) => (
-            <ToolCard key={c.id} item={c} active={openTool === c.id} />
-          ))}
-        </Section>
+      </div>
+      {trackedFiles.length > 0 && (
+        <Section title={L.toolboxFileTools} columns>{trackedFiles.map(renderTool)}</Section>
       )}
       {trackedTraces.length > 0 && (
-        <Section title={L.moreSectionTraces} hint={L.moreSectionTracesHint}>
-          {trackedTraces.map((c) => (
-            <ToolCard key={c.id} item={c} active={openTool === c.id} />
-          ))}
+        <Section title={L.moreSectionTraces} columns>
+          {trackedTraces.map(renderTool)}
         </Section>
       )}
-      {trackedHelp.length > 0 && (
+      </>}
+      {(settingsOnly || (q && trackedHelp.length > 0)) && (
         <Section
-          title={L.moreSectionHelp}
-          hint={L.moreSectionHelpHint}
-          extra={
+          title={settingsOnly ? L.toolboxHelp : L.moreSectionHelp}
+          columns
+          extra={settingsOnly && (
             <button
               style={{ ...css.btnGhost, height: 26, fontSize: 12 }}
               title={L.openReleases}
@@ -636,15 +624,13 @@ export function MorePage({
             >
               {L.openReleases}
             </button>
-          }
+          )}
         >
-          {trackedHelp.map((c) => (
-            <ToolCard key={c.id} item={c} active={openTool === c.id} />
-          ))}
+          {trackedHelp.map(renderTool)}
         </Section>
       )}
 
-      <Section title={L.closeMode} hint={L.closeModeHint}>
+      {settingsOnly && <Section title={L.closeMode} hint={L.closeModeHint}>
         <div style={{ gridColumn: "1 / -1" }}>
           <label
             style={{
@@ -725,7 +711,7 @@ export function MorePage({
             })}
           </div>
         </div>
-      </Section>
+      </Section>}
     </div>
   );
 }

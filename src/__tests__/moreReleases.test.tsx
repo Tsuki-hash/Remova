@@ -30,6 +30,7 @@ function Toolbox(props: Omit<ComponentProps<typeof MorePage>, "restore">) {
 it("opens the Releases page from the help section header", async () => {
   render(
     <Toolbox
+      settingsOnly
       selected={null}
       monitoring={false}
       monitorDiff={null}
@@ -48,6 +49,28 @@ it("opens the Releases page from the help section header", async () => {
   );
   fireEvent.click(await screen.findByRole("button", { name: t().openReleases }));
   await waitFor(() => expect(api.openPath).toHaveBeenCalledWith(RELEASES_URL));
+  expect(screen.getByRole("button", { name: t().versionCheck })).toBeTruthy();
+});
+
+it("opens the requested backup from the toolbox", async () => {
+  render(
+    <Toolbox
+      selected={null}
+      monitoring={false}
+      monitorDiff={null}
+      lastReport={null}
+      closeMode={null}
+      onCloseModeChange={vi.fn()}
+      onIgnorePublisher={vi.fn()}
+      onToggleMonitor={vi.fn()}
+      onMonitorToCleanup={vi.fn()}
+      onDismissMonitor={vi.fn()}
+      onExportReport={vi.fn()}
+      onError={vi.fn()}
+      onCheckUpdate={vi.fn()}
+      onGoSoftware={vi.fn()}
+    />,
+  );
   requestBackupSession("requested");
   await waitFor(() => expect(api.previewRestore).toHaveBeenCalledWith("requested", expect.any(String)));
   expect(api.previewRestore).not.toHaveBeenCalledWith("newest", expect.any(String));

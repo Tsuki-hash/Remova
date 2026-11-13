@@ -1,49 +1,70 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 
-/** Process-wide icon cache: displayIcon raw → data URL (or null on failure). */
-const iconCache = new Map<string, string | null>();
+/** Share loaded icons between the virtualized list and the detail pane. */
+const iconCache = new Map<string, string>();
 const iconInflight = new Map<string, Promise<string | null>>();
+const MAX_CACHE_CHARS = 8 * 1024 * 1024;
+let cachedChars = 0;
 
-function loadAppIcon(displayIcon: string): Promise<string | null> {
-  if (iconCache.has(displayIcon)) {
-    return Promise.resolve(iconCache.get(displayIcon) ?? null);
+function forgetIcon(key: string) {
+  cachedChars -= iconCache.get(key)?.length ?? 0;
+  iconCache.delete(key);
+}
+
+function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string): Promise<string | null> {
+  const cached = iconCache.get(key);
+  if (cached) {
+    iconCache.delete(key);
+    iconCache.set(key, cached);
+    return Promise.resolve(cached);
   }
-  const existing = iconInflight.get(displayIcon);
+  const existing = iconInflight.get(key);
   if (existing) return existing;
-  const p = api.appIconData(displayIcon)
+  const p = api.appIconData(displayIcon, embeddedOnly)
     .then((url) => {
-      iconCache.set(displayIcon, url);
-      iconInflight.delete(displayIcon);
+      if (url) {
+        iconCache.set(key, url);
+        cachedChars += url.length;
+        for (const oldest of iconCache.keys()) {
+          if (cachedChars <= MAX_CACHE_CHARS) break;
+          forgetIcon(oldest);
+        }
+      }
+      iconInflight.delete(key);
       return url;
     })
     .catch(() => {
-      iconCache.set(displayIcon, null);
-      iconInflight.delete(displayIcon);
+      iconInflight.delete(key);
       return null;
     });
-  iconInflight.set(displayIcon, p);
+  iconInflight.set(key, p);
   return p;
 }
 
-export function AppIcon({ displayIcon, name }: { displayIcon: string; name: string }) {
-  const [src, setSrc] = useState<string | null>(() =>
-    displayIcon ? (iconCache.get(displayIcon) ?? null) : null,
-  );
+export function AppIcon({ displayIcon, name, fallback, embeddedOnly = false, bare = false }: {
+  displayIcon: string;
+  name: string;
+  fallback?: ReactNode;
+  embeddedOnly?: boolean;
+  bare?: boolean;
+}) {
+  const key = embeddedOnly ? "embedded\0" + displayIcon : displayIcon;
+  const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null);
+  const [failedImage, setFailedImage] = useState<{ key: string; url: string } | null>(null);
+  const src = loaded?.key === key ? loaded.url : iconCache.get(key);
+  const imageFailed = failedImage?.key === key && failedImage.url === src;
 
   useEffect(() => {
-    if (!displayIcon) {
-      setSrc(null);
-      return;
-    }
+    if (!displayIcon) return;
     let cancelled = false;
-    void loadAppIcon(displayIcon).then((url) => {
-      if (!cancelled) setSrc(url);
+    void loadAppIcon(displayIcon, embeddedOnly, key).then((url) => {
+      if (!cancelled) setLoaded({ key, url });
     });
     return () => {
       cancelled = true;
     };
-  }, [displayIcon]);
+  }, [displayIcon, embeddedOnly, key]);
 
   const initial = (name.trim()[0] || "?").toUpperCase();
   return (
@@ -56,18 +77,22 @@ export function AppIcon({ displayIcon, name }: { displayIcon: string; name: stri
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "var(--surface-2)",
-        color: "var(--muted)",
+        background: bare ? "transparent" : "var(--surface-2)",
+        color: bare ? "var(--accent-text)" : "var(--muted)",
         fontSize: 13,
         fontWeight: 700,
         overflow: "hidden",
       }}
       aria-hidden
     >
-      {src ? (
-        <img src={src} width={32} height={32} alt="" style={{ display: "block" }} />
+      {src && !imageFailed ? (
+        <img src={src} width={32} height={32} alt="" style={{ display: "block", objectFit: "contain" }}
+          onError={() => {
+            forgetIcon(key);
+            setFailedImage({ key, url: src });
+          }} />
       ) : (
-        initial
+        fallback ?? initial
       )}
     </span>
   );
