@@ -32,6 +32,7 @@ const elevateRestart = vi.fn();
 const requestConfirmEx = vi.hoisted(() => vi.fn(async () => ({ ok: true, checked: false })));
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     brokenInstalls: (...a: unknown[]) => brokenInstalls(...a),
     officialUninstall: (...a: unknown[]) => officialUninstall(...a),
     cleanupBrokenInstall: (...a: unknown[]) => cleanupBrokenInstall(...a),

@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { currentLang, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { LeftoverSummaryBar } from "./LeftoverSummaryBar";
+import { LocalItemIcon } from "./AppIcon";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
 import {
   flattenOriginGroups,
@@ -53,7 +54,7 @@ const LeftoverRow = memo(function LeftoverRow({
       }}
       style={{
         display: "grid",
-        gridTemplateColumns: "28px minmax(0, 1fr) 120px 90px 40px",
+        gridTemplateColumns: "28px 20px minmax(0, 1fr) 120px 90px 40px",
         gap: 8,
         alignItems: "start",
         padding: "12px 14px",
@@ -76,6 +77,7 @@ const LeftoverRow = memo(function LeftoverRow({
           onChange={() => { if (!disabled) onTogglePath(it.path); }}
         />
       </div>
+      <LocalItemIcon path={it.path} kind={it.kind} size={20} />
       <div style={{ minWidth: 0, overflow: "hidden" }}>
         <span
           className="ell"

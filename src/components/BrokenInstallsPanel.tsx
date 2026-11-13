@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
+import { InstalledAppIcon } from "./AppIcon";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -157,6 +158,7 @@ export function BrokenInstallsPanel({
                 background: "var(--surface-2)",
               }}
             >
+              <InstalledAppIcon app={row.app} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{row.app.name}</div>
                 <div style={{ ...css.muted, fontSize: 11.5 }}>

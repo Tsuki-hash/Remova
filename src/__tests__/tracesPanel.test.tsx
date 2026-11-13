@@ -8,6 +8,7 @@ import { t } from "../i18n";
 import { toast } from "../lib/toast";
 
 const native = vi.hoisted(() => ({
+  appIconData: vi.fn(async () => null),
   consentOrphans: vi.fn(),
   portableCandidates: vi.fn(),
   shellAssocOrphans: vi.fn(async () => ({ orphans: [], omitted: 0, completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } })),

@@ -23,6 +23,7 @@ const elevateRestart = vi.fn();
 const requestConfirmEx = vi.hoisted(() => vi.fn(async () => ({ ok: true, checked: false })));
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     firewallOrphans: (...a: unknown[]) => firewallOrphans(...a),
     deleteFirewallRules: (...a: unknown[]) => deleteFirewallRules(...a),
     elevateRestart: (...a: unknown[]) => elevateRestart(...a),

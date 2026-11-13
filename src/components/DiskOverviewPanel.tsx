@@ -9,6 +9,7 @@ import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
 import { CloseGlyph } from "./ui/Glyph";
 import { ToolGlyph } from "./ToolIcons";
+import { LocalItemIcon } from "./AppIcon";
 import type {
   ComponentStoreAnalysis,
   JunctionScanResult,
@@ -501,7 +502,7 @@ export function DiskOverviewPanel({
                       title={triageReasonText(L, row.reason)}
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "18px minmax(0, 1fr) 120px 72px 84px",
+                        gridTemplateColumns: "18px 18px minmax(0, 1fr) 120px 72px 84px",
                         columnGap: 8,
                         padding: "5px 8px",
                         borderBottom: "1px solid var(--border)",
@@ -521,6 +522,7 @@ export function DiskOverviewPanel({
                       ) : (
                         <span aria-hidden />
                       )}
+                      <LocalItemIcon path={row.path} kind="dir" size={18} />
                       <span
                         className="ell"
                         style={{

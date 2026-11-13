@@ -8,7 +8,7 @@ import { backendText } from "../lib/backendText";
 import { cleanupAccomplishedSomething, cleanupFeedback } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { ToolGlyph } from "./ToolIcons";
+import { LocalItemIcon } from "./AppIcon";
 import { VirtualList } from "./ui/VirtualList";
 import { ScanProgressBar } from "./ScanProgressBar";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
@@ -468,9 +468,7 @@ export function ScopedScanPanel({
                 });
               }}
             />
-            <span style={{ color: "var(--muted)", display: "inline-flex", marginTop: 2 }}>
-              <ToolGlyph name={row.item.kind === "dir" ? "folder" : "file"} />
-            </span>
+            <LocalItemIcon path={row.item.path} kind={row.item.kind} size={18} />
             <span style={{ minWidth: 0, flex: 1 }}>
               <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }} title={row.item.path}>
                 {row.item.path}

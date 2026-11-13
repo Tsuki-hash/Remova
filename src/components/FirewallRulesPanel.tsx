@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
 import { api } from "../lib/api";
+import { LocalItemIcon } from "./AppIcon";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -210,6 +211,7 @@ export function FirewallRulesPanel({
                 disabled={busy}
                 onChange={(e) => toggle(row.value_name, e.target.checked)}
               />
+              <LocalItemIcon path={row.app_path} />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{row.rule_name}</div>
                 <div style={{ ...css.muted, fontSize: 11.5 }}>

@@ -6,6 +6,7 @@ import { bucketItem } from "../lib/decision";
 import { evidenceText } from "../lib/evidenceText";
 import type { CleanupItem } from "../types";
 import { ToolGlyph } from "./ToolIcons";
+import { LocalItemIcon } from "./AppIcon";
 
 function riskChip(it: CleanupItem, L: ReturnType<typeof t>) {
   const bucket = bucketItem(it);
@@ -97,6 +98,7 @@ export function OrphanOriginGroups({
                         aria-label={it.path}
                         style={{ marginTop: 2, accentColor: "var(--accent)" }}
                       />
+                      <LocalItemIcon path={it.path} kind={it.kind} size={20} />
                       <span style={{ minWidth: 0, flex: 1 }}>
                         <span
                           className="ell"

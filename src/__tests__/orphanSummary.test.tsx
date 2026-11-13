@@ -11,6 +11,7 @@ import { groupByOrigin } from "../lib/decision";
 import type { CleanupItem } from "../types";
 
 vi.mock("../lib/api", () => ({ api: {
+  appIconData: vi.fn(async () => null),
   beginAssociationScan: vi.fn(async () => 100), cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null), orphanScan: vi.fn(async () => ({
   items: [{

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { LocalItemIcon } from "./AppIcon";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -108,7 +109,8 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
       {result &&
         result.instances.map((inst) => (
           <div key={inst.installation_path} style={{ borderTop: "1px solid var(--border)", padding: "6px 0" }}>
-            <div style={{ fontWeight: 600 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 600 }}>
+              <LocalItemIcon path={inst.installation_path} kind="dir" />
               {inst.display_name} <span style={{ ...css.mono, ...css.muted, fontSize: 11 }}>{inst.installation_version}</span>
             </div>
             <div className="ell" style={{ ...css.muted, fontSize: 11.5 }} title={inst.installation_path}>

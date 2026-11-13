@@ -6,6 +6,7 @@ import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
 import { CloseGlyph } from "./ui/Glyph";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
+import { LocalItemIcon } from "./AppIcon";
 import type { MsiConsistencyReport, ProductFamily, ScanCompleteness } from "../types";
 
 /** The source label shown per vector row (localized via colSource). */
@@ -79,6 +80,7 @@ export function VectorsPanel({ onClose }: { onClose: () => void }) {
                 flexWrap: "wrap",
               }}
             >
+              {v.install_location && <LocalItemIcon path={v.install_location} kind="dir" />}
               <span style={{ ...css.mono, flexShrink: 0 }}>{sourceLabel(v.source)}</span>
               <span>{v.version}</span>
               <span className="ell" style={{ ...css.muted, flex: 1, minWidth: 120 }} title={v.install_location}>

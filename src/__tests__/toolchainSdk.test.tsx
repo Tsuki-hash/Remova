@@ -9,6 +9,7 @@ import { setLang, t } from "../i18n";
 const auditToolchains = vi.fn();
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     auditToolchains: (...a: unknown[]) => auditToolchains(...a),
     toolchainConsumers: vi.fn(async () => ({ hits: [], omitted: 0, completeness: { status: "complete", roots_scanned: 0, failed_roots: [] } })),
   },

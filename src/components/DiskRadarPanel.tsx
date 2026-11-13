@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
+import { LocalItemIcon } from "./AppIcon";
 import { VirtualList } from "./ui/VirtualList";
 import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -226,6 +227,7 @@ export function DiskRadarPanel({
               background: "var(--surface-2)",
             }}
           >
+            <LocalItemIcon path={r.path} kind="dir" />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                 <span className="ell" style={{ fontWeight: 600 }}>

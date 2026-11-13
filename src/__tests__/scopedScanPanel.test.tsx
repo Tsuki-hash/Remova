@@ -14,7 +14,7 @@ import { setLang, t, formatSize } from "../i18n";
 import { backendText } from "../lib/backendText";
 import type { CleanupItem, FullCleanupReport, ScopedScanResult } from "../types";
 
-vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn(async () => {}),
+vi.mock("../lib/api", () => ({ api: { fullCleanup: vi.fn(), openPath: vi.fn(async () => {}), appIconData: vi.fn(async () => null),
   beginAssociationScan: vi.fn(async () => 501), cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null) } }));
 vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })) }));

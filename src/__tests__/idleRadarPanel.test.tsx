@@ -33,6 +33,7 @@ const row: IdleApp = {
 
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     beginAssociationScan: vi.fn(async () => 501),
     cancelAssociationScan: vi.fn(async () => {}),
     associationScanProgress: vi.fn(async () => null),

@@ -18,6 +18,7 @@ vi.mock("../lib/toast", () => ({
 
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     listLocalDrives: vi.fn(),
     junctionLedger: vi.fn(),
     spaceTriage: vi.fn(),

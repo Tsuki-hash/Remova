@@ -11,6 +11,7 @@ import { t, formatSize } from "../i18n";
 
 vi.mock("../lib/api", () => ({
   api: {
+    appIconData: vi.fn(async () => null),
     listLocalDrives: vi.fn(),
     listTopDirSizes: vi.fn(),
     listDirChildren: vi.fn(),

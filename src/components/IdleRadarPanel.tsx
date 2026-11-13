@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CloseGlyph } from "./ui/Glyph";
+import { InstalledAppIcon } from "./AppIcon";
 import { VirtualList } from "./ui/VirtualList";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -98,6 +99,7 @@ export function IdleRadarPanel({
               background: "var(--surface-2)",
             }}
           >
+            <InstalledAppIcon app={r.app} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{r.app.name}</div>
               <div style={{ ...css.muted, fontSize: 11.5, fontFamily: "var(--mono)" }}>

@@ -5,6 +5,7 @@ import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { CloseGlyph } from "./ui/Glyph";
+import { LocalItemIcon } from "./AppIcon";
 import type { PortableScanResult, ScanCompleteness, TraceScanResult } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 
@@ -139,6 +140,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
                     fontSize: 12,
                   }}
                 >
+                  <LocalItemIcon path={o.exe_path} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }} title={o.exe_path}>
                       {o.exe_path}
@@ -185,6 +187,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
                     fontSize: 12,
                   }}
                 >
+                  <LocalItemIcon path={c.exe_path} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div className="ell" style={{ fontFamily: "var(--mono)", fontSize: 11.5 }} title={c.exe_path}>
                       {c.exe_path}
@@ -237,6 +240,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 180, overflow: "auto" }}>
         {shellAssoc.orphans.map((o) => (
           <div key={o.class + "|" + o.exe_path} style={{ display: "flex", gap: 8, padding: "6px 8px", borderBottom: "1px solid var(--border)", fontSize: 12, alignItems: "center" }}>
+            <LocalItemIcon path={o.exe_path} />
             <span style={{ ...css.mono, fontSize: 11, flexShrink: 0 }}>{o.class}</span>
             <span className="ell" style={{ ...css.mono, fontSize: 11, flex: 1 }} title={o.exe_path}>{o.exe_path}</span>
             <button type="button" style={{ ...css.btnGhost, height: 24, padding: "0 8px", flexShrink: 0 }} aria-label={L.copyPath + ": " + o.exe_path} onClick={() => copyPath(o.exe_path)}>
