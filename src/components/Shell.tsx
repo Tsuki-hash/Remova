@@ -79,7 +79,7 @@ export function Shell({
   footer?: ReactNode;
   children: ReactNode;
 }) {
-  const maintenance = nav === "more" || nav === "settings" || nav === "tasks";
+  const maintenance = nav === "more" || nav === "settings" || nav === "tasks" || nav === "orphans";
   return (
     <div
       className="remova-shell"

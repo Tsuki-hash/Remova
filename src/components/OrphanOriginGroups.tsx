@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { t } from "../i18n";
+import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { OriginGroup } from "../lib/decision";
 import { bucketItem } from "../lib/decision";
 import { evidenceText } from "../lib/evidenceText";
 import type { CleanupItem } from "../types";
+import { ToolGlyph } from "./ToolIcons";
 
 function riskChip(it: CleanupItem, L: ReturnType<typeof t>) {
   const bucket = bucketItem(it);
@@ -21,11 +22,13 @@ export function OrphanOriginGroups({
   selectedPaths,
   onToggle,
   onToggleMany,
+  compact = false,
 }: {
   groups: OriginGroup[];
   selectedPaths: Set<string>;
   onToggle?: (path: string) => void;
   onToggleMany?: (paths: string[], select: boolean) => void;
+  compact?: boolean;
 }) {
   const L = t();
   const [openPath, setOpenPath] = useState<string | null>(null);
@@ -33,7 +36,7 @@ export function OrphanOriginGroups({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   if (groups.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+    <div className={compact ? "remova-orphan-groups" : undefined} style={compact ? undefined : { display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
       {groups.map((g) => {
         const selectablePaths = g.items
           .filter((it) => bucketItem(it) !== "keep")
@@ -41,13 +44,14 @@ export function OrphanOriginGroups({
         const isOpen = expanded.has(g.origin);
         const shown = isOpen ? g.items : g.items.slice(0, 8);
         return (
-          <div key={g.origin} style={{ ...css.card, padding: "10px 12px", fontSize: 13 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
-              <strong style={{ fontSize: 13 }}>{g.origin}</strong>
+          <div key={g.origin} className="remova-orphan-group" style={compact ? undefined : { ...css.card, padding: "10px 12px", fontSize: 13 }}>
+            <div className="remova-orphan-group-head" style={compact ? undefined : { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
+              {compact && <ToolGlyph name="folder" size={21} />}
+              <strong>{g.origin}</strong>
               <span style={css.muted}>
                 {L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
               </span>
-              {g.keep > 0 && (
+              {!compact && g.keep > 0 && (
                 <span style={{ ...css.chip, fontFamily: "inherit", color: "var(--warn-ink)" }}>
                   {L.bucketKeep} {g.keep}
                 </span>
@@ -65,13 +69,15 @@ export function OrphanOriginGroups({
                 )}
               </div>
             </div>
-            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={compact ? undefined : { marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
               {shown.map((it) => {
                 const chip = riskChip(it, L);
                 const open = openPath === it.path;
                 return (
-                  <div key={`${it.kind}:${it.path}`} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div key={`${it.kind}:${it.path}`} className="remova-orphan-item"
+                    data-selected={selectedPaths.has(it.path) || undefined}
+                    style={compact ? undefined : { borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
+                    <div className="remova-orphan-row" style={compact ? undefined : { display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <label
                       style={{
                         display: "flex",
@@ -94,7 +100,7 @@ export function OrphanOriginGroups({
                       <span style={{ minWidth: 0, flex: 1 }}>
                         <span
                           className="ell"
-                          style={{
+                          style={compact ? undefined : {
                             display: "block",
                             fontFamily: "var(--mono)",
                             fontSize: 11.5,
@@ -105,7 +111,8 @@ export function OrphanOriginGroups({
                           {it.path}
                         </span>
                         <span style={{ fontSize: 11.5 }}>
-                          <span style={{ color: chip.color, fontWeight: 650, marginRight: 8 }}>
+                          <span
+                            style={{ color: chip.color, fontWeight: 650, marginRight: 8 }}>
                             {chip.label}
                           </span>
                           {(it.reason || "").toLowerCase().includes("orphan") ||
@@ -115,17 +122,21 @@ export function OrphanOriginGroups({
                         </span>
                       </span>
                     </label>
+                    {compact && typeof it.size_kb === "number" && it.size_kb > 0 && (
+                      <span className="remova-orphan-item-size">{formatSize(it.size_kb)}</span>
+                    )}
                     <button
                       type="button"
                       style={{ ...css.btnGhost, height: 26, fontSize: 11.5, flexShrink: 0, alignSelf: "flex-start", borderColor: "transparent", color: "var(--accent-text)" }}
                       onClick={() => setOpenPath(open ? null : it.path)}
+                      aria-expanded={open}
                     >
                       {open ? L.orphanCollapseEvidence : L.orphanExpandEvidence}
                     </button>
                     </div>
                     {open && (
-                      <div
-                        style={{
+                      <div className="remova-orphan-evidence"
+                        style={compact ? undefined : {
                           marginTop: 6,
                           marginLeft: 22,
                           padding: "8px 10px",
@@ -138,6 +149,7 @@ export function OrphanOriginGroups({
                         <div style={{ fontWeight: 650, marginBottom: 4 }}>
                           {L.orphanEvidenceTitle}
                         </div>
+                        {compact && <div className="remova-orphan-full-path">{it.path}</div>}
                         {it.evidence && it.evidence.length > 0 ? (
                           <ul style={{ margin: 0, paddingLeft: 16, color: "var(--muted)" }}>
                             {it.evidence.map(raw => ({ ...raw, ...evidenceText(raw) })).map((ev) => (
@@ -173,6 +185,8 @@ export function OrphanOriginGroups({
               {g.items.length > 8 && (
                 <button
                   type="button"
+                  aria-expanded={isOpen}
+                  className="remova-orphan-show-all"
                   style={{ ...css.btnGhost, height: 24, fontSize: 11, alignSelf: "flex-start" }}
                   onClick={() =>
                     setExpanded((prev) => {

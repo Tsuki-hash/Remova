@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { OrphanPage } from "../components/OrphanPage";
 import { setLang, t } from "../i18n";
 import { api } from "../lib/api";
@@ -97,12 +97,12 @@ it("keeps candidates visible but disables cleanup when their ownership is unveri
 
 it("keeps orphan statistics read-only and its existing selection action working", async () => {
   render(<OrphanPage onLastReport={vi.fn()} />);
-  expect(await screen.findByText(`${t().bucketSafe} (1)`)).toBeTruthy();
+  expect(await screen.findByText(t().bucketSafe, { selector: ".remova-orphan-summary span" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: t().conclusionCleanSafe(1) })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: t().clearSelection }));
   expect(screen.getByRole("button", { name: t().cleanup }).hasAttribute("disabled")).toBe(true);
-  const selectSafe = screen.getAllByRole("button", { name: t().orphanSelectAll })[0];
-  if (!selectSafe) throw new Error("missing orphan select-safe action");
+  const selection = screen.getByRole("status").parentElement!;
+  const selectSafe = within(selection).getByRole("button", { name: t().orphanSelectAll });
   fireEvent.click(selectSafe);
   expect(screen.getByRole("button", { name: `${t().cleanup} (1)` }).hasAttribute("disabled")).toBe(false);
 });
@@ -122,7 +122,7 @@ it("translates the completed scan label on a language switch without rerunning t
 it("clears old orphan targets and rejects a cancelled late success without claiming zero leftovers", async () => {
   const onError = vi.fn();
   render(<OrphanPage onLastReport={vi.fn()} onError={onError} />);
-  await screen.findByText(`${t().bucketSafe} (1)`);
+  await screen.findByText(t().bucketSafe, { selector: ".remova-orphan-summary span" });
   let finish!: (list: Awaited<ReturnType<typeof api.orphanScan>>) => void;
   vi.mocked(api.orphanScan).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   fireEvent.click(screen.getByRole("button", { name: t().orphanScan }));
