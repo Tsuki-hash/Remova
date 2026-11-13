@@ -108,6 +108,39 @@ it("keeps orphan statistics read-only and its existing selection action working"
   expect(screen.getByRole("button", { name: `${t().cleanup} (1)` }).hasAttribute("disabled")).toBe(false);
 });
 
+it.each(["zh", "en"] as const)("explains default skips in the summary and on the rows (%s)", async (lang) => {
+  setLang(lang);
+  const L = t();
+  const candidate: CleanupItem = {
+    path: "C:/Example/Review", kind: "dir", score: 35, confidence: "suspected", risk: "medium",
+    reason: "Orphan app-like folder (no matching uninstall entry)", evidence: [],
+  };
+  const skipped: [CleanupItem, string][] = [
+    [{ ...candidate, path: "C:/Example/Recent", risk: "high",
+      evidence: [{ code: "orphan_recent", label: "Recently written", weight: 0, detail: "written 0 day(s) ago" }] }, L.orphanSkipRecent],
+    [{ ...candidate, path: "C:/Example/Shared", shared: true }, L.orphanSkipShared],
+    [{ ...candidate, path: "C:/Example/Service", service_bound: true }, L.orphanSkipService],
+    [{ ...candidate, path: "C:/Example/UserData", user_data: true }, L.orphanSkipUserData],
+    [{ ...candidate, path: "C:/Example/High", risk: "high" }, L.orphanSkipHighRisk],
+  ];
+  vi.mocked(api.orphanScan).mockResolvedValueOnce({
+    items: [candidate, ...skipped.map(([item]) => item)], omitted: 0, cleanup_allowed: true,
+    completeness: { status: "complete", roots_scanned: 4, failed_roots: [] },
+  });
+  render(<OrphanPage onLastReport={vi.fn()} />);
+  expect(await screen.findByText(L.orphanSkipHint)).toBeTruthy();
+  expect(screen.getByText(L.orphanSkip, { selector: ".remova-orphan-summary span" })).toBeTruthy();
+  expect(screen.getAllByText(L.orphanGroupMeta(1, 0, 0, 1))).toHaveLength(skipped.length);
+  fireEvent.click(within(screen.getByRole("status").parentElement!).getByRole("button", { name: L.orphanSelectAll }));
+  expect(screen.getByRole<HTMLInputElement>("checkbox", { name: candidate.path }).checked).toBe(true);
+  for (const [item, reason] of skipped) {
+    const checkbox = screen.getByRole<HTMLInputElement>("checkbox", { name: item.path });
+    expect(checkbox.checked).toBe(false);
+    const description = checkbox.getAttribute("aria-describedby")!;
+    expect(document.getElementById(description)?.textContent).toBe(`${L.orphanSkip} ${reason}`);
+  }
+});
+
 it("translates the completed scan label on a language switch without rerunning the scan", async () => {
   setLang("zh");
   const view = render(<OrphanPage onLastReport={vi.fn()} />);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { OriginGroup } from "../lib/decision";
@@ -8,13 +8,21 @@ import type { CleanupItem } from "../types";
 import { ToolGlyph } from "./ToolIcons";
 import { LocalItemIcon } from "./AppIcon";
 
-function riskChip(it: CleanupItem, L: ReturnType<typeof t>) {
+function rowDecision(it: CleanupItem, L: ReturnType<typeof t>) {
   const bucket = bucketItem(it);
-  const label =
-    bucket === "safe" ? L.bucketSafe : bucket === "suggest" ? L.bucketSuggest : L.bucketKeep;
-  const color =
-    bucket === "safe" ? "var(--ok-ink)" : bucket === "suggest" ? "var(--warn-ink)" : "var(--danger-text)";
-  return { label, color, bucket };
+  if (bucket === "keep") {
+    const reasons = [
+      it.evidence.some((evidence) => evidence.code === "orphan_recent") && L.orphanSkipRecent,
+      it.shared && L.orphanSkipShared,
+      it.service_bound && L.orphanSkipService,
+      it.user_data && L.orphanSkipUserData,
+    ].filter(Boolean);
+    return { label: L.orphanSkip, color: "var(--fg)", reason: reasons.join(" · ") || L.orphanSkipHighRisk };
+  }
+  const reason = /orphan|leftover/i.test(it.reason || "") ? L.orphanReasonDefault : it.reason || L.orphanNoOwnerHint;
+  return bucket === "safe"
+    ? { label: L.bucketSafe, color: "var(--ok-ink)", reason }
+    : { label: L.bucketSuggest, color: "var(--warn-ink)", reason };
 }
 
 /** Orphan results grouped by suspected folder origin (no invented product names). */
@@ -32,13 +40,14 @@ export function OrphanOriginGroups({
   compact?: boolean;
 }) {
   const L = t();
+  const rowId = useId();
   const [openPath, setOpenPath] = useState<string | null>(null);
  // per-group expansion — the 8-item cap must not hide reachable paths.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   if (groups.length === 0) return null;
   return (
     <div className={compact ? "remova-orphan-groups" : undefined} style={compact ? undefined : { display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
-      {groups.map((g) => {
+      {groups.map((g, groupIndex) => {
         const selectablePaths = g.items
           .filter((it) => bucketItem(it) !== "keep")
           .map((it) => it.path);
@@ -52,11 +61,6 @@ export function OrphanOriginGroups({
               <span style={css.muted}>
                 {L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
               </span>
-              {!compact && g.keep > 0 && (
-                <span style={{ ...css.chip, fontFamily: "inherit", color: "var(--warn-ink)" }}>
-                  {L.bucketKeep} {g.keep}
-                </span>
-              )}
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 {selectablePaths.length > 0 && onToggleMany && (
                   <button
@@ -71,8 +75,9 @@ export function OrphanOriginGroups({
               </div>
             </div>
             <div style={compact ? undefined : { marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-              {shown.map((it) => {
-                const chip = riskChip(it, L);
+              {shown.map((it, index) => {
+                const decision = rowDecision(it, L);
+                const descriptionId = `${rowId}-${groupIndex}-${index}`;
                 const open = openPath === it.path;
                 return (
                   <div key={`${it.kind}:${it.path}`} className="remova-orphan-item"
@@ -96,6 +101,7 @@ export function OrphanOriginGroups({
                         disabled={!onToggle}
                         onChange={() => onToggle?.(it.path)}
                         aria-label={it.path}
+                        aria-describedby={descriptionId}
                         style={{ marginTop: 2, accentColor: "var(--accent)" }}
                       />
                       <LocalItemIcon path={it.path} kind={it.kind} size={20} />
@@ -112,15 +118,12 @@ export function OrphanOriginGroups({
                         >
                           {it.path}
                         </span>
-                        <span style={{ fontSize: 11.5 }}>
+                        <span id={descriptionId} style={{ fontSize: 11.5 }}>
                           <span
-                            style={{ color: chip.color, fontWeight: 650, marginRight: 8 }}>
-                            {chip.label}
-                          </span>
-                          {(it.reason || "").toLowerCase().includes("orphan") ||
-                          (it.reason || "").toLowerCase().includes("leftover")
-                            ? L.orphanReasonDefault
-                            : it.reason || L.orphanNoOwnerHint}
+                            style={{ color: decision.color, fontWeight: 650, marginRight: 8 }}>
+                            {decision.label}
+                          </span>{" "}
+                          {decision.reason}
                         </span>
                       </span>
                     </label>

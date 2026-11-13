@@ -267,10 +267,11 @@ export function OrphanPage({
               {([
                 ["safe", L.bucketSafe, summary.safe, L.bucketSafeHint],
                 ["suggest", L.bucketSuggest, summary.suggest, L.bucketSuggestHint],
-                ["keep", L.bucketKeep, summary.keep, L.bucketKeepHint],
+                ["keep", L.orphanSkip, summary.keep, L.orphanSkipHint],
               ] as const).map(([bucket, label, count, hint]) => (
                 <div key={bucket} data-bucket={bucket} title={hint}>
                   <span>{label}</span> <strong>{count}</strong>
+                  {bucket === "keep" && <small className="remova-orphan-summary-hint">{hint}</small>}
                 </div>
               ))}
             </div>
