@@ -113,12 +113,13 @@ The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
        'D:/acceptance/client-launch.json'
        'D:/acceptance/elevated-launch.json'
    )
-   $approval = & ./scripts/release-approval.ps1 -Tag v1.4.1 -Commit $commit `
+   $tag = "v$((Get-Content -Raw package.json | ConvertFrom-Json).version)"
+   $approval = & ./scripts/release-approval.ps1 -Tag $tag -Commit $commit `
        -BundleDir 'D:/candidate' -LaunchRecord $launches `
        -PackageExeReference 'D:/acceptance/package-exe-reference.json' `
        -ReleaseMetadataPath 'D:/acceptance/release-metadata.json' `
        -PrivateKeyPath 'D:/private/remova-release-approval/approval-private.pem' -Reviewed
-   gh workflow run publish-release.yml --ref main -f tag=v1.4.1 -f "approval=$approval"
+   gh workflow run publish-release.yml --ref main -f "tag=$tag" -f "approval=$approval"
    ```
 
    A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes, executable digests for all three channels, title, notes and publication settings. Any change to the approved draft title, notes or prerelease setting requires a new approval. Keep the original launch records with the acceptance evidence.

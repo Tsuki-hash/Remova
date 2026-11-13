@@ -81,7 +81,7 @@ export const cssStyles = {
   // record"). Keep new buttons in this split instead of a third look, and
   // keep the disabled dimming at 0.5 like the other tool panels. Several
   // pre-existing solid-danger buttons still hand-write this look over
-  // css.btn; they should converge here after 1.4.1.
+  // css.btn; use this shared style when updating those panels.
   btnDanger: {
     height: 34,
     padding: "0 14px",

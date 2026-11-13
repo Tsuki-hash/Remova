@@ -4,14 +4,15 @@
 # snapshot, including when a step fails.
 param(
     [Parameter(Mandatory = $true)][string]$Installer140,
-    [Parameter(Mandatory = $true)][string]$Installer141,
+    [Parameter(Mandatory = $true)][Alias('Installer141')][string]$CandidateInstaller,
     [Parameter(Mandatory = $true)][string]$InstallDir,
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9a-fA-F]{64}$')][string]$CandidateExeSha256,
     [string]$ConfigDir = '',
     [string[]]$FixtureFiles = @(),
     [string]$Out = '',
-    [switch]$ConfirmReplaceInstalledApp
+    [switch]$ConfirmReplaceInstalledApp,
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$CandidateVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,6 +93,9 @@ $result = [ordered]@{
 }
 
 try {
+    if (-not $CandidateVersion) {
+        $CandidateVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+    }
     if (-not $ConfirmReplaceInstalledApp) {
         throw 'This matrix replaces the installed app in a disposable VM. Pass -ConfirmReplaceInstalledApp.'
     }
@@ -118,7 +122,8 @@ try {
     }
     $result.install_dir = $InstallDir
     $result.installers = [ordered]@{}
-    foreach ($item in @(@{ id = 'v140'; path = $Installer140 }, @{ id = 'v141'; path = $Installer141 })) {
+    $result.candidate_version = $CandidateVersion
+    foreach ($item in @(@{ id = 'v140'; path = $Installer140 }, @{ id = 'candidate'; path = $CandidateInstaller })) {
         $path = (Get-Item -LiteralPath $item.path).FullName
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installer not found: $path" }
         $result.installers[$item.id] = @{
@@ -152,9 +157,9 @@ try {
     Assert-MatrixInstall 'install-1.4.0' $InstallDir '1.4.0'
     Assert-MatrixFixtures 'install-keeps-fixture' $fixtureHashes
 
-    $code = Invoke-NsisInstall $result.installers.v141.path $InstallDir
-    Assert-MatrixResult 'upgrade-1.4.1' ($code -eq 0) "exit=$code"
-    Assert-MatrixInstall 'upgrade-1.4.1' $InstallDir '1.4.1' $CandidateExeSha256
+    $code = Invoke-NsisInstall $result.installers.candidate.path $InstallDir
+    Assert-MatrixResult "upgrade-$CandidateVersion" ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall "upgrade-$CandidateVersion" $InstallDir $CandidateVersion $CandidateExeSha256
     $entries = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' |
         ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like '*Remova*' })
     Assert-MatrixResult 'upgrade-single-entry' ($entries.Count -eq 1) "uninstall entries=$($entries.Count)"
@@ -165,14 +170,14 @@ try {
     Assert-MatrixInstall 'rollback-1.4.0' $InstallDir '1.4.0'
     Assert-MatrixFixtures 'rollback-keeps-fixture' $fixtureHashes
 
-    $code = Invoke-NsisInstall $result.installers.v141.path $InstallDir
-    Assert-MatrixResult 'reinstall-1.4.1' ($code -eq 0) "exit=$code"
-    Assert-MatrixInstall 'reinstall-1.4.1' $InstallDir '1.4.1' $CandidateExeSha256
+    $code = Invoke-NsisInstall $result.installers.candidate.path $InstallDir
+    Assert-MatrixResult "reinstall-$CandidateVersion" ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall "reinstall-$CandidateVersion" $InstallDir $CandidateVersion $CandidateExeSha256
     Assert-MatrixFixtures 'reinstall-keeps-fixture' $fixtureHashes
 
     $uninstaller = Join-Path $InstallDir 'uninstall.exe'
     $code = (Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait).ExitCode
-    Assert-MatrixResult 'uninstall-1.4.1' ($code -eq 0) "exit=$code"
+    Assert-MatrixResult "uninstall-$CandidateVersion" ($code -eq 0) "exit=$code"
     $timer = [Diagnostics.Stopwatch]::StartNew()
     while ((Test-Path -LiteralPath $uninstallKey) -and $timer.Elapsed.TotalSeconds -lt 60) {
         Start-Sleep -Milliseconds 250

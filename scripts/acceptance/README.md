@@ -8,7 +8,7 @@
 $reference = Get-Content -Raw 'D:/acceptance/package-exe-reference.json' | ConvertFrom-Json
 $commit = '<候选提交的 40 位 SHA>'
 pwsh -NoProfile -File scripts/acceptance/record-launch.ps1 `
-    -ExePath 'D:/candidate/portable/remova.exe' -CandidateCommit $commit -CandidateVersion 1.4.1 `
+    -ExePath 'D:/candidate/portable/remova.exe' -CandidateCommit $commit -CandidateVersion 1.5.0 `
     -ExpectedExeSha256 $reference.portable.executable_sha256 -Mode client -Out 'D:/acceptance/client-launch.json'
 ```
 
@@ -45,7 +45,7 @@ pwsh -NoProfile -File scripts/acceptance/record-launch.ps1 `
 在用于审查发行附件的 Windows 机器上，切换到候选提交，用可信的 7-Zip 和 WiX 3 `dark.exe` 生成可执行文件参考摘要。脚本只解包，并逐字节核对三种包内的 `LICENSE` 和 `THIRD-PARTY-NOTICES.md`。把生成的 JSON 随同一批附件交给各验收环境和签批人。
 
 ```powershell
-./scripts/acceptance/get-package-exe-reference.ps1 -Artifacts 'D:/artifacts' -CandidateVersion 1.4.1 `
+./scripts/acceptance/get-package-exe-reference.ps1 -Artifacts 'D:/artifacts' -CandidateVersion 1.5.0 `
     -SevenZip 'C:/Program Files/7-Zip/7z.exe' -WixDark 'C:/Tools/WiX/bin/dark.exe' |
     Set-Content -Encoding utf8 'D:/acceptance/package-exe-reference.json'
 ```
@@ -62,11 +62,11 @@ $env:REMOVA_ACCEPTANCE_OUT        = "D:\acceptance"  # 结果输出目录
 $candidateCommit = "<候选提交的 40 位 SHA>"
 $packageExeReference = 'D:/acceptance/package-exe-reference.json'
 pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite client -CandidateCommit $candidateCommit `
-    -CandidateVersion 1.4.1 -PackageExeReference $packageExeReference
+    -CandidateVersion 1.5.0 -PackageExeReference $packageExeReference
 
 # 3. 另开管理员 PowerShell，使用相同的包和候选身份运行
 pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -CandidateCommit $candidateCommit `
-    -CandidateVersion 1.4.1 -PackageExeReference $packageExeReference
+    -CandidateVersion 1.5.0 -PackageExeReference $packageExeReference
 ```
 
 在 Windows 10 和 11 上各留存两份摘要。脚本核对 `SHA256SUMS.txt` 中的三类发行包。按提示亲自执行各场景，输入观察结果和非空日志或截图路径。结果写入独立运行目录的 `acceptance-summary.json`，并附带与摘要哈希一致的证据副本。跳过、失败、缺包、错包或缺证据均不通过。
@@ -132,7 +132,7 @@ pwsh -NoProfile -File scripts/acceptance/run-acceptance.ps1 -Suite elevated -Can
 $reference = Get-Content -Raw 'D:/acceptance/package-exe-reference.json' | ConvertFrom-Json
 pwsh -NoProfile -File scripts/acceptance/run-install-matrix.ps1 `
   -Installer140 D:\stable\Remova_1.4.0_x64-setup.exe `
-  -Installer141 D:\artifacts\Remova_1.4.1_x64-setup.exe `
+  -CandidateInstaller D:\artifacts\Remova_1.5.0_x64-setup.exe -CandidateVersion 1.5.0 `
   -InstallDir D:\vm-fixture\Remova -CandidateExeSha256 $reference.nsis.executable_sha256 `
   -Out D:\acceptance\nsis-matrix -ConfirmReplaceInstalledApp
 ```

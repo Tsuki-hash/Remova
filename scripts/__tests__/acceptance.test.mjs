@@ -156,13 +156,14 @@ function Start-Process { @{ExitCode=17} }
   const wrapper = join(root, "matrix-main-probe.ps1");
   writeFileSync(wrapper, String.raw`
 param([string]$Script,[string]$Root,[string]$Digest)
-& $Script -Installer140 (Join-Path $Root 'old.exe') -Installer141 (Join-Path $Root 'candidate.exe') -InstallDir (Join-Path $Root 'install') -CandidateExeSha256 $Digest -Out (Join-Path $Root 'out') -FixtureFiles @((Join-Path $Root 'ai-config.json'),(Join-Path $Root 'history.jsonl')) -ConfirmReplaceInstalledApp
+& $Script -Installer140 (Join-Path $Root 'old.exe') -CandidateInstaller (Join-Path $Root 'candidate.exe') -CandidateVersion '1.5.0' -InstallDir (Join-Path $Root 'install') -CandidateExeSha256 $Digest -Out (Join-Path $Root 'out') -FixtureFiles @((Join-Path $Root 'ai-config.json'),(Join-Path $Root 'history.jsonl')) -ConfirmReplaceInstalledApp
 exit $LASTEXITCODE
 `);
   const failed = run(wrapper, [fake, root, exeSha], { TEST_ACCEPTANCE_ELEVATED: "" });
   assert.equal(failed.status, 1, resultText(failed));
   const summary = readJson(join(out, "install-matrix.json"));
   assert.equal(summary.passed, false);
+  assert.equal(summary.candidate_version, "1.5.0");
   assert.equal(summary.snapshot_rollback_required, true);
   assert.deepEqual(summary.steps.map(({ step, ok }) => [step, ok]),
     [["preflight", true], ["install-1.4.0", false], ["matrix-stopped", false]]);

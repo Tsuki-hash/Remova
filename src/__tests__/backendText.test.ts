@@ -85,7 +85,7 @@ it.each(["zh", "en"] as const)("every specialty-scan bucket and reason localizes
   }
 });
 
-describe("1.4.1 backend error strings", () => {
+describe("Backend error strings for cleanup and recovery", () => {
   it("localizes the migration and regenerable error strings", () => {
     expect(backendErrorText("migrate:cancelled")).toBe(t().migrateCancelled);
     expect(backendErrorText("cleanup cancelled during backup")).toBe(t().backendCleanupCancelledBackup);
