@@ -167,6 +167,18 @@ it("shows run state and start type as separate facts on a service row", async ()
   expect(screen.getAllByText(new RegExp(`${t().manageStartType}:`)).length).toBeGreaterThan(0);
 });
 
+it("loads a packaged startup logo by its Windows application ID without an executable path", async () => {
+  const appUserModelId = "Acme.Tools_abcd1234!StartAgent";
+  native.appIconData.mockResolvedValue("data:image/png;base64,dGVzdA==");
+  native.listStartupItems.mockResolvedValue([{
+    name: "Acme Tools", detail: "Store", location: `PACKAGED::registry::${appUserModelId}`,
+    enabled: true, kind: "startup", app_user_model_id: appUserModelId,
+  }]);
+  const { container } = render(<ManageListPage tab="startup" title={t().navStartup} />);
+  await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA=="));
+  expect(native.appIconData).toHaveBeenCalledWith("", true, undefined, { path: "", appUserModelId });
+});
+
 it("shows a readable service title, description and icon, and controls it by its service ID", async () => {
   const path = "C:\\Program Files\\Acme\\agent.exe";
   native.appIconData.mockResolvedValue("data:image/png;base64,dGVzdA==");
@@ -185,7 +197,7 @@ it("shows a readable service title, description and icon, and controls it by its
   expect(screen.getByText(/后台服务 · AcmeSvc/)).toBeTruthy();
   expect(screen.queryByText(/HKLM64/)).toBeNull();
   await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA=="));
-  expect(native.appIconData).toHaveBeenCalledWith(path, true);
+  expect(native.appIconData).toHaveBeenCalledWith(path, true, undefined, { path, appUserModelId: "" });
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "agent.exe" } });
   expect(screen.getByText("Acme 后台助手")).toBeTruthy();
   fireEvent.click(stop);
@@ -229,7 +241,7 @@ it("shows a scheduled task's executable icon and uses the full registered path w
   expect(detail.getByText("09:00")).toBeTruthy();
   expect(detail.getByText("10:00")).toBeTruthy();
   await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
-  expect(native.appIconData).toHaveBeenCalledWith(path, true);
+  expect(native.appIconData).toHaveBeenCalledWith(path, true, undefined, { path, appUserModelId: "" });
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "\\Vendor\\Guard" } });
   fireEvent.click(detail.getByRole("button", { name: t().manageTaskDisable + ": LaunchGuard" }));
   await waitFor(() => expect(native.setTaskEnabled).toHaveBeenCalledWith(location, false));

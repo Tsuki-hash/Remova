@@ -2,8 +2,7 @@ import { useId, useRef, useState, type KeyboardEvent, type RefObject } from "rea
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
 import type { ManageItem } from "../types";
-import { AppIcon } from "./AppIcon";
-import { ToolGlyph } from "./ToolIcons";
+import { ManageItemIcon } from "./AppIcon";
 
 export function taskName(item: ManageItem) {
   return item.display_name || item.name.split("\\").filter(Boolean).pop() || item.name;
@@ -22,10 +21,7 @@ function TaskIcon({ item }: { item: ManageItem }) {
   const action = item.task_action;
   const glyph = action?.kind === "multiple" ? "task-multiple"
     : action?.kind === "program" ? (action.script_host ? "task-command" : "package") : "tasks";
-  return (
-    <AppIcon displayIcon={item.display_icon || ""} name={taskName(item)} embeddedOnly
-      bare fallback={<ToolGlyph name={glyph} size={22} />} />
-  );
+  return <ManageItemIcon item={item} glyph={glyph} />;
 }
 
 export function TaskWorkspace({ rows, scrollRef, busy, emptyLabel, onSetEnabled }: {

@@ -9,7 +9,9 @@ const ICON_SIZE: i32 = 32;
 #[cfg(windows)]
 mod installed;
 #[cfg(windows)]
-pub(crate) use installed::{installed_icon, remember_icon_apps};
+pub(crate) use installed::{
+    installed_icon, related_icon, remember_additional_icon_apps, remember_icon_apps,
+};
 
 fn icon_cache_dir() -> Option<PathBuf> {
     // Known Folder, not LOCALAPPDATA: a rewritten environment variable must not

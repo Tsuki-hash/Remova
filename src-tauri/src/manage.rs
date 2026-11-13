@@ -31,6 +31,8 @@ pub struct ManageItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_user_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_service: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_action: Option<presentation::TaskAction>,
@@ -341,6 +343,7 @@ fn list_packaged_startup_with(
                 enabled,
             );
             it.kind = Some("startup".into());
+            it.app_user_model_id = vname.contains('!').then_some(vname);
             it
         });
     }

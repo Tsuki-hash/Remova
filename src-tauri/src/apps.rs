@@ -277,10 +277,10 @@ pub struct InstalledApp {
 /// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
 pub fn scan_installed_apps() -> Vec<InstalledApp> {
     let (mut out, completeness) = scan_installed_inventory_with_completeness();
-    let ignore = crate::ignore::load();
-    filter_visible_apps(&mut out, &ignore);
     #[cfg(windows)]
     crate::icon::remember_icon_apps(&out);
+    let ignore = crate::ignore::load();
+    filter_visible_apps(&mut out, &ignore);
     remember_complete_inventory(&out, &completeness);
     out
 }

@@ -1,4 +1,4 @@
-//! Icon sources for the installed-software list, resolved from scanned records.
+//! Windows icon sources shared by installed software and related local items.
 
 use super::{extract_icon_png, looks_like_png};
 use crate::apps::{parse_display_icon, InstalledApp};
@@ -18,14 +18,31 @@ use windows::Win32::UI::Shell::{
 type Icon = (&'static str, Vec<u8>);
 type ShortcutIndex = HashMap<String, Vec<PathBuf>>;
 static START_MENU: Mutex<Option<Arc<ShortcutIndex>>> = Mutex::new(None);
-static ICON_APPS: Mutex<Option<HashMap<String, InstalledApp>>> = Mutex::new(None);
+#[derive(Default)]
+struct IconInventory {
+    apps: HashMap<String, InstalledApp>,
+    roots: HashMap<String, Option<String>>,
+}
+
+static ICON_APPS: Mutex<Option<IconInventory>> = Mutex::new(None);
 const MAX_IMAGE_BYTES: usize = 512 * 1024;
 
 pub(crate) fn remember_icon_apps(apps: &[InstalledApp]) {
-    let next = apps
-        .iter()
-        .map(|app| (crate::apps::app_key(app), app.clone()))
-        .collect();
+    let mut next = IconInventory::default();
+    for app in apps {
+        let key = crate::apps::app_key(app);
+        if let Some(root) = path_key(&app.install_location).filter(|root| {
+            root[3..].contains('\\')
+                && !root.ends_with("\\windowsapps")
+                && !root.ends_with("\\common files")
+        }) {
+            next.roots
+                .entry(root)
+                .and_modify(|owner| *owner = None)
+                .or_insert_with(|| Some(key.clone()));
+        }
+        next.apps.insert(key, app.clone());
+    }
     if let Ok(mut current) = ICON_APPS.lock() {
         *current = Some(next);
     }
@@ -35,8 +52,78 @@ pub(crate) fn remember_icon_apps(apps: &[InstalledApp]) {
 }
 
 pub(crate) fn installed_icon(key: &str) -> Option<Icon> {
-    let app = ICON_APPS.lock().ok()?.as_ref()?.get(key)?.clone();
+    let app = ICON_APPS.lock().ok()?.as_ref()?.apps.get(key)?.clone();
     resolve_icon(&app)
+}
+
+pub(crate) fn related_icon(raw_icon: &str, path: &str, app_user_model_id: &str) -> Option<Icon> {
+    if let Some(icon) = app_model_icon(app_user_model_id) {
+        return Some(icon);
+    }
+    let owner = installed_owner(path);
+    if let Some(app) = owner
+        .as_ref()
+        .filter(|app| app.source == crate::apps::STORE_INVENTORY_ROOT)
+    {
+        // Packaged helper executables often carry no branding of their own.
+        return resolve_icon(app).or_else(|| file_icon(raw_icon));
+    }
+    file_icon(raw_icon).or_else(|| owner.as_ref().and_then(resolve_icon))
+}
+
+fn path_key(raw: &str) -> Option<String> {
+    let raw = crate::regops::expand_env_string(raw.trim().trim_matches('"'));
+    let path = crate::fsutil::local_drive_candidate(&raw)?;
+    let trimmed = path.trim_end_matches('\\');
+    let tail = trimmed.get(3..)?;
+    if tail.split('\\').any(|part| {
+        part.is_empty()
+            || part.ends_with(['.', ' '])
+            || part
+                .chars()
+                .any(|ch| ch.is_control() || matches!(ch, '"' | '<' | '>' | '|' | '?' | '*' | ':'))
+    }) {
+        return None;
+    }
+    Some(trimmed.to_lowercase())
+}
+
+fn installed_owner(path: &str) -> Option<InstalledApp> {
+    let path = path_key(path)?;
+    let app = {
+        let inventory = ICON_APPS.lock().ok()?;
+        let inventory = inventory.as_ref()?;
+        inventory
+            .apps
+            .get(owner_key(&path, &inventory.roots)?)?
+            .clone()
+    };
+    // WindowsApps may deny directory reads to standard users. For a registered
+    // package the path only identifies its owner; WinRT reads the actual logo.
+    (app.source == crate::apps::STORE_INVENTORY_ROOT || crate::fsutil::is_local_drive_path(&path))
+        .then_some(app)
+}
+
+pub(crate) fn remember_additional_icon_apps(apps: impl IntoIterator<Item = InstalledApp>) {
+    if let Ok(mut inventory) = ICON_APPS.lock() {
+        let inventory = inventory.get_or_insert_with(IconInventory::default);
+        for app in apps {
+            inventory
+                .apps
+                .entry(crate::apps::app_key(&app))
+                .or_insert(app);
+        }
+    }
+}
+
+fn owner_key<'a>(path: &str, roots: &'a HashMap<String, Option<String>>) -> Option<&'a str> {
+    let mut candidate = path;
+    loop {
+        if let Some(owner) = roots.get(candidate) {
+            return owner.as_deref();
+        }
+        candidate = candidate.rsplit_once('\\')?.0;
+    }
 }
 
 fn resolve_icon(app: &InstalledApp) -> Option<Icon> {
@@ -313,29 +400,127 @@ fn unique_main_executable(paths: impl IntoIterator<Item = PathBuf>, name: &str) 
     matches.next().is_none().then_some(path)
 }
 
-fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
-    use windows::Foundation::Size;
-    use windows::Management::Deployment::PackageManager;
-    use windows::Storage::Streams::{DataReader, RandomAccessStreamReference};
-    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
-    use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
+struct WinRt(bool);
 
-    struct WinRt(bool);
-    impl Drop for WinRt {
-        fn drop(&mut self) {
-            if self.0 {
-                unsafe { RoUninitialize() };
-            }
+impl WinRt {
+    fn init() -> Option<Self> {
+        use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+        use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+
+        let init = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+        if init
+            .as_ref()
+            .is_err_and(|err| err.code() != RPC_E_CHANGED_MODE)
+        {
+            return None;
+        }
+        Some(Self(init.is_ok()))
+    }
+}
+
+impl Drop for WinRt {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { windows::Win32::System::WinRT::RoUninitialize() };
         }
     }
-    let init = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
-    if init
-        .as_ref()
-        .is_err_and(|err| err.code() != RPC_E_CHANGED_MODE)
+}
+
+const LOGO_SIZE: windows::Foundation::Size = windows::Foundation::Size {
+    Width: 64.0,
+    Height: 64.0,
+};
+
+fn read_logo(reference: windows::Storage::Streams::RandomAccessStreamReference) -> Option<Icon> {
+    use windows::Storage::Streams::DataReader;
+
+    let stream = reference.OpenReadAsync().ok()?.get().ok()?;
+    let size = usize::try_from(stream.Size().ok()?).ok()?;
+    if size == 0 || size > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0).ok()?).ok()?;
+    if reader.LoadAsync(size as u32).ok()?.get().ok()? != size as u32 {
+        return None;
+    }
+    let mut bytes = vec![0; size];
+    reader.ReadBytes(&mut bytes).ok()?;
+    raster_icon(bytes)
+}
+
+fn app_model_icon(id: &str) -> Option<Icon> {
+    use windows::Management::Deployment::PackageManager;
+
+    let (family, app_id) = id.split_once('!')?;
+    if family.is_empty()
+        || app_id.is_empty()
+        || id.len() > 256
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'!'))
+        || app_id.contains('!')
     {
         return None;
     }
-    let _winrt = WinRt(init.is_ok());
+    let _winrt = WinRt::init()?;
+    if let Some(icon) =
+        windows::ApplicationModel::AppInfo::GetFromAppUserModelId(&HSTRING::from(id))
+            .ok()
+            .and_then(|app| app.DisplayInfo().ok())
+            .and_then(|info| info.GetLogo(LOGO_SIZE).ok())
+            .and_then(read_logo)
+    {
+        return Some(icon);
+    }
+
+    // Older Windows versions lack AppInfo's lookup method. Some packaged
+    // startup registrations also use a task ID instead of an application ID.
+    let packages = PackageManager::new()
+        .ok()?
+        .FindPackagesByUserSecurityIdPackageFamilyName(&HSTRING::new(), &HSTRING::from(family))
+        .ok()?;
+    for package in packages {
+        if package.IsResourcePackage().unwrap_or(false) || package.IsFramework().unwrap_or(false) {
+            continue;
+        }
+        if let Some(icon) = package_entries(&package)
+            .into_iter()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .AppUserModelId()
+                    .is_ok_and(|key| key.to_string().eq_ignore_ascii_case(id))
+            })
+            .and_then(|entry| entry.DisplayInfo().ok())
+            .and_then(|info| info.GetLogo(LOGO_SIZE).ok())
+            .and_then(read_logo)
+            .or_else(|| {
+                package
+                    .GetLogoAsRandomAccessStreamReference(LOGO_SIZE)
+                    .ok()
+                    .and_then(read_logo)
+            })
+        {
+            return Some(icon);
+        }
+    }
+    None
+}
+
+fn package_entries(
+    package: &windows::ApplicationModel::Package,
+) -> Option<
+    windows::Foundation::Collections::IVectorView<windows::ApplicationModel::Core::AppListEntry>,
+> {
+    package
+        .GetAppListEntries()
+        .or_else(|_| package.GetAppListEntriesAsync()?.get())
+        .ok()
+}
+
+fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
+    use windows::Management::Deployment::PackageManager;
+    let _winrt = WinRt::init()?;
     let package = PackageManager::new()
         .ok()?
         .FindPackageByUserSecurityIdPackageFullName(
@@ -343,28 +528,7 @@ fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
             &HSTRING::from(package_full_name),
         )
         .ok()?;
-    let size = Size {
-        Width: 64.0,
-        Height: 64.0,
-    };
-    let read_logo = |reference: RandomAccessStreamReference| {
-        let stream = reference.OpenReadAsync().ok()?.get().ok()?;
-        let size = usize::try_from(stream.Size().ok()?).ok()?;
-        if size == 0 || size > MAX_IMAGE_BYTES {
-            return None;
-        }
-        let reader = DataReader::CreateDataReader(&stream.GetInputStreamAt(0).ok()?).ok()?;
-        if reader.LoadAsync(size as u32).ok()?.get().ok()? != size as u32 {
-            return None;
-        }
-        let mut bytes = vec![0; size];
-        reader.ReadBytes(&mut bytes).ok()?;
-        raster_icon(bytes)
-    };
-    let entries = package
-        .GetAppListEntries()
-        .or_else(|_| package.GetAppListEntriesAsync()?.get());
-    if let Ok(entries) = entries {
+    if let Some(entries) = package_entries(&package) {
         let mut logos = entries
             .into_iter()
             .filter_map(|entry| entry.DisplayInfo().ok());
@@ -378,7 +542,7 @@ fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
                 Some(second) => [first, second].into_iter().chain(logos).find(is_match),
             };
             if let Some(icon) = selected
-                .and_then(|info| info.GetLogo(size).ok())
+                .and_then(|info| info.GetLogo(LOGO_SIZE).ok())
                 .and_then(read_logo)
             {
                 return Some(icon);
@@ -386,7 +550,7 @@ fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
         }
     }
     package
-        .GetLogoAsRandomAccessStreamReference(size)
+        .GetLogoAsRandomAccessStreamReference(LOGO_SIZE)
         .ok()
         .and_then(read_logo)
 }
@@ -394,6 +558,30 @@ fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn related_icon_owner_uses_whole_path_segments_and_rejects_ties() {
+        let roots = HashMap::from([
+            (r"c:\program files\suite".into(), Some("suite".into())),
+            (
+                r"c:\program files\suite\editor".into(),
+                Some("editor".into()),
+            ),
+            (r"c:\program files\suite\shared".into(), None),
+        ]);
+        assert_eq!(
+            owner_key(r"c:\program files\suite\editor\helper.exe", &roots),
+            Some("editor")
+        );
+        assert_eq!(
+            owner_key(r"c:\program files\suite\shared\helper.exe", &roots),
+            None
+        );
+        assert_eq!(
+            owner_key(r"c:\program files\suite2\helper.exe", &roots),
+            None
+        );
+    }
 
     #[test]
     fn chooses_only_a_unique_matching_main_executable() {
@@ -480,5 +668,62 @@ mod tests {
         println!(
             "Desktop and Store counts: total={total:?} previous={previous:?} current={recovered:?} lost={lost:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "reads the current Windows user's application, service and task inventory"]
+    fn inspect_related_icons() {
+        crate::apps::scan_installed_apps();
+        if let Ok(id) = std::env::var("REMOVA_TEST_AUMID") {
+            assert!(
+                app_model_icon(&id).is_some(),
+                "registered app logo for {id}"
+            );
+            let (family, _) = id.split_once('!').expect("expected a packaged app ID");
+            assert!(
+                app_model_icon(&format!("{family}!RemovaIconTestStartupTask")).is_some(),
+                "registered package logo for {family}"
+            );
+            println!("Packaged startup: exact application logo and package fallback passed");
+        }
+        for (page, items) in [
+            ("Startup", crate::manage::list_startup_items()),
+            ("Services", crate::manage::list_services()),
+            ("Tasks", crate::manage::list_scheduled_tasks()),
+        ] {
+            let mut previous = 0;
+            let mut current = 0;
+            let mut lost = 0;
+            for item in &items {
+                let raw = item.display_icon.as_deref().unwrap_or_default();
+                let path = item.path.as_deref().unwrap_or_default();
+                let model = item.app_user_model_id.as_deref().unwrap_or_default();
+                let old = extract_icon_png(raw, true).is_some();
+                let new = if item.system_service == Some(true) {
+                    old
+                } else {
+                    related_icon(raw, path, model).is_some()
+                };
+                previous += usize::from(old);
+                current += usize::from(new);
+                lost += usize::from(old && !new);
+                if matches!(
+                    item.name.as_str(),
+                    "CodexSandboxService.OpenAI.Codex"
+                        | "CoworkVMService"
+                        | "douyin_performance_service"
+                ) {
+                    let owner = installed_owner(path).map(|app| app.name);
+                    println!(
+                        "{page} {}: owner={owner:?}, old={old}, new={new}",
+                        item.name
+                    );
+                }
+            }
+            println!(
+                "{page}: total={}, previous={previous}, current={current}, lost={lost}",
+                items.len()
+            );
+        }
     }
 }

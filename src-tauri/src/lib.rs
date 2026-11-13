@@ -285,12 +285,20 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
     })
 }
 
-/// Return `data:image/png;base64,...` for the app icon, or null.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelatedIcon {
+    path: String,
+    app_user_model_id: String,
+}
+
+/// Return an image data URL for an app or a related local item, or null.
 #[tauri::command]
 async fn app_icon_data(
     display_icon: Option<String>,
     embedded_only: Option<bool>,
     installed_app_key: Option<String>,
+    related: Option<RelatedIcon>,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
@@ -301,8 +309,20 @@ async fn app_icon_data(
                 base64_light::b64_encode(&bytes)
             ));
         }
+        #[cfg(windows)]
+        if let Some(related) = related {
+            let (mime, bytes) = icon::related_icon(
+                display_icon.as_deref().unwrap_or_default(),
+                &related.path,
+                &related.app_user_model_id,
+            )?;
+            return Some(format!(
+                "data:{mime};base64,{}",
+                base64_light::b64_encode(&bytes)
+            ));
+        }
         #[cfg(not(windows))]
-        let _ = installed_app_key;
+        let _ = (installed_app_key, related);
         let raw = display_icon?;
         if raw.trim().is_empty() || !crate::fsutil::is_local_drive_path(&raw) {
             return None;
@@ -1039,9 +1059,14 @@ async fn find_project_consumers(
 /// remains, so Programs & Features can no longer remove the product (§9.7).
 #[tauri::command]
 async fn scan_broken_installs() -> Result<Vec<apps::BrokenInstall>, String> {
-    tauri::async_runtime::spawn_blocking(apps::scan_broken_installs)
-        .await
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| {
+        let rows = apps::scan_broken_installs();
+        #[cfg(windows)]
+        icon::remember_additional_icon_apps(rows.iter().map(|row| row.app.clone()));
+        rows
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Remove a broken record after exporting its keys to a Safety Vault session.
@@ -1285,7 +1310,10 @@ async fn rank_idle_apps(scan_id: Option<u32>) -> Result<idle::IdleScanResult, St
                 };
             }
             apps::filter_visible_apps(&mut installed, &ignore::load());
-            idle::rank_idle_apps(&installed)
+            let result = idle::rank_idle_apps(&installed);
+            #[cfg(windows)]
+            icon::remember_additional_icon_apps(result.items.iter().map(|row| row.app.clone()));
+            result
         })
     })
     .await

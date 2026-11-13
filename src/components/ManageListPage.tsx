@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
-import { ToolGlyph } from "./ToolIcons";
-import { AppIcon } from "./AppIcon";
+import { ManageItemIcon } from "./AppIcon";
 import { cssStyles as css } from "../styles";
 import { formatError, isAccessDeniedError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
@@ -340,8 +339,7 @@ export function ManageListPage({
                     overflow: "hidden",
                   }}
                 >
-                  <AppIcon displayIcon={it.display_icon || ""} name={name} embeddedOnly
-                    fallback={<ToolGlyph name={entryGlyph(it, tab)} />} />
+                  <ManageItemIcon item={it} glyph={entryGlyph(it, tab)} />
                   <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                     <div
                       style={{ fontWeight: 600, fontSize: 13 }}
