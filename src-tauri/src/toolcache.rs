@@ -289,10 +289,7 @@ fn is_plausible_cache_root(p: &Path) -> bool {
         "saved games",
         "searches",
     ];
-    if LIBRARY_NAMES.contains(&last.as_str()) {
-        return false;
-    }
-    true
+    !LIBRARY_NAMES.contains(&last.as_str())
 }
 
 /// Build the fixed single-owner cache list from explicit bases.

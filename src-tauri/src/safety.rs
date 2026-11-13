@@ -665,12 +665,8 @@ pub fn is_safe_restore_target(p: &std::path::Path) -> bool {
     }
     // Never write into Startup (persistence). Library *subpaths* stay restorable —
     // path_map is the server-side record of where the file came from (roots already blocked).
-    if trimmed.contains("\\start menu\\programs\\startup")
-        || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup")
-    {
-        return false;
-    }
-    true
+    !(trimmed.contains("\\start menu\\programs\\startup")
+        || trimmed.contains("\\microsoft\\windows\\start menu\\programs\\startup"))
 }
 
 /// Lowercased, per-segment Win32-normalized form of a path string: trailing

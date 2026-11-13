@@ -311,22 +311,17 @@ pub fn path_associated_with_app(app: &crate::apps::InstalledApp, item: &CleanupI
                 }
             }
             let pub_slugs = crate::scanner::slugify(&app.publisher);
-            if !pub_slugs.is_empty()
-                && pub_slugs
-                    .iter()
-                    .filter(|s| {
-                        s.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&s.to_lowercase().as_str())
-                    })
-                    .any(|s| {
-                        let sl = s.to_lowercase();
-                        low.split(['\\', '/', ' ', '_', '-', '.'])
-                            .any(|seg| seg == sl)
-                    })
+            pub_slugs
+                .iter()
+                .filter(|s| {
+                    s.len() >= 6 && !AR10_NAME_STOPWORDS.contains(&s.to_lowercase().as_str())
+                })
+                .any(|s| {
+                    let sl = s.to_lowercase();
+                    low.split(['\\', '/', ' ', '_', '-', '.'])
+                        .any(|seg| seg == sl)
+                })
                 && ar10_in_install_root(&low)
-            {
-                return true;
-            }
-            false
         }
     }
 }
