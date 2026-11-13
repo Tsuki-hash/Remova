@@ -57,6 +57,7 @@ Remova 的原则是 **Find it. Explain it. Remove it. Restore it.**（找到 · 
 
 ### 已安装软件列表
 - 来源：HKLM64 / HKLM32 / HKCU / Microsoft Store（MSIX），同产品自动去重
+- 从 Windows 应用包、卸载记录、MSI 产品或可匹配的本机快捷方式和主程序取图标。
 - 决策 chips：大体积 / 最近安装 / 推荐清理 / 无卸载命令 / 商店或桌面
 - 搜索、排序、虚拟化大列表；拖放 exe / 安装目录可分析
 

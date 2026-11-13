@@ -6,6 +6,11 @@ use std::time::UNIX_EPOCH;
 
 const ICON_SIZE: i32 = 32;
 
+#[cfg(windows)]
+mod installed;
+#[cfg(windows)]
+pub(crate) use installed::{installed_icon, remember_icon_apps};
+
 fn icon_cache_dir() -> Option<PathBuf> {
     // Known Folder, not LOCALAPPDATA: a rewritten environment variable must not
     // make an elevated process probe or write a UNC path. No fallback to

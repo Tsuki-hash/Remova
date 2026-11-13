@@ -271,6 +271,6 @@ export const api = {
   listStartupItems: (scanId?: number) => invoke<ManageItem[]>("list_startup_items", { scanId }),
   listServices: (scanId?: number) => invoke<ManageItem[]>("list_services", { scanId }),
   listScheduledTasks: (scanId?: number) => invoke<ManageItem[]>("list_scheduled_tasks", { scanId }),
-  appIconData: (displayIcon: string | null | undefined, embeddedOnly = false) =>
-    invoke<string | null>("app_icon_data", { displayIcon: displayIcon ?? null, embeddedOnly }),
+  appIconData: (displayIcon: string | null | undefined, embeddedOnly = false, installedAppKey?: string) =>
+    invoke<string | null>("app_icon_data", { displayIcon: displayIcon ?? null, embeddedOnly, installedAppKey }),
 };

@@ -4,7 +4,7 @@ import { CloseGlyph, Deco } from "./ui/Glyph";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { AppIcon } from "./AppIcon";
+import { InstalledAppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { summarizeLeftovers } from "../lib/decision";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
@@ -83,7 +83,7 @@ export function AppDetailPanel({
   return (
     <aside style={{ ...css.panelShell, borderRadius: 12 }} className="software-detail" aria-label={name}>
       <div style={{ ...css.panelHeader, padding: "20px 18px", gap: 12 }}>
-        <AppIcon displayIcon={app.display_icon} name={app.name} />
+        <InstalledAppIcon app={app} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 650, fontSize: 16, lineHeight: 1.4, overflowWrap: "anywhere" }}>{name}</div>
           <div className="ell" style={{ ...css.muted, marginTop: 5, fontSize: 11.5 }} title={`${app.publisher} · ${app.version}`}>

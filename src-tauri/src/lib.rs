@@ -290,8 +290,19 @@ fn open_path_in_explorer(path: String) -> Result<(), String> {
 async fn app_icon_data(
     display_icon: Option<String>,
     embedded_only: Option<bool>,
+    installed_app_key: Option<String>,
 ) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        if let Some(key) = installed_app_key.as_deref() {
+            let (mime, bytes) = icon::installed_icon(key)?;
+            return Some(format!(
+                "data:{mime};base64,{}",
+                base64_light::b64_encode(&bytes)
+            ));
+        }
+        #[cfg(not(windows))]
+        let _ = installed_app_key;
         let raw = display_icon?;
         if raw.trim().is_empty() || !crate::fsutil::is_local_drive_path(&raw) {
             return None;

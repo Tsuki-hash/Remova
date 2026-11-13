@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
+import { appKey } from "../lib/appKey";
+import type { InstalledApp } from "../types";
+import { ToolGlyph } from "./ToolIcons";
 
 /** Share loaded icons between the virtualized list and the detail pane. */
 const iconCache = new Map<string, string>();
@@ -12,7 +15,7 @@ function forgetIcon(key: string) {
   iconCache.delete(key);
 }
 
-function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string): Promise<string | null> {
+function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string, installedAppKey?: string): Promise<string | null> {
   const cached = iconCache.get(key);
   if (cached) {
     iconCache.delete(key);
@@ -21,7 +24,10 @@ function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string): P
   }
   const existing = iconInflight.get(key);
   if (existing) return existing;
-  const p = api.appIconData(displayIcon, embeddedOnly)
+  const request = installedAppKey
+    ? api.appIconData(displayIcon, embeddedOnly, installedAppKey)
+    : api.appIconData(displayIcon, embeddedOnly);
+  const p = request
     .then((url) => {
       if (url) {
         iconCache.set(key, url);
@@ -42,29 +48,37 @@ function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string): P
   return p;
 }
 
-export function AppIcon({ displayIcon, name, fallback, embeddedOnly = false, bare = false }: {
+export function InstalledAppIcon({ app }: { app: InstalledApp }) {
+  return <AppIcon displayIcon={app.display_icon} name={app.name} installedAppKey={appKey(app)} version={app.version}
+    bare fallback={<ToolGlyph name="package" size={19} />} />;
+}
+
+export function AppIcon({ displayIcon, name, fallback, embeddedOnly = false, bare = false, installedAppKey, version }: {
   displayIcon: string;
   name: string;
   fallback?: ReactNode;
   embeddedOnly?: boolean;
   bare?: boolean;
+  installedAppKey?: string;
+  version?: string;
 }) {
-  const key = embeddedOnly ? "embedded\0" + displayIcon : displayIcon;
+  const key = installedAppKey ? `installed\0${installedAppKey}\0${version}\0${displayIcon}`
+    : embeddedOnly ? "embedded\0" + displayIcon : displayIcon;
   const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null);
   const [failedImage, setFailedImage] = useState<{ key: string; url: string } | null>(null);
   const src = loaded?.key === key ? loaded.url : iconCache.get(key);
   const imageFailed = failedImage?.key === key && failedImage.url === src;
 
   useEffect(() => {
-    if (!displayIcon) return;
+    if (!displayIcon && !installedAppKey) return;
     let cancelled = false;
-    void loadAppIcon(displayIcon, embeddedOnly, key).then((url) => {
+    void loadAppIcon(displayIcon, embeddedOnly, key, installedAppKey).then((url) => {
       if (!cancelled) setLoaded({ key, url });
     });
     return () => {
       cancelled = true;
     };
-  }, [displayIcon, embeddedOnly, key]);
+  }, [displayIcon, embeddedOnly, installedAppKey, key]);
 
   const initial = (name.trim()[0] || "?").toUpperCase();
   return (
@@ -78,7 +92,7 @@ export function AppIcon({ displayIcon, name, fallback, embeddedOnly = false, bar
         alignItems: "center",
         justifyContent: "center",
         background: bare ? "transparent" : "var(--surface-2)",
-        color: bare ? "var(--accent-text)" : "var(--muted)",
+        color: bare && !installedAppKey ? "var(--accent-text)" : "var(--muted)",
         fontSize: 13,
         fontWeight: 700,
         overflow: "hidden",

@@ -279,6 +279,8 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
     let (mut out, completeness) = scan_installed_inventory_with_completeness();
     let ignore = crate::ignore::load();
     filter_visible_apps(&mut out, &ignore);
+    #[cfg(windows)]
+    crate::icon::remember_icon_apps(&out);
     remember_complete_inventory(&out, &completeness);
     out
 }

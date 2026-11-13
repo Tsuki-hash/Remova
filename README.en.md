@@ -52,6 +52,7 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 
 ### Installed apps
 - Sources: HKLM64 / HKLM32 / HKCU / Microsoft Store (MSIX), deduplicated
+- Icons come from Windows app packages, uninstall records, MSI products, or matching local shortcuts and executables.
 - Decision chips: large / recent / recommended / no uninstaller / store vs desktop
 - Search, sort, virtualized list; drop exe or install folder to analyze
 

@@ -9,7 +9,7 @@ import { t } from "../i18n";
 import { requestCloseChoice, settleCloseChoice } from "../lib/closeMode";
 import type { InstalledApp } from "../types";
 
-vi.mock("../components/AppIcon", () => ({ AppIcon: () => null }));
+vi.mock("../components/AppIcon", () => ({ InstalledAppIcon: () => null }));
 afterEach(() => { cleanup(); settleCloseChoice("cancel"); toast.clear(); vi.useRealTimers(); });
 
 it("announces new toasts through one persistent live owner and keeps errors readable", () => {

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import type { InstalledApp } from "../types";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
-import { AppIcon } from "./AppIcon";
+import { InstalledAppIcon } from "./AppIcon";
 import { prettyAppName, prettyPublisher } from "../lib/format";
 import { decisionChips, type DecisionChip } from "../lib/decision";
 import { dialogLayer } from "../lib/useDialogFocus";
@@ -264,7 +264,7 @@ function AppRowImpl({
       </td>
       <td style={{ ...css.td, paddingTop: 6, paddingBottom: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <AppIcon displayIcon={a.display_icon} name={a.name} />
+          <InstalledAppIcon app={a} />
           <div style={{ minWidth: 0 }}>
             <div
               className="ell"
