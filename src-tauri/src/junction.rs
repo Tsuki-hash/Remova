@@ -8,12 +8,16 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// Hard ceiling on ledger rows per run; beyond it the walk stops and the
 /// result reports the truncation in `omitted`.
 const RESULT_CAP: usize = 20_000;
 /// Plain directories this many levels below a root are still enumerated.
 const MAX_DEPTH: usize = 4;
+const SCAN_BUDGET: Duration = Duration::from_secs(8);
+const DIRECTORY_ATTRIBUTE: u32 = 0x10;
+const REPARSE_ATTRIBUTE: u32 = 0x400;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JunctionEntry {
@@ -47,59 +51,45 @@ struct ChildDir {
 /// Pure walk step: record reparse children via `classify`, queue plain
 /// directories while depth allows, and stop at `cap`. Structured so the cap
 /// and the never-follow rule are testable without touching the disk.
-/// Returns true when the cap was reached (results are truncated).
-fn visit_step<F: Fn(&Path) -> JunctionEntry>(
-    children: Vec<ChildDir>,
+/// Reports whether a limit stopped the walk and whether a link was unreadable.
+fn visit_step(
+    children: impl IntoIterator<Item = ChildDir>,
     depth: usize,
     cap: usize,
-    classify: F,
+    classify: impl Fn(&Path) -> std::io::Result<JunctionEntry>,
     out: &mut Vec<JunctionEntry>,
     queue: &mut Vec<(PathBuf, usize)>,
-) -> bool {
+    deadline: Instant,
+) -> (bool, bool) {
+    let mut degraded = false;
     for child in children {
-        if out.len() >= cap {
-            return true;
+        if out.len() >= cap || Instant::now() >= deadline {
+            return (true, degraded);
         }
         if child.is_reparse {
-            out.push(classify(&child.path));
+            match classify(&child.path) {
+                Ok(entry) => out.push(entry),
+                Err(_) => degraded = true,
+            }
         } else if depth < MAX_DEPTH {
             queue.push((child.path, depth + 1));
         }
     }
-    false
+    (false, degraded)
 }
 
 /// IO classification of one reparse-point directory.
-fn classify(path: &Path) -> JunctionEntry {
-    let parent_pins = path
-        .parent()
-        .and_then(|p| crate::fsutil::pin_local_scan_path(p).ok());
-    if parent_pins.is_none() {
-        return JunctionEntry {
-            path: path.to_string_lossy().into_owned(),
-            target: None,
-            reachable: true,
-        };
-    }
-    let Some(target) = crate::fsutil::read_local_scan_link(path)
-        .ok()
-        .map(|t| t.to_string_lossy().into_owned())
-    else {
-        return JunctionEntry {
-            path: path.to_string_lossy().into_owned(),
-            target: None,
-            reachable: true,
-        };
-    };
+fn classify(path: &Path) -> std::io::Result<JunctionEntry> {
+    let target = crate::fsutil::inspect_local_directory_link(path)?;
     // Compatibility contract: true means present OR unknown/not probed. Only
     // conclusive local absence may set false; remote/relative/reparse targets
     // must not be contacted and must never inflate the UI dead-link count.
-    let reachable = target_reachable(Path::new(&target));
-    JunctionEntry {
+    let reachable = target.as_deref().is_none_or(target_reachable);
+    Ok(JunctionEntry {
         path: path.to_string_lossy().into_owned(),
-        target: Some(target),
+        target: target.map(|path| path.to_string_lossy().into_owned()),
         reachable,
-    }
+    })
 }
 
 fn target_reachable(target: &Path) -> bool {
@@ -115,61 +105,34 @@ fn target_reachable(target: &Path) -> bool {
 
 /// Bounded walk of one root. Plain directories are descended up to
 /// `MAX_DEPTH`; reparse directories are recorded and never entered.
-fn scan_root<F: Fn(&Path) -> JunctionEntry>(
-    root: &Path,
-    cap: usize,
-    classify: F,
-) -> (Vec<JunctionEntry>, bool, bool) {
+fn scan_root(root: &Path, cap: usize, deadline: Instant) -> (Vec<JunctionEntry>, bool, bool) {
     let mut out: Vec<JunctionEntry> = Vec::new();
     let mut queue: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
     let mut truncated = false;
     let mut degraded = false;
     while let Some((dir, depth)) = queue.pop() {
-        let Ok(_pins) = crate::fsutil::pin_local_scan_path(&dir) else {
+        if Instant::now() >= deadline {
+            truncated = true;
+            break;
+        }
+        let Ok((entries, timed_out)) = crate::fsutil::read_local_directory_entries(&dir, deadline)
+        else {
             degraded = true;
             continue;
         };
-        let Ok(read) = crate::fsutil::read_local_scan_dir(&dir) else {
-            degraded = true;
-            continue;
-        };
-        let children: Vec<ChildDir> = read
-            .filter_map(|entry| {
-                let e = match entry {
-                    Ok(e) => e,
-                    Err(_) => {
-                        degraded = true;
-                        return None;
-                    }
-                };
-                // DirEntry::metadata does not traverse the link. std's
-                // file_type() reports junctions as is_dir() == false on
-                // Windows, so directory-ness comes from the attribute bit.
-                let md = match e.metadata() {
-                    Ok(md) => md,
-                    Err(_) => {
-                        degraded = true;
-                        return None;
-                    }
-                };
-                #[cfg(windows)]
-                let dir_like = {
-                    use std::os::windows::fs::MetadataExt;
-                    // FILE_ATTRIBUTE_DIRECTORY = 0x10.
-                    md.file_attributes() & 0x10 != 0
-                };
-                #[cfg(not(windows))]
-                let dir_like = md.file_type().is_dir();
-                if !dir_like {
-                    return None;
-                }
-                Some(ChildDir {
-                    path: e.path(),
-                    is_reparse: crate::fsutil::is_reparse_metadata(&md),
-                })
+        // Directory-listing attributes avoid opening every ordinary file.
+        // Both descent and link inspection still validate the object at open.
+        let children = entries.into_iter().filter_map(|(name, attributes)| {
+            (attributes & DIRECTORY_ATTRIBUTE != 0).then(|| ChildDir {
+                path: dir.join(name),
+                is_reparse: attributes & REPARSE_ATTRIBUTE != 0,
             })
-            .collect();
-        if visit_step(children, depth, cap, &classify, &mut out, &mut queue) {
+        });
+        let (stopped, unreadable) = visit_step(
+            children, depth, cap, classify, &mut out, &mut queue, deadline,
+        );
+        degraded |= unreadable;
+        if timed_out || stopped {
             truncated = true;
             break;
         }
@@ -220,24 +183,20 @@ pub fn scan_junction_ledger() -> JunctionScanResult {
 }
 
 fn scan_ledger_with(roots: Vec<PathBuf>) -> JunctionScanResult {
+    scan_ledger_until(roots, Instant::now() + SCAN_BUDGET)
+}
+
+fn scan_ledger_until(roots: Vec<PathBuf>, deadline: Instant) -> JunctionScanResult {
     let mut entries = Vec::new();
     let mut degraded = Vec::new();
     let mut omitted_roots: u32 = 0;
     for root in roots {
-        let Ok(_pins) = crate::fsutil::pin_local_scan_path(&root) else {
-            degraded.push(root.to_string_lossy().into_owned());
-            continue;
-        };
-        if crate::fsutil::read_local_scan_dir(&root).is_err() {
-            degraded.push(root.to_string_lossy().into_owned());
-            continue;
-        }
         let remaining = RESULT_CAP.saturating_sub(entries.len());
-        if remaining == 0 {
+        if remaining == 0 || Instant::now() >= deadline {
             omitted_roots += 1;
             continue;
         }
-        let (found, truncated, incomplete) = scan_root(&root, remaining, classify);
+        let (found, truncated, incomplete) = scan_root(&root, remaining, deadline);
         if incomplete {
             degraded.push(root.to_string_lossy().into_owned());
         }
@@ -260,12 +219,12 @@ mod tests {
         }
     }
 
-    fn fake(path: &Path) -> JunctionEntry {
-        JunctionEntry {
+    fn fake(path: &Path) -> std::io::Result<JunctionEntry> {
+        Ok(JunctionEntry {
             path: path.to_string_lossy().into_owned(),
             target: Some("Z:\\target".into()),
             reachable: true,
-        }
+        })
     }
 
     #[cfg(windows)]
@@ -294,15 +253,17 @@ mod tests {
     fn reparse_children_are_recorded_but_never_queued() {
         let mut out = Vec::new();
         let mut queue = Vec::new();
-        let full = visit_step(
+        let (full, degraded) = visit_step(
             vec![child(r"C:\R\link", true), child(r"C:\R\plain", false)],
             1,
             100,
             fake,
             &mut out,
             &mut queue,
+            Instant::now() + SCAN_BUDGET,
         );
         assert!(!full);
+        assert!(!degraded);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].path, r"C:\R\link");
         // Only the plain directory is queued for descent.
@@ -323,6 +284,7 @@ mod tests {
             fake,
             &mut out,
             &mut queue,
+            Instant::now() + SCAN_BUDGET,
         );
         // A reparse at the deepest enumerated level is still recorded…
         assert_eq!(out.len(), 1);
@@ -334,7 +296,7 @@ mod tests {
     fn the_walk_stops_cleanly_at_the_cap() {
         let mut out = Vec::new();
         let mut queue = Vec::new();
-        let full = visit_step(
+        let (full, degraded) = visit_step(
             vec![
                 child(r"C:\R\link1", true),
                 child(r"C:\R\link2", true),
@@ -345,10 +307,23 @@ mod tests {
             fake,
             &mut out,
             &mut queue,
+            Instant::now() + SCAN_BUDGET,
         );
         assert!(full, "the cap must be reported to the caller");
+        assert!(!degraded);
         assert_eq!(out.len(), 2);
         assert!(queue.is_empty(), "nothing is queued once the cap hit");
+    }
+
+    #[test]
+    fn expired_budget_reports_unscanned_roots() {
+        let result = scan_ledger_until(
+            vec![r"C:\First".into(), r"C:\Second".into()],
+            Instant::now(),
+        );
+        assert_eq!(result.omitted, 2);
+        assert!(result.entries.is_empty());
+        assert!(result.degraded_roots.is_empty());
     }
 
     #[test]
@@ -452,7 +427,8 @@ mod tests {
         make_junction(&inner_link, &inner_target);
         make_junction(&root.join("outer"), &outer_target);
 
-        let (entries, truncated, degraded) = scan_root(&root, RESULT_CAP, classify);
+        let (entries, truncated, degraded) =
+            scan_root(&root, RESULT_CAP, Instant::now() + SCAN_BUDGET);
         assert!(!truncated);
         assert!(!degraded);
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();

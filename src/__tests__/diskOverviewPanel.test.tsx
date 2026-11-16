@@ -2,7 +2,7 @@
 // Disk-space overview: volume shape, junction ledger with dead links,
 // triage actions, regenerable cleanup, and on-demand DISM analysis.
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DiskOverviewPanel } from "../components/DiskOverviewPanel";
 import { api } from "../lib/api";
 import { requestConfirmEx } from "../lib/confirm";
@@ -131,7 +131,30 @@ it("renders the volume shape, dead junctions and degraded roots", async () => {
   expect(screen.getByText(L.diskOverviewSystemVolume("C:", "150.0 GB", "200.0 GB", "50.0 GB"))).toBeTruthy();
   expect(screen.getByRole("note").textContent).toContain("c:\\Program Files\\Docker");
   expect(screen.getByText(L.diskOverviewDegraded("F:\\Gone"))).toBeTruthy();
-  expect(screen.getByText(L.scanOmitted(3))).toBeTruthy();
+  expect(screen.getByText(L.diskOverviewJunctionPartial)).toBeTruthy();
+});
+
+it("shows volume usage while other scans are still pending and avoids a false empty result", async () => {
+  mockLoads();
+  let finishTriage!: (result: Awaited<ReturnType<typeof api.spaceTriage>>) => void;
+  let finishJunction!: (result: Awaited<ReturnType<typeof api.junctionLedger>>) => void;
+  vi.mocked(api.spaceTriage).mockReturnValueOnce(new Promise(resolve => { finishTriage = resolve; }));
+  vi.mocked(api.junctionLedger).mockReturnValueOnce(new Promise(resolve => { finishJunction = resolve; }));
+  vi.mocked(api.regenerableLayouts).mockResolvedValueOnce({ items: [], omitted: 0 });
+  render(<DiskOverviewPanel onClose={vi.fn()} />);
+  const L = t();
+  expect(screen.getByRole("progressbar", { name: L.diskOverviewProgressLabel })).toHaveProperty("value", 0);
+  expect(await screen.findByText(L.diskOverviewSystemVolume("C:", "150.0 GB", "200.0 GB", "50.0 GB"))).toBeTruthy();
+  expect(screen.getByRole("progressbar")).toHaveProperty("value", 2);
+  expect(screen.getByRole("status").textContent).toContain(L.diskOverviewStepJunctions);
+  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
+  expect(screen.getByRole("status").textContent).toContain(L.diskOverviewStepDirectories);
+  expect(screen.queryByText(L.diskOverviewEmpty)).toBeNull();
+  await act(async () => finishTriage({ entries: [], omitted: 0 }));
+  expect(screen.getByRole("progressbar")).toHaveProperty("value", 3);
+  expect(screen.getByText(L.diskOverviewEmpty)).toBeTruthy();
+  await act(async () => finishJunction({ entries: [], omitted: 0, degraded_roots: [] }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
 });
 
 it("runs the DISM analysis on demand and reports the verdict", async () => {
@@ -145,7 +168,7 @@ it("runs the DISM analysis on demand and reports the verdict", async () => {
   const L = t();
   fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabComponents }));
   fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
-  await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes));
   expect(api.analyzeComponentStore).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes);
 });
@@ -297,8 +320,6 @@ it("retry replaces the banner text when it fails again", async () => {
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
   expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain("first failure");
-  // The retry button lives in the cleanup tab's failed state.
-  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
   fireEvent.click(screen.getByRole("button", { name: L.retry }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toContain("second failure"),
@@ -320,7 +341,7 @@ it("moves focus to the newly activated tab with the arrow keys", async () => {
   expect(document.activeElement).toBe(cleanupTab);
 });
 
-it("disables the retry button while a retry is in flight", async () => {
+it("offers retry directly in the overview and reruns only the failed scan", async () => {
   // First load fails to surface the retry; the retry itself hangs, so the
   // in-flight guard must keep the button disabled instead of allowing a
   // second concurrent load.
@@ -328,12 +349,15 @@ it("disables the retry button while a retry is in flight", async () => {
   render(<DiskOverviewPanel onClose={vi.fn()} />);
   const L = t();
   expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain("first failure");
-  fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
   const retry = screen.getByRole("button", { name: L.retry });
-  expect(retry.hasAttribute("disabled")).toBe(false);
   vi.mocked(api.listLocalDrives).mockReturnValue(new Promise(() => {}));
   fireEvent.click(retry);
-  await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(true));
+  expect(screen.queryByRole("button", { name: L.retry })).toBeNull();
+  expect(screen.getByRole("status").textContent).toContain(L.diskOverviewStepVolume);
+  expect(api.listLocalDrives).toHaveBeenCalledTimes(2);
+  expect(api.junctionLedger).toHaveBeenCalledOnce();
+  expect(api.spaceTriage).toHaveBeenCalledOnce();
+  expect(api.regenerableLayouts).toHaveBeenCalledOnce();
   // A pending promise never settles and afterEach's mockReset drops it, so
   // no setState fires after unmount.
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type DriveInfo } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -10,6 +10,7 @@ import { requestConfirmEx } from "../lib/confirm";
 import { CloseGlyph } from "./ui/Glyph";
 import { ToolGlyph } from "./ToolIcons";
 import { LocalItemIcon } from "./AppIcon";
+import { useRequestSeq } from "../hooks/useRequestSeq";
 import type {
   ComponentStoreAnalysis,
   JunctionScanResult,
@@ -82,6 +83,28 @@ function parentPath(path: string): string {
 
 type OverviewTab = "overview" | "cleanup" | "components";
 
+function useDiskScan<T>(scan: () => Promise<T>) {
+  const [state, setState] = useState<{ data: T | null; pending: boolean; error: string | null }>({
+    data: null, pending: true, error: null,
+  });
+  const { next, isCurrent, invalidate } = useRequestSeq();
+  const reload = useCallback(async () => {
+    const id = next();
+    setState({ data: null, pending: true, error: null });
+    try {
+      const data = await scan();
+      if (isCurrent(id)) setState({ data, pending: false, error: null });
+    } catch (error) {
+      if (isCurrent(id)) setState({ data: null, pending: false, error: formatError(error) });
+    }
+  }, [isCurrent, next, scan]);
+  useEffect(() => {
+    void reload();
+    return invalidate;
+  }, [invalidate, reload]);
+  return { ...state, reload };
+}
+
 /** One row of the merged action list: triage classification + its delete gate. */
 type CleanupRow = {
   path: string;
@@ -119,63 +142,28 @@ export function DiskOverviewPanel({
 }) {
   const L = t();
   const [tab, setTab] = useState<OverviewTab>("overview");
-  const [drives, setDrives] = useState<DriveInfo[] | null>(null);
-  const [junction, setJunction] = useState<JunctionScanResult | null>(null);
-  const [triage, setTriage] = useState<TriageScanResult | null>(null);
-  const [regen, setRegen] = useState<RegenerableScanResult | null>(null);
+  const volumeScan = useDiskScan<DriveInfo[]>(api.listLocalDrives);
+  const junctionScan = useDiskScan<JunctionScanResult>(api.junctionLedger);
+  const triageScan = useDiskScan<TriageScanResult>(api.spaceTriage);
+  const regenScan = useDiskScan<RegenerableScanResult>(api.regenerableLayouts);
+  const drives = volumeScan.data;
+  const junction = junctionScan.data;
+  const triage = triageScan.data;
+  const regen = regenScan.data;
   const [regenSel, setRegenSel] = useState<Set<string>>(new Set());
   const [regenBusy, setRegenBusy] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [dismBusy, setDismBusy] = useState(false);
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
 
-  const reload = async () => {
-    const [d, j, tr, rg] = await Promise.all([
-      api.listLocalDrives(),
-      api.junctionLedger(),
-      api.spaceTriage(),
-      api.regenerableLayouts(),
-    ]);
-    setDrives(d);
-    setJunction(j);
-    setTriage(tr);
-    setRegen(rg);
-  };
-
-  useEffect(() => {
-    let alive = true;
-    setLoadError(null);
-    void (async () => {
-      try {
-        if (alive) await reload();
-      } catch (e) {
-        if (alive) setLoadError(formatError(e));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // The retry button owns the loadError lifecycle the same way the initial
-  // load does: success clears the stale banner, a repeated failure replaces
-  // its text — a bare void reload() would leak an unhandled rejection and
-  // keep reporting an error that no longer exists. One retry in flight at a
-  // time: two concurrent loads could land out of order and leave a loaded
-  // list under a stale error banner.
-  const [retryBusy, setRetryBusy] = useState(false);
-  const retryLoad = async () => {
-    if (retryBusy) return;
-    setRetryBusy(true);
-    try {
-      await reload();
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(formatError(e));
-    } finally {
-      setRetryBusy(false);
-    }
-  };
+  const scans = [
+    { ...volumeScan, label: L.diskOverviewStepVolume },
+    { ...junctionScan, label: L.diskOverviewStepJunctions },
+    { ...triageScan, label: L.diskOverviewStepDirectories },
+    { ...regenScan, label: L.diskOverviewStepCaches },
+  ];
+  const failed = scans.filter(scan => scan.error);
+  const pending = scans.filter(scan => scan.pending);
+  const cleanupPending = triageScan.pending || regenScan.pending;
 
   const runDism = async () => {
     if (dismBusy) return;
@@ -269,7 +257,7 @@ export function DiskOverviewPanel({
         toast.success(L.regenDone(report.cleaned.length, formatSize(report.reclaimed_kb)));
       }
       setRegenSel(new Set());
-      await reload();
+      await Promise.all(scans.filter(scan => !scan.pending).map(scan => scan.reload()));
     } catch (e) {
       toast.error(backendErrorText(formatError(e)));
     } finally {
@@ -309,9 +297,26 @@ export function DiskOverviewPanel({
         </button>
       </div>
 
-      {loadError && (
-        <div role="alert" style={{ color: "var(--danger-text)", marginBottom: 8 }}>
-          {loadError}
+      {pending.length > 0 && (
+        <div style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface-2)", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6, fontWeight: 600 }}>
+            <span>{L.diskOverviewProgressLabel}</span>
+            <span>{L.diskOverviewProgressCount(scans.length - pending.length, scans.length)}</span>
+          </div>
+          <progress aria-label={L.diskOverviewProgressLabel} value={scans.length - pending.length} max={scans.length}
+            style={{ display: "block", width: "100%", margin: "4px 0", accentColor: "var(--accent)" }} />
+          <div role="status" style={css.muted}>{L.diskOverviewProgressPending(pending.map(scan => scan.label).join(" · "))}</div>
+        </div>
+      )}
+
+      {failed.length > 0 && (
+        <div style={{ marginBottom: 8, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+          <div role="alert" style={{ color: "var(--danger-text)" }}>
+            {L.diskOverviewLoadFailed} · {failed.map(scan => `${scan.label} (${scan.error})`).join(" · ")}
+          </div>
+          <button type="button" style={css.btnGhost} onClick={() => void Promise.all(failed.map(scan => scan.reload()))}>
+            {L.retry}
+          </button>
         </div>
       )}
 
@@ -368,6 +373,7 @@ export function DiskOverviewPanel({
 
       {tab === "overview" && (
         <div id="disk-overview-panel-overview" role="tabpanel" aria-labelledby="disk-overview-tab-overview" aria-label={L.diskOverviewTabOverview}>
+          {drives && !system && <div style={css.muted}>{L.diskOverviewVolumeUnavailable}</div>}
           {system && (
             <div style={css.muted}>
               {L.diskOverviewSystemVolume(
@@ -430,7 +436,7 @@ export function DiskOverviewPanel({
               )}
               {junction.omitted > 0 && (
                 <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
-                  {L.scanOmitted(junction.omitted)}
+                  {L.diskOverviewJunctionPartial}
                 </div>
               )}
             </div>
@@ -457,23 +463,7 @@ export function DiskOverviewPanel({
           <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
           <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
           {rows.length === 0 ? (
-            loadError ? (
-              // An errored load must not read as "nothing to clean": offer the
-              // retry the alert above cannot.
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <p style={{ ...css.muted, margin: 0 }}>{L.diskOverviewLoadFailed}</p>
-                <button
-                  type="button"
-                  style={{ ...css.btnGhost, height: 28, opacity: retryBusy ? 0.5 : 1 }}
-                  disabled={retryBusy}
-                  onClick={() => void retryLoad()}
-                >
-                  {L.retry}
-                </button>
-              </div>
-            ) : (
-              <p style={css.muted}>{L.diskOverviewEmpty}</p>
-            )
+            !cleanupPending && !triageScan.error && !regenScan.error && <p style={css.muted}>{L.diskOverviewEmpty}</p>
           ) : (
             <>
               <div

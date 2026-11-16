@@ -1127,6 +1127,52 @@ async fn scan_regenerable_layouts() -> Result<regenclean::RegenerableScanResult,
         .map_err(|e| e.to_string())
 }
 
+#[cfg(all(test, windows))]
+#[test]
+#[ignore = "times the read-only space checkup on the current Windows machine"]
+fn inspect_disk_overview_scans() {
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let start = std::time::Instant::now();
+            let drives = diskradar::list_local_drives();
+            println!(
+                "Volume: {:?}, system found={}",
+                start.elapsed(),
+                drives.iter().any(|d| d.is_system)
+            );
+        });
+        scope.spawn(|| {
+            let start = std::time::Instant::now();
+            let result = junction::scan_junction_ledger();
+            println!(
+                "Junctions: {:?}, links={}, incomplete roots={}, omitted={}",
+                start.elapsed(),
+                result.entries.len(),
+                result.degraded_roots.len(),
+                result.omitted
+            );
+        });
+        scope.spawn(|| {
+            let start = std::time::Instant::now();
+            let result = triage::scan_space_triage();
+            println!(
+                "Triage: {:?}, rows={}",
+                start.elapsed(),
+                result.entries.len()
+            );
+        });
+        scope.spawn(|| {
+            let start = std::time::Instant::now();
+            let result = regenclean::scan_regenerable();
+            println!(
+                "Regenerable layouts: {:?}, rows={}",
+                start.elapsed(),
+                result.items.len()
+            );
+        });
+    });
+}
+
 /// Global CLI package inventory, npm/pnpm/yarn (read-only).
 #[tauri::command]
 async fn scan_cli_globals() -> Result<cliglobals::CliGlobalScanResult, String> {

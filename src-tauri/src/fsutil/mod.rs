@@ -309,11 +309,23 @@ pub fn local_scan_is_dir(path: &Path) -> bool {
     scan_path_metadata(path).is_ok_and(|md| md.is_dir())
 }
 
-pub fn read_local_scan_link(path: &Path) -> std::io::Result<PathBuf> {
+/// Check the current link object without following it. Unrecognized link tags
+/// have no readable destination but still count as reparse directories.
+pub(crate) fn inspect_local_directory_link(path: &Path) -> std::io::Result<Option<PathBuf>> {
     #[cfg(windows)]
     {
+        use std::os::windows::fs::MetadataExt;
+        use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
         let (_parents, link) = open_local_scan_leaf(path, 0x81, 1)?;
-        read_reparse_target(link.handle).map(|(_, path)| path)
+        let metadata = pin_metadata(&link)?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 == 0
+            || !is_reparse_metadata(&metadata)
+        {
+            return Err(std::io::Error::other("directory link changed during scan"));
+        }
+        Ok(read_reparse_target(link.handle)
+            .ok()
+            .map(|(_, target)| target))
     }
     #[cfg(not(windows))]
     {
@@ -511,6 +523,33 @@ fn relative_names_with_limit(
     pin: &DirPin,
     limit: usize,
 ) -> std::io::Result<Vec<std::ffi::OsString>> {
+    relative_entries_with_limit(pin, limit, || false, |name, _| name).map(|(names, _)| names)
+}
+
+pub(crate) fn read_local_directory_entries(
+    path: &Path,
+    deadline: std::time::Instant,
+) -> std::io::Result<DirectoryEntries> {
+    let pins = pin_local_scan_path(path)?;
+    let parent = pins
+        .last()
+        .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
+    relative_entries_with_limit(
+        parent,
+        20_000,
+        || std::time::Instant::now() >= deadline,
+        |name, attributes| (name, attributes),
+    )
+}
+
+type DirectoryEntries = (Vec<(std::ffi::OsString, u32)>, bool);
+
+fn relative_entries_with_limit<T>(
+    pin: &DirPin,
+    limit: usize,
+    stop: impl Fn() -> bool,
+    entry_value: impl Fn(std::ffi::OsString, u32) -> T,
+) -> std::io::Result<(Vec<T>, bool)> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
@@ -518,9 +557,12 @@ fn relative_names_with_limit(
             FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
             FILE_ID_BOTH_DIR_INFO,
         };
-        let mut names = Vec::new();
+        let mut entries = Vec::new();
         let mut first = true;
         loop {
+            if stop() {
+                return Ok((entries, true));
+            }
             let mut buffer = vec![0u64; 8192]; // native structures require 8-byte alignment
             let result = unsafe {
                 GetFileInformationByHandleEx(
@@ -560,9 +602,9 @@ fn relative_names_with_limit(
                 let units = unsafe { std::slice::from_raw_parts(entry.FileName.as_ptr(), len) };
                 let name = std::ffi::OsString::from_wide(units);
                 if name != "." && name != ".." {
-                    names.push(name);
+                    entries.push(entry_value(name, entry.FileAttributes));
                 }
-                if names.len() > limit {
+                if entries.len() > limit {
                     return Err(std::io::Error::other("directory budget exceeded"));
                 }
                 if entry.NextEntryOffset == 0 {
@@ -577,11 +619,11 @@ fn relative_names_with_limit(
                 offset = next;
             }
         }
-        Ok(names)
+        Ok((entries, false))
     }
     #[cfg(not(windows))]
     {
-        let _ = (pin, limit);
+        let _ = (pin, limit, stop, entry_value);
         Err(std::io::Error::other("Windows handle required"))
     }
 }
