@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useReducer } from "react";
 import type { CleanupItem, IgnoreSuggestion } from "../types";
 import type { VerifyRow } from "../lib/api";
+import type { UninstallReview } from "../lib/uninstallReview";
 import { initialResidualState, residualReducer } from "./reducers/residual";
 
 export type { VerifyRow };
@@ -51,8 +52,8 @@ export function useResidualState() {
     },
     [],
   );
-  const setResidualFromUninstall = useCallback((value: boolean) => {
-    dispatch({ type: "residualFromUninstall/set", value });
+  const setUninstallReview = useCallback((value: UninstallReview | null) => {
+    dispatch({ type: "uninstallReview/set", value });
   }, []);
 
   const actions = useMemo(
@@ -66,7 +67,7 @@ export function useResidualState() {
       setIgnoreSuggestions,
       setMonitoring,
       setMonitorDiff,
-      setResidualFromUninstall,
+      setUninstallReview,
     }),
     [
       togglePath,
@@ -78,7 +79,7 @@ export function useResidualState() {
       setIgnoreSuggestions,
       setMonitoring,
       setMonitorDiff,
-      setResidualFromUninstall,
+      setUninstallReview,
     ],
   );
 
@@ -94,8 +95,7 @@ export function useResidualState() {
       setMonitoring,
       monitorDiff: state.monitorDiff,
       setMonitorDiff,
-      residualFromUninstall: state.residualFromUninstall,
-      setResidualFromUninstall,
+      uninstallReview: state.uninstallReview,
       actions,
     }),
     [
@@ -105,7 +105,6 @@ export function useResidualState() {
       setIgnoreSuggestions,
       setMonitoring,
       setMonitorDiff,
-      setResidualFromUninstall,
       actions,
     ],
   );

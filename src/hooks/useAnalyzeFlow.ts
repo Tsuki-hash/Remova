@@ -14,6 +14,7 @@ import type { ConvergenceRound } from "../lib/residueConvergence";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
+import type { UninstallReview } from "../lib/uninstallReview";
 
 export type AnalyzeOptions = {
   fromUninstall?: boolean;
@@ -33,7 +34,7 @@ export type AnalyzeFlowSetters = {
   setIgnoreSuggestions: (s: IgnoreSuggestion[]) => void;
   setSelectedPaths: (s: Set<string>) => void;
   setError: (e: string | null) => void;
-  setResidualFromUninstall: (v: boolean) => void;
+  setUninstallReview: (v: UninstallReview | null) => void;
   setUninstallingKey: (k: string | null) => void;
   setUninstallStage: (s: UninstallStage) => void;
   setEvidence: (v: string | null) => void;
@@ -80,7 +81,7 @@ export function useAnalyzeFlow({
     setIgnoreSuggestions,
     setSelectedPaths,
     setError,
-    setResidualFromUninstall,
+    setUninstallReview,
     setUninstallingKey,
     setUninstallStage,
     setEvidence,
@@ -139,8 +140,8 @@ export function useAnalyzeFlow({
       analyzeHoldRef.current += 1;
       busyRef.current = true;
       goNav("software");
-      if (!opts?.fromUninstall) setResidualFromUninstall(false);
-      if (opts?.afterCleanup) setResidualFromUninstall(true);
+      const afterUninstall = Boolean(opts?.fromUninstall || opts?.afterCleanup);
+      setUninstallReview(afterUninstall ? { app, rescan: { phase: "scanning" } } : null);
       const keepReport = Boolean(opts?.afterCleanup || opts?.keepReport);
       setSelected(app);
       setScanning(true);
@@ -163,6 +164,10 @@ export function useAnalyzeFlow({
           items: r.items,
           complete: scanMatchesApp(r, app) && (r.degraded ?? []).length === 0,
         };
+        if (afterUninstall) {
+          setUninstallReview({ app, rescan: reviewRound.complete
+            ? { phase: "complete", count: r.items.length } : { phase: "incomplete" } });
+        }
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
         if (sharedPaths.length > 0 && app.publisher) {
           void api
@@ -181,8 +186,9 @@ export function useAnalyzeFlow({
         return true;
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return false;
-        setResidualFromUninstall(false);
-        if (scanCancelled(e)) {
+        const cancelled = scanCancelled(e);
+        if (afterUninstall) setUninstallReview({ app, rescan: { phase: cancelled ? "cancelled" : "failed" } });
+        if (cancelled) {
           setSelectedPaths(new Set());
           setError(null);
           toast.info(t().scanCancelledIncomplete, { channel: "analyze-flow" });
@@ -217,7 +223,7 @@ export function useAnalyzeFlow({
       setSelectedPaths,
       setEvidence,
       setError,
-      setResidualFromUninstall,
+      setUninstallReview,
       runScan,
     ],
   );
@@ -257,7 +263,7 @@ export function useAnalyzeFlow({
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
-      setResidualFromUninstall(false);
+      setUninstallReview(null);
       busyRef.current = true;
       try {
         setUninstallStage("identify");
@@ -270,18 +276,13 @@ export function useAnalyzeFlow({
           setReport(null);
           setScan(null);
           setSelectedPaths(new Set());
-          setResidualFromUninstall(true);
+          setUninstallReview({ app, rescan: { phase: rebootPending ? "reboot" : "not_started" } });
         }
         // MSI 1641 already started a restart: scanning is harmless, but offering
         // residual cleanup now would delete while the shutdown is pending.
         if (r.had_command && r.ok && checked && !rebootPending) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
- // arm the residual flag — the post-uninstall rescan must
- // clean leftovers WITHOUT re-running the official uninstaller, and
- // the cleanup UI must hide the official-uninstall toggle. execReal
- // clears the flag once the residual pass finishes.
-          setResidualFromUninstall(true);
           const analyzed = await analyze(app, { fromUninstall: true });
           if (analyzed) {
             setUninstallStage("analyze");
@@ -310,7 +311,7 @@ export function useAnalyzeFlow({
       analyze,
       refreshApps,
       setSelected,
-      setResidualFromUninstall,
+      setUninstallReview,
       setUninstallingKey,
       setUninstallStage,
       setReport,
@@ -347,6 +348,7 @@ const openOfficialOnly = useCallback(
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
+      setUninstallReview(null);
       busyRef.current = true;
       try {
         const r = await api.officialUninstall(app);
@@ -356,15 +358,11 @@ const openOfficialOnly = useCallback(
           setReport(null);
           setScan(null);
           setSelectedPaths(new Set());
-          setResidualFromUninstall(true);
+          setUninstallReview({ app, rescan: { phase: rebootPending ? "reboot" : "not_started" } });
         }
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && !rebootPending && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
-          // Same contract as startUninstall's rescan: the post-uninstall
-          // pass cleans leftovers WITHOUT re-running the official
-          // uninstaller — without this flag a re-run aborts the cleanup.
-          setResidualFromUninstall(true);
           const analyzed = await analyze(app, { fromUninstall: true });
           if (analyzed) {
             setUninstallStage("analyze");
@@ -385,7 +383,7 @@ const openOfficialOnly = useCallback(
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setResidualFromUninstall, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer, setReport, setScan, setSelectedPaths],
+    [refreshApps, setSelected, setUninstallReview, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer, setReport, setScan, setSelectedPaths],
   );
 
   const openAnalyzeFromDrawer = useCallback(
@@ -398,13 +396,17 @@ const openOfficialOnly = useCallback(
 
   const selectApp = useCallback(
     (app: InstalledApp) => {
+      if (busyRef.current) {
+        toast.info(t().taskBusy, { channel: "analyze-flow" });
+        return;
+      }
       setSelected(app);
       // A previous app's scan (and its selected paths) must not stay on screen
       // or be submitted for the newly selected app.
       setScan(null);
       setSelectedPaths(new Set());
     },
-    [setSelected, setScan, setSelectedPaths],
+    [busyRef, setSelected, setScan, setSelectedPaths],
   );
 
   return {

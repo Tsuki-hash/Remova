@@ -52,6 +52,7 @@ export type SoftwareControllerInput = {
   setSelectedPaths: SoftwarePageProps["setSelectedPaths"];
   ignoreSuggestions: IgnoreSuggestion[];
   residualFromUninstall: boolean;
+  uninstallReview: SoftwarePageProps["uninstallReview"];
   useOfficial: boolean;
   aiBusy: boolean;
   aiRisk: string | null;
@@ -186,6 +187,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         },
         onDismissIgnore: () => residualActions.clearIgnoreSuggestions(),
         residualFromUninstall: input.residualFromUninstall,
+        uninstallReview: input.uninstallReview,
         useOfficial: input.useOfficial,
         setUseOfficial: core.setUseOfficial,
         aiBusy: input.aiBusy,
@@ -292,6 +294,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.setSelectedPaths,
       input.ignoreSuggestions,
       input.residualFromUninstall,
+      input.uninstallReview,
       input.useOfficial,
       input.aiBusy,
       input.aiRisk,

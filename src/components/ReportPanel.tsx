@@ -15,6 +15,7 @@ import { cleanupAbortText, hasHistorySaveWarning } from "../lib/cleanupFeedback"
 import { downloadAudit } from "../lib/exportAuditReport";
 import { reviewSessionFor, reviewVerdictFor } from "../lib/rescanRounds";
 import { requestConfirmEx } from "../lib/confirm";
+import { uninstallRescanText, type UninstallRescan } from "../lib/uninstallReview";
 import type { CleanupReport, FullCleanupReport } from "../types";
 
 type Props = {
@@ -23,7 +24,7 @@ type Props = {
   aiReportBusy: boolean;
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
-  residualScan?: { scanning: boolean; count?: number };
+  residualScan?: UninstallRescan;
   /** re-analyze the same app without preselecting anything. */
   onRescan?: () => void;
   rescanBusy?: boolean;
@@ -52,7 +53,8 @@ export function ReportPanel({
   const L = t();
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!report.dry_run) panel.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    panel.current?.scrollIntoView?.({ block: "start", behavior: report.dry_run || reducedMotion ? "auto" : "smooth" });
   }, [report]);
   const [auditBusy, setAuditBusy] = useState(false);
   const exportAudit = async (format: "json" | "md", summaryOnly: boolean) => {
@@ -107,6 +109,7 @@ export function ReportPanel({
   const backupDir = "backup_dir" in report && !report.dry_run ? report.backup_dir : "";
   const backupSession = backupDir && "backup_verified" in report && report.backup_verified === true
     ? backupDir.split(/[\\/]/).filter(Boolean).at(-1) : undefined;
+  const planned = report.dry_run ? ("deleted_planned" in report ? report.deleted_planned : report.deleted) : null;
   return (
     <div
       ref={panel}
@@ -126,13 +129,16 @@ export function ReportPanel({
           <CloseGlyph />
         </button>
       </div>
-      {"uninstall_ok" in report && !report.dry_run && !report.aborted && report.uninstall_ok && (
+      {planned !== null && (
+        <p role="status" style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", margin: "8px 0" }}>
+          <strong>{L.dryRunPlanned} {planned}</strong>
+          <span style={css.muted}>{L.reportSkipped} {report.skipped}</span>
+        </p>
+      )}
+      {"uninstall_ok" in report && !report.dry_run && !report.aborted && (report.uninstall_ok || residualScan) && (
         <div role="status" style={{ marginTop: 8, lineHeight: 1.6 }}>
           <strong>{L.uninstallOk}</strong>
-          {residualScan && <div style={{ color: "var(--muted)" }}>
-            {residualScan.scanning ? L.cleanupRescanRunning : residualScan.count === undefined
-              ? L.cleanupRescanUnknown : L.cleanupRescanResult(residualScan.count)}
-          </div>}
+          <div style={{ color: "var(--muted)" }}>{uninstallRescanText(L, residualScan, true)}</div>
         </div>
       )}
       {hasHistorySaveWarning(report) && (
@@ -140,7 +146,7 @@ export function ReportPanel({
           {L.cleanupHistorySaveFailed}
         </div>
       )}
-      {"deleted" in report &&
+      {!report.dry_run && "deleted" in report &&
       (report.reclaimed_kb || report.kept_kb || report.delayed_kb) ? (
         <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
           {L.reportReclaimedKept(
@@ -166,9 +172,9 @@ export function ReportPanel({
         </div>
       )}
 
-      <details open={"aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
+      <details open={!report.dry_run && "aborted" in report && (report.aborted || report.failed > 0)} style={{ marginTop: 8 }}>
         <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-          {L.cleanupReportDetails}{"deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}
+          {L.cleanupReportDetails}{!report.dry_run && "deleted" in report ? ` · ${L.reportDeleted} ${report.deleted} · ${L.reportFailed} ${report.failed} · ${L.reportSkipped} ${report.skipped} · ${L.reportPendingReboot} ${report.delayed ?? 0}` : ""}
         </summary>
         <div style={{ maxHeight: 360, overflow: "auto" }}>
       {"backup_dir" in report &&
@@ -209,7 +215,7 @@ export function ReportPanel({
             {backupDir ? L.unverifiedBackupThisRun : L.noBackupThisRun}
           </div>
         ) : null)}
-      {"deleted" in report && (
+      {!report.dry_run && "deleted" in report && (
         <div
           style={{
             marginTop: 8,
@@ -232,7 +238,7 @@ export function ReportPanel({
           <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 650 }}>
             · {aiReportNote ? L.conclusionSourceAi : L.conclusionSourceRule}
           </span>
-          {"uninstall_ok" in report && !report.dry_run && !report.aborted && report.uninstall_ok &&
+          {!report.aborted && report.uninstall_ok &&
             report.deleted > 0 && !report.failed && !report.skipped && !report.delayed && (
             <div style={{ marginTop: 4, fontWeight: 600, color: "var(--fg)" }}>
               {L.reportFlowDone}
@@ -243,7 +249,7 @@ export function ReportPanel({
               ? L.reportNextFailed
               : report.skipped > 0
                 ? L.reportNextSkipped
-                : ("dry_run" in report && report.dry_run) || ("aborted" in report && report.aborted)
+                : report.aborted
                   ? L.reportNextCheck
                   : report.delayed
                     ? L.reportNextDelayed
@@ -253,13 +259,13 @@ export function ReportPanel({
           </div>
         </div>
       )}
-      {"deleted" in report &&
+      {!report.dry_run && "deleted" in report &&
         (() => {
           const p = cleanupProgress(report.deleted, report.failed + report.skipped + (report.delayed ?? 0), 0);
           return (
             <div style={{ marginTop: 8, fontSize: 13 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                {p.complete && !report.dry_run && !report.aborted
+                {p.complete && !report.aborted
                   ? L.reportProgressComplete
                   : L.reportProgressLabel(p.handled, p.total, p.pct)}
               </div>
@@ -277,7 +283,7 @@ export function ReportPanel({
                   style={{
                     width: `${p.pct}%`,
                     height: "100%",
-                    background: p.complete && !report.dry_run && !report.aborted ? "var(--ok)" : "var(--accent)",
+                    background: p.complete && !report.aborted ? "var(--ok)" : "var(--accent)",
                   }}
                 />
               </div>
@@ -285,17 +291,12 @@ export function ReportPanel({
           );
         })()}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-        {("deleted_planned" in report
-          ? [
-              { label: L.dryRunPlanned, value: report.deleted_planned, tone: "var(--accent)" },
-              { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
-            ]
-          : [
+        {(!report.dry_run && "deleted" in report ? [
               { label: L.reportDeleted, value: report.deleted, tone: "var(--ok)" },
               { label: L.reportFailed, value: report.failed, tone: "var(--danger)" },
               { label: L.reportSkipped, value: report.skipped, tone: "var(--muted)" },
               { label: L.reportPendingReboot, value: report.delayed ?? 0, tone: "var(--warn-ink)" },
-            ]
+            ] : []
         ).map((s) => (
           <div
             key={s.label}
@@ -344,7 +345,7 @@ export function ReportPanel({
             {rescanBusy ? L.analyzing : L.reportRescanApp}
           </button>
         )}
-        {aiEnabled && "deleted" in report && (
+        {aiEnabled && !report.dry_run && "deleted" in report && (
           <button
             style={{ ...css.btnGhost, height: 36, alignSelf: "center" }}
             disabled={aiReportBusy}

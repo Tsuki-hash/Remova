@@ -66,6 +66,7 @@ function input(overrides: Partial<SoftwareControllerInput> = {}): SoftwareContro
     setSelectedPaths: noop,
     ignoreSuggestions: [],
     residualFromUninstall: false,
+    uninstallReview: null,
     useOfficial: false,
     aiBusy: false,
     aiRisk: null,

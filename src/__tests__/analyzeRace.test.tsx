@@ -93,7 +93,7 @@ describe("useAnalyzeFlow request sequencing", () => {
         captured.selectedPaths = s;
       },
       setError: () => {},
-      setResidualFromUninstall: () => {},
+      setUninstallReview: () => {},
       setUninstallingKey: () => {},
       setUninstallStage: () => {},
       setEvidence: () => {},
@@ -144,13 +144,13 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(captured.scanning).toBe(false);
   });
 
-  it("clears the residual flag after a failed post-uninstall scan", async () => {
+  it.each([["scan failed", "failed"], ["scan:cancelled", "cancelled"]] as const)("keeps the uninstall review when the rescan returns %s", async (error, phase) => {
     const residual = vi.fn();
-    flow.setResidualFromUninstall = residual;
-    analyzeMock.mockRejectedValue(new Error("scan failed"));
+    flow.setUninstallReview = residual;
+    analyzeMock.mockRejectedValue(new Error(error));
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never, refreshApps: async () => {}, busyRef: { current: false } }));
     await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
-    expect(residual).toHaveBeenLastCalledWith(false);
+    expect(residual).toHaveBeenLastCalledWith({ app: app("AppA"), rescan: { phase } });
     expect(captured.scan).toBeNull();
     expect(captured.scanning).toBe(false);
   });

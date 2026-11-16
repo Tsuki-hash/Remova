@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
@@ -402,7 +403,8 @@ export function ManageListPage({
                       title={L.manageItemDetails}
                       aria-haspopup="dialog"
                       onClick={() => {
-                        setDetailsItem(it);
+                        // Native dialog focus can announce the title during showModal().
+                        flushSync(() => setDetailsItem(it));
                         detailsRef.current?.showModal();
                       }}
                     >…</button>

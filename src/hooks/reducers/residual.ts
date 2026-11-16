@@ -1,5 +1,6 @@
 import type { CleanupItem, IgnoreSuggestion } from "../../types";
 import { defaultSelectable } from "../../lib/decision";
+import type { UninstallReview } from "../../lib/uninstallReview";
 
 export type MonitorDiffState = {
   added_files: string[];
@@ -14,7 +15,7 @@ export type ResidualState = {
   ignoreSuggestions: IgnoreSuggestion[];
   monitoring: boolean;
   monitorDiff: MonitorDiffState;
-  residualFromUninstall: boolean;
+  uninstallReview: UninstallReview | null;
 };
 
 export type ResidualAction =
@@ -28,7 +29,7 @@ export type ResidualAction =
   | { type: "ignore/clear" }
   | { type: "monitoring/set"; value: boolean }
   | { type: "monitorDiff/set"; value: MonitorDiffState }
-  | { type: "residualFromUninstall/set"; value: boolean }
+  | { type: "uninstallReview/set"; value: UninstallReview | null }
   | { type: "scanChrome/clear" };
 
 export function initialResidualState(): ResidualState {
@@ -38,7 +39,7 @@ export function initialResidualState(): ResidualState {
     ignoreSuggestions: [],
     monitoring: false,
     monitorDiff: null,
-    residualFromUninstall: false,
+    uninstallReview: null,
   };
 }
 
@@ -73,8 +74,8 @@ export function residualReducer(state: ResidualState, action: ResidualAction): R
       return { ...state, monitoring: action.value };
     case "monitorDiff/set":
       return { ...state, monitorDiff: action.value };
-    case "residualFromUninstall/set":
-      return { ...state, residualFromUninstall: action.value };
+    case "uninstallReview/set":
+      return { ...state, uninstallReview: action.value };
     case "scanChrome/clear":
       return {
         ...state,

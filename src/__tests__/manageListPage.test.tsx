@@ -201,7 +201,10 @@ it("shows a readable service title, description and icon, and controls it by its
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "agent.exe" } });
   expect(screen.getByText("Acme 后台助手")).toBeTruthy();
   const dialog = screen.getByRole<HTMLDialogElement>("dialog", { hidden: true });
-  Object.defineProperty(dialog, "showModal", { value: () => { dialog.open = true; } });
+  Object.defineProperty(dialog, "showModal", { value: () => {
+    expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("Acme 后台助手");
+    dialog.open = true;
+  } });
   fireEvent.click(screen.getByRole("button", { name: `${t().manageItemDetails} · Acme 后台助手` }));
   const details = within(screen.getByRole("dialog", { name: "Acme 后台助手" }));
   expect(details.getByText("AcmeSvc")).toBeTruthy();

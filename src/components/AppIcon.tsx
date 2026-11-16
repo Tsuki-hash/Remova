@@ -6,13 +6,64 @@ import { ToolGlyph, type ToolIconName } from "./ToolIcons";
 
 /** Share loaded icons between lists and detail panes. */
 const iconCache = new Map<string, string>();
-const iconInflight = new Map<string, Promise<string | null>>();
+const iconMisses = new Map<string, number>();
+type IconListener = (url: string | null) => void;
+type IconRequest = { read: () => Promise<string | null>; started: boolean; listeners: Set<IconListener> };
+const iconRequests = new Map<string, IconRequest>();
 const MAX_CACHE_CHARS = 8 * 1024 * 1024;
+const MAX_ICON_REQUESTS = 4;
+const MAX_MISSES = 512;
+const MISS_TTL_MS = 30_000;
 let cachedChars = 0;
+let activeRequests = 0;
 
 function forgetIcon(key: string) {
   cachedChars -= iconCache.get(key)?.length ?? 0;
   iconCache.delete(key);
+}
+
+function hasRecentMiss(key: string) {
+  const expires = iconMisses.get(key);
+  if (expires === undefined) return false;
+  if (performance.now() < expires) return true;
+  iconMisses.delete(key);
+  return false;
+}
+
+function cacheIconResult(key: string, url: string | null) {
+  if (url) {
+    iconCache.set(key, url);
+    cachedChars += url.length;
+    for (const oldest of iconCache.keys()) {
+      if (cachedChars <= MAX_CACHE_CHARS) break;
+      forgetIcon(oldest);
+    }
+  } else if (url === null) {
+    if (iconMisses.size === MAX_MISSES) {
+      const oldest = iconMisses.keys().next().value;
+      if (oldest !== undefined) iconMisses.delete(oldest);
+    }
+    iconMisses.set(key, performance.now() + MISS_TTL_MS);
+  }
+}
+
+function startWaitingIcons() {
+  for (const [key, request] of iconRequests) {
+    if (activeRequests >= MAX_ICON_REQUESTS) break;
+    if (request.started) continue;
+    request.started = true;
+    activeRequests++;
+    const finish = (url: string | null) => {
+      activeRequests--;
+      iconRequests.delete(key);
+      for (const listener of request.listeners) listener(url);
+      startWaitingIcons();
+    };
+    void Promise.resolve().then(request.read).then(url => {
+      cacheIconResult(key, url);
+      finish(url);
+    }, () => finish(null));
+  }
 }
 
 type IconAppearance = { background: string; imageStyle?: CSSProperties };
@@ -59,40 +110,24 @@ function iconAppearance(img: HTMLImageElement): IconAppearance | null {
   };
 }
 
-function loadAppIcon(displayIcon: string, embeddedOnly: boolean, key: string,
-  installedAppKey?: string, relatedPath = "", appUserModelId = ""): Promise<string | null> {
+function watchAppIcon(key: string, read: IconRequest["read"], onReady: IconListener): () => void {
   const cached = iconCache.get(key);
   if (cached) {
     iconCache.delete(key);
     iconCache.set(key, cached);
-    return Promise.resolve(cached);
   }
-  const existing = iconInflight.get(key);
-  if (existing) return existing;
-  const request = relatedPath || appUserModelId
-    ? api.appIconData(displayIcon, embeddedOnly, undefined, { path: relatedPath, appUserModelId })
-    : installedAppKey
-    ? api.appIconData(displayIcon, embeddedOnly, installedAppKey)
-    : api.appIconData(displayIcon, embeddedOnly);
-  const p = request
-    .then((url) => {
-      if (url) {
-        iconCache.set(key, url);
-        cachedChars += url.length;
-        for (const oldest of iconCache.keys()) {
-          if (cachedChars <= MAX_CACHE_CHARS) break;
-          forgetIcon(oldest);
-        }
-      }
-      iconInflight.delete(key);
-      return url;
-    })
-    .catch(() => {
-      iconInflight.delete(key);
-      return null;
-    });
-  iconInflight.set(key, p);
-  return p;
+  if (cached || hasRecentMiss(key)) {
+    queueMicrotask(() => onReady(cached ?? null));
+    return () => {};
+  }
+  const request = iconRequests.get(key) ?? { read, started: false, listeners: new Set<IconListener>() };
+  iconRequests.set(key, request);
+  request.listeners.add(onReady);
+  startWaitingIcons();
+  return () => {
+    request.listeners.delete(onReady);
+    if (!request.started && request.listeners.size === 0) iconRequests.delete(key);
+  };
 }
 
 export function InstalledAppIcon({ app }: { app: InstalledApp }) {
@@ -133,7 +168,7 @@ export function AppIcon({ displayIcon, fallback, embeddedOnly = false, bare = fa
   defer?: boolean;
 }) {
   const key = installedAppKey ? `installed\0${installedAppKey}\0${version}\0${displayIcon}`
-    : relatedPath || appUserModelId ? `related\0${relatedPath}\0${appUserModelId}\0${displayIcon}`
+    : relatedPath || appUserModelId ? `related\0${embeddedOnly}\0${relatedPath}\0${appUserModelId}\0${displayIcon}`
     : embeddedOnly ? "embedded\0" + displayIcon : displayIcon;
   const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null);
   const [failedImage, setFailedImage] = useState<{ key: string; url: string } | null>(null);
@@ -146,13 +181,19 @@ export function AppIcon({ displayIcon, fallback, embeddedOnly = false, bare = fa
   useEffect(() => {
     if (!displayIcon && !installedAppKey && !relatedPath && !appUserModelId) return;
     let cancelled = false;
+    let stopWatching: (() => void) | undefined;
+    const read = () => relatedPath || appUserModelId
+      ? api.appIconData(displayIcon, embeddedOnly, undefined, { path: relatedPath, appUserModelId })
+      : installedAppKey
+        ? api.appIconData(displayIcon, embeddedOnly, installedAppKey)
+        : api.appIconData(displayIcon, embeddedOnly);
     const load = () => {
-      void loadAppIcon(displayIcon, embeddedOnly, key, installedAppKey, relatedPath, appUserModelId).then((url) => {
+      stopWatching ??= watchAppIcon(key, read, url => {
         if (!cancelled) setLoaded({ key, url });
       });
     };
     let observer: IntersectionObserver | undefined;
-    if (defer && !iconCache.has(key) && element.current && typeof IntersectionObserver !== "undefined") {
+    if (defer && !iconCache.has(key) && !hasRecentMiss(key) && element.current && typeof IntersectionObserver !== "undefined") {
       observer = new IntersectionObserver((entries) => {
         if (cancelled || !entries.some((entry) => entry.isIntersecting)) return;
         observer?.disconnect();
@@ -165,6 +206,7 @@ export function AppIcon({ displayIcon, fallback, embeddedOnly = false, bare = fa
     return () => {
       cancelled = true;
       observer?.disconnect();
+      stopWatching?.();
     };
   }, [defer, displayIcon, embeddedOnly, installedAppKey, key, relatedPath, appUserModelId]);
 

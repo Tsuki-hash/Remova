@@ -7,7 +7,7 @@ import { SoftwareToolbar } from "../components/SoftwareToolbar";
 import { ScanLeftoversView } from "../components/ScanLeftoversView";
 import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
 import { groupByOrigin } from "../lib/decision";
-import type { CleanupItem, FullCleanupReport } from "../types";
+import type { CleanupItem, CleanupReport, FullCleanupReport } from "../types";
 import { CleanupResultDetails } from "../components/CleanupResultDetails";
 import { api } from "../lib/api";
 import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
@@ -15,6 +15,38 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["zh", "en"] as const)("brings planned and skipped counts into view without claiming cleanup in %s", lang => {
+  setLang(lang);
+  const L = t();
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
+  try {
+    const preview: CleanupReport = { app_name: "sample", dry_run: true, deleted_planned: 7, skipped: 2,
+      uninstall_command: [], uninstall_message: "", errors: [], item_details: [] };
+    const fullPreview: FullCleanupReport = { app_name: "sample", dry_run: true, backup_dir: "", uninstall_ok: false,
+      uninstall_message: "", deleted: 7, failed: 0, skipped: 2, aborted: false,
+      restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+    const props = { aiEnabled: false, aiReportBusy: false, aiReportNote: null,
+      verifyRows: null, onDismiss: () => {}, onRegenerate: () => {} };
+    const view = render(<ReportPanel {...props} report={preview} />);
+    for (const report of [preview, fullPreview]) {
+      view.rerender(<ReportPanel {...props} report={report} />);
+      const status = screen.getByRole("status");
+      expect(status.textContent).toContain(`${L.dryRunPlanned} 7`);
+      expect(status.textContent).toContain(`${L.reportSkipped} 2`);
+      expect(status.closest("details")).toBeNull();
+      expect(screen.getByText(L.cleanupReportDetails).closest("details")?.open).toBe(false);
+      expect(screen.queryByText(`${L.reportDeleted} 7`, { exact: false })).toBeNull();
+    }
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll).toHaveBeenLastCalledWith({ block: "start", behavior: "auto" });
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  }
+});
+
 it.each(["zh", "en"] as const)("separates official success from remaining scan status in %s", lang => {
   setLang(lang);
   const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: true,
@@ -22,11 +54,11 @@ it.each(["zh", "en"] as const)("separates official success from remaining scan s
     restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
   const props = { report, aiEnabled: false, aiReportBusy: false, aiReportNote: null,
     verifyRows: null, onDismiss: () => {}, onRegenerate: () => {} };
-  const view = render(<ReportPanel {...props} residualScan={{ scanning: true }} />);
+  const view = render(<ReportPanel {...props} residualScan={{ phase: "scanning" }} />);
   expect(screen.getByRole("status").textContent).toContain(t().uninstallOk);
   expect(screen.getByRole("status").textContent).toContain(t().cleanupRescanRunning);
   for (const count of [0, 2, undefined]) {
-    view.rerender(<ReportPanel {...props} residualScan={{ scanning: false, count }} />);
+    view.rerender(<ReportPanel {...props} residualScan={count === undefined ? undefined : { phase: "complete", count }} />);
     expect(screen.getByRole("status").textContent).toContain(count === undefined ? t().cleanupRescanUnknown : t().cleanupRescanResult(count));
     expect(screen.queryByText(t().reportFlowDone)).toBeNull();
   }
@@ -121,7 +153,8 @@ it.each(["zh", "en"] as const)("offers restoration only for a verified backup in
     expect(screen.queryByRole("button", { name: `${t().restorePreviewTitle}: session` }) !== null)
       .toBe(hasRestoration);
     expect(screen.queryByText(t().safetyVaultBanner) !== null).toBe(hasRestoration);
-    expect(screen.getByText(t().reportNarrative(report.deleted, report.failed, report.skipped, hasRestoration))).toBeTruthy();
+    expect(Boolean(screen.queryByText(t().reportNarrative(report.deleted, report.failed, report.skipped, hasRestoration))))
+      .toBe(!report.dry_run);
     expect(screen.queryByText(t().reportNextOk) !== null).toBe(hasRestoration && !report.aborted && !report.failed);
     if (!hasRestoration && !report.dry_run) {
       expect(screen.getByRole("note").textContent).toBe(report.backup_dir ? t().unverifiedBackupThisRun : t().noBackupThisRun);

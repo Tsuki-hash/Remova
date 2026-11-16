@@ -15,6 +15,7 @@ import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey, scanMatchesApp } from "./lib/appKey";
+import { reviewForApp } from "./lib/uninstallReview";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
 import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
@@ -190,9 +191,10 @@ export default function App() {
     ignoreSuggestions,
     monitoring,
     monitorDiff,
-    residualFromUninstall,
+    uninstallReview,
     actions: residualActions,
   } = residual;
+  const residualFromUninstall = reviewForApp(uninstallReview, core.scanTarget) !== null;
 
   const ai = useAiPanelState();
   const {
@@ -317,7 +319,7 @@ export default function App() {
       setMulti: coreSetMulti,
       setSelectedPaths,
       setScan: core.setScan,
-      setResidualFromUninstall: residualActions.setResidualFromUninstall,
+      setUninstallReview: residualActions.setUninstallReview,
       setAiRisk,
       setReport: coreSetReport,
       setVerifyRows,
@@ -328,7 +330,7 @@ export default function App() {
       coreSetMulti,
       setSelectedPaths,
       core.setScan,
-      residualActions.setResidualFromUninstall,
+      residualActions.setUninstallReview,
       setAiRisk,
       coreSetReport,
       setVerifyRows,
@@ -347,7 +349,7 @@ export default function App() {
       setIgnoreSuggestions: residualActions.setIgnoreSuggestions,
       setSelectedPaths,
       setError: core.setError,
-      setResidualFromUninstall: residualActions.setResidualFromUninstall,
+      setUninstallReview: residualActions.setUninstallReview,
       setUninstallingKey: core.setUninstallingKey,
       setUninstallStage,
       setEvidence,
@@ -362,7 +364,7 @@ export default function App() {
       residualActions.setIgnoreSuggestions,
       setSelectedPaths,
       core.setError,
-      residualActions.setResidualFromUninstall,
+      residualActions.setUninstallReview,
       core.setUninstallingKey,
       setUninstallStage,
       setEvidence,
@@ -573,7 +575,7 @@ export default function App() {
   const closePreview = useCallback(() => {
     currentReport.current = null;
     coreClosePreview();
-    residualActions.setResidualFromUninstall(false);
+    residualActions.setUninstallReview(null);
     residualActions.clearIgnoreSuggestions();
     residualActions.clearSelection();
     setEvidence(null);
@@ -702,6 +704,7 @@ export default function App() {
     setSelectedPaths,
     ignoreSuggestions,
     residualFromUninstall,
+    uninstallReview,
     useOfficial,
     aiBusy,
     aiRisk,

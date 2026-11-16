@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import type { FullCleanupReport, InstalledApp } from "../types";
+import { t } from "../i18n";
 
 // The integration suite mocks SoftwarePage wholesale, so its own identity
 // resolution (and the module-level report cache that survives navigating away)
@@ -103,6 +104,7 @@ function props(over: Partial<ComponentProps<typeof SoftwarePage>> = {}) {
     onIgnoreApplied: vi.fn(),
     onDismissIgnore: vi.fn(),
     residualFromUninstall: false,
+    uninstallReview: null,
     uninstallStage: "idle" as const,
     report,
     setReport: vi.fn(),
@@ -285,22 +287,42 @@ describe("SoftwarePage report identity", () => {
   });
 
   it("renders the post-uninstall residual notice for scanning, empty and unknown scans", () => {
+    const listAnalyze = vi.fn();
+    const base = props({ report: null, listAnalyze });
     const { rerender } = render(
-      <SoftwarePage {...props({ residualFromUninstall: true, report: null, scanning: true })} />,
+      <SoftwarePage {...base} uninstallReview={{ app: demo, rescan: { phase: "scanning" } }} scanning />,
     );
     expect(screen.getAllByText(/^分析中/).length).toBeGreaterThan(0);
     rerender(
       <SoftwarePage
-        {...props({
-          residualFromUninstall: true,
-          report: null,
-          scan: { app_name: "Demo", app_key: appKey(demo), items: [], degraded: [] },
-        })}
+        {...base}
+        uninstallReview={{ app: demo, rescan: { phase: "complete", count: 0 } }}
+        scan={{ app_name: "Demo", app_key: appKey(demo), items: [], degraded: [] }}
       />,
     );
     expect(screen.getByText(/本次复扫未发现关联残留/)).toBeTruthy();
-    rerender(<SoftwarePage {...props({ residualFromUninstall: true, report: null, scan: null })} />);
+    rerender(<SoftwarePage {...base} selected={null} uninstallReview={{ app: demo, rescan: { phase: "not_started" } }} />);
     expect(screen.getByText(/剩余关联项尚未核对/)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain(demo.name);
+    fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp }));
+    expect(listAnalyze).toHaveBeenCalledWith(demo, { fromUninstall: true });
+    rerender(<SoftwarePage {...base} selected={{ ...demo, source: "HKLM32" }}
+      uninstallReview={{ app: demo, rescan: { phase: "cancelled" } }} />);
+    expect(screen.queryByText(t().uninstallRescanCancelled)).toBeNull();
+    expect(screen.queryByRole("button", { name: t().reportRescanApp })).toBeNull();
+  });
+
+  it("keeps the report rescan state and target tied to the report identity", () => {
+    const other = { ...demo, source: "HKLM32" as const };
+    const listAnalyze = vi.fn();
+    const base = props({ apps: [other], selected: other, listAnalyze, report: { ...report, failed: 0 } });
+    const { rerender } = render(<SoftwarePage {...base} uninstallReview={{ app: other, rescan: { phase: "scanning" } }} />);
+    expect(screen.getByText(t().cleanupRescanUnknown)).toBeTruthy();
+    expect(screen.queryByText(t().cleanupRescanRunning)).toBeNull();
+    rerender(<SoftwarePage {...base} uninstallReview={{ app: demo, rescan: { phase: "cancelled" } }} />);
+    expect(screen.getByText(t().uninstallRescanCancelled)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp }));
+    expect(listAnalyze).toHaveBeenCalledWith(demo, expect.objectContaining({ afterCleanup: true, keepReport: true }));
   });
 
   it("expires a cached report identity after 24 hours", () => {

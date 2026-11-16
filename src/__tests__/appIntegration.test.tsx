@@ -123,7 +123,7 @@ const scan: ScanResult = {
     confidence: "confirmed", risk: "low", reason: "install", evidence: [] }],
 };
 const report: FullCleanupReport = {
-  app_name: demo.name, dry_run: false, backup_dir: "", uninstall_ok: true,
+  app_name: demo.name, app_key: appKey(demo), dry_run: false, backup_dir: "", uninstall_ok: true,
   uninstall_message: "", deleted: 1, failed: 0, skipped: 0, delayed: 0,
   aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [],
 };
@@ -498,7 +498,9 @@ describe("App orchestration", () => {
       expect.objectContaining({ skip_official_uninstall: false }));
     await waitFor(() => expect(software().dryRunning).toBe(false));
     expect(native.analyze).toHaveBeenCalledTimes(enabled ? 2 : 1);
-    expect(software().residualFromUninstall).toBe(true);
+    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo,
+      rescan: enabled ? { phase: "complete", count: scan.items.length } : { phase: "not_started" } }));
+    expect(software().residualFromUninstall).toBe(enabled);
     expect(software().report).toEqual(report);
     expect(software().selectedPaths.size).toBe(0);
   });
@@ -589,6 +591,7 @@ describe("App orchestration", () => {
     expect(software().selectedPaths.size).toBe(0);
     if (state === "failed" || state === "cancelled") {
       expect(software().scan).toBeNull();
+      expect(software().uninstallReview).toEqual({ app: demo, rescan: { phase: state } });
       expect(reviewVerdictFor(reviewSessionFor(report)).state).toBe("incomplete_round");
     }
     else expect(software().scan?.items.length).toBe(state === "empty" ? 0 : scan.items.length);
@@ -606,12 +609,37 @@ describe("App orchestration", () => {
     await mount();
     act(() => software().listStartUninstall(demo));
     await waitFor(() => expect(native.officialUninstall).toHaveBeenCalledWith(demo));
-    await waitFor(() => expect(software().residualFromUninstall).toBe(true));
+    await waitFor(() => expect(software().uninstallReview?.app).toEqual(demo));
     if (checked) await waitFor(() => expect(software().scan).toEqual(scan));
     else expect(software().scan).toBeNull();
-    expect(software().residualFromUninstall).toBe(true);
+    expect(software().residualFromUninstall).toBe(checked);
     expect(software().report).toBeNull();
     expect(native.fullCleanup).not.toHaveBeenCalled();
+  });
+
+  it("can retry a cancelled leftover scan and still runs the official uninstaller for a same-name variant", async () => {
+    const sibling = { ...demo, source: "HKLM32" as const };
+    native.listApps.mockResolvedValueOnce(inventory(demo, sibling)).mockResolvedValue(inventory(sibling));
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: true });
+    native.analyze.mockRejectedValueOnce(new Error("scan:cancelled"));
+    await mount();
+    act(() => software().listStartUninstall(demo));
+    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo, rescan: { phase: "cancelled" } }));
+    await waitFor(() => expect(software().selected).toBeNull());
+    act(() => software().listAnalyze(demo, { fromUninstall: true }));
+    await waitFor(() => expect(software().scan).toEqual(scan));
+    expect(software().residualFromUninstall).toBe(true);
+    expect(native.officialUninstall).toHaveBeenCalledTimes(1);
+
+    act(() => software().selectApp(sibling));
+    expect(software().residualFromUninstall).toBe(false);
+    native.analyze.mockResolvedValueOnce({ ...scan, app_key: appKey(sibling) });
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    act(() => software().listAnalyze(sibling));
+    await waitFor(() => expect(software().scan?.app_key).toBe(appKey(sibling)));
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledWith(sibling, scan.items,
+      expect.objectContaining({ skip_official_uninstall: false })));
   });
 
   it("protects unload during a batch and releases it when the batch completes", async () => {

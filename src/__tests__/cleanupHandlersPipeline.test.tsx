@@ -103,7 +103,7 @@ function report(partial: Partial<FullCleanupReport> = {}): FullCleanupReport {
 const noop = () => {};
 const flow: CleanupFlowSetters = {
   setMulti: noop,
-  setResidualFromUninstall: noop,
+  setUninstallReview: noop,
   setAiRisk: noop,
   setReport: noop,
   setVerifyRows: noop,
@@ -170,13 +170,13 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
         aiRisk: null,
         apps: [],
         multi: new Set<string>(),
-        flow: { ...flow, setResidualFromUninstall: residualSpy },
+        flow: { ...flow, setUninstallReview: residualSpy },
         refreshApps: async () => {},
         busyRef,
       }),
     );
     await act(async () => { await hook.result.current.handleCleanupConfirm(); });
-    expect(residualSpy).toHaveBeenCalledWith(true);
+    expect(residualSpy).toHaveBeenCalledWith({ app: app(), rescan: { phase: "reboot" } });
     expect(toast.info).toHaveBeenCalled();
   });
 
@@ -334,7 +334,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     const refreshApps = vi.fn().mockResolvedValue(undefined);
     const flowDeep: CleanupFlowSetters = {
       setMulti: vi.fn(),
-      setResidualFromUninstall: noop,
+      setUninstallReview: noop,
       setAiRisk: noop,
       setReport: vi.fn(),
       setVerifyRows: noop,

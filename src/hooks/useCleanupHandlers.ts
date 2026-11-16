@@ -17,13 +17,14 @@ import { runBatchCleanup } from "../lib/batchEngine";
 import { cleanupAbortText, cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
+import type { UninstallReview } from "../lib/uninstallReview";
 
 /** Grouped cleanup setters. */
 export type CleanupFlowSetters = {
   setSelectedPaths?: (paths: Set<string>) => void;
   setScan?: (scan: ScanResult | null) => void;
   setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
-  setResidualFromUninstall: (v: boolean) => void;
+  setUninstallReview: (v: UninstallReview) => void;
   setAiRisk: (v: string | null) => void;
   setReport: (r: CleanupReport | FullCleanupReport | null) => void;
   setVerifyRows: (rows: { path: string; kind: string; still_there: boolean }[] | null) => void;
@@ -75,7 +76,7 @@ export function useCleanupHandlers({
     setMulti,
     setSelectedPaths,
     setScan,
-    setResidualFromUninstall,
+    setUninstallReview,
     setAiRisk,
     setReport,
     setVerifyRows,
@@ -256,7 +257,7 @@ export function useCleanupHandlers({
         setAiReportNote(null);
         // A 1641 abort still means the official uninstaller succeeded. Keep the
         // post-uninstall state so a retry never re-runs the uninstaller.
-        setResidualFromUninstall(r.uninstall_ok || residualFromUninstall);
+        if (r.uninstall_ok) setUninstallReview({ app: selected, rescan: { phase: r.reboot_pending ? "reboot" : "not_started" } });
         void refreshApps();
         return;
       }
@@ -282,7 +283,7 @@ export function useCleanupHandlers({
           if (vseq === verifySeqRef.current && (!currentReport || currentReport.current === r)) setVerifyRows(rows);
         })
         .catch(() => {});
-      setResidualFromUninstall(r.uninstall_ok || residualFromUninstall);
+      if (r.uninstall_ok || residualFromUninstall) setUninstallReview({ app: selected, rescan: { phase: "not_started" } });
       if (r.uninstall_ok && selected) {
         afterCleanup = { app: selected, report: r };
       }
@@ -313,7 +314,7 @@ export function useCleanupHandlers({
     setReport,
     setAiReportNote,
     setVerifyRows,
-    setResidualFromUninstall,
+    setUninstallReview,
     setError,
     busyRef,
     currentReport,

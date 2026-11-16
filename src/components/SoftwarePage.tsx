@@ -12,6 +12,8 @@ import type { LinkedBucketId } from "../lib/linkedItems";
 import { findReportApp, scanMatchesApp } from "../lib/appKey";
 import { shouldRescanAfterUninstall } from "../lib/cleanupFeedback";
 import { reviewSessionFor } from "../lib/rescanRounds";
+import { reviewForApp, uninstallRescanText, type UninstallReview } from "../lib/uninstallReview";
+import { prettyAppName } from "../lib/format";
 import type { AnalyzeOptions } from "../hooks/useAnalyzeFlow";
 import type { UninstallStage } from "./UninstallStageBar";
 import type { BatchItemResult } from "./BatchPanels";
@@ -121,6 +123,7 @@ export type SoftwarePageProps = {
   onIgnoreApplied: (pubs: string[], names: string[]) => void;
   onDismissIgnore: () => void;
   residualFromUninstall: boolean;
+  uninstallReview: UninstallReview | null;
   useOfficial: boolean;
   setUseOfficial: (v: boolean) => void;
   aiBusy: boolean;
@@ -196,6 +199,12 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const reportApp =
     liveReportApp ??
     (report ? cachedReportApp(reportIdentity) : undefined);
+  const review = p.uninstallReview;
+  const currentReview = review && (!p.selected || reviewForApp(review, p.selected)) &&
+    (!p.scan || scanMatchesApp(p.scan, review.app)) ? review : null;
+  const reportReview = review && report?.app_key === p.appKey(review.app) &&
+    (!reportApp || reviewForApp(review, reportApp)) ? review : null;
+  const rescanTarget = reportReview?.app ?? reportApp;
   useEffect(() => {
     if (liveReportApp && reportIdentity) {
       cacheReportApp(reportIdentity, liveReportApp);
@@ -205,9 +214,8 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   // the user rescans. `uninstall_ok` also covers a 1641 abort (official
   // uninstaller succeeded, residual deletion was postponed), while a failed
   // uninstall/backup abort has `uninstall_ok === false`.
-  const rescanAfterUninstall = report
-    ? shouldRescanAfterUninstall(report)
-    : false;
+  const rescanAfterUninstall = report && (reportReview !== null || shouldRescanAfterUninstall(report));
+  const canRetryRescan = currentReview && !["complete", "scanning", "reboot"].includes(currentReview.rescan.phase);
   return (
     <>
       <SoftwareToolbar
@@ -224,11 +232,16 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         onToggleSmartFilter={() => setSmartFilterOpen((v) => !v)}
       />
       {p.uninstallStage !== "idle" && <UninstallStageBar stage={p.uninstallStage} />}
-      {p.residualFromUninstall && !p.report && <div role="status" style={{ ...css.card, padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
-        <strong>{L.uninstallOk}</strong>
-        <div style={{ color: "var(--muted)" }}>{p.scanning ? L.analyzing : p.scan
-          ? p.scan.items.length === 0 ? L.cleanupRescanResult(0) : L.uninstallAwaitCleanup(p.scan.items.length)
-          : L.cleanupRescanUnknown}</div>
+      {currentReview && !report && <div style={{ ...css.card, padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
+        <div role="status">
+          <strong>{L.uninstallOk} · {prettyAppName(currentReview.app.name, currentReview.app.source)}</strong>
+          <div style={{ color: "var(--muted)" }}>{uninstallRescanText(L, currentReview.rescan, false)}</div>
+        </div>
+        {canRetryRescan && <button type="button" style={{ ...css.btnGhost, marginTop: 8 }}
+          disabled={p.busy || !!p.uninstallingKey}
+          onClick={() => p.listAnalyze(currentReview.app, { fromUninstall: true })}>
+          {L.reportRescanApp}
+        </button>}
       </div>}
 
       {p.selected && !p.scan && (
@@ -294,17 +307,17 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           aiReportBusy={p.aiReportBusy}
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
-          residualScan={{ scanning: p.scanning, count: p.residualFromUninstall ? p.scan?.items.length : undefined }}
+          residualScan={reportReview?.rescan}
           onRescan={
-            reportApp
-              ? () => p.listAnalyze(reportApp, {
-                  afterCleanup: rescanAfterUninstall,
+            rescanTarget
+              ? () => p.listAnalyze(rescanTarget, {
+                  afterCleanup: Boolean(rescanAfterUninstall),
                   keepReport: true,
                   reviewSession: reviewSessionFor(report),
                 })
               : undefined
           }
-          rescanBusy={p.scanning}
+          rescanBusy={p.busy || !!p.uninstallingKey}
           deepCheckApp={reportApp ? { name: reportApp.name } : report ? { name: report.app_name } : null}
           appInstallLocation={reportApp?.install_location}
           onDismiss={() => p.setReport(null)}
