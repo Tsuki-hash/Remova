@@ -233,7 +233,7 @@ describe("long manage rows are clipped instead of overlapping", () => {
   it("clips the row and its text blocks so nothing spills into a neighbour", async () => {
     const { api } = await import("../lib/api");
     vi.mocked(api.listScheduledTasks).mockResolvedValue([task()]);
-    const { container } = render(<ManageListPage tab="tasks" title="Tasks" onError={vi.fn()} />);
+    const { container } = render(<ManageListPage tab="tasks" onError={vi.fn()} />);
     const row = await waitFor(() => {
       const found = container.querySelector<HTMLElement>(".remova-manage-row");
       if (!found) throw new Error("row not rendered");

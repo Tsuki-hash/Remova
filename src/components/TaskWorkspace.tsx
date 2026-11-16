@@ -8,6 +8,11 @@ export function taskName(item: ManageItem) {
   return item.display_name || item.name.split("\\").filter(Boolean).pop() || item.name;
 }
 
+function taskDescription(item: ManageItem) {
+  const detail = item.detail?.trim();
+  return detail && detail !== taskName(item) && detail !== item.path ? detail : "";
+}
+
 function taskProgram(item: ManageItem, L: ReturnType<typeof t>) {
   const action = item.task_action;
   if (action?.kind === "multiple") return L.manageTaskMultiple;
@@ -39,6 +44,7 @@ export function TaskWorkspace({ rows, scrollRef, busy, emptyLabel, onSetEnabled 
   const listId = useId();
   const selectedIndex = selection === null ? 0 : rows.findIndex((item) => item.name === selection);
   const selected = rows[selectedIndex];
+  const description = selected && taskDescription(selected);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => listRef.current,
@@ -94,7 +100,7 @@ export function TaskWorkspace({ rows, scrollRef, busy, emptyLabel, onSetEnabled 
               const item = rows[index];
               if (!item) return null;
               const name = taskName(item);
-              const summary = item.detail || taskProgram(item, L);
+              const summary = taskDescription(item) || taskProgram(item, L);
               return (
                 <div
                   id={`${listId}-${index}`}
@@ -134,18 +140,8 @@ export function TaskWorkspace({ rows, scrollRef, busy, emptyLabel, onSetEnabled 
                 <span className="remova-task-status" data-enabled={selected.enabled}>{enabledLabel(selected)}</span>
               </div>
             </header>
-            {selected.detail && <p className="remova-task-description">{selected.detail}</p>}
+            {description && <p className="remova-task-description">{description}</p>}
             <dl>
-              <dt>{L.manageTaskPath}</dt>
-              <dd className="remova-task-path">{selected.location}</dd>
-              <dt>{L.manageTaskProgram}</dt>
-              <dd>
-                {selected.task_action?.kind === "program" && !selected.task_action.script_host
-                  ? selected.task_action.program : taskProgram(selected, L)}
-                {selected.path && selected.path !== (selected.task_action?.kind === "program" && selected.task_action.program) && (
-                  <span className="remova-task-binary remova-task-path">{selected.path}</span>
-                )}
-              </dd>
               <dt>{L.manageLastRun}</dt>
               <dd>{selected.last_run || L.manageNoLastRun}</dd>
               <dt>{L.manageNextRun}</dt>
@@ -160,6 +156,21 @@ export function TaskWorkspace({ rows, scrollRef, busy, emptyLabel, onSetEnabled 
             >
               {selected.enabled ? L.manageTaskDisable : L.manageTaskEnable}
             </button>
+            <details className="remova-task-technical">
+              <summary>{L.manageTaskTechnical}</summary>
+              <dl>
+                <dt>{L.manageTaskPath}</dt>
+                <dd className="remova-task-path">{selected.location}</dd>
+                <dt>{L.manageTaskProgram}</dt>
+                <dd>
+                  {selected.task_action?.kind === "program" && !selected.task_action.script_host
+                    ? selected.task_action.program : taskProgram(selected, L)}
+                  {selected.path && selected.path !== (selected.task_action?.kind === "program" && selected.task_action.program) && (
+                    <span className="remova-task-binary remova-task-path">{selected.path}</span>
+                  )}
+                </dd>
+              </dl>
+            </details>
           </>
         ) : (
           <p className="remova-task-empty">{busy ? L.loadingManage : L.manageTaskSelect}</p>

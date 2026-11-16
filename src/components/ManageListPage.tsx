@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { t } from "../i18n";
@@ -16,7 +16,7 @@ import { taskName, TaskWorkspace } from "./TaskWorkspace";
 
 export type ManagePageTab = ManageTabId;
 
-const ROW_H = 72;
+const ROW_H = 64;
 
 /** Offer one-click elevate when an admin-gated action fails or is attempted. */
 async function ensureElevatedForManage(): Promise<boolean> {
@@ -53,16 +53,15 @@ function displayName(it: ManageItem) {
   return it.display_name || it.name;
 }
 
-function entrySubtitle(it: ManageItem, tab: ManagePageTab, L: ReturnType<typeof t>) {
-  const filename = it.path?.split(/[\\/]/).pop();
-  const service = tab === "services" || it.location.startsWith("SVC::");
-  if (service) {
-    const source = tab === "startup" ? L.manageSourceService : it.system_service ? L.manageSystemService : L.manageService;
-    const id = it.display_name && it.display_name !== it.name ? it.name : "";
-    return [source, id, !it.detail && filename].filter(Boolean).join(" · ");
-  }
-  return [startupSourceLabel(it, L), filename && filename !== it.name ? filename : null]
-    .filter(Boolean).join(" · ");
+function entrySource(it: ManageItem, tab: ManagePageTab, L: ReturnType<typeof t>) {
+  if (tab === "services") return it.system_service ? L.manageSystemService : L.manageService;
+  return startupSourceLabel(it, L);
+}
+
+function entryDescription(it: ManageItem) {
+  const detail = it.detail?.trim();
+  return detail && ![displayName(it), it.name, it.path, it.location]
+    .some((value) => value?.trim().toLowerCase() === detail.toLowerCase()) ? detail : "";
 }
 
 function entryGlyph(it: ManageItem, tab: ManagePageTab) {
@@ -98,17 +97,20 @@ function runLabel(it: ManageItem, L: ReturnType<typeof t>) {
 
 export function ManageListPage({
   tab,
-  title,
   onError,
 }: {
   tab: ManagePageTab;
-  title: string;
   onError?: (msg: string) => void;
 }) {
   const L = t();
   const [q, setQ] = useState("");
   const [onlyOn, setOnlyOn] = useState(true);
   const [hideMicrosoft, setHideMicrosoft] = useState(tab === "services");
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [detailsItem, setDetailsItem] = useState<ManageItem | null>(null);
+  const helpId = useId();
+  const detailsTitleId = useId();
+  const detailsRef = useRef<HTMLDialogElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useListViewportHeight(scrollRef);
@@ -218,41 +220,17 @@ export function ManageListPage({
   const emptyLabel = !busy && (!progress || progress.status === "complete")
     ? (q.trim() || onlyOn || hideMicrosoft ? L.emptySearch : L.emptyList)
     : undefined;
+  const searchPlaceholder = tab === "startup" ? L.searchStartup : tab === "services" ? L.searchServices : L.searchTasks;
 
   return (
     <div className={tab === "tasks" ? "remova-tasks" : undefined}
       style={{ ...css.card, flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          padding: "16px 18px",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-          flexWrap: "wrap",
-        }}
-      >
-        {tab !== "tasks" && <>
-          <strong style={{ fontSize: 13, fontWeight: 600 }}>{title}</strong>
-          <span style={css.chip}>
-            {busy && items.length === 0
-              ? "…"
-              : `${rows.length}${rows.length !== items.length ? ` / ${items.length}` : ""}`}
-          </span>
-        </>}
+      <div className="remova-manage-toolbar">
         <input
           ref={searchRef}
-          style={{ ...css.input, maxWidth: tab === "tasks" ? 380 : 240, height: 34,
-            flex: tab === "tasks" ? "1 1 240px" : "0 1 240px", minWidth: 0 }}
-          aria-label={tab === "tasks" ? L.manageTaskSearch : L.search}
-          placeholder={
-            tab === "startup"
-              ? L.searchStartup
-              : tab === "services"
-                ? L.searchServices
-                : L.searchTasks
-          }
+          style={{ ...css.input, maxWidth: 380, height: 34, flex: "1 1 220px", minWidth: 0 }}
+          aria-label={tab === "tasks" ? L.manageTaskSearch : searchPlaceholder}
+          placeholder={searchPlaceholder}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -274,25 +252,23 @@ export function ManageListPage({
             {L.filterHideMs}
           </label>
         )}
-        <button
-          style={{ ...css.btnGhost, marginLeft: "auto" }}
-          disabled={busy}
-          onClick={() => void reload()}
-        >
-          {L.manageReload}
-        </button>
+        <div className="remova-manage-tools">
+          {(!busy || items.length > 0) && <span className="remova-manage-count">
+            {L.manageResultCount(rows.length, items.length)}
+          </span>}
+          {tab !== "tasks" && <button
+            type="button"
+            style={css.btnGhost}
+            aria-expanded={helpOpen}
+            aria-controls={helpId}
+            onClick={() => setHelpOpen((open) => !open)}
+          >{L.manageHelp}</button>}
+          <button type="button" style={css.btnGhost} disabled={busy} onClick={() => void reload()}>
+            {L.manageReload}
+          </button>
+        </div>
       </div>
-      {tab !== "tasks" && <div
-        style={{
-          padding: "10px 18px",
-          fontSize: 12,
-          color: "var(--muted)",
-          background: "var(--surface-2)",
-          borderBottom: "1px solid var(--border)",
-          lineHeight: 1.5,
-          flexShrink: 0,
-        }}
-      >
+      {tab !== "tasks" && <div id={helpId} className="remova-manage-help" hidden={!helpOpen}>
         {tab === "startup" ? L.startupHint : L.servicesHint}
       </div>}
       <div title={busy ? L.loadingManage : undefined}>
@@ -303,7 +279,7 @@ export function ManageListPage({
         <TaskWorkspace rows={rows} scrollRef={scrollRef} busy={busy} emptyLabel={emptyLabel} onSetEnabled={setEnabled} />
       ) : <div
         ref={scrollRef}
-        style={{ ...css.scroll, padding: "4px 8px", position: "relative" }}
+        style={{ ...css.scroll, padding: "0 8px", position: "relative" }}
       >
         {emptyLabel && rows.length === 0 && (
           <div style={{ ...css.muted, padding: 28, textAlign: "center" as const }}>
@@ -316,28 +292,16 @@ export function ManageListPage({
               const it = rows[vr.index];
               if (!it) return null;
               const name = displayName(it);
-              const subtitle = entrySubtitle(it, tab, L);
-              const description = (tab === "services" || it.location.startsWith("SVC::")) && it.detail;
+              const source = tab === "startup" || it.system_service ? entrySource(it, tab, L) : "";
+              const summary = entryDescription(it) || source;
               const statusTone = it.enabled ? "var(--ok-ink)" : "var(--muted)";
               return (
                 <div
                   key={it.location + it.name}
-                  className="remova-manage-row"
+                  className="remova-manage-row remova-manage-entry"
                   style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
                     height: vr.size,
                     transform: `translateY(${vr.start}px)`,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "0 10px",
-                    borderBottom: "1px solid var(--border)",
-                    boxSizing: "border-box",
-                    // Keep the description and metadata inside the virtual row.
-                    overflow: "hidden",
                   }}
                 >
                   <ManageItemIcon item={it} glyph={entryGlyph(it, tab)} />
@@ -349,18 +313,9 @@ export function ManageListPage({
                     >
                       {name}
                     </div>
-                    {description && (
-                      <div style={{ ...css.muted, fontSize: 11.5 }} className="ell" title={description}>
-                        {description}
-                      </div>
-                    )}
-                    <div
-                      style={{ ...css.muted, fontSize: 11.5 }}
-                      className="ell"
-                      title={[subtitle, it.path, it.location].filter(Boolean).join("\n")}
-                    >
-                      {subtitle}
-                    </div>
+                    {summary && <div className="ell remova-manage-summary" title={summary}>
+                      {summary}
+                    </div>}
                   </div>
                   <div
                     style={{
@@ -368,7 +323,6 @@ export function ManageListPage({
                       flexDirection: "column",
                       alignItems: "flex-end",
                       gap: 2,
-                      minWidth: tab === "services" ? 110 : 72,
                       flexShrink: 0,
                       overflow: "hidden",
                     }}
@@ -441,6 +395,17 @@ export function ManageListPage({
                     >
                       {it.enabled ? L.manageDisable : L.manageEnable}
                     </button>
+                    <button
+                      type="button"
+                      className="remova-manage-more"
+                      aria-label={`${L.manageItemDetails} · ${name}`}
+                      title={L.manageItemDetails}
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        setDetailsItem(it);
+                        detailsRef.current?.showModal();
+                      }}
+                    >…</button>
                   </div>
                 </div>
               );
@@ -448,6 +413,22 @@ export function ManageListPage({
           </div>
         )}
       </div>}
+      {tab !== "tasks" && <dialog ref={detailsRef} className="remova-manage-dialog" aria-labelledby={detailsTitleId}>
+        <header>
+          {detailsItem && <ManageItemIcon item={detailsItem} glyph={entryGlyph(detailsItem, tab)} />}
+          <h2 id={detailsTitleId}>{detailsItem && displayName(detailsItem)}</h2>
+          <form method="dialog"><button type="submit" style={css.btnGhost}>{L.panelClose}</button></form>
+        </header>
+        {detailsItem && <>
+          {entryDescription(detailsItem) && <p>{entryDescription(detailsItem)}</p>}
+          <dl>
+            <dt>{L.manageDetailSource}</dt><dd>{entrySource(detailsItem, tab, L)}</dd>
+            <dt>{L.manageDetailId}</dt><dd>{detailsItem.name}</dd>
+            {detailsItem.path && <><dt>{L.manageDetailProgram}</dt><dd>{detailsItem.path}</dd></>}
+            <dt>{L.manageDetailLocation}</dt><dd>{detailsItem.location}</dd>
+          </dl>
+        </>}
+      </dialog>}
     </div>
   );
 }

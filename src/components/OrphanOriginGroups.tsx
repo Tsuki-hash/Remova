@@ -58,9 +58,9 @@ export function OrphanOriginGroups({
             <div className="remova-orphan-group-head" style={compact ? undefined : { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
               {compact && <ToolGlyph name="folder" size={21} />}
               <strong>{g.origin}</strong>
-              <span style={css.muted}>
-                {L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
-              </span>
+              {(!compact || g.count > 1) && <span style={css.muted}>
+                {compact ? L.orphanGroupCount(g.count) : L.orphanGroupMeta(g.count, g.safe, g.suggest, g.keep)}
+              </span>}
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 {selectablePaths.length > 0 && onToggleMany && (
                   <button

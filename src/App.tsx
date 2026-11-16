@@ -868,13 +868,13 @@ export default function App() {
           }
         >
           {nav === "startup" && (
-            <ManageListPage tab="startup" title={L.navStartup} onError={core.setError} />
+            <ManageListPage tab="startup" onError={core.setError} />
           )}
           {nav === "services" && (
-            <ManageListPage tab="services" title={L.navServices} onError={core.setError} />
+            <ManageListPage tab="services" onError={core.setError} />
           )}
           {nav === "tasks" && (
-            <ManageListPage tab="tasks" title={L.navTasks} onError={core.setError} />
+            <ManageListPage tab="tasks" onError={core.setError} />
           )}
           {nav === "orphans" && (
             <OrphanPage

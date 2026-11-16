@@ -116,7 +116,7 @@ export function SoftwareToolbar({
       >
         <Deco ch="✦" />
       </button>
-      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+      <div className="remova-software-categories" role="group" aria-label={L.softwareCategories}>
         {(
           [
             ["all", L.catAll],
@@ -126,17 +126,7 @@ export function SoftwareToolbar({
         ).map(([id, label]) => (
           <button
             key={id}
-            style={{
-              height: 32,
-              padding: "0 14px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: category === id ? "var(--accent-soft)" : "var(--surface)",
-              color: category === id ? "var(--accent)" : "var(--fg)",
-              fontWeight: category === id ? 650 : 500,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
+            type="button"
             aria-pressed={category === id}
             onClick={() => onCategory(id)}
           >

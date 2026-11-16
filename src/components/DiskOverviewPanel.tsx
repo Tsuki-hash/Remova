@@ -287,7 +287,6 @@ export function DiskOverviewPanel({
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.diskOverviewTitle}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
         <strong>{L.diskOverviewTitle}</strong>
-        <span style={css.muted}>{L.diskOverviewHint}</span>
         <button
           style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }}
           onClick={onClose}

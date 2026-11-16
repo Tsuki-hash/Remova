@@ -73,7 +73,7 @@ const service = (over: Partial<ManageItem> = {}): ManageItem => ({
 
 const renderServices = (items: ManageItem[]) => {
   native.listServices.mockResolvedValue(items);
-  return render(<ManageListPage tab="services" title={t().navServices} onError={vi.fn()} />);
+  return render(<ManageListPage tab="services" onError={vi.fn()} />);
 };
 
 it("gates every mutating action behind elevation and offers the restart prompt", async () => {
@@ -151,7 +151,7 @@ it("keeps the startup tab on the startup command and never the service command",
   native.listStartupItems.mockResolvedValue([{
     name: "Acme Agent", detail: "Acme", location: "HKCU\\Run\\AcmeAgent", enabled: true, kind: "startup",
   }]);
-  render(<ManageListPage tab="startup" title={t().navStartup} onError={vi.fn()} />);
+  render(<ManageListPage tab="startup" onError={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: `${t().manageDisable}: Acme Agent` }));
   await waitFor(() => expect(native.setStartupEnabled).toHaveBeenCalledWith("HKCU\\Run\\AcmeAgent", false));
   expect(native.setServiceRunning).not.toHaveBeenCalled();
@@ -174,7 +174,7 @@ it("loads a packaged startup logo by its Windows application ID without an execu
     name: "Acme Tools", detail: "Store", location: `PACKAGED::registry::${appUserModelId}`,
     enabled: true, kind: "startup", app_user_model_id: appUserModelId,
   }]);
-  const { container } = render(<ManageListPage tab="startup" title={t().navStartup} />);
+  const { container } = render(<ManageListPage tab="startup" />);
   await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA=="));
   expect(native.appIconData).toHaveBeenCalledWith("", true, undefined, { path: "", appUserModelId });
 });
@@ -194,12 +194,21 @@ it("shows a readable service title, description and icon, and controls it by its
   const stop = await screen.findByRole("button", { name: t().manageStop + ": Acme 后台助手" });
   expect(screen.getByText("Acme 后台助手")).toBeTruthy();
   expect(screen.getByText("在后台同步应用数据")).toBeTruthy();
-  expect(screen.getByText(/后台服务 · AcmeSvc/)).toBeTruthy();
+  expect(screen.queryByText(/AcmeSvc/)).toBeNull();
   expect(screen.queryByText(/HKLM64/)).toBeNull();
   await waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,dGVzdA=="));
   expect(native.appIconData).toHaveBeenCalledWith(path, true, undefined, { path, appUserModelId: "" });
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "agent.exe" } });
   expect(screen.getByText("Acme 后台助手")).toBeTruthy();
+  const dialog = screen.getByRole<HTMLDialogElement>("dialog", { hidden: true });
+  Object.defineProperty(dialog, "showModal", { value: () => { dialog.open = true; } });
+  fireEvent.click(screen.getByRole("button", { name: `${t().manageItemDetails} · Acme 后台助手` }));
+  const details = within(screen.getByRole("dialog", { name: "Acme 后台助手" }));
+  expect(details.getByText("AcmeSvc")).toBeTruthy();
+  expect(details.getByText(t().manageService)).toBeTruthy();
+  expect(details.getByText(path)).toBeTruthy();
+  expect(details.getByText(/HKLM64/)).toBeTruthy();
+  dialog.open = false;
   fireEvent.click(stop);
   await waitFor(() => expect(native.setServiceRunning).toHaveBeenCalledWith("AcmeSvc", false));
 });
@@ -211,14 +220,17 @@ it("filters Windows services by their binary and localizes the startup service s
   expect(await screen.findByText(t().emptySearch)).toBeTruthy();
   fireEvent.click(screen.getByRole("checkbox", { name: t().filterHideMs }));
   expect(await screen.findByText("Windows Audio")).toBeTruthy();
-  expect(screen.getByText(/Windows 系统服务 · Audiosrv/)).toBeTruthy();
   expect(screen.getByText("管理音频设备")).toBeTruthy();
   cleanup();
 
-  native.listStartupItems.mockResolvedValue([{ ...windows, kind: "startup", location: "SVC::Audiosrv" }]);
-  render(<ManageListPage tab="startup" title={t().navStartup} />);
+  native.listStartupItems.mockResolvedValue([{ ...windows, detail: "Windows Audio", kind: "startup", location: "SVC::Audiosrv" }]);
+  render(<ManageListPage tab="startup" />);
   expect(await screen.findByText("Windows Audio")).toBeTruthy();
-  expect(screen.getByText(/服务自启 · Audiosrv/)).toBeTruthy();
+  expect(screen.getByText(t().manageSourceService)).toBeTruthy();
+  const help = screen.getByRole("button", { name: t().manageHelp });
+  expect(screen.getByText(t().startupHint).hidden).toBe(true);
+  fireEvent.click(help);
+  expect(screen.getByText(t().startupHint).hidden).toBe(false);
 });
 
 it("shows a scheduled task's executable icon and uses the full registered path when disabling it", async () => {
@@ -230,13 +242,15 @@ it("shows a scheduled task's executable icon and uses the full registered path w
     display_icon: path, path, task_action: { kind: "program", program: "guard.exe", script_host: false },
     last_run: "09:00", next_run: "10:00",
   }]);
-  const { container } = render(<ManageListPage tab="tasks" title={t().navTasks} />);
+  const { container } = render(<ManageListPage tab="tasks" />);
   const row = await screen.findByRole("option", { name: /LaunchGuard/ });
   expect(row).toHaveProperty("title", location);
   expect(within(row).getByText("Launch the guard")).toBeTruthy();
   expect(within(row).queryByText("09:00")).toBeNull();
   const detail = within(screen.getByRole("complementary", { name: t().manageTaskDetails }));
-  expect(detail.getByText(location)).toBeTruthy();
+  const technical = detail.getByText(t().manageTaskTechnical).closest("details")!;
+  expect(technical.open).toBe(false);
+  expect(technical.contains(detail.getByText(location))).toBe(true);
   expect(detail.getByText("guard.exe")).toBeTruthy();
   expect(detail.getByText("09:00")).toBeTruthy();
   expect(detail.getByText("10:00")).toBeTruthy();
@@ -256,7 +270,7 @@ it("labels scheduled scripts, multiple actions and unknown executables without m
       task_action: { kind: "multiple" } },
     { name: "\\Unknown", location: "\\Unknown", display_name: "Unknown", enabled: true, detail: "" },
   ]);
-  const { container } = render(<ManageListPage tab="tasks" title={t().navTasks} />);
+  const { container } = render(<ManageListPage tab="tasks" />);
   const list = within(screen.getByRole("listbox"));
   expect(await list.findByText("通过 pwsh.exe 执行")).toBeTruthy();
   expect(list.getByText("多个执行动作")).toBeTruthy();
@@ -270,7 +284,7 @@ it("selects the exact task with the keyboard and clears hidden task actions when
     { name: "\\One\\Sync", location: "\\One\\Sync", enabled: true, detail: "First vendor" },
     { name: "\\Two\\Sync", location: "\\Two\\Sync", enabled: true, detail: "Second vendor" },
   ]);
-  render(<ManageListPage tab="tasks" title={t().navTasks} />);
+  render(<ManageListPage tab="tasks" />);
   const list = screen.getByRole("listbox");
   const detail = within(screen.getByRole("complementary", { name: t().manageTaskDetails }));
   expect(await detail.findByText("\\One\\Sync")).toBeTruthy();

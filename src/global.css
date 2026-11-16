@@ -174,6 +174,86 @@
   .remova-tool-description { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .remova-tool-section:has(input[type="checkbox"]) > div { padding-top: 10px; }
 
+  .remova-software-categories {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+  }
+  .remova-software-categories button {
+    min-height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .remova-software-categories button:hover { background: var(--row-hover); color: var(--fg); }
+  .remova-software-categories button[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-weight: 650;
+  }
+
+  .remova-manage-toolbar, .remova-manage-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  .remova-manage-toolbar { padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .remova-manage-tools { margin-inline-start: auto; }
+  .remova-manage-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .remova-manage-help {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .remova-manage-entry {
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .remova-manage-summary { color: var(--muted); font-size: 12px; }
+  .remova-manage-more {
+    width: 30px;
+    height: 32px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .remova-manage-more:hover { border-color: var(--border); background: var(--surface-2); color: var(--fg); }
+  .remova-manage-dialog {
+    width: min(520px, calc(100% - 32px));
+    padding: 20px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--fg);
+    box-shadow: var(--shadow-float);
+    overflow-wrap: anywhere;
+  }
+  .remova-manage-dialog::backdrop { background: rgba(10, 16, 29, .45); }
+  .remova-manage-dialog header { display: flex; align-items: center; gap: 12px; }
+  .remova-manage-dialog h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; }
+  .remova-manage-dialog p { color: var(--muted); }
+  .remova-manage-dialog dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 16px; margin: 14px 0 0; }
+  .remova-manage-dialog dt { color: var(--muted); }
+  .remova-manage-dialog dd { margin: 0; user-select: text; }
   .remova-manage-row:hover { background: var(--row-hover); }
   .remova-tasks { border: none !important; }
   .remova-task-workspace {
@@ -237,6 +317,9 @@
   .remova-task-detail dd { overflow-wrap: anywhere; }
   .remova-task-path { font-family: var(--mono); font-size: 12px; }
   .remova-task-binary { display: block; color: var(--muted); }
+  .remova-task-technical { margin-top: 16px; color: var(--muted); font-size: 12px; }
+  .remova-task-technical summary { width: fit-content; padding-block: 3px; cursor: pointer; }
+  .remova-task-technical dl { margin-top: 8px; color: var(--fg); }
   .remova-task-action {
     border: 1px solid var(--accent);
     border-radius: 7px;

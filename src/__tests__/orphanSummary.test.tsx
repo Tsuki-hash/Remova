@@ -130,7 +130,7 @@ it.each(["zh", "en"] as const)("explains default skips in the summary and on the
   render(<OrphanPage onLastReport={vi.fn()} />);
   expect(await screen.findByText(L.orphanSkipHint)).toBeTruthy();
   expect(screen.getByText(L.orphanSkip, { selector: ".remova-orphan-summary span" })).toBeTruthy();
-  expect(screen.getAllByText(L.orphanGroupMeta(1, 0, 0, 1))).toHaveLength(skipped.length);
+  expect(screen.getAllByText(L.orphanSkip, { selector: ".remova-orphan-row span" })).toHaveLength(skipped.length);
   fireEvent.click(within(screen.getByRole("status").parentElement!).getByRole("button", { name: L.orphanSelectAll }));
   expect(screen.getByRole<HTMLInputElement>("checkbox", { name: candidate.path }).checked).toBe(true);
   for (const [item, reason] of skipped) {
