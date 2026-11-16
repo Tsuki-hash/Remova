@@ -391,6 +391,9 @@ export function MorePage({
           onCancelRestore={() => void rest.cancelRestore()}
           onRun={rest.runRestore}
           onDelete={rest.deleteSession}
+          onOpenFolder={(folder) => {
+            void api.openPath(folder).catch((error) => onError(`${L.restoreOpenFolderFailed} ${formatError(error)}`));
+          }}
           onClose={() => {
             rest.closeRestore();
             tools.setOpenTool(null);

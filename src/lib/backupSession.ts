@@ -2,12 +2,22 @@ export type BackupSessionStatus = "verified" | "pending_verification" | "unseale
 
 export type BackupSession = {
   name: string;
+  folder?: string;
   size_kb: number | null;
   created_at: string;
   /** Compatibility with backends that only report seal verification. */
   sealed: boolean;
   status?: BackupSessionStatus;
 };
+
+export function backupSessionLabel(name: string, labels: { npm: string; firewall: string; fallback: string }): string {
+  const generated = name.match(/^(?:\d+|\d{8}-\d{6})_([a-z\d_-]+)$/i);
+  if (!generated) return name;
+  const source = generated[1]!;
+  if (/^npm-globals(?:_\d+)?$/.test(source)) return labels.npm;
+  if (/^firewall-rules(?:_\d+)?$/.test(source)) return labels.firewall;
+  return source.replace(/_+/g, " ").trim() || labels.fallback;
+}
 
 export function backupSessionStatus(session: BackupSession): BackupSessionStatus {
   return session.status ?? (session.sealed ? "verified" : "invalid");

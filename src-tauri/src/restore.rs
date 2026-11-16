@@ -1058,6 +1058,8 @@ fn preview_session_with_cancel(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionInfo {
     pub name: String,
+    /// A local directory listed under the backup root, for manual inspection.
+    pub folder: String,
     /// Older consumers can still read the field. New lists defer directory size
     /// until the selected session's preview.
     pub size_kb: Option<u64>,
@@ -1143,6 +1145,7 @@ fn list_session_info_at(root: &Path) -> Result<Vec<SessionInfo>, String> {
             let status = session_status(p);
             Some(SessionInfo {
                 name: name.clone(),
+                folder: p.to_string_lossy().into_owned(),
                 size_kb: None,
                 created_at: name.split('_').next().unwrap_or("").to_string(),
                 sealed: status == SessionStatus::PendingVerification,
@@ -3025,13 +3028,14 @@ mod tests {
         let rows: std::collections::BTreeMap<_, _> = list_session_info()
             .unwrap()
             .into_iter()
-            .map(|row| (row.name, row.status))
+            .map(|row| (row.name.clone(), row))
             .collect();
-        assert_eq!(rows[no_seal], SessionStatus::MissingMetadata);
-        assert_eq!(rows[no_map], SessionStatus::MissingMetadata);
-        assert_eq!(rows[verified], SessionStatus::PendingVerification);
-        assert_eq!(rows[empty], SessionStatus::Unsealed);
-        assert_eq!(rows[legacy], SessionStatus::Legacy);
+        assert_eq!(rows[no_seal].status, SessionStatus::MissingMetadata);
+        assert_eq!(rows[no_map].status, SessionStatus::MissingMetadata);
+        assert_eq!(rows[verified].status, SessionStatus::PendingVerification);
+        assert_eq!(rows[empty].status, SessionStatus::Unsealed);
+        assert_eq!(rows[legacy].status, SessionStatus::Legacy);
+        assert_eq!(Path::new(&rows[no_map].folder), backups.join(no_map));
         assert_eq!(preview_by_name(no_map).unwrap_err(), "seal:map_missing");
         for name in [no_seal, no_map, legacy] {
             assert!(delete_session_by_name(name).is_err());

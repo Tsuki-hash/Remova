@@ -480,13 +480,32 @@ it.each(["zh", "en"] as const)("shows unavailable backup reasons and only proven
   }
   expect(screen.queryByText(L.restoreNoSessions)).toBeNull();
   expect(screen.queryByRole("radio")).toBeNull();
-  expect(screen.getByRole("button", { name: L.restoreRun })).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("button", { name: L.restoreRun })).toBeNull();
   const remove = screen.getByRole("button", { name: `${L.deleteSession}: unsealed` });
   fireEvent.click(remove);
   expect(onDelete).toHaveBeenCalledWith("unsealed");
   for (const status of statuses.slice(1)) {
     expect(screen.queryByRole("button", { name: `${L.deleteSession}: ${status}` })).toBeNull();
   }
+});
+
+it.each(["zh", "en"] as const)("names older npm backups and opens the exact folder without offering restore (%s)", lang => {
+  setLang(lang);
+  const L = t();
+  const name = "1700000000_npm-globals_1";
+  const folder = `C:\\ProgramData\\Remova\\Backup\\${name}`;
+  const onOpenFolder = vi.fn();
+  const onRun = vi.fn();
+  render(<RestorePanel sessions={[{ name, folder, status: "missing_metadata", size_kb: null, sealed: false, created_at: "1700000000" }]}
+    pick="" setPick={vi.fn()} busy={false} msgs={[]} onRun={onRun} onOpenFolder={onOpenFolder}
+    onDelete={vi.fn()} onClose={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: new RegExp(L.restoreOtherBackups) })).toBeTruthy();
+  expect(screen.getByText(L.restoreSourceNpm)).toBeTruthy();
+  expect(screen.queryByText(name)).toBeNull();
+  expect(screen.queryByRole("button", { name: L.restoreRun })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.restoreOpenFolder) }));
+  expect(onOpenFolder).toHaveBeenCalledWith(folder);
+  expect(onRun).not.toHaveBeenCalled();
 });
 
 it("only exposes removal and size for a pending session after its own preview validates", () => {
