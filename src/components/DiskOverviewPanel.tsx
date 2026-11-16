@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type DriveInfo } from "../lib/api";
+import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
@@ -13,11 +13,9 @@ import { LocalItemIcon } from "./AppIcon";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import type {
   ComponentStoreAnalysis,
-  JunctionScanResult,
   RegenerableScanResult,
   TriageClass,
   TriageEntry,
-  TriageScanResult,
 } from "../types";
 
 const DEAD_LINKS_SHOWN = 50;
@@ -83,6 +81,21 @@ function parentPath(path: string): string {
 
 type OverviewTab = "overview" | "cleanup" | "components";
 
+// A panel can close while its Windows reads are still running. Reopening
+// subscribes to the same reads, and later refreshes start fresh ones.
+function sharePendingScan<T>(scan: () => Promise<T>) {
+  let pending: Promise<T> | undefined;
+  return () => {
+    pending ??= Promise.resolve(scan()).finally(() => { pending = undefined; });
+    return pending;
+  };
+}
+
+const scanVolumes = sharePendingScan(api.listLocalDrives);
+const scanJunctions = sharePendingScan(api.junctionLedger);
+const scanDirectories = sharePendingScan(api.spaceTriage);
+const scanCaches = sharePendingScan(api.regenerableLayouts);
+
 function useDiskScan<T>(scan: () => Promise<T>) {
   const [state, setState] = useState<{ data: T | null; pending: boolean; error: string | null }>({
     data: null, pending: true, error: null,
@@ -142,10 +155,10 @@ export function DiskOverviewPanel({
 }) {
   const L = t();
   const [tab, setTab] = useState<OverviewTab>("overview");
-  const volumeScan = useDiskScan<DriveInfo[]>(api.listLocalDrives);
-  const junctionScan = useDiskScan<JunctionScanResult>(api.junctionLedger);
-  const triageScan = useDiskScan<TriageScanResult>(api.spaceTriage);
-  const regenScan = useDiskScan<RegenerableScanResult>(api.regenerableLayouts);
+  const volumeScan = useDiskScan(scanVolumes);
+  const junctionScan = useDiskScan(scanJunctions);
+  const triageScan = useDiskScan(scanDirectories);
+  const regenScan = useDiskScan(scanCaches);
   const drives = volumeScan.data;
   const junction = junctionScan.data;
   const triage = triageScan.data;

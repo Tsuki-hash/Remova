@@ -134,6 +134,35 @@ it("renders the volume shape, dead junctions and degraded roots", async () => {
   expect(screen.getByText(L.diskOverviewJunctionPartial)).toBeTruthy();
 });
 
+it("reuses all pending disk reads when the tool is repeatedly closed and reopened", async () => {
+  mockLoads();
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  function delay<T>(scan: () => Promise<T>) {
+    const mock = vi.mocked(scan);
+    const read = mock.getMockImplementation()!;
+    mock.mockImplementationOnce(() => gate.then(read));
+  }
+  const scans = [api.listLocalDrives, api.junctionLedger, api.spaceTriage, api.regenerableLayouts];
+  delay(api.listLocalDrives);
+  delay(api.junctionLedger);
+  delay(api.spaceTriage);
+  delay(api.regenerableLayouts);
+
+  const panel = <DiskOverviewPanel onClose={vi.fn()} />;
+  for (let i = 0; i < 3; i += 1) render(panel).unmount();
+  const reopened = render(panel);
+  for (const scan of scans) expect(scan).toHaveBeenCalledOnce();
+
+  await act(async () => { finish(); });
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByText(t().diskOverviewJunctionSummary(2, 1))).toBeTruthy();
+  reopened.unmount();
+  render(panel);
+  await screen.findByText(t().diskOverviewJunctionSummary(2, 1));
+  for (const scan of scans) expect(scan).toHaveBeenCalledTimes(2);
+});
+
 it("shows volume usage while other scans are still pending and avoids a false empty result", async () => {
   mockLoads();
   let finishTriage!: (result: Awaited<ReturnType<typeof api.spaceTriage>>) => void;
@@ -350,7 +379,8 @@ it("offers retry directly in the overview and reruns only the failed scan", asyn
   const L = t();
   expect(await screen.findByRole("alert").then((el) => el.textContent)).toContain("first failure");
   const retry = screen.getByRole("button", { name: L.retry });
-  vi.mocked(api.listLocalDrives).mockReturnValue(new Promise(() => {}));
+  let finish!: (drives: Awaited<ReturnType<typeof api.listLocalDrives>>) => void;
+  vi.mocked(api.listLocalDrives).mockReturnValue(new Promise(resolve => { finish = resolve; }));
   fireEvent.click(retry);
   expect(screen.queryByRole("button", { name: L.retry })).toBeNull();
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewStepVolume);
@@ -358,6 +388,5 @@ it("offers retry directly in the overview and reruns only the failed scan", asyn
   expect(api.junctionLedger).toHaveBeenCalledOnce();
   expect(api.spaceTriage).toHaveBeenCalledOnce();
   expect(api.regenerableLayouts).toHaveBeenCalledOnce();
-  // A pending promise never settles and afterEach's mockReset drops it, so
-  // no setState fires after unmount.
+  await act(async () => { finish([]); });
 });

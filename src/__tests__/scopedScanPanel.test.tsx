@@ -6,7 +6,7 @@
 // push_item` / `push_dir_item`, `scanner/mod.rs::CleanupItem`) and asserts the
 // presentation facts a user actually relies on.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScopedScanPanel } from "../components/ScopedScanPanel";
 import { api } from "../lib/api";
 import { toast } from "../lib/toast";
@@ -76,6 +76,25 @@ const panel = (scan: () => Promise<ScopedScanResult>) =>
 const installerPanel = (scan: () => Promise<ScopedScanResult>) =>
   render(<ScopedScanPanel title={t().installerTitle} hint={t().installerHint} appName={t().installerTitle}
     scan={scan} cleanupSource="installer" onClose={vi.fn()} onError={vi.fn()} onLastReport={vi.fn()} />);
+
+it("reports cleanup after closing the panel without starting another scan", async () => {
+  const L = t();
+  const item = toolCache("C:\\cache\\uv", "dev");
+  const scan = vi.fn(async () => result([item]));
+  const onLastReport = vi.fn();
+  let finish!: (value: FullCleanupReport) => void;
+  vi.mocked(api.fullCleanup).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const view = render(<ScopedScanPanel title={L.toolcacheTitle} hint="" appName={L.toolcacheTitle}
+    scan={scan} cleanupSource="toolcache" onClose={vi.fn()} onError={vi.fn()} onLastReport={onLastReport} />);
+  await screen.findByText(item.path);
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.cleanup) }));
+  await waitFor(() => expect(api.fullCleanup).toHaveBeenCalledOnce());
+  view.unmount();
+  const completed = report();
+  await act(async () => { finish(completed); });
+  expect(onLastReport).toHaveBeenCalledWith(completed);
+  expect(scan).toHaveBeenCalledOnce();
+});
 
 it.each([
   { name: "tool cache whole dir", item: toolCache("C:\\Users\\u\\AppData\\Local\\uv\\cache", "dev", 4_608_000) },

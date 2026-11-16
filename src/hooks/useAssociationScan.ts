@@ -17,25 +17,35 @@ export function useAssociationScan() {
   const active = useRef<Job | null>(null);
   const [progress, setProgress] = useState<ScanProgressState | null>(null);
   const stop = useCallback((job: Job) => {
-    clearTimeout(job.timer);
-    if (job.id === undefined) { job.cancelled = true; return Promise.resolve(); }
+    if (job.cancelRequest) return job.cancelRequest;
+    const id = job.id;
+    if (id === undefined) { job.cancelled = true; return Promise.resolve(); }
     job.cancelRequest = (async () => {
-      if (await api.cancelAssociationScan(job.id!) !== false) job.cancelled = true;
-    })();
+      if (await api.cancelAssociationScan(id) !== false) {
+        job.cancelled = true;
+        clearTimeout(job.timer);
+      }
+    })().finally(() => { job.cancelRequest = undefined; });
     return job.cancelRequest;
   }, []);
   useEffect(() => () => {
     const job = active.current;
     active.current = null;
-    if (job) void stop(job).catch(() => {});
+    if (job) {
+      clearTimeout(job.timer);
+      void stop(job).catch(() => {});
+    }
   }, [stop]);
 
   const cancel = useCallback(async () => {
     const job = active.current;
-    if (!job || job.cancelled) return;
+    if (!job || job.cancelled || job.cancelRequest) return;
     setProgress(p => p && { ...p, status: "stopping" });
-    await stop(job);
-    if (!job.cancelled && active.current === job) setProgress(p => p && { ...p, status: "running" });
+    try {
+      await stop(job);
+    } finally {
+      if (!job.cancelled && active.current === job) setProgress(p => p && { ...p, status: "running" });
+    }
   }, [stop]);
 
   const runReadOnly = useCallback(async <T,>(work: (id: number) => Promise<T>, count: (result: T) => number) => {
@@ -48,6 +58,7 @@ export function useAssociationScan() {
       job.id = await api.beginAssociationScan();
       if (job.cancelled || active.current !== job) throw new Error("scan:cancelled");
       const poll = async () => {
+        if (active.current !== job || job.cancelled) return;
         try {
           const p = await api.associationScanProgress(job.id!);
           if (p && active.current === job && !job.cancelled && !job.cancelRequest) {

@@ -8,10 +8,39 @@ vi.mock("../lib/api", () => ({ api: native }));
 import { useAssociationScan } from "../hooks/useAssociationScan";
 import { ScanProgressBar } from "../components/ScanProgressBar";
 import { setLang, t } from "../i18n";
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 const app = { name: "sample" } as InstalledApp;
 const complete: ScanResult = { app_name: "sample", items: [] };
 describe("association scan cancellation", () => {
+  it.each(["declined", "rejected"])("keeps polling and allows retry when cancellation is %s", async outcome => {
+    vi.useFakeTimers();
+    native.beginAssociationScan.mockResolvedValueOnce(62);
+    native.associationScanProgress
+      .mockResolvedValueOnce({ stage: "files", found: 1 })
+      .mockResolvedValueOnce({ stage: "files", found: 3 });
+    if (outcome === "declined") native.cancelAssociationScan.mockResolvedValueOnce(false);
+    else native.cancelAssociationScan.mockRejectedValueOnce(new Error("cancel unavailable"));
+    let finish!: (scan: ScanResult) => void;
+    native.analyze.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { result } = renderHook(useAssociationScan);
+    let pending!: Promise<ScanResult>;
+    await act(async () => { pending = result.current.run(app); });
+    expect(result.current.progress?.found).toBe(1);
+
+    await act(async () => {
+      const cancelling = result.current.cancel();
+      if (outcome === "declined") await cancelling;
+      else await expect(cancelling).rejects.toThrow("cancel unavailable");
+    });
+    expect(result.current.progress?.status).toBe("running");
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(result.current.progress?.found).toBe(3);
+
+    const cancelled = expect(pending).rejects.toThrow("scan:cancelled");
+    await act(async () => { await result.current.cancel(); finish(complete); await cancelled; });
+    expect(result.current.progress?.status).toBe("cancelled");
+  });
+
   it("waits for cancellation acknowledgement and preserves an already committed result", async () => {
     native.beginAssociationScan.mockResolvedValueOnce(61);
     let acknowledge!: (accepted: boolean) => void;

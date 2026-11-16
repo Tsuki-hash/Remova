@@ -8,10 +8,11 @@ import { toast } from "../lib/toast";
 import { StrictMode } from "react";
 import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
 import { groupByOrigin } from "../lib/decision";
-import type { CleanupItem } from "../types";
+import type { CleanupItem, FullCleanupReport } from "../types";
 
 vi.mock("../lib/api", () => ({ api: {
   appIconData: vi.fn(async () => null),
+  fullCleanup: vi.fn(),
   beginAssociationScan: vi.fn(async () => 100), cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null), orphanScan: vi.fn(async () => ({
   items: [{
@@ -22,6 +23,7 @@ vi.mock("../lib/api", () => ({ api: {
   cleanup_allowed: true,
 })) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
+vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); setLang("zh"); });
 
 it.each(["zh", "en"] as const)("uses one group select-all action for safe and review items while leaving keep items alone (%s)", lang => {
@@ -106,6 +108,25 @@ it("keeps orphan statistics read-only and its existing selection action working"
   const selectSafe = within(selection).getByRole("button", { name: t().orphanSelectAll });
   fireEvent.click(selectSafe);
   expect(screen.getByRole("button", { name: `${t().cleanup} (1)` }).hasAttribute("disabled")).toBe(false);
+});
+
+it("reports orphan cleanup after navigating away without starting another scan", async () => {
+  const L = t();
+  const onLastReport = vi.fn();
+  let finish!: (value: FullCleanupReport) => void;
+  vi.mocked(api.fullCleanup).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const view = render(<OrphanPage onLastReport={onLastReport} />);
+  fireEvent.click(await screen.findByRole("button", { name: `${L.cleanup} (1)` }));
+  await waitFor(() => expect(api.fullCleanup).toHaveBeenCalledOnce());
+  view.unmount();
+  const report: FullCleanupReport = {
+    app_name: L.orphanScan, dry_run: false, backup_dir: "", uninstall_ok: false, uninstall_message: "",
+    deleted: 1, failed: 0, skipped: 0, delayed: 0, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", item_details: [], errors: [],
+  };
+  await act(async () => { finish(report); });
+  expect(onLastReport).toHaveBeenCalledWith(report);
+  expect(api.orphanScan).toHaveBeenCalledOnce();
 });
 
 it.each(["zh", "en"] as const)("explains default skips in the summary and on the rows (%s)", async (lang) => {

@@ -218,6 +218,7 @@ export function ScopedScanPanel({
     quiet = false,
   ): Promise<boolean> => {
     if (picked.length === 0 || busy) return false;
+    const round = nextScanRound();
     submitted.current = picked;
     setBusy(true);
     try {
@@ -230,9 +231,12 @@ export function ScopedScanPanel({
         restore_point: loadRestorePointPref(),
         cleanup_source: cleanupSource,
       });
-      setResult(report);
       onLastReport(report);
-      const message = cleanupFeedback(report, L, quiet ? `${channel}-refresh` : channel);
+      const current = isCurrentScanRound(round);
+      const feedbackChannel = current ? (quiet ? `${channel}-refresh` : channel) : `${channel}-cleanup`;
+      const message = cleanupFeedback(report, L, feedbackChannel);
+      if (!current) return false;
+      setResult(report);
       if (report.aborted) onError(message);
       if (!report.aborted) {
         await runScan(true);
@@ -242,18 +246,23 @@ export function ScopedScanPanel({
       const msg = formatError(e, "cleanup");
       // the IPC never ran, so the previous report and its retry button
       // must not stay on screen as if they described this attempt.
-      setResult(null);
-      submitted.current = [];
-      onError(msg);
-      toast.error(msg, { channel });
+      const current = isCurrentScanRound(round);
+      if (current) {
+        setResult(null);
+        submitted.current = [];
+        onError(msg);
+      }
+      toast.error(msg, { channel: current ? channel : `${channel}-cleanup` });
       return false;
     } finally {
-      setBusy(false);
+      if (isCurrentScanRound(round)) setBusy(false);
     }
-  }, [busy, buildApp, cleanupSource, L, onError, onLastReport, runScan, channel, setBusy, setResult]);
+  }, [busy, buildApp, cleanupSource, L, onError, onLastReport, runScan, channel,
+      nextScanRound, isCurrentScanRound, setBusy, setResult]);
 
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
+    const round = nextScanRound();
     const picked = items.filter((it) => selected.has(it.path));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     // only one sentence carries the item count — `riskTierPrefix` states
@@ -265,7 +274,7 @@ export function ScopedScanPanel({
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });
-    if (!ok) return;
+    if (!ok || !isCurrentScanRound(round)) return;
     backupEnabled.current = checked;
     await runCleanup(picked, checked);
   };

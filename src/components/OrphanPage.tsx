@@ -139,6 +139,7 @@ export function OrphanPage({
 
   const cleanSelected = async () => {
     if (!cleanupAllowed || !items || selected.size === 0 || busy) return;
+    const round = nextScanRound();
     const picked = items.filter((it) => selected.has(it.path));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
@@ -149,7 +150,7 @@ export function OrphanPage({
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });
-    if (!ok) return;
+    if (!ok || !isCurrentScanRound(round)) return;
     setBusy(true);
     try {
       const app: InstalledApp = {
@@ -174,22 +175,24 @@ export function OrphanPage({
         restore_point: loadRestorePointPref(),
         cleanup_source: "orphan",
       });
+      onLastReport(report);
+      const current = isCurrentScanRound(round);
+      const channel = current ? ORPHAN_CHANNEL : `${ORPHAN_CHANNEL}-cleanup`;
       if (report.aborted) {
         const msg = cleanupAbortText(report, L);
-        onError?.(msg);
-        toast.error(msg, { channel: ORPHAN_CHANNEL });
-        onLastReport(report);
+        if (current) onError?.(msg);
+        toast.error(msg, { channel });
         return;
       }
-      onLastReport(report);
-      cleanupFeedback(report, L, ORPHAN_CHANNEL);
-      await scan(true);
+      cleanupFeedback(report, L, channel);
+      if (current) await scan(true);
     } catch (e) {
       const msg = formatError(e, "cleanup");
-      onError?.(msg);
-      toast.error(msg, { channel: ORPHAN_CHANNEL });
+      const current = isCurrentScanRound(round);
+      if (current) onError?.(msg);
+      toast.error(msg, { channel: current ? ORPHAN_CHANNEL : `${ORPHAN_CHANNEL}-cleanup` });
     } finally {
-      setBusy(false);
+      if (isCurrentScanRound(round)) setBusy(false);
     }
   };
 
