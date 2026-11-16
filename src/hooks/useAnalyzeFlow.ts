@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { api } from "../lib/api";
-import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, OfficialUninstallResult, ScanResult } from "../types";
 import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
-import { backendText } from "../lib/backendText";
+import { backendText, uninstallNeedsRestart } from "../lib/backendText";
 import { requestConfirm, requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { defaultSelectable } from "../lib/decision";
@@ -38,6 +38,25 @@ export type AnalyzeFlowSetters = {
   setUninstallStage: (s: UninstallStage) => void;
   setEvidence: (v: string | null) => void;
 };
+
+function notifyUninstall(result: OfficialUninstallResult, L: ReturnType<typeof t>) {
+  if (!result.had_command) {
+    toast.info(L.uninstallNoCmd);
+  } else if (result.reboot_initiated) {
+    if (result.reboot_gate_persisted === false) toast.error(L.backendRebootGateNotPersisted);
+    else toast.info(L.backendRebootInitiated);
+  } else if (uninstallNeedsRestart(result.message)) {
+    toast.info(backendText(result.message), { ttl: 7000 });
+  } else if (result.ok) {
+    toast.success(L.uninstallOk);
+  } else if (result.message.startsWith("uninstall registration ")) {
+    toast.info(backendText(result.message), { ttl: 7000 });
+  } else if (result.message.includes("1602")) {
+    toast.info(L.uninstallCancelled);
+  } else {
+    toast.error(L.uninstallFail, { detail: backendText(result.message) });
+  }
+}
 
 /** Deep-analyze + official uninstall flow used by list rows and detail drawer. */
 export function useAnalyzeFlow({
@@ -246,17 +265,7 @@ export function useAnalyzeFlow({
         setUninstallStage("official");
         const r = await api.officialUninstall(app);
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
-        if (!r.had_command) {
-          toast.info(strings.uninstallNoCmd);
-        } else if (r.ok) {
-          if (rebootPending && r.reboot_gate_persisted === false) {
-            toast.error(strings.backendRebootGateNotPersisted);
-          } else {
-            toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
-          }
-        } else {
-          uninstallFailToast(r.message, strings);
-        }
+        notifyUninstall(r, strings);
         if (r.had_command && r.ok) {
           setReport(null);
           setScan(null);
@@ -320,21 +329,6 @@ export function useAnalyzeFlow({
     [startUninstall],
   );
 
-  
-/** Official-uninstall failures carry free-form technical messages. 1602 is
- * MSI's "user cancelled" — worth its own friendly wording; everything else
- * keeps the localized headline and moves the raw message into the detail. */
-function uninstallFailToast(
-  msg: string,
-  strings: ReturnType<typeof t>,
-): void {
-  if (msg.includes("1602")) {
-    toast.info(strings.uninstallCancelled);
-    return;
-  }
-  toast.error(strings.uninstallFail, { detail: backendText(msg) });
-}
-
 const openOfficialOnly = useCallback(
     async (app: InstalledApp) => {
       if (busyRef.current) return;
@@ -357,14 +351,7 @@ const openOfficialOnly = useCallback(
       try {
         const r = await api.officialUninstall(app);
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
-        if (!r.had_command) toast.info(strings.uninstallNoCmd);
-        else if (r.ok) {
-          if (rebootPending && r.reboot_gate_persisted === false) {
-            toast.error(strings.backendRebootGateNotPersisted);
-          } else {
-            toast.success(rebootPending ? strings.backendRebootInitiated : strings.uninstallOk);
-          }
-        } else uninstallFailToast(r.message, strings);
+        notifyUninstall(r, strings);
         if (r.had_command && r.ok) {
           setReport(null);
           setScan(null);

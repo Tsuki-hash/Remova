@@ -180,8 +180,8 @@ fn split_win_args(s: &str) -> Vec<String> {
     out
 }
 
-/// MSI 3010/1641 mean success-with-reboot-required, not failure. Treating them
-/// as failure aborted the whole residual cleanup after the product was gone.
+/// Success codes describe the process. Residual cleanup still needs the
+/// product registration check, and 1641 already started a reboot.
 fn uninstaller_exit_ok(code: Option<i32>) -> bool {
     matches!(code, Some(0 | 3010 | 1641))
 }
@@ -228,6 +228,132 @@ fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> (bo
         }
     }
     (initiated, persisted)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RegistrationState {
+    Removed,
+    Present,
+    Unverified,
+}
+
+fn registration_state(reads: impl IntoIterator<Item = Option<bool>>) -> RegistrationState {
+    let mut state = RegistrationState::Removed;
+    for read in reads {
+        match read {
+            Some(true) => return RegistrationState::Present,
+            Some(false) => {}
+            None => state = RegistrationState::Unverified,
+        }
+    }
+    state
+}
+
+#[cfg(windows)]
+fn check_registration(scanned: &crate::apps::ScannedApp, argv: &[String]) -> RegistrationState {
+    let app = &scanned.app;
+    let keys = std::iter::once(&app.registry_key).chain(&scanned.registration_aliases);
+    if app.source == "Store" {
+        return registration_state(keys.map(|key| {
+            key.strip_prefix("Store\\")
+                .and_then(crate::storeapps::package_family_present)
+        }));
+    }
+
+    let other_view = app
+        .registry_key
+        .strip_prefix("HKLM64\\")
+        .map(|subkey| format!("HKLM32\\{subkey}"))
+        .or_else(|| {
+            app.registry_key
+                .strip_prefix("HKLM32\\")
+                .map(|subkey| format!("HKLM64\\{subkey}"))
+        });
+    let keys = keys.chain(other_view.iter());
+    // Only the pinned, normalized MSI command emitted by build_uninstall_command
+    // carries a product code to verify in Windows Installer's own database.
+    let msi_product = argv
+        .first()
+        .filter(|exe| {
+            system_uninstall_tool("msiexec.exe").is_some_and(|path| exe.eq_ignore_ascii_case(&path))
+        })
+        .and_then(|_| {
+            crate::apps::msiexec_uninstall_guid_public(&format!("msiexec {}", argv[1..].join(" ")))
+        });
+    registration_state(
+        keys.map(|key| crate::regops::key_present(key))
+            .chain(msi_product.iter().map(|code| msi_product_present(code))),
+    )
+}
+
+#[cfg(windows)]
+fn msi_product_present(code: &str) -> Option<bool> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::ApplicationInstallationAndServicing::{
+        MsiQueryProductStateW, INSTALLSTATE_ABSENT, INSTALLSTATE_ADVERTISED, INSTALLSTATE_DEFAULT,
+        INSTALLSTATE_UNKNOWN,
+    };
+    let code = crate::fsutil::to_wide(code);
+    match unsafe { MsiQueryProductStateW(PCWSTR(code.as_ptr())) } {
+        INSTALLSTATE_ABSENT | INSTALLSTATE_ADVERTISED | INSTALLSTATE_DEFAULT => Some(true),
+        INSTALLSTATE_UNKNOWN => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+fn check_registration(_scanned: &crate::apps::ScannedApp, _argv: &[String]) -> RegistrationState {
+    RegistrationState::Unverified
+}
+
+fn uninstall_result_after_exit(
+    code: Option<i32>,
+    executable: &str,
+    app: &crate::apps::InstalledApp,
+    verify: impl FnOnce() -> RegistrationState,
+) -> OfficialUninstallResult {
+    let (reboot_initiated, reboot_gate_persisted) = record_reboot_exit(code, app);
+    let (ok, message) = if !uninstaller_exit_ok(code) {
+        let class = classify_uninstaller_exit(code);
+        (false, format!("uninstaller exited with {code:?} [{class}]"))
+    } else {
+        // Invalidate pre-uninstall caches even if the product is still listed.
+        crate::scanner::reg_scans::invalidate_service_snapshot();
+        crate::regscan::invalidate_subkey_cache();
+        crate::scanner::reg_scans::invalidate_muicache_cache();
+        crate::scanner::fs_scans::clear_scan_caches();
+        if reboot_initiated {
+            (true, super::reboot::INITIATED_MESSAGE.into())
+        } else {
+            let state = verify();
+            match (state, code) {
+                (RegistrationState::Removed, Some(3010)) => (
+                    true,
+                    format!("uninstaller finished (reboot required): {executable}"),
+                ),
+                (RegistrationState::Removed, _) => {
+                    (true, format!("uninstaller finished: {executable}"))
+                }
+                (_, Some(3010)) => (
+                    false,
+                    "uninstall requires reboot before verification".into(),
+                ),
+                (RegistrationState::Present, _) => {
+                    (false, "uninstall registration still present".into())
+                }
+                (RegistrationState::Unverified, _) => {
+                    (false, "uninstall registration could not be verified".into())
+                }
+            }
+        }
+    };
+    OfficialUninstallResult {
+        ok,
+        message,
+        had_command: true,
+        reboot_initiated,
+        reboot_gate_persisted,
+    }
 }
 
 fn pending_result() -> OfficialUninstallResult {
@@ -294,7 +420,7 @@ fn run_official_uninstall_unchecked(
     // caller that keeps a trusted identity but rewrites the command cannot
     // reach spawn. The recorded source — not the client field — drives the
     // elevated-HKCU refusal below.
-    let Some(scanned) = crate::apps::trusted_app(app) else {
+    let Some(scanned) = crate::apps::trusted_app_with_registrations(app) else {
         // A command exists but we refuse to run it. Reporting `had_command:
         // false` here told the caller there was nothing to run, so cleanup
         // proceeded to delete leftovers of an app that is still installed —
@@ -307,12 +433,11 @@ fn run_official_uninstall_unchecked(
             reboot_gate_persisted: true,
         };
     };
-    let scan_source = scanned.source.clone();
     // Per-user uninstall strings are user-writable. Running one from an
     // elevated Remova would execute an arbitrary user-controlled image as
     // administrator; require a non-elevated launch for HKCU entries. The
     // decision uses the recorded scan source, never the client-supplied field.
-    if elevated && scan_source.to_ascii_uppercase().starts_with("HKCU") {
+    if elevated && scanned.app.source.to_ascii_uppercase().starts_with("HKCU") {
         return OfficialUninstallResult {
             ok: false,
             message: "elevated HKCU uninstall refused".into(),
@@ -322,8 +447,8 @@ fn run_official_uninstall_unchecked(
         };
     }
     let cmd = build_uninstall_command(
-        &scanned.uninstall_string,
-        &scanned.quiet_uninstall_string,
+        &scanned.app.uninstall_string,
+        &scanned.app.quiet_uninstall_string,
         true,
     );
     match cmd {
@@ -352,39 +477,12 @@ fn run_official_uninstall_unchecked(
                     loop {
                         match child.try_wait() {
                             Ok(Some(status)) => {
-                                let code = status.code();
-                                let ok = uninstaller_exit_ok(code);
-                                let (initiated, persisted) = record_reboot_exit(code, &scanned);
-                                if ok {
-                                    // The vendor uninstaller may have removed
-                                    // services, registry keys and cache folders;
-                                    // do not let pre-uninstall snapshots linger.
-                                    crate::scanner::reg_scans::invalidate_service_snapshot();
-                                    crate::regscan::invalidate_subkey_cache();
-                                    crate::scanner::reg_scans::invalidate_muicache_cache();
-                                    crate::scanner::fs_scans::clear_scan_caches();
-                                }
-                                // The stable class rides along so the UI can
-                                // say WHY an exit is what it is (the 1600
-                                // range is not one lump of failure).
-                                let class = classify_uninstaller_exit(code);
-                                let message = if ok && matches!(code, Some(3010 | 1641)) {
-                                    format!(
-                                        "uninstaller finished (reboot required): {} [{}]",
-                                        argv[0], class
-                                    )
-                                } else if ok {
-                                    format!("uninstaller finished: {}", argv[0])
-                                } else {
-                                    format!("uninstaller exited with {:?} [{}]", code, class)
-                                };
-                                return OfficialUninstallResult {
-                                    ok,
-                                    message,
-                                    had_command: true,
-                                    reboot_initiated: initiated,
-                                    reboot_gate_persisted: persisted,
-                                };
+                                return uninstall_result_after_exit(
+                                    status.code(),
+                                    &exe,
+                                    &scanned.app,
+                                    || check_registration(&scanned, &argv),
+                                );
                             }
                             Ok(None) => {
                                 // Cancellation never kills a running vendor
@@ -495,6 +593,68 @@ mod tests {
             assert!(!uninstaller_exit_ok(Some(code)));
         }
         assert!(!uninstaller_exit_ok(None));
+    }
+
+    #[test]
+    fn exit_success_requires_verified_absence_before_cleanup() {
+        let app = crate::apps::InstalledApp {
+            name: "RegistrationCheckFixture".into(),
+            version: String::new(),
+            publisher: String::new(),
+            install_location: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            source: "HKLM64".into(),
+            registry_key: "HKLM64\\SOFTWARE\\RegistrationCheckFixture".into(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        for (code, reads, ok, message) in [
+            (
+                0,
+                vec![Some(false), Some(true)],
+                false,
+                "uninstall registration still present",
+            ),
+            (
+                0,
+                vec![Some(false), None],
+                false,
+                "uninstall registration could not be verified",
+            ),
+            (
+                0,
+                vec![Some(false), Some(false)],
+                true,
+                "uninstaller finished: fixture.exe",
+            ),
+            (
+                3010,
+                vec![Some(true)],
+                false,
+                "uninstall requires reboot before verification",
+            ),
+            (
+                3010,
+                vec![Some(false)],
+                true,
+                "uninstaller finished (reboot required): fixture.exe",
+            ),
+        ] {
+            let result = uninstall_result_after_exit(Some(code), "fixture.exe", &app, || {
+                registration_state(reads)
+            });
+            assert_eq!((result.ok, result.message.as_str()), (ok, message));
+            assert!(!result.reboot_initiated);
+            assert!(!crate::executor::reboot::any_pending());
+        }
+        let result = uninstall_result_after_exit(Some(1641), "fixture.exe", &app, || {
+            panic!("restart already initiated")
+        });
+        assert!(result.ok && result.reboot_initiated);
+        assert!(crate::executor::reboot::any_pending());
+        crate::executor::reboot::reset_for_test();
     }
 
     #[test]

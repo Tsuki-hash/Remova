@@ -33,7 +33,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-struct TestHistoryDirGuard;
+pub(crate) struct TestHistoryDirGuard;
 #[cfg(test)]
 impl Drop for TestHistoryDirGuard {
     fn drop(&mut self) {
@@ -42,7 +42,7 @@ impl Drop for TestHistoryDirGuard {
 }
 
 #[cfg(test)]
-fn use_history_dir(dir: &Path) -> TestHistoryDirGuard {
+pub(crate) fn use_history_dir(dir: &Path) -> TestHistoryDirGuard {
     TEST_HISTORY_DIR.with(|d| *d.borrow_mut() = Some(dir.to_path_buf()));
     TestHistoryDirGuard
 }

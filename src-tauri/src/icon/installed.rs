@@ -400,32 +400,6 @@ fn unique_main_executable(paths: impl IntoIterator<Item = PathBuf>, name: &str) 
     matches.next().is_none().then_some(path)
 }
 
-struct WinRt(bool);
-
-impl WinRt {
-    fn init() -> Option<Self> {
-        use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
-        use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
-
-        let init = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
-        if init
-            .as_ref()
-            .is_err_and(|err| err.code() != RPC_E_CHANGED_MODE)
-        {
-            return None;
-        }
-        Some(Self(init.is_ok()))
-    }
-}
-
-impl Drop for WinRt {
-    fn drop(&mut self) {
-        if self.0 {
-            unsafe { windows::Win32::System::WinRT::RoUninitialize() };
-        }
-    }
-}
-
 const LOGO_SIZE: windows::Foundation::Size = windows::Foundation::Size {
     Width: 64.0,
     Height: 64.0,
@@ -462,7 +436,7 @@ fn app_model_icon(id: &str) -> Option<Icon> {
     {
         return None;
     }
-    let _winrt = WinRt::init()?;
+    let _winrt = crate::storeapps::WinRt::init()?;
     if let Some(icon) =
         windows::ApplicationModel::AppInfo::GetFromAppUserModelId(&HSTRING::from(id))
             .ok()
@@ -520,7 +494,7 @@ fn package_entries(
 
 fn store_icon(package_full_name: &str, name: &str) -> Option<Icon> {
     use windows::Management::Deployment::PackageManager;
-    let _winrt = WinRt::init()?;
+    let _winrt = crate::storeapps::WinRt::init()?;
     let package = PackageManager::new()
         .ok()?
         .FindPackageByUserSecurityIdPackageFullName(

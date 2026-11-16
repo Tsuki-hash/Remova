@@ -25,7 +25,7 @@
 
 Stock uninstallers leave registry keys, services, PATH entries, CLSIDs, and cross-drive caches. Generic “cleaners” often delete *your* files by mistake.
 
-Deep uninstall runs the app's uninstaller first, then scans for leftovers. Review the results and choose whether to make a backup before confirming cleanup.
+Deep uninstall runs the app's uninstaller first and scans for leftovers after verifying that Windows no longer lists the app. Review the results and choose whether to make a backup before confirming cleanup.
 
 | Capability | What you get |
 |---|---|
@@ -54,7 +54,7 @@ Deep uninstall runs the app's uninstaller first, then scans for leftovers. Revie
 
 ### Deep uninstall flow
 1. **Identify** install type and associations  
-2. **Official uninstaller** first when available  
+2. **Official uninstaller** first when available. Remova keeps the related files if Windows still lists the app or the registration cannot be verified.
 3. **Scan leftovers** with a summary of what is safe to clean, needs review or is skipped by default
 4. **Report** deleted/kept/pending-reboot sizes + progress + Safety Vault note + verify checklist; rescan the app or run a read-only deep registry check  
 

@@ -29,6 +29,7 @@ vi.mock("../i18n", () => ({
     backendBackupFailed: "backup stopped cleanup",
     backendDetailUnavailable: "diagnostic unavailable",
     backendRebootInitiated: "reboot pending",
+    backendUninstallRebootBeforeVerify: "restart before verifying this app",
     rebootGateNotPersisted: "gate not persisted",
     uninstallFail: "uninstall failed",
   }),
@@ -264,6 +265,21 @@ describe("runBatchCleanup", () => {
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[1]).toMatchObject({
       key: "Uninstall\\B", status: "not_run", detail: "waiting for restart",
     });
+  });
+
+  it("reports a requested restart for the affected app and continues the batch", async () => {
+    analyze.mockResolvedValue(scan("X", []));
+    fullCleanup.mockResolvedValueOnce(report({
+      deleted: 0, aborted: true, uninstall_ok: false,
+      uninstall_message: "uninstall requires reboot before verification",
+    })).mockResolvedValueOnce(report({ deleted: 0 }));
+    const cb = makeCb();
+    await runBatchCleanup([app("A"), app("B")], true, keyOf, cb);
+    expect(fullCleanup).toHaveBeenCalledTimes(2);
+    expect(cb.onResults.mock.calls.at(-1)?.[0]).toMatchObject([
+      { name: "A", status: "reboot", detail: "restart before verifying this app", officialDone: false },
+      { name: "B", status: "ok" },
+    ]);
   });
 
   it("fails the row instead of scanning untracked when the task cap rejects begin", async () => {

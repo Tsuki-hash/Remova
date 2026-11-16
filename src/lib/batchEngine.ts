@@ -2,7 +2,7 @@
 import { api } from "./api";
 import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
-import { backendText } from "./backendText";
+import { backendText, uninstallNeedsRestart } from "./backendText";
 import { defaultSelectable } from "../lib/decision";
 import {
   cleanupAbortText,
@@ -162,6 +162,11 @@ export async function runBatchCleanup(
           // growing array on every app made the UI update quadratic.
           break;
         }
+        const needsRestart = uninstallNeedsRestart(report.uninstall_message);
+        if (runOfficial && report.aborted && needsRestart) {
+          record({ key, name: app.name, status: "reboot", detail: backendText(report.uninstall_message), officialDone });
+          continue;
+        }
         if ((report.aborted && !emptyResidual) || (runOfficial && !report.uninstall_ok)) {
  // backup/session abort must not look like success.
           record({
@@ -184,7 +189,8 @@ export async function runBatchCleanup(
         }
         // the per-app line states all four counts, not just deleted/failed,
         // so a run that deleted nothing is legible in the batch summary too.
-        const detail = cleanupOutcomeText(report, L);
+        const outcome = cleanupOutcomeText(report, L);
+        const detail = needsRestart ? `${backendText(report.uninstall_message)} ${outcome}` : outcome;
         if (report.failed > 0) {
           record({ key, name: app.name, status: "failed", detail, officialDone });
         } else if (!items.length && report.uninstall_ok) {
@@ -192,7 +198,7 @@ export async function runBatchCleanup(
             key,
             name: app.name,
             status: "ok",
-            detail: L.batchDetail(0, 0),
+            detail: needsRestart ? detail : L.batchDetail(0, 0),
           });
           okKeys.add(key);
         } else if (!cleanupAccomplishedSomething(report)) {

@@ -6,6 +6,11 @@ export function isNamedStreamRefusal(raw: string) {
   return raw.trimEnd().endsWith("named data streams cannot be backed up or restored");
 }
 
+export function uninstallNeedsRestart(raw: string) {
+  return raw === "uninstall requires reboot before verification" ||
+    raw.startsWith("uninstaller finished (reboot required): ");
+}
+
 /** Localize backend diagnostics without treating unknown text as success. */
 export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = "cleanup"): string {
   const L = t();
@@ -48,6 +53,9 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   const exact: Record<string, string> = {
     skipped: L.backendOfficialSkipped, "no items": L.backendNoItems,
     "no uninstall string": L.uninstallNoCmd,
+    "uninstall registration still present": L.backendUninstallStillRegistered,
+    "uninstall registration could not be verified": L.backendUninstallUnverified,
+    "uninstall requires reboot before verification": L.backendUninstallRebootBeforeVerify,
     "app is not from the latest scan": L.backendAppStale,
     "analysis must run before cleanup": L.backendAnalysisRequired,
     "uninstall command uses a relative executable; refused": L.uninstallRelativeRefused,
@@ -67,7 +75,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   if (Object.hasOwn(exact, raw)) return exact[raw]!;
   if (isNamedStreamRefusal(raw)) return L.backendBackupNamedStreams;
   if (raw.startsWith("backup source could not be verified: ")) return L.backendBackupSourceUnverified;
-  if (raw.startsWith("uninstaller finished (reboot required): ")) return L.backendRebootRequired;
+  if (uninstallNeedsRestart(raw)) return L.backendRebootRequired;
   if (
     raw === "official uninstaller initiated reboot; residual cleanup skipped" ||
     raw === "system reboot pending; residual cleanup postponed"

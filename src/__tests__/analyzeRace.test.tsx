@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
 
@@ -20,6 +20,10 @@ vi.mock("../lib/confirm", () => ({
 }));
 
 import { useAnalyzeFlow } from "../hooks/useAnalyzeFlow";
+import { getToasts, toast } from "../lib/toast";
+import { t } from "../i18n";
+
+afterEach(() => toast.clear());
 
 function app(name: string): InstalledApp {
   return {
@@ -304,6 +308,19 @@ describe("useAnalyzeFlow request sequencing", () => {
       refreshApps: async () => {}, busyRef: { current: false } }));
     await act(async () => { await result.current.openOfficialOnly(app("OfficialRebootApp")); });
     expect(officialMock).toHaveBeenCalled();
+    expect(analyzeMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["startUninstall", "openOfficialOnly"] as const)("shows restart guidance and holds residual cleanup in %s", async action => {
+    officialMock.mockResolvedValue({
+      ok: false, had_command: true, reboot_initiated: false,
+      message: "uninstall requires reboot before verification",
+    });
+    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
+      refreshApps: async () => {}, busyRef: { current: false } }));
+    await act(async () => { await result.current[action](app("NeedsRestart")); });
+    expect(getToasts()).toContainEqual(expect.objectContaining({ kind: "info", message: t().backendUninstallRebootBeforeVerify }));
+    expect(getToasts().some(item => item.message === t().uninstallOk)).toBe(false);
     expect(analyzeMock).not.toHaveBeenCalled();
   });
 

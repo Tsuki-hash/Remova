@@ -799,10 +799,8 @@ fn run_full_cleanup_before_delete(
         uninstall_message = official.message.clone();
         uninstall_had_command = official.had_command;
         reboot_gate_persisted = official.reboot_gate_persisted;
-        // MSI 1641 means the uninstaller already initiated a reboot. The product
-        // was removed, but continuing file/registry deletes while shutdown is
-        // pending can leave the cleanup half-done; ask the user to rerun after
-        // reboot instead.
+        // MSI 1641 means the uninstaller initiated a reboot. Postpone further
+        // cleanup until restart so a shutdown cannot interrupt deletion.
         if official.reboot_initiated {
             // Distinct from the 3010 "reboot required" message: this one
             // tells the user residual deletion was skipped on purpose.
@@ -825,8 +823,8 @@ fn run_full_cleanup_before_delete(
             return report;
         }
     }
-    // when a vendor uninstaller existed and failed, do not silently wipe leftovers —
-    // the main program may still be half-installed. Force-clean / skip_official remains available.
+    // The requested official uninstall must be confirmed before deleting
+    // selected leftovers. Explicit residual-only cleanup remains available.
     if uninstall_had_command && !uninstall_ok {
         return aborted_report(
             app,
@@ -1506,6 +1504,115 @@ mod tests {
             .item_details
             .iter()
             .any(|d| { d.status == "skipped" && d.message == "user_data red line" }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exit_zero_preserves_files_until_the_registration_is_gone() {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::ERROR_SUCCESS;
+        use windows::Win32::System::Registry::{
+            RegCloseKey, RegCreateKeyExW, RegDeleteKeyExW, HKEY, HKEY_CURRENT_USER,
+            HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY, REG_OPTION_VOLATILE,
+        };
+
+        struct TestRegistration(HKEY, Vec<u16>);
+        impl Drop for TestRegistration {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    RegDeleteKeyExW(self.0, PCWSTR(self.1.as_ptr()), KEY_WOW64_64KEY.0, 0)
+                };
+            }
+        }
+
+        let root = crate::test_support::TempDir::new("verify-uninstall");
+        let _history = crate::history::use_history_dir(root.path());
+        let subkey = format!(
+            "SOFTWARE\\{}",
+            root.path().file_name().unwrap().to_string_lossy()
+        );
+        let (hive, source) = if crate::sysops::is_elevated_for_gate() {
+            (HKEY_LOCAL_MACHINE, "HKLM64")
+        } else {
+            (HKEY_CURRENT_USER, "HKCU")
+        };
+        let mut key = HKEY::default();
+        let wide = crate::fsutil::to_wide(&subkey);
+        assert_eq!(
+            unsafe {
+                RegCreateKeyExW(
+                    hive,
+                    PCWSTR(wide.as_ptr()),
+                    0,
+                    PCWSTR::null(),
+                    REG_OPTION_VOLATILE,
+                    KEY_READ | KEY_WOW64_64KEY,
+                    None,
+                    &mut key,
+                    None,
+                )
+            },
+            ERROR_SUCCESS
+        );
+        let _ = unsafe { RegCloseKey(key) };
+        let registration = TestRegistration(hive, wide);
+
+        let install_dir = root.subdir("FixtureApp");
+        let file = install_dir.join("payload.bin");
+        std::fs::write(&file, b"installed payload").unwrap();
+        let app = crate::apps::InstalledApp {
+            name: "FixtureApp".into(),
+            publisher: "Fixture".into(),
+            install_location: install_dir.to_string_lossy().into_owned(),
+            uninstall_string: format!(r#""{}" /d /c exit 0"#, crate::regops::sys_tool("cmd.exe")),
+            quiet_uninstall_string: String::new(),
+            source: source.into(),
+            registry_key: format!("{source}\\{subkey}"),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+            version: "1".into(),
+        };
+        let _trust = crate::apps::trust_test_support::guard();
+        crate::apps::remember_uninstall_commands(std::slice::from_ref(&app));
+        let item = CleanupItem {
+            path: file.to_string_lossy().into_owned(),
+            kind: ItemKind::File,
+            score: 90,
+            confidence: crate::scanner::Confidence::Confirmed,
+            risk: crate::scanner::RiskLevel::Low,
+            reason: "fixture".into(),
+            evidence: vec![],
+            shared: false,
+            service_bound: false,
+            user_data: false,
+            user_library: false,
+            size_kb: None,
+            size_capped: false,
+            bucket: None,
+        };
+        let options = FullCleanupOptions {
+            dry_run: false,
+            skip_official_uninstall: false,
+            backup_enabled: false,
+            restore_point: false,
+            cleanup_source: Some("uninstall".into()),
+        };
+        let items = std::slice::from_ref(&item);
+        let blocked = run_full_cleanup(&app, items, &options);
+        assert!(blocked.aborted && !blocked.uninstall_ok, "{blocked:?}");
+        assert_eq!(
+            blocked.uninstall_message,
+            "uninstall registration still present"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"installed payload");
+
+        drop(registration);
+        assert_eq!(crate::regops::key_present(&app.registry_key), Some(false));
+        let allowed = run_full_cleanup(&app, items, &options);
+        assert!(!allowed.aborted && allowed.uninstall_ok, "{allowed:?}");
+        assert_eq!(allowed.deleted, 1, "{allowed:?}");
+        assert!(!file.exists());
     }
 
     /// end to end: an uninstall string that exists but cannot be parsed

@@ -2,6 +2,66 @@
 
 use crate::apps::InstalledApp;
 
+#[cfg(windows)]
+pub(crate) struct WinRt(bool);
+
+#[cfg(windows)]
+impl WinRt {
+    pub(crate) fn init() -> Option<Self> {
+        use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+        use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+
+        let init = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+        if init
+            .as_ref()
+            .is_err_and(|err| err.code() != RPC_E_CHANGED_MODE)
+        {
+            return None;
+        }
+        Some(Self(init.is_ok()))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WinRt {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { windows::Win32::System::WinRT::RoUninitialize() };
+        }
+    }
+}
+
+/// Query the current user's family so a concurrent package update is not
+/// mistaken for disappearance of the app. Resource and framework packages
+/// can remain without a runnable app in that family.
+#[cfg(windows)]
+pub(crate) fn package_family_present(full_name: &str) -> Option<bool> {
+    use windows::core::HSTRING;
+    use windows::Management::Deployment::PackageManager;
+
+    let mut parts = full_name.split('_');
+    let name = parts.next().filter(|name| !name.is_empty())?;
+    let publisher = parts.nth(3).filter(|publisher| !publisher.is_empty())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let _winrt = WinRt::init()?;
+    let pm = PackageManager::new().ok()?;
+    let family = HSTRING::from(format!("{name}_{publisher}"));
+    let cursor = pm
+        .FindPackagesByUserSecurityIdPackageFamilyName(&HSTRING::new(), &family)
+        .and_then(|packages| packages.First())
+        .ok()?;
+    while cursor.HasCurrent().ok()? {
+        let package = cursor.Current().ok()?;
+        if !package.IsResourcePackage().ok()? && !package.IsFramework().ok()? {
+            return Some(true);
+        }
+        cursor.MoveNext().ok()?;
+    }
+    Some(false)
+}
+
 /// Critical / framework package name prefixes that must never be offered for uninstall.
 const BLOCKED_PREFIXES: &[&str] = &[
     "Microsoft.Windows.",
@@ -51,11 +111,9 @@ pub(crate) fn scan_store_apps_with_completeness() -> (Vec<InstalledApp>, bool) {
         return (Vec::new(), false);
     }
 
-    // Console / test processes may lack WinRT init; Tauri already has it.
-    unsafe {
-        use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
-        let _ = RoInitialize(RO_INIT_MULTITHREADED);
-    }
+    let Some(_winrt) = WinRt::init() else {
+        return (Vec::new(), false);
+    };
 
     let mut out = Vec::new();
     let Ok(pm) = PackageManager::new() else {

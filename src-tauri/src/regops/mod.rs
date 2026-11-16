@@ -29,6 +29,22 @@ fn parse(key: &str) -> Option<(HKEY, String, REG_SAM_FLAGS)> {
 #[cfg(windows)]
 use crate::fsutil::{to_wide, to_wide_name};
 
+/// Check the exact registry view without treating a read error as deletion.
+#[cfg(windows)]
+pub(crate) fn key_present(path: &str) -> Option<bool> {
+    let (hive, sub, view) = parse(path)?;
+    let wide = to_wide(&sub);
+    let mut key = HKEY::default();
+    match unsafe { RegOpenKeyExW(hive, PCWSTR(wide.as_ptr()), 0, KEY_READ | view, &mut key) } {
+        ERROR_SUCCESS => {
+            let _ = unsafe { RegCloseKey(key) };
+            Some(true)
+        }
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => Some(false),
+        _ => None,
+    }
+}
+
 /// Delete registry key tree. Caller must have run safety checks.
 /// Opens the parent with the correct WOW64 view, then deletes the leaf via RegDeleteTreeW.
 /// Parent needs DELETE + enumerate/query/set rights (MSDN RegDeleteTreeW).

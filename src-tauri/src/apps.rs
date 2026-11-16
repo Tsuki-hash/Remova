@@ -15,12 +15,13 @@ static UNINSTALL_TRUST: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new
 
 /// Apps from the latest server scan. Analyze/uninstall/cleanup resolve the
 /// client's identity here and use the server copy, never the client fields.
-static SCANNED_CURRENT: OnceLock<Mutex<HashMap<String, InstalledApp>>> = OnceLock::new();
+static SCANNED_CURRENT: OnceLock<Mutex<HashMap<String, ScannedApp>>> = OnceLock::new();
 /// Recently scanned apps survive one refresh so a post-uninstall analyze can
 /// still resolve the app that just left the inventory. Bounded by generation,
 /// capacity and a wall-clock TTL.
-type RecentApp = (u64, Instant, InstalledApp);
+type RecentApp = (u64, Instant, ScannedApp);
 type RecentApps = HashMap<String, RecentApp>;
+type RegistrationAliases = HashMap<String, Vec<String>>;
 static SCANNED_RECENT: OnceLock<Mutex<RecentApps>> = OnceLock::new();
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 const MAX_RECENT_APPS: usize = 8192;
@@ -33,8 +34,30 @@ fn uninstall_trust() -> &'static Mutex<HashMap<String, String>> {
     UNINSTALL_TRUST.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn scanned_current() -> &'static Mutex<HashMap<String, InstalledApp>> {
+fn scanned_current() -> &'static Mutex<HashMap<String, ScannedApp>> {
     SCANNED_CURRENT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone)]
+pub(crate) struct ScannedApp {
+    pub app: InstalledApp,
+    pub registration_aliases: Vec<String>,
+}
+
+fn scanned_app_map(
+    apps: &[InstalledApp],
+    aliases: &RegistrationAliases,
+) -> HashMap<String, ScannedApp> {
+    apps.iter()
+        .map(|app| {
+            let key = app_key(app);
+            let record = ScannedApp {
+                app: app.clone(),
+                registration_aliases: aliases.get(&key).cloned().unwrap_or_default(),
+            };
+            (key, record)
+        })
+        .collect()
 }
 
 fn scanned_recent() -> &'static Mutex<RecentApps> {
@@ -69,10 +92,10 @@ fn trust_key(uninstall: &str, quiet: &str) -> String {
 /// paths so a fixture cannot inherit an earlier test's scan record.
 fn remember_apps_exact(apps: &[InstalledApp]) {
     let generation = next_generation();
-    let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
-    let recent: HashMap<_, _> = apps
+    let current = scanned_app_map(apps, &HashMap::new());
+    let recent: HashMap<_, _> = current
         .iter()
-        .map(|a| (app_key(a), (generation, Instant::now(), a.clone())))
+        .map(|(key, app)| (key.clone(), (generation, Instant::now(), app.clone())))
         .collect();
     if let Ok(mut g) = scanned_current().lock() {
         *g = current;
@@ -85,7 +108,7 @@ fn remember_apps_exact(apps: &[InstalledApp]) {
 /// Record one server-side inventory scan. Current is replaced (the app list is
 /// authoritative now); recent is merged so post-uninstall analysis still works
 /// after the inventory refresh removed the app.
-pub fn remember_scan(apps: &[InstalledApp]) {
+fn remember_scan(apps: &[InstalledApp], aliases: &RegistrationAliases, partial: bool) {
     // A new inventory invalidates every enumeration the previous generation
     // could have cached, including the CLSID default-value index.
     crate::regscan::invalidate_subkey_cache();
@@ -94,14 +117,20 @@ pub fn remember_scan(apps: &[InstalledApp]) {
     crate::scanner::fs_scans::clear_scan_caches();
     rebuild_trust(apps);
     let generation = next_generation();
-    let current: HashMap<_, _> = apps.iter().map(|a| (app_key(a), a.clone())).collect();
-    if let Ok(mut g) = scanned_current().lock() {
-        *g = current;
-    }
+    let mut current = scanned_app_map(apps, aliases);
     if let Ok(mut g) = scanned_recent().lock() {
         g.retain(|_, (_, at, _)| at.elapsed() < RECENT_APP_TTL);
-        for a in apps {
-            g.insert(app_key(a), (generation, Instant::now(), a.clone()));
+        for (key, app) in &mut current {
+            // A temporarily unreadable view can hide a known registration.
+            // Keep its exact key for post-uninstall verification.
+            if let Some((_, _, previous)) = g.get(key).filter(|_| partial) {
+                for alias in &previous.registration_aliases {
+                    if !app.registration_aliases.contains(alias) {
+                        app.registration_aliases.push(alias.clone());
+                    }
+                }
+            }
+            g.insert(key.clone(), (generation, Instant::now(), app.clone()));
         }
         if g.len() > MAX_RECENT_APPS {
             let mut keys: Vec<(u64, String)> = g
@@ -113,6 +142,9 @@ pub fn remember_scan(apps: &[InstalledApp]) {
                 g.remove(&k);
             }
         }
+    }
+    if let Ok(mut g) = scanned_current().lock() {
+        *g = current;
     }
 }
 
@@ -129,6 +161,10 @@ pub fn remember_uninstall_commands(apps: &[InstalledApp]) {
 /// A caller may rewrite any field, but only `source + registry_key + name`
 /// identifies the app; all executable/root fields come from the server copy.
 pub fn trusted_app(app: &InstalledApp) -> Option<InstalledApp> {
+    trusted_app_with_registrations(app).map(|record| record.app)
+}
+
+pub(crate) fn trusted_app_with_registrations(app: &InstalledApp) -> Option<ScannedApp> {
     let key = app_key(app);
     if let Ok(g) = scanned_current().lock() {
         if let Some(found) = g.get(&key) {
@@ -181,7 +217,7 @@ pub mod trust_test_support {
 
     struct Saved {
         trust: HashMap<String, String>,
-        current: HashMap<String, super::InstalledApp>,
+        current: HashMap<String, super::ScannedApp>,
         recent: HashMap<String, super::RecentApp>,
     }
 
@@ -289,20 +325,25 @@ pub fn scan_installed_apps() -> Vec<InstalledApp> {
 pub(crate) fn scan_installed_apps_snapshot() -> InstalledAppsSnapshot {
     static LIST_SCAN: Mutex<()> = Mutex::new(());
     let _list_scan = LIST_SCAN.lock().unwrap_or_else(|error| error.into_inner());
-    let (apps, completeness) = scan_installed_inventory_with_completeness();
+    let inventory = scan_install_owners();
     #[cfg(windows)]
-    if completeness.status != ScanStatus::Cancelled {
-        crate::icon::remember_icon_apps(&apps);
+    if inventory.completeness.status != ScanStatus::Cancelled {
+        crate::icon::remember_icon_apps(&inventory.apps);
     }
     let ignore = crate::ignore::load();
-    publish_visible_inventory(apps, completeness, &ignore)
+    publish_visible_inventory(inventory, &ignore)
 }
 
 fn publish_visible_inventory(
-    mut apps: Vec<InstalledApp>,
-    mut completeness: ScanCompleteness,
+    inventory: InstallInventory,
     ignore: &crate::ignore::IgnoreList,
 ) -> InstalledAppsSnapshot {
+    let InstallInventory {
+        mut apps,
+        mut completeness,
+        registration_aliases,
+        ..
+    } = inventory;
     if completeness.status == ScanStatus::Cancelled {
         apps.clear();
     } else {
@@ -316,7 +357,11 @@ fn publish_visible_inventory(
             completeness.status,
             ScanStatus::Complete | ScanStatus::Partial
         ) {
-            remember_scan(&apps);
+            remember_scan(
+                &apps,
+                &registration_aliases,
+                completeness.status == ScanStatus::Partial,
+            );
         }
     }
     InstalledAppsSnapshot { apps, completeness }
@@ -347,6 +392,7 @@ pub(crate) struct InstallInventory {
     pub apps: Vec<InstalledApp>,
     pub install_roots: Vec<String>,
     pub completeness: ScanCompleteness,
+    registration_aliases: RegistrationAliases,
 }
 
 pub(crate) fn scan_install_owners() -> InstallInventory {
@@ -391,6 +437,7 @@ pub(crate) fn scan_install_owners() -> InstallInventory {
         apps: Vec::new(),
         install_roots: Vec::new(),
         completeness: ScanCompleteness::complete(),
+        registration_aliases: HashMap::new(),
     }
 }
 
@@ -444,13 +491,16 @@ fn finish_inventory(
         .map(|app| app.install_location.clone())
         .collect();
     apps.retain(|app| !app.name.trim().is_empty());
-    if completeness.status != ScanStatus::Cancelled {
-        dedup_same_products(&mut apps);
-    }
+    let registration_aliases = if completeness.status != ScanStatus::Cancelled {
+        dedup_same_products(&mut apps)
+    } else {
+        RegistrationAliases::new()
+    };
     InstallInventory {
         apps,
         install_roots,
         completeness,
+        registration_aliases,
     }
 }
 
@@ -462,15 +512,28 @@ fn finish_inventory(
 /// executable fields into a machine-wide identity. Keeping
 /// the rows separate also preserves a per-user command when the per-machine
 /// entry has none.
-fn dedup_same_products(out: &mut Vec<InstalledApp>) {
+fn dedup_same_products(out: &mut Vec<InstalledApp>) -> RegistrationAliases {
+    let mut registrations = RegistrationAliases::new();
     out.sort_by_key(|a| a.name.to_lowercase());
     out.dedup_by(|a, b| {
         if !same_hive(a, b) || !same_product(a, b) {
             return false;
         }
+        let mut aliases = registrations.remove(&app_key(b)).unwrap_or_default();
+        let previous_key = b.registry_key.clone();
         merge_app_fields(b, a);
+        let alias = if previous_key == b.registry_key {
+            &a.registry_key
+        } else {
+            &previous_key
+        };
+        if alias != &b.registry_key && !aliases.contains(alias) {
+            aliases.push(alias.clone());
+        }
+        registrations.insert(app_key(b), aliases);
         true
     });
+    registrations
 }
 
 fn hive_class(app: &InstalledApp) -> String {
@@ -1169,7 +1232,7 @@ mod tests {
             }
             ok
         });
-        let first = publish_visible_inventory(partial.apps, partial.completeness, &ignore);
+        let first = publish_visible_inventory(partial, &ignore);
         assert_eq!(first.completeness.status, ScanStatus::Partial);
         assert_eq!(first.completeness.failed_roots, ["HKCU"]);
         assert_eq!(first.apps.len(), 1);
@@ -1181,8 +1244,7 @@ mod tests {
         assert!(trusted_app(&hidden).is_none());
 
         let cancelled = publish_visible_inventory(
-            vec![complete_app.clone()],
-            ScanCompleteness::cancelled(1),
+            finish_inventory(vec![complete_app.clone()], ScanCompleteness::cancelled(1)),
             &ignore,
         );
         assert!(cancelled.apps.is_empty());
@@ -1190,8 +1252,7 @@ mod tests {
         assert!(trusted_app(&partial_app).is_some());
 
         let refreshed = publish_visible_inventory(
-            vec![complete_app.clone()],
-            ScanCompleteness::complete(),
+            finish_inventory(vec![complete_app.clone()], ScanCompleteness::complete()),
             &ignore,
         );
         assert_eq!(refreshed.completeness.status, ScanStatus::Complete);
@@ -1596,10 +1657,27 @@ mod tests {
                 12345,
             ),
         ];
-        dedup_same_products(&mut v);
+        let aliases = dedup_same_products(&mut v);
         assert_eq!(v.len(), 1);
         // Stable sort keeps the first (HKLM64) row — it must carry the dropped twin's data.
         assert_eq!(v[0].source, "HKLM64");
+        let record = scanned_app_map(&v, &aliases)
+            .remove(&app_key(&v[0]))
+            .unwrap();
+        assert_eq!(
+            record.registration_aliases,
+            [r"HKLM32\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Xftp 8"]
+        );
+        let _cache = crate::test_support::cache_test_lock();
+        let _trust = trust_test_support::guard();
+        remember_scan(&v, &aliases, false);
+        remember_scan(&v, &HashMap::new(), true);
+        assert_eq!(
+            trusted_app_with_registrations(&v[0])
+                .unwrap()
+                .registration_aliases,
+            record.registration_aliases
+        );
         assert_eq!(v[0].estimated_size_kb, 12345);
         assert_eq!(
             v[0].install_location,
@@ -1672,7 +1750,11 @@ mod tests {
 
         // A refresh that no longer lists the app must keep the recent record so
         // the post-uninstall analyze can still resolve it.
-        remember_scan(&[sample_app("OtherApp", "", "other.exe")]);
+        remember_scan(
+            &[sample_app("OtherApp", "", "other.exe")],
+            &HashMap::new(),
+            false,
+        );
         assert!(trusted_app(&scanned).is_some());
     }
 
