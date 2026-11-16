@@ -73,6 +73,8 @@ export type SoftwarePageProps = {
   apps: InstalledApp[];
   filtered: InstalledApp[];
   loading: boolean;
+  inventoryIncomplete?: boolean;
+  refreshInventory?: () => Promise<void>;
   q: string;
   category: CategoryId;
   sortCol: SortCol;
@@ -180,6 +182,7 @@ export type SoftwarePageProps = {
 export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
+  const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
   const report = p.report;
   const liveReportApp = report ? findReportApp(report, p.apps, p.selected) : undefined;
   // A successful uninstall removes the app from the refreshed list and the
@@ -391,6 +394,24 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               flexDirection: "column",
             }}
           >
+            {p.inventoryIncomplete && (
+              <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", padding: "10px 12px", color: "var(--warn-ink)" }}>
+                <span role="status">{p.apps.length ? L.appInventoryPartial : L.appInventoryUnreadable}</span>
+                {p.refreshInventory && (
+                  <button
+                    type="button"
+                    style={css.btnSm}
+                    disabled={inventoryRefreshing}
+                    onClick={() => {
+                      setInventoryRefreshing(true);
+                      void p.refreshInventory?.().finally(() => setInventoryRefreshing(false));
+                    }}
+                  >
+                    {inventoryRefreshing ? L.loadingGeneric : L.retry}
+                  </button>
+                )}
+              </div>
+            )}
             <div style={{ padding: "10px 12px 0", flexShrink: 0 }}>
               {smartFilterOpen && (
                 <CopilotPanel
@@ -403,7 +424,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
                 />
               )}
             </div>
-            <SoftwareListTable
+            {(!p.inventoryIncomplete || p.apps.length > 0) && <SoftwareListTable
               filtered={p.filtered}
               allApps={p.apps}
               loading={p.loading}
@@ -426,7 +447,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               doIgnorePublisher={p.listIgnorePublisher}
               toggleMulti={p.toggleMulti}
               setSelected={p.setSelected}
-            />
+            />}
             {p.multi.size > 0 && !p.scan && (
               <BatchActionBar
                 count={p.multi.size}

@@ -80,6 +80,11 @@ export type ScanCompleteness = {
   failed_roots: string[];
 };
 
+export type InstalledAppsSnapshot = {
+  apps: InstalledApp[];
+  completeness: ScanCompleteness;
+};
+
 /** Orphan/idle scans used to truncate at their cap with no signal. */
 export type OrphanScanResult = {
   items: CleanupItem[];

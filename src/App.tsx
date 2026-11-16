@@ -1,6 +1,6 @@
 import { api } from "./lib/api";
 import { useBackupSessionRequest } from "./lib/backupSessionNavigation";
-import type { CleanupReport, FullCleanupReport, InstalledApp } from "./types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnapshot } from "./types";
 import { loadLang, currentLang, t } from "./i18n";
 import { cssStyles as css } from "./styles";
 import { formatError } from "./lib/format";
@@ -278,14 +278,18 @@ export default function App() {
   });
 
   const coreSetApps = core.setApps;
+  const [inventoryIncomplete, setInventoryIncomplete] = useState(false);
+  const setInventory = useCallback((inventory: InstalledAppsSnapshot) => {
+    setInventoryIncomplete(inventory.completeness.status !== "complete");
+    coreSetApps(inventory.apps);
+  }, [coreSetApps]);
   const refreshApps = useCallback(async () => {
     try {
-      const list = await api.listApps();
-      coreSetApps(list);
+      setInventory(await api.listApps());
     } catch (e) {
       coreSetError(formatError(e));
     }
-  }, [coreSetApps, coreSetError]);
+  }, [setInventory, coreSetError]);
 
   const onAfterCleanup = useCallback(
     (app: InstalledApp, report: FullCleanupReport) => {
@@ -501,7 +505,7 @@ export default function App() {
   });
 
   useAppBoot({
-    setApps: core.setApps,
+    setInventory,
     setLoading: core.setLoading,
     setError: core.setError,
     setAdmin: core.setAdmin,
@@ -919,7 +923,11 @@ export default function App() {
           {nav === "software" && (
             <>
               <ScanProgressBar progress={scanProgress} onCancel={cancelScan} />
-              <SoftwarePage {...softwareProps} />
+              <SoftwarePage
+                {...softwareProps}
+                inventoryIncomplete={inventoryIncomplete}
+                refreshInventory={refreshApps}
+              />
             </>
           )}
         </Suspense>

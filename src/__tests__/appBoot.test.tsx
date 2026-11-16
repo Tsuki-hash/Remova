@@ -3,7 +3,7 @@
 // update-check flows (useAppBoot was previously 0% covered).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import type { InstalledApp } from "../types";
+import type { InstalledApp, InstalledAppsSnapshot } from "../types";
 
 const listApps = vi.fn();
 const openPath = vi.fn();
@@ -63,9 +63,13 @@ function app(): InstalledApp {
   };
 }
 
+function inventory(...apps: InstalledApp[]): InstalledAppsSnapshot {
+  return { apps, completeness: { status: "complete", roots_scanned: 4, failed_roots: [] } };
+}
+
 function bootSpies() {
   return {
-    setApps: vi.fn(),
+    setInventory: vi.fn(),
     setLoading: vi.fn(),
     setError: vi.fn(),
     setAdmin: vi.fn(),
@@ -88,7 +92,7 @@ function mountBoot(spies: ReturnType<typeof bootSpies>) {
 
 it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray exits during %s", async command => {
   vi.clearAllMocks();
-  listApps.mockResolvedValue([]);
+  listApps.mockResolvedValue(inventory());
   checkLatestRelease.mockResolvedValue({ ok: false });
   let handleClose!: (event: { preventDefault: () => void }) => Promise<void>;
   let quit!: () => void;
@@ -145,7 +149,7 @@ it.each(["restore_session_by_name", "run_full_cleanup"])("guards window and tray
 
 it.each(["accept", "cancel", "uac-failure"])("confirms busy elevation before spawning: %s", async outcome => {
   vi.clearAllMocks();
-  listApps.mockResolvedValue([]);
+  listApps.mockResolvedValue(inventory());
   checkLatestRelease.mockResolvedValue({ ok: false });
   let elevate!: () => void;
   let answer!: (ok: boolean) => void;
@@ -197,7 +201,7 @@ it.each(["accept", "cancel", "uac-failure"])("confirms busy elevation before spa
 
 it("skips the busy confirm and spawns directly when nothing is in flight", async () => {
   vi.clearAllMocks();
-  listApps.mockResolvedValue([]);
+  listApps.mockResolvedValue(inventory());
   checkLatestRelease.mockResolvedValue({ ok: false });
   let elevate!: () => void;
   const win = {
@@ -235,10 +239,11 @@ describe("useAppBoot", () => {
   });
 
   it("loads the app list on mount and clears loading", async () => {
-    listApps.mockResolvedValue([app()]);
+    const snapshot = inventory(app());
+    listApps.mockResolvedValue(snapshot);
     const spies = bootSpies();
     mountBoot(spies);
-    await vi.waitFor(() => expect(spies.setApps).toHaveBeenCalledWith([app()]));
+    await vi.waitFor(() => expect(spies.setInventory).toHaveBeenCalledWith(snapshot));
     expect(spies.setLoading).toHaveBeenCalledWith(false);
     expect(spies.setAdmin).toHaveBeenCalledWith(true);
     expect(spies.setIgnorePub).toHaveBeenCalledWith([]);
@@ -251,21 +256,21 @@ describe("useAppBoot", () => {
     mountBoot(spies);
     await vi.waitFor(() => expect(spies.setError).toHaveBeenCalled());
     expect(String(spies.setError.mock.calls[0]![0])).toContain("boot:broken");
-    expect(spies.setApps).not.toHaveBeenCalled();
+    expect(spies.setInventory).not.toHaveBeenCalled();
     expect(spies.setLoading).toHaveBeenCalledWith(false);
   });
 
   it("ignores the list result when unmounted first (boot race)", async () => {
-    let resolveList!: (v: InstalledApp[]) => void;
+    let resolveList!: (v: InstalledAppsSnapshot) => void;
     listApps.mockReturnValue(new Promise((r) => (resolveList = r)));
     const spies = bootSpies();
     const { unmount } = mountBoot(spies);
     unmount();
     await act(async () => {
-      resolveList([app()]);
+      resolveList(inventory(app()));
       await Promise.resolve();
     });
-    expect(spies.setApps).not.toHaveBeenCalled();
+    expect(spies.setInventory).not.toHaveBeenCalled();
     expect(spies.setLoading).not.toHaveBeenCalled();
     expect(spies.setError).not.toHaveBeenCalled();
   });
@@ -278,7 +283,7 @@ describe("useAppBoot", () => {
     );
     const spies = bootSpies();
     const { unmount } = mountBoot(spies);
-    await vi.waitFor(() => expect(spies.setApps).toHaveBeenCalled());
+    await vi.waitFor(() => expect(spies.setInventory).toHaveBeenCalled());
     unmount();
     await act(async () => {
       resolveElevated(true);

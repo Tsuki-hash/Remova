@@ -13,7 +13,7 @@ import type { MorePage } from "../components/MorePage";
 import type { OrphanPage } from "../components/OrphanPage";
 import type { ManageListPage } from "../components/ManageListPage";
 import type { AppDetailPanel } from "../components/AppDetailPanel";
-import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
+import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnapshot, ScanResult } from "../types";
 
 const native = vi.hoisted(() => ({
   listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(), officialUninstall: vi.fn(),
@@ -114,6 +114,9 @@ const demo: InstalledApp = {
   registry_key: "demo", estimated_size_kb: 100, install_date: "", display_icon: "",
 };
 const other: InstalledApp = { ...demo, name: "Other", registry_key: "other" };
+function inventory(...apps: InstalledApp[]): InstalledAppsSnapshot {
+  return { apps, completeness: { status: "complete", roots_scanned: 4, failed_roots: [] } };
+}
 const scan: ScanResult = {
   app_name: demo.name, app_key: appKey(demo),
   items: [{ path: "C:\\Apps\\Demo\\cache", kind: "dir", score: 90,
@@ -160,7 +163,7 @@ beforeEach(() => {
   for (const key of Object.keys(pages) as (keyof typeof pages)[]) pages[key] = undefined;
   native.drag = undefined;
   native.showRealSoftwarePage = false;
-  native.listApps.mockResolvedValue([demo, other]);
+  native.listApps.mockResolvedValue(inventory(demo, other));
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
   native.fullCleanup.mockResolvedValue(report);
@@ -183,6 +186,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("App orchestration", () => {
+  it("shows readable apps during a partial inventory and clears the notice on retry", async () => {
+    native.showRealSoftwarePage = true;
+    native.listApps.mockResolvedValueOnce({
+      apps: [demo],
+      completeness: { status: "partial", roots_scanned: 3, failed_roots: ["HKCU"] },
+    } satisfies InstalledAppsSnapshot);
+    await mount();
+    expect(software().apps).toEqual([demo]);
+    expect(screen.getByText(i18n.t().appInventoryPartial)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().retry }));
+    await waitFor(() => expect(screen.queryByText(i18n.t().appInventoryPartial)).toBeNull());
+    expect(software().apps).toEqual([demo, other]);
+  });
+
   it.each(["complete", "partial", "unknown"] as const)("shows orphan completeness from IPC in software checkup (%s)", async (status) => {
     native.showRealSoftwarePage = true;
     const items = scan.items;
@@ -280,7 +297,7 @@ describe("App orchestration", () => {
     expect(appForPath([demo, nested], `${nested.install_location}\\file.exe`)).toEqual(nested);
     expect(appForPath([demo, { ...other, install_location: demo.install_location }], demo.install_location)).toBeNull();
     expect(appForPath([demo], "C:\\Apps")).toBeNull();
-    native.listApps.mockResolvedValue([demo, adjacent]);
+    native.listApps.mockResolvedValue(inventory(demo, adjacent));
     native.takePendingAnalyze.mockResolvedValueOnce(`${demo.install_location}Extra/app.exe`);
     await mount();
     await waitFor(() => expect(native.takePendingAnalyze).toHaveBeenCalled());
@@ -719,7 +736,7 @@ describe("App orchestration", () => {
   });
 
   it("hands pending analyze and native drag-drop into the App scan flow", async () => {
-    native.listApps.mockResolvedValue([demo]);
+    native.listApps.mockResolvedValue(inventory(demo));
     native.takePendingAnalyze.mockResolvedValueOnce("C:\\Apps\\Demo\\app.exe");
     await mount();
     await waitFor(() => expect(software().scan).toEqual(scan));
@@ -736,7 +753,7 @@ describe("App orchestration", () => {
   // identities directly: the page's props object is rebuilt on every App render
   // (it is a spread), so only the individual identities prove the bail-out.
   it("keeps the software page's action identities stable across unrelated chrome state", async () => {
-    native.listApps.mockResolvedValue([demo, other]);
+    native.listApps.mockResolvedValue(inventory(demo, other));
     await mount();
     // Let the boot chain settle; its promises can land after `mount()` returns.
     let quiet = 0;

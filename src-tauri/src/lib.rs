@@ -74,9 +74,8 @@ use scanner::{CleanupItem, ScanResult};
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
-async fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
-    // scan_installed_apps refreshes the uninstall trust and server app snapshots.
-    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps)
+async fn list_installed_apps() -> Result<apps::InstalledAppsSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(apps::scan_installed_apps_snapshot)
         .await
         .map_err(|e| e.to_string())
 }

@@ -35,6 +35,8 @@ export const dict: EnDict = {
     cleanupAdvanced: "Advanced options",
     officialFirstHint: "Uninstall this app, then clean selected associated items. Remova will not clean unselected items.",
     colName: "Name",
+    appInventoryPartial: "Some apps could not be loaded. You can still manage the apps shown.",
+    appInventoryUnreadable: "The app list could not be loaded. Try again.",
     colSource: "Source",
     kindLabel: (kind: string) => kind,
     kindSummaryHint: "Leftover counts by kind",

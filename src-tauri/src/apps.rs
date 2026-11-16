@@ -274,24 +274,52 @@ pub struct InstalledApp {
     pub display_icon: String,
 }
 
-/// Scan HKLM64 / HKLM32 / HKCU Uninstall keys (canonical view paths, no WOW6432Node in path).
-pub fn scan_installed_apps() -> Vec<InstalledApp> {
-    let (mut out, completeness) = scan_installed_inventory_with_completeness();
-    #[cfg(windows)]
-    crate::icon::remember_icon_apps(&out);
-    let ignore = crate::ignore::load();
-    filter_visible_apps(&mut out, &ignore);
-    remember_complete_inventory(&out, &completeness);
-    out
+#[derive(Serialize)]
+pub(crate) struct InstalledAppsSnapshot {
+    pub apps: Vec<InstalledApp>,
+    pub completeness: ScanCompleteness,
 }
 
-fn remember_complete_inventory(
-    apps: &[InstalledApp],
-    completeness: &crate::scan_contract::ScanCompleteness,
-) {
-    if completeness.status == crate::scan_contract::ScanStatus::Complete {
-        remember_scan(apps);
+pub fn scan_installed_apps() -> Vec<InstalledApp> {
+    scan_installed_apps_snapshot().apps
+}
+
+/// Serialize user-facing inventory scans so their list and authorization are
+/// published together, even when a refresh overlaps a request already running.
+pub(crate) fn scan_installed_apps_snapshot() -> InstalledAppsSnapshot {
+    static LIST_SCAN: Mutex<()> = Mutex::new(());
+    let _list_scan = LIST_SCAN.lock().unwrap_or_else(|error| error.into_inner());
+    let (apps, completeness) = scan_installed_inventory_with_completeness();
+    #[cfg(windows)]
+    if completeness.status != ScanStatus::Cancelled {
+        crate::icon::remember_icon_apps(&apps);
     }
+    let ignore = crate::ignore::load();
+    publish_visible_inventory(apps, completeness, &ignore)
+}
+
+fn publish_visible_inventory(
+    mut apps: Vec<InstalledApp>,
+    mut completeness: ScanCompleteness,
+    ignore: &crate::ignore::IgnoreList,
+) -> InstalledAppsSnapshot {
+    if completeness.status == ScanStatus::Cancelled {
+        apps.clear();
+    } else {
+        filter_visible_apps(&mut apps, ignore);
+        // A root can return fully read registrations before an enumeration
+        // error. Only those records may appear in the list or authorize actions.
+        if completeness.status == ScanStatus::Failed && !apps.is_empty() {
+            completeness.status = ScanStatus::Partial;
+        }
+        if matches!(
+            completeness.status,
+            ScanStatus::Complete | ScanStatus::Partial
+        ) {
+            remember_scan(&apps);
+        }
+    }
+    InstalledAppsSnapshot { apps, completeness }
 }
 
 pub(crate) fn filter_visible_apps(out: &mut Vec<InstalledApp>, ignore: &crate::ignore::IgnoreList) {
@@ -1121,31 +1149,54 @@ mod tests {
     }
 
     #[test]
-    fn an_interleaved_inventory_cannot_publish_another_requests_partial_rows() {
-        use crate::scan_contract::ScanStatus;
-
+    fn visible_inventory_publishes_only_the_readable_rows_from_this_request() {
         let _trust = trust_test_support::guard();
+        remember_uninstall_commands(&[]);
+        let ignore = crate::ignore::IgnoreList::default();
         let complete_app = sample_app("Complete inventory app", "", "complete.exe");
         let partial_app = sample_app("Partial inventory app", "", "partial.exe");
+        let hidden = sample_app("KB5021234", "", "hidden.exe");
         let partial = collect_inventory([("HKCU", false), ("HKLM64", true)], |ok, rows| {
             if ok {
-                // Complete a different request while this one still owns a failed root.
+                // Ownership readers can finish at any time without publishing authorization.
                 let complete = collect_inventory([("HKCU", ())], |(), rows| {
                     rows.push(complete_app.clone());
                     true
                 });
-                remember_complete_inventory(&complete.apps, &complete.completeness);
+                assert_eq!(complete.completeness.status, ScanStatus::Complete);
                 rows.push(partial_app.clone());
+                rows.push(hidden.clone());
             }
             ok
         });
-        assert_eq!(partial.completeness.status, ScanStatus::Partial);
-        assert_eq!(partial.completeness.failed_roots, ["HKCU"]);
-        assert_eq!(partial.apps.len(), 1);
-        remember_complete_inventory(&partial.apps, &partial.completeness);
+        let first = publish_visible_inventory(partial.apps, partial.completeness, &ignore);
+        assert_eq!(first.completeness.status, ScanStatus::Partial);
+        assert_eq!(first.completeness.failed_roots, ["HKCU"]);
+        assert_eq!(first.apps.len(), 1);
+        assert_eq!(
+            trusted_app(&partial_app).unwrap().uninstall_string,
+            "partial.exe"
+        );
+        assert!(trusted_app(&complete_app).is_none());
+        assert!(trusted_app(&hidden).is_none());
 
+        let cancelled = publish_visible_inventory(
+            vec![complete_app.clone()],
+            ScanCompleteness::cancelled(1),
+            &ignore,
+        );
+        assert!(cancelled.apps.is_empty());
+        assert!(trusted_app(&complete_app).is_none());
+        assert!(trusted_app(&partial_app).is_some());
+
+        let refreshed = publish_visible_inventory(
+            vec![complete_app.clone()],
+            ScanCompleteness::complete(),
+            &ignore,
+        );
+        assert_eq!(refreshed.completeness.status, ScanStatus::Complete);
+        assert!(trusted_app(&complete_app).is_some());
         let current = scanned_current().lock().unwrap();
-        assert!(current.contains_key(&app_key(&complete_app)));
         assert!(!current.contains_key(&app_key(&partial_app)));
     }
 

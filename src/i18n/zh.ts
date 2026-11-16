@@ -23,6 +23,8 @@ export const dict = {
     cleanupAdvanced: "高级选项",
     officialFirstHint: "先卸载该软件，再清理勾选的关联项；未勾选项不会由 Remova 清理。",
     colName: "名称",
+    appInventoryPartial: "部分软件未能读取，已显示的软件仍可操作。",
+    appInventoryUnreadable: "暂时无法读取软件列表，请重试。",
     colSource: "来源",
     kindLabel: (kind: string) =>
       ({ dir: "目录", registry: "注册表", file: "文件", path: "PATH" }[kind] ?? kind),

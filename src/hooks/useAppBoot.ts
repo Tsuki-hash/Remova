@@ -8,13 +8,13 @@ import { compareSemver } from "../semver";
 import { checkLatestRelease, type UpdateInfo } from "../lib/updateCheck";
 import { consumeQuitIntent, markQuitIntent, loadCloseMode, resolveCloseAction } from "../lib/closeMode";
 import { hasPendingNativeWrites } from "../lib/nativeActivity";
-import type { InstalledApp } from "../types";
+import type { InstalledAppsSnapshot } from "../types";
 
 declare const __APP_VERSION__: string;
 
 /** Launch bootstrap: list apps, admin/AI/ignore/disk, update check, close-guard. */
 export function useAppBoot({
-  setApps,
+  setInventory,
   setLoading,
   setError,
   setAdmin,
@@ -25,7 +25,7 @@ export function useAppBoot({
   setUpdateInfo,
   busyRef,
 }: {
-  setApps: (apps: InstalledApp[]) => void;
+  setInventory: (inventory: InstalledAppsSnapshot) => void;
   setLoading: (v: boolean) => void;
   setError: (e: string | null) => void;
   setAdmin: (v: boolean) => void;
@@ -40,8 +40,8 @@ export function useAppBoot({
     let cancelled = false;
     void (async () => {
       try {
-        const list = await api.listApps();
-        if (!cancelled) setApps(list);
+        const inventory = await api.listApps();
+        if (!cancelled) setInventory(inventory);
       } catch (e) {
         if (!cancelled) setError(formatError(e));
       } finally {
