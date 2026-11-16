@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { useId, useState } from "react";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -50,7 +51,7 @@ export function OrphanOriginGroups({
       {groups.map((g, groupIndex) => {
         const selectablePaths = g.items
           .filter((it) => bucketItem(it) !== "keep")
-          .map((it) => it.path);
+          .map(cleanupItemKey);
         const isOpen = expanded.has(g.origin);
         const shown = isOpen ? g.items : g.items.slice(0, 8);
         return (
@@ -80,8 +81,8 @@ export function OrphanOriginGroups({
                 const descriptionId = `${rowId}-${groupIndex}-${index}`;
                 const open = openPath === it.path;
                 return (
-                  <div key={`${it.kind}:${it.path}`} className="remova-orphan-item"
-                    data-selected={selectedPaths.has(it.path) || undefined}
+                  <div key={cleanupItemKey(it)} className="remova-orphan-item"
+                    data-selected={selectedPaths.has(cleanupItemKey(it)) || undefined}
                     style={compact ? undefined : { borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
                     <div className="remova-orphan-row" style={compact ? undefined : { display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <label
@@ -97,9 +98,9 @@ export function OrphanOriginGroups({
                     >
                       <input
                         type="checkbox"
-                        checked={selectedPaths.has(it.path)}
+                        checked={selectedPaths.has(cleanupItemKey(it))}
                         disabled={!onToggle}
-                        onChange={() => onToggle?.(it.path)}
+                        onChange={() => onToggle?.(cleanupItemKey(it))}
                         aria-label={it.path}
                         aria-describedby={descriptionId}
                         style={{ marginTop: 2, accentColor: "var(--accent)" }}

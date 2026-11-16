@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -50,7 +51,7 @@ const LeftoverRow = memo(function LeftoverRow({
       onClick={(event) => {
         const selection = window.getSelection();
         if (disabled || (event.target as Element).closest("input,button,a,label") || (selection && !selection.isCollapsed)) return;
-        onTogglePath(it.path);
+        onTogglePath(cleanupItemKey(it));
       }}
       style={{
         display: "grid",
@@ -74,7 +75,7 @@ const LeftoverRow = memo(function LeftoverRow({
           aria-label={it.path}
           checked={checked}
           disabled={disabled}
-          onChange={() => { if (!disabled) onTogglePath(it.path); }}
+          onChange={() => { if (!disabled) onTogglePath(cleanupItemKey(it)); }}
         />
       </div>
       <LocalItemIcon path={it.path} kind={it.kind} size={20} />
@@ -267,15 +268,15 @@ export function ScanLeftoversView({
           ),
     [riskFilter, bucketItems],
   );
-  const displayItems = useMemo(() => onlySelected ? riskItems.filter(item => selectedPaths.has(item.path)) : riskItems,
+  const displayItems = useMemo(() => onlySelected ? riskItems.filter(item => selectedPaths.has(cleanupItemKey(item))) : riskItems,
     [onlySelected, riskItems, selectedPaths]);
   const displayGroups = useMemo(
     () => (isOrphan ? groupByOrigin(displayItems) : []),
     [isOrphan, displayItems],
   );
   const { selectedCount, hiddenSelected, visibleSelected, allVisibleSelected } = useMemo(() => {
-    const selected = scan.items.filter(item => selectedPaths.has(item.path)).length;
-    const visible = displayItems.filter(item => selectedPaths.has(item.path)).length;
+    const selected = scan.items.filter(item => selectedPaths.has(cleanupItemKey(item))).length;
+    const visible = displayItems.filter(item => selectedPaths.has(cleanupItemKey(item))).length;
     return {
       selectedCount: selected,
       hiddenSelected: selected - visible,
@@ -289,7 +290,7 @@ export function ScanLeftoversView({
     if (selectAllRef.current) selectAllRef.current.indeterminate = visibleSelected > 0 && !allVisibleSelected;
   }, [visibleSelected, allVisibleSelected]);
   const selectVisible = () => {
-    if (!scanning && displayItems.length) onSelectVisible?.(displayItems.map(item => item.path), !allVisibleSelected);
+    if (!scanning && displayItems.length) onSelectVisible?.(displayItems.map(cleanupItemKey), !allVisibleSelected);
   };
   const filterLabel = useMemo(() => {
     if (!kindFilter) return null;
@@ -334,7 +335,7 @@ export function ScanLeftoversView({
     estimateSize: () => 72,
     overscan: 8,
     scrollMargin: listMargin,
-    getItemKey: (index) => displayItems[index]?.path ?? index,
+    getItemKey: (index) => displayItems[index] ? cleanupItemKey(displayItems[index]) : index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
@@ -429,7 +430,7 @@ export function ScanLeftoversView({
               if (!it) return null;
               return (
                 <div
-                  key={`${it.kind}:${it.path}`}
+                  key={cleanupItemKey(it)}
                   ref={rowVirtualizer.measureElement}
                   data-index={vr.index}
                   style={{
@@ -443,7 +444,7 @@ export function ScanLeftoversView({
                   <LeftoverRow
                     language={currentLang()}
                     it={it}
-                    checked={selectedPaths.has(it.path)}
+                    checked={selectedPaths.has(cleanupItemKey(it))}
                     disabled={scanning}
                     note={aiNotes[it.path]}
                     onTogglePath={onTogglePath}

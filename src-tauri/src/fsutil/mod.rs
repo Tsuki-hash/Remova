@@ -1420,6 +1420,16 @@ pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
     remove_tree_pinned(p)
 }
 
+#[cfg(windows)]
+pub(crate) fn remove_scanned_tree(path: &Path, expected: (u32, u64)) -> std::io::Result<()> {
+    let _parents = pin_existing_parents(path)?;
+    let pin = pin_dir_no_reparse(path)?;
+    if pin.file_identity()? != expected {
+        return Err(std::io::Error::other("specialty cleanup object changed"));
+    }
+    remove_tree_with_pin(path, pin)
+}
+
 /// Hold every ancestor from the volume root before resolving a deletion path.
 /// Do not create missing ancestors or follow junctions in the chain.
 pub fn pin_existing_parents(p: &Path) -> std::io::Result<Vec<DirPin>> {

@@ -95,6 +95,7 @@ fn pipeline_dry_run_backup_delete_restore() {
             backup_enabled: true,
             restore_point: false,
             cleanup_source: None,
+            scope_revision: None,
         },
     );
     assert!(!report.aborted, "cleanup aborted: {:?}", report.errors);
@@ -178,6 +179,7 @@ fn pipeline_empty_items_aborts() {
             backup_enabled: false,
             restore_point: false,
             cleanup_source: None,
+            scope_revision: None,
         },
     );
     assert!(report.aborted);

@@ -25,7 +25,7 @@ import type { CleanupItem, FullCleanupReport, InstalledApp } from "../types";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { loadRestorePointPref } from "../lib/restorePointPref";
 import { compareConvergence, type ConvergenceRound } from "../lib/residueConvergence";
-import { summarizeCleanupPlan } from "../lib/cleanupPlan";
+import { cleanupItemKey, summarizeCleanupPlan } from "../lib/cleanupPlan";
 import { normalizeOrphanScan } from "../lib/scopedScan";
 import "./OrphanPage.css";
 
@@ -98,7 +98,7 @@ export function OrphanPage({
       setConverged(conv.converged);
       setOmitted(leftOut);
       setItems(list);
-      if (cleanupAllowed) setSelected(new Set(list.filter(defaultSelectable).map((it) => it.path)));
+      if (cleanupAllowed) setSelected(new Set(list.filter(defaultSelectable).map(cleanupItemKey)));
       setLastScanCount(list.length);
       if (!quiet && complete) {
         if (list.length === 0) {
@@ -140,7 +140,7 @@ export function OrphanPage({
   const cleanSelected = async () => {
     if (!cleanupAllowed || !items || selected.size === 0 || busy) return;
     const round = nextScanRound();
-    const picked = items.filter((it) => selected.has(it.path));
+    const picked = items.filter((it) => selected.has(cleanupItemKey(it)));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
@@ -198,7 +198,7 @@ export function OrphanPage({
 
   const selectAll = () => {
     if (!cleanupAllowed || !items || busy) return;
-    const paths = items.filter((it) => bucketItem(it) !== "keep").map((it) => it.path);
+    const paths = items.filter((it) => bucketItem(it) !== "keep").map(cleanupItemKey);
     setSelected((prev) => {
       const n = new Set(prev);
       for (const p of paths) n.add(p);

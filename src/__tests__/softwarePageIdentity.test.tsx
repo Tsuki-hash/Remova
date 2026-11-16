@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
@@ -212,7 +213,7 @@ describe("SoftwarePage report identity", () => {
       <SoftwarePage
         {...props({
           scan,
-          selectedPaths: new Set([item.path]),
+          selectedPaths: new Set([cleanupItemKey(item)]),
           onCleanup,
         })}
       />,
@@ -251,7 +252,7 @@ describe("SoftwarePage report identity", () => {
       <SoftwarePage
         {...props({
           scan,
-          selectedPaths: new Set([item.path]),
+          selectedPaths: new Set([cleanupItemKey(item)]),
           dryRunning: true,
           onCancelCleanup,
         })}

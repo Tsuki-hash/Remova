@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import type { ReactNode } from "react";
 import { memo, useEffect, useState } from "react";
 import type {
@@ -365,7 +366,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
             riskFilter={p.riskFilter}
             onSelectSafe={() => {
               p.setSelectedPaths(
-                new Set(p.scan!.items.filter(defaultSelectable).map((it) => it.path)),
+                new Set(p.scan!.items.filter(defaultSelectable).map(cleanupItemKey)),
               );
               p.setKindFilter(null);
               p.setRiskFilter(null);

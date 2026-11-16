@@ -3,7 +3,7 @@ import type { CleanupItem } from "../types";
 /**
  * The frontend mirror of `fsutil::path_key`: slashes, surrounding quotes,
  * trailing dots/spaces per segment, and casing all resolve to one identity.
- * The header's count and its byte total must agree on what "one path" means.
+ * Used for file size estimates, where overlapping file targets count once.
  */
 export const pathKey = (path: string) =>
   path
@@ -16,30 +16,15 @@ export const pathKey = (path: string) =>
     .map(seg => (seg === "." || seg === ".." ? seg : seg.replace(/[. ]+$/, "")))
     .join("\\");
 
+/** One selectable action in the current scan. Keep the server's spelling. */
+export function cleanupItemKey(item: Pick<CleanupItem, "kind" | "path">): string {
+  return `${item.kind}\0${item.path}`;
+}
+
 /** Pure estimate behind the scan action bar's size/attention numbers. */
 export function summarizeCleanupPlan(items: CleanupItem[], selected: Set<string>) {
-  const picked = items.filter(item => selected.has(item.path));
-  // regression fix: `count` is deduplicated by path identity, while the backend's
-  // plan/delete phases are not. Scanners never emit the same path twice (the
-  // allow-list and `scanned` sets are keyed by exact path), so the two only
-  // diverge on a hand-forged payload — if that ever changes, deduplicate the
-  // backend instead of counting raw rows here.
-  const uniquePicked = new Map<string, CleanupItem>();
-  for (const item of picked) {
-    const key = pathKey(item.path);
-    if (!uniquePicked.has(key)) uniquePicked.set(key, item);
-  }
-  const unique = new Map<string, CleanupItem>();
-  for (const item of uniquePicked.values()) {
-    if (item.kind === "file" || item.kind === "dir") unique.set(pathKey(item.path), item);
-  }
-  const roots = pickRoots(unique);
-  let knownKb = 0, unknown = 0;
-  for (const [, item] of roots) {
-    if (item.size_kb != null && Number.isFinite(item.size_kb) && item.size_kb >= 0) knownKb += item.size_kb;
-    else unknown++;
-  }
-  return { count: uniquePicked.size, knownKb, unknown,
+  const picked = items.filter(item => selected.has(cleanupItemKey(item)));
+  return { count: picked.length, ...summarizeScanTotal(picked),
     review: picked.filter(item => item.risk !== "low" || item.confidence !== "confirmed"
       || item.shared || item.user_data || item.user_library).length,
     registry: picked.filter(item => item.kind === "registry").length,

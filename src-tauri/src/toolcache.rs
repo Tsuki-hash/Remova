@@ -894,13 +894,8 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
     // shared-root phase could push the total past `SPECIALTY_RESULT_CAP`, so
     // the cap documented on the constant was not what the code guaranteed.
     if out.len() > SPECIALTY_RESULT_CAP {
-        let reported: HashSet<String> = out[..SPECIALTY_RESULT_CAP]
-            .iter()
-            .map(|it| it.path.clone())
-            .collect();
         report.omit(out.len() - SPECIALTY_RESULT_CAP);
         out.truncate(SPECIALTY_RESULT_CAP);
-        scanned.retain(|p| reported.contains(p));
     }
     if !crate::scan_task::checkpoint("sizes", out.len()) {
         return Ok(ScopedScanResult::empty());
@@ -913,9 +908,12 @@ pub fn scan_tool_caches() -> Result<ScopedScanResult, String> {
     fill_item_buckets(&mut out, "");
     // Armed from exactly what is reported: a truncated or cancelled candidate is
     // never authorized.
-    scan_allow::remember(AllowScope::ToolCache, &scanned);
+    let reported = out.len();
+    let scope_revision = scan_allow::remember(AllowScope::ToolCache, &mut out);
+    report.omit(reported - out.len());
     Ok(ScopedScanResult {
         items: out,
+        scope_revision,
         omitted: report.omitted,
         degraded: report.degraded,
     })

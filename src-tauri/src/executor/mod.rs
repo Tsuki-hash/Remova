@@ -145,6 +145,8 @@ pub struct FullCleanupOptions {
     /// uninstall | orphan | monitor | copilot | installer | toolcache — default uninstall.
     #[serde(default)]
     pub cleanup_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_revision: Option<u64>,
 }
 
 pub fn cleanup_source_from_opts(opts: &FullCleanupOptions) -> crate::policy::CleanupSource {

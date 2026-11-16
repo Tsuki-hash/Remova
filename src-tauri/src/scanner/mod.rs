@@ -304,6 +304,8 @@ pub struct ScanResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScopedScanResult {
     pub items: Vec<CleanupItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_revision: Option<u64>,
     /// Rows found but not reported because a per-root or total cap was hit.
     /// Always ROWS (a JetBrains child expands into several), so the UI's
     /// "N more not shown" means one thing across scanners. Incomplete phases
@@ -321,6 +323,7 @@ impl ScopedScanResult {
     pub fn empty() -> Self {
         Self {
             items: Vec::new(),
+            scope_revision: None,
             omitted: 0,
             degraded: Vec::new(),
         }

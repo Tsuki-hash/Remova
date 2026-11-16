@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
@@ -140,7 +141,7 @@ describe("useAnalyzeFlow request sequencing", () => {
       resolveA(scanA);
     });
     expect(captured.scan).toBe(scanB);
-    expect(captured.selectedPaths).toEqual(new Set([scanB.items[0]?.path]));
+    expect(captured.selectedPaths).toEqual(new Set([cleanupItemKey(scanB.items[0]!)]));
     expect(captured.scanning).toBe(false);
   });
 
@@ -182,7 +183,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     });
     expect(calls).toBe(2);
     expect(captured.scan?.app_name).toBe("AppB");
-    expect(captured.selectedPaths).toEqual(new Set([scan("AppB").items[0]?.path]));
+    expect(captured.selectedPaths).toEqual(new Set([cleanupItemKey(scan("AppB").items[0]!)]));
     expect(captured.scanning).toBe(false);
   });
   it("clears old selection and never publishes a cancelled scan", async () => {

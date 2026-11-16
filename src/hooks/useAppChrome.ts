@@ -15,7 +15,7 @@ export type AppChromeFlow = {
   setIgnorePub: (v: string[]) => void;
   setIgnoreName: (v: string[]) => void;
   setError: (e: string | null) => void;
-  setScan: (r: { app_name: string; items: import("../types").CleanupItem[] } | null) => void;
+  setScan: (r: import("../types").ScanResult | null) => void;
   setSelected: (a: InstalledApp | null) => void;
 };
 
@@ -27,12 +27,14 @@ export type AppChromeResidual = {
       added_files: string[];
       added_reg_values: string[];
       items?: import("../types").CleanupItem[];
+      scope_revision?: number;
     } | null,
   ) => void;
   monitorDiff: {
     added_files: string[];
     added_reg_values: string[];
     items?: import("../types").CleanupItem[];
+    scope_revision?: number;
   } | null;
   selectDefaultItems: (items: import("../types").CleanupItem[]) => void;
 };
@@ -175,7 +177,7 @@ export function useAppChrome({
         toast.info(L.monitorFinishing, { channel: MON_CH });
         const result = await monitorRunReadOnly(api.endInstallMonitor, result => result.diff.added_files.length + result.diff.added_reg_values.length);
         residual.setMonitoring(false);
-        residual.setMonitorDiff({ ...result.diff, items: result.items });
+        residual.setMonitorDiff({ ...result.diff, items: result.items, scope_revision: result.scope_revision });
         toast.success(
           L.toastMonitorDiff(result.diff.added_files.length, result.diff.added_reg_values.length),
           {
@@ -223,7 +225,7 @@ export function useAppChrome({
           display_icon: "",
         };
         flow.setSelected(monApp);
-        flow.setScan({ app_name: L.monitorDiff, items });
+        flow.setScan({ app_name: L.monitorDiff, items, scope_revision: residual.monitorDiff?.scope_revision });
         residual.selectDefaultItems(items);
         residual.setMonitorDiff(null);
         toast.success(`${L.monitorToCleanup}: ${items.length}`);

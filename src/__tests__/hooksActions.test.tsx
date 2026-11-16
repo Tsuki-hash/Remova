@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { describe, expect, it } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useResidualState } from "../hooks/useResidualState";
@@ -23,14 +24,14 @@ function item(partial: Partial<CleanupItem> = {}): CleanupItem {
 describe("useResidualState actions", () => {
   it("togglePath / selectDefaultItems / clearResidualScan", () => {
     const { result } = renderHook(() => useResidualState());
-    act(() => result.current.actions.togglePath("C:\\a"));
-    expect(result.current.selectedPaths.has("C:\\a")).toBe(true);
+    act(() => result.current.actions.togglePath(cleanupItemKey(item())));
+    expect(result.current.selectedPaths.has(cleanupItemKey(item()))).toBe(true);
     act(() => result.current.actions.selectDefaultItems([
       item(),
       item({ path: "C:\\shared", shared: true }),
     ]));
-    expect(result.current.selectedPaths.has("C:\\a")).toBe(true);
-    expect(result.current.selectedPaths.has("C:\\shared")).toBe(false);
+    expect(result.current.selectedPaths.has(cleanupItemKey(item()))).toBe(true);
+    expect(result.current.selectedPaths.has(cleanupItemKey(item({ path: "C:\\shared" })))).toBe(false);
     act(() => result.current.actions.clearResidualScan());
     expect(result.current.selectedPaths.size).toBe(0);
   });

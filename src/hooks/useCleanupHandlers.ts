@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { useCallback, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
@@ -178,11 +179,12 @@ export function useCleanupHandlers({
  // Never overlap dry-run with another busy cleanup/uninstall.
     if (busyRef.current) return;
     busyRef.current = true;
-    const items = scan.items.filter((it) => selectedPaths.has(it.path));
+    const items = scan.items.filter((it) => selectedPaths.has(cleanupItemKey(it)));
     const seq = ++dryRunSeqRef.current;
     setDryRunning(true);
     try {
       const r = await api.dryRun(selected, items, {
+        ...(scan.scope_revision !== undefined && { scope_revision: scan.scope_revision }),
         cleanup_source:
           selected.source === "Monitor"
             ? "monitor"
@@ -224,13 +226,14 @@ export function useCleanupHandlers({
     } else {
       busyRef.current = true;
     }
-    const items = scan.items.filter((it) => selectedPaths.has(it.path));
+    const items = scan.items.filter((it) => selectedPaths.has(cleanupItemKey(it)));
     verifySeqRef.current += 1;
     setDryRunning(true);
     let afterCleanup: { app: InstalledApp; report: FullCleanupReport } | null = null;
     try {
       const r = await api.fullCleanup(selected, items, {
         dry_run: false,
+        ...(scan.scope_revision !== undefined && { scope_revision: scan.scope_revision }),
  // Residual cleanup after official uninstall never re-runs official uninstaller.
  // Normal analysis runs official uninstall unless advanced direct cleanup is selected.
         skip_official_uninstall: !runOfficial,
@@ -330,7 +333,7 @@ export function useCleanupHandlers({
  // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
     busyRef.current = true;
     try {
-    const picked = scan.items.filter((it) => selectedPaths.has(it.path));
+    const picked = scan.items.filter((it) => selectedPaths.has(cleanupItemKey(it)));
     const n = picked.length;
     if (n === 0) {
  // FE-N3 / never confirm an empty cleanup set — say "select rows", not "cleanup".

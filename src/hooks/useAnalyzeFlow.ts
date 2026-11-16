@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { useCallback, useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { CleanupReport, FullCleanupReport, InstalledApp, OfficialUninstallResult, ScanResult } from "../types";
@@ -177,7 +178,7 @@ export function useAnalyzeFlow({
             })
             .catch(() => {});
         }
-        setSelectedPaths(keepReport ? new Set() : new Set(r.items.filter(defaultSelectable).map((it) => it.path)));
+        setSelectedPaths(keepReport ? new Set() : new Set(r.items.filter(defaultSelectable).map(cleanupItemKey)));
         setError(null);
         toast.success(
           t().toastAnalyzeDone(((performance.now() - t0) / 1000).toFixed(1), r.items.length),

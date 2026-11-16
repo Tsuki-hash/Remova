@@ -1,31 +1,31 @@
-//! Server-side allow-lists for scoped scans (installer / toolcache).
-//! Same trust model as orphan paths : only paths from the latest scan may be deleted.
+//! Server-side cleanup authorization from the latest scans.
 
+use crate::scanner::{CleanupItem, ItemKind};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AllowScope {
     Installer,
     ToolCache,
     Monitor,
 }
 
-impl AllowScope {
-    fn key(self) -> &'static str {
-        match self {
-            AllowScope::Installer => "installer",
-            AllowScope::ToolCache => "toolcache",
-            AllowScope::Monitor => "monitor",
-        }
-    }
+#[derive(Clone)]
+struct ScopedItem {
+    item: CleanupItem,
+    file_id: Option<(u32, u64)>,
 }
 
-static MAPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+type ScopedItems = HashMap<String, ScopedItem>;
+type ScopedMaps = Mutex<HashMap<AllowScope, (u64, ScopedItems)>>;
+static MAPS: OnceLock<ScopedMaps> = OnceLock::new();
+static SCOPED_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-fn maps() -> &'static Mutex<HashSet<String>> {
-    MAPS.get_or_init(|| Mutex::new(HashSet::new()))
+fn maps() -> &'static ScopedMaps {
+    MAPS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Per-app cleanup authorization from the latest analysis, bounded so a long
@@ -50,19 +50,21 @@ fn item_kind_tag(kind: &crate::scanner::ItemKind) -> &'static str {
 }
 
 pub(crate) fn authorized_item_key(item: &crate::scanner::CleanupItem) -> Option<String> {
-    normalize(&item.path).map(|key| {
-        // Security-relevant classification is part of the authorization
-        // snapshot. A renderer may not clear shared/service/user-data flags
-        // while keeping the same path and kind.
-        format!(
-            "{key}\0{}\0{}\0{}\0{}\0{}",
-            item_kind_tag(&item.kind),
-            item.shared,
-            item.service_bound,
-            item.user_data,
-            item.user_library
-        )
-    })
+    normalize(&item.path).map(|key| item_key(&key, item))
+}
+
+fn item_key(path: &str, item: &CleanupItem) -> String {
+    // Security-relevant classification is part of the authorization
+    // snapshot. A renderer may not clear shared/service/user-data flags
+    // while keeping the same path and kind.
+    format!(
+        "{path}\0{}\0{}\0{}\0{}\0{}",
+        item_kind_tag(&item.kind),
+        item.shared,
+        item.service_bound,
+        item.user_data,
+        item.user_library
+    )
 }
 
 /// Publish the cleanup items of one successful analysis as the only actions a
@@ -125,60 +127,138 @@ fn normalize(path: &str) -> Option<String> {
     crate::fsutil::path_key(std::path::Path::new(path))
 }
 
-fn scoped_key(scope: AllowScope, path: &str) -> Option<String> {
-    normalize(path).map(|key| format!("{}\0{}", scope.key(), key))
+fn file_identity(item: &CleanupItem) -> std::io::Result<(u32, u64)> {
+    #[cfg(windows)]
+    {
+        let pins = crate::fsutil::pin_local_scan_path(Path::new(&item.path))?;
+        let object = pins
+            .last()
+            .ok_or_else(|| std::io::Error::other("empty path"))?;
+        let metadata = crate::fsutil::pin_metadata(object)?;
+        if !(metadata.is_file() && item.kind == ItemKind::File
+            || metadata.is_dir() && item.kind == ItemKind::Dir)
+        {
+            return Err(std::io::Error::other("cleanup object type changed"));
+        }
+        object.file_identity()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = item;
+        Err(std::io::Error::other(
+            "cleanup object identity requires Windows",
+        ))
+    }
 }
 
-/// Replace the allow-list for `scope` with the latest scan results.
-pub fn remember(scope: AllowScope, paths: &HashSet<String>) {
+fn scope_items(items: &[CleanupItem]) -> ScopedItems {
+    items
+        .iter()
+        .filter_map(|item| {
+            normalize(&item.path)?;
+            let file_id = match item.kind {
+                ItemKind::File | ItemKind::Dir => Some(file_identity(item).ok()?),
+                ItemKind::Registry => None,
+                ItemKind::Path => return None, // These scanners never authorize a PATH edit.
+            };
+            Some((
+                item_key(&item.path, item),
+                ScopedItem {
+                    item: item.clone(),
+                    file_id,
+                },
+            ))
+        })
+        .collect()
+}
+
+pub fn remember(scope: AllowScope, items: &mut Vec<CleanupItem>) -> Option<u64> {
+    let originals = scope_items(items);
+    items.retain(|item| originals.contains_key(&item_key(&item.path, item)));
+    let mut generation = None;
     crate::scan_task::publish(|| {
         if let Ok(mut g) = maps().lock() {
-            g.retain(|k| !k.starts_with(&format!("{}\0", scope.key())));
-            for p in paths {
-                // A path that cannot be named is not authorized — skip it rather
-                // than storing a key no delete request could ever match.
-                if let Some(key) = scoped_key(scope, p) {
-                    g.insert(key);
-                }
-            }
+            let revision = SCOPED_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+            g.insert(scope, (revision, originals));
+            generation = Some(revision);
         }
     });
+    generation
 }
 
-/// Publish the monitor scan's paths as the monitor allow-list.
-///
-/// Committing these items **authorizes deleting exactly those paths** for the
-/// monitor scope: the scoped panels refuse anything the latest scan did not
-/// report, so this is the moment a set of paths becomes deletable. It therefore
-/// updates the scan snapshot first. If that update fails, the previous
-/// authorization is left in place.
+/// Publish the monitor authorization only after the matching snapshot update.
 pub(crate) fn commit_monitor_items(
     _permit: &crate::scan_task::CommitPermit,
-    paths: &HashSet<String>,
+    items: &[CleanupItem],
     update_snapshot: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
+    let items = scope_items(items);
     let mut g = maps().lock().map_err(|_| "scan:state")?;
     update_snapshot()?;
-    g.retain(|key| !key.starts_with("monitor\0"));
-    for path in paths {
-        if let Some(key) = scoped_key(AllowScope::Monitor, path) {
-            g.insert(key);
-        }
-    }
-    Ok(())
+    let revision = SCOPED_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    g.insert(AllowScope::Monitor, (revision, items));
+    Ok(revision)
 }
 
-/// True when `path` was returned by the latest scan for `scope`.
-///
-/// The lookup is normalized the same way as the stored key, so case, slash style
-/// and Win32's per-segment trailing dots/spaces of a reported path still
-/// authorize; anything the latest scan did not report does not, including a path
-/// from an older scan. A path that cannot be named never authorizes.
-pub fn was_recent(scope: AllowScope, path: &str) -> bool {
-    match scoped_key(scope, path) {
-        Some(key) => maps().lock().map(|g| g.contains(&key)).unwrap_or(false),
-        None => false,
-    }
+pub(crate) fn scoped_item_was_reported(scope: AllowScope, item: &CleanupItem) -> bool {
+    let key = item_key(&item.path, item);
+    maps()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&scope).map(|(_, items)| items.contains_key(&key)))
+        .unwrap_or(false)
+}
+
+pub(crate) fn resolve_scoped_items(
+    scope: AllowScope,
+    revision: Option<u64>,
+    items: &[CleanupItem],
+) -> Result<Vec<CleanupItem>, String> {
+    let entries = {
+        let g = maps().lock().map_err(|_| "scan:state")?;
+        let (_, originals) = g
+            .get(&scope)
+            .filter(|(current, _)| Some(*current) == revision)
+            .ok_or("specialty cleanup scan expired; scan again")?;
+        items
+            .iter()
+            .map(|item| {
+                originals
+                    .get(&item_key(&item.path, item))
+                    .cloned()
+                    .ok_or_else(|| format!("specialty cleanup item not authorized: {}", item.path))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    entries
+        .into_iter()
+        .map(|entry| {
+            if entry.file_id.is_some() && file_identity(&entry.item).ok() != entry.file_id {
+                return Err(format!(
+                    "specialty cleanup object changed: {}",
+                    entry.item.path
+                ));
+            }
+            Ok(entry.item)
+        })
+        .collect()
+}
+
+pub(crate) fn scoped_file_id(
+    scope: AllowScope,
+    revision: Option<u64>,
+    path: &Path,
+) -> Result<(u32, u64), String> {
+    let g = maps().lock().map_err(|_| "scan:state")?;
+    let (_, items) = g
+        .get(&scope)
+        .filter(|(current, _)| Some(*current) == revision)
+        .ok_or("specialty cleanup scan expired; scan again")?;
+    items
+        .values()
+        .find(|entry| Path::new(&entry.item.path) == path)
+        .and_then(|entry| entry.file_id)
+        .ok_or_else(|| format!("specialty cleanup object changed: {}", path.display()))
 }
 
 #[cfg(test)]
@@ -188,22 +268,50 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
+pub(crate) use tests::cleanup_item as test_item;
+
+#[cfg(test)]
+pub(crate) fn remember_for_test(scope: AllowScope, items: &[CleanupItem]) {
+    let originals = items
+        .iter()
+        .map(|item| {
+            (
+                item_key(&item.path, item),
+                ScopedItem {
+                    item: item.clone(),
+                    file_id: None,
+                },
+            )
+        })
+        .collect();
+    let revision = SCOPED_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    maps().lock().unwrap().insert(scope, (revision, originals));
+}
+
+#[cfg(test)]
+pub(crate) fn was_recent(scope: AllowScope, path: &str) -> bool {
+    maps()
+        .lock()
+        .unwrap()
+        .get(&scope)
+        .is_some_and(|(_, items)| items.values().any(|entry| entry.item.path == path))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn failed_snapshot_consumption_cannot_publish_monitor_authorization() {
         let _g = test_lock();
-        remember(
+        remember_for_test(
             AllowScope::Monitor,
-            &HashSet::from(["previous-monitor-path".into()]),
+            &[cleanup_item("previous-monitor-path")],
         );
         let result = crate::scan_task::commit(|permit| {
-            commit_monitor_items(
-                permit,
-                &HashSet::from(["unpublished-monitor-path".into()]),
-                || Err("fixture consume failed".into()),
-            )
+            commit_monitor_items(permit, &[cleanup_item("unpublished-monitor-path")], || {
+                Err("fixture consume failed".into())
+            })
         });
         assert_eq!(result, Err("fixture consume failed".into()));
         assert!(was_recent(AllowScope::Monitor, "previous-monitor-path"));
@@ -226,7 +334,7 @@ mod tests {
             ),
         ] {
             let path = "cancelled-scan-previous-path";
-            remember(scope, &HashSet::from([path.into()]));
+            remember_for_test(scope, &[cleanup_item(path)]);
             let id = crate::scan_task::begin().unwrap();
             assert_eq!(
                 crate::scan_task::run(id, || {
@@ -241,72 +349,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scoped_allow_lists_are_isolated() {
-        let _g = test_lock();
-        let mut a = HashSet::new();
-        a.insert(r"C:\Users\x\Downloads\app.msi".into());
-        remember(AllowScope::Installer, &a);
-        assert!(was_recent(
-            AllowScope::Installer,
-            r"C:\Users\x\Downloads\app.msi"
-        ));
-        assert!(!was_recent(
-            AllowScope::ToolCache,
-            r"C:\Users\x\Downloads\app.msi"
-        ));
-    }
-
-    #[test]
-    fn normalize_repels_case_and_slash_variants() {
-        let _g = test_lock();
-        let mut a = HashSet::new();
-        a.insert(r"C:\Users\x\AppData\Local\npm-cache".into());
-        remember(AllowScope::ToolCache, &a);
-        assert!(was_recent(
-            AllowScope::ToolCache,
-            r"c:/users/x/appdata/local/npm-cache/"
-        ));
-    }
-
-    /// this allow-list now shares `fsutil::path_key` with the red-line
-    /// checks, so the two halves of the gate must agree on the shapes Win32
-    /// collapses. Before the delegation a reported `…\npm-cache.` stored the key
-    /// `…\npm-cache.`, and the delete request for `…\npm-cache` was refused — the
-    /// panel listed an item the user could not remove.
-    #[test]
-    fn normalize_matches_win32_on_trailing_dots_and_spaces() {
-        let _g = test_lock();
-        let mut a = HashSet::new();
-        a.insert(r"C:\Users\x\AppData\Local\npm-cache.".into());
-        remember(AllowScope::ToolCache, &a);
-        assert!(was_recent(
-            AllowScope::ToolCache,
-            r"c:/users/x/appdata/local/npm-cache"
-        ));
-        // And the reverse direction: reported plain, requested decorated.
-        let mut b = HashSet::new();
-        b.insert(r"C:\Users\x\AppData\Local\pnpm-store".into());
-        remember(AllowScope::ToolCache, &b);
-        assert!(was_recent(
-            AllowScope::ToolCache,
-            r" C:\Users\x\AppData\Local\pnpm-store. "
-        ));
-    }
-
-    /// A path that cannot be named must never become an authorization.
-    #[test]
-    fn unnameable_paths_are_never_authorized() {
-        let _g = test_lock();
-        let mut a = HashSet::new();
-        a.insert("   ".into());
-        a.insert("\"\"".into());
-        remember(AllowScope::ToolCache, &a);
-        assert!(!was_recent(AllowScope::ToolCache, "   "));
-        assert!(!was_recent(AllowScope::ToolCache, r"C:\Anything"));
-    }
-
-    fn cleanup_item(path: &str) -> crate::scanner::CleanupItem {
+    pub(crate) fn cleanup_item(path: &str) -> crate::scanner::CleanupItem {
         crate::scanner::CleanupItem {
             path: path.into(),
             kind: crate::scanner::ItemKind::Dir,
@@ -323,6 +366,50 @@ mod tests {
             size_capped: false,
             bucket: None,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scoped_cleanup_requires_the_same_action_scope_revision_and_native_object() {
+        let _guard = test_lock();
+        let fixture = crate::test_support::TempDir::new("scope-identity");
+        let original = fixture.subdir("fixture-cache");
+        let mut item = cleanup_item(original.to_str().unwrap());
+        item.user_library = true;
+        let scope = AllowScope::Monitor;
+        let revision = remember(scope, &mut vec![item.clone()]);
+        assert!(revision.is_some());
+
+        let check = |scope, revision, candidate: &CleanupItem| {
+            resolve_scoped_items(scope, revision, std::slice::from_ref(candidate))
+        };
+        let mut edited = item.clone();
+        edited.reason = "client reason".into();
+        assert_eq!(
+            check(scope, revision, &edited).unwrap()[0].reason,
+            item.reason
+        );
+        assert!(check(AllowScope::ToolCache, revision, &item).is_err());
+        assert!(check(scope, None, &item).is_err());
+        edited.kind = ItemKind::Path;
+        assert!(check(scope, revision, &edited).is_err());
+        edited = item.clone();
+        edited.user_library = false;
+        assert!(check(scope, revision, &edited).is_err());
+        edited = item.clone();
+        edited.path.push('\\');
+        assert!(check(scope, revision, &edited).is_err());
+
+        let newer = remember(scope, &mut vec![item.clone()]);
+        assert!(check(scope, revision, &item).is_err());
+        let expected = scoped_file_id(scope, newer, &original).unwrap();
+        std::fs::rename(&original, fixture.join("original")).unwrap();
+        std::fs::create_dir(&original).unwrap();
+        let marker = original.join("keep.txt");
+        std::fs::write(&marker, b"keep").unwrap();
+        assert!(check(scope, newer, &item).is_err());
+        assert!(crate::fsutil::remove_scanned_tree(&original, expected).is_err());
+        assert_eq!(std::fs::read(marker).unwrap(), b"keep");
     }
 
     #[test]

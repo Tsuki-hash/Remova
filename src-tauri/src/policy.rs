@@ -40,20 +40,22 @@ impl CleanupSource {
         )
     }
 
+    pub(crate) fn specialty_scope(&self) -> Option<crate::scan_allow::AllowScope> {
+        use crate::scan_allow::AllowScope;
+        match self {
+            Self::Monitor => Some(AllowScope::Monitor),
+            Self::Installer => Some(AllowScope::Installer),
+            Self::ToolCache => Some(AllowScope::ToolCache),
+            _ => None,
+        }
+    }
+
     fn allow_ok(&self, item: &CleanupItem) -> bool {
-        let path = &item.path;
         match self {
             CleanupSource::Orphan => crate::orphans::was_recent_orphan_item(item),
-            CleanupSource::Monitor => {
-                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Monitor, path)
-            }
-            CleanupSource::Installer => {
-                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::Installer, path)
-            }
-            CleanupSource::ToolCache => {
-                crate::scan_allow::was_recent(crate::scan_allow::AllowScope::ToolCache, path)
-            }
-            _ => false,
+            _ => self
+                .specialty_scope()
+                .is_some_and(|scope| crate::scan_allow::scoped_item_was_reported(scope, item)),
         }
     }
 }
@@ -670,6 +672,7 @@ mod tests {
                 backup_enabled: false,
                 restore_point: false,
                 cleanup_source: Some("uninstall".into()),
+                scope_revision: None,
             },
         );
         assert_eq!(
@@ -924,14 +927,14 @@ mod tests {
         let ignore = crate::ignore::IgnoreList::default();
         let orphanish = app("x", "");
 
-        let mut ins = std::collections::HashSet::new();
-        ins.insert(r"C:\Users\a\Downloads\app.msi".to_string());
-        ins.insert(r"C:\Users\a\AppData\Local\perfectworldarena-updater".to_string());
-        crate::scan_allow::remember(crate::scan_allow::AllowScope::Installer, &ins);
         let listed = item(r"C:\Users\a\Downloads\app.msi", ItemKind::File);
         let updater = item(
             r"C:\Users\a\AppData\Local\perfectworldarena-updater",
             ItemKind::Dir,
+        );
+        crate::scan_allow::remember_for_test(
+            crate::scan_allow::AllowScope::Installer,
+            &[listed.clone(), updater.clone()],
         );
         let forged = item(r"C:\Users\a\Documents\save.dat", ItemKind::File);
         let sibling = item(r"C:\Users\a\AppData\Local\unscanned-updater", ItemKind::Dir);
@@ -965,10 +968,11 @@ mod tests {
         )
         .is_allow());
 
-        let mut tc = std::collections::HashSet::new();
-        tc.insert(r"C:\Users\a\AppData\Local\npm-cache\x".to_string());
-        crate::scan_allow::remember(crate::scan_allow::AllowScope::ToolCache, &tc);
         let listed = item(r"C:\Users\a\AppData\Local\npm-cache\x", ItemKind::Dir);
+        crate::scan_allow::remember_for_test(
+            crate::scan_allow::AllowScope::ToolCache,
+            std::slice::from_ref(&listed),
+        );
         let forged = item(
             r"C:\Users\a\AppData\Roaming\Code\User\settings.json",
             ItemKind::File,

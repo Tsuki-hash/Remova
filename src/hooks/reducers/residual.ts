@@ -1,3 +1,4 @@
+import { cleanupItemKey } from "../../lib/cleanupPlan";
 import type { CleanupItem, IgnoreSuggestion } from "../../types";
 import { defaultSelectable } from "../../lib/decision";
 import type { UninstallReview } from "../../lib/uninstallReview";
@@ -7,6 +8,7 @@ export type MonitorDiffState = {
   added_reg_values: string[];
   /** Server-computed cleanup items from `end_install_monitor` (trusted). */
   items?: CleanupItem[];
+  scope_revision?: number;
 } | null;
 
 export type ResidualState = {
@@ -57,7 +59,7 @@ export function residualReducer(state: ResidualState, action: ResidualAction): R
       return {
         ...state,
         selectedPaths: new Set(
-          action.items.filter(defaultSelectable).map((it) => it.path),
+          action.items.filter(defaultSelectable).map(cleanupItemKey),
         ),
       };
     case "selection/update":

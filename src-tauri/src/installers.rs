@@ -532,13 +532,14 @@ pub fn scan_installer_caches() -> Result<ScopedScanResult, String> {
         return Ok(ScopedScanResult::empty());
     }
     fill_item_buckets(&mut out, "");
-    let mut scanned = downloads_scanned;
-    scanned.extend(updater_scanned);
     // Armed from exactly what is reported: a truncated or cancelled candidate is
     // never authorized.
-    scan_allow::remember(AllowScope::Installer, &scanned);
+    let reported = out.len();
+    let scope_revision = scan_allow::remember(AllowScope::Installer, &mut out);
+    report.omit(reported - out.len());
     Ok(ScopedScanResult {
         items: out,
+        scope_revision,
         omitted: report.omitted,
         degraded: report.degraded,
     })

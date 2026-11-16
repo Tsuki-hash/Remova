@@ -44,6 +44,7 @@ export type CleanupItem = {
 
 export type ScanResult = {
   app_name: string;
+  scope_revision?: number;
   /** Backend-built `source\0registry_key\0name` identity; absent on synthetic
    * scans (monitor diff / orphan) which fall back to name comparison. */
   app_key?: string;
@@ -68,6 +69,7 @@ export type ItemDetail = {
  */
 export type ScopedScanResult = {
   items: CleanupItem[];
+  scope_revision?: number;
   omitted: number;
   degraded: string[];
 };

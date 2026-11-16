@@ -85,10 +85,10 @@ it.each(["zh", "en"] as const)("preserves the no-leftovers label alongside a his
     setLang("zh");
   }
 });
-it.each([true, false])("retains scoped cleanup feedback after refresh, aborted=%s", async aborted => {
+it.each([true, false])("keeps the scoped scan authorization available after a failure, aborted=%s", async aborted => {
   const item: CleanupItem = { path: "fixture", kind: "file", score: 90, confidence: "confirmed",
     risk: "low", reason: "fixture", evidence: [] };
-  const scan = vi.fn().mockResolvedValueOnce([item]).mockResolvedValue([]);
+  const scan = vi.fn().mockResolvedValue({ items: [item], omitted: 0, degraded: [], scope_revision: 42 });
   vi.mocked(api.fullCleanup).mockResolvedValue(report({ aborted, failed: 1 }));
   const onError = vi.fn();
   render(<ScopedScanPanel title="Tool" hint="" appName="Tool" scan={scan} cleanupSource="installer"
@@ -98,7 +98,8 @@ it.each([true, false])("retains scoped cleanup feedback after refresh, aborted=%
   vi.mocked(toast.info).mockClear();
   fireEvent.click(screen.getByRole("button", { name: new RegExp(t().cleanup) }));
   await waitFor(() => expect(toast.error).toHaveBeenCalled());
-  await waitFor(() => expect(scan).toHaveBeenCalledTimes(aborted ? 1 : 2));
+  expect(scan).toHaveBeenCalledOnce();
+  expect(api.fullCleanup).toHaveBeenCalledWith(expect.anything(), [item], expect.objectContaining({ scope_revision: 42 }));
   expect(toast.success).not.toHaveBeenCalled();
   expect(toast.info).not.toHaveBeenCalled();
   expect(onError).toHaveBeenCalledTimes(aborted ? 1 : 0);

@@ -69,6 +69,7 @@ export type FullCleanupOptions = {
   backup_enabled: boolean;
   /** Gate source: uninstall | orphan | monitor | copilot | installer | toolcache */
   cleanup_source?: CleanupSourceId;
+  scope_revision?: number;
   /**
    * Ask Windows for a restore point before deleting. The backend owns the
    * decision when the field is absent (`#[serde(default = "default_true")]`),
@@ -97,7 +98,7 @@ export type MonitorDiff = {
    * that never changed; present it as incomplete, not authoritative. */
   walk_degraded?: boolean;
 };
-export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
+export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[]; scope_revision?: number };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
 export type AssociationScanProgress = {
   stage: string;
@@ -131,8 +132,9 @@ export const api = {
   dryRun: (
     app: InstalledApp,
     items: CleanupItem[],
-    options?: { cleanup_source?: CleanupSourceId },
-  ) => invoke<CleanupReport>("run_cleanup_dry_run", { app, items, cleanupSource: options?.cleanup_source }),
+    options?: { cleanup_source?: CleanupSourceId; scope_revision?: number },
+  ) => invoke<CleanupReport>("run_cleanup_dry_run", { app, items, cleanupSource: options?.cleanup_source,
+    ...(options?.scope_revision !== undefined && { scopeRevision: options.scope_revision }) }),
   fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions) =>
     invoke<FullCleanupReport>("run_full_cleanup", { app, items, options }),
   officialUninstall: (app: InstalledApp) =>

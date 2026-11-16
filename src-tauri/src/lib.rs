@@ -533,6 +533,7 @@ mod cleanup_trust_tests {
             backup_enabled: false,
             restore_point: false,
             cleanup_source: Some("orphan".into()),
+            scope_revision: None,
         };
         for service in [false, true] {
             trusted.shared = !service;
@@ -809,15 +810,22 @@ async fn run_cleanup_dry_run(
     app: InstalledApp,
     items: Vec<CleanupItem>,
     cleanup_source: Option<String>,
+    scope_revision: Option<u64>,
 ) -> Result<CleanupReport, String> {
     let source = cleanup_source_from_arg(cleanup_source.as_deref());
     let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
     authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
-        executor::run_cleanup_dry_for_app_source(&app, &items, source)
+        let items = match source.specialty_scope() {
+            Some(scope) => scan_allow::resolve_scoped_items(scope, scope_revision, &items)?,
+            None => items,
+        };
+        Ok(executor::run_cleanup_dry_for_app_source(
+            &app, &items, source,
+        ))
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

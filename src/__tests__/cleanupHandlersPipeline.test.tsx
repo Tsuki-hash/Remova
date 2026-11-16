@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // money-path orchestration — confirm pipeline + busyRef gate.
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import type { FullCleanupReport, InstalledApp, ScanResult } from "../types";
@@ -111,13 +112,13 @@ const flow: CleanupFlowSetters = {
   setError: noop,
 };
 
-function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"]), residual = false) {
+function setup(selectedPaths = new Set([cleanupItemKey(scan().items[0]!)]), residual = false, currentScan = scan()) {
   const busyRef = { current: false };
   const hook = renderHook(() =>
     useCleanupHandlers({
       L: t(),
       selected: app(),
-      scan: scan(),
+      scan: currentScan,
       selectedPaths,
       residualFromUninstall: residual,
       useOfficial: residual,
@@ -134,10 +135,25 @@ function setup(selectedPaths = new Set(["C:\\Program Files\\DemoApp\\x"]), resid
 }
 
 describe("useCleanupHandlers confirm / force pipeline", () => {
+  it.each(["dir", "path"] as const)("previews and executes only the selected %s action at a shared path", async kind => {
+    const directory = scan().items[0]!;
+    const pathEntry = { ...directory, kind: "path" as const };
+    const picked = kind === "dir" ? directory : pathEntry;
+    const { result } = setup(new Set([cleanupItemKey(picked)]), false, { ...scan(), items: [directory, pathEntry] });
+    vi.mocked(api.dryRun).mockClear();
+    fullCleanup.mockClear();
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    fullCleanup.mockResolvedValue(report());
+    await act(async () => { await result.current.dryRun(); });
+    await act(async () => { await result.current.handleCleanupConfirm(); });
+    expect(vi.mocked(api.dryRun).mock.calls[0]?.[1]).toEqual([picked]);
+    expect(fullCleanup.mock.calls[0]?.[1]).toEqual([picked]);
+  });
+
   it("counts only current scan targets in confirmation and never passes stale selection paths", async () => {
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     fullCleanup.mockResolvedValue(report());
-    const { result } = setup(new Set([scan().items[0]!.path, "stale-selection"]));
+    const { result } = setup(new Set([cleanupItemKey(scan().items[0]!), "stale-selection"]));
     await act(async () => { await result.current.handleCleanupConfirm(); });
     expect(requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining(t().cleanupConfirmOptionalBackup(1, false)),
@@ -163,7 +179,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
         L: t(),
         selected: app(),
         scan: scan(),
-        selectedPaths: new Set([scan().items[0]!.path]),
+        selectedPaths: new Set([cleanupItemKey(scan().items[0]!)]),
         residualFromUninstall: false,
         useOfficial: false,
         aiEnabled: false,
@@ -190,7 +206,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
         L: t(),
         selected: app(),
         scan: scan(),
-        selectedPaths: new Set([scan().items[0]!.path]),
+        selectedPaths: new Set([cleanupItemKey(scan().items[0]!)]),
         residualFromUninstall: false,
         useOfficial: false,
         aiEnabled: false,
@@ -216,7 +232,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
       const core = useAppCoreState();
       const cleanup = useCleanupHandlers({
         L: t(), selected: core.selected, scanTarget: core.scanTarget, scan: core.scan,
-        selectedPaths: new Set(scan().items.map(it => it.path)),
+        selectedPaths: new Set(scan().items.map(cleanupItemKey)),
         residualFromUninstall: true, useOfficial: true, aiEnabled: false,
         apps: core.apps, multi: core.multi, flow, refreshApps: async () => {}, busyRef,
       });
@@ -346,7 +362,7 @@ describe("useCleanupHandlers deep pipeline", () => {
         L: t(),
         selected: app(),
         scan: scan(),
-        selectedPaths: opts.selectedPaths ?? new Set(["C:\\Program Files\\DemoApp\\x"]),
+        selectedPaths: opts.selectedPaths ?? new Set([cleanupItemKey(scan().items[0]!)]),
         residualFromUninstall: false,
         useOfficial: false,
         aiEnabled: opts.aiEnabled ?? false,

@@ -171,7 +171,11 @@ impl BackupReceipt {
     }
 
     #[cfg(windows)]
-    pub(super) fn delete(&self, path: &Path) -> Result<(), FilesystemDeleteError> {
+    pub(super) fn delete(
+        &self,
+        path: &Path,
+        scoped_id: Option<(u32, u64)>,
+    ) -> Result<(), FilesystemDeleteError> {
         let unverified = FilesystemDeleteError::Unverified;
         let source = path
             .to_str()
@@ -194,6 +198,11 @@ impl BackupReceipt {
             crate::path_seal::MAX_PAYLOAD_NODES,
         )
         .map_err(|error| unverified(error.to_string()))?;
+        if let Some(expected) = scoped_id {
+            if tree.root_pin().file_identity().ok() != Some(expected) {
+                return Err(unverified("specialty cleanup object changed".into()));
+            }
+        }
         tree.verify_cleanup_backup(identities, &files.manifest, root_key)
             .map_err(|error| unverified(error.to_string()))?;
         let _backup = files
@@ -203,7 +212,11 @@ impl BackupReceipt {
     }
 
     #[cfg(not(windows))]
-    pub(super) fn delete(&self, _: &Path) -> Result<(), FilesystemDeleteError> {
+    pub(super) fn delete(
+        &self,
+        _: &Path,
+        _: Option<(u32, u64)>,
+    ) -> Result<(), FilesystemDeleteError> {
         Err(FilesystemDeleteError::Unverified(
             "backup verification requires Windows".into(),
         ))

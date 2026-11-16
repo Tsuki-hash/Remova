@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // tool panel smoke — empty/diff surfaces render and fire callbacks.
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MonitorPanel } from "../components/MonitorPanel";
@@ -201,7 +202,7 @@ describe("ScanActionsBar", () => {
     try {
       const item: CleanupItem = { path: "fixture", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
       const onDryRun = vi.fn();
-      const props = { ...baseProps, scan: { ...baseScan, items: [item] }, selectedPaths: new Set([item.path]), onDryRun };
+      const props = { ...baseProps, scan: { ...baseScan, items: [item] }, selectedPaths: new Set([cleanupItemKey(item)]), onDryRun };
       const view = render(<ScanActionsBar {...props} />);
       const disclosure = screen.getByText(t().cleanupPlanDetails).closest("details")!;
       expect(disclosure.open).toBe(false);
@@ -248,7 +249,7 @@ describe("ScanActionsBar", () => {
 
   it("shows the analyzing state and hides estimates while scanning", () => {
     const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
-    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} scanning={true} />);
+    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set([cleanupItemKey(item)])} scanning={true} />);
     expect(screen.getByText(t().analyzing)).toBeTruthy();
     expect(screen.queryByText(t().cleanupPlanReview(1))).toBeNull();
     expect(screen.queryByText(t().conclusionSpace(formatSize(10)))).toBeNull();
@@ -262,7 +263,7 @@ describe("ScanActionsBar", () => {
 
   it("shows the action-row estimate once a row is selected", () => {
     const item: CleanupItem = { path: "C:\\Tool", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
-    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set(["C:\\Tool"])} />);
+    render(<ScanActionsBar {...baseProps} scan={{ ...baseScan, items: [item] }} selectedPaths={new Set([cleanupItemKey(item)])} />);
     expect(screen.getByText(`${t().cleanup} (1)`)).toBeTruthy();
     expect(screen.getByText(t().conclusionSpace(formatSize(10)))).toBeTruthy();
     expect(screen.queryByText(t().cleanupPlanReview(0))).toBeNull();

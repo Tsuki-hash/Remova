@@ -34,6 +34,8 @@ pub struct MonitorDiff {
 pub struct MonitorEndResult {
     pub diff: MonitorDiff,
     pub items: Vec<crate::scanner::CleanupItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_revision: Option<u64>,
 }
 
 // tests must never touch the real PROGRAMDATA snapshot — the override
@@ -369,12 +371,13 @@ pub fn begin() -> Result<(), String> {
     let s = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
     crate::scan_task::checkpoint("finalizing", snap.fs.files.len() + snap.reg.len());
     crate::scan_task::commit(|permit| {
-        crate::scan_allow::commit_monitor_items(permit, &Default::default(), || {
+        crate::scan_allow::commit_monitor_items(permit, &[], || {
             if let Some(dir) = p.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
             crate::fsutil::write_bytes_atomic(&p, s.as_bytes()).map_err(|e| e.to_string())
         })
+        .map(|_| ())
     })
 }
 
@@ -387,16 +390,26 @@ pub fn end() -> Result<MonitorEndResult, String> {
     let raw =
         std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
     let before: FullSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let result = build_diff(before, take_fs_snapshot(), reg_value_names());
-    let scanned = trusted_monitor_paths(&result);
+    let mut result = build_diff(before, take_fs_snapshot(), reg_value_names());
     crate::scan_task::checkpoint(
         "finalizing",
         result.diff.added_files.len() + result.diff.added_reg_values.len(),
     );
     crate::scan_task::commit(|permit| {
-        crate::scan_allow::commit_monitor_items(permit, &scanned, || {
-            std::fs::remove_file(&p).map_err(|e| e.to_string())
-        })?;
+        let revision = crate::scan_allow::commit_monitor_items(
+            permit,
+            trusted_monitor_items(&result),
+            || std::fs::remove_file(&p).map_err(|e| e.to_string()),
+        )?;
+        if !result.diff.walk_degraded {
+            result.scope_revision = Some(revision);
+            result.items.retain(|item| {
+                crate::scan_allow::scoped_item_was_reported(
+                    crate::scan_allow::AllowScope::Monitor,
+                    item,
+                )
+            });
+        }
         Ok(result)
     })
 }
@@ -427,14 +440,18 @@ fn build_diff(
     // the walk would resurface as ghost "added" paths and arm deletions the
     // user never actually saw in the diff.
     let items = diff_to_cleanup_items(&diff);
-    MonitorEndResult { diff, items }
+    MonitorEndResult {
+        diff,
+        items,
+        scope_revision: None,
+    }
 }
 
-fn trusted_monitor_paths(result: &MonitorEndResult) -> std::collections::HashSet<String> {
+fn trusted_monitor_items(result: &MonitorEndResult) -> &[crate::scanner::CleanupItem] {
     if result.diff.walk_degraded {
-        return Default::default();
+        return &[];
     }
-    result.items.iter().map(|item| item.path.clone()).collect()
+    &result.items
 }
 
 #[cfg(test)]
@@ -444,10 +461,8 @@ fn diff_and_arm(
     after_reg: Result<BTreeSet<String>, String>,
 ) -> MonitorEndResult {
     let result = build_diff(before, after, after_reg);
-    crate::scan_allow::remember(
-        crate::scan_allow::AllowScope::Monitor,
-        &trusted_monitor_paths(&result),
-    );
+    let mut eligible = trusted_monitor_items(&result).to_vec();
+    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &mut eligible);
     result
 }
 
@@ -667,9 +682,9 @@ mod tests {
         let _allow = crate::scan_allow::test_lock();
         let path = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run|Vendor".to_lowercase();
         for failed_before in [true, false] {
-            crate::scan_allow::remember(
+            crate::scan_allow::remember_for_test(
                 crate::scan_allow::AllowScope::Monitor,
-                &[path.clone()].into(),
+                &[crate::scan_allow::test_item(&path)],
             );
             let before = super::FullSnapshot {
                 fs: super::FsSnapshot::default(),
@@ -850,9 +865,9 @@ mod tests {
         assert!(e2.is_err());
         // Exercise the same scoped commit path as the Tauri commands.
         let previous = r"C:\InstallMonitorFixture\previous.exe".to_string();
-        crate::scan_allow::remember(
+        crate::scan_allow::remember_for_test(
             crate::scan_allow::AllowScope::Monitor,
-            &[previous.clone()].into(),
+            &[crate::scan_allow::test_item(&previous)],
         );
         let start_id = crate::scan_task::begin().unwrap();
         crate::scan_task::run_scoped(start_id, "monitor", super::begin)
@@ -1091,11 +1106,7 @@ mod tests {
             );
         }
         // Simulate end() arming, then gate passes.
-        let mut scanned = std::collections::HashSet::new();
-        for it in &items {
-            scanned.insert(it.path.clone());
-        }
-        crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &scanned);
+        crate::scan_allow::remember_for_test(crate::scan_allow::AllowScope::Monitor, &items);
         for it in &items {
             let d = crate::policy::gate_cleanup_item(
                 Some(&app),
@@ -1212,9 +1223,9 @@ mod tests {
         let state = tmp.join("monitor_snapshot.json");
         set_test_state_path(Some(state.clone()));
         let stale = "stale_monitor_authorization".to_string();
-        crate::scan_allow::remember(
+        crate::scan_allow::remember_for_test(
             crate::scan_allow::AllowScope::Monitor,
-            &[stale.clone()].into(),
+            &[crate::scan_allow::test_item(&stale)],
         );
         TEST_BUDGET.store(3, std::sync::atomic::Ordering::SeqCst);
         super::begin().unwrap();
@@ -1222,9 +1233,9 @@ mod tests {
             crate::scan_allow::AllowScope::Monitor,
             &stale
         ));
-        crate::scan_allow::remember(
+        crate::scan_allow::remember_for_test(
             crate::scan_allow::AllowScope::Monitor,
-            &[stale.clone()].into(),
+            &[crate::scan_allow::test_item(&stale)],
         );
         let res = super::end();
         TEST_BUDGET.store(200, std::sync::atomic::Ordering::SeqCst);

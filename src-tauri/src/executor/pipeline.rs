@@ -321,17 +321,33 @@ fn delete_planned_items_with_native(
     items: &[CleanupItem],
     native_delete: &mut impl FnMut(&str, &dyn Fn() -> bool) -> Option<(bool, String)>,
     receipt: Option<&BackupReceipt>,
+    specialty: Option<(crate::scan_allow::AllowScope, Option<u64>)>,
 ) -> DeleteOutcome {
     let mut path_results = None;
     delete_planned_items_with_io(
         items,
-        &mut |path| match receipt {
-            Some(receipt) => receipt.delete(path),
-            None => crate::fsutil::remove_tree_no_reparse(path).map_err(FilesystemDeleteError::Io),
+        &mut |path| {
+            let scoped_id = specialty
+                .map(|(scope, revision)| crate::scan_allow::scoped_file_id(scope, revision, path))
+                .transpose()
+                .map_err(FilesystemDeleteError::Unverified)?;
+            if let Some(receipt) = receipt {
+                return receipt.delete(path, scoped_id);
+            }
+            #[cfg(windows)]
+            if let Some(id) = scoped_id {
+                return crate::fsutil::remove_scanned_tree(path, id)
+                    .map_err(|error| FilesystemDeleteError::Unverified(error.to_string()));
+            }
+            crate::fsutil::remove_tree_no_reparse(path).map_err(FilesystemDeleteError::Io)
         },
         // The Windows reboot queue records a path. It cannot enforce that the
         // object still matches the backup when Windows eventually removes it.
-        &mut |path| receipt.is_none() && crate::sysops::schedule_delete_on_reboot(path),
+        &mut |path| {
+            receipt.is_none()
+                && specialty.is_none()
+                && crate::sysops::schedule_delete_on_reboot(path)
+        },
         &mut |path| {
             delete_registry_target(
                 path,
@@ -679,6 +695,25 @@ fn run_full_cleanup_before_delete(
 ) -> FullCleanupReport {
     let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     super::begin_cleanup_control();
+    let source = cleanup_source_from_opts(opts);
+    let originals;
+    let items = if let Some(scope) = source.specialty_scope() {
+        if !opts.skip_official_uninstall && !opts.dry_run {
+            return ignore_read_abort(
+                app,
+                false,
+                "specialty cleanup cannot run an uninstaller".into(),
+            );
+        }
+        originals = match crate::scan_allow::resolve_scoped_items(scope, opts.scope_revision, items)
+        {
+            Ok(items) => items,
+            Err(error) => return ignore_read_abort(app, opts.dry_run, error),
+        };
+        originals.as_slice()
+    } else {
+        items
+    };
     // One ignore-list read for the whole run: the backup and delete phases must
     // not re-read mutable global state between them.
     let ignore = match crate::ignore::load_checked() {
@@ -853,10 +888,30 @@ fn run_full_cleanup_before_delete(
     }
 
     before_delete();
+    if let Some(scope) = source.specialty_scope() {
+        if let Err(error) =
+            crate::scan_allow::resolve_scoped_items(scope, opts.scope_revision, &plan.allowed)
+        {
+            return aborted_report(
+                app,
+                backup_dir,
+                backup_verified,
+                false,
+                error,
+                false,
+                restore_point_ok,
+                restore_point_msg,
+                vec![],
+            );
+        }
+    }
     let mut del = delete_planned_items_with_native(
         &plan.allowed,
         &mut native_delete_checked,
         receipt.as_deref(),
+        source
+            .specialty_scope()
+            .map(|scope| (scope, opts.scope_revision)),
     );
     // Keep unselected parent directories when cleanup requires a backup.
     let tokens: Vec<String> = [app.name.clone(), app.publisher.clone()]
@@ -1274,6 +1329,7 @@ mod tests {
             backup_enabled: true,
             restore_point: false,
             cleanup_source: Some("uninstall".into()),
+            scope_revision: None,
         };
         let report = run_full_cleanup(&other, &[item], &opts);
         assert!(report.aborted);
@@ -1354,6 +1410,7 @@ mod tests {
                 Some((true, "native service deleted".into()))
             },
             None,
+            None,
         );
         assert_eq!(calls, 1);
         assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
@@ -1393,6 +1450,7 @@ mod tests {
                 backup_enabled: false,
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
         );
         assert_eq!(report.deleted, 0);
@@ -1494,6 +1552,7 @@ mod tests {
                 backup_enabled: false,
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
         );
         assert_eq!(report.deleted, 1, "{:?}", report.item_details);
@@ -1597,6 +1656,7 @@ mod tests {
             backup_enabled: false,
             restore_point: false,
             cleanup_source: Some("uninstall".into()),
+            scope_revision: None,
         };
         let items = std::slice::from_ref(&item);
         let blocked = run_full_cleanup(&app, items, &options);
@@ -1675,6 +1735,7 @@ mod tests {
                 backup_enabled: cfg!(windows),
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
         );
         assert!(report.aborted, "{:?}", report.item_details);
@@ -1740,6 +1801,7 @@ mod tests {
                 backup_enabled: true,
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
         );
         assert!(!report.aborted, "{:?}", report.errors);
@@ -1807,6 +1869,7 @@ mod tests {
                 backup_enabled: true,
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
             || path_mock::install_expand(&original_user, &current_machine),
         );
@@ -1907,6 +1970,7 @@ mod tests {
             backup_enabled: true,
             restore_point: false,
             cleanup_source: None,
+            scope_revision: None,
         };
         let report = run_full_cleanup_before_delete(&app, &items, &opts, || {
             std::fs::rename(&replaced, install.join("previous.bin")).unwrap();
@@ -2096,7 +2160,7 @@ mod tests {
         // the "the uninstaller already took it" shape.
         let registry = crate::test_support::registry_mutations::Spy::new();
         crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
-        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None);
+        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None, None);
         assert_eq!(
             (outcome.deleted, outcome.failed, outcome.skipped),
             (0, 0, 1)
@@ -2136,7 +2200,8 @@ mod tests {
             r"HKCU\SOFTWARE\RemovaNoSuchVendor",
             true,
         );
-        let value_outcome = delete_planned_items_with_native(&value_items, &mut |_, _| None, None);
+        let value_outcome =
+            delete_planned_items_with_native(&value_items, &mut |_, _| None, None, None);
         assert_eq!(
             (
                 value_outcome.deleted,
@@ -2162,6 +2227,7 @@ mod tests {
                 backup_enabled: false,
                 restore_point: false,
                 cleanup_source: None,
+                scope_revision: None,
             },
         );
         assert_eq!(report.deleted, 0);

@@ -23,7 +23,7 @@ import {
   riskTierLabel,
   summarizeLeftovers,
 } from "../lib/decision";
-import { summarizeCleanupPlan, summarizeScanTotal } from "../lib/cleanupPlan";
+import { cleanupItemKey, summarizeCleanupPlan, summarizeScanTotal } from "../lib/cleanupPlan";
 import { degradedText } from "../lib/degradedText";
 import { groupScannedItems, normalizeScopedScan } from "../lib/scopedScan";
 import type { CleanupItem, FullCleanupReport, InstalledApp, ScopedScanResult } from "../types";
@@ -83,6 +83,7 @@ export function ScopedScanPanel({
   const [degraded, setDegraded] = useState<string[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const scopeRevision = useRef<number | undefined>(undefined);
   /** Kept on screen after the toast fades so failures stay actionable. */
   const [result, setResult] = useState<FullCleanupReport | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
@@ -150,11 +151,12 @@ export function ScopedScanPanel({
         (r: ScopedScanResult) => r.items.length,
       );
       if (!isCurrentScanRound(round)) return;
+      scopeRevision.current = found.scope_revision;
       setItems(found.items);
       setOmitted(found.omitted);
       setDegraded(found.degraded);
       setLastScanCount(found.items.length);
-      setSelected(new Set(found.items.filter(defaultSelectable).map((it) => it.path)));
+      setSelected(new Set(found.items.filter(defaultSelectable).map(cleanupItemKey)));
       // a degraded or capped scan must not read as a complete one —
       // the toast was the only part a screen reader actually announced.
       const partial = found.degraded.length > 0;
@@ -230,6 +232,7 @@ export function ScopedScanPanel({
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
         cleanup_source: cleanupSource,
+        ...(scopeRevision.current !== undefined && { scope_revision: scopeRevision.current }),
       });
       onLastReport(report);
       const current = isCurrentScanRound(round);
@@ -238,7 +241,8 @@ export function ScopedScanPanel({
       if (!current) return false;
       setResult(report);
       if (report.aborted) onError(message);
-      if (!report.aborted) {
+      // Keep the authorized scan live when there are failed rows to retry.
+      if (!report.aborted && report.failed === 0) {
         await runScan(true);
       }
       return cleanupAccomplishedSomething(report);
@@ -263,7 +267,7 @@ export function ScopedScanPanel({
   const cleanSelected = async () => {
     if (!items || selected.size === 0 || busy) return;
     const round = nextScanRound();
-    const picked = items.filter((it) => selected.has(it.path));
+    const picked = items.filter((it) => selected.has(cleanupItemKey(it)));
     const riskNote = formatRiskNote(buildCleanupRiskBits(picked, L), L.riskNoteTitle);
     // only one sentence carries the item count — `riskTierPrefix` states
     // the risk level, `cleanupConfirmOptionalBackup` states how many items.
@@ -367,7 +371,7 @@ export function ScopedScanPanel({
                     // "select all" means the same thing here as on the
                     // orphan page — keep-class rows stay unchecked.
                     .filter((it) => bucketItem(it) !== "keep")
-                    .map((it) => it.path),
+                    .map(cleanupItemKey),
                 ),
               )
             }
@@ -461,12 +465,12 @@ export function ScopedScanPanel({
           >
             <input
               type="checkbox"
-              checked={selected.has(row.item.path)}
+              checked={selected.has(cleanupItemKey(row.item))}
               onChange={(e) => {
                 setSelected((prev) => {
                   const n = new Set(prev);
-                  if (e.target.checked) n.add(row.item.path);
-                  else n.delete(row.item.path);
+                  if (e.target.checked) n.add(cleanupItemKey(row.item));
+                  else n.delete(cleanupItemKey(row.item));
                   return n;
                 });
               }}

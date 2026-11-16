@@ -41,7 +41,8 @@ export function normalizeIdleScan(raw: IdleScanResult | IdleApp[] | null | undef
  */
 export function normalizeScopedScan(raw: ScopedScanResult | CleanupItem[] | null | undefined): ScopedScanResult {
   if (Array.isArray(raw)) return { items: raw, omitted: 0, degraded: ["legacy_payload"] };
-  return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0, degraded: raw?.degraded ?? [] };
+  return { items: raw?.items ?? [], omitted: raw?.omitted ?? 0, degraded: raw?.degraded ?? [],
+    ...(raw?.scope_revision !== undefined && { scope_revision: raw.scope_revision }) };
 }
 
 export type ScannedGroup = { bucket: string; items: CleanupItem[] };

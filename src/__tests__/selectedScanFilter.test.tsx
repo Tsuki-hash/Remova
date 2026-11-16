@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ it.each(["zh", "en"] as const)("selects the whole filtered result and preserves 
   setLang(lang);
   const extra = { ...item("HKCU\\Software\\review", "registry", "registry"), risk: "medium" as const };
   function Harness() {
-    const [selected, setSelected] = useState(new Set(items.map(item => item.path)));
+    const [selected, setSelected] = useState(new Set(items.map(cleanupItemKey)));
     return <ScanLeftoversView scan={{ app_name: "sample", items: [...items, extra] }} scanning={false}
       selectedPaths={selected} evidence={null} aiNotes={{}} orphanLabel="orphans" onEvidence={() => {}}
       onTogglePath={() => {}} kindFilter="registry" filterApp={app}
@@ -94,7 +95,7 @@ it("renders evidence in the active language after switching a memoized row", () 
 it.each(["zh", "en"] as const)("keeps hidden selection and combines Selected only with the type filter in %s", lang => {
   setLang(lang);
   const toggle = vi.fn();
-  render(<ScanLeftoversView scan={{ app_name: "sample", items }} scanning={false} selectedPaths={new Set([items[0]!.path])}
+  render(<ScanLeftoversView scan={{ app_name: "sample", items }} scanning={false} selectedPaths={new Set([cleanupItemKey(items[0]!)])}
     evidence={null} aiNotes={{}} orphanLabel="orphans" onTogglePath={toggle} onEvidence={() => {}}
     kindFilter="registry" filterApp={app} onClearKindFilter={() => {}} />);
   expect(screen.getByText(t().scanSelectionScope(1, 1, 1))).toBeTruthy();
@@ -108,7 +109,7 @@ it.each(["zh", "en"] as const)("keeps hidden selection and combines Selected onl
 
 it("keeps the exit toggle after unchecking the final visible selection", () => {
   function Harness() {
-    const [selected, setSelected] = useState(new Set([items[0]!.path]));
+    const [selected, setSelected] = useState(new Set([cleanupItemKey(items[0]!)]));
     return <ScanLeftoversView scan={{ app_name: "sample", items }} scanning={false} selectedPaths={selected}
       evidence={null} aiNotes={{}} orphanLabel="orphans" onEvidence={() => {}}
       onTogglePath={path => setSelected(previous => { const next = new Set(previous); next.delete(path); return next; })} />;

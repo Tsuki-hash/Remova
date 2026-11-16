@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { OrphanPage } from "../components/OrphanPage";
@@ -36,7 +37,7 @@ it.each(["zh", "en"] as const)("uses one group select-all action for safe and re
   render(<OrphanOriginGroups groups={groups} selectedPaths={new Set()} onToggle={() => {}} onToggleMany={onToggleMany} />);
   const select = screen.getByRole("button", { name: t().orphanSelectAll });
   fireEvent.click(select);
-  expect(onToggleMany).toHaveBeenCalledWith([items[0]!.path, items[1]!.path], true);
+  expect(onToggleMany).toHaveBeenCalledWith(items.slice(0,2).map(cleanupItemKey), true);
   fireEvent.click(screen.getAllByRole("button", { name: t().orphanExpandEvidence })[0]!);
   expect(onToggleMany).toHaveBeenCalledOnce();
 });

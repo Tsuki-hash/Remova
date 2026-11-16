@@ -4,6 +4,7 @@
 // Page internals are covered by their own real-component suites:
 // softwarePageIdentity (SoftwarePage), moreReleases + moreExportReport (MorePage),
 // orphanSummary (OrphanPage), manageListPage (ManageListPage).
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
@@ -429,7 +430,7 @@ describe("App orchestration", () => {
       software().setEvidence("shared");
       software().setAiRisk("high");
       software().setAiReportNote("old");
-      software().setSelectedPaths(new Set([scan.items[0]!.path]));
+      software().setSelectedPaths(new Set([cleanupItemKey(scan.items[0]!)]));
       software().setKindFilter("registry");
       software().setRiskFilter("keep");
       software().setShowBatchSummary(true);
@@ -596,7 +597,7 @@ describe("App orchestration", () => {
     }
     else expect(software().scan?.items.length).toBe(state === "empty" ? 0 : scan.items.length);
     if (state === "remaining") {
-      act(() => software().setSelectedPaths(new Set([scan.items[0]!.path])));
+      act(() => software().setSelectedPaths(new Set([cleanupItemKey(scan.items[0]!)])));
       act(() => software().onCleanup());
       await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledTimes(2));
       expect(native.fullCleanup).toHaveBeenLastCalledWith(expect.anything(), expect.anything(),
