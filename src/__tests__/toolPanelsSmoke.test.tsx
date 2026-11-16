@@ -15,16 +15,28 @@ afterEach(cleanup);
 describe("MonitorPanel", () => {
   it("stops tracking from the active tool without reopening the directory", () => {
     const L = t();
-    const onStop = vi.fn();
+    const onToggle = vi.fn();
+    const actions = { onToggle, onToCleanup: vi.fn(), onDismiss: vi.fn() };
     const { rerender } = render(
-      <MonitorPanel diff={{ added_files: [], added_reg_values: [] }} monitoring
-        onStop={onStop} onToCleanup={vi.fn()} onDismiss={vi.fn()} />,
+      <MonitorPanel diff={null} monitoring {...actions} />,
     );
+    expect(screen.getByRole("status").textContent).toBe(L.monitorActive);
+    expect(screen.queryByRole("button", { name: L.monitorToCleanup })).toBeNull();
+    expect(screen.queryByRole("group", { name: L.monitorDiff })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: L.monitorStop }));
-    expect(onStop).toHaveBeenCalledOnce();
-    rerender(<MonitorPanel diff={{ added_files: [], added_reg_values: [] }} monitoring stopping
-      onStop={onStop} onToCleanup={vi.fn()} onDismiss={vi.fn()} />);
+    expect(onToggle).toHaveBeenCalledOnce();
+    rerender(<MonitorPanel diff={null} monitoring stopping {...actions} />);
     expect(screen.getByRole("button", { name: L.monitorStop })).toHaveProperty("disabled", true);
+    expect(screen.queryByText(L.monitorActive)).toBeNull();
+  });
+
+  it("offers a retry after tracking could not start", () => {
+    const L = t();
+    const onToggle = vi.fn();
+    render(<MonitorPanel diff={null} onToggle={onToggle} onToCleanup={vi.fn()} onDismiss={vi.fn()} />);
+    expect(screen.getByRole("status").textContent).toBe(L.monitorStartHint);
+    fireEvent.click(screen.getByRole("button", { name: L.monitorStartAction }));
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 
   it("shows degradation and blocks cleanup even when rows exist", () => {
@@ -36,22 +48,20 @@ describe("MonitorPanel", () => {
     fireEvent.click(btn);
     expect(onToCleanup).not.toHaveBeenCalled();
   });
-  it("shows empty state and disables cleanup CTA", () => {
-    const onToCleanup = vi.fn();
-    const { container } = render(
+  it("shows the empty result without a cleanup action or an empty list to focus", () => {
+    const L = t();
+    render(
       <MonitorPanel
         diff={{ added_files: [], added_reg_values: [] }}
         monitoring={false}
-        onToCleanup={onToCleanup}
+        onToCleanup={vi.fn()}
         onDismiss={() => {}}
         onClose={() => {}}
       />,
     );
-    expect(screen.getByText(/暂无安装变更|No install changes/)).toBeTruthy();
-    const btn = within(container).getByRole("button", { name: "转入清理列表" });
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(btn);
-    expect(onToCleanup).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toBe(L.monitorEmpty);
+    expect(screen.queryByRole("button", { name: L.monitorToCleanup })).toBeNull();
+    expect(screen.queryByRole("group", { name: L.monitorDiff })).toBeNull();
   });
 
   it("lists diff rows and enables cleanup", () => {
@@ -59,7 +69,6 @@ describe("MonitorPanel", () => {
     const { container } = render(
       <MonitorPanel
         diff={{ added_files: ["C:\\new\\a.dll"], added_reg_values: ["HKCU\\x"] }}
-        monitoring
         onToCleanup={onToCleanup}
         onDismiss={() => {}}
       />,

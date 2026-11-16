@@ -11,7 +11,7 @@ import { ScopedScanPanel } from "./ScopedScanPanel";
 import { BrokenInstallsPanel } from "./BrokenInstallsPanel";
 import { FirewallRulesPanel } from "./FirewallRulesPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
-import { api, type IgnoreLists } from "../lib/api";
+import { api, type IgnoreLists, type MonitorDiff } from "../lib/api";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { cssStyles as css } from "../styles";
@@ -58,7 +58,7 @@ export function MorePage({
   selected: InstalledApp | null;
   monitoring: boolean;
   monitorSnapshotBusy?: boolean;
-  monitorDiff: { added_files: string[]; added_reg_values: string[] } | null;
+  monitorDiff: MonitorDiff | null;
   lastReport: FullCleanupReport | null;
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
@@ -489,10 +489,10 @@ export function MorePage({
       )}
       {showMonitorPanel && (
         <MonitorPanel
-          diff={monitorDiff ?? { added_files: [], added_reg_values: [] }}
+          diff={monitorDiff}
           monitoring={monitoring}
           stopping={monitorSnapshotBusy}
-          onStop={() => void onToggleMonitor()}
+          onToggle={onToggleMonitor}
           onToCleanup={onMonitorToCleanup}
           onDismiss={() => {
             onDismissMonitor();
