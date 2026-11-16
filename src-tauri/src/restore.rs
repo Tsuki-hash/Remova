@@ -172,8 +172,12 @@ fn restore_with_before_copy(
     #[cfg(windows)]
     let _session_pins = crate::fsutil::pin_local_scan_path(session).map_err(|e| e.to_string())?;
     #[cfg(windows)]
+    let files_need_newer_windows = !map.is_empty() && !publish::automatic_file_restore_supported();
+    #[cfg(not(windows))]
+    let files_need_newer_windows = false;
+    #[cfg(windows)]
     let authenticated = inventory
-        .filter(|_| !map.is_empty())
+        .filter(|_| !map.is_empty() && !files_need_newer_windows)
         .map(|inventory| crate::path_seal::restore_stage().map(|stage| (inventory, stage)))
         .transpose()?;
     #[cfg(windows)]
@@ -188,7 +192,9 @@ fn restore_with_before_copy(
     )> = None;
 
     let files_root = session.join("files");
-    if !map.is_empty() {
+    if files_need_newer_windows {
+        messages.push("automatic file restore requires newer Windows".into());
+    } else if !map.is_empty() {
         // The backup map is keyed by a hash-shaped name, so its natural order
         // scatters files from the same destination directory. Sort by the
         // original path first so the parent-pin reuse below actually hits.
@@ -352,6 +358,13 @@ fn restore_with_before_copy(
                 };
                 match publish::publish(source, parent, name, &receipts, rel) {
                     Ok(()) => messages.push(format!("restored {original}")),
+                    Err(
+                        publish::Failure::Io(error) | publish::Failure::PartialDirectory(error),
+                    ) if error.kind() == std::io::ErrorKind::Unsupported => {
+                        messages.push(format!(
+                            "automatic file restore unavailable for target: {original}"
+                        ));
+                    }
                     Err(publish::Failure::Occupied) => {
                         messages.push(format!("skipped existing restore target: {original}"));
                     }
@@ -927,6 +940,8 @@ fn session_path(name: &str) -> Result<PathBuf, String> {
 pub struct RestorePreviewEntry {
     pub target: String,
     pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_entry: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -939,6 +954,7 @@ pub struct RestorePreview {
     pub resumable: usize,
     pub unavailable: usize,
     pub manual_file_restore: bool,
+    pub files_need_newer_windows: bool,
     pub entries: Vec<RestorePreviewEntry>,
     pub size_kb: Option<u64>,
 }
@@ -983,7 +999,13 @@ fn preview_session_with_cancel(
     #[cfg(windows)]
     let receipts = retry::Receipts::new(&inputs.seal);
     #[cfg(windows)]
-    let manual_file_restore = !inputs.map.is_empty() && inputs.inventory.is_none();
+    let files_need_newer_windows =
+        !inputs.map.is_empty() && !publish::automatic_file_restore_supported();
+    #[cfg(not(windows))]
+    let files_need_newer_windows = false;
+    #[cfg(windows)]
+    let manual_file_restore =
+        !inputs.map.is_empty() && (files_need_newer_windows || inputs.inventory.is_none());
     #[cfg(not(windows))]
     let manual_file_restore = false;
     let mut preview = RestorePreview {
@@ -999,6 +1021,7 @@ fn preview_session_with_cancel(
         resumable: 0,
         unavailable: 0,
         manual_file_restore,
+        files_need_newer_windows,
         entries: vec![],
     };
     for (rel, target) in inputs.map {
@@ -1049,7 +1072,11 @@ fn preview_session_with_cancel(
         preview.resumable += usize::from(status == "resumable");
         preview.unavailable += usize::from(matches!(status, "blocked" | "missing" | "unverified"));
         if preview.entries.len() < 200 {
-            preview.entries.push(RestorePreviewEntry { target, status });
+            preview.entries.push(RestorePreviewEntry {
+                target,
+                status,
+                backup_entry: manual_file_restore.then(|| format!("files\\{rel}")),
+            });
         }
     }
     Ok(preview)
@@ -2260,6 +2287,107 @@ mod tests {
             .find(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .expect("the directory payload is published")
             .path()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unavailable_file_publication_preserves_live_files_and_authenticated_backups() {
+        use crate::scanner::ItemKind;
+        use publish::{with_file_support_failure, FileSupportFailure};
+
+        let root = crate::test_support::TempDir::new("restore-unsupported-publication");
+        let _store = crate::path_seal::TestStore::new(root.join("seals"));
+        let live = root.subdir("live");
+        let file = live.join("file.txt");
+        let replaced = live.join("existing.txt");
+        let directory = live.join("directory");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("child.txt"), b"original child").unwrap();
+        fs::write(&file, b"original file").unwrap();
+        fs::write(&replaced, b"original existing").unwrap();
+        let session = root.subdir("1700000000_unsupported");
+        let (ok, failed, errors) = crate::backup::backup_items(
+            &[
+                restore_fixture_item(&file, ItemKind::File),
+                restore_fixture_item(&replaced, ItemKind::File),
+                restore_fixture_item(&directory, ItemKind::Dir),
+            ],
+            &session,
+        );
+        assert_eq!((ok, failed), (3, 0), "{errors:?}");
+
+        let inputs = validate_session(&session, || false).unwrap();
+        let payload = |target: &Path| {
+            let (rel, _) = inputs
+                .map
+                .iter()
+                .find(|(_, path)| Path::new(path) == target)
+                .unwrap();
+            session.join("files").join(rel)
+        };
+        let backed_file = payload(&file);
+        let backed_child = payload(&directory).join("child.txt");
+        let backed_existing = payload(&replaced);
+        fs::remove_file(&file).unwrap();
+        fs::rename(&directory, root.join("saved-original")).unwrap();
+        fs::write(&replaced, b"new user data").unwrap();
+
+        let assert_preserved = || {
+            assert!(!file.exists() && !directory.exists());
+            assert_eq!(fs::read(&replaced).unwrap(), b"new user data");
+            assert_eq!(fs::read(&backed_file).unwrap(), b"original file");
+            assert_eq!(fs::read(&backed_child).unwrap(), b"original child");
+            assert_eq!(fs::read(&backed_existing).unwrap(), b"original existing");
+        };
+        with_file_support_failure(FileSupportFailure::LegacyWindows, || {
+            let preview = preview_session("1700000000_unsupported", &session).unwrap();
+            assert!(preview.manual_file_restore && preview.files_need_newer_windows);
+            assert_eq!(preview.unavailable, 3);
+            assert!(preview.entries.iter().all(|entry| {
+                entry.status == "unverified"
+                    && entry
+                        .backup_entry
+                        .as_ref()
+                        .is_some_and(|rel| session.join(rel).exists())
+            }));
+            let messages =
+                restore_with_before_copy(&session, |_| panic!("file restore must not start"))
+                    .unwrap();
+            assert_eq!(messages, ["automatic file restore requires newer Windows"]);
+            assert_preserved();
+        });
+
+        with_file_support_failure(FileSupportFailure::DispositionUnsupported, || {
+            let messages = restore_session(&session).unwrap();
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|message| message
+                        .starts_with("automatic file restore unavailable for target: "))
+                    .count(),
+                2,
+                "{messages:?}"
+            );
+            assert_preserved();
+        });
+
+        let messages = restore_session(&session).unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.starts_with("restored "))
+                .count(),
+            2,
+            "{messages:?}"
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"original file");
+        assert_eq!(
+            fs::read(directory.join("child.txt")).unwrap(),
+            b"original child"
+        );
+        assert_eq!(fs::read(&replaced).unwrap(), b"new user data");
+        assert_eq!(fs::read(&backed_file).unwrap(), b"original file");
+        assert_eq!(fs::read(&backed_child).unwrap(), b"original child");
     }
 
     #[cfg(windows)]

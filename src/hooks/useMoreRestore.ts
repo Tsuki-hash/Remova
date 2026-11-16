@@ -23,6 +23,7 @@ const restoreResultPrefixes = [
   ["restore directory interrupted: ", "restoreDirectoryInterrupted", false],
   ["restore directory kept conflicts: ", "restoreDirectoryConflicts", false],
   ["restore could not read targets: ", "restoreTargetsUnreadable", false],
+  ["automatic file restore unavailable for target: ", "restoreManualFilesAtDestination", false],
   ["restore failed for ", "restoreFileFailed", false],
   ["skipped existing restore target: ", "restoreTargetOccupied", false],
   ["skipped backup entry with no recorded digest: ", "restoreSkippedNoDigest", false],
@@ -56,6 +57,8 @@ function describeRestoreResult(message: string, L: Strings) {
     return { text: `${summary}: ${message.slice(prefix.length)}`, complete };
   }
   switch (message) {
+    case "automatic file restore requires newer Windows":
+      return { text: L.restoreManualFilesOnWindows, complete: false };
     case "restore cancelled":
       return { text: L.restoreFilesCancelled, complete: false };
     case "restore cancelled before remaining PATH entries":
@@ -231,12 +234,14 @@ export function useMoreRestore(onError: (msg: string) => void) {
       if (pending.cancelled) return;
       setRestorePreview(preview);
       setPreviewError(null);
+      if (preview.manual_file_restore && !preview.registry && !preview.path_entries) return;
+      const manualHelp = preview.files_need_newer_windows ? L.restoreManualFilesOnWindows : L.restoreManualFiles;
       const ok = await requestConfirm({
         title: L.restore,
         message: [L.restoreConfirm(restorePick),
           preview.existing ? L.restoreConflict(preview.existing) : "",
           preview.resumable ? L.restoreResumable(preview.resumable) : "",
-          preview.manual_file_restore ? L.restoreManualFiles : preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
+          preview.manual_file_restore ? manualHelp : preview.unavailable ? L.restoreUnavailable(preview.unavailable) : ""].filter(Boolean).join("\n"),
         confirmLabel: L.restoreRun,
         danger: true,
       });

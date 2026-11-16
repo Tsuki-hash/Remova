@@ -108,8 +108,9 @@ export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
   existing: number; resumable?: number; unavailable: number;
   manual_file_restore?: boolean;
+  files_need_newer_windows?: boolean;
   size_kb?: number | null;
-  entries: { target: string; status: "available" | "existing" | "resumable" | "missing" | "blocked" | "unverified" }[];
+  entries: { target: string; status: "available" | "existing" | "resumable" | "missing" | "blocked" | "unverified"; backup_entry?: string }[];
 };
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

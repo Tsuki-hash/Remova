@@ -107,7 +107,7 @@ NSIS installs Remova for the current user. Run setup or the uninstaller normally
 
 Run Remova as administrator to clean machine-wide apps, the machine PATH, services and firewall rules, or to restore into protected directories. Without elevation, these items fail individually and report the reason.
 
-Automatic restore verifies the whole RSEAL2 backup session before writing. Run Remova elevated under the account that created the backup, on the same Windows installation.
+Automatic restore verifies the whole RSEAL2 backup session before writing. Run Remova elevated under the account that created the backup, on the same Windows installation. Automatic file restore requires Windows 10 version 1709 or later. On earlier versions, use the paths shown in the preview to locate and copy files from the backup folder.
 
 > **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
 

@@ -598,6 +598,39 @@ it("explains manual file recovery and permits independently verified snapshots",
   expect(screen.getByRole("button", { name: t().restoreRun })).toHaveProperty("disabled", false);
 });
 
+it.each(["zh", "en"] as const)("shows older-Windows recovery guidance and the backup location in %s", lang => {
+  setLang(lang);
+  const folder = "C:\\Backup\\session";
+  const onOpenFolder = vi.fn();
+  const L = t();
+  render(<RestorePanel sessions={[{ name: "older-backup", folder, size_kb: null, created_at: "1700000000", sealed: true }]}
+    pick="older-backup" setPick={vi.fn()} busy={false} msgs={[]} onRun={vi.fn()} onDelete={vi.fn()}
+    onClose={vi.fn()} onOpenFolder={onOpenFolder}
+    preview={{ name: "older-backup", files: 1, registry: 0, path_entries: 0, existing: 0, unavailable: 1,
+      manual_file_restore: true, files_need_newer_windows: true,
+      entries: [{ target: "C:\\Example\\my-file", status: "unverified", backup_entry: "files\\stored-file" }] }} />);
+  expect(screen.getByText(L.restoreManualFilesOnWindows)).toBeTruthy();
+  expect(screen.getByText(L.restoreBackupEntry("files\\stored-file"))).toBeTruthy();
+  expect(screen.getByRole("button", { name: L.restoreRun })).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(L.restoreOpenFolder) }));
+  expect(onOpenFolder).toHaveBeenCalledWith(folder);
+});
+
+it("keeps manual recovery guidance in the result after restoring other settings", async () => {
+  native.previewRestore.mockResolvedValue({ name: "older-backup", files: 1, registry: 0, path_entries: 1,
+    existing: 0, unavailable: 1, manual_file_restore: true, files_need_newer_windows: true, entries: [] });
+  native.restoreSessionByName.mockResolvedValue([
+    "automatic file restore requires newer Windows", "PATH scope already matches backup: user",
+  ]);
+  const { result } = renderVisibleRestore();
+  await act(async () => { await result.current.loadRestore(); });
+  await act(async () => { await result.current.runRestore(); });
+  expect(requestConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining(t().restoreManualFilesOnWindows) }));
+  expect(result.current.restoreMsgs).toContain(t().restoreManualFilesOnWindows);
+  expect(result.current.restoreMsgs).toContain(`${t().restoreAlreadyPresent}: user`);
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
 it("locks selection and deletion during confirmation and releases the lock on cancellation", async () => {
   native.backupSessions.mockResolvedValueOnce(["older-backup", "other"].map(name =>
     ({ name, size_kb: 1, created_at: "", sealed: true })));

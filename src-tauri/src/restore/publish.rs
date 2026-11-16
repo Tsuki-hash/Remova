@@ -19,7 +19,8 @@ use windows::Wdk::Storage::FileSystem::{
     NTCREATEFILE_CREATE_OPTIONS,
 };
 use windows::Win32::Foundation::{
-    HANDLE, NTSTATUS, STATUS_FILE_IS_A_DIRECTORY, STATUS_NOT_A_DIRECTORY, STATUS_NO_SUCH_FILE,
+    HANDLE, NTSTATUS, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
+    STATUS_INVALID_INFO_CLASS, STATUS_NOT_A_DIRECTORY, STATUS_NOT_SUPPORTED, STATUS_NO_SUCH_FILE,
     STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
     STATUS_REPARSE_POINT_ENCOUNTERED, UNICODE_STRING,
 };
@@ -219,14 +220,66 @@ fn commit_file(file: &File, name: &OsStr) -> io::Result<()> {
     }
 }
 
+/// The read-only preview can detect versions predating FileDispositionInformationEx.
+/// Publication itself still checks the result on the actual destination volume.
+pub(super) fn automatic_file_restore_supported() -> bool {
+    #[cfg(test)]
+    if TEST_FILE_SUPPORT_FAILURE.get() == Some(FileSupportFailure::LegacyWindows) {
+        return false;
+    }
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| windows_version().is_none_or(|version| version >= (10, 0, 16299)))
+}
+
+fn windows_version() -> Option<(u32, u32, u32)> {
+    use windows::core::{s, w};
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+
+    // RtlGetVersion reports the actual build even without an OS compatibility manifest.
+    type GetVersion = unsafe extern "system" fn(*mut OSVERSIONINFOW) -> NTSTATUS;
+    let mut version = OSVERSIONINFOW {
+        dwOSVersionInfoSize: std::mem::size_of::<OSVERSIONINFOW>() as u32,
+        ..Default::default()
+    };
+    let status = unsafe {
+        let module = GetModuleHandleW(w!("ntdll.dll")).ok()?;
+        let proc = GetProcAddress(module, s!("RtlGetVersion"))?;
+        let get_version: GetVersion = std::mem::transmute(proc);
+        get_version(&mut version)
+    };
+    status.is_ok().then_some((
+        version.dwMajorVersion,
+        version.dwMinorVersion,
+        version.dwBuildNumber,
+    ))
+}
+
+fn disposition_result(status: NTSTATUS) -> io::Result<()> {
+    if matches!(
+        status,
+        STATUS_INVALID_INFO_CLASS | STATUS_NOT_SUPPORTED | STATUS_INVALID_DEVICE_REQUEST
+    ) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "restore destination lacks safe file publication",
+        ));
+    }
+    nt_result(status)
+}
+
 fn keep_published_entry(file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    if TEST_FILE_SUPPORT_FAILURE.get() == Some(FileSupportFailure::DispositionUnsupported) {
+        return disposition_result(STATUS_INVALID_INFO_CLASS);
+    }
     let info = FILE_DISPOSITION_INFORMATION_EX {
         Flags: FILE_DISPOSITION_ON_CLOSE,
     };
     let mut status = IO_STATUS_BLOCK::default();
     // Remove the on-close flag only after the exclusive handle has renamed
     // the fully prepared object. A process exit before this point is safe to retry.
-    nt_result(unsafe {
+    disposition_result(unsafe {
         NtSetInformationFile(
             HANDLE(file.as_raw_handle()),
             &mut status,
@@ -235,6 +288,33 @@ fn keep_published_entry(file: &File) -> io::Result<()> {
             FileDispositionInformationEx,
         )
     })
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileSupportFailure {
+    LegacyWindows,
+    DispositionUnsupported,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FILE_SUPPORT_FAILURE: std::cell::Cell<Option<FileSupportFailure>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn with_file_support_failure<T>(
+    failure: FileSupportFailure,
+    work: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<FileSupportFailure>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_FILE_SUPPORT_FAILURE.set(self.0);
+        }
+    }
+    let _reset = Reset(TEST_FILE_SUPPORT_FAILURE.replace(Some(failure)));
+    work()
 }
 
 pub(super) fn discard_temporary_file(file: &File) {

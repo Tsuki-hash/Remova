@@ -207,7 +207,9 @@ export function RestorePanel({
             {selectedPreview.existing > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreConflict(selectedPreview.existing)}</p>}
             {!!selectedPreview.resumable && <p style={css.muted}>{L.restoreResumable(selectedPreview.resumable)}</p>}
             {selectedPreview.manual_file_restore
-              ? <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreManualFiles}</p>
+              ? <p role="status" style={{ color: "var(--warn-ink)", margin: "6px 0" }}>
+                {selectedPreview.files_need_newer_windows ? L.restoreManualFilesOnWindows : L.restoreManualFiles}
+              </p>
               : selectedPreview.unavailable > 0 && <p style={{ color: "var(--warn-ink)", margin: "6px 0" }}>{L.restoreUnavailable(selectedPreview.unavailable)}</p>}
             <p style={{ ...css.muted, fontSize: 12, lineHeight: 1.5, margin: "6px 0" }}>{L.restorePreviewHint}</p>
             <details open={selectedPreview.existing > 0 || !!selectedPreview.resumable || selectedPreview.unavailable > 0} style={{ marginTop: 8 }}>
@@ -216,7 +218,10 @@ export function RestorePanel({
               <ul style={{ listStyle: "none", margin: "6px 0", padding: 0, maxHeight: 220, overflow: "auto" }}>
                 {previewEntries.map((entry, index) => <li key={`${entry.target}-${index}`} style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "6px 8px", borderBottom: "1px solid var(--border)",
                   borderLeft: entry.status === "available" ? undefined : "3px solid var(--warn-ink)", background: entry.status === "available" ? undefined : "var(--surface-2)" }}>
-                  <span style={{ flex: "1 1 240px", overflowWrap: "anywhere", fontFamily: "var(--mono)", fontSize: 12 }}>{entry.target}</span>
+                  <span style={{ flex: "1 1 240px", overflowWrap: "anywhere", fontFamily: "var(--mono)", fontSize: 12 }}>
+                    {entry.target}
+                    {entry.backup_entry && <span style={{ display: "block", color: "var(--muted)" }}>{L.restoreBackupEntry(entry.backup_entry)}</span>}
+                  </span>
                   <span style={{ color: entry.status === "available" ? "var(--muted)" : "var(--warn-ink)", fontWeight: entry.status === "available" ? 400 : 650 }}>
                     {targetLabels[entry.status]}
                   </span>
