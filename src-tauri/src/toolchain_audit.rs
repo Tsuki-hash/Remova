@@ -52,7 +52,7 @@ pub struct SdkProbe {
     /// `dotnet` | `rustup` | `java`
     pub tool: String,
     pub present: bool,
-    /// First line of the tool's own version output (empty when absent).
+    /// Resolved executable path (empty when the tool is absent from PATH).
     pub detail: String,
 }
 
@@ -77,19 +77,15 @@ const CONSUMER_DEPTH: usize = 7;
 /// bounded search effectively unbounded.
 const CONSUMER_VISIT_BUDGET: usize = 200_000;
 
+#[cfg(windows)]
 fn vswhere_path() -> Option<std::path::PathBuf> {
-    #[cfg(windows)]
-    {
-        let pf86 = std::env::var_os("ProgramFiles(x86)")
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(std::path::PathBuf::from(r"C:\Program Files (x86)")))?;
-        let p = pf86.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
-        p.is_file().then_some(p)
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
+    let root = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramFilesX86)?;
+    Some(root.join(r"Microsoft Visual Studio\Installer\vswhere.exe"))
+}
+
+#[cfg(not(windows))]
+fn vswhere_path() -> Option<std::path::PathBuf> {
+    None
 }
 
 /// `is_dir` for directory workloads (MSVC/MSBuild); devenv.exe is a file, so
@@ -228,152 +224,21 @@ pub fn find_consumers(roots: &[String]) -> ConsumerSearchResult {
     result
 }
 
-/// Directories an SDK probe may execute a program from. PATH is user-writable:
-/// resolving `dotnet` to a first match under the current directory or a temp
-/// folder and then running it would execute untrusted code just by opening a
-/// read-only panel. Only OS/vendor install roots qualify.
-fn trusted_probe_root(path: &std::path::Path) -> bool {
-    let Some(raw) = path.to_str() else {
-        return false;
-    };
-    if !crate::fsutil::is_local_drive_path(raw) || crate::fsutil::is_reparse_point(path) {
-        return false;
-    }
-    let normalized = crate::fsutil::path_key(path).unwrap_or_default();
-    if normalized.is_empty() {
-        return false;
-    }
-    let mut roots: Vec<String> = Vec::new();
-    for env in [
-        "SystemRoot",
-        "ProgramFiles",
-        "ProgramFiles(x86)",
-        "ProgramData",
-    ] {
-        if let Some(value) = std::env::var_os(env) {
-            if let Some(key) = crate::fsutil::path_key(std::path::Path::new(&value)) {
-                roots.push(key);
-            }
-        }
-    }
-    for fallback in [
-        r"c:\windows",
-        r"c:\program files",
-        r"c:\program files (x86)",
-    ] {
-        roots.push(fallback.to_string());
-    }
-    roots
-        .iter()
-        .any(|root| normalized == *root || normalized.starts_with(&format!("{root}\\")))
-}
-
-/// Probe one SDK tool via PATH resolution (`where`) and its own version flag.
-/// Read-only; a tool that resolves but fails to run reports "present" with
-/// the error as detail — absence is only ever claimed from PATH resolution.
+/// The SDK audit reports the resolved local file without starting it.
 #[cfg(windows)]
-fn probe_sdk(tool: &str, version_arg: &str) -> SdkProbe {
-    let mut where_cmd = std::process::Command::new(crate::regops::sys_tool("where.exe"));
-    where_cmd.arg(tool);
-    let resolved = crate::bounded_cmd::run_bounded(
-        where_cmd,
-        crate::bounded_cmd::PROBE_TIMEOUT,
-        crate::bounded_cmd::PROBE_OUTPUT_CAP,
-    );
-    let (stdout, success) = match resolved {
-        crate::bounded_cmd::BoundedOutput::Finished {
-            success, stdout, ..
-        } => (stdout, success),
-        // A hung or cancelled `where` must not look like "absent": report the
-        // real cause so the panel can say the probe did not finish.
-        crate::bounded_cmd::BoundedOutput::TimedOut => {
-            return SdkProbe {
-                tool: tool.into(),
-                present: false,
-                detail: "path lookup timed out".into(),
-            }
-        }
-        crate::bounded_cmd::BoundedOutput::Failed(e) => {
-            return SdkProbe {
-                tool: tool.into(),
-                present: false,
-                detail: format!("path lookup failed: {e}"),
-            }
-        }
-    };
-    if !success {
-        return SdkProbe {
-            tool: tool.into(),
-            present: false,
-            detail: String::new(),
-        };
-    }
-    let candidates: Vec<String> = stdout
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect();
-    if candidates.is_empty() {
-        return SdkProbe {
-            tool: tool.into(),
-            present: false,
-            detail: String::new(),
-        };
-    }
-    // The first match may live anywhere on PATH, including the working
-    // directory. Report presence from PATH, but only execute a candidate that
-    // sits under a trusted install root.
-    let executable = candidates
-        .iter()
-        .find(|candidate| trusted_probe_root(std::path::Path::new(candidate)));
-    let Some(first) = executable else {
-        return SdkProbe {
-            tool: tool.into(),
-            present: true,
-            detail: format!(
-                "resolved outside trusted install roots; version not run: {}",
-                candidates[0]
-            ),
-        };
-    };
-    let mut version_cmd = std::process::Command::new(first);
-    version_cmd.arg(version_arg);
-    let run = crate::bounded_cmd::run_bounded(
-        version_cmd,
-        crate::bounded_cmd::PROBE_TIMEOUT,
-        crate::bounded_cmd::PROBE_OUTPUT_CAP,
-    );
-    let detail = match run {
-        crate::bounded_cmd::BoundedOutput::Finished { stdout, stderr, .. } => {
-            // `java -version` prints to stderr; stdout-empty falls back so the
-            // detail line is never blank for a tool that ran.
-            let out = stdout.lines().next().unwrap_or("").trim().to_string();
-            if out.is_empty() {
-                stderr.lines().next().unwrap_or("").trim().to_string()
-            } else {
-                out
-            }
-        }
-        crate::bounded_cmd::BoundedOutput::TimedOut => {
-            format!("resolved at {first}; version probe timed out")
-        }
-        crate::bounded_cmd::BoundedOutput::Failed(e) => {
-            format!("resolved at {first}; run failed: {e}")
-        }
-    };
+fn probe_sdk(tool: &str, dirs: impl IntoIterator<Item = std::path::PathBuf>) -> SdkProbe {
+    let executable = format!("{tool}.exe");
+    let found = dirs.into_iter().find_map(|dir| {
+        let candidate = dir.join(&executable);
+        let _pins = crate::fsutil::pin_local_scan_path(&candidate).ok()?;
+        candidate.is_file().then_some(candidate)
+    });
     SdkProbe {
         tool: tool.into(),
-        present: true,
-        detail,
-    }
-}
-
-#[cfg(not(windows))]
-fn probe_sdk(tool: &str, _version_arg: &str) -> SdkProbe {
-    SdkProbe {
-        tool: tool.into(),
-        present: false,
-        detail: String::new(),
+        present: found.is_some(),
+        detail: found
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
     }
 }
 
@@ -384,7 +249,18 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
         result.completeness = crate::scan_contract::ScanCompleteness::cancelled(0);
         return result;
     }
-    let Some(vswhere) = vswhere_path() else {
+    #[cfg(windows)]
+    {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        result.sdks = ["dotnet", "rustup", "java"]
+            .into_iter()
+            .map(|tool| probe_sdk(tool, std::env::split_paths(&path)))
+            .collect();
+    }
+    let Some((vswhere, _vswhere_pins)) = vswhere_path().and_then(|path| {
+        let pins = crate::fsutil::pin_local_scan_path(&path).ok()?;
+        path.is_file().then_some((path, pins))
+    }) else {
         result.notes.push("vswhere_missing".into());
         result.completeness.status = crate::scan_contract::ScanStatus::Partial;
         result.completeness.failed_roots.push("vswhere".into());
@@ -393,7 +269,10 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
     // The binary resolved: the audit can enumerate instances. Without this the
     // panel showed the "vswhere missing" warning even next to a full list.
     let mut vswhere_cmd = std::process::Command::new(&vswhere);
-    vswhere_cmd.args(["-all", "-prerelease", "-products", "*", "-format", "json"]);
+    vswhere_cmd
+        .current_dir(vswhere.parent().expect("VS installer directory"))
+        .env_remove("PATH")
+        .args(["-all", "-prerelease", "-products", "*", "-format", "json"]);
     let output = crate::bounded_cmd::run_bounded(
         vswhere_cmd,
         crate::bounded_cmd::PROBE_TIMEOUT,
@@ -474,17 +353,6 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
             size_capped,
         });
     }
-    for (tool, arg) in [
-        ("dotnet", "--list-sdks"),
-        ("rustup", "show"),
-        ("java", "-version"),
-    ] {
-        if crate::scan_task::cancelled() {
-            result.completeness.status = crate::scan_contract::ScanStatus::Cancelled;
-            return result;
-        }
-        result.sdks.push(probe_sdk(tool, arg));
-    }
     // M4E.6 acceptance: the shared Package Cache backs repair/modify/uninstall
     // of EVERY remaining instance — report its footprint (a capped walk is a
     // lower bound, marked as such) so "drop the IDE" can be weighed against a
@@ -501,28 +369,18 @@ pub fn audit_toolchains() -> ToolchainAuditResult {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
-    fn sdk_probe_only_executes_from_trusted_install_roots() {
-        // A working-directory or temp candidate is reported present but never run.
-        let tmp = crate::test_support::TempDir::new("probe-untrusted");
-        let fake = tmp.path().join("dotnet.exe");
-        std::fs::write(&fake, b"not a real binary").unwrap();
-        assert!(
-            !trusted_probe_root(&fake),
-            "a temp-directory candidate must not be executed"
-        );
-        assert!(!trusted_probe_root(std::path::Path::new(
-            r"\\server\share\dotnet.exe"
-        )));
-        // A real System32 binary is trusted.
-        if let Some(system_root) = std::env::var_os("SystemRoot") {
-            let where_exe = std::path::Path::new(&system_root)
-                .join("System32")
-                .join("where.exe");
-            if where_exe.is_file() {
-                assert!(trusted_probe_root(&where_exe));
-            }
-        }
+    fn sdk_probe_reports_local_path_without_running_it() {
+        let tmp = crate::test_support::TempDir::new("sdk-probe");
+        let candidate = tmp.path().join("dotnet.exe");
+        std::fs::write(&candidate, b"metadata fixture").unwrap();
+        let sdk = probe_sdk("dotnet", [std::path::PathBuf::from("."), tmp.path().into()]);
+        assert!(sdk.present);
+        assert_eq!(std::path::Path::new(&sdk.detail), candidate);
+        let missing = probe_sdk("java", [tmp.path().into()]);
+        assert!(!missing.present);
+        assert!(missing.detail.is_empty());
     }
 
     #[test]

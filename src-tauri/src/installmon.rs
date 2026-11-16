@@ -358,7 +358,6 @@ pub fn begin() -> Result<(), String> {
     if !crate::scan_task::checkpoint("preparing", 0) {
         return Err("scan:cancelled".into());
     }
-    crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &Default::default());
     let reg = reg_value_names();
     let reg_degraded = reg.is_err();
     let snap = FullSnapshot {
@@ -369,11 +368,13 @@ pub fn begin() -> Result<(), String> {
     let p = monitor_state_path();
     let s = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
     crate::scan_task::checkpoint("finalizing", snap.fs.files.len() + snap.reg.len());
-    crate::scan_task::commit(|_| {
-        if let Some(dir) = p.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&p, s).map_err(|e| e.to_string())
+    crate::scan_task::commit(|permit| {
+        crate::scan_allow::commit_monitor_items(permit, &Default::default(), || {
+            if let Some(dir) = p.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            crate::fsutil::write_bytes_atomic(&p, s.as_bytes()).map_err(|e| e.to_string())
+        })
     })
 }
 
@@ -847,10 +848,25 @@ mod tests {
         // end() without begin() must error (no snapshot at the injected path).
         let e2 = super::end();
         assert!(e2.is_err());
-        // begin() writes the snapshot at the injected path; end() consumes it.
-        super::begin().unwrap();
+        // Exercise the same scoped commit path as the Tauri commands.
+        let previous = r"C:\InstallMonitorFixture\previous.exe".to_string();
+        crate::scan_allow::remember(
+            crate::scan_allow::AllowScope::Monitor,
+            &[previous.clone()].into(),
+        );
+        let start_id = crate::scan_task::begin().unwrap();
+        crate::scan_task::run_scoped(start_id, "monitor", super::begin)
+            .unwrap()
+            .unwrap();
         assert!(state.exists());
-        super::end().unwrap();
+        assert!(!crate::scan_allow::was_recent(
+            crate::scan_allow::AllowScope::Monitor,
+            &previous
+        ));
+        let end_id = crate::scan_task::begin().unwrap();
+        crate::scan_task::run_scoped(end_id, "monitor", super::end)
+            .unwrap()
+            .unwrap();
         assert!(!state.exists(), "end() consumes the snapshot");
         set_test_state_path(None);
         let _ = std::fs::remove_dir_all(&tmp);

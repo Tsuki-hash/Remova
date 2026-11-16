@@ -1,8 +1,6 @@
-//! Extract a file/app icon as PNG bytes (Windows). Optional disk cache.
+//! Extract a file/app icon as PNG bytes (Windows).
 
 use crate::apps::parse_display_icon;
-use std::path::PathBuf;
-use std::time::UNIX_EPOCH;
 
 const ICON_SIZE: i32 = 32;
 
@@ -13,55 +11,10 @@ pub(crate) use installed::{
     installed_icon, related_icon, remember_additional_icon_apps, remember_icon_apps,
 };
 
-fn icon_cache_dir() -> Option<PathBuf> {
-    // Known Folder, not LOCALAPPDATA: a rewritten environment variable must not
-    // make an elevated process probe or write a UNC path. No fallback to
-    // C:\Users\Public (shared writable).
-    #[cfg(windows)]
-    let base = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)?;
-    #[cfg(not(windows))]
-    let base = {
-        let raw = std::env::var_os("LOCALAPPDATA")?;
-        PathBuf::from(raw)
-    };
-    if !crate::fsutil::is_local_drive_path(&base.to_string_lossy()) {
-        return None;
-    }
-    Some(base.join("Remova").join("icons"))
-}
-
-fn fnv1a64(s: &str) -> u64 {
-    crate::fsutil::fnv1a64(s)
-}
-
-/// File fingerprint so icon updates (same DisplayIcon path) invalidate the cache.
-fn source_fingerprint(path: &str) -> String {
-    match std::fs::metadata(path) {
-        Ok(m) => {
-            let len = m.len();
-            let mtime = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            format!("{len}:{mtime}")
-        }
-        Err(_) => "missing".to_string(),
-    }
-}
-
-/// PNG file signature (0x89 'PNG' CR LF 0x1A LF) — every cached
-/// payload must start with it, so a torn or planted file is never served.
+/// PNG file signature (0x89 'PNG' CR LF 0x1A LF).
+#[cfg(any(windows, test))]
 fn looks_like_png(bytes: &[u8]) -> bool {
     bytes.len() > 8 && bytes[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
-}
-
-fn cache_key(raw: &str) -> String {
-    let (path, index) = parse_display_icon(raw);
-    let fp = source_fingerprint(&path);
-    let payload = format!("{raw}\0{index}\0{fp}");
-    format!("{:016x}.png", fnv1a64(&payload))
 }
 
 fn icon_source_extension_ok(path: &str) -> bool {
@@ -76,9 +29,7 @@ fn icon_source_extension_ok(path: &str) -> bool {
     )
 }
 
-/// Extract icon from `DisplayIcon` raw value (`path` or `path,index`) as PNG bytes.
-/// Uses the Known Folder LocalAppData `\Remova\icons\{hash}.png` as disk cache
-/// (key includes source fingerprint).
+/// Extract a local icon as PNG bytes. The webview shares results in memory.
 pub fn extract_icon_png(raw_display_icon: &str, embedded_only: bool) -> Option<Vec<u8>> {
     let (path, index) = parse_display_icon(raw_display_icon);
     if path.is_empty()
@@ -93,67 +44,7 @@ pub fn extract_icon_png(raw_display_icon: &str, embedded_only: bool) -> Option<V
     } else {
         None
     };
-    let dir = icon_cache_dir();
-    let cache_file = dir.as_ref().map(|dir| {
-        let key = cache_key(raw_display_icon);
-        dir.join(if embedded_only {
-            format!("embedded-{key}")
-        } else {
-            key
-        })
-    });
-    if let (Some(_), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
-        if cache_file.is_file() {
-            if let Ok(bytes) = std::fs::read(cache_file) {
-                // A torn or planted non-PNG cache file must not be served as an icon.
-                if looks_like_png(&bytes) {
-                    return Some(bytes);
-                }
-            }
-        }
-    }
-    let png = extract_from_path(&path, index, embedded_only)?;
-    if let (Some(dir), Some(cache_file)) = (dir.as_ref(), cache_file.as_ref()) {
-        let _ = std::fs::create_dir_all(dir);
-        // tmp + rename: a crash mid-write must not leave a torn PNG that would
-        // poison the cache key until the fingerprint changes.
-        let _ = write_cache_png(cache_file, &png);
-        prune_stale_cache(dir, cache_file);
-    }
-    Some(png)
-}
-
-fn write_cache_png(cache_file: &std::path::Path, png: &[u8]) -> std::io::Result<()> {
-    crate::fsutil::write_bytes_atomic(cache_file, png)
-}
-
-/// Drop cache PNGs left behind by older source fingerprints (age > 7 days).
-fn prune_stale_cache(dir: &std::path::Path, keep: &std::path::Path) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let keep_name = keep.file_name();
-    for ent in rd.flatten() {
-        let p = ent.path();
-        let is_tmp = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-            n.ends_with(".png.tmp") || (n.contains(".png.") && n.ends_with(".tmp"))
-        });
-        if p.extension().and_then(|e| e.to_str()) != Some("png") && !is_tmp {
-            continue;
-        }
-        if p.file_name() == keep_name {
-            continue;
-        }
-        if let Ok(meta) = p.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if let Ok(age) = modified.elapsed() {
-                    if age.as_secs() > 7 * 24 * 3600 {
-                        let _ = std::fs::remove_file(&p);
-                    }
-                }
-            }
-        }
-    }
+    extract_from_path(&path, index, embedded_only)
 }
 
 #[cfg(not(windows))]
@@ -301,54 +192,6 @@ fn encode_png_bgra(bgra: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// A fixture directory that removes itself on drop, including on panic — the
-    /// hand-rolled `remove_dir_all` at the end of each test body used to be skipped
-    /// by every failing assertion.
-    fn unique_dir(label: &str) -> crate::test_support::TempDir {
-        crate::test_support::TempDir::new(label)
-    }
-
-    #[test]
-    fn failed_publish_removes_tmp_and_prune_includes_stale_tmp() {
-        let dir = unique_dir("remova_icon_publish");
-        let blocked = dir.join("blocked.png");
-        std::fs::create_dir_all(&blocked).unwrap();
-        assert!(write_cache_png(&blocked, b"png").is_err());
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".png.tmp"))
-            .collect();
-        assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
-        let keep = dir.join("keep.png");
-        let stale = dir.join("stale.png.tmp");
-        let unrelated = dir.join("unrelated.tmp");
-        let recent = dir.join("recent.png.tmp");
-        for p in [&keep, &stale, &unrelated, &recent] {
-            std::fs::write(p, b"x").unwrap();
-        }
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
-        for p in [&keep, &stale, &unrelated] {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(p)
-                .unwrap()
-                .set_times(std::fs::FileTimes::new().set_modified(old))
-                .unwrap();
-        }
-        prune_stale_cache(&dir, &keep);
-        assert!(!stale.exists());
-        assert!(keep.exists());
-        assert!(unrelated.exists());
-        assert!(recent.exists());
-        std::fs::remove_file(keep).unwrap();
-        std::fs::remove_file(unrelated).unwrap();
-        std::fs::remove_file(recent).unwrap();
-        std::fs::remove_dir(blocked).unwrap();
-        std::fs::remove_dir(dir).unwrap();
-    }
-
     #[test]
     fn png_magic_rejects_torn_or_planted_files() {
         let mut ok = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -374,74 +217,7 @@ mod tests {
     #[test]
     fn extract_shell32_icon() {
         let dll = crate::regops::sys_tool("shell32.dll");
-        let bytes =
-            super::extract_from_path(&dll, 0, true).expect("system shell icon must extract");
+        let bytes = extract_icon_png(&dll, true).expect("system shell icon must extract");
         assert!(looks_like_png(&bytes));
-    }
-
-    #[test]
-    fn cache_key_changes_with_source_fingerprint() {
-        let dir = unique_dir("remova_icon_fingerprint");
-        let exe = dir.join("app.exe");
-        std::fs::write(&exe, b"v1").unwrap();
-        let raw = format!("{},0", exe.display());
-        let k1 = super::cache_key(&raw);
-        std::fs::write(&exe, b"v2-with-new-icon-bytes").unwrap();
-        let k2 = super::cache_key(&raw);
-        assert_ne!(
-            k1, k2,
-            "cache key must change when the icon source file changes"
-        );
-    }
-
-    #[test]
-    fn cache_key_stable_for_missing_source() {
-        let k = super::cache_key(r"C:\no\such\file.dll,0");
-        assert!(k.ends_with(".png"));
-    }
-
-    /// Two threads writing the SAME cache entry must not share a tmp file:
-    /// each write gets its own nonce so both renames succeed and the final
-    /// PNG is always one whole write (never a tear).
-    #[test]
-    fn concurrent_writes_stay_whole_and_leave_no_tmp() {
-        let dir = unique_dir("remova_icon_concurrent");
-        let cache = dir.join("app.png");
-        let whole_a = vec![0xAu8; 8192];
-        let whole_b = vec![0xBu8; 8192];
-        std::thread::scope(|s| {
-            let t1 = s.spawn(|| write_cache_png(&cache, &whole_a));
-            let t2 = s.spawn(|| write_cache_png(&cache, &whole_b));
-            t1.join().unwrap().expect("write A must succeed");
-            t2.join().unwrap().expect("write B must succeed");
-        });
-        let written = std::fs::read(&cache).unwrap();
-        assert!(
-            written == whole_a || written == whole_b,
-            "final PNG must be one whole write, not a tear"
-        );
-        let leftovers: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".tmp"))
-            .collect();
-        assert!(leftovers.is_empty(), "no tmp leftovers: {leftovers:?}");
-    }
-
-    #[test]
-    fn cache_write_preserves_preexisting_hard_links() {
-        let dir = unique_dir("remova_icon_occupied");
-        let cache = dir.join("app.png");
-        let sentinel = dir.join("sentinel");
-        std::fs::write(&sentinel, b"keep original").unwrap();
-        // Cover every legacy nonce used by the other cache tests as well.
-        for nonce in 0..32 {
-            let tmp = dir.join(format!("app.png.{}_{nonce}.png.tmp", std::process::id()));
-            std::fs::hard_link(&sentinel, tmp).unwrap();
-        }
-        write_cache_png(&cache, b"new icon").unwrap();
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep original");
-        assert_eq!(std::fs::read(&cache).unwrap(), b"new icon");
     }
 }

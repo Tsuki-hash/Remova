@@ -150,16 +150,15 @@ pub fn remember(scope: AllowScope, paths: &HashSet<String>) {
 /// Committing these items **authorizes deleting exactly those paths** for the
 /// monitor scope: the scoped panels refuse anything the latest scan did not
 /// report, so this is the moment a set of paths becomes deletable. It therefore
-/// consumes the scan snapshot first and fails closed — if the snapshot cannot be
-/// consumed the previous authorization is left in place and nothing new is
-/// armed.
+/// updates the scan snapshot first. If that update fails, the previous
+/// authorization is left in place.
 pub(crate) fn commit_monitor_items(
     _permit: &crate::scan_task::CommitPermit,
     paths: &HashSet<String>,
-    consume_snapshot: impl FnOnce() -> Result<(), String>,
+    update_snapshot: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut g = maps().lock().map_err(|_| "scan:state")?;
-    consume_snapshot()?;
+    update_snapshot()?;
     g.retain(|key| !key.starts_with("monitor\0"));
     for path in paths {
         if let Some(key) = scoped_key(AllowScope::Monitor, path) {
