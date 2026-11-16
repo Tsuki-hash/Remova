@@ -6,8 +6,6 @@
 
 **Deep uninstall for Windows — clean removal, explained**
 
-Find it. Explain it. Remove it. Restore it.
-
 [English](./README.en.md) · [简体中文](./README.md)
 
 [![Release](https://img.shields.io/github/v/release/Tsuki-hash/Remova?style=flat-square&label=release)](https://github.com/Tsuki-hash/Remova/releases/latest)
@@ -27,14 +25,14 @@ Find it. Explain it. Remove it. Restore it.
 
 Stock uninstallers leave registry keys, services, PATH entries, CLSIDs, and cross-drive caches. Generic “cleaners” often delete *your* files by mistake.
 
-Remova is built around **Find it. Explain it. Remove it. Restore it.**
+Deep uninstall runs the app's uninstaller first, then scans for leftovers. Review the results and choose whether to make a backup before confirming cleanup.
 
 | Capability | What you get |
 |---|---|
 | **Decision UI** | Detail drawer before uninstall: size, links, health, official / deep / force modes |
 | **Deep-uninstall loop** | The confirm states the flow; a phase bar (detect → official uninstall → rescan → analyze → report); post-clean report and re-check |
 | **Evidence scan** | Install dir, shortcuts, TEMP, registry, Run, services, tasks, **PATH, CLSID/shell, drivers, other-drive roots, WebView2 caches, home dot-directories, MuiCache** |
-| **Plain language** | Why each leftover belongs (or why it is kept); Safe · Review · Keep buckets |
+| **Plain language** | Evidence for each leftover, grouped as Safe to clean, Review or Skip by default |
 | **Orphan evidence** | Expandable evidence on orphan leftovers: no uninstall record / contains exes / config files / install root / recent modification |
 | **Deep-uninstall extras** | Broken MSI records, orphan firewall rules, lock diagnosis (end a process under the app's install dir after confirmation), report totals and post-clean rescan/deep registry check |
 | **User-data red line** | Documents / Downloads / sync-conflict folders are never auto-selected |
@@ -43,8 +41,6 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin |
 | **System-item details** | Startup items and services show readable names, sources and available icons. Services show run state and start type separately. Select a scheduled task to see its program, full task path and run times. |
 | AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
-
-> Brand: calm, professional, reversible — not a “PC manager”.
 
 ---
 
@@ -59,11 +55,12 @@ Remova is built around **Find it. Explain it. Remove it. Restore it.**
 ### Deep uninstall flow
 1. **Identify** install type and associations  
 2. **Official uninstaller** first when available  
-3. **Scan leftovers** with live Safe / Review / Keep overview  
+3. **Scan leftovers** with a summary of what is safe to clean, needs review or is skipped by default
 4. **Report** deleted/kept/pending-reboot sizes + progress + Safety Vault note + verify checklist; rescan the app or run a read-only deep registry check  
 
 ### Clean & backup
-- Dry-run first; real clean can opt into a safety backup (**unchecked by default**)  
+- Use Check cleanup plan to preview the operation. To make a backup, select Create backup before confirming cleanup. The option starts off.
+- Toolbox → Restore backup recovers files and settings successfully backed up by Remova during cleanup. The app's own uninstaller runs before Remova's cleanup backup. Regenerable cache tools explain their cleanup process before confirmation.
 - Remova attempts to create a system restore point before cleaning. Turn this off under Settings & help.
 - Shared runtimes (VC++ / .NET, …) unchecked by default  
 - Backup root: `%PROGRAMDATA%\Remova\Backup\`
@@ -88,7 +85,13 @@ Restore Backup and Cleanup History are at the top. Browse the remaining tools by
 
 Get the latest build from **[Releases](https://github.com/Tsuki-hash/Remova/releases)**:
 
-> Download updates from the Release page and check `SHA256SUMS.txt` alongside the packages. Each release includes `SBOM.cdx.json` for the Windows x64 Rust dependency graph and npm production dependencies.
+Current packages are unsigned and updates are downloaded manually. Download the package and `SHA256SUMS.txt` from the same release page. Run the following in PowerShell and compare the hash with the entry for that file. When they match, run the installer or extract the portable ZIP.
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\Remova_1.5.0_x64-setup.exe"
+```
+
+Replace the example path with the file you downloaded. The release also includes `SBOM.cdx.json` for the Windows x64 Rust dependency graph and npm production dependencies.
 >
 > Authenticode identifies the Windows publisher and is configured separately through SignPath. In-app updates require explicit enablement and all three updater signing settings before the workflow produces `latest.json` and `.sig`. MSI and portable builds use manual downloads. See the [release signing guide](.github/RELEASE_SIGNING.md).
 

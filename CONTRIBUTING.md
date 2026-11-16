@@ -49,13 +49,7 @@ node scripts/make-sbom.mjs --notices THIRD-PARTY-NOTICES.md
 # release gates: `cargo audit` in src-tauri and `npm audit --omit=dev
 # --audit-level=high`. Production npm dependencies must stay at zero
 # vulnerabilities. Accepted Rust advisories live in `src-tauri/.cargo/audit.toml`
-# with a reachability argument each — do not add a blanket ignore. Currently
-# accepted (verify the rationale still holds before enabling updater assets):
-#   RUSTSEC-2026-0367/0368/0369/0429 (zip 4.6.1, via tauri-plugin-updater 2.12):
-#     upstream pins zip 4 (fix needs a later major); releases ship without
-#     updater assets, so the extraction path is unreachable, and update packages
-#     are minisign-verified before extraction. Remove these entries when the
-#     plugin moves to a fixed zip and the lockfile is bumped.
+# with a reachability argument for each entry.
 cargo audit
 npm audit --omit=dev --audit-level=high
 # Targeted race fixture: requires Developer Mode or symlink privilege.
@@ -68,11 +62,9 @@ cargo test privileged_key_store_acl_and_missing_state_regression -- --ignored
 
 # Ignored tests: what actually runs, and what is manual.
 #
-# The tree has 13 tests marked `#[ignore]`. CI runs five by name, including
-# the two fixture tests above and three read-only native checks. Release runs
-# the two fixture tests by name. The remaining eight cover optional capacity,
-# performance and explicitly enabled real-system fixtures. See each test's
-# ignore reason and the commands below before running one locally.
+# CI runs the two fixture tests above and three read-only native checks
+# listed below. Release runs the two fixture tests above. For other local
+# tests, use `cargo test -- --list --ignored` and check the ignore reason before running them.
 #
 # | 测试 | 执行方式 | 它会动什么 |
 # | --- | --- | --- |
