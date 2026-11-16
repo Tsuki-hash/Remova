@@ -298,7 +298,6 @@ Regenerate from the repository root after installing the locked dependencies wit
 - zerotrie 0.2.5 (pkg:cargo/zerotrie@0.2.5) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - zerovec-derive 0.11.6 (pkg:cargo/zerovec-derive@0.11.6) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
 - zerovec 0.11.8 (pkg:cargo/zerovec@0.11.8) — Unicode-3.0. [`LICENSE`](#text-f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2).
-- zip 4.6.1 (pkg:cargo/zip@4.6.1) — MIT. [`LICENSE`](#text-04dc52136d82400b11df5f474949863a70a5d05d2278dec45b99c479494450a6).
 - zlib-rs 0.6.7 (pkg:cargo/zlib-rs@0.6.7) — Zlib. [`LICENSE`](#text-e72111c52b7d96ebe25348dee19f0744f444d3c95ae6b1ecb6ccaecc5bce05ba).
 - zmij 1.0.23 (pkg:cargo/zmij@1.0.23) — MIT. [`LICENSE-MIT`](#text-23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3).
 - @tanstack/react-virtual 3.14.12 (pkg:npm/%40tanstack/react-virtual@3.14.12) — MIT. [`LICENSE`](#text-a405ee70c632bb938acb7ac5f210e814409b3760ea9d2329d8ed8ffcfd11a0e7).
@@ -681,35 +680,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-```
-
-### Text 04dc52136d82400b11df5f474949863a70a5d05d2278dec45b99c479494450a6
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Some files in the "tests/data" subdirectory of this repository are under other
-licences; see files named LICENSE.*.txt for details.
 ```
 
 ### Text 070dbc7dda03a29296f2d58bdb9b7331af90f2abc9f31df22875d1eabaf29852

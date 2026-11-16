@@ -5,7 +5,7 @@
 - **Status**: 1.5.0 is in development. Configure the release mode before creating the candidate draft. Final acceptance and approval are required before publishing.
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
 - **Signing and publication**: the current candidate uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
-- **Updater**: in-app updates stay disabled. The upstream `tauri-plugin-updater` still depends on a `zip` version with open advisories, so update assets are not produced; upgrades remain manual downloads verified via `SHA256SUMS.txt`.
+- **Updater**: 1.5.0 uses manual downloads verified via `SHA256SUMS.txt`. The Windows updater dependency supports installer files and is built without the legacy ZIP updater feature.
 - **SBOM**: every release attaches a CycloneDX SBOM (Cargo + production npm dependencies) alongside the installers, continuing the practice introduced in 1.4.0.
 
 ## 1.4.0 (published 2026-10-25)
