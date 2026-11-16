@@ -3,7 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -167,12 +168,49 @@ pub fn load_config() -> Result<AiConfig, String> {
     load_config_file(&config_path()?)
 }
 
-fn load_config_file(p: &std::path::Path) -> Result<AiConfig, String> {
-    let s = match std::fs::read_to_string(p) {
-        Ok(s) => zeroize::Zeroizing::new(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AiConfig::default()),
+fn open_config_file(p: &Path) -> io::Result<std::fs::File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+
+        // Open via the verified ancestor handles. A successful path lookup
+        // alone cannot authorize a subsequent read of a replaceable name.
+        let file = crate::fsutil::open_local_regular_file(p)?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+            .map_err(io::Error::other)?;
+        if info.nNumberOfLinks != 1 {
+            return Err(io::Error::other("AI settings file has multiple links"));
+        }
+        Ok(file)
+    }
+    #[cfg(not(windows))]
+    {
+        crate::fsutil::ensure_no_reparse_ancestors(p)?;
+        let file = std::fs::File::open(p)?;
+        if !file.metadata()?.is_file() || crate::fsutil::has_multiple_links(p) {
+            return Err(io::Error::other("AI settings require an ordinary file"));
+        }
+        Ok(file)
+    }
+}
+
+fn load_config_file(p: &Path) -> Result<AiConfig, String> {
+    let mut file = match open_config_file(p) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(AiConfig::default()),
         Err(e) => return Err(format!("ai:config_read_failed::{e}")),
     };
+    let mut s = zeroize::Zeroizing::new(String::new());
+    file.read_to_string(&mut s)
+        .map_err(|e| format!("ai:config_read_failed::{e}"))?;
+    // The read handle denies replacement until closed. Migration uses the
+    // same guarded writer as an explicit settings change.
+    drop(file);
     let mut c: AiConfig =
         serde_json::from_str(&s).map_err(|e| format!("ai:config_read_failed::{e}"))?;
     // take ownership of the stored bytes so the pre-image is wiped
@@ -214,18 +252,30 @@ fn load_config_file(p: &std::path::Path) -> Result<AiConfig, String> {
 /// Atomic config write (tmp + rename): a crash mid-write must not destroy the
 /// DPAPI-wrapped key or a half-migrated file. The caller holds CONFIG_LOCK
 /// for the complete read/migrate/update transaction.
-fn write_config_file(p: &std::path::Path, s: &str) -> Result<(), String> {
-    crate::fsutil::write_bytes_atomic(p, s.as_bytes()).map_err(|e| e.to_string())
+fn write_config_file(p: &Path, s: &str) -> Result<(), String> {
+    let write = || -> io::Result<()> {
+        let parent = p
+            .parent()
+            .ok_or_else(|| io::Error::other("AI settings path has no parent"))?;
+        crate::fsutil::ensure_no_reparse_ancestors(p)?;
+        let _pins = crate::fsutil::create_dirs_pinned(parent)?;
+        // Guard the parent through publication, and require any existing
+        // config to be readable and free of links before replacing it.
+        match open_config_file(p) {
+            Ok(file) => drop(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        crate::fsutil::write_bytes_atomic(p, s.as_bytes())
+    };
+    write().map_err(|e| format!("ai:config_write_failed::{e}"))
 }
 
 pub fn update_config(f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, String> {
     update_config_file(&config_path()?, f)
 }
 
-fn update_config_file(
-    p: &std::path::Path,
-    f: impl FnOnce(&mut AiConfig),
-) -> Result<AiConfigView, String> {
+fn update_config_file(p: &Path, f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, String> {
     let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = load_config_file(p)?;
     f(&mut c);
@@ -233,10 +283,7 @@ fn update_config_file(
     Ok(AiConfigView::from(&c))
 }
 
-fn save_config_file(p: &std::path::Path, c: &AiConfig) -> Result<(), String> {
-    if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
+fn save_config_file(p: &Path, c: &AiConfig) -> Result<(), String> {
     // never clone the plaintext key into `out` — build the write
     // payload without it and store only the ciphertext.
     let mut out = AiConfig {

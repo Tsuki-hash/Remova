@@ -859,6 +859,7 @@ export const dict: EnDict = {
     aiRiskBriefFailed: "Could not fetch the AI risk summary, so this confirmation carries no model conclusion — rely on the local rules and risk labels.",
     aiFailed: "Smart explanation unavailable",
     aiErrHttp: "AI endpoint unreachable — check your network and base URL",
+    aiErrConfigStorage: "Remova could not read or save AI settings. In File Explorer, check that your account can read and write %LOCALAPPDATA%\\Remova and its ai-config.json file.",
     aiErrKeyEmpty: "AI API key is not configured — set it in AI settings",
     aiErrModelEmpty: "AI model name is not configured — set it in AI settings",
     aiErrEmpty: "AI returned an empty response — try again",

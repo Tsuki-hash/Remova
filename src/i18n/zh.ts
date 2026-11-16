@@ -813,6 +813,7 @@ export const dict = {
     whitelistEmpty: "白名单为空",
     whitelistRestoreHint: "移除条目后，对应的软件会重新显示。",
     aiSettings: "模型设置",
+    aiErrConfigStorage: "无法读取或保存模型设置。请在资源管理器中检查 %LOCALAPPDATA%\\Remova 和其中的 ai-config.json，确认当前账户可以读写。",
     aiSettingsHint: "配置智能解释：用更易懂的话说明残留与风险；只建议，不执行删除",
     aiEnable: "启用智能解释",
     aiStateOn: "已开启",

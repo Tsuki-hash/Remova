@@ -90,6 +90,7 @@ export function formatError(e: unknown, ctx: ErrorContext = "invoke"): string {
   // not collapse into the generic invoke-failed text.
   if (raw === "reboot:gate_not_corrupt") return L.rebootGateNotCorrupt;
   if (raw === "reboot:gate_rename_failed") return L.rebootGateRenameFailed;
+  if (/^ai:config_(?:dir_unavailable|read_failed|write_failed)(?:::|$)/.test(raw)) return L.aiErrConfigStorage;
   // Backup errors may embed the seal code in a per-item failure message.
   if (raw.includes("seal:")) {
     if (raw.includes("requires_admin")) return L.errSealAdmin;

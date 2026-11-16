@@ -257,6 +257,53 @@ fn checked_config_transactions_preserve_unreadable_or_corrupt_originals() {
 }
 
 #[test]
+#[cfg(windows)]
+fn config_rejects_redirected_paths_and_preserves_legacy_settings() {
+    let root = crate::test_support::TempDir::new("ai-config-paths");
+    let existing = root.subdir("existing");
+    let original = existing.join("ai-config.json");
+    let mut legacy = AiConfig::default();
+    legacy.api_key = "fixture-legacy-key".into();
+    let bytes = serde_json::to_vec(&legacy).unwrap();
+    std::fs::write(&original, &bytes).unwrap();
+
+    let junction = root.join("Remova");
+    let status = std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&existing)
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "could not create the fixture junction"
+    );
+    let redirected = junction.join("ai-config.json");
+    assert!(load_config_file(&redirected).is_err());
+    assert!(
+        update_config_file(&redirected, |_| panic!("must not load redirected settings")).is_err()
+    );
+    assert!(save_config_file(&redirected, &AiConfig::default()).is_err());
+    assert_eq!(std::fs::read(&original).unwrap(), bytes);
+    std::fs::remove_dir(&junction).unwrap();
+
+    let linked_file = root.join("linked-config.json");
+    std::fs::hard_link(&original, &linked_file).unwrap();
+    assert!(load_config_file(&linked_file).is_err());
+    assert!(save_config_file(&linked_file, &AiConfig::default()).is_err());
+    assert_eq!(std::fs::read(&linked_file).unwrap(), bytes);
+    std::fs::remove_file(&linked_file).unwrap();
+
+    // Normal reads still perform the in-place DPAPI migration after the link is removed.
+    assert_eq!(
+        load_config_file(&original).unwrap().api_key,
+        "fixture-legacy-key"
+    );
+    let stored: AiConfig = serde_json::from_slice(&std::fs::read(&original).unwrap()).unwrap();
+    assert!(stored.api_key.starts_with(KEY_PREFIX));
+}
+
+#[test]
 fn migration_and_updates_hold_one_transaction_lock() {
     let p = std::env::temp_dir().join(format!(
         "remova-config-race-{}-{}",
