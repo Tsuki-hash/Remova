@@ -94,7 +94,6 @@ export function ScanActionsBar({
             )}
           </div>
         </div>
-        {scanning && <div className="remova-progress" aria-hidden />}
         <div className="scan-actions-secondary">
           {!residualFromUninstall && canRunOfficial && (
             <span className="scan-actions-caption" style={{ color: useOfficial ? undefined : "var(--warn-ink)" }}>

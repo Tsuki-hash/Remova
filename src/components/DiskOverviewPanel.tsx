@@ -303,9 +303,8 @@ export function DiskOverviewPanel({
             <span>{L.diskOverviewProgressLabel}</span>
             <span>{L.diskOverviewProgressCount(scans.length - pending.length, scans.length)}</span>
           </div>
-          <progress aria-label={L.diskOverviewProgressLabel} value={scans.length - pending.length} max={scans.length}
-            style={{ display: "block", width: "100%", margin: "4px 0", accentColor: "var(--accent)" }} />
-          <div role="status" style={css.muted}>{L.diskOverviewProgressPending(pending.map(scan => scan.label).join(" · "))}</div>
+          <progress className="remova-scan-meter" aria-label={L.diskOverviewProgressLabel} value={scans.length - pending.length} max={scans.length} />
+          <div role="status" style={{ ...css.muted, marginTop: 4 }}>{L.diskOverviewProgressPending(pending.map(scan => scan.label).join(" · "))}</div>
         </div>
       )}
 

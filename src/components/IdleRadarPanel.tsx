@@ -73,7 +73,7 @@ export function IdleRadarPanel({
           </button>
         </div>
       </div>
-      <ScanProgressBar progress={progress} onCancel={cancel} />
+      <ScanProgressBar progress={progress} onCancel={cancel} stages={["preparing", "registry", "files"]} />
       {omitted > 0 && (
         <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }} role="status">
           {L.scanOmitted(omitted)}

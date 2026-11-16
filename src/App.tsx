@@ -20,7 +20,7 @@ import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
 import { useCleanupHandlers } from "./hooks/useCleanupHandlers";
 import { useAnalyzeFlow, type AnalyzeOptions } from "./hooks/useAnalyzeFlow";
-import { ScanProgressBar } from "./components/ScanProgressBar";
+import { ORPHAN_SCAN_STAGES, ScanProgressBar } from "./components/ScanProgressBar";
 import { useAppBoot, checkUpdateNow } from "./hooks/useAppBoot";
 import { useAiPanelState } from "./hooks/useAiPanelState";
 import { useSystemThemeFollow } from "./hooks/useSystemThemeFollow";
@@ -478,7 +478,7 @@ export default function App() {
   // object literal too, and `checkupScanStatus` is a `useSoftwareController`
   // dependency — so a fresh element each render re-rendered the whole page.
   const checkupScanStatus = useMemo(
-    () => <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />,
+    () => <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} stages={ORPHAN_SCAN_STAGES} />,
     [checkupScanProgress, cancelCheckupScan],
   );
 
@@ -856,8 +856,9 @@ export default function App() {
           </div>
         )}
         {checkupOrphanBusy && (nav !== "software" || !checkupOpen) &&
-          <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} />}
+          <ScanProgressBar progress={checkupScanProgress} onCancel={cancelCheckupScan} stages={ORPHAN_SCAN_STAGES} />}
         <ScanProgressBar progress={monitorScanProgress} onCancel={cancelMonitorScan} title={L.monitorInstall}
+          stages={monitoring ? ["preparing", "files", "registry", "finalizing"] : ["preparing", "registry", "files", "finalizing"]}
           cancelledLabel={L.monitorScanCancelled(monitoring)} failedLabel={L.monitorScanFailed(monitoring)} />
         <Suspense
           fallback={

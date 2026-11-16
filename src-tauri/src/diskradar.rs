@@ -410,6 +410,7 @@ const RADAR_DRILL_LIMITS: RadarLimits = RadarLimits {
 struct WalkProgress {
     inspected: u64,
     next_report: u64,
+    work: Option<crate::scan_task::WorkProgress>,
 }
 
 impl WalkProgress {
@@ -417,6 +418,7 @@ impl WalkProgress {
         Self {
             inspected: 0,
             next_report: RADAR_REPORT_EVERY,
+            work: None,
         }
     }
 
@@ -424,7 +426,31 @@ impl WalkProgress {
         self.inspected += 1;
         if self.inspected >= self.next_report {
             self.next_report = self.inspected.saturating_add(RADAR_REPORT_EVERY);
-            crate::scan_task::checkpoint("sizes", self.inspected as usize);
+            self.report("sizes");
+        }
+    }
+
+    fn start_work(&mut self, total: usize, unit: crate::scan_task::WorkUnit) {
+        self.work = Some(crate::scan_task::WorkProgress {
+            completed: 0,
+            total,
+            unit,
+        });
+        self.report("sizes");
+    }
+
+    fn finish_work(&mut self, count: usize) {
+        if let Some(work) = &mut self.work {
+            work.completed += count;
+            self.report("sizes");
+        }
+    }
+
+    fn report(&self, stage: &'static str) {
+        if let Some(work) = self.work {
+            crate::scan_task::checkpoint_work(stage, self.inspected as usize, work);
+        } else {
+            crate::scan_task::checkpoint(stage, self.inspected as usize);
         }
     }
 }
@@ -537,6 +563,12 @@ fn root_walk(
         child_dirs.truncate(limits.queue_cap);
         aggregate.capped = true;
     }
+    // A single-root scan can measure real progress once the top level is
+    // listed. A multi-root scan keeps a fixed denominator across roots.
+    let track_folders = progress.work.is_none();
+    if track_folders {
+        progress.start_work(child_dirs.len(), crate::scan_task::WorkUnit::Folders);
+    }
     // Open no child walk unless every queued child can still read at least
     // one entry: with a smaller pool all of them would be floors anyway, and
     // opening up to `queue_cap` directories nothing will read is pure cost.
@@ -568,6 +600,17 @@ fn root_walk(
             }
         })
         .collect();
+    if track_folders {
+        let resolved = walks
+            .iter()
+            .filter(|(_, child)| match child {
+                ChildWalk::Reparse => true,
+                ChildWalk::Walk(walk) => walk.finished,
+                ChildWalk::Unmeasured => false,
+            })
+            .count();
+        progress.finish_work(resolved);
+    }
     // Water filling: equal shares for every unfinished child, repeated until the
     // pool is empty or all children are fully measured.
     loop {
@@ -592,6 +635,9 @@ fn root_walk(
             let mut slice = share.min(*budget);
             let before = slice;
             walk.advance(&mut slice, progress);
+            if track_folders && walk.finished {
+                progress.finish_work(1);
+            }
             let spent = before - slice;
             *budget = budget.saturating_sub(spent);
             spent_any |= spent > 0;
@@ -697,6 +743,7 @@ fn top_dir_sizes_with_budget(letter: Option<char>, budget_cap: u64) -> Vec<DirSi
             .filter(|root| root.exists())
             .collect();
         let mut remaining = roots.len();
+        progress.start_work(remaining, crate::scan_task::WorkUnit::Roots);
         for root in roots {
             if crate::scan_task::cancelled() {
                 // A cancelled call never reaches the caller (`scan_task::run`
@@ -723,6 +770,7 @@ fn top_dir_sizes_with_budget(letter: Option<char>, budget_cap: u64) -> Vec<DirSi
                 totals.push(aggregate);
             }
             rows.extend(child_rows);
+            progress.finish_work(1);
         }
         rank_rows(&mut rows, DISK_RADAR_TOP_N * 2);
     } else {
@@ -741,6 +789,7 @@ fn top_dir_sizes_with_budget(letter: Option<char>, budget_cap: u64) -> Vec<DirSi
     // so the top of the list reads as a ranking; they still never compete with
     // the child rows for the cutoff.
     totals.sort_by(|a, b| b.size_kb.cmp(&a.size_kb).then_with(|| a.path.cmp(&b.path)));
+    progress.report("finalizing");
     assemble_top(totals, rows)
 }
 
@@ -871,6 +920,7 @@ pub fn list_dir_children(path: &str) -> Result<DirChildrenResult, String> {
     let mut progress = WalkProgress::new();
     let (aggregate, mut rows, omitted) =
         root_walk(&p, &RADAR_DRILL_LIMITS, &mut budget, &mut progress);
+    progress.report("finalizing");
     rank_rows(&mut rows, DISK_RADAR_TOP_N);
     Ok(DirChildrenResult {
         rows,
@@ -1230,6 +1280,27 @@ mod tests {
             "the late sibling must be measured before the pool runs dry"
         );
         assert!(!small.capped, "two files fit one share");
+    }
+
+    #[test]
+    fn folder_progress_counts_finished_walks_even_when_the_budget_runs_out() {
+        let fixture = fixture("progress-folders");
+        let top = fixture.path();
+        seed(&top.join("aaa-big"), 10, 4096);
+        seed(&top.join("zzz-small"), 2, 4096);
+        let id = crate::scan_task::begin().unwrap();
+        let (report, capped) = crate::scan_task::run(id, || {
+            let mut progress = WalkProgress::new();
+            let (aggregate, _, _) = root_walk(top, &RADAR_VISIT_LIMITS, &mut 8, &mut progress);
+            progress.report("finalizing");
+            (crate::scan_task::progress(id).unwrap(), aggregate.capped)
+        })
+        .unwrap();
+        assert!(capped);
+        assert_eq!(report.found, 8);
+        let work = report.work.unwrap();
+        assert!(matches!(work.unit, crate::scan_task::WorkUnit::Folders));
+        assert_eq!((work.completed, work.total), (1, 2));
     }
 
     /// The budget is shared across roots: a second root cannot reset it.

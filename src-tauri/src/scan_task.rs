@@ -9,6 +9,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct Progress {
     pub stage: String,
     pub found: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work: Option<WorkProgress>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkUnit {
+    Roots,
+    Folders,
+}
+
+#[derive(Clone, Copy, Serialize)]
+pub struct WorkProgress {
+    pub completed: usize,
+    pub total: usize,
+    pub unit: WorkUnit,
 }
 
 struct Task {
@@ -30,6 +46,7 @@ struct Task {
     last_stage_ptr: AtomicUsize,
     last_stage_len: AtomicUsize,
     last_found: AtomicUsize,
+    last_had_work: AtomicBool,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
@@ -88,10 +105,12 @@ pub fn begin() -> Result<u32, String> {
             progress: Mutex::new(Progress {
                 stage: "preparing".into(),
                 found: 0,
+                work: None,
             }),
             last_stage_ptr: AtomicUsize::new(0),
             last_stage_len: AtomicUsize::new(0),
             last_found: AtomicUsize::new(usize::MAX),
+            last_had_work: AtomicBool::new(false),
         }),
     );
     Ok(id)
@@ -312,11 +331,21 @@ pub(crate) fn cancelled_watch_for_test() -> CancelWatch {
 /// remova_lib::scan_task::checkpoint(stage.as_str(), 0);
 /// ```
 pub fn checkpoint(stage: &'static str, found: usize) -> bool {
+    publish_progress(stage, found, None)
+}
+
+pub fn checkpoint_work(stage: &'static str, found: usize, work: WorkProgress) {
+    publish_progress(stage, found, (work.total > 0).then_some(work));
+}
+
+fn publish_progress(stage: &'static str, found: usize, work: Option<WorkProgress>) -> bool {
     CURRENT.with(|c| {
         if let Some(task) = c.borrow().as_ref() {
             let ptr = stage.as_ptr() as usize;
             let len = stage.len();
-            let unchanged = task.last_stage_ptr.load(Ordering::Relaxed) == ptr
+            let unchanged = work.is_none()
+                && !task.last_had_work.load(Ordering::Relaxed)
+                && task.last_stage_ptr.load(Ordering::Relaxed) == ptr
                 && task.last_stage_len.load(Ordering::Relaxed) == len
                 && task.last_found.load(Ordering::Relaxed) == found;
             if !unchanged {
@@ -324,11 +353,13 @@ pub fn checkpoint(stage: &'static str, found: usize) -> bool {
                     *p = Progress {
                         stage: stage.into(),
                         found,
+                        work,
                     };
                 }
                 task.last_stage_ptr.store(ptr, Ordering::Relaxed);
                 task.last_stage_len.store(len, Ordering::Relaxed);
                 task.last_found.store(found, Ordering::Relaxed);
+                task.last_had_work.store(work.is_some(), Ordering::Relaxed);
             }
         }
     });
@@ -338,6 +369,29 @@ pub fn checkpoint(stage: &'static str, found: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measured_progress_can_change_at_the_same_checkpoint_and_be_cleared() {
+        let id = begin().unwrap();
+        run(id, || {
+            let mut work = WorkProgress {
+                completed: 0,
+                total: 4,
+                unit: WorkUnit::Roots,
+            };
+            checkpoint_work("sizes", 20, work);
+            work.completed = 1;
+            checkpoint_work("sizes", 20, work);
+            let payload = serde_json::to_value(progress(id).unwrap()).unwrap();
+            assert_eq!(
+                payload["work"],
+                serde_json::json!({ "completed": 1, "total": 4, "unit": "roots" })
+            );
+            assert!(checkpoint("sizes", 20));
+            assert!(progress(id).unwrap().work.is_none());
+        })
+        .unwrap();
+    }
 
     #[test]
     fn metadata_commit_and_cancel_have_a_single_winner() {

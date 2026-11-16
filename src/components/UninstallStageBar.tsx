@@ -88,9 +88,6 @@ export function UninstallStageBar({
           </span>
         );
       })}
-      {(stage === "scan" || stage === "analyze") && (
-        <div className="remova-progress" style={{ flex: "1 1 80px", minWidth: 60 }} aria-hidden />
-      )}
       {detail && <span style={{ ...css.muted, flex: "1 1 120px" }}>{detail}</span>}
     </div>
   );

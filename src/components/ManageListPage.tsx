@@ -296,7 +296,8 @@ export function ManageListPage({
         {tab === "startup" ? L.startupHint : L.servicesHint}
       </div>}
       <div title={busy ? L.loadingManage : undefined}>
-        <ScanProgressBar progress={progress} onCancel={cancel} />
+        <ScanProgressBar progress={progress} onCancel={cancel}
+          stages={tab === "startup" ? ["preparing", "registry", "files", "tasks", "services"] : undefined} />
       </div>
       {tab === "tasks" ? (
         <TaskWorkspace rows={rows} scrollRef={scrollRef} busy={busy} emptyLabel={emptyLabel} onSetEnabled={setEnabled} />

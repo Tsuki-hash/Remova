@@ -79,8 +79,21 @@ describe("association scan cancellation", () => {
     }
     setLang("zh");
     render(<ScanProgressBar progress={{ status: "running", stage: "files", found: 3, elapsedMs: 800 }} onCancel={async () => {}} />);
-    expect(screen.getByRole("progressbar").getAttribute("value")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.getByText(t().scanFound(3))).toBeTruthy();
+  });
+  it("fills the meter only with measured work or completed stages", () => {
+    const base = { status: "running", stage: "files", found: 20, elapsedMs: 800 } as const;
+    const stages = ["preparing", "files", "sizes", "finalizing"];
+    const view = render(<ScanProgressBar progress={base} stages={stages} onCancel={async () => {}} />);
+    expect(screen.getByRole("progressbar")).toHaveProperty("value", 1);
+    view.rerender(<ScanProgressBar progress={{ ...base, stage: "sizing" }} stages={stages} onCancel={async () => {}} />);
+    expect(screen.getByRole("progressbar")).toHaveProperty("value", 2);
+    view.rerender(<ScanProgressBar progress={{ ...base, stage: "sizes", work: { completed: 8, total: 12, unit: "folders" } }} onCancel={async () => {}} />);
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveProperty("value", 8);
+    expect(bar).toHaveProperty("max", 12);
+    expect(bar.getAttribute("aria-valuetext")).toBe(t().scanProgressFolders(8, 12));
   });
   it("ignores old polling and scan results after a newer run completes", async () => {
     native.beginAssociationScan.mockResolvedValueOnce(43).mockResolvedValueOnce(44);

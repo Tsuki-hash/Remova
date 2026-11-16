@@ -423,7 +423,9 @@ export function ScopedScanPanel({
         </div>
       )}
       <LeftoverSummaryBar summary={summary} scanning={busy} />
-      <ScanProgressBar progress={progress} onCancel={cancel} />
+      <ScanProgressBar progress={progress} onCancel={cancel} stages={cleanupSource === "installer"
+        ? ["preparing", "files", "caches", "sizes", "finalizing"]
+        : ["preparing", "files", "sizes", "finalizing"]} />
       <VirtualList
         items={rows}
         height="min(320px, 40vh)"

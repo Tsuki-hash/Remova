@@ -8,7 +8,7 @@ import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
 import { ToolGlyph } from "./ToolIcons";
-import { ScanProgressBar } from "./ScanProgressBar";
+import { ORPHAN_SCAN_STAGES, ScanProgressBar } from "./ScanProgressBar";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import {
@@ -237,7 +237,7 @@ export function OrphanPage({
             <ToolGlyph name="monitor" />{L.orphanScan}
           </button>
         </div>
-        <ScanProgressBar progress={progress} onCancel={cancel} />
+        <ScanProgressBar progress={progress} onCancel={cancel} stages={ORPHAN_SCAN_STAGES} />
         {items && <ScanCompletenessNotice completeness={completeness} />}
         {items && !cleanupAllowed && (
           <div style={css.muted} role="note">{L.orphanReadOnly}</div>

@@ -98,7 +98,11 @@ export type MonitorDiff = {
 };
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[] };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
-export type AssociationScanProgress = { stage: string; found: number };
+export type AssociationScanProgress = {
+  stage: string;
+  found: number;
+  work?: { completed: number; total: number; unit: "roots" | "folders" };
+};
 export type RestorePreview = {
   name: string; files: number; registry: number; path_entries: number;
   existing: number; resumable?: number; unavailable: number;
