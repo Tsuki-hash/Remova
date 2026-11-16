@@ -108,6 +108,25 @@ it("shows an explicit empty state when nothing matches", async () => {
   expect(screen.getByText(L.restore)).toBeTruthy();
 });
 
+it("opens a focused tool and keeps the filtered directory available", async () => {
+  mountMore();
+  const L = t();
+  const search = screen.getByRole("textbox", { name: L.moreSearchTools });
+  fireEvent.change(search, { target: { value: L.history } });
+  const opener = screen.getByRole("button", { name: L.history });
+  opener.focus();
+  fireEvent.click(opener);
+  const browse = screen.getByText(L.moreBrowseTools);
+  const catalog = browse.closest("details")!;
+  expect(catalog.open).toBe(false);
+  fireEvent.click(browse);
+  expect(catalog.open).toBe(true);
+  expect(search).toHaveProperty("value", L.history);
+  fireEvent.click(within(screen.getByRole("region", { name: L.toolboxTitle })).getByRole("button", { name: L.panelClose }));
+  expect(catalog.open).toBe(true);
+  expect(document.activeElement).toBe(opener);
+});
+
 it.each([
   ["history", "panelClose"],
   ["restore", "restoreClose"],
@@ -154,7 +173,10 @@ it.each(["history", "other-page"] as const)("discards a fresh restore confirmati
   fireEvent.click(restore);
   await waitFor(() => expect(api.previewRestore).toHaveBeenCalledTimes(2));
   const operation = vi.mocked(api.previewRestore).mock.calls[1]![1];
-  if (destination === "history") fireEvent.click(screen.getByText(L.history).closest("button")!);
+  if (destination === "history") {
+    fireEvent.click(screen.getByText(L.moreBrowseTools));
+    fireEvent.click(screen.getByText(L.history).closest("button")!);
+  }
   else page.rerender(<Toolbox visible={false} />);
   await waitFor(() => expect(api.cancelRestorePreview).toHaveBeenCalledWith(operation));
   await act(async () => complete());

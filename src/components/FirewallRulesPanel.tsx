@@ -123,10 +123,9 @@ export function FirewallRulesPanel({
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>{L.firewallTitle}</strong>
-        <span style={css.muted}>{L.firewallHint}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+      <div className="remova-tool-heading">
+        <h2>{L.firewallTitle}</h2>
+        <div className="remova-tool-actions">
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void scan()}>
             {L.manageReload}
           </button>
@@ -161,6 +160,7 @@ export function FirewallRulesPanel({
           </button>
         </div>
       </div>
+      <p className="remova-tool-note">{L.firewallHint}</p>
       <ScanCompletenessNotice completeness={completeness} />
       {lastResult && (
         <div style={{ marginTop: 10, padding: 10, border: "1px solid var(--border)", borderRadius: 8 }}>
@@ -215,7 +215,7 @@ export function FirewallRulesPanel({
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>{row.rule_name}</div>
                 <div style={{ ...css.muted, fontSize: 11.5 }}>
-                  {L.firewallApp}: <span style={{ fontFamily: "var(--mono)" }}>{row.app_path}</span>
+                  {L.firewallApp}: <span style={{ fontFamily: "var(--mono)", overflowWrap: "anywhere" }}>{row.app_path}</span>
                 </div>
                 <div style={{ ...css.muted, fontSize: 11 }}>
                   {row.direction === "Out" ? L.firewallDirectionOut : L.firewallDirectionIn}

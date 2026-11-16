@@ -116,7 +116,7 @@ export function SoftwareToolbar({
       >
         <Deco ch="✦" />
       </button>
-      <div className="remova-software-categories" role="group" aria-label={L.softwareCategories}>
+      <div className="remova-software-categories remova-segmented" role="group" aria-label={L.softwareCategories}>
         {(
           [
             ["all", L.catAll],

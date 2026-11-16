@@ -44,9 +44,9 @@ export function VectorsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.vectorsTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.vectorsTitle}</strong>
-        <span style={css.muted}>{L.vectorsHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.vectorsTitle}</h2>
+        <span style={css.muted}>{L.toolReadOnly}</span>
         <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onClose} aria-label={L.panelClose}>
           <CloseGlyph />
         </button>
@@ -160,9 +160,9 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.msiTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.msiTitle}</strong>
-        <span style={css.muted}>{L.msiHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.msiTitle}</h2>
+        <span style={css.muted}>{L.toolReadOnly}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={{ ...css.btnGhost, height: 28 }} disabled={busy} onClick={() => void scan()}>
             {busy ? L.loadingGeneric : L.manageReload}
@@ -175,11 +175,14 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
       {loadError && <div role="alert" style={{ color: "var(--danger-text)", marginBottom: 8 }}>{loadError}</div>}
       <ScanCompletenessNotice completeness={completeness} />
       {report && report.notes.length > 0 && (
-        <div style={{ ...css.muted, fontSize: 12, margin: "6px 0" }}>
-          {report.notes.map((n) => (
-            <div key={n}>{noteLabel(n)}</div>
-          ))}
-        </div>
+        <details className="remova-tool-disclosure">
+          <summary>{L.msiSources}</summary>
+          <div className="remova-tool-note">
+            {report.notes.map((n) => (
+              <div key={n}>{noteLabel(n)}</div>
+            ))}
+          </div>
+        </details>
       )}
       {report && report.products.length === 0 && <p style={css.muted}>{L.msiEmpty}</p>}
       {report && report.products.length > 0 && (
@@ -189,14 +192,17 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
               key={d.product_code}
               style={{ display: "flex", gap: 8, padding: "6px 8px", borderBottom: "1px solid var(--border)", fontSize: 12, alignItems: "center", flexWrap: "wrap" }}
             >
-              <span style={{ flexShrink: 0, fontWeight: 600 }}>{classLabel(d.class)}</span>
-              <span style={{ flex: 1, minWidth: 100 }}>{d.display_name || L.msiUnnamed}</span>
-              <span style={{ ...css.mono, ...css.muted, fontSize: 11 }}>{d.product_code}</span>
+              <strong style={{ flex: "1 1 180px" }}>{d.display_name || L.msiUnnamed}</strong>
+              <span style={css.muted}>{classLabel(d.class)}</span>
+              <details className="remova-tool-row-detail">
+                <summary>{L.brokenInstallsGuid}</summary>
+                <span>{d.product_code}</span>
+              </details>
             </div>
           ))}
         </div>
       )}
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.msiNote}</div>
+      {report && report.products.length > 0 && <p className="remova-tool-note" style={{ marginTop: 10 }}>{L.msiNote}</p>}
     </section>
   );
 }

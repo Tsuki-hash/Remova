@@ -125,8 +125,8 @@ export function DiskRadarPanel({
 
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>{L.diskRadarTitle}</strong>
+      <div className="remova-tool-heading">
+        <h2>{L.diskRadarTitle}</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {drives.map((d) => (
             <button

@@ -77,22 +77,20 @@ export function HistoryPanel({
 
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>{L.historyTitle}</strong>
-        <span style={css.muted}>{L.historyTimelineHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.historyTitle}</h2>
         <input
           style={{ ...css.input, maxWidth: 220, height: 32, marginLeft: "auto" }}
-          aria-label={L.search}
-          placeholder={L.search}
+          aria-label={L.historySearch}
+          placeholder={L.historySearch}
           value={histQ}
           onChange={(e) => setHistQ(e.target.value)}
         />
         <button
           style={{
-            ...css.btn,
+            ...css.btnGhost,
             height: 30,
-            background: "var(--danger-text)",
-            color: "var(--surface)",
+            color: "var(--danger-text)",
             opacity: loading || !!loadError || history.length === 0 || mutating ? 0.5 : 1,
           }}
           disabled={loading || !!loadError || history.length === 0 || mutating}

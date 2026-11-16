@@ -285,8 +285,8 @@ export function DiskOverviewPanel({
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.diskOverviewTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.diskOverviewTitle}</strong>
+      <div className="remova-tool-heading">
+        <h2>{L.diskOverviewTitle}</h2>
         <button
           style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }}
           onClick={onClose}
@@ -458,8 +458,7 @@ export function DiskOverviewPanel({
 
       {tab === "cleanup" && (
         <div id="disk-overview-panel-cleanup" role="tabpanel" aria-labelledby="disk-overview-tab-cleanup" aria-label={L.diskOverviewTabCleanup}>
-          <div style={{ fontWeight: 600 }}>{L.triageTitle}</div>
-          <div style={{ ...css.muted, fontSize: 12, margin: "4px 0 6px" }}>{L.triageHint}</div>
+          {rows.length > 0 && <p className="remova-tool-note">{L.triageHint}</p>}
           {rows.length === 0 ? (
             !cleanupPending && !triageScan.error && !regenScan.error && <p style={css.muted}>{L.diskOverviewEmpty}</p>
           ) : (

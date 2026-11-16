@@ -120,9 +120,8 @@ export function BrokenInstallsPanel({
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>{L.brokenInstallsTitle}</strong>
-        <span style={css.muted}>{L.brokenInstallsHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.brokenInstallsTitle}</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void scan()}>
             {L.manageReload}
@@ -163,12 +162,14 @@ export function BrokenInstallsPanel({
                 <div style={{ fontWeight: 600 }}>{row.app.name}</div>
                 <div style={{ ...css.muted, fontSize: 11.5 }}>
                   {L.brokenInstallsMissingDir}:{" "}
-                  <span style={{ fontFamily: "var(--mono)" }}>{row.app.install_location}</span>
+                  <span style={{ fontFamily: "var(--mono)", overflowWrap: "anywhere" }}>{row.app.install_location}</span>
                 </div>
-                <div style={{ ...css.muted, fontSize: 11 }}>
-                  {L.brokenInstallsGuid}: <span style={{ fontFamily: "var(--mono)" }}>{row.guid}</span>
-                </div>
+                <details className="remova-tool-row-detail">
+                  <summary>{L.brokenInstallsGuid}</summary>
+                  <span>{row.guid}</span>
+                </details>
               </div>
+              <div className="remova-tool-actions">
               <button
                 style={{ ...css.btn, height: 28, fontSize: 12, opacity: busy ? 0.5 : 1 }}
                 disabled={busy}
@@ -177,12 +178,13 @@ export function BrokenInstallsPanel({
                 {running === row.guid ? L.brokenInstallsRunning : L.brokenInstallsRerun}
               </button>
               <button
-                style={{ ...css.btnDanger, height: 28, fontSize: 12, opacity: busy ? 0.5 : 1 }}
+                style={{ ...css.btnGhost, height: 28, color: "var(--danger-text)" }}
                 disabled={busy}
                 onClick={() => void remove(row)}
               >
                 {L.brokenInstallsRemove}
               </button>
+              </div>
             </div>
           ))}
         </div>

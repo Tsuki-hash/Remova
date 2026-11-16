@@ -51,11 +51,13 @@ it("groups the inventory by manager and opens the root folder", async () => {
   await waitFor(() => expect(api.openPath).toHaveBeenCalledWith("C:\\npm"));
 });
 
-it("shows the empty state and the read-only note", async () => {
+it("shows the empty state and offers the missing locations on demand", async () => {
   vi.mocked(api.cliGlobals).mockResolvedValue({ items: [], omitted: 0, notes: ["npm", "pnpm", "yarn"], completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } });
   render(<CliGlobalsPanel onClose={vi.fn()} />);
   expect(await screen.findByText(t().cliEmpty)).toBeTruthy();
-  expect(screen.getByText(t().cliNote)).toBeTruthy();
+  const notes = screen.getByText(t().backendTechnicalDetails).closest("details")!;
+  expect(notes.open).toBe(false);
+  expect(notes.textContent).toContain(t().cliNoRoot("npm"));
   expect(screen.queryByText(t().scanCompletenessPartial)).toBeNull();
 });
 

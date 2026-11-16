@@ -310,7 +310,7 @@ it("retry clears the error banner on success and replaces it on failure", async 
   fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabCleanup }));
   fireEvent.click(screen.getByRole("button", { name: L.retry }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  expect(await screen.findByText(L.triageTitle)).toBeTruthy();
+  expect(screen.getByRole("tabpanel", { name: L.diskOverviewTabCleanup })).toBeTruthy();
 });
 
 it("retry replaces the banner text when it fails again", async () => {

@@ -73,9 +73,8 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
   const loading = traces === null || portable === null;
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.tracesTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.tracesTitle}</strong>
-        <span style={css.muted}>{L.tracesHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.tracesTitle}</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={{ ...css.btnGhost, height: 28 }} disabled={busy} onClick={() => void scan()}>
             {busy ? L.loadingGeneric : L.manageReload}
@@ -86,19 +85,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div
-        style={{
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          padding: "8px 10px",
-          ...css.muted,
-          fontSize: 12,
-          marginBottom: 10,
-        }}
-      >
-        {L.tracesIntro}
-      </div>
+      <p className="remova-tool-note">{L.tracesIntro}</p>
 
       {loadError && (
         <div role="alert" style={{ color: "var(--danger-text)", marginBottom: 8 }}>
@@ -223,9 +210,8 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
         </>
       )}
 
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.tracesAdvice}</div>
-      <details style={{ marginTop: 8 }}>
-        <summary style={{ ...css.muted, fontSize: 12, cursor: "pointer" }}>{L.tracesTechSummary}</summary>
+      <details className="remova-tool-disclosure">
+        <summary>{L.tracesTechSummary}</summary>
         <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
   {shellAssoc && (
     <ScanCompletenessNotice completeness={shellAssoc.completeness} />

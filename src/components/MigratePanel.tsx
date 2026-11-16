@@ -80,7 +80,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   const [state, setState] = useState<MigrationState | null>(null);
   const [actionFocus, setActionFocus] = useState<HTMLButtonElement | null>(null);
   const primaryAction = useRef<HTMLButtonElement>(null);
-  const title = useRef<HTMLElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
   const busy = operation !== null;
   const reopenedDuringOperation = useRef(busy);
   // Monotonic id for status probes: the probe runs on the blocking pool shared
@@ -286,9 +286,8 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.migrateTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong ref={title} tabIndex={-1}>{L.migrateTitle}</strong>
-        <span style={css.muted}>{L.migrateHint}</span>
+      <div className="remova-tool-heading">
+        <h2 ref={title} tabIndex={-1}>{L.toolboxMigrate}</h2>
         <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onClose} aria-label={L.panelClose}>
           <CloseGlyph />
         </button>
@@ -298,13 +297,13 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         <span style={{ ...css.muted, fontSize: 12, minWidth: 96 }}>{L.migrateSource}</span>
         <input style={{ ...css.input, height: 30 }} value={source} disabled={busy}
           onChange={(e) => editPath(setSource, e.target.value)}
-          placeholder="C:\\Users\\me\\AppData\\Local\\SomeApp" />
+          placeholder={"C:\\Users\\me\\AppData\\Local\\SomeApp"} />
       </label>
       <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
         <span style={{ ...css.muted, fontSize: 12, minWidth: 96 }}>{L.migrateTarget}</span>
         <input style={{ ...css.input, height: 30 }} value={target} disabled={busy}
           onChange={(e) => editPath(setTarget, e.target.value)}
-          placeholder="D:\\Moved\\SomeApp" />
+          placeholder={"D:\\Moved\\SomeApp"} />
       </label>
 
       {(() => {
@@ -346,7 +345,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         <button
           ref={primaryAction}
           type="button"
-          style={{ ...css.btn, height: 34, opacity: busy ? 0.5 : 1 }}
+          style={{ ...css.btn, height: 34 }}
           disabled={busy || !source.trim() || !target.trim() || state === "finished"}
           onClick={({ currentTarget }) => {
             if (state === "copied") void withBusy(currentTarget, runCutover);
@@ -411,7 +410,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
         </div>
       )}
 
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.migrateNote}</div>
+      <p className="remova-tool-note" style={{ marginTop: 10 }}>{L.migrateNote}</p>
     </section>
   );
 }

@@ -327,28 +327,26 @@ export function ScopedScanPanel({
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>{title}</h2>
-        <span style={css.muted}>{hint}</span>
+      <div className="remova-tool-heading">
+        <h2>{title}</h2>
         {!busy && lastScanCount !== null && (
           <span style={css.muted}>
             {`${L.orphanJustScanned} · ${lastScanCount}`}
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button
-            style={{
-              ...css.btn,
-              height: 30,
-              background: "var(--danger-text)",
-              color: "var(--surface)",
-              opacity: busy || selected.size === 0 ? 0.5 : 1,
-            }}
-            disabled={busy || selected.size === 0}
-            onClick={() => void cleanSelected()}
-          >
-            {L.cleanup} ({selected.size})
+        <div className="remova-tool-actions">
+          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
+            {L.scanStart}
           </button>
+          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
+            <CloseGlyph />
+          </button>
+        </div>
+      </div>
+      {hint && <p className="remova-tool-note">{hint}</p>}
+      <div className="remova-tool-selection">
+        {summaryText && <div style={css.muted}>{summaryText}</div>}
+        <div className="remova-tool-actions">
           <button
             style={{ ...css.btnGhost, height: 30 }}
             disabled={busy || !items || items.length === 0}
@@ -374,11 +372,12 @@ export function ScopedScanPanel({
           >
             {L.clearSelection}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
-            {L.scanStart}
-          </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
+          <button
+            style={{ ...css.btnDanger, height: 30 }}
+            disabled={busy || selected.size === 0}
+            onClick={() => void cleanSelected()}
+          >
+            {L.cleanup} ({selected.size})
           </button>
         </div>
       </div>
@@ -402,13 +401,6 @@ export function ScopedScanPanel({
       >
         {announcedSummary}
       </div>
-      {items && (
-        <div style={{ ...css.muted, marginTop: 6, fontSize: 12 }}>
-          {found.knownKb > 0 ? `${L.scanFoundTotal(formatSize(found.knownKb))} · ` : ""}
-          {L.orphanSelectedMeta(selected.size, formatSize(plan.knownKb))}
-          {plan.unknown > 0 ? ` · ${L.planUnknownSize(plan.unknown)}` : ""}
-        </div>
-      )}
       {/* an omitted count is the only honest way to show a capped list. */}
       {omitted > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>{L.scanOmitted(omitted)}</div>

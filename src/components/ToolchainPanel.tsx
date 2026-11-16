@@ -66,9 +66,9 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.toolchainTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.toolchainTitle}</strong>
-        <span style={css.muted}>{L.toolchainHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.toolchainTitle}</h2>
+        <span style={css.muted}>{L.toolReadOnly}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={{ ...css.btnGhost, height: 28 }} disabled={busy} onClick={() => void scan()}>
             {busy ? L.loadingGeneric : L.manageReload}
@@ -131,9 +131,9 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
           </div>
         ))}
 
-      <div style={{ borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 8 }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{L.toolchainConsumers}</div>
-        <div style={{ ...css.muted, fontSize: 12, marginBottom: 6 }}>{L.toolchainConsumersHint}</div>
+      <details className="remova-tool-disclosure">
+        <summary>{L.toolchainConsumers}</summary>
+        <p className="remova-tool-note">{L.toolchainConsumersHint}</p>
         <textarea
           style={{ ...css.input, width: "100%", minHeight: 56, fontFamily: "var(--mono)", fontSize: 11.5 }}
           placeholder={"D:\\projects\nC:\\code"}
@@ -173,8 +173,7 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
-      </div>
-      <div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.toolchainNote}</div>
+      </details>
     </section>
   );
 }

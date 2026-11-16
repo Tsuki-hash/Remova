@@ -6,12 +6,16 @@ import type { MonitorDiff } from "../lib/api";
 export function MonitorPanel({
   diff,
   monitoring,
+  stopping,
+  onStop,
   onToCleanup,
   onDismiss,
   onClose,
 }: {
   diff: MonitorDiff;
   monitoring?: boolean;
+  stopping?: boolean;
+  onStop?: () => void;
   onToCleanup: () => void;
   onDismiss: () => void;
   onClose?: () => void;
@@ -21,16 +25,14 @@ export function MonitorPanel({
   const truncated = (diff.files_truncated ?? 0) + (diff.reg_truncated ?? 0);
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-        <strong>{monitoring ? L.monitorStop : L.monitorInstall}</strong>
-        <span style={css.muted}>
-          {total === 0
-            ? monitoring
-              ? L.monitorInstallHint
-              : L.monitorEmpty
-            : L.monitorDiffCounts(diff.added_files.length, diff.added_reg_values.length)}
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+      <header className="remova-tool-heading">
+        <h2>{L.monitorInstall}</h2>
+        <div className="remova-tool-actions">
+          {monitoring && onStop && (
+            <button type="button" style={css.btn} disabled={stopping} onClick={onStop}>
+              {L.monitorStop}
+            </button>
+          )}
           <button
             style={{ ...css.btn, height: 30, opacity: total === 0 || diff.walk_degraded ? 0.5 : 1 }}
             disabled={total === 0 || diff.walk_degraded}
@@ -47,7 +49,12 @@ export function MonitorPanel({
             </button>
           )}
         </div>
-      </div>
+      </header>
+      <p className="remova-tool-note" role="status">
+        {monitoring ? L.monitorActive
+          : total === 0 ? L.monitorEmpty
+            : L.monitorDiffCounts(diff.added_files.length, diff.added_reg_values.length)}
+      </p>
       {truncated > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
           {L.monitorTruncated(diff.files_truncated ?? 0, diff.reg_truncated ?? 0)}
@@ -65,7 +72,7 @@ export function MonitorPanel({
         style={{ maxHeight: 160, overflow: "auto", marginTop: 8 }}
       >
         {total === 0 ? (
-          <div style={{ ...css.muted, padding: "8px 0" }}>{L.monitorEmptyHint}</div>
+          !monitoring && <div className="remova-tool-note">{L.monitorEmptyHint}</div>
         ) : (
           [...diff.added_files, ...diff.added_reg_values].map((line, i) => (
             <div

@@ -13,6 +13,20 @@ import type { CleanupItem } from "../types";
 afterEach(cleanup);
 
 describe("MonitorPanel", () => {
+  it("stops tracking from the active tool without reopening the directory", () => {
+    const L = t();
+    const onStop = vi.fn();
+    const { rerender } = render(
+      <MonitorPanel diff={{ added_files: [], added_reg_values: [] }} monitoring
+        onStop={onStop} onToCleanup={vi.fn()} onDismiss={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: L.monitorStop }));
+    expect(onStop).toHaveBeenCalledOnce();
+    rerender(<MonitorPanel diff={{ added_files: [], added_reg_values: [] }} monitoring stopping
+      onStop={onStop} onToCleanup={vi.fn()} onDismiss={vi.fn()} />);
+    expect(screen.getByRole("button", { name: L.monitorStop })).toHaveProperty("disabled", true);
+  });
+
   it("shows degradation and blocks cleanup even when rows exist", () => {
     const onToCleanup = vi.fn();
     render(<MonitorPanel diff={{ added_files: ["test-file"], added_reg_values: [], walk_degraded: true }} onToCleanup={onToCleanup} onDismiss={() => {}} />);

@@ -61,10 +61,12 @@ export function IdleRadarPanel({
 
   return (
     <div style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>{L.idleTitle}</strong>
-        <span style={css.muted}>{L.idleHint}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+      <div className="remova-tool-heading">
+        <h2>{L.idleTitle}</h2>
+        <div className="remova-tool-actions">
+          {(rows?.length ?? 0) > 0 && <button style={{ ...css.btnGhost, height: 30 }} onClick={onGoSoftware}>
+            {L.goToSoftware}
+          </button>}
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} title={busy ? L.idleScanning : undefined} onClick={() => void load()}>
             {L.manageReload}
           </button>
@@ -121,9 +123,6 @@ export function IdleRadarPanel({
                 ))}
               </div>
             </div>
-            <button style={{ ...css.btnGhost, height: 28 }} onClick={onGoSoftware}>
-              {L.goToSoftware}
-            </button>
           </div>
         )}
       />

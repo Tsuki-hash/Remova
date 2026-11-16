@@ -124,6 +124,34 @@
     --row-hover: #eef3fa;
   }
   .remova-toolbox { max-width: 1440px; margin-inline: auto; }
+  .remova-tool-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding-bottom: 11px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .remova-tool-heading h2 { margin: 0 auto 0 0; font-size: 18px; font-weight: 650; }
+  .remova-tool-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .remova-tool-selection { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 8px; }
+  .remova-tool-selection > .remova-tool-actions { margin-inline-start: auto; }
+  .remova-tool-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .remova-tool-disclosure { margin-block: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .remova-tool-disclosure > summary, .remova-tool-catalog > summary {
+    width: fit-content;
+    padding: 5px 0;
+    margin-bottom: 6px;
+    cursor: pointer;
+    color: var(--accent-text);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .remova-tool-pending { margin-bottom: 8px; }
+  .remova-tool-row-detail { min-width: 0; color: var(--muted); font-size: 11px; }
+  .remova-tool-row-detail summary { cursor: pointer; }
+  .remova-tool-row-detail span { font-family: var(--mono); overflow-wrap: anywhere; user-select: text; }
   .remova-tool-quick, .remova-tool-groups, .remova-tool-columns {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -174,7 +202,67 @@
   .remova-tool-description { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
   .remova-tool-section:has(input[type="checkbox"]) > div { padding-top: 10px; }
 
-  .remova-software-categories {
+  .remova-settings-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 16px;
+    max-width: 1040px;
+  }
+  .remova-settings-grid[hidden] { display: none; }
+  .remova-settings-preferences { display: grid; gap: 16px; min-width: 0; }
+  .remova-settings-card {
+    min-width: 0;
+    padding: 15px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .remova-settings-card .remova-tool-section { margin-bottom: 0; }
+  .remova-settings-card .remova-tool-section h2 { font-size: 16px; }
+  .remova-setting-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    cursor: pointer;
+  }
+  .remova-setting-option + .remova-setting-option { border-top: 1px solid var(--border); }
+  .remova-setting-option strong, .remova-setting-option span span { display: block; }
+  .remova-setting-option span span { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .remova-setting-switch {
+    appearance: none;
+    flex: none;
+    width: 37px;
+    height: 22px;
+    margin: 0;
+    padding: 3px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface-2);
+    cursor: pointer;
+  }
+  .remova-setting-switch::after {
+    content: "";
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .remova-setting-switch:checked { background: var(--accent); border-color: var(--accent); }
+  .remova-setting-switch:checked::after { margin-inline-start: auto; background: var(--accent-ink); }
+  .remova-setting-close { display: grid; justify-items: start; gap: 9px; padding-top: 12px; }
+  .remova-setting-close p { margin: 0; }
+  @container (max-width: 690px) {
+    .remova-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (forced-colors: active) {
+    .remova-setting-switch { appearance: auto; width: 18px; height: 18px; }
+    .remova-setting-switch::after { content: none; }
+  }
+  .remova-segmented {
     display: flex;
     gap: 2px;
     flex-shrink: 0;
@@ -183,7 +271,7 @@
     border-radius: 8px;
     background: var(--surface-2);
   }
-  .remova-software-categories button {
+  .remova-segmented button {
     min-height: 28px;
     padding: 0 12px;
     border: 0;
@@ -193,8 +281,8 @@
     font-size: 12px;
     cursor: pointer;
   }
-  .remova-software-categories button:hover { background: var(--row-hover); color: var(--fg); }
-  .remova-software-categories button[aria-pressed="true"] {
+  .remova-segmented button:hover { background: var(--row-hover); color: var(--fg); }
+  .remova-segmented button[aria-pressed="true"] {
     background: var(--accent-soft);
     color: var(--accent-text);
     font-weight: 650;

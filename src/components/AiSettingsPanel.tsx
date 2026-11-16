@@ -151,20 +151,8 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
         overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "16px 18px",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface-2)",
-        }}
-      >
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{L.aiSettings}</div>
-          <div style={{ ...css.muted, marginTop: 2 }}>{L.aiSettingsHint}</div>
-        </div>
+      <div className="remova-tool-heading" style={{ padding: "12px 18px", marginBottom: 0 }}>
+        <h2>{L.aiSettings}</h2>
         <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label={t().panelClose}>
           <CloseGlyph />
         </button>

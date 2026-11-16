@@ -127,7 +127,9 @@ export function MorePage({
     return () => setPreviewVisible(false);
   }, [openTool, setPreviewVisible]);
   const panelRef = useRef<HTMLDivElement>(null);
+  const catalogRef = useRef<HTMLDetailsElement>(null);
   const hasMonitorDiff = !settingsOnly && Boolean(monitorDiff);
+  const showMonitorPanel = openTool === "monitor" || (hasMonitorDiff && !openTool);
   // `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
   // retained, so "new" stopped meaning anything. Show it once per session, on the
   // first report that arrives.
@@ -137,10 +139,13 @@ export function MorePage({
     if (lastReport) seenReport.current = true;
   }, [lastReport]);
   useEffect(() => {
-    if (!openTool && !hasMonitorDiff) return;
+    if (!openTool && !showMonitorPanel) return;
     panelRef.current?.scrollIntoView?.({ block: "start" });
     panelRef.current?.focus({ preventScroll: true });
-  }, [openTool, hasMonitorDiff]);
+  }, [openTool, showMonitorPanel]);
+  useEffect(() => {
+    if (catalogRef.current) catalogRef.current.open = !openTool;
+  }, [openTool]);
 
   const quick: ToolItem[] = [
     {
@@ -307,13 +312,6 @@ export function MorePage({
 
   const help: ToolItem[] = [
     {
-      id: "ai",
-      title: L.aiSettings,
-      desc: L.aiSettingsHint,
-      icon: "ai",
-      action: () => tools.toggleTool("ai"),
-    },
-    {
       id: "releases",
       title: L.versionCheck,
       desc: L.versionCheckHint,
@@ -321,11 +319,32 @@ export function MorePage({
       action: onCheckUpdate,
     },
     {
+      id: "open-releases",
+      title: L.openReleases,
+      desc: L.openReleasesHint,
+      icon: "installers",
+      action: () => {
+        void import("../lib/updateCheck")
+          .then(({ RELEASES_URL }) => api.openPath(RELEASES_URL))
+          .catch((e) => {
+            console.error("[update] open releases failed", e);
+            toast.error(formatError(e));
+          });
+      },
+    },
+    {
       id: "onboarding",
       title: L.onboardingReopen,
       desc: L.onboardingReopenHint,
       icon: "report",
       action: () => onReopenOnboarding?.(),
+    },
+    {
+      id: "ai",
+      title: L.aiSettings,
+      desc: L.aiSettingsHint,
+      icon: "ai",
+      action: () => tools.toggleTool("ai"),
     },
   ];
 
@@ -468,11 +487,12 @@ export function MorePage({
       {openTool === "diskradar" && (
         <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
       )}
-      {/* always render the monitor tool surface (not only after a diff arrives). */}
-      {(openTool === "monitor" || hasMonitorDiff) && (
+      {showMonitorPanel && (
         <MonitorPanel
           diff={monitorDiff ?? { added_files: [], added_reg_values: [] }}
           monitoring={monitoring}
+          stopping={monitorSnapshotBusy}
+          onStop={() => void onToggleMonitor()}
           onToCleanup={onMonitorToCleanup}
           onDismiss={() => {
             onDismissMonitor();
@@ -483,7 +503,15 @@ export function MorePage({
         />
       )}
       </div>
-      {!settingsOnly && <>
+      {hasMonitorDiff && !showMonitorPanel && (
+        <div className="remova-tool-pending">
+          <button type="button" style={css.btnGhost} onClick={() => openFromTrigger("monitor", { opener: searchRef.current })}>
+            {L.monitorViewResult}
+          </button>
+        </div>
+      )}
+      {!settingsOnly && <details className="remova-tool-catalog" ref={catalogRef} open={!openTool}>
+        <summary hidden={!openTool}>{L.moreBrowseTools}</summary>
         <div
           style={{
             display: "flex",
@@ -607,114 +635,58 @@ export function MorePage({
           {trackedTraces.map(renderTool)}
         </Section>
       )}
-      </>}
-      {(settingsOnly || (q && trackedHelp.length > 0)) && (
-        <Section
-          title={settingsOnly ? L.toolboxHelp : L.moreSectionHelp}
-          columns
-          extra={settingsOnly && (
-            <button
-              style={{ ...css.btnGhost, height: 26, fontSize: 12 }}
-              title={L.openReleases}
-              onClick={() => {
-                void import("../lib/updateCheck")
-                  .then(({ RELEASES_URL }) => api.openPath(RELEASES_URL))
-                  .catch((e) => {
-                    console.error("[update] open releases failed", e);
-                    toast.error(formatError(e));
-                  });
-              }}
-            >
-              {L.openReleases}
-            </button>
-          )}
-        >
-          {trackedHelp.map(renderTool)}
-        </Section>
-      )}
-
-      {settingsOnly && <Section title={L.closeMode} hint={L.closeModeHint}>
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              marginBottom: 12,
-              fontSize: 13,
-              color: "var(--fg)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={tools.rescanOn}
-              onChange={() => tools.toggleRescan()}
-            />
-            <span style={{ fontWeight: 600 }}>{L.rescanAfterUninstall}</span>
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>
-              {L.rescanAfterUninstallHint}
-            </span>
-          </label>
-          <label
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              marginBottom: 12,
-              fontSize: 13,
-              color: "var(--fg)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={tools.restorePointOn}
-              onChange={() => tools.toggleRestorePoint()}
-            />
-            <span style={{ fontWeight: 600 }}>{L.restorePointBeforeCleanup}</span>
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>
-              {L.restorePointBeforeCleanupHint}
-            </span>
-          </label>
-          <div
-            style={{
-              display: "inline-flex",
-              border: "1px solid var(--border)",
-              borderRadius: 10,
-              overflow: "hidden",
-              background: "var(--surface)",
-            }}
-          >
-            {([
-              { id: "tray" as const, label: L.closeModeTray },
-              { id: "quit" as const, label: L.closeModeQuit },
-            ]).map((opt) => {
-              const active = closeMode === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => onCloseModeChange(opt.id)}
-                  style={{
-                    border: "none",
-                    background: active ? "var(--accent-soft)" : "transparent",
-                    color: active ? "var(--accent)" : "var(--fg)",
-                    padding: "10px 18px",
-                    fontSize: 13,
-                    fontWeight: active ? 650 : 500,
-                    cursor: "pointer",
-                    borderRight: opt.id === "tray" ? "1px solid var(--border)" : "none",
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
+      {q && trackedHelp.length > 0 && <Section title={L.moreSectionHelp} columns>
+        {trackedHelp.map(renderTool)}
+      </Section>}
+      </details>}
+      {settingsOnly && <div className="remova-settings-grid" hidden={Boolean(openTool)}>
+        <div className="remova-settings-preferences">
+          <div className="remova-settings-card">
+            <Section title={L.cleanupPreferences}>
+              {([
+                ["rescan", L.rescanAfterUninstall, L.rescanAfterUninstallHint, tools.rescanOn, tools.toggleRescan],
+                ["restore-point", L.restorePointBeforeCleanup, L.restorePointBeforeCleanupHint, tools.restorePointOn, tools.toggleRestorePoint],
+              ] as const).map(([id, label, help, checked, onChange]) => (
+                <label className="remova-setting-option" key={id}>
+                  <span>
+                    <strong>{label}</strong>
+                    <span id={"remova-setting-help-" + id}>{help}</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    className="remova-setting-switch"
+                    aria-label={label}
+                    aria-describedby={"remova-setting-help-" + id}
+                    checked={checked}
+                    onChange={onChange}
+                  />
+                </label>
+              ))}
+            </Section>
+          </div>
+          <div className="remova-settings-card">
+            <Section title={L.closeMode}>
+              <div className="remova-setting-close">
+                <div className="remova-segmented" role="group" aria-label={L.closeMode}>
+                  {([["tray", L.closeModeTray], ["quit", L.closeModeQuit]] as const).map(([mode, label]) => (
+                    <button key={mode} type="button" aria-pressed={closeMode === mode}
+                      onClick={() => onCloseModeChange(mode)}>{label}</button>
+                  ))}
+                </div>
+                {closeMode !== "quit" && <p className="remova-tool-note">
+                  {closeMode === "tray" ? L.closeModeHint : L.closeModeAskHint}
+                </p>}
+              </div>
+            </Section>
           </div>
         </div>
-      </Section>}
+        <div className="remova-settings-card">
+          <Section title={L.toolboxHelp}>
+            {help.map(renderTool)}
+          </Section>
+        </div>
+      </div>}
     </div>
   );
 }

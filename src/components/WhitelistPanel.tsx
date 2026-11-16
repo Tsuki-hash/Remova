@@ -72,9 +72,8 @@ export function WhitelistPanel({
         fontSize: 13,
       }}
     >
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <strong style={{ fontSize: 13, fontWeight: 600 }}>{L.appWhitelist}</strong>
-        <span style={{ ...css.muted, fontSize: 12, flex: 1 }}>{L.appWhitelistHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.appWhitelist}</h2>
         {onIgnorePublisher && (
           <button
             style={{ ...css.btnSm, height: 28 }}
@@ -88,6 +87,7 @@ export function WhitelistPanel({
           <CloseGlyph />
         </button>
       </div>
+      {rows.length > 0 && <p className="remova-tool-note">{L.whitelistRestoreHint}</p>}
       {lists === null ? (
         loadError ? <div role="alert">
           <div style={{ color: "var(--danger-text)", marginBottom: 8 }}>{loadError}</div>

@@ -27,7 +27,7 @@ function Toolbox(props: Omit<ComponentProps<typeof MorePage>, "restore">) {
   return <MorePage {...props} restore={restore} />;
 }
 
-it("opens the Releases page from the help section header", async () => {
+it("opens the Releases page alongside the update check", async () => {
   render(
     <Toolbox
       settingsOnly

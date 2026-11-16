@@ -133,9 +133,8 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.cliTitle}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-        <strong>{L.cliTitle}</strong>
-        <span style={css.muted}>{L.cliHint}</span>
+      <div className="remova-tool-heading">
+        <h2>{L.cliTitle}</h2>
         <button
           style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }}
           onClick={onClose}
@@ -164,12 +163,6 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
       )}
       <ScanCompletenessNotice completeness={completeness} />
 
-      {result?.notes.map((m) => (
-        <div key={m} style={{ ...css.muted, fontSize: 12 }}>
-          {L.cliNoRoot(m)}
-        </div>
-      ))}
-
       {MANAGERS.map((m) => {
         const rows = result?.items.filter((i) => i.manager === m) ?? [];
         if (!rows.length || !result) return null;
@@ -178,7 +171,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <strong style={{ fontSize: 12 }}>{m}</strong>
               <span style={{ ...css.muted, fontSize: 12 }}>
-                {rows.length} · {m === "pnpm" ? L.cliShimNote : ""}
+                {rows.length}{m !== "npm" && ` · ${L.toolReadOnly}`}
               </span>
               <button
                 type="button"
@@ -226,7 +219,7 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
 
       {npmRows.length > 0 && (
         <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-          <span style={{ ...css.muted, fontSize: 12, flex: 1 }}>{L.cliRemoveNote}</span>
+          <span style={{ ...css.muted, fontSize: 12, flex: 1 }}>{L.cliNote}</span>
           <button
             type="button"
             style={{
@@ -271,7 +264,15 @@ export function CliGlobalsPanel({ onClose }: { onClose: () => void }) {
     <div style={{ ...css.muted, fontSize: 11, marginTop: 4 }}>{L.cliResidueNote}</div>
   </details>
 )}
-<div style={{ ...css.muted, fontSize: 12, marginTop: 10 }}>{L.cliNote}</div>
+      {result && (result.notes.length > 0 || result.items.some((item) => item.manager === "pnpm")) && (
+        <details className="remova-tool-disclosure">
+          <summary>{L.backendTechnicalDetails}</summary>
+          <div className="remova-tool-note">
+            {result.items.some((item) => item.manager === "pnpm") && <div>{L.cliShimNote}</div>}
+            {result.notes.map((m) => <div key={m}>{L.cliNoRoot(m)}</div>)}
+          </div>
+        </details>
+      )}
     </section>
   );
 }
