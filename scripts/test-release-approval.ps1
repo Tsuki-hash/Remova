@@ -47,6 +47,61 @@ function Test-LaunchObservation([string]$FixtureRoot) {
     if ($state.closed -ne $state.starts) { throw 'An unsuccessful launch was not closed.' }
 }
 
+function Test-PortableSmoke([string]$FixtureRoot) {
+    $scripts = Join-Path $FixtureRoot 'scripts'
+    $acceptance = Join-Path $scripts 'acceptance'
+    $release = Join-Path $FixtureRoot 'src-tauri/target/release'
+    $portable = Join-Path $release 'bundle/portable'
+    New-Item -ItemType Directory -Path $acceptance, $portable -Force | Out-Null
+    Copy-Item -LiteralPath "$PSScriptRoot/smoke-portable.ps1" -Destination $scripts
+    Copy-Item -LiteralPath "$PSScriptRoot/acceptance/acceptance-common.ps1" -Destination $acceptance
+    Set-Content -LiteralPath (Join-Path $FixtureRoot 'package.json') -Value '{"version":"1.4.1"}'
+    Set-Content -LiteralPath (Join-Path $FixtureRoot 'LICENSE') -Value 'fixture license'
+    Set-Content -LiteralPath (Join-Path $FixtureRoot 'THIRD-PARTY-NOTICES.md') -Value 'fixture notices'
+    $exe = Join-Path $release 'remova.exe'
+    $original = 'fixture built exe bytes'
+    Set-Content -LiteralPath $exe -Value $original -NoNewline
+    $zip = Join-Path $portable 'Remova_1.4.1_x64-portable.zip'
+    $smoke = Join-Path $scripts 'smoke-portable.ps1'
+
+    function Write-FixtureZip([string[]]$Executables, [string]$Bytes) {
+        $stream = [IO.File]::Open($zip, 'Create', 'Write', 'None')
+        try {
+            $archive = [IO.Compression.ZipArchive]::new($stream, 'Create', $true)
+            try {
+                foreach ($doc in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
+                    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, (Join-Path $FixtureRoot $doc), $doc)
+                }
+                $entries = @(@{ Name = 'PORTABLE.txt'; Text = 'Remova 1.4.1 requires WebView2' })
+                $entries += @($Executables | ForEach-Object { @{ Name = $_; Text = $Bytes } })
+                foreach ($entry in $entries) {
+                    $writer = [IO.StreamWriter]::new($archive.CreateEntry($entry.Name).Open())
+                    try { $writer.Write($entry.Text) } finally { $writer.Dispose() }
+                }
+            } finally { $archive.Dispose() }
+        } finally { $stream.Dispose() }
+    }
+
+    $saved = $env:REMOVA_SMOKED_EXECUTABLE_SHA256
+    try {
+        $env:REMOVA_SMOKED_EXECUTABLE_SHA256 = (Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant()
+        Write-FixtureZip @('Remova.exe') $original
+        & $smoke
+        Write-FixtureZip @('Remova.exe') 'different bytes pretending to be the exe'
+        Must-Refuse { & $smoke } 'archived Remova.exe differs from the built executable'
+        foreach ($duplicate in @('remova.exe', 'nested/Remova.exe')) {
+            Write-FixtureZip @('Remova.exe', $duplicate) $original
+            Must-Refuse { & $smoke } 'exactly one nonempty Remova.exe'
+        }
+        Write-FixtureZip @('nested/Remova.exe') $original
+        Must-Refuse { & $smoke } 'exactly one nonempty Remova.exe'
+        Set-Content -LiteralPath $exe -Value 'a different build' -NoNewline
+        Write-FixtureZip @('Remova.exe') 'a different build'
+        Must-Refuse { & $smoke } 'differs from the executable used for launch smoke'
+    } finally { $env:REMOVA_SMOKED_EXECUTABLE_SHA256 = $saved }
+    Write-Host 'Portable smoke passed the executable digest, duplicate entry and launch identity checks.'
+}
+
 function Test-PublishDraft(
     [string]$Scenario,
     [string]$FixtureRole,
@@ -202,6 +257,7 @@ $reference | ConvertTo-Json -Depth 3
 
     $launchFixture = New-Item -ItemType Directory -Path (Join-Path $root 'launch')
     Test-LaunchObservation $launchFixture.FullName
+    Test-PortableSmoke (Join-Path $root 'portable-smoke')
     $tag = 'v1.4.1'
     $commit = 'a' * 40
     $bundle = New-Item -ItemType Directory -Path (Join-Path $root 'bundle')

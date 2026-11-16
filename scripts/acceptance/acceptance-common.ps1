@@ -104,6 +104,28 @@ function Read-AcceptanceExecutableReference([string]$Path, $Artifacts) {
     $digests
 }
 
+function Get-PortableArchiveExeHash([IO.Compression.ZipArchive]$Archive, [Collections.IDictionary]$DistributionHashes = @{}) {
+    foreach ($name in $DistributionHashes.Keys) {
+        $documents = @($Archive.Entries | Where-Object { $_.FullName -ieq $name })
+        if ($documents.Count -ne 1) {
+            throw "The portable archive must contain one $name at its root."
+        }
+        $document = $documents[0].Open()
+        try {
+            if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($document)).ToLowerInvariant() -cne $DistributionHashes[$name]) {
+                throw "The portable archive contains unexpected contents for $name."
+            }
+        } finally { $document.Dispose() }
+    }
+    $entries = @($Archive.Entries | Where-Object { ($_.FullName -split '[\\/]')[-1] -ieq 'remova.exe' })
+    if ($entries.Count -ne 1 -or $entries[0].FullName -ine 'remova.exe' -or $entries[0].Length -le 0) {
+        throw 'The portable archive must contain exactly one nonempty Remova.exe, at its root.'
+    }
+    $exe = $entries[0].Open()
+    try { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($exe)).ToLowerInvariant() }
+    finally { $exe.Dispose() }
+}
+
 function Get-PortableExeHash([string]$Path, [string]$ArchiveHash, [Collections.IDictionary]$DistributionHashes = @{}) {
     $file = [IO.File]::Open((Resolve-Path -LiteralPath $Path).Path, 'Open', 'Read', 'Read')
     try {
@@ -112,27 +134,8 @@ function Get-PortableExeHash([string]$Path, [string]$ArchiveHash, [Collections.I
         }
         $file.Position = 0
         $archive = [IO.Compression.ZipArchive]::new($file, 'Read', $true)
-        try {
-            foreach ($name in $DistributionHashes.Keys) {
-                $documents = @($archive.Entries | Where-Object { $_.FullName -ieq $name })
-                if ($documents.Count -ne 1) {
-                    throw "The portable archive must contain one $name at its root."
-                }
-                $document = $documents[0].Open()
-                try {
-                    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($document)).ToLowerInvariant() -cne $DistributionHashes[$name]) {
-                        throw "The portable archive contains unexpected contents for $name."
-                    }
-                } finally { $document.Dispose() }
-            }
-            $entries = @($archive.Entries | Where-Object { $_.FullName -ieq 'remova.exe' })
-            if ($entries.Count -ne 1 -or $entries[0].Length -le 0) {
-                throw 'The portable archive must contain one nonempty remova.exe at its root.'
-            }
-            $exe = $entries[0].Open()
-            try { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($exe)).ToLowerInvariant() }
-            finally { $exe.Dispose() }
-        } finally { $archive.Dispose() }
+        try { Get-PortableArchiveExeHash $archive $DistributionHashes }
+        finally { $archive.Dispose() }
     } finally { $file.Dispose() }
 }
 

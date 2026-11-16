@@ -12,6 +12,7 @@ if (Get-Process -Name Remova -ErrorAction SilentlyContinue) {
 }
 $pin = [IO.File]::Open($exe, 'Open', 'Read', 'Read')
 try {
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($pin)).ToLowerInvariant()
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $proc = Start-Process -FilePath $exe -PassThru
     try {
@@ -21,6 +22,9 @@ try {
         if ($proc.HasExited -or $proc.MainModule.FileName -ine $exe) {
             throw 'Launch smoke failed: the running process did not match the selected executable.'
         }
-        Write-Host "Launch smoke passed: application UI ready after $($timer.ElapsedMilliseconds) ms."
+        if ($env:GITHUB_ENV) {
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value "REMOVA_SMOKED_EXECUTABLE_SHA256=$hash" -Encoding utf8
+        }
+        Write-Host "Launch smoke passed: application UI ready after $($timer.ElapsedMilliseconds) ms. Remova.exe SHA-256 $hash"
     } finally { Close-RemovaTestProcess $proc }
 } finally { $pin.Dispose() }

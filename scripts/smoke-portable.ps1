@@ -1,44 +1,44 @@
 # Smoke-check portable zip after `npm run package:portable` / tauri build.
 # Usage: pwsh -NoProfile -File scripts/smoke-portable.ps1
 $ErrorActionPreference = "Stop"
-$here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-$root = Split-Path -Parent $here
+. "$PSScriptRoot/acceptance/acceptance-common.ps1"
+$root = Split-Path -Parent $PSScriptRoot
 
 $pkgPath = Join-Path $root "package.json"
 if (-not (Test-Path $pkgPath)) {
   Write-Error "smoke-portable FAILED: missing $pkgPath"
 }
 $ver = (Get-Content $pkgPath -Raw | ConvertFrom-Json).version
-$outDir = Join-Path $root "src-tauri/target/release/bundle/portable"
+$releaseDir = Join-Path $root "src-tauri/target/release"
+$outDir = Join-Path $releaseDir "bundle/portable"
 $zip = Join-Path $outDir "Remova_${ver}_x64-portable.zip"
 
 if (-not (Test-Path $zip)) {
   Write-Error "smoke-portable FAILED: missing $zip (run npm run tauri build && npm run package:portable first)"
 }
 
+$buildExe = @('remova.exe', 'Remova.exe') | ForEach-Object { Join-Path $releaseDir $_ } |
+  Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $buildExe) { throw 'smoke-portable FAILED: the built Remova.exe is missing.' }
+$buildHash = (Get-FileHash -LiteralPath $buildExe -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($env:REMOVA_SMOKED_EXECUTABLE_SHA256 -and $buildHash -cne $env:REMOVA_SMOKED_EXECUTABLE_SHA256) {
+  throw 'smoke-portable FAILED: the built Remova.exe differs from the executable used for launch smoke.'
+}
+$distributionHashes = @{}
+foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES.md')) {
+  $distributionHashes[$name] = (Get-FileHash -LiteralPath (Join-Path $root $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
 try {
-  $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-  # The licence and third-party notices are part of the deliverable, not just
-  # the source tree.
-  foreach ($required in @("Remova.exe", "PORTABLE.txt", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
-    if (-not ($names | Where-Object { $_ -eq $required -or $_ -like "*/$required" })) {
-      Write-Error "smoke-portable FAILED: zip missing $required. Entries: $($names -join ', ')"
-    }
+  $portableExeHash = Get-PortableArchiveExeHash $archive $distributionHashes
+  if ($portableExeHash -cne $buildHash) {
+    throw 'smoke-portable FAILED: archived Remova.exe differs from the built executable.'
   }
-  foreach ($required in @("LICENSE", "THIRD-PARTY-NOTICES.md")) {
-    $entries = @($archive.Entries | Where-Object { $_.FullName -ieq $required })
-    if ($entries.Count -ne 1) { throw "smoke-portable FAILED: expected one $required at the root." }
-    $expected = (Get-FileHash -LiteralPath (Join-Path $root $required) -Algorithm SHA256).Hash
-    $stream = $entries[0].Open()
-    try {
-      $actual = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream))
-      if ($actual -cne $expected) { throw "smoke-portable FAILED: contents differ for $required." }
-    } finally { $stream.Dispose() }
-  }
-  $portableEntry = $archive.Entries | Where-Object { $_.Name -eq "PORTABLE.txt" } | Select-Object -First 1
-  $reader = New-Object System.IO.StreamReader($portableEntry.Open())
+  $portableEntries = @($archive.Entries | Where-Object { $_.FullName -ieq 'PORTABLE.txt' })
+  if ($portableEntries.Count -ne 1) { throw 'smoke-portable FAILED: expected one PORTABLE.txt at the root.' }
+  $reader = [IO.StreamReader]::new($portableEntries[0].Open())
   try { $portableText = $reader.ReadToEnd() } finally { $reader.Dispose() }
 } finally {
   $archive.Dispose()
@@ -50,4 +50,4 @@ if ($portableText -notmatch [regex]::Escape($ver)) {
 if ($portableText -notmatch "WebView2") {
   Write-Error "smoke-portable FAILED: PORTABLE.txt missing WebView2 runtime note"
 }
-Write-Host "smoke-portable OK: $zip (Remova.exe + PORTABLE.txt + LICENSE + THIRD-PARTY-NOTICES.md + WebView2 + $ver)" -ForegroundColor Green
+Write-Host "smoke-portable OK: $zip (Remova.exe SHA-256 $portableExeHash)" -ForegroundColor Green
