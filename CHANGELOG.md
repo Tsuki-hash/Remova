@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.5.1]
 
-本版提供未签名安装包。请下载同页的 `SHA256SUMS.txt`，用 `Get-FileHash -Algorithm SHA256` 核对下载文件后再运行。
+本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。
+
+### 下载与校验
+
+从此发布页下载所选发行包和 `SHA256SUMS.txt`。在下载目录打开 PowerShell，将示例文件名替换为实际下载的 EXE、MSI 或 ZIP 文件名。
+
+```powershell
+Get-FileHash -LiteralPath '.\Remova_1.5.1_x64-setup.exe' -Algorithm SHA256
+```
+
+将输出的 Hash 与 `SHA256SUMS.txt` 中同名文件的摘要比对。一致后再运行安装程序或解压便携版。
 
 ### 修复
 

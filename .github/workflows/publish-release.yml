@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-refs/tags/${{ inputs.tag }}
@@ -43,3 +44,9 @@ jobs:
           RELEASE_APPROVAL_PUBLIC_KEY: ${{ vars.RELEASE_APPROVAL_PUBLIC_KEY }}
           DISPATCH_ACTOR: ${{ github.triggering_actor }}
         run: pwsh -NoProfile -File scripts/publish-release-draft.ps1
+      - name: Save the public release verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-publication
+          path: ${{ runner.temp }}/release-publication.json
+          if-no-files-found: error

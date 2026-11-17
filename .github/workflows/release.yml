@@ -26,78 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
-      # A green PR run is not a release gate: the commit must already be on main.
-      - name: require the tagged commit to be on main
+      - name: require successful main CI for the tagged commit
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $state = (& gh api "repos/$env:GITHUB_REPOSITORY/compare/main...$env:GITHUB_SHA" --jq '.status').Trim()
-          if ($state -notin @('behind', 'identical')) {
-            throw "Tagged commit $env:GITHUB_SHA is not on main (compare status: $state)."
-          }
-
-      # v1.3.0 and v1.3.1 were published with no Release run at all, because
-      # both workflows were disabled remotely and nothing in the pipeline could see it.
-      # A tag push is the last moment anyone is looking, so the release refuses to
-      # spend a runner until CI has actually passed on this exact commit. A missing
-      # run (CI disabled, or the tag points at a commit that never reached main) fails
-      # here too — "no evidence" is not "green".
-      - name: require a green CI run on this commit
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_WAIT_MINUTES: "45"
-        run: |
-          $sha = $env:GITHUB_SHA
-          $waitMin = [int]$env:CI_WAIT_MINUTES
-          $deadline = (Get-Date).AddMinutes($waitMin)
-          function Get-CiState {
-            & gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20" `
-              --jq '[.workflow_runs[] | select(.event=="push")] as $runs | if ($runs | length) == 0 then "NONE" else ($runs | max_by(.run_number) | "\(.run_number)|\(.status)|\(.conclusion)") end'
-          }
-          $state = (Get-CiState).Trim()
-          # A tag can beat CI run registration by a few seconds. Retry briefly,
-          # but keep treating a persistent missing run as "no evidence".
-          $registrationDeadline = (Get-Date).AddMinutes(2)
-          while ($state -eq 'NONE' -or -not $state) {
-            if ((Get-Date) -gt $registrationDeadline) {
-              throw "No CI run exists for commit $sha. Push the commit to main, let CI finish, then tag."
-            }
-            Start-Sleep -Seconds 10
-            $state = (Get-CiState).Trim()
-          }
-          $parts = $state.Split('|')
-          Write-Host "CI run #$($parts[0]) status=$($parts[1]) conclusion=$($parts[2])"
-          while ($parts[1] -ne 'completed') {
-            if ((Get-Date) -gt $deadline) {
-              throw "CI run #$($parts[0]) is still '$($parts[1])' after $waitMin minutes; refusing to release an unverified tree."
-            }
-            Start-Sleep -Seconds 30
-            $state = (Get-CiState).Trim()
-            if ($state -eq 'NONE' -or -not $state) { throw "CI run for $sha disappeared." }
-            $parts = $state.Split('|')
-            Write-Host "CI run #$($parts[0]) status=$($parts[1]) conclusion=$($parts[2])"
-          }
-          if ($parts[2] -ne 'success') {
-            throw "CI run #$($parts[0]) concluded '$($parts[2])' for $sha. Fix CI before tagging a release."
-          }
-          # The aggregate conclusion can be green while a required job was
-          # skipped. Assert the two release-critical jobs individually.
-          $runId = (& gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20" `
-            --jq '[.workflow_runs[] | select(.event=="push")] | max_by(.run_number) | .id').Trim()
-          $jobs = (& gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/jobs" `
-            --jq '[.jobs[] | {name, conclusion}]') | ConvertFrom-Json
-          foreach ($required in @('test', 'package')) {
-            $job = $jobs | Where-Object { $_.name -eq $required } | Select-Object -First 1
-            if (-not $job) {
-              throw "CI run $runId has no '$required' job for $sha; refusing to release."
-            }
-            if ($job.conclusion -ne 'success') {
-              throw "CI job '$required' concluded '$($job.conclusion)' for $sha; refusing to release."
-            }
-          }
-          Write-Host "CI is green for $sha (test + package)."
+        run: pwsh -NoProfile -File scripts/require-release-ci.ps1 -Repository $env:GITHUB_REPOSITORY -Commit $env:GITHUB_SHA -WaitMinutes 45
 
       - name: validate release mode and signing configuration
         id: signing-config
@@ -375,7 +308,11 @@ jobs:
       # instead of silently falling back to GitHub auto notes (which read like a raw commit list).
       - name: build Release body from CHANGELOG
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/extract-release-notes.ps1
+        env:
+          SIGNPATH_ENABLED: ${{ steps.signing-config.outputs.signpath-enabled }}
+        run: |
+          if ($env:SIGNPATH_ENABLED -cnotin @('true', 'false')) { throw 'Unknown installer signing mode.' }
+          & scripts/extract-release-notes.ps1 -CheckDownloadNotes -Unsigned:($env:SIGNPATH_ENABLED -cne 'true')
 
       - name: generate artifact checksums
         shell: pwsh

@@ -1,10 +1,53 @@
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/acceptance/acceptance-common.ps1"
+. "$PSScriptRoot/release-notes-policy.ps1"
 $temp = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $root = Join-Path $temp "remova-release-approval-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $root | Out-Null
 $approvalScripts = Join-Path $root 'scripts'
-$releaseMetadata = @{ name = 'Remova 1.4.1'; body = "Release notes`nLine two"; prerelease = $false; make_latest = 'true' }
+$releaseBody = @'
+## Remova 1.4.1
+
+本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。
+
+### 下载与校验
+
+从此发布页下载所选发行包和 `SHA256SUMS.txt`。在下载目录打开 PowerShell，将示例文件名替换为实际下载的 EXE、MSI 或 ZIP 文件名。
+
+```powershell
+Get-FileHash -LiteralPath '.\Remova_1.4.1_x64-setup.exe' -Algorithm SHA256
+```
+
+将输出的 Hash 与 `SHA256SUMS.txt` 中同名文件的摘要比对。一致后再运行安装程序或解压便携版。
+
+### Changes
+
+An example release.
+'@
+$releaseMetadata = @{ name = 'Remova 1.4.1'; body = $releaseBody; prerelease = $false; make_latest = 'true' }
+
+# Only these fixtures use synthetic package bytes.
+function Get-AuthenticodeSignature([string]$LiteralPath) {
+    if (!(Test-Path -LiteralPath $LiteralPath -PathType Leaf)) { throw 'Missing fixture installer.' }
+    return @{ Status = 'NotSigned' }
+}
+
+$ciFailures = @{
+    'ci-wrong-sha' = 'does not match the release commit'
+    'ci-pr' = 'does not match the release commit'
+    'ci-not-on-main' = 'is not on main'
+    'ci-no-run' = 'No main push CI run exists'
+    'ci-api-error' = 'GitHub API call failed while checking release CI'
+    'ci-pending' = "is still 'in_progress'"
+    'ci-failed' = "concluded 'failure'"
+    'ci-job-failed' = "CI job 'test' must have one successful result"
+    'ci-job-skipped' = "CI job 'package' must have one successful result"
+    'ci-job-missing' = "CI job 'package' must have one successful result"
+    'ci-job-wrong-sha' = "CI job 'package' must have one successful result"
+    'ci-job-duplicate' = "CI job 'package' must have one successful result"
+    'ci-rerun' = 'CI changed during verification'
+    'ci-late-failure' = "concluded 'failure'"
+}
 
 function Must-Refuse([scriptblock]$Action, [string]$Reason) {
     try { & $Action | Out-Null } catch {
@@ -115,7 +158,7 @@ function Test-PublishDraft(
     $fixtureRepository = 'fixture-org/fixture-remova'
     $fixtureActor = 'fixture-maintainer'
     $fixtureRelease = 700
-    $state = @{ permissions = 0; commits = 0; drafts = 0; downloads = 0; patches = 0 }
+    $state = @{ permissions = 0; commits = 0; drafts = 0; downloads = 0; patches = 0; compares = 0; runs = 0; jobs = 0; publicReads = 0 }
     $assetId = 1000
     $files = @(Get-ChildItem -LiteralPath $FixtureBundle -File)
     $assets = @(
@@ -139,16 +182,58 @@ function Test-PublishDraft(
                 $state.permissions++
                 return $FixtureRole
             }
-            "api|repos/$fixtureRepository/commits/$fixtureTag|--jq|.sha" {
+            "api|repos/$fixtureRepository/commits/tags/$fixtureTag|--jq|.sha" {
                 $state.commits++
                 if ($Scenario -eq 'tag-changed' -and $state.commits -eq 2) { return ('b' * 40) }
+                if ($Scenario -eq 'public-tag-changed' -and $state.commits -eq 3) { return ('b' * 40) }
                 return $FixtureCommit
+            }
+            "api|repos/$fixtureRepository/compare/main...$FixtureCommit|--jq|.status" {
+                $state.compares++
+                if ($Scenario -eq 'ci-not-on-main') { return 'ahead' }
+                return 'behind'
+            }
+            "api|repos/$fixtureRepository/actions/workflows/ci.yml/runs?head_sha=$FixtureCommit&branch=main&event=push&per_page=100|--paginate|--slurp" {
+                $state.runs++
+                if ($Scenario -eq 'ci-api-error') {
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+                if ($Scenario -eq 'ci-no-run') { return '[{"workflow_runs":[]}]' }
+                $run = @{ id = 12; run_number = 14; run_attempt = 2; head_sha = $FixtureCommit
+                    head_branch = 'main'; event = 'push'; status = 'completed'; conclusion = 'success' }
+                switch ($Scenario) {
+                    'ci-wrong-sha' { $run.head_sha = 'b' * 40 }
+                    'ci-pr' { $run.event = 'pull_request' }
+                    'ci-pending' { $run.status = 'in_progress'; $run.conclusion = $null }
+                    'ci-failed' { $run.conclusion = 'failure' }
+                    'ci-rerun' { if ($state.runs -eq 2) { $run.run_attempt++ } }
+                    'ci-late-failure' { if ($state.runs -eq 3) { $run.conclusion = 'failure' } }
+                }
+                $older = $run.Clone()
+                $older.run_number = 13
+                $older.id = 11
+                $older.conclusion = 'success'
+                return ConvertTo-Json -InputObject @(@{workflow_runs = @($older, $run)}) -Depth 7 -Compress
+            }
+            "api|repos/$fixtureRepository/actions/runs/12/jobs?filter=latest&per_page=100|--paginate|--slurp" {
+                $state.jobs++
+                $test = @{ run_id = 12; head_sha = $FixtureCommit; name = 'test'; status = 'completed'; conclusion = 'success' }
+                $package = @{ run_id = 12; head_sha = $FixtureCommit; name = 'package'; status = 'completed'; conclusion = 'success' }
+                if ($Scenario -eq 'ci-job-failed') { $test.conclusion = 'failure' }
+                if ($Scenario -eq 'ci-job-skipped') { $package.conclusion = 'skipped' }
+                if ($Scenario -eq 'ci-job-wrong-sha') { $package.head_sha = 'b' * 40 }
+                $all = if ($Scenario -eq 'ci-job-missing') { @($test) } else { @($test, $package) }
+                if ($Scenario -eq 'ci-job-duplicate') { $all += $package.Clone() }
+                return ConvertTo-Json -InputObject @(@{jobs = @($all)}) -Depth 7 -Compress
             }
             "api|repos/$fixtureRepository/releases?per_page=100|--paginate|--slurp" {
                 $state.drafts++
                 $draft = @{ id = $fixtureRelease; draft = $true; tag_name = $fixtureTag; assets = $assets
                     name = $releaseMetadata.name; body = $releaseMetadata.body; prerelease = $releaseMetadata.prerelease }
                 if ($Scenario -eq 'wrong-approved-title') { $draft.name += ' changed' }
+                if ($Scenario -eq 'missing-download-notes') { $draft.body = 'No verification instructions' }
+                if ($Scenario -eq 'wrong-asset-digest') { $assets[0].digest = 'sha256:' + ('b' * 64) }
                 if ($state.drafts -eq 2) {
                     if ($Scenario -eq 'asset-changed') { $assets[0].id += 100 }
                     if ($Scenario -eq 'draft-replaced') { $draft.id++ }
@@ -160,7 +245,8 @@ function Test-PublishDraft(
                 return ConvertTo-Json -InputObject @(@($earlier), @($draft)) -Depth 7 -Compress
             }
             "api|--method|PATCH|repos/$fixtureRepository/releases/$fixtureRelease|--input|$(Join-Path $fixtureTemp "reviewed-release-$fixtureRelease/publish-request.json")|--silent" {
-                if ($state.commits -ne 2 -or $state.drafts -ne 2 -or $state.downloads -ne 1) {
+                if ($state.commits -ne 2 -or $state.drafts -ne 2 -or $state.downloads -ne 1 -or
+                    $state.compares -ne 4 -or $state.runs -ne 4 -or $state.jobs -ne 2) {
                     throw 'The release was patched before verification completed.'
                 }
                 $request = Get-Content -LiteralPath $args[5] -Raw | ConvertFrom-Json -AsHashtable
@@ -171,6 +257,18 @@ function Test-PublishDraft(
                 }
                 $state.patches++
                 return
+            }
+            "api|repos/$fixtureRepository/releases/tags/$fixtureTag" {
+                if ($state.patches -ne 1) { throw 'Read-back must follow publication.' }
+                $state.publicReads++
+                if ($Scenario -eq 'public-api-error') { $global:LASTEXITCODE = 1; return }
+                $public = @{ id = $fixtureRelease; draft = $false; tag_name = $fixtureTag; assets = $assets
+                    name = $releaseMetadata.name; body = $releaseMetadata.body; prerelease = $releaseMetadata.prerelease
+                    published_at = '2026-01-01T00:00:00Z' }
+                if ($Scenario -eq 'public-body-changed') { $public.body = 'Replaced public text' }
+                if ($Scenario -eq 'public-assets-changed') { $assets[0].digest = 'sha256:' + ('b' * 64) }
+                if ($Scenario -eq 'public-draft') { $public.draft = $true }
+                return $public | ConvertTo-Json -Depth 7 -Compress
             }
         }
         $destination = Join-Path $fixtureTemp "reviewed-release-$fixtureRelease"
@@ -205,12 +303,16 @@ function Test-PublishDraft(
             [Environment]::SetEnvironmentVariable($key, $overrides[$key], 'Process')
         }
         $publish = "$approvalScripts/publish-release-draft.ps1"
-        switch ($Scenario) {
+        switch -Wildcard ($Scenario) {
             'success' { & $publish 6>&1 | Out-Null }
             'unauthorized' { Must-Refuse { & $publish } 'requires a repository maintainer or administrator' }
             'no-key' { Must-Refuse { & $publish } 'Configure the RELEASE_APPROVAL_PUBLIC_KEY' }
             'unsigned' { Must-Refuse { & $publish } 'signed release approval is required' }
             'wrong-approved-title' { Must-Refuse { & $publish } 'metadata does not match the signed approval' }
+            'wrong-asset-digest' { Must-Refuse { & $publish } 'attachment does not match the downloaded' }
+            'missing-download-notes' { Must-Refuse { & $publish } 'download verification instructions' }
+            'ci-*' { Must-Refuse { & $publish } $ciFailures[$Scenario] }
+            'public-*' { Must-Refuse { & $publish } 'GitHub accepted publication*public verification failed' }
             default { Must-Refuse { & $publish } 'changed during verification' }
         }
     } finally {
@@ -219,17 +321,35 @@ function Test-PublishDraft(
         }
     }
 
-    $expected = switch ($Scenario) {
-        'success' { '1/2/2/1/1' }
+    $expected = switch -Wildcard ($Scenario) {
+        'success' { '1/3/2/1/1' }
         'unauthorized' { '1/0/0/0/0' }
         'no-key' { '0/0/0/0/0' }
         'unsigned' { '1/1/1/1/0' }
         'wrong-approved-title' { '1/1/1/1/0' }
+        'wrong-asset-digest' { '1/1/1/1/0' }
+        'missing-download-notes' { '1/1/1/1/0' }
         'tag-changed' { '1/2/2/1/0' }
+        'ci-late-failure' { '1/1/1/1/0'; break }
+        'ci-*' { '1/1/0/0/0' }
+        'public-tag-changed' { '1/3/2/1/1'; break }
+        'public-*' { '1/2/2/1/1' }
         default { '1/1/2/1/0' }
     }
     $calls = "$($state.permissions)/$($state.commits)/$($state.drafts)/$($state.downloads)/$($state.patches)"
     if ($calls -cne $expected) { throw "Unexpected $Scenario fixture calls: $calls, expected $expected." }
+    $evidence = Join-Path $fixtureTemp 'release-publication.json'
+    if ($Scenario -eq 'success') {
+        $verified = Get-Content -LiteralPath $evidence -Raw | ConvertFrom-Json
+        $bodyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($releaseMetadata.body))).ToLowerInvariant()
+        if ($state.publicReads -ne 1 -or $verified.commit -cne $FixtureCommit -or
+            $verified.body_sha256 -cne $bodyHash -or $verified.assets.Count -ne $assets.Count) {
+            throw 'Missing or incorrect public release verification evidence.'
+        }
+    } elseif (Test-Path -LiteralPath $evidence) {
+        throw 'A failed verification produced evidence of a successful release.'
+    }
 }
 
 try {
@@ -237,7 +357,8 @@ try {
     # extraction adapter; the real approval and publication logic runs below.
     $acceptanceScripts = Join-Path $approvalScripts 'acceptance'
     New-Item -ItemType Directory -Path $acceptanceScripts -Force | Out-Null
-    Copy-Item -LiteralPath @("$PSScriptRoot/release-approval.ps1", "$PSScriptRoot/publish-release-draft.ps1") -Destination $approvalScripts
+    Copy-Item -LiteralPath @("$PSScriptRoot/release-approval.ps1", "$PSScriptRoot/publish-release-draft.ps1",
+        "$PSScriptRoot/require-release-ci.ps1", "$PSScriptRoot/release-notes-policy.ps1") -Destination $approvalScripts
     Copy-Item -LiteralPath "$PSScriptRoot/acceptance/acceptance-common.ps1" -Destination $acceptanceScripts
     @'
 param($Artifacts, $CandidateVersion, $SevenZip, $WixDark, [switch]$ExecutableOnly)
@@ -402,10 +523,32 @@ $reference | ConvertTo-Json -Depth 3
     Test-PublishDraft 'no-key' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unsigned' 'maintain' $commit $bundle.FullName ($signed | ConvertTo-Json -Depth 7 -Compress) $publicKey $root
     foreach ($scenario in 'asset-changed', 'draft-replaced', 'tag-changed', 'wrong-approved-title',
-        'title-changed', 'body-changed', 'prerelease-changed') {
+        'title-changed', 'body-changed', 'prerelease-changed', 'wrong-asset-digest',
+        'public-body-changed', 'public-assets-changed', 'public-draft', 'public-tag-changed', 'public-api-error') {
         Test-PublishDraft $scenario 'admin' $commit $bundle.FullName $approval $publicKey $root
     }
-    Write-Host 'Draft publication fixture passed the maintainer, permission, changed-asset, replaced-draft and changed-tag checks.'
+    foreach ($scenario in $ciFailures.Keys) {
+        Test-PublishDraft $scenario 'maintain' $commit $bundle.FullName $approval $publicKey $root
+    }
+
+    $signedBody = '### 下载与校验' + ($releaseBody -split '### 下载与校验', 2)[1]
+    Assert-ReleaseDownloadNotes -Body $signedBody -Version '1.4.1'
+    Must-Refuse { Assert-ReleaseDownloadNotes -Body $signedBody -Version '1.4.1' -Unsigned } 'download verification instructions'
+    $metadataFixture = $releaseMetadata.Clone()
+    $metadataFixture.body = "<!--$releaseBody-->"
+    $metadataFixture | ConvertTo-Json | Set-Content -LiteralPath $metadataPath
+    Must-Refuse { & $check @params @prepare -LaunchRecord $evidence } 'download verification instructions'
+
+    $noNotesEnvelope = $approval | ConvertFrom-Json -AsHashtable
+    $noNotesPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($noNotesEnvelope.payload)) | ConvertFrom-Json -AsHashtable
+    $noNotesPayload.publication.body_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes('No verification instructions'))).ToLowerInvariant()
+    $noNotesBytes = [Text.Encoding]::UTF8.GetBytes(($noNotesPayload | ConvertTo-Json -Depth 7 -Compress))
+    $noNotesEnvelope.payload = [Convert]::ToBase64String($noNotesBytes)
+    $noNotesEnvelope.signature = [Convert]::ToBase64String($rsa.SignData($noNotesBytes,
+        [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pss))
+    Test-PublishDraft 'missing-download-notes' 'maintain' $commit $bundle.FullName ($noNotesEnvelope | ConvertTo-Json -Compress) $publicKey $root
+    Write-Host 'Draft publication passed the exact-commit CI, download notes and public read-back checks.'
 
     Add-Content -LiteralPath (Join-Path $bundle.FullName 'SBOM.cdx.json') -Value ' '
     Must-Refuse { & $check @params -ApprovalJson $approval -PublicKeyPem $publicKey } 'draft attachment changed'

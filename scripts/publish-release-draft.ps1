@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/release-notes-policy.ps1"
 $tag = $env:RELEASE_TAG
 $repository = $env:GITHUB_REPOSITORY
 $actor = $env:DISPATCH_ACTOR
@@ -10,6 +11,7 @@ if ($tag -cnotmatch '^v\d+\.\d+\.\d+$' -or
 if ([string]::IsNullOrWhiteSpace($env:RELEASE_APPROVAL_PUBLIC_KEY)) {
     throw 'Configure the RELEASE_APPROVAL_PUBLIC_KEY repository variable before publishing.'
 }
+$version = $tag.Substring(1)
 
 function Invoke-GitHub([string[]]$Arguments) {
     $result = gh api @Arguments
@@ -23,7 +25,7 @@ if ($permission -cnotin @('admin', 'maintain')) {
 }
 
 function Get-TagCommit {
-    $commit = Invoke-GitHub @("repos/$repository/commits/$tag", '--jq', '.sha')
+    $commit = Invoke-GitHub @("repos/$repository/commits/tags/$tag", '--jq', '.sha')
     if ($commit -cnotmatch '^[a-f0-9]{40}$') { throw 'The release tag does not resolve to a commit.' }
     return $commit
 }
@@ -33,14 +35,29 @@ function Get-Draft {
     $matches = @(foreach ($page in $pages) {
         $page | Where-Object { $_.tag_name -ceq $tag }
     })
-    if ($matches.Count -ne 1 -or !$matches[0].draft -or !$matches[0].id) {
+    if ($matches.Count -ne 1 -or $matches[0].draft -isnot [bool] -or !$matches[0].draft -or !$matches[0].id) {
         throw 'The tag must have an unpublished release draft.'
     }
     return $matches[0]
 }
 
 function Get-AttachmentIdentity($Draft) {
-    $Draft.assets | Sort-Object id | Select-Object id, name, digest, state | ConvertTo-Json -Compress
+    ConvertTo-Json -InputObject @($Draft.assets | Sort-Object id | Select-Object id, name, digest, state) -Compress
+}
+
+function Assert-DownloadedAttachments($Draft, [string]$Directory) {
+    $files = @(Get-ChildItem -LiteralPath $Directory -File)
+    if ($files.Count -ne @($Draft.assets).Count) {
+        throw 'The downloaded attachments do not match the draft inventory.'
+    }
+    foreach ($file in $files) {
+        $remote = @($Draft.assets | Where-Object { $_.name -ceq $file.Name })
+        $sha = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($remote.Count -ne 1 -or $remote[0].state -cne 'uploaded' -or
+            $remote[0].id -notmatch '^[1-9]\d*$' -or $remote[0].digest -cne "sha256:$sha") {
+            throw "The GitHub attachment does not match the downloaded $($file.Name)."
+        }
+    }
 }
 
 function Test-PublicationMetadata($Draft, $Approved) {
@@ -54,6 +71,7 @@ function Test-PublicationMetadata($Draft, $Approved) {
 }
 
 $commit = Get-TagCommit
+& "$PSScriptRoot/require-release-ci.ps1" -Repository $repository -Commit $commit
 $draft = Get-Draft
 $identity = Get-AttachmentIdentity $draft
 $download = Join-Path $env:RUNNER_TEMP "reviewed-release-$($draft.id)"
@@ -65,6 +83,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not download the draft attachments.' }
 $publication = & "$PSScriptRoot/release-approval.ps1" -Tag $tag -Commit $commit -BundleDir $download `
     -ApprovalJson $env:APPROVAL_JSON -PublicKeyPem $env:RELEASE_APPROVAL_PUBLIC_KEY
 if (!(Test-PublicationMetadata $draft $publication)) { throw 'The draft metadata does not match the signed approval.' }
+$unsigned = Test-UnsignedInstallers -BundleDir $download -Version $version
+Assert-ReleaseDownloadNotes -Body $draft.body -Version $version -Unsigned:$unsigned
+Assert-DownloadedAttachments $draft $download
+& "$PSScriptRoot/require-release-ci.ps1" -Repository $repository -Commit $commit
 $current = Get-Draft
 if ($current.id -ne $draft.id -or (Get-AttachmentIdentity $current) -cne $identity -or
     !(Test-PublicationMetadata $current $publication) -or (Get-TagCommit) -cne $commit) {
@@ -81,4 +103,26 @@ $request = Join-Path $download 'publish-request.json'
     draft = $false
 } | ConvertTo-Json -Compress | Set-Content -LiteralPath $request -Encoding utf8NoBOM
 Invoke-GitHub @('--method', 'PATCH', "repos/$repository/releases/$($draft.id)", '--input', $request, '--silent')
+try {
+    $published = Invoke-GitHub @("repos/$repository/releases/tags/$tag") | Out-String | ConvertFrom-Json
+    if ($published.id -ne $draft.id -or $published.tag_name -cne $tag -or
+        $published.draft -isnot [bool] -or $published.draft -or !$published.published_at -or
+        !(Test-PublicationMetadata $published $publication) -or
+        (Get-AttachmentIdentity $published) -cne $identity -or (Get-TagCommit) -cne $commit) {
+        throw 'The public release no longer matches the approved tag, notes or attachments.'
+    }
+    @{
+        release_id = $published.id
+        tag = $tag
+        commit = $commit
+        name = $published.name
+        body_sha256 = $publication.body_sha256
+        prerelease = $published.prerelease
+        published_at = $published.published_at
+        verified_at = [DateTime]::UtcNow.ToString('o')
+        assets = @($published.assets | Select-Object id, name, digest)
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'release-publication.json') -Encoding utf8NoBOM
+} catch {
+    throw "GitHub accepted publication of $tag but public verification failed. Inspect the public release before retrying. $_"
+}
 Write-Host "Published verified release $tag."

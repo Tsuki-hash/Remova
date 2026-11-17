@@ -93,6 +93,7 @@ $pss = [Security.Cryptography.RSASignaturePadding]::Pss
 
 if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
     if (!$Reviewed) { throw 'Review the recorded observations, SBOM, release mode and recovery instructions first.' }
+    . "$PSScriptRoot/release-notes-policy.ps1"
     $extracted = Get-ReviewedExecutables
     $packageIdentity = [ordered]@{}
     foreach ($channel in $names.Keys) { $packageIdentity[$channel] = @{ sha256 = $hashes[$names[$channel]] } }
@@ -110,6 +111,8 @@ if ($PSCmdlet.ParameterSetName -eq 'Prepare') {
         ($metadata.prerelease -and $metadata.make_latest -cne 'false')) {
         throw 'Invalid release title, notes, prerelease or latest setting.'
     }
+    $unsigned = Test-UnsignedInstallers -BundleDir $BundleDir -Version $version
+    Assert-ReleaseDownloadNotes -Body $metadata.body -Version $version -Unsigned:$unsigned
     $publication = [ordered]@{
         name = $metadata.name
         body_sha256 = ConvertTo-Sha256Hex ([Security.Cryptography.SHA256]::HashData(

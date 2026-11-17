@@ -89,7 +89,9 @@ updater settings unset. Leave SignPath disabled for unsigned Windows packages.
 The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
 `SBOM.cdx.json`.
 
-1. Validate signing configuration, version and tests.
+1. Verify the tagged commit is reachable from `main` and that the latest `main`
+   push CI run for that exact commit passed both `test` and `package`. Validate
+   the signing configuration and version.
 2. Build the application. Embed the updater public key when the updater is enabled.
 3. If enabled, sign and verify the application through SignPath.
 4. Bundle the application into NSIS and MSI installers.
@@ -103,7 +105,9 @@ The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
    Extract `remova.exe` from the portable ZIP. On one Windows PC, record WebView2
    readiness for this executable in a regular and an elevated PowerShell. Keep
    both records and the executable reference.
-9. Save the reviewed draft metadata as JSON with `name`, `body`, `prerelease`
+9. Confirm the draft starts with download and SHA-256 verification instructions.
+   Include the unsigned installer notice when applicable. Save the reviewed draft
+   metadata as JSON with `name`, `body`, `prerelease`
    (Boolean) and `make_latest` (`"true"` or `"false"` as a string). Set
    `make_latest` to `"false"` for a prerelease. Prepare the approval with the
    tag, exact commit, both launch records and draft metadata.
@@ -122,7 +126,15 @@ The draft contains NSIS, MSI and portable packages, `SHA256SUMS.txt` and
    gh workflow run publish-release.yml --ref main -f "tag=$tag" -f "approval=$approval"
    ```
 
-   A repository maintainer or administrator dispatches **Publish release draft** from `main`. The job checks the signature, tag, attachment bytes, executable digests for all three channels, title, notes and publication settings. Any change to the approved draft title, notes or prerelease setting requires a new approval. Keep the original launch records with the acceptance evidence.
+   A repository maintainer or administrator dispatches **Publish release draft** from `main`.
+   The job applies the same CI gate as the tag workflow and checks the approval,
+   tag, attachment bytes, executable digests for all three channels, title, notes
+   and publication settings. Changes to the approved title, notes or prerelease
+   setting require a fresh approval. The workflow reads the published release
+   back and saves the tag, commit, body digest and attachment digests as the
+   `release-publication` workflow artifact. If read-back fails after publication,
+   inspect the public release before retrying. Keep the original launch records
+   with the acceptance evidence.
 
 The NSIS update manifest uses the custom target `windows-x86_64-nsis`.
 MSI and portable users retain manual updates. Existing releases cannot be overwritten.

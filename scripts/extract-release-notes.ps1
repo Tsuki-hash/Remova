@@ -3,7 +3,7 @@
 # checkout; CHANGELOG.md is the single published source. An absent or empty section fails the job,
 # because otherwise the Release would silently fall back to GitHub-generated notes (a raw commit list).
 # Usage: pwsh -NoProfile -File scripts/extract-release-notes.ps1 [-Tag v1.1.1]
-param([string]$Tag = "")
+param([string]$Tag = "", [switch]$CheckDownloadNotes, [switch]$Unsigned)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -47,6 +47,10 @@ $text = ($body -join "`n").Trim()
 $rest = ($body | Select-Object -Skip 1) -join "`n"
 if (-not $text -or -not $rest.Trim()) {
   Write-Error "CHANGELOG '## [$ver]' section is empty - refusing to publish an empty Release body."
+}
+if ($CheckDownloadNotes) {
+  . "$PSScriptRoot/release-notes-policy.ps1"
+  Assert-ReleaseDownloadNotes -Body $text -Version $ver -Unsigned:$Unsigned
 }
 
 $outDir = ".release-notes"
