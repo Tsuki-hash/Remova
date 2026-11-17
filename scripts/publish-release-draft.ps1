@@ -25,7 +25,7 @@ if ($permission -cnotin @('admin', 'maintain')) {
 }
 
 function Get-TagCommit {
-    $commit = Invoke-GitHub @("repos/$repository/commits/tags/$tag", '--jq', '.sha')
+    $commit = Invoke-GitHub @("repos/$repository/commits/refs/tags/$tag", '--jq', '.sha')
     if ($commit -cnotmatch '^[a-f0-9]{40}$') { throw 'The release tag does not resolve to a commit.' }
     return $commit
 }

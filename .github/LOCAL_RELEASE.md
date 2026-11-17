@@ -30,7 +30,7 @@ Use the existing remote tag and confirm it resolves to the built commit. The CI 
 
 ```powershell
 $repo = 'Tsuki-hash/Remova'
-$remoteCommit = gh api "repos/$repo/commits/tags/$tag" --jq '.sha'
+$remoteCommit = gh api "repos/$repo/commits/refs/tags/$tag" --jq '.sha'
 if ($LASTEXITCODE -or $remoteCommit -cne $commit) { throw 'The tag does not identify the local build.' }
 ./scripts/require-release-ci.ps1 -Repository $repo -Commit $commit
 $version = $tag.Substring(1)

@@ -196,7 +196,17 @@ function Test-PublishDraft(
                 return $FixtureRole
             }
             "api|repos/$fixtureRepository/commits/tags/$fixtureTag|--jq|.sha" {
+                $global:LASTEXITCODE = 1
+                return 'No commit found for SHA (HTTP 422)'
+            }
+            "api|repos/$fixtureRepository/commits/$fixtureTag|--jq|.sha" {
+                # A same-named branch must not be mistaken for the release tag.
+                return ('b' * 40)
+            }
+            "api|repos/$fixtureRepository/commits/refs/tags/$fixtureTag|--jq|.sha" {
                 $state.commits++
+                if ($Scenario -eq 'tag-api-error') { $global:LASTEXITCODE = 1; return }
+                if ($Scenario -eq 'tag-invalid-sha') { return 'not-a-commit' }
                 if ($Scenario -eq 'tag-changed' -and $state.commits -eq 2) { return ('b' * 40) }
                 if ($Scenario -eq 'public-tag-changed' -and $state.commits -eq 3) { return ('b' * 40) }
                 return $FixtureCommit
@@ -318,6 +328,8 @@ function Test-PublishDraft(
         $publish = "$approvalScripts/publish-release-draft.ps1"
         switch -Wildcard ($Scenario) {
             'success*' { & $publish 6>&1 | Out-Null }
+            'tag-api-error' { Must-Refuse { & $publish } 'GitHub API call failed' }
+            'tag-invalid-sha' { Must-Refuse { & $publish } 'tag does not resolve to a commit' }
             'unauthorized' { Must-Refuse { & $publish } 'requires a repository maintainer or administrator' }
             'no-key' { Must-Refuse { & $publish } 'Configure the RELEASE_APPROVAL_PUBLIC_KEY' }
             'unsigned' { Must-Refuse { & $publish } 'signed release approval is required' }
@@ -336,6 +348,8 @@ function Test-PublishDraft(
 
     $expected = switch -Wildcard ($Scenario) {
         'success*' { '1/3/2/1/1' }
+        'tag-api-error' { '1/1/0/0/0' }
+        'tag-invalid-sha' { '1/1/0/0/0' }
         'unauthorized' { '1/0/0/0/0' }
         'no-key' { '0/0/0/0/0' }
         'unsigned' { '1/1/1/1/0' }
@@ -537,6 +551,8 @@ $reference | ConvertTo-Json -Depth 3
     Must-Refuse { & $check @params -ApprovalJson ($envelope | ConvertTo-Json -Compress) -PublicKeyPem $publicKey } 'Invalid local launch record digest'
 
     Test-PublishDraft 'success' 'maintain' $commit $bundle.FullName $approval $publicKey $root
+    Test-PublishDraft 'tag-api-error' 'maintain' $commit $bundle.FullName $approval $publicKey $root
+    Test-PublishDraft 'tag-invalid-sha' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'success-latest-delay' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unauthorized' 'write' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'no-key' 'maintain' $commit $bundle.FullName $approval $publicKey $root
