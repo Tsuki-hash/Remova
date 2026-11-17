@@ -47,6 +47,11 @@ pub(crate) fn use_history_dir(dir: &Path) -> TestHistoryDirGuard {
     TestHistoryDirGuard
 }
 
+#[cfg(test)]
+pub(crate) fn test_history_dir() -> Option<PathBuf> {
+    TEST_HISTORY_DIR.with(|dir| dir.borrow().clone())
+}
+
 fn history_path() -> PathBuf {
     #[cfg(test)]
     if let Some(dir) = TEST_HISTORY_DIR.with(|d| d.borrow().clone()) {

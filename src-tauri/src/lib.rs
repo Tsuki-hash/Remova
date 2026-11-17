@@ -495,6 +495,125 @@ mod cleanup_trust_tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn orphan_commands_preserve_replacements_and_require_the_latest_scan() {
+        let _backup = crate::backup::lock_backup_env();
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("orphan-ipc-identity");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
+        let _seals = crate::path_seal::TestStore::new(fixture.join("seals"));
+        let _history = crate::history::use_history_dir(fixture.path());
+        let target = app("Orphan fixture", "Orphan", "");
+        for backup in [false, true] {
+            for directory in [false, true] {
+                for replacement_directory in [false, true] {
+                    let path = fixture.join(format!(
+                        "candidate-{backup}-{directory}-{replacement_directory}"
+                    ));
+                    if directory {
+                        std::fs::create_dir(&path).unwrap();
+                    } else {
+                        std::fs::write(&path, b"original").unwrap();
+                    }
+                    let candidate = CleanupItem {
+                        kind: if directory {
+                            ItemKind::Dir
+                        } else {
+                            ItemKind::File
+                        },
+                        ..item(&path.to_string_lossy())
+                    };
+                    let items = vec![candidate];
+                    let revision = orphans::remember_orphan_items(&items);
+                    let options = FullCleanupOptions {
+                        dry_run: false,
+                        skip_official_uninstall: true,
+                        backup_enabled: backup,
+                        restore_point: false,
+                        cleanup_source: Some("orphan".into()),
+                        scope_revision: revision,
+                        uninstall_review: None,
+                    };
+                    let preview = tauri::async_runtime::block_on(run_cleanup_dry_run(
+                        target.clone(),
+                        items.clone(),
+                        Some("orphan".into()),
+                        revision,
+                        None,
+                    ))
+                    .unwrap();
+                    assert_eq!(preview.deleted_planned, 1);
+                    std::fs::rename(&path, path.with_extension("original")).unwrap();
+                    let sentinel = if replacement_directory {
+                        std::fs::create_dir(&path).unwrap();
+                        path.join("new-data")
+                    } else {
+                        path.clone()
+                    };
+                    std::fs::write(&sentinel, b"keep replacement").unwrap();
+                    let preview = tauri::async_runtime::block_on(run_cleanup_dry_run(
+                        target.clone(),
+                        items.clone(),
+                        Some("orphan".into()),
+                        revision,
+                        None,
+                    ))
+                    .unwrap();
+                    assert_eq!((preview.deleted_planned, preview.skipped), (0, 1));
+                    let report = tauri::async_runtime::block_on(run_full_cleanup(
+                        target.clone(),
+                        items.clone(),
+                        options.clone(),
+                        None,
+                    ))
+                    .unwrap();
+                    assert_eq!((report.deleted, report.skipped), (0, 1), "{report:?}");
+                    assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep replacement");
+                    let current_item = CleanupItem {
+                        kind: if replacement_directory {
+                            ItemKind::Dir
+                        } else {
+                            ItemKind::File
+                        },
+                        ..items[0].clone()
+                    };
+                    let current = vec![current_item];
+                    let fresh = orphans::remember_orphan_items(&current);
+                    assert!(tauri::async_runtime::block_on(run_full_cleanup(
+                        target.clone(),
+                        items,
+                        options.clone(),
+                        None
+                    ))
+                    .is_err());
+                    assert!(tauri::async_runtime::block_on(run_full_cleanup(
+                        target.clone(),
+                        current.clone(),
+                        FullCleanupOptions {
+                            scope_revision: None,
+                            ..options.clone()
+                        },
+                        None
+                    ))
+                    .is_err());
+                    let report = tauri::async_runtime::block_on(run_full_cleanup(
+                        target.clone(),
+                        current,
+                        FullCleanupOptions {
+                            scope_revision: fresh,
+                            ..options
+                        },
+                        None,
+                    ))
+                    .unwrap();
+                    assert_eq!((report.deleted, report.failed), (1, 0), "{report:?}");
+                    assert!(!path.exists());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn orphan_ipc_rejects_cleared_guards_before_executor_dispatch() {
         let _lock = crate::scan_allow::test_lock();
         let app = app("Fixture", "orphan", "");
@@ -741,7 +860,12 @@ fn authorize_cleanup_items(
     items: &[CleanupItem],
     source: policy::CleanupSource,
 ) -> Result<(), String> {
-    let revision = scan_allow::app_revision(&executor::uninstall_review::analysis_key(app, None));
+    let key = if source == policy::CleanupSource::Orphan {
+        scan_allow::ORPHAN_SCAN_KEY.to_owned()
+    } else {
+        executor::uninstall_review::analysis_key(app, None)
+    };
+    let revision = scan_allow::app_revision(&key);
     authorize_cleanup_items_for_review(app, items, source, None, revision).map(|_| ())
 }
 
@@ -753,15 +877,8 @@ fn authorize_cleanup_items_for_review(
     scope_revision: Option<u64>,
 ) -> Result<Option<scan_allow::AppFileSnapshot>, String> {
     if source == policy::CleanupSource::Orphan {
-        for item in items {
-            if !orphans::was_recent_orphan_item(item) {
-                return Err(format!(
-                    "orphan item not from the latest scan: {}",
-                    item.path
-                ));
-            }
-        }
-        return Ok(None);
+        return scan_allow::resolve_app_files(scan_allow::ORPHAN_SCAN_KEY, scope_revision, items)
+            .map(Some);
     }
     if source.is_scoped_scan() {
         return Ok(None);
@@ -919,7 +1036,11 @@ async fn run_full_cleanup(
         options.uninstall_review,
         options.scope_revision,
     )?;
+    #[cfg(test)]
+    let history_dir = history::test_history_dir();
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(test)]
+        let _history = history_dir.as_deref().map(history::use_history_dir);
         let work = || executor::run_full_cleanup_for_scan(&app, &items, &options, scan.as_ref());
         let mut report = match request {
             Some(request) => request.run(work),

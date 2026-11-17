@@ -44,6 +44,7 @@ export function OrphanPage({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cleanupAllowed, setCleanupAllowed] = useState(false);
+  const [scopeRevision, setScopeRevision] = useState<number>();
   const [lastScanCount, setLastScanCount] = useState<number | null>(null);
   const [omitted, setOmitted] = useState(0);
   const [completeness, setCompleteness] = useState<import("../types").ScanCompleteness>({
@@ -75,6 +76,7 @@ export function OrphanPage({
     setItems(null);
     setSelected(new Set());
     setCleanupAllowed(false);
+    setScopeRevision(undefined);
     setLastScanCount(null);
     setOmitted(0);
     setCompleteness({ status: "unknown", roots_scanned: 0, failed_roots: ["not_scanned"] });
@@ -86,9 +88,10 @@ export function OrphanPage({
         (r) => normalizeOrphanScan(r).items.length,
       );
       if (!isCurrentScanRound(round)) return;
-      const { items: list, omitted: leftOut, completeness, cleanupAllowed } = normalizeOrphanScan(raw);
+      const { items: list, omitted: leftOut, completeness, cleanupAllowed, scopeRevision } = normalizeOrphanScan(raw);
       setCompleteness(completeness);
       setCleanupAllowed(cleanupAllowed);
+      setScopeRevision(scopeRevision);
       // Convergence rounds: only complete scans feed the comparator; an
       // incomplete scan cannot prove the next sweep would not surface more.
       const complete = completeness.status === "complete";
@@ -174,6 +177,7 @@ export function OrphanPage({
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
         cleanup_source: "orphan",
+        ...(scopeRevision !== undefined && { scope_revision: scopeRevision }),
       });
       onLastReport(report);
       const current = isCurrentScanRound(round);

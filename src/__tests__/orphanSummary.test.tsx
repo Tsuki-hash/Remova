@@ -22,6 +22,7 @@ vi.mock("../lib/api", () => ({ api: {
   }], omitted: 0,
   completeness: { status: "complete", roots_scanned: 4, failed_roots: [] },
   cleanup_allowed: true,
+  scope_revision: 73,
 })) } }));
 vi.mock("../lib/toast", () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }));
 vi.mock("../lib/confirm", () => ({ requestConfirmEx: vi.fn(async () => ({ ok: true, checked: false })) }));
@@ -119,6 +120,7 @@ it("reports orphan cleanup after navigating away without starting another scan",
   const view = render(<OrphanPage onLastReport={onLastReport} />);
   fireEvent.click(await screen.findByRole("button", { name: `${L.cleanup} (1)` }));
   await waitFor(() => expect(api.fullCleanup).toHaveBeenCalledOnce());
+  expect(api.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope_revision: 73 }));
   view.unmount();
   const report: FullCleanupReport = {
     app_name: L.orphanScan, dry_run: false, backup_dir: "", uninstall_ok: false, uninstall_message: "",

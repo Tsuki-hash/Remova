@@ -222,6 +222,8 @@ pub struct OrphanScanResult {
     /// Read-only when an incomplete ownership inventory could hide an owner.
     #[serde(default)]
     pub cleanup_allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_revision: Option<u64>,
 }
 
 fn orphan_roots() -> Vec<std::path::PathBuf> {
@@ -393,6 +395,7 @@ fn scan_orphans_with_install_roots<'a>(
             omitted: 0,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(0),
             cleanup_allowed: false,
+            scope_revision: None,
         };
     }
     // Load ignore rules once. An opt-in audit adds fixed-drive roots and home dot-directories.
@@ -461,6 +464,7 @@ fn scan_orphans_in_roots_with(
                 omitted: 0,
                 completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
                 cleanup_allowed: false,
+                scope_revision: None,
             };
         }
         let rd = match std::fs::read_dir(&root) {
@@ -480,6 +484,7 @@ fn scan_orphans_in_roots_with(
                     omitted: 0,
                     completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
                     cleanup_allowed: false,
+                    scope_revision: None,
                 };
             }
             let e = match e {
@@ -543,6 +548,7 @@ fn scan_orphans_in_roots_with(
                 omitted,
                 completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
                 cleanup_allowed: false,
+                scope_revision: None,
             };
         }
         // The expensive shape probe runs only for what the cap keeps.
@@ -649,6 +655,7 @@ fn scan_orphans_in_roots_with(
             omitted,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
             cleanup_allowed: false,
+            scope_revision: None,
         };
     }
     // Orphan rows otherwise bypass the app analyzer's service-bound marking.
@@ -660,12 +667,13 @@ fn scan_orphans_in_roots_with(
             omitted,
             completeness: crate::scan_contract::ScanCompleteness::cancelled(roots_scanned),
             cleanup_allowed: false,
+            scope_revision: None,
         };
     }
     crate::scanner::fill_item_buckets(&mut out, "");
     // Replace the previous allow-list too: an older complete scan cannot
     // authorize a request after this scan encountered unreadable owners.
-    remember_orphan_items(if cleanup_allowed { &out } else { &[] });
+    let scope_revision = remember_orphan_items(if cleanup_allowed { &out } else { &[] });
     let completeness = if failed_roots.is_empty() {
         crate::scan_contract::ScanCompleteness {
             status: crate::scan_contract::ScanStatus::Complete,
@@ -680,56 +688,26 @@ fn scan_orphans_in_roots_with(
         omitted,
         completeness,
         cleanup_allowed,
+        scope_revision,
     }
-}
-
-/// Latest published orphan scan, including server-classified deletion guards.
-type OrphanItems = std::collections::HashMap<String, CleanupItem>;
-static ORPHAN_ITEMS: std::sync::OnceLock<std::sync::Mutex<OrphanItems>> =
-    std::sync::OnceLock::new();
-
-fn orphan_items() -> &'static std::sync::Mutex<OrphanItems> {
-    ORPHAN_ITEMS.get_or_init(|| std::sync::Mutex::new(OrphanItems::new()))
 }
 
 fn normalize_orphan_key(path: &str) -> Option<String> {
     crate::fsutil::path_key(std::path::Path::new(path))
 }
 
-pub(crate) fn remember_orphan_items(items: &[CleanupItem]) {
-    crate::scan_task::publish(|| {
-        if let Ok(mut saved) = orphan_items().lock() {
-            *saved = items
-                .iter()
-                .filter_map(|item| normalize_orphan_key(&item.path).map(|key| (key, item.clone())))
-                .collect();
-        }
-    });
+pub(crate) fn remember_orphan_items(items: &[CleanupItem]) -> Option<u64> {
+    crate::scan_allow::remember_uninstall_items(crate::scan_allow::ORPHAN_SCAN_KEY, items)
 }
 
 /// Used at IPC admission and by both preview/full policy.
 pub fn was_recent_orphan_item(item: &CleanupItem) -> bool {
-    let Some(key) = normalize_orphan_key(&item.path) else {
-        return false;
-    };
-    orphan_items()
-        .lock()
-        .map(|saved| {
-            saved.get(&key).is_some_and(|original| {
-                crate::scan_allow::authorized_item_key(original)
-                    == crate::scan_allow::authorized_item_key(item)
-            })
-        })
-        .unwrap_or(false)
+    crate::scan_allow::app_item_was_reported(crate::scan_allow::ORPHAN_SCAN_KEY, item)
 }
 
+#[cfg(test)]
 pub fn was_recent_orphan_path(path: &str) -> bool {
-    normalize_orphan_key(path).is_some_and(|key| {
-        orphan_items()
-            .lock()
-            .map(|saved| saved.contains_key(&key))
-            .unwrap_or(false)
-    })
+    crate::scan_allow::app_path_was_reported(crate::scan_allow::ORPHAN_SCAN_KEY, path)
 }
 
 #[cfg(test)]

@@ -739,7 +739,10 @@ pub(crate) fn run_full_cleanup_for_scan(
     opts: &FullCleanupOptions,
     scan: Option<&crate::scan_allow::AppFileSnapshot>,
 ) -> FullCleanupReport {
-    if !cleanup_source_from_opts(opts).is_scoped_scan() && scan.is_none() {
+    let source = cleanup_source_from_opts(opts);
+    if (!source.is_scoped_scan() || source == crate::policy::CleanupSource::Orphan)
+        && scan.is_none()
+    {
         return ignore_read_abort(app, opts.dry_run, "analysis must run before cleanup".into());
     }
     run_full_cleanup_with_preflight(app, items, opts, scan, || {})
@@ -2082,6 +2085,143 @@ mod tests {
         );
         assert_eq!(path_mock::read_raw("User").unwrap(), (original_user, true));
         assert_eq!(path_mock::get("Machine"), current_machine);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_keeps_identity_until_disposition_and_preserves_recreated_names() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("cleanup-disposition");
+        let install = fixture.subdir("FixtureApp");
+        let app = crate::apps::InstalledApp {
+            name: "FixtureApp".into(),
+            install_location: install.to_string_lossy().into_owned(),
+            source: "HKLM64".into(),
+            registry_key: "fixture-disposition".into(),
+            version: "1".into(),
+            publisher: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        for source in ["force", "orphan", "monitor", "installer", "toolcache"] {
+            for directory in [false, true] {
+                let path = install.join(format!("{source}-{directory}"));
+                if directory {
+                    std::fs::create_dir(&path).unwrap();
+                    let child = path.join("readonly");
+                    std::fs::write(&child, b"selected").unwrap();
+                    let mut permissions = std::fs::metadata(&child).unwrap().permissions();
+                    permissions.set_readonly(true);
+                    std::fs::set_permissions(&child, permissions).unwrap();
+                    let outside = fixture.subdir(&format!("outside-{source}"));
+                    std::fs::write(outside.join("sentinel"), b"keep outside").unwrap();
+                    assert!(
+                        std::process::Command::new(crate::regops::sys_tool("cmd.exe"))
+                            .args(["/c", "mklink", "/J"])
+                            .arg(path.join("link"))
+                            .arg(&outside)
+                            .output()
+                            .unwrap()
+                            .status
+                            .success()
+                    );
+                } else {
+                    std::fs::write(&path, b"selected").unwrap();
+                    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+                    permissions.set_readonly(true);
+                    std::fs::set_permissions(&path, permissions).unwrap();
+                }
+                let item = CleanupItem {
+                    kind: if directory {
+                        ItemKind::Dir
+                    } else {
+                        ItemKind::File
+                    },
+                    ..crate::scan_allow::test_item(&path.to_string_lossy())
+                };
+                let mut items = vec![item];
+                let options = FullCleanupOptions {
+                    dry_run: false,
+                    skip_official_uninstall: true,
+                    backup_enabled: false,
+                    restore_point: false,
+                    cleanup_source: Some(source.into()),
+                    scope_revision: None,
+                    uninstall_review: None,
+                };
+                let policy_source = cleanup_source_from_opts(&options);
+                let key = if source == "orphan" {
+                    crate::scan_allow::ORPHAN_SCAN_KEY.to_owned()
+                } else {
+                    crate::apps::app_key(&app)
+                };
+                let revision = if let Some(scope) = policy_source.specialty_scope() {
+                    crate::scan_allow::remember(scope, &mut items)
+                } else {
+                    crate::scan_allow::remember_uninstall_items(&key, &items)
+                };
+                let snapshot = if policy_source.specialty_scope().is_none() {
+                    Some(crate::scan_allow::resolve_app_files(&key, revision, &items).unwrap())
+                } else {
+                    None
+                };
+                let observed = Arc::new(AtomicUsize::new(0));
+                let count = observed.clone();
+                let target = path.clone();
+                let report = crate::fsutil::with_delete_observer(
+                    move |held, closed| {
+                        if held != target {
+                            return;
+                        }
+                        count.fetch_add(1, Ordering::SeqCst);
+                        if closed {
+                            assert!(!target.exists());
+                            std::fs::create_dir(&target).unwrap();
+                            std::fs::write(target.join("new-sentinel"), b"new object").unwrap();
+                        } else {
+                            assert!(
+                                std::fs::rename(&target, target.with_extension("moved")).is_err(),
+                                "verified object must remain pinned"
+                            );
+                        }
+                    },
+                    || {
+                        run_full_cleanup_for_scan(
+                            &app,
+                            &items,
+                            &FullCleanupOptions {
+                                scope_revision: revision,
+                                ..options
+                            },
+                            snapshot.as_ref(),
+                        )
+                    },
+                );
+                assert_eq!(
+                    (report.deleted, report.failed, report.skipped),
+                    (1, 0, 0),
+                    "{source} {directory}: {report:?}"
+                );
+                assert_eq!(observed.load(Ordering::SeqCst), 2);
+                assert_eq!(
+                    std::fs::read(path.join("new-sentinel")).unwrap(),
+                    b"new object"
+                );
+                if directory {
+                    assert_eq!(
+                        std::fs::read(fixture.join(format!("outside-{source}/sentinel"))).unwrap(),
+                        b"keep outside"
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(windows)]

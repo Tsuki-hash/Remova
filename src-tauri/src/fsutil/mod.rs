@@ -1429,19 +1429,23 @@ pub(crate) fn remove_scanned_object(
     expected: (u32, u64),
     directory: Option<bool>,
 ) -> std::io::Result<()> {
-    let _parents = pin_existing_parents(path)?;
-    let pin = pin_dir_no_reparse(path)?;
-    if pin.file_identity()? != expected
-        || directory.is_some_and(|directory| {
-            pin_metadata(&pin).map_or(true, |metadata| metadata.is_dir() != directory)
-        })
+    let tree = PinnedLocalDeleteTree::collect_with_root_access(
+        path,
+        crate::path_seal::MAX_PAYLOAD_NODES,
+        0x10081,
+        0x10081,
+        &mut |_| Ok(()),
+        true,
+    )?;
+    if tree.root_pin().file_identity()? != expected
+        || directory.is_some_and(|directory| tree.is_dir() != directory)
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "scanned cleanup object changed",
         ));
     }
-    remove_tree_with_pin(path, pin)
+    tree.remove_objects(false, true)
 }
 
 pub(crate) fn is_plain_pinned_directory(pin: &DirPin) -> bool {
@@ -1486,6 +1490,7 @@ pub(crate) fn remove_regenerable_contents(root: &DirPin, layout: &Path) -> std::
                 0x10081,
                 Vec::new(),
                 &mut |_| Ok(()),
+                false,
             )?;
             tree.remove()
         })();
@@ -1609,7 +1614,7 @@ impl PinnedLocalDeleteTree {
     pub(crate) fn with_rename_security(path: &Path, limit: usize) -> std::io::Result<Self> {
         // Rename only the held root. Descendants need read access for the
         // comparison and never need DELETE permission.
-        Self::collect_with_root_access(path, limit, 0x30081, 0x20081, &mut |_| Ok(()))
+        Self::collect_with_root_access(path, limit, 0x30081, 0x20081, &mut |_| Ok(()), false)
     }
 
     fn collect_with(
@@ -1618,7 +1623,7 @@ impl PinnedLocalDeleteTree {
         access: u32,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
-        Self::collect_with_root_access(path, limit, access, access, after_open)
+        Self::collect_with_root_access(path, limit, access, access, after_open, false)
     }
 
     fn collect_with_root_access(
@@ -1627,6 +1632,7 @@ impl PinnedLocalDeleteTree {
         root_access: u32,
         access: u32,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+        allow_child_links: bool,
     ) -> std::io::Result<Self> {
         let _parents = pin_local_scan_path(
             path.parent()
@@ -1641,7 +1647,15 @@ impl PinnedLocalDeleteTree {
             root_access,
             false,
         )?;
-        Self::collect_pinned_root(path, root, limit, access, _parents, after_open)
+        Self::collect_pinned_root(
+            path,
+            root,
+            limit,
+            access,
+            _parents,
+            after_open,
+            allow_child_links,
+        )
     }
 
     fn collect_pinned_root(
@@ -1651,23 +1665,29 @@ impl PinnedLocalDeleteTree {
         access: u32,
         _parents: Vec<DirPin>,
         after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
+        allow_child_links: bool,
     ) -> std::io::Result<Self> {
         let mut objects = Vec::new();
+        struct TreeBudget {
+            remaining: usize,
+            allow_child_links: bool,
+        }
         fn collect(
             path: &Path,
             pin: DirPin,
             access: u32,
             depth: usize,
-            remaining: &mut usize,
+            budget: &mut TreeBudget,
             objects: &mut Vec<(PathBuf, bool, DirPin)>,
             after_open: &mut impl FnMut(&Path) -> std::io::Result<()>,
         ) -> std::io::Result<bool> {
-            if depth > PINNED_TREE_MAX_DEPTH || *remaining == 0 {
+            if depth > PINNED_TREE_MAX_DEPTH || budget.remaining == 0 {
                 return Err(std::io::Error::other("tree snapshot budget exceeded"));
             }
-            *remaining -= 1;
+            budget.remaining -= 1;
             let md = pin_metadata(&pin)?;
-            if is_reparse_metadata(&md) || !(md.is_dir() || md.is_file()) {
+            let is_link = is_reparse_metadata(&md);
+            if is_link && !budget.allow_child_links || !(md.is_dir() || md.is_file() || is_link) {
                 return Err(std::io::Error::other(
                     "package snapshot refuses reparse/special entry",
                 ));
@@ -1676,15 +1696,15 @@ impl PinnedLocalDeleteTree {
             after_open(path)?;
             // An empty object may have become a junction at this exact point.
             // Enumeration and every child open still use that object handle.
-            if is_dir {
-                for name in relative_names_with_limit(&pin, *remaining)? {
-                    let child = open_relative(&pin, &name, access, false)?;
+            if is_dir && !is_link {
+                for name in relative_names_with_limit(&pin, budget.remaining)? {
+                    let child = open_relative(&pin, &name, access, budget.allow_child_links)?;
                     collect(
                         &path.join(name),
                         child,
                         access,
                         depth + 1,
-                        remaining,
+                        budget,
                         objects,
                         after_open,
                     )?;
@@ -1694,16 +1714,11 @@ impl PinnedLocalDeleteTree {
             objects.push((path.into(), is_dir, pin));
             Ok(is_dir)
         }
-        let mut remaining = limit;
-        let is_dir = collect(
-            path,
-            root,
-            access,
-            0,
-            &mut remaining,
-            &mut objects,
-            after_open,
-        )?;
+        let mut budget = TreeBudget {
+            remaining: limit,
+            allow_child_links,
+        };
+        let is_dir = collect(path, root, access, 0, &mut budget, &mut objects, after_open)?;
         objects.reverse();
         Ok(Self {
             path: path.into(),
@@ -1745,7 +1760,15 @@ impl PinnedLocalDeleteTree {
             handle: windows::Win32::Foundation::HANDLE(borrowed.try_clone()?.into_raw_handle()),
             guard: None,
         };
-        Self::collect_pinned_root(path, root, limit, 0x30081, Vec::new(), &mut |_| Ok(()))
+        Self::collect_pinned_root(
+            path,
+            root,
+            limit,
+            0x30081,
+            Vec::new(),
+            &mut |_| Ok(()),
+            false,
+        )
     }
 
     #[cfg(windows)]
@@ -1917,7 +1940,7 @@ impl PinnedLocalDeleteTree {
     }
 
     pub(crate) fn remove(self) -> std::io::Result<()> {
-        self.remove_objects(false)
+        self.remove_objects(false, false)
     }
 
     pub(crate) fn remove_backed_up(self) -> std::io::Result<()> {
@@ -1925,14 +1948,24 @@ impl PinnedLocalDeleteTree {
         for (_, _, pin) in &self.objects {
             verify_backed_object(pin)?;
         }
-        self.remove_objects(true)
+        self.remove_objects(true, true)
     }
 
-    fn remove_objects(mut self, verify_streams: bool) -> std::io::Result<()> {
+    fn remove_objects(
+        mut self,
+        verify_streams: bool,
+        ignore_readonly: bool,
+    ) -> std::io::Result<()> {
         #[cfg(not(windows))]
-        let _ = verify_streams;
+        let _ = (verify_streams, ignore_readonly);
         // Children close before their parents, which must be empty for disposition.
         while let Some((_path, _is_dir, pin)) = self.objects.pop() {
+            #[cfg(test)]
+            DELETE_OBSERVER.with_borrow_mut(|observer| {
+                if let Some(observer) = observer {
+                    observer(&_path, false);
+                }
+            });
             #[cfg(windows)]
             {
                 if verify_streams && crate::executor::cleanup_cancelled() {
@@ -1941,7 +1974,7 @@ impl PinnedLocalDeleteTree {
                         "cleanup cancelled",
                     ));
                 }
-                let readonly = verify_streams && pin_metadata(&pin)?.permissions().readonly();
+                let readonly = ignore_readonly && pin_metadata(&pin)?.permissions().readonly();
                 set_file_disposition(&pin, true, readonly)?;
                 if verify_streams {
                     // A writer may have opened a different stream despite the
@@ -1954,9 +1987,38 @@ impl PinnedLocalDeleteTree {
                 }
             }
             drop(pin);
+            #[cfg(test)]
+            DELETE_OBSERVER.with_borrow_mut(|observer| {
+                if let Some(observer) = observer {
+                    observer(&_path, true);
+                }
+            });
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+type DeleteObserver = Box<dyn FnMut(&Path, bool)>;
+
+#[cfg(test)]
+thread_local! {
+    static DELETE_OBSERVER: std::cell::RefCell<Option<DeleteObserver>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_delete_observer<T>(
+    observer: impl FnMut(&Path, bool) + 'static,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Reset(Option<DeleteObserver>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            DELETE_OBSERVER.with(|current| current.replace(self.0.take()));
+        }
+    }
+    let _reset = Reset(DELETE_OBSERVER.with(|current| current.replace(Some(Box::new(observer)))));
+    run()
 }
 
 #[cfg(windows)]

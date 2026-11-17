@@ -90,6 +90,7 @@ export type InstalledAppsSnapshot = {
 /** Orphan/idle scans used to truncate at their cap with no signal. */
 export type OrphanScanResult = {
   items: CleanupItem[];
+  scope_revision?: number;
   omitted: number;
   completeness: ScanCompleteness;
   cleanup_allowed?: boolean;

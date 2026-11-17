@@ -36,6 +36,7 @@ type AppMaps = Mutex<AppPaths>;
 static APP_MAPS: OnceLock<AppMaps> = OnceLock::new();
 static APP_GENERATION: AtomicU64 = AtomicU64::new(0);
 const MAX_ANALYZED_APPS: usize = 64;
+pub(crate) const ORPHAN_SCAN_KEY: &str = "orphan-scan";
 pub(crate) const APP_OBJECT_CHANGED: &str = "cleanup object no longer matches the scan; scan again";
 
 /// Selected objects from a single server-side analysis. Hold it through the
@@ -133,6 +134,26 @@ pub fn uninstall_scan_recorded(app_key: &str) -> bool {
 #[cfg(test)]
 pub fn was_recent_uninstall_item(app_key: &str, item: &crate::scanner::CleanupItem) -> bool {
     resolve_app_files(app_key, app_revision(app_key), std::slice::from_ref(item)).is_ok()
+}
+
+pub(crate) fn app_item_was_reported(app_key: &str, item: &CleanupItem) -> bool {
+    authorized_item_key(item).is_some_and(|key| {
+        app_maps().lock().is_ok_and(|maps| {
+            maps.get(app_key)
+                .is_some_and(|(_, items)| items.contains_key(&key))
+        })
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn app_path_was_reported(app_key: &str, path: &str) -> bool {
+    normalize(path).is_some_and(|path| {
+        let prefix = format!("{path}\0");
+        app_maps().lock().is_ok_and(|maps| {
+            maps.get(app_key)
+                .is_some_and(|(_, items)| items.keys().any(|key| key.starts_with(&prefix)))
+        })
+    })
 }
 
 #[cfg(test)]

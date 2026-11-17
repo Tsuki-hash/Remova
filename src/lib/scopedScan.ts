@@ -25,6 +25,7 @@ function normalizeScan<T>(raw: { items: T[]; omitted: number; completeness?: Sca
 export function normalizeOrphanScan(raw: OrphanScanResult | CleanupItem[] | null | undefined) {
   return {
     ...normalizeScan<CleanupItem>(raw),
+    scopeRevision: !Array.isArray(raw) ? raw?.scope_revision : undefined,
     cleanupAllowed: !Array.isArray(raw) && raw?.cleanup_allowed === true,
   };
 }
