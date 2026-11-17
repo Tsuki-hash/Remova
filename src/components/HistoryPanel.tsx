@@ -39,6 +39,7 @@ export function HistoryPanel({
   onClose,
   loading,
   loadError,
+  corruptRows = 0,
   mutating,
   onReload,
 }: {
@@ -50,11 +51,13 @@ export function HistoryPanel({
   onClose: () => void;
   loading?: boolean;
   loadError?: string | null;
+  corruptRows?: number;
   /** A delete/clear is running; destructive controls stay disabled. */
   mutating?: boolean;
   onReload?: () => void;
 }) {
   const L = t();
+  const empty = history.length === 0 && corruptRows === 0;
   const q = histQ.trim().toLowerCase();
   const rows = history.filter((h) => !q || h.app_name.toLowerCase().includes(q));
 
@@ -91,9 +94,9 @@ export function HistoryPanel({
             ...css.btnGhost,
             height: 30,
             color: "var(--danger-text)",
-            opacity: loading || !!loadError || history.length === 0 || mutating ? 0.5 : 1,
+            opacity: loading || !!loadError || empty || mutating ? 0.5 : 1,
           }}
-          disabled={loading || !!loadError || history.length === 0 || mutating}
+          disabled={loading || !!loadError || empty || mutating}
           onClick={onClearAll}
         >
           {L.clearHistory}
@@ -102,6 +105,7 @@ export function HistoryPanel({
           <CloseGlyph />
         </button>
       </div>
+      {!loading && !loadError && corruptRows > 0 && <p role="alert">{L.historyPartial(corruptRows)}</p>}
       {loading ? <p role="status" style={css.muted}>{L.loadingGeneric}</p>
         : loadError ? <div role="alert" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
           <span>{loadError}</span>
@@ -112,7 +116,7 @@ export function HistoryPanel({
         estimateSize={72}
         rowGap={6}
         listRole
-        empty={<div style={css.muted}>{histQ ? L.emptySearch : L.noHistory}</div>}
+        empty={<div style={css.muted}>{histQ ? L.emptySearch : corruptRows > 0 ? L.historyUnreadable : L.noHistory}</div>}
         keyOf={(u) =>
           u.kind === "header" ? `day-${u.day}` : u.h.id || `${u.h.app_name}-${u.h.created_at || u.idx}`
         }

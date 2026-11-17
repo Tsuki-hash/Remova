@@ -23,6 +23,20 @@ pub struct HistoryEntry {
     pub created_at: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct HistoryRead {
+    pub entries: Vec<HistoryEntry>,
+    pub corrupt_rows: usize,
+}
+
+pub fn load_with_status(limit: usize) -> Result<HistoryRead, String> {
+    let (entries, corrupt_rows) = read_history(limit)?;
+    Ok(HistoryRead {
+        entries,
+        corrupt_rows,
+    })
+}
+
 const HISTORY_MAX_BYTES: usize = 2 * 1024 * 1024;
 const HISTORY_MAX_ROWS: usize = 2000;
 
@@ -367,36 +381,31 @@ fn read_history(limit: usize) -> Result<(Vec<HistoryEntry>, usize), String> {
     let mut raw = Vec::new();
     let mut ring = VecDeque::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut corrupt = 0usize;
     while reader
         .next_line(&mut raw)
-        .map_err(|e| format!("history read failed: {e}"))?
+        .map_err(|error| format!("history read failed: {error}"))?
     {
         let line = history_line(&raw);
-        if line.iter().all(|b| b.is_ascii_whitespace()) {
+        if line.iter().all(|byte| byte.is_ascii_whitespace()) {
             continue;
         }
-        let row = std::str::from_utf8(line)
-            .ok()
-            .map(|text| (text.to_owned(), next_line_id(&mut seen, text)));
-        if ring.len() == limit {
-            ring.pop_front();
-        }
-        ring.push_back(row);
-    }
-    let mut out: Vec<HistoryEntry> = Vec::with_capacity(ring.len());
-    let mut corrupt = 0usize;
-    for row in ring.into_iter().rev() {
-        let entry = row.and_then(|(line, id)| {
-            let mut entry: HistoryEntry = serde_json::from_str(&line).ok()?;
+        let entry = std::str::from_utf8(line).ok().and_then(|text| {
+            let id = next_line_id(&mut seen, text);
+            let mut entry: HistoryEntry = serde_json::from_str(text).ok()?;
             entry.id = id;
             Some(entry)
         });
-        match entry {
-            Some(entry) => out.push(entry),
-            None => corrupt += 1,
+        if let Some(entry) = entry {
+            if ring.len() == limit {
+                ring.pop_front();
+            }
+            ring.push_back(entry);
+        } else {
+            corrupt += 1;
         }
     }
-    Ok((out, corrupt))
+    Ok((ring.into_iter().rev().collect(), corrupt))
 }
 
 /// Delete rows by runtime ids returned from [`load`] (`H{hash}-{nth}`). Ids are
@@ -504,6 +513,46 @@ fn unix_now_secs() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn public_history_keeps_valid_rows_and_reports_local_corruption() {
+        let tmp = crate::test_support::TempDir::new("history-public-partial");
+        tmp.subdir("Remova");
+        let _guard = super::use_history_dir(tmp.path());
+        let path = super::history_path();
+        for bad in ["", "broken\n", "{\"app_name\":", "broken\nsecond bad\n"] {
+            let contents = format!("{}\n{bad}", row("Readable"));
+            std::fs::write(&path, &contents).unwrap();
+            let result = crate::commands::history_cmd::list_cleanup_history().unwrap();
+            assert_eq!(result.entries.len(), 1);
+            assert_eq!(result.entries[0].app_name, "Readable");
+            assert_eq!(result.corrupt_rows, bad.lines().count());
+            assert_eq!(super::load_with_status(1).unwrap().entries.len(), 1);
+            let csv = crate::commands::history_cmd::export_history_csv().unwrap();
+            assert!(csv.starts_with("\u{FEFF}app_name,deleted,"));
+            assert!(csv.contains("Readable,"));
+            assert_eq!(csv.contains("# skipped_unreadable_rows"), !bad.is_empty());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+            assert_eq!(
+                super::delete_by_ids(&[result.entries[0].id.clone()]).unwrap(),
+                1
+            );
+            let remaining = crate::commands::history_cmd::list_cleanup_history().unwrap();
+            assert!(remaining.entries.is_empty());
+            assert_eq!(remaining.corrupt_rows, bad.lines().count());
+        }
+        std::fs::write(&path, "bad\n").unwrap();
+        let all_bad = crate::commands::history_cmd::list_cleanup_history().unwrap();
+        assert!(all_bad.entries.is_empty());
+        assert_eq!(all_bad.corrupt_rows, 1);
+        std::fs::write(&path, "x".repeat(super::HISTORY_MAX_BYTES + 1)).unwrap();
+        assert!(crate::commands::history_cmd::list_cleanup_history().is_err());
+        assert!(crate::commands::history_cmd::export_history_csv().is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(crate::commands::history_cmd::list_cleanup_history().is_err());
+        assert!(crate::commands::history_cmd::export_history_csv().is_err());
+    }
+
     use std::collections::HashMap;
 
     #[test]
@@ -854,7 +903,7 @@ mod tests {
         std::fs::write(&p, &rebuilt).unwrap();
 
         // Load reports the unreadable row instead of pretending the history is
-        // shorter than it is; the strict reader is the one the UI now uses.
+        // shorter than it is; the strict reader remains available to callers requiring complete data.
         assert!(
             super::load_checked(10).is_err(),
             "an unreadable row must surface as an error"

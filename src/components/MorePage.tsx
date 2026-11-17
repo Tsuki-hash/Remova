@@ -382,6 +382,7 @@ export function MorePage({
           history={hist.history}
           loading={hist.historyLoading}
           loadError={hist.historyLoadError}
+          corruptRows={hist.historyCorruptRows}
           mutating={hist.historyMutating}
           onReload={() => void hist.loadHistory()}
           histQ={hist.histQ}

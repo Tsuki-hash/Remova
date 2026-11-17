@@ -23,9 +23,29 @@ vi.mock("../lib/toast", () => ({
 const { api } = await import("../lib/api");
 const { requestConfirm } = await import("../lib/confirm");
 const { toast } = await import("../lib/toast");
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); setLang("zh"); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("useMoreHistory", () => {
+  it.each(["zh", "en"] as const)("retains readable history and makes partial or all-corrupt results explicit in %s", async language => {
+    setLang(language);
+    const row = { id: "fixture", app_name: "Readable", deleted: 1, failed: 0, skipped: 0,
+      aborted: false, dry_run: false, backup_dir: "", created_at: "1700000000" };
+    vi.mocked(api.history).mockResolvedValueOnce({ entries: [row], corrupt_rows: 2 });
+    const { result } = renderHook(() => useMoreHistory(vi.fn()));
+    await act(async () => { await result.current.loadHistory(); });
+    expect(result.current.history).toEqual([row]);
+    expect(result.current.historyCorruptRows).toBe(2);
+    expect(result.current.historyLoadError).toBeNull();
+    const props = { histQ: "", setHistQ: vi.fn(), onDelete: vi.fn(), onClearAll: vi.fn(), onClose: vi.fn() };
+    const view = render(<HistoryPanel {...props} history={result.current.history} corruptRows={2} />);
+    expect(screen.getByRole("alert").textContent).toBe(t().historyPartial(2));
+    expect(screen.getByText("Readable")).toBeTruthy();
+    view.rerender(<HistoryPanel {...props} history={[]} corruptRows={2} />);
+    expect(screen.queryByText(t().noHistory)).toBeNull();
+    expect(screen.getByText(t().historyUnreadable)).toBeTruthy();
+    expect(screen.getByRole("button", { name: t().clearHistory }).hasAttribute("disabled")).toBe(false);
+  });
+
   it("ignores a closed or replaced history read", async () => {
     let finish!: (rows: Awaited<ReturnType<typeof api.history>>) => void;
     vi.mocked(api.history).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
@@ -157,8 +177,9 @@ describe("useMoreHistory", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  it("downloads CSV and releases its URL and temporary anchor", async () => {
-    vi.mocked(api.exportHistoryCsv).mockResolvedValueOnce("name,count\nDemo,1");
+  it.each([0, 2])("downloads CSV with corrupt count %s and releases its URL and temporary anchor", async corrupt => {
+    const warning = corrupt ? `\n# skipped_unreadable_rows,${corrupt}\n` : "";
+    vi.mocked(api.exportHistoryCsv).mockResolvedValueOnce("name,count\nDemo,1" + warning);
     const create = vi.fn(() => "blob:csv"), revoke = vi.fn();
     vi.stubGlobal("URL", class extends URL { static createObjectURL = create; static revokeObjectURL = revoke; });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
@@ -173,6 +194,8 @@ describe("useMoreHistory", () => {
     expect(click).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:csv");
     expect(document.querySelector('a[download="remova-history.csv"]')).toBeNull();
+    if (corrupt) expect(toast.info).toHaveBeenCalledWith(t().historyPartial(corrupt));
+    else expect(toast.success).toHaveBeenCalledWith(t().exportCsv);
     vi.mocked(api.exportHistoryCsv).mockRejectedValueOnce("denied");
     await act(async () => { await result.current.exportCsv(); });
     expect(error).toHaveBeenCalledOnce();

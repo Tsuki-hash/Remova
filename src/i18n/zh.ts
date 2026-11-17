@@ -2,6 +2,8 @@
 export const dict = {
     search: "搜索软件名称…",
     history: "清理历史",
+    historyPartial: (count: number) => `有 ${count} 条历史记录无法读取，已保留其余有效记录。CSV 会附上缺读数量。`,
+    historyUnreadable: "当前没有可显示的有效记录。",
     exportCsv: "导出 CSV",
     restore: "还原备份",
     analyze: "深度分析",

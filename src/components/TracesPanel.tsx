@@ -210,12 +210,29 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
         </>
       )}
 
+      {shellFailed && (
+        <div
+          role="alert"
+          style={{
+            ...css.muted,
+            fontSize: 12,
+            marginTop: 10,
+            padding: "6px 8px",
+            borderLeft: "3px solid var(--warn)",
+            background: "var(--surface-2)",
+          }}
+        >
+          {L.shellAssocFailed}
+        </div>
+      )}
+      {shellAssoc && (
+        <ScanCompletenessNotice completeness={shellAssoc.completeness} />
+      )}
+
       <details className="remova-tool-disclosure">
         <summary>{L.tracesTechSummary}</summary>
         <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>
-  {shellAssoc && (
-    <ScanCompletenessNotice completeness={shellAssoc.completeness} />
-  )}
+
   {shellAssoc && shellAssoc.omitted > 0 && (
     <div style={{ ...css.muted, fontSize: 12 }}>{L.orphanOmitted(shellAssoc.omitted)}</div>
   )}
@@ -238,24 +255,7 @@ export function TracesPanel({ onClose }: { onClose: () => void }) {
       <div style={{ fontSize: 11, marginTop: 4 }}>{L.shellAssocNote}</div>
     </div>
   )}
-  {shellFailed && (
-    // A failed Shell scan used to be one muted line above a collapsed
-    // "technical details" block. It is now a warning block at the same level as
-    // the results, so "no orphans" is never read as "nothing was found".
-    <div
-      role="alert"
-      style={{
-        ...css.muted,
-        fontSize: 12,
-        marginTop: 10,
-        padding: "6px 8px",
-        borderLeft: "3px solid var(--warn)",
-        background: "var(--surface-2)",
-      }}
-    >
-      {L.shellAssocFailed}
-    </div>
-  )}
+
 </div>
         <div style={{ ...css.muted, fontSize: 12, marginTop: 4 }}>{L.tracesNote}</div>
       </details>

@@ -39,6 +39,7 @@ import type {
   DirSizeRow,
   FullCleanupReport,
   HistoryEntry,
+  HistoryRead,
   IdleApp,
   IdleScanResult,
   IgnoreSuggestion,
@@ -248,7 +249,7 @@ export const api = {
     invoke<string | null>("ai_summarize_report", { request, locale: currentLang() }),
   aiParseIntent: (text: string, appNames: string[]) =>
     invoke<NlIntent>("ai_parse_intent", { text, appNames, locale: currentLang() }),
-  history: () => invoke<HistoryEntry[]>("list_cleanup_history"),
+  history: () => invoke<HistoryEntry[] | HistoryRead>("list_cleanup_history"),
   exportHistoryCsv: () => invoke<string>("export_history_csv"),
   deleteHistory: (ids: string[]) => invoke<number>("delete_cleanup_history", { ids }),
   clearHistory: () => invoke("clear_cleanup_history"),

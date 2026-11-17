@@ -526,6 +526,8 @@ export type HistoryEntry = {
   created_at: string;
 };
 
+export type HistoryRead = { entries: HistoryEntry[]; corrupt_rows: number };
+
 export type ManageStartType = "auto" | "manual" | "disabled" | "other";
 export type ManageKind = "startup" | "service" | "task";
 

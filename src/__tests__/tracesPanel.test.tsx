@@ -4,14 +4,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TracesPanel } from "../components/TracesPanel";
-import { t } from "../i18n";
+import { setLang, t } from "../i18n";
 import { toast } from "../lib/toast";
 
 const native = vi.hoisted(() => ({
   appIconData: vi.fn(async () => null),
   consentOrphans: vi.fn(),
   portableCandidates: vi.fn(),
-  shellAssocOrphans: vi.fn(async () => ({ orphans: [], omitted: 0, completeness: { status: "complete", roots_scanned: 3, failed_roots: [] } })),
+  shellAssocOrphans: vi.fn(async () => ({ orphans: [], omitted: 0, completeness: { status: "complete", roots_scanned: 3, failed_roots: [] as string[] } })),
   openPath: vi.fn(),
 }));
 
@@ -25,10 +25,30 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  setLang("zh");
   toast.clear();
 });
 
 describe("TracesPanel", () => {
+  it.each(["zh", "en"] as const)("keeps association failures and partial results visible and clears them on refresh in %s", async language => {
+    setLang(language);
+    native.shellAssocOrphans.mockRejectedValueOnce(new Error("fixture failed"));
+    const view = render(<TracesPanel onClose={() => {}} />);
+    const warning = await screen.findByText(t().shellAssocFailed);
+    expect(warning.closest("details")).toBeNull();
+    native.shellAssocOrphans.mockResolvedValueOnce({ orphans: [], omitted: 0,
+      completeness: { status: "partial", roots_scanned: 1, failed_roots: ["fixture missing"] } });
+    fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
+    await waitFor(() => expect(screen.queryByText(t().shellAssocFailed)).toBeNull());
+    const partial = screen.getByText(/fixture missing/);
+    expect(partial.closest("details")).toBeNull();
+    native.shellAssocOrphans.mockResolvedValueOnce({ orphans: [], omitted: 0,
+      completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
+    fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
+    await waitFor(() => expect(screen.queryByText(/fixture missing/)).toBeNull());
+    view.unmount();
+  });
+
   it("explains the read-only checkup and shows friendly empty states", async () => {
     render(<TracesPanel onClose={() => {}} />);
     const L = t();

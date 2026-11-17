@@ -14,6 +14,8 @@ type EnDict = {
 export const dict: EnDict = {
     search: "Search apps…",
     history: "Cleanup history",
+    historyPartial: (count: number) => `${count} history record(s) could not be read. Other valid records are retained. CSV includes the unreadable count.`,
+    historyUnreadable: "There are no readable records to display.",
     exportCsv: "Export CSV",
     restore: "Restore backup",
     analyze: "Deep analyze",

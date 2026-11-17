@@ -2,11 +2,10 @@
 
 use crate::fsutil;
 use crate::history;
-use crate::history::HistoryEntry;
 
 #[tauri::command]
-pub fn list_cleanup_history() -> Result<Vec<HistoryEntry>, String> {
-    history::load_checked(crate::constants::HISTORY_LIST_CAP)
+pub fn list_cleanup_history() -> Result<history::HistoryRead, String> {
+    history::load_with_status(crate::constants::HISTORY_LIST_CAP)
 }
 
 /// Delete rows by runtime ids from `list_cleanup_history`. Returns removed count.
@@ -27,13 +26,13 @@ pub async fn clear_cleanup_history() -> Result<(), String> {
 
 #[tauri::command]
 pub fn export_history_csv() -> Result<String, String> {
-    let entries = history::load_checked(crate::constants::HISTORY_CSV_CAP)?;
+    let result = history::load_with_status(crate::constants::HISTORY_CSV_CAP)?;
     // Excel (the default Windows .csv handler) needs a UTF-8 BOM
     // or it decodes Chinese app names as ANSI.
     let mut out = String::from(
         "\u{FEFF}app_name,deleted,failed,skipped,delayed,aborted,backup_dir,created_at\n",
     );
-    for e in entries {
+    for e in result.entries {
         out.push_str(&format!(
             "{},{},{},{},{},{},{},{}\n",
             fsutil::csv_escape(&e.app_name),
@@ -44,6 +43,12 @@ pub fn export_history_csv() -> Result<String, String> {
             e.aborted,
             fsutil::csv_escape(&e.backup_dir),
             fsutil::csv_escape(&e.created_at)
+        ));
+    }
+    if result.corrupt_rows > 0 {
+        out.push_str(&format!(
+            "# skipped_unreadable_rows,{}\n",
+            result.corrupt_rows
         ));
     }
     Ok(out)

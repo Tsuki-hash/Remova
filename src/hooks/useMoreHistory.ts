@@ -4,10 +4,15 @@ import { formatError } from "../lib/format";
 import { requestConfirm } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
-import type { HistoryEntry } from "../types";
+import type { HistoryEntry, HistoryRead } from "../types";
+
+function historyResult(result: HistoryEntry[] | HistoryRead): HistoryRead {
+  return Array.isArray(result) ? { entries: result, corrupt_rows: 0 } : result;
+}
 
 export function useMoreHistory(onError: (msg: string) => void) {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyCorruptRows, setHistoryCorruptRows] = useState(0);
   const [histQ, setHistQ] = useState("");
   const [openHistory, setOpenHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -20,12 +25,14 @@ export function useMoreHistory(onError: (msg: string) => void) {
   const loadHistory = useCallback(async () => {
     const sequence = ++loadSequence.current;
     setHistory([]);
+    setHistoryCorruptRows(0);
     setHistoryLoading(true);
     setHistoryLoadError(null);
     try {
-      const h = await api.history();
+      const h = historyResult(await api.history());
       if (sequence !== loadSequence.current) return;
-      setHistory(h);
+      setHistory(h.entries);
+      setHistoryCorruptRows(h.corrupt_rows);
       setOpenHistory(true);
     } catch (e) {
       if (sequence !== loadSequence.current) return;
@@ -56,9 +63,10 @@ export function useMoreHistory(onError: (msg: string) => void) {
       setHistoryMutating(true);
       try {
         const removed = await api.deleteHistory([id]);
-        const h = await api.history();
+        const h = historyResult(await api.history());
         if (sequence !== loadSequence.current) return;
-        setHistory(h);
+        setHistory(h.entries);
+        setHistoryCorruptRows(h.corrupt_rows);
         if (removed > 0) toast.success(L.historyDeleted);
         else toast.info(L.historyDeleteNoMatch);
       } catch (e) {
@@ -86,6 +94,7 @@ export function useMoreHistory(onError: (msg: string) => void) {
       await api.clearHistory();
       if (sequence !== loadSequence.current) return;
       setHistory([]);
+      setHistoryCorruptRows(0);
       toast.success(L.historyCleared);
     } catch (e) {
       if (sequence === loadSequence.current) onError(formatError(e));
@@ -107,7 +116,9 @@ export function useMoreHistory(onError: (msg: string) => void) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success(L.exportCsv);
+      const partial = csv.match(/\n# skipped_unreadable_rows,(\d+)\n?$/);
+      if (partial) toast.info(L.historyPartial(Number(partial[1])));
+      else toast.success(L.exportCsv);
     } catch (e) {
       onError(formatError(e));
     }
@@ -121,6 +132,7 @@ export function useMoreHistory(onError: (msg: string) => void) {
 
   return {
     history,
+    historyCorruptRows,
     historyLoading,
     historyLoadError,
     historyMutating,
