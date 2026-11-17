@@ -169,6 +169,61 @@ exit $LASTEXITCODE
     [["preflight", true], ["install-1.4.0", false], ["matrix-stopped", false]]);
 });
 
+test("the install matrix runs the selected previous release and rejects an incorrect upgrade", { skip: !hasPwsh }, (t) => {
+  const root = fixture(t);
+  const fake = mockRunner(root, "run-install-matrix.ps1", fakeWindows + String.raw`
+$script:installed = $false
+function Get-Process { }
+function Start-Process($FilePath) {
+    $script:installed = -not $FilePath.EndsWith('uninstall.exe')
+    if ($FilePath.EndsWith('old.exe')) { $script:installedVersion = '1.5.0' }
+    if ($FilePath.EndsWith('candidate.exe')) {
+        $script:installedVersion = if ($env:TEST_WRONG_UPGRADE) { '1.5.0' } else { '1.5.1' }
+    }
+    @{ ExitCode = 0; Id = 1234 }
+}
+function Wait-RemovaUiReady { $true }
+function Close-RemovaTestProcess { }
+function Get-ItemProperty { @{ DisplayVersion=$script:installedVersion; InstallLocation=$InstallDir; DisplayName='Remova' } }
+function Get-Item([string]$LiteralPath) {
+    if ($LiteralPath.EndsWith('remova.exe')) { @{VersionInfo=@{ProductVersion=$script:installedVersion}} }
+    else { Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath }
+}
+function Get-FileHash([string]$LiteralPath) {
+    if ($LiteralPath.EndsWith('remova.exe')) { @{Hash=$CandidateExeSha256} }
+    else { Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath }
+}
+function Test-Path([string]$LiteralPath) {
+    if ($LiteralPath.StartsWith('HKCU:')) { $script:installed }
+    else { Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath }
+}
+function Get-ChildItem([string]$Path,[string]$LiteralPath) {
+    if ($Path.StartsWith('HKCU:')) { @{PSPath='fixture-key'} }
+    elseif (Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath) { Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $LiteralPath }
+}
+`);
+  for (const name of ["old.exe", "candidate.exe", "ai-config.json", "history.jsonl"]) writeFileSync(join(root, name), "fixture");
+  const wrapper = join(root, "matrix-version-probe.ps1");
+  writeFileSync(wrapper, String.raw`
+param($Script,$Root,$Digest,$Out)
+& $Script -PreviousInstaller (Join-Path $Root 'old.exe') -PreviousVersion '1.5.0' -CandidateInstaller (Join-Path $Root 'candidate.exe') -CandidateVersion '1.5.1' -InstallDir (Join-Path $Root 'install') -CandidateExeSha256 $Digest -Out $Out -FixtureFiles @((Join-Path $Root 'ai-config.json'),(Join-Path $Root 'history.jsonl')) -ConfirmReplaceInstalledApp
+exit $LASTEXITCODE
+`);
+  for (const wrong of [false, true]) {
+    const out = join(root, wrong ? "wrong-upgrade" : "good-upgrade");
+    const result = run(wrapper, [fake, root, exeSha, out], { TEST_ACCEPTANCE_ELEVATED: "", TEST_WRONG_UPGRADE: wrong ? "1" : "" });
+    assert.equal(result.status, wrong ? 1 : 0, resultText(result));
+    const summary = readJson(join(out, "install-matrix.json"));
+    assert.equal(summary.previous_version, "1.5.0");
+    assert.equal(summary.candidate_version, "1.5.1");
+    assert.equal(summary.passed, !wrong);
+    if (wrong) assert.match(summary.error, /upgrade-1\.5\.1-version failed/);
+    else for (const name of ["install-1.5.0", "upgrade-1.5.1", "rollback-1.5.0", "reinstall-1.5.1", "uninstall-1.5.1"]) {
+      assert(summary.steps.some(({ step, ok }) => step === name && ok));
+    }
+  }
+});
+
 test("the performance gate requires six limits, matching identities and three real readiness samples", { skip: !hasPwsh }, (t) => {
   const root = fixture(t);
   const startupFile = join(root, "startup.json");

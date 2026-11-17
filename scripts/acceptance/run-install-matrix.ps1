@@ -3,7 +3,8 @@
 # disposable Windows VM. Restore the original environment by reverting the VM
 # snapshot, including when a step fails.
 param(
-    [Parameter(Mandatory = $true)][string]$Installer140,
+    [Parameter(Mandatory = $true)][Alias('Installer140')][string]$PreviousInstaller,
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$PreviousVersion = '1.4.0',
     [Parameter(Mandatory = $true)][Alias('Installer141')][string]$CandidateInstaller,
     [Parameter(Mandatory = $true)][string]$InstallDir,
     [Parameter(Mandatory = $true)]
@@ -123,7 +124,8 @@ try {
     $result.install_dir = $InstallDir
     $result.installers = [ordered]@{}
     $result.candidate_version = $CandidateVersion
-    foreach ($item in @(@{ id = 'v140'; path = $Installer140 }, @{ id = 'candidate'; path = $CandidateInstaller })) {
+    $result.previous_version = $PreviousVersion
+    foreach ($item in @(@{ id = 'previous'; path = $PreviousInstaller }, @{ id = 'candidate'; path = $CandidateInstaller })) {
         $path = (Get-Item -LiteralPath $item.path).FullName
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installer not found: $path" }
         $result.installers[$item.id] = @{
@@ -152,9 +154,9 @@ try {
     Add-MatrixResult 'preflight' $true "Isolated VM snapshot confirmed. Fixture files: $($fixtureHashes.Count)."
 
     $result.snapshot_rollback_required = $true
-    $code = Invoke-NsisInstall $result.installers.v140.path $InstallDir
-    Assert-MatrixResult 'install-1.4.0' ($code -eq 0) "exit=$code"
-    Assert-MatrixInstall 'install-1.4.0' $InstallDir '1.4.0'
+    $code = Invoke-NsisInstall $result.installers.previous.path $InstallDir
+    Assert-MatrixResult "install-$PreviousVersion" ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall "install-$PreviousVersion" $InstallDir $PreviousVersion
     Assert-MatrixFixtures 'install-keeps-fixture' $fixtureHashes
 
     $code = Invoke-NsisInstall $result.installers.candidate.path $InstallDir
@@ -165,9 +167,9 @@ try {
     Assert-MatrixResult 'upgrade-single-entry' ($entries.Count -eq 1) "uninstall entries=$($entries.Count)"
     Assert-MatrixFixtures 'upgrade-keeps-fixture' $fixtureHashes
 
-    $code = Invoke-NsisInstall $result.installers.v140.path $InstallDir
-    Assert-MatrixResult 'rollback-1.4.0' ($code -eq 0) "exit=$code"
-    Assert-MatrixInstall 'rollback-1.4.0' $InstallDir '1.4.0'
+    $code = Invoke-NsisInstall $result.installers.previous.path $InstallDir
+    Assert-MatrixResult "rollback-$PreviousVersion" ($code -eq 0) "exit=$code"
+    Assert-MatrixInstall "rollback-$PreviousVersion" $InstallDir $PreviousVersion
     Assert-MatrixFixtures 'rollback-keeps-fixture' $fixtureHashes
 
     $code = Invoke-NsisInstall $result.installers.candidate.path $InstallDir

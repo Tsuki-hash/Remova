@@ -46,7 +46,13 @@ try {
     foreach ($exe in 'candle.exe', 'light.exe') {
         $tools.wix[$exe] = (Get-Item -LiteralPath (Join-Path $tauriTools "WixTools314/$exe")).VersionInfo.FileVersion
     }
-    [ordered]@{ schema_version = 1; commit = $commit; tools = $tools; inputs_sha256 = $inputs } |
+    $version = (Get-Content -Raw -LiteralPath 'src-tauri/tauri.conf.json' | ConvertFrom-Json).version
+    $outputs = [ordered]@{}
+    foreach ($name in "remova.exe", "bundle/nsis/Remova_${version}_x64-setup.exe", "bundle/msi/Remova_${version}_x64_zh-CN.msi") {
+        $file = Join-Path 'src-tauri/target/release' $name
+        $outputs[$name] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    [ordered]@{ schema_version = 2; commit = $commit; tools = $tools; inputs_sha256 = $inputs; outputs_sha256 = $outputs } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $evidence -Encoding utf8
     Write-Host "Wrote build inputs and tool versions to $evidence."
 } finally { Pop-Location }

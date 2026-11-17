@@ -70,6 +70,18 @@ function Test-PublicationMetadata($Draft, $Approved) {
     return $bodyHash -ceq $Approved.body_sha256
 }
 
+function Get-LatestRelease {
+    $response = gh api "repos/$repository/releases/latest" --include 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    if ($response -notmatch '(?m)^HTTP/[\d.]+\s+(\d{3})') { throw 'Missing latest release response status.' }
+    $status = [int]$Matches[1]
+    if ($status -eq 404) { return $null }
+    if ($code -ne 0 -or $status -ne 200) { throw 'Could not read the latest release.' }
+    $latest = ($response -split '\r?\n\r?\n', 2)[1] | ConvertFrom-Json
+    if (!$latest.id -or !$latest.tag_name) { throw 'Invalid latest release identity.' }
+    return @{ id = $latest.id; tag = $latest.tag_name }
+}
+
 $commit = Get-TagCommit
 & "$PSScriptRoot/require-release-ci.ps1" -Repository $repository -Commit $commit
 $draft = Get-Draft
@@ -94,6 +106,7 @@ if ($current.id -ne $draft.id -or (Get-AttachmentIdentity $current) -cne $identi
 }
 # Send the approved values in the publish request itself, so a concurrent edit
 # to the title, notes or release flags cannot become the published text.
+$previousLatest = if ($publication.make_latest -ceq 'false') { Get-LatestRelease } else { $null }
 $request = Join-Path $download 'publish-request.json'
 @{
     name = $publication.name
@@ -111,6 +124,17 @@ try {
         (Get-AttachmentIdentity $published) -cne $identity -or (Get-TagCommit) -cne $commit) {
         throw 'The public release no longer matches the approved tag, notes or attachments.'
     }
+    $expectedLatest = if ($publication.make_latest -ceq 'true') { @{ id = $draft.id; tag = $tag } } else { $previousLatest }
+    $latestMatches = $false
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $latest = Get-LatestRelease
+        $latestMatches = if ($null -eq $expectedLatest) { $null -eq $latest } else {
+            $latest.id -eq $expectedLatest.id -and $latest.tag -ceq $expectedLatest.tag
+        }
+        if ($latestMatches) { break }
+        if ($attempt -lt 2) { Start-Sleep -Milliseconds 500 }
+    }
+    if (!$latestMatches) { throw 'The latest release does not match the approved publication intent.' }
     @{
         release_id = $published.id
         tag = $tag
@@ -118,6 +142,9 @@ try {
         name = $published.name
         body_sha256 = $publication.body_sha256
         prerelease = $published.prerelease
+        make_latest = $publication.make_latest
+        previous_latest = $previousLatest
+        verified_latest = $latest
         published_at = $published.published_at
         verified_at = [DateTime]::UtcNow.ToString('o')
         assets = @($published.assets | Select-Object id, name, digest)

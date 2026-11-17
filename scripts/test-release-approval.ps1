@@ -158,7 +158,7 @@ function Test-PublishDraft(
     $fixtureRepository = 'fixture-org/fixture-remova'
     $fixtureActor = 'fixture-maintainer'
     $fixtureRelease = 700
-    $state = @{ permissions = 0; commits = 0; drafts = 0; downloads = 0; patches = 0; compares = 0; runs = 0; jobs = 0; publicReads = 0 }
+    $state = @{ permissions = 0; commits = 0; drafts = 0; downloads = 0; patches = 0; compares = 0; runs = 0; jobs = 0; publicReads = 0; latestReads = 0 }
     $assetId = 1000
     $files = @(Get-ChildItem -LiteralPath $FixtureBundle -File)
     $assets = @(
@@ -178,6 +178,19 @@ function Test-PublishDraft(
     function gh {
         $global:LASTEXITCODE = 0
         switch -Exact ($args -join '|') {
+            "api|repos/$fixtureRepository/releases/latest|--include" {
+                $state.latestReads++
+                if ($Scenario -eq 'public-latest-api-error') { $global:LASTEXITCODE = 1; return 'HTTP/2.0 503 Service Unavailable' }
+                if ($Scenario -eq 'success-no-latest') { $global:LASTEXITCODE = 1; return 'HTTP/2.0 404 Not Found' }
+                $latest = @{ id = $fixtureRelease; tag_name = $fixtureTag }
+                if ($Scenario -in @('public-latest-wrong', 'success-latest-delay') -and
+                    ($Scenario -eq 'public-latest-wrong' -or $state.latestReads -eq 1) -or
+                    $releaseMetadata.make_latest -eq 'false') {
+                    $latest = @{ id = 42; tag_name = 'v1.4.0' }
+                }
+                if ($Scenario -eq 'public-latest-false-changed' -and $state.patches) { $latest.id = $fixtureRelease }
+                return "HTTP/2.0 200 OK`r`nContent-Type: application/json`r`n`r`n$($latest | ConvertTo-Json -Compress)"
+            }
             "api|repos/$fixtureRepository/collaborators/$fixtureActor/permission|--jq|.role_name" {
                 $state.permissions++
                 return $FixtureRole
@@ -304,7 +317,7 @@ function Test-PublishDraft(
         }
         $publish = "$approvalScripts/publish-release-draft.ps1"
         switch -Wildcard ($Scenario) {
-            'success' { & $publish 6>&1 | Out-Null }
+            'success*' { & $publish 6>&1 | Out-Null }
             'unauthorized' { Must-Refuse { & $publish } 'requires a repository maintainer or administrator' }
             'no-key' { Must-Refuse { & $publish } 'Configure the RELEASE_APPROVAL_PUBLIC_KEY' }
             'unsigned' { Must-Refuse { & $publish } 'signed release approval is required' }
@@ -322,7 +335,7 @@ function Test-PublishDraft(
     }
 
     $expected = switch -Wildcard ($Scenario) {
-        'success' { '1/3/2/1/1' }
+        'success*' { '1/3/2/1/1' }
         'unauthorized' { '1/0/0/0/0' }
         'no-key' { '0/0/0/0/0' }
         'unsigned' { '1/1/1/1/0' }
@@ -333,18 +346,23 @@ function Test-PublishDraft(
         'ci-late-failure' { '1/1/1/1/0'; break }
         'ci-*' { '1/1/0/0/0' }
         'public-tag-changed' { '1/3/2/1/1'; break }
+        'public-latest-*' { '1/3/2/1/1'; break }
         'public-*' { '1/2/2/1/1' }
         default { '1/1/2/1/0' }
     }
     $calls = "$($state.permissions)/$($state.commits)/$($state.drafts)/$($state.downloads)/$($state.patches)"
     if ($calls -cne $expected) { throw "Unexpected $Scenario fixture calls: $calls, expected $expected." }
     $evidence = Join-Path $fixtureTemp 'release-publication.json'
-    if ($Scenario -eq 'success') {
+    if ($Scenario -like 'success*') {
         $verified = Get-Content -LiteralPath $evidence -Raw | ConvertFrom-Json
         $bodyHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
             [Text.Encoding]::UTF8.GetBytes($releaseMetadata.body))).ToLowerInvariant()
         if ($state.publicReads -ne 1 -or $verified.commit -cne $FixtureCommit -or
-            $verified.body_sha256 -cne $bodyHash -or $verified.assets.Count -ne $assets.Count) {
+            $verified.body_sha256 -cne $bodyHash -or $verified.assets.Count -ne $assets.Count -or
+            $verified.make_latest -cne $releaseMetadata.make_latest -or $state.latestReads -lt 1 -or
+            ($Scenario -eq 'success' -and $verified.verified_latest.id -ne $fixtureRelease) -or
+            ($Scenario -eq 'success-keep-latest' -and $verified.verified_latest.id -ne 42) -or
+            ($Scenario -eq 'success-no-latest' -and $null -ne $verified.verified_latest)) {
             throw 'Missing or incorrect public release verification evidence.'
         }
     } elseif (Test-Path -LiteralPath $evidence) {
@@ -519,17 +537,31 @@ $reference | ConvertTo-Json -Depth 3
     Must-Refuse { & $check @params -ApprovalJson ($envelope | ConvertTo-Json -Compress) -PublicKeyPem $publicKey } 'Invalid local launch record digest'
 
     Test-PublishDraft 'success' 'maintain' $commit $bundle.FullName $approval $publicKey $root
+    Test-PublishDraft 'success-latest-delay' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unauthorized' 'write' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'no-key' 'maintain' $commit $bundle.FullName $approval $publicKey $root
     Test-PublishDraft 'unsigned' 'maintain' $commit $bundle.FullName ($signed | ConvertTo-Json -Depth 7 -Compress) $publicKey $root
     foreach ($scenario in 'asset-changed', 'draft-replaced', 'tag-changed', 'wrong-approved-title',
         'title-changed', 'body-changed', 'prerelease-changed', 'wrong-asset-digest',
-        'public-body-changed', 'public-assets-changed', 'public-draft', 'public-tag-changed', 'public-api-error') {
+        'public-body-changed', 'public-assets-changed', 'public-draft', 'public-tag-changed', 'public-api-error',
+        'public-latest-wrong', 'public-latest-api-error') {
         Test-PublishDraft $scenario 'admin' $commit $bundle.FullName $approval $publicKey $root
     }
     foreach ($scenario in $ciFailures.Keys) {
         Test-PublishDraft $scenario 'maintain' $commit $bundle.FullName $approval $publicKey $root
     }
+    $releaseMetadata.make_latest = 'false'
+    $falseEnvelope = $approval | ConvertFrom-Json -AsHashtable
+    $falsePayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($falseEnvelope.payload)) | ConvertFrom-Json -AsHashtable
+    $falsePayload.publication.make_latest = 'false'
+    $falseBytes = [Text.Encoding]::UTF8.GetBytes(($falsePayload | ConvertTo-Json -Depth 7 -Compress))
+    $falseEnvelope.payload = [Convert]::ToBase64String($falseBytes)
+    $falseEnvelope.signature = [Convert]::ToBase64String($rsa.SignData($falseBytes,
+        [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pss))
+    foreach ($scenario in 'success-keep-latest', 'success-no-latest', 'public-latest-false-changed') {
+        Test-PublishDraft $scenario 'maintain' $commit $bundle.FullName ($falseEnvelope | ConvertTo-Json -Compress) $publicKey $root
+    }
+    $releaseMetadata.make_latest = 'true'
 
     $signedBody = '### 下载与校验' + ($releaseBody -split '### 下载与校验', 2)[1]
     Assert-ReleaseDownloadNotes -Body $signedBody -Version '1.4.1'
