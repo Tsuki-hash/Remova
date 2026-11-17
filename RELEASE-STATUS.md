@@ -5,6 +5,7 @@
 - **Status**: 1.5.1 is in development. Configure the release mode before creating a candidate draft. Final acceptance and approval are required before publishing.
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
 - **Signing and publication**: the planned distribution uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
+- **Local build fallback**: when the tag workflow cannot build the draft, use the locked local build and record its toolchain, then upload and review the same five attachments. [Local Windows release procedure](.github/LOCAL_RELEASE.md)
 - **Updater**: verify manual downloads via `SHA256SUMS.txt`. The Windows updater dependency supports installer files and is built without the legacy ZIP updater feature.
 - **SBOM**: every release attaches a CycloneDX SBOM (Cargo + production npm dependencies) alongside the installers, continuing the practice introduced in 1.4.0.
 

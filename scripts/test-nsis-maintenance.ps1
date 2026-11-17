@@ -2,16 +2,21 @@
 [CmdletBinding()]
 param(
     [string]$MakeNsis = (Join-Path $env:LOCALAPPDATA 'tauri/NSIS/makensis.exe'),
+    [string]$TemplateDirectory = (Join-Path $PSScriptRoot '../src-tauri/target/release/nsis/x64'),
+    [ValidateSet('Standard', 'Elevated')][string]$ExpectedToken,
     [switch]$VerifyElevation
 )
 
 $ErrorActionPreference = 'Stop'
-$source = Join-Path $PSScriptRoot '../src-tauri/target/release/nsis/x64'
-$template = Get-Content -Raw -LiteralPath (Join-Path $source 'installer.nsi')
-$MakeNsis = (Resolve-Path -LiteralPath $MakeNsis).Path
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevated = [Security.Principal.WindowsPrincipal]::new($identity).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($ExpectedToken -and ($elevated -ne ($ExpectedToken -eq 'Elevated'))) {
+    throw "NSIS fixture expected a $ExpectedToken Windows token."
+}
+$source = (Resolve-Path -LiteralPath $TemplateDirectory).Path
+$template = Get-Content -Raw -LiteralPath (Join-Path $source 'installer.nsi')
+$MakeNsis = (Resolve-Path -LiteralPath $MakeNsis).Path
 
 function Invoke-Setup([string]$Exe, [string]$Arguments, [int]$Expected = 0) {
     $process = Start-Process -FilePath $Exe -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
@@ -193,7 +198,7 @@ SectionEnd
 
     if ($VerifyElevation -and !$elevated) {
         $log = Join-Path $lab 'elevated.log'
-        $command = "& '$($PSCommandPath.Replace("'", "''"))' -MakeNsis '$($MakeNsis.Replace("'", "''"))' *> '$($log.Replace("'", "''"))'"
+        $command = "& '$($PSCommandPath.Replace("'", "''"))' -ExpectedToken Elevated -MakeNsis '$($MakeNsis.Replace("'", "''"))' -TemplateDirectory '$($source.Replace("'", "''"))' *> '$($log.Replace("'", "''"))'"
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $process = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -WindowStyle Hidden -PassThru -Wait -ArgumentList '-NoProfile', '-EncodedCommand', $encoded
         try {

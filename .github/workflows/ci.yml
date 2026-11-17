@@ -162,7 +162,7 @@ jobs:
         run: npm run smoke:dist
 
   package:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
     # Never ship artifacts from a red test tree.
     needs: test
@@ -172,23 +172,27 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.8.0
         with:
           workspaces: src-tauri
           cache-targets: "false"
       - run: npm ci
-      # The tauri build runs beforeBuildCommand (npm run build) itself.
-      - run: npx tauri build
+      # Tauri runs beforeBuildCommand (npm run build) itself.
+      - name: build locked Windows packages and record inputs
+        shell: pwsh
+        run: ./scripts/build-windows-candidate.ps1 -EvidenceFile "$env:RUNNER_TEMP/windows-build.json"
       - name: NSIS WebView2 failure regression
         shell: pwsh
         run: pwsh -NoProfile -File scripts/test-nsis-webview2.ps1
-      - name: NSIS per-user maintenance regression
+      - name: NSIS per-user maintenance regression (standard and elevated)
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/test-nsis-maintenance.ps1
+        run: ./scripts/test-nsis-maintenance-ci.ps1
       - name: install WebView2 (launch smoke prerequisite)
         shell: pwsh
         run: |
@@ -228,3 +232,9 @@ jobs:
         run: npm run package:portable
       - shell: pwsh
         run: npm run smoke:portable
+      - name: retain the Windows build record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-build-inputs
+          path: ${{ runner.temp }}/windows-build.json
+          if-no-files-found: error
