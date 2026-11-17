@@ -1,7 +1,7 @@
 import { cleanupItemKey } from "../lib/cleanupPlan";
 import { useCallback, useRef, useState } from "react";
-import { api } from "../lib/api";
-import type { CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
+import { api, type FullCleanupOptions } from "../lib/api";
+import type { CleanupItem, CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { Strings } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
@@ -19,6 +19,8 @@ import { cleanupAbortText, cleanupAccomplishedSomething, cleanupFeedback, cleanu
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
 import { uninstallReviewFromResult, type UninstallReview } from "../lib/uninstallReview";
+
+type BatchControl = { id: symbol; current: boolean };
 
 /** Grouped cleanup setters. */
 export type CleanupFlowSetters = {
@@ -90,6 +92,8 @@ export function useCleanupHandlers({
   } = flow;
   const [forceBusy, setForceBusy] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupId, setCleanupId] = useState<number>();
   const [previewSelection, setPreviewSelection] = useState<{ scan: ScanResult; keys: Set<string> } | null>(null);
   /** Beginner batch path runs official uninstaller by default. */
   const batchUseOfficial = true;
@@ -99,7 +103,9 @@ export function useCleanupHandlers({
   const [batchCurrent, setBatchCurrent] = useState("");
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [showBatchSummary, setShowBatchSummary] = useState(false);
-  const batchCancelRef = useRef(false);
+  const [batchId, setBatchId] = useState<symbol | null>(null);
+  const activeBatch = useRef<BatchControl | null>(null);
+  const activeWrite = useRef<{ id: number; batch?: BatchControl } | null>(null);
   const batchQueueRef = useRef<InstalledApp[]>([]);
 
   const backupEnabledRef = useRef(false);
@@ -109,6 +115,27 @@ export function useCleanupHandlers({
   const dryRunSeqRef = useRef(0);
   /** Invalidates force-clean's internal analyze when a newer one starts. */
   const forceAnalyzeSeqRef = useRef(0);
+
+  const runControlledCleanup = useCallback(async (
+    app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions, batch?: BatchControl,
+  ) => {
+    const id = await api.beginCleanupOperation();
+    activeWrite.current = { id, batch };
+    if (!batch) setCleanupId(id);
+    try {
+      if (batch?.current) throw new Error("cleanup cancelled");
+      return await api.fullCleanup(app, items, options, id);
+    } catch (error) {
+      // A failed invocation may have left the reservation unclaimed.
+      void api.cancelCleanup(id).catch(() => {});
+      throw error;
+    } finally {
+      if (activeWrite.current?.id === id) {
+        activeWrite.current = null;
+        if (!batch) setCleanupId(undefined);
+      }
+    }
+  }, []);
 
   const forceClean = useCallback(
     async (appOverride?: InstalledApp) => {
@@ -236,10 +263,10 @@ export function useCleanupHandlers({
     }
     const items = scan.items.filter((it) => selectedPaths.has(cleanupItemKey(it)));
     verifySeqRef.current += 1;
-    setDryRunning(true);
+    setCleaning(true);
     let afterCleanup: { app: InstalledApp; report: FullCleanupReport } | null = null;
     try {
-      const r = await api.fullCleanup(selected, items, {
+      const r = await runControlledCleanup(selected, items, {
         dry_run: false,
         ...(scan.scope_revision !== undefined && { scope_revision: scan.scope_revision }),
         ...(uninstallReviewReceipt !== undefined && { uninstall_review: uninstallReviewReceipt }),
@@ -309,7 +336,7 @@ export function useCleanupHandlers({
     } finally {
       backupEnabledRef.current = false;
       busyRef.current = false;
-      setDryRunning(false);
+      setCleaning(false);
     }
     // Start the post-cleanup rescan only after the cleanup released busyRef;
     // otherwise the nested analyze inherits an external hold while the ref is
@@ -336,6 +363,7 @@ export function useCleanupHandlers({
     setError,
     busyRef,
     currentReport,
+    runControlledCleanup,
   ]);
 
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
@@ -455,6 +483,9 @@ export function useCleanupHandlers({
       if (busyRef.current || batching) return;
       setBatchTotal(queue.length);
       batchQueueRef.current = queue;
+      const control = { id: Symbol(), current: false };
+      activeBatch.current = control;
+      setBatchId(control.id);
       try {
         busyRef.current = true;
         await runBatchCleanup(
@@ -476,8 +507,8 @@ export function useCleanupHandlers({
                 return n;
               });
             },
-            cancelRef: batchCancelRef,
-            busyRef,
+            cancelRef: control,
+            runCleanup: (app, items, options) => runControlledCleanup(app, items, options, control),
           },
           checked,
           reviewReceipts,
@@ -486,20 +517,29 @@ export function useCleanupHandlers({
         await refreshApps();
       } catch (e) {
         setError(formatError(e, "cleanup"));
+      } finally {
+        activeBatch.current = null;
+        setBatchId(null);
+        busyRef.current = false;
       }
     },
-    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching, refreshApps],
+    [apps, multi, L, setMulti, setError, busyRef, batchUseOfficial, batching, refreshApps, runControlledCleanup],
   );
 
   const cancelBatch = useCallback(() => {
-    batchCancelRef.current = true;
-    void api.cancelCleanup().catch(() => {});
+    const batch = activeBatch.current;
+    if (!batch || batch.id !== batchId) return;
+    batch.current = true;
+    const write = activeWrite.current;
+    if (write?.batch === batch) void api.cancelCleanup(write.id).catch(() => {});
     toast.info(L.batchCancelHint);
-  }, [L]);
+  }, [L, batchId]);
 
   const cancelCleanup = useCallback(() => {
-    void api.cancelCleanup().catch(() => {});
-  }, []);
+    if (cleanupId !== undefined && activeWrite.current?.id === cleanupId) {
+      void api.cancelCleanup(cleanupId).catch(() => {});
+    }
+  }, [cleanupId]);
 
   const retryFailedBatch = useCallback(() => {
     const failed = batchResults.filter((r) => r.status === "failed");
@@ -517,6 +557,8 @@ export function useCleanupHandlers({
   return {
     forceBusy,
     dryRunning,
+    cleaning,
+    canCancelCleanup: cleanupId !== undefined,
     previewStale: previewSelection !== null && (previewSelection.scan !== scan || previewSelection.keys !== selectedPaths),
     batching,
     batchIndex,

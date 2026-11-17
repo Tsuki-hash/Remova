@@ -18,7 +18,7 @@ import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnaps
 
 const native = vi.hoisted(() => ({
   listApps: vi.fn(), analyze: vi.fn(), dryRun: vi.fn(), fullCleanup: vi.fn(), officialUninstall: vi.fn(),
-  orphanScan: vi.fn(),
+  orphanScan: vi.fn(), beginCleanupOperation: vi.fn(), cancelCleanup: vi.fn(),
   openPath: vi.fn(), elevateRestart: vi.fn(), takePendingAnalyze: vi.fn(),
   ignorePublisher: vi.fn(), ignoreAppName: vi.fn(),
   beginInstallMonitor: vi.fn(), endInstallMonitor: vi.fn(),
@@ -168,6 +168,8 @@ beforeEach(() => {
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
   native.fullCleanup.mockResolvedValue(report);
+  native.beginCleanupOperation.mockResolvedValue(51);
+  native.cancelCleanup.mockResolvedValue(true);
   native.officialUninstall.mockResolvedValue({ ok: true, had_command: true, message: "finished", uninstall_review: 42 });
   native.openPath.mockResolvedValue(undefined);
   native.elevateRestart.mockResolvedValue(undefined);
@@ -495,6 +497,49 @@ describe("App orchestration", () => {
     expect(remove).toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
 
+  it("offers cancellation only for the active write and sends its exact operation ID", async () => {
+    native.showRealSoftwarePage = true;
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    native.beginCleanupOperation.mockResolvedValueOnce(71).mockResolvedValueOnce(72);
+    saveRescanAfterUninstall(false);
+    let finishPreview!: (value: CleanupReport) => void;
+    let finishWrite!: (value: FullCleanupReport) => void;
+    let finishNext!: (value: FullCleanupReport) => void;
+    native.dryRun.mockReturnValueOnce(new Promise(resolve => { finishPreview = resolve; }));
+    native.fullCleanup.mockReturnValueOnce(new Promise(resolve => { finishWrite = resolve; }))
+      .mockReturnValueOnce(new Promise(resolve => { finishNext = resolve; }));
+
+    await mount();
+    await analyzeDemo();
+    act(() => software().onDryRun());
+    expect(screen.getByText(i18n.t().dryRunRunning)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: i18n.t().cancelCleanup })).toBeNull();
+    await nav("more");
+    await nav("software");
+    expect(software().dryRunning).toBe(true);
+    expect(software().onCancelCleanup).toBeUndefined();
+    expect(native.beginCleanupOperation).not.toHaveBeenCalled();
+    expect(native.cancelCleanup).not.toHaveBeenCalled();
+
+    await act(async () => finishPreview(dryReport));
+    act(() => software().onCleanup());
+    const button = await screen.findByRole("button", { name: i18n.t().cancelCleanup });
+    expect(software().dryRunning).toBe(false);
+    const oldCancel = software().onCancelCleanup!;
+    fireEvent.click(button);
+    expect(native.cancelCleanup).toHaveBeenCalledExactlyOnceWith(71);
+    await act(async () => finishWrite(report));
+    await waitFor(() => expect(software().busy).toBe(false));
+    await analyzeDemo();
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.fullCleanup).toHaveBeenLastCalledWith(demo, scan.items, expect.anything(), 72));
+    act(oldCancel);
+    expect(native.cancelCleanup).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByRole("button", { name: i18n.t().cancelCleanup }));
+    expect(native.cancelCleanup).toHaveBeenLastCalledWith(72);
+    await act(async () => finishNext(report));
+  });
+
   it("only skips official uninstall explicitly and resets the choice on a new scan", async () => {
     saveRescanAfterUninstall(false);
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
@@ -504,8 +549,8 @@ describe("App orchestration", () => {
     act(() => software().onCleanup());
     await waitFor(() => expect(native.fullCleanup).toHaveBeenCalled());
     expect(native.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(),
-      expect.objectContaining({ skip_official_uninstall: true }));
-    await waitFor(() => expect(software().dryRunning).toBe(false));
+      expect.objectContaining({ skip_official_uninstall: true }), 51);
+    await waitFor(() => expect(software().busy).toBe(false));
     await analyzeDemo();
     expect(software().useOfficial).toBe(true);
   });
@@ -519,7 +564,7 @@ describe("App orchestration", () => {
     act(() => software().onCleanup());
     await waitFor(() => expect(native.fullCleanup).toHaveBeenCalled());
     expect(native.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(),
-      expect.objectContaining({ skip_official_uninstall: false }));
+      expect.objectContaining({ skip_official_uninstall: false }), 51);
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(enabled ? 2 : 1));
     await waitFor(() => expect(software().uninstallReviews[0]).toEqual({ app: demo, receipt: 42,
       rescan: enabled ? { phase: "complete", count: scan.items.length } : { phase: "not_started" } }));
@@ -623,7 +668,7 @@ describe("App orchestration", () => {
       act(() => software().onCleanup());
       await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledTimes(2));
       expect(native.fullCleanup).toHaveBeenLastCalledWith(expect.anything(), expect.anything(),
-        expect.objectContaining({ skip_official_uninstall: true }));
+        expect.objectContaining({ skip_official_uninstall: true }), 51);
     }
   });
 
@@ -662,7 +707,7 @@ describe("App orchestration", () => {
     await waitFor(() => expect(software().scan?.app_key).toBe(appKey(sibling)));
     act(() => software().onCleanup());
     await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledWith(sibling, scan.items,
-      expect.objectContaining({ skip_official_uninstall: false })));
+      expect.objectContaining({ skip_official_uninstall: false }), 51));
   });
 
   it("keeps two uninstall reviews available after analyzing a third app and reopening Software", async () => {

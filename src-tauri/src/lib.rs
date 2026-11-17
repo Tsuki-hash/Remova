@@ -904,13 +904,24 @@ async fn run_full_cleanup(
     app: InstalledApp,
     items: Vec<CleanupItem>,
     options: FullCleanupOptions,
+    operation_id: Option<u32>,
 ) -> Result<FullCleanupReport, String> {
+    let request = operation_id
+        .map(executor::cleanup_request::CleanupRequest::claim)
+        .transpose()?;
+    if options.dry_run && request.is_some() {
+        return Err("a cleanup request cannot be used for a preview".into());
+    }
     let source = cleanup_source_from_arg(options.cleanup_source.as_deref());
     validate_cleanup_intent(source, &options)?;
     let app = resolve_review_cleanup_app(app, source, options.uninstall_review)?;
     authorize_cleanup_items_for_review(&app, &items, source, options.uninstall_review)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut report = executor::run_full_cleanup(&app, &items, &options);
+        let work = || executor::run_full_cleanup(&app, &items, &options);
+        let mut report = match request {
+            Some(request) => request.run(work),
+            None => work(),
+        };
         if let Err(error) = history::append(
             &report.app_name,
             report.deleted,
@@ -1558,8 +1569,13 @@ fn system_language_is_zh() -> bool {
 }
 
 #[tauri::command]
-fn cancel_cleanup() {
-    executor::cancel_cleanup_operation();
+fn begin_cleanup_operation() -> Result<u32, String> {
+    executor::cleanup_request::begin()
+}
+
+#[tauri::command]
+fn cancel_cleanup(operation_id: u32) -> bool {
+    executor::cleanup_request::cancel(operation_id)
 }
 
 #[tauri::command]
@@ -1772,6 +1788,7 @@ pub fn run() {
         // `begin_install_monitor`
         // `end_install_monitor`
         // `take_pending_analyze`
+        // `begin_cleanup_operation`
         // `cancel_cleanup`
         // `reboot_gate_status`
         // `clear_corrupt_reboot_gate`
@@ -1868,6 +1885,7 @@ pub fn run() {
             begin_install_monitor,
             end_install_monitor,
             take_pending_analyze,
+            begin_cleanup_operation,
             cancel_cleanup,
             reboot_gate_status,
             clear_corrupt_reboot_gate,

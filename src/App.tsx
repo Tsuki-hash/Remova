@@ -405,6 +405,8 @@ export default function App() {
   const {
     forceBusy,
     dryRunning,
+    cleaning,
+    canCancelCleanup,
     previewStale,
     batching,
     batchIndex,
@@ -545,14 +547,14 @@ export default function App() {
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (batching || dryRunning) {
+      if (batching || dryRunning || cleaning) {
         e.preventDefault();
         e.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [batching, dryRunning]);
+  }, [batching, dryRunning, cleaning]);
 
   usePendingAnalyze({
     loading,
@@ -713,6 +715,8 @@ export default function App() {
     aiNotes,
     aiSummaryNote,
     dryRunning,
+    cleaning,
+    canCancelCleanup,
     forceBusy,
     batching,
     error,

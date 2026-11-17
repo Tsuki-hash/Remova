@@ -82,7 +82,8 @@ export function ScanActionsBar({
             >
               {runsOfficial ? L.uninstallAndCleanup : `${L.cleanup} (${plan.count})`}
             </button>
-            {dryRunning && (
+            {dryRunning && <span className="scan-actions-caption" role="status">{L.dryRunRunning}</span>}
+            {onCancelCleanup && (
               <button
                 type="button"
                 className="scan-actions-cancel"

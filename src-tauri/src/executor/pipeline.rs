@@ -8,9 +8,7 @@ use backup_receipt::{BackupReceipt, FilesystemDeleteError};
 
 use super::preview::run_cleanup_dry_for_app_source;
 use super::uninstall::run_official_uninstall_locked;
-use super::{
-    cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail, CLEANUP_LOCK,
-};
+use super::{cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail};
 
 /// Stage 1: restore point + Safety Vault backup.
 enum BackupOutcome {
@@ -697,7 +695,10 @@ fn run_full_cleanup_before_delete(
     opts: &FullCleanupOptions,
     before_delete: impl FnOnce(),
 ) -> FullCleanupReport {
-    let _guard = CLEANUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cancelled = || super::scoped_cleanup_cancelled() == Some(true);
+    let Some(_guard) = super::wait_for_cleanup_lock(cancelled).filter(|_| !cancelled()) else {
+        return ignore_read_abort(app, opts.dry_run, "cleanup cancelled".into());
+    };
     super::begin_cleanup_control();
     let source = cleanup_source_from_opts(opts);
     let originals;

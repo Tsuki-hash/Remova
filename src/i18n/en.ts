@@ -19,6 +19,7 @@ export const dict: EnDict = {
     analyze: "Deep analyze",
     analyzing: "Analyzing…",
     dryRun: "Check cleanup plan",
+    dryRunRunning: "Checking cleanup plan…",
     cancelCleanup: "Cancel cleanup",
     dryRunHint: "Checks safety rules for selected items and whether some targets exist, without uninstalling or deleting. Passing does not guarantee cleanup will succeed.",
     cleanup: "Clean selected",

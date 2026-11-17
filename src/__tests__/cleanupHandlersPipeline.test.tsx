@@ -24,7 +24,8 @@ vi.mock("../lib/api", () => ({
     aiRiskBrief: vi.fn(),
     verifyLeftovers: vi.fn(async () => []),
     dryRun: vi.fn(),
-    cancelCleanup: vi.fn(async () => {}),
+    beginCleanupOperation: vi.fn(async () => 51),
+    cancelCleanup: vi.fn(async () => true),
   },
 }));
 
@@ -159,7 +160,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
     expect(requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining(t().cleanupConfirmOptionalBackup(1, false)),
     }));
-    expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items, expect.anything());
+    expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items, expect.anything(), 51);
   });
 
   it("keeps the uninstall state after a 1641 abort and shows an advisory", async () => {
@@ -247,7 +248,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
     expect(hook.result.current.core.selected).toBeNull();
     await act(async () => { await hook.result.current.cleanup.handleCleanupConfirm(); });
     expect(fullCleanup).toHaveBeenCalledWith(app(), scan().items,
-      expect.objectContaining({ skip_official_uninstall: true }));
+      expect.objectContaining({ skip_official_uninstall: true }), 51);
     fullCleanup.mockClear();
     requestConfirmEx.mockClear();
     act(() => hook.result.current.core.setScan(scan(), { ...app(), name: "Other" }));
@@ -261,7 +262,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     const { result } = setup(undefined, true);
     await act(async () => { await result.current.handleCleanupConfirm(); });
-    expect(fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ skip_official_uninstall: true }));
+    expect(fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ skip_official_uninstall: true }), 51);
   });
   beforeEach(() => {
     requestConfirmEx.mockReset();
@@ -451,11 +452,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     const a1 = mkApp("AppA");
     const a2 = mkApp("AppB");
     runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
- // Mirror the engine contract: it owns the busy slot for the whole run
- // and reports finished keys so multi can be pruned.
-      cb.busyRef.current = true;
       cb.onDoneKeys([appKey(a1)]);
-      cb.busyRef.current = false;
     });
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     const { result, busyRef, refreshApps, flowDeep } = setupDeep({
@@ -520,7 +517,6 @@ describe("useCleanupHandlers deep pipeline", () => {
       ]);
       cb.onShowSummary(true);
       cb.onSetBatching(false);
-      cb.busyRef.current = false;
     });
     requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
     const options = {
@@ -542,12 +538,27 @@ describe("useCleanupHandlers deep pipeline", () => {
     expect(runBatchCleanupMock.mock.calls[1]?.[5]).toEqual(new Map([[appKey(a1), 42]]));
   });
 
-  it("cancelBatch signals the cancel ref and toasts", () => {
-    const { result } = setupDeep();
-    act(() => {
-      result.current.cancelBatch();
+  it("cancels the active batch write by ID and ignores a closed batch callback", async () => {
+    const appA = mkApp("AppA");
+    let finish!: (value: FullCleanupReport) => void;
+    fullCleanup.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    runBatchCleanupMock.mockImplementation(async (_queue, _official, _key, cb) => {
+      cb.onSetBatching(true);
+      await cb.runCleanup(appA, [], { dry_run: false, skip_official_uninstall: false, backup_enabled: false });
+      expect(cb.cancelRef.current).toBe(true);
+      cb.onSetBatching(false);
     });
-    expect(api.cancelCleanup).toHaveBeenCalledTimes(1);
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const { result } = setupDeep({ apps: [appA], multi: new Set([appKey(appA)]) });
+    let work!: Promise<void>;
+    await act(async () => { work = result.current.batchCleanup(); });
+    await waitFor(() => expect(fullCleanup).toHaveBeenCalledTimes(1));
+    const cancel = result.current.cancelBatch;
+    act(cancel);
+    expect(api.cancelCleanup).toHaveBeenCalledExactlyOnceWith(51);
     expect(toast.info).toHaveBeenCalledWith(t().batchCancelHint);
+    await act(async () => { finish(report()); await work; });
+    act(cancel);
+    expect(api.cancelCleanup).toHaveBeenCalledTimes(1);
   });
 });

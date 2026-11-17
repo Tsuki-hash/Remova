@@ -109,7 +109,7 @@ function makeCb() {
     onSetBatching: vi.fn(),
     onDoneKeys: vi.fn(),
     cancelRef: { current: false },
-    busyRef: { current: false },
+    runCleanup: fullCleanup,
   };
 }
 
@@ -232,7 +232,6 @@ describe("runBatchCleanup", () => {
     await runBatchCleanup([app("A")], true, keyOf, cb);
     expect(cb.onDoneKeys).toHaveBeenCalledWith(["Uninstall\\A"]);
     expect(cb.onShowSummary).toHaveBeenCalledWith(true);
-    expect(cb.busyRef.current).toBe(false);
   });
 
   it("defaults backup_enabled to false and honors opt-in true", async () => {
@@ -460,7 +459,6 @@ describe("runBatchCleanup", () => {
       ]);
       expect(cb.onShowSummary).toHaveBeenLastCalledWith(true);
       expect(cb.onSetBatching).toHaveBeenLastCalledWith(false);
-      expect(cb.busyRef.current).toBe(false);
     } finally {
       vi.useRealTimers();
     }

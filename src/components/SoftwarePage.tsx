@@ -138,7 +138,7 @@ export type SoftwarePageProps = {
   onBack: () => void;
   onDryRun: () => void;
   onCleanup: () => void;
-  onCancelCleanup: () => void;
+  onCancelCleanup?: () => void;
   onAiExplain: () => void;
   onRegenerateAiReport: () => void;
 

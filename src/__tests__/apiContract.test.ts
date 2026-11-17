@@ -17,6 +17,7 @@ const COMMAND_KEYS = [
   "analyze",
   "beginAssociationScan",
   "cancelAssociationScan",
+  "beginCleanupOperation",
   "cancelCleanup",
   "rebootGateStatus",
   "clearCorruptRebootGate",
@@ -203,6 +204,23 @@ describe("api IPC contract", () => {
     expect(vi.mocked(invoke).mock.calls.slice(-2)).toEqual([
       ["migrate_rollback", { source, target, recoverInterrupted: true }],
       ["migrate_rollback", { source, target }],
+    ]);
+  });
+
+  it("passes a cleanup reservation to the write and cancel IPC only", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(31).mockResolvedValueOnce({}).mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({});
+    const app = {} as Parameters<typeof api.fullCleanup>[0];
+    const options = { dry_run: false, skip_official_uninstall: true, backup_enabled: false };
+    const operation = await api.beginCleanupOperation();
+    await api.fullCleanup(app, [], options, operation);
+    await api.cancelCleanup(operation);
+    await api.dryRun(app, []);
+    expect(vi.mocked(invoke).mock.calls.slice(-4)).toEqual([
+      ["begin_cleanup_operation", undefined],
+      ["run_full_cleanup", { app, items: [], options, operationId: 31 }],
+      ["cancel_cleanup", { operationId: 31 }],
+      ["run_cleanup_dry_run", { app, items: [], cleanupSource: undefined }],
     ]);
   });
 });

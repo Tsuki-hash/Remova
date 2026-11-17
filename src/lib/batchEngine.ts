@@ -25,7 +25,7 @@ export type BatchCallbacks = {
   onSetBatching: (v: boolean) => void;
   onDoneKeys: (keys: string[]) => void;
   cancelRef: { current: boolean };
-  busyRef: { current: boolean };
+  runCleanup: typeof api.fullCleanup;
 };
 
 export async function runBatchCleanup(
@@ -42,8 +42,6 @@ export async function runBatchCleanup(
     toast.info(L.selectRowHint);
     return;
   }
-  cb.busyRef.current = true;
-  cb.cancelRef.current = false;
   cb.onSetBatching(true);
   cb.onIndex(0);
   cb.onCurrent("");
@@ -108,7 +106,7 @@ export async function runBatchCleanup(
         const items = r.items.filter(defaultSelectable);
  // do not skip the whole app when there are no default-selectable leftovers.
  // Official uninstall still runs (batchUseOfficial); residual delete is a no-op.
-        const report = await api.fullCleanup(app, items, {
+        const report = await cb.runCleanup(app, items, {
           dry_run: false,
           skip_official_uninstall: !runOfficial,
           ...(receipt !== undefined && { uninstall_review: receipt }),
@@ -262,7 +260,6 @@ export async function runBatchCleanup(
     cb.onDoneKeys([...okKeys]);
     cb.onShowSummary(true);
   } finally {
-    cb.busyRef.current = false;
     cb.onSetBatching(false);
     cb.onCurrent("");
     cb.onIndex(0);

@@ -124,7 +124,8 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
 export const api = {
   onlineUpdateSupported: () => invoke<boolean>("online_update_supported"),
   setTrayLanguage: (lang: string) => invoke<void>("set_tray_language", { lang }),
-  cancelCleanup: () => invoke<void>("cancel_cleanup"),
+  beginCleanupOperation: () => invoke<number>("begin_cleanup_operation"),
+  cancelCleanup: (operationId: number) => invoke<boolean>("cancel_cleanup", { operationId }),
   rebootGateStatus: () => invoke<string>("reboot_gate_status"),
   clearCorruptRebootGate: () => invoke<boolean>("clear_corrupt_reboot_gate"),
   listApps: () => invoke<InstalledAppsSnapshot>("list_installed_apps"),
@@ -140,8 +141,8 @@ export const api = {
   ) => invoke<CleanupReport>("run_cleanup_dry_run", { app, items, cleanupSource: options?.cleanup_source,
     ...(options?.scope_revision !== undefined && { scopeRevision: options.scope_revision }),
     ...(options?.uninstall_review !== undefined && { uninstallReview: options.uninstall_review }) }),
-  fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions) =>
-    invoke<FullCleanupReport>("run_full_cleanup", { app, items, options }),
+  fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions, operationId?: number) =>
+    invoke<FullCleanupReport>("run_full_cleanup", { app, items, options, ...(operationId !== undefined && { operationId }) }),
   officialUninstall: (app: InstalledApp) =>
     invoke<OfficialUninstallResult>("run_official_uninstall", { app }),
   verifyLeftovers: (items: CleanupItem[]) =>

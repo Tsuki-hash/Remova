@@ -10,8 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) static CLEANUP_LOCK: Mutex<()> = Mutex::new(());
-#[cfg(not(test))]
-static CLEANUP_CANCELLED: AtomicBool = AtomicBool::new(false);
 thread_local! {
     static OPERATION_CANCELLED: std::cell::RefCell<Option<Arc<AtomicBool>>> = const {
         std::cell::RefCell::new(None)
@@ -19,34 +17,22 @@ thread_local! {
 }
 #[cfg(test)]
 thread_local! {
-    /// Thread-local in tests so one test's cancellation cannot abort a parallel
-    /// cleanup fixture. Production uses the process-wide flag (the cancel IPC
-    /// arrives on a different thread).
+    /// Direct fixtures can cancel their work without a request ID.
     static TEST_CLEANUP_CANCELLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Start a new cleanup/restore transaction. Cancellation only aborts at a
-/// phase boundary, so the product is never left mid-delete.
+/// Reset cancellation for direct fixtures. Native requests carry their own
+/// cancellation flag for the lifetime of the blocking operation.
 pub fn begin_cleanup_control() {
     #[cfg(test)]
     {
         TEST_CLEANUP_CANCELLED.with(|v| v.set(false));
     }
-    #[cfg(not(test))]
-    {
-        CLEANUP_CANCELLED.store(false, Ordering::SeqCst);
-    }
 }
 
+#[cfg(test)]
 pub fn cancel_cleanup_operation() {
-    #[cfg(test)]
-    {
-        TEST_CLEANUP_CANCELLED.with(|v| v.set(true));
-    }
-    #[cfg(not(test))]
-    {
-        CLEANUP_CANCELLED.store(true, Ordering::SeqCst);
-    }
+    TEST_CLEANUP_CANCELLED.with(|v| v.set(true));
 }
 
 pub(crate) fn scoped_cleanup_cancelled() -> Option<bool> {
@@ -67,7 +53,7 @@ pub(crate) fn cleanup_cancelled() -> bool {
     }
     #[cfg(not(test))]
     {
-        CLEANUP_CANCELLED.load(Ordering::SeqCst)
+        false
     }
 }
 
@@ -99,6 +85,7 @@ pub(crate) fn with_operation_cancellation<T>(flag: Arc<AtomicBool>, run: impl Fn
     run()
 }
 
+pub(crate) mod cleanup_request;
 mod pipeline;
 mod preview;
 pub(crate) mod reboot;

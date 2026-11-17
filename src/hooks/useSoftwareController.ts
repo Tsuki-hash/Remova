@@ -61,6 +61,8 @@ export type SoftwareControllerInput = {
   aiNotes: Record<string, string>;
   aiSummaryNote: string | null;
   dryRunning: boolean;
+  cleaning: boolean;
+  canCancelCleanup: boolean;
   forceBusy: boolean;
   batching: boolean;
   cancelCleanup: () => void;
@@ -198,11 +200,11 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         aiNotes: input.aiNotes,
         aiSummaryNote: input.aiSummaryNote,
         dryRunning: input.dryRunning,
-        busy: input.dryRunning || input.forceBusy || input.batching || input.scanning || input.aiBusy,
+        busy: input.dryRunning || input.cleaning || input.forceBusy || input.batching || input.scanning || input.aiBusy,
         onBack: input.closePreview,
         onDryRun: () => void input.dryRun(),
         onCleanup: () => void input.handleCleanupConfirm(),
-        onCancelCleanup: input.cancelCleanup,
+        onCancelCleanup: input.canCancelCleanup ? input.cancelCleanup : undefined,
         onAiExplain: () => void input.runAiExplain(),
         onRegenerateAiReport: () => void input.runAiReport({ force: true }),
         error: input.error,
@@ -305,6 +307,8 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.aiNotes,
       input.aiSummaryNote,
       input.dryRunning,
+      input.cleaning,
+      input.canCancelCleanup,
       input.batching,
       input.error,
       input.report,

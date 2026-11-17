@@ -7,6 +7,7 @@ export const dict = {
     analyze: "深度分析",
     analyzing: "分析中…",
     dryRun: "检查清理计划",
+    dryRunRunning: "正在检查清理计划…",
     cancelCleanup: "取消清理",
     dryRunHint: "检查已选项的安全规则及部分目标是否存在，不卸载、不删除；检查通过不保证实际清理成功。",
     cleanup: "清理选中项",
