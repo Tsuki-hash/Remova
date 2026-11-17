@@ -197,6 +197,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
 
   const confirmPaths = (message: string) => `${message}\n${L.migrateSource}: ${source}\n${L.migrateTarget}: ${target}`;
   const cleanupPending = state === "cleanup_pending";
+  const recoveryPending = state === "recovery_pending";
 
   const runCutover = async () => {
     const { ok } = await requestConfirmEx({
@@ -261,19 +262,20 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
   };
 
   const runRollback = async () => {
+    const actionLabel = recoveryPending ? L.migrateRecover : L.migrateRollback;
     const { ok } = await requestConfirmEx({
-      title: L.migrateRollback,
-      message: confirmPaths(L.migrateRollbackConfirm),
-      confirmLabel: L.migrateRollback,
+      title: actionLabel,
+      message: confirmPaths(recoveryPending ? L.migrateRecoverConfirm : L.migrateRollbackConfirm),
+      confirmLabel: actionLabel,
       danger: true,
     });
     if (!ok) return;
     try {
-      const r = await api.migrateRollback(source, target);
+      const r = await (recoveryPending ? api.migrateRecover : api.migrateRollback)(source, target);
       if (r.ok) {
-        toast.success(L.migrateRollbackDone);
+        toast.success(recoveryPending ? L.migrateRecoverDone : L.migrateRollbackDone);
       } else {
-        toast.error(L.migrateRollbackFailed, {
+        toast.error(recoveryPending ? L.migrateRecoverFailed : L.migrateRollbackFailed, {
           detail: r.message ? backendErrorText(r.message) : undefined,
         });
       }
@@ -306,7 +308,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           placeholder={"D:\\Moved\\SomeApp"} />
       </label>
 
-      {(() => {
+      {!recoveryPending && (() => {
         const steps = [L.stepPlan, L.stepCopy, L.stepCutover, L.stepFinish];
         // The current step is the action the user takes NEXT: after a copy
         // the cutover is next; after a cutover the finish is next.
@@ -346,20 +348,23 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
           ref={primaryAction}
           type="button"
           style={{ ...css.btn, height: 34 }}
-          disabled={busy || !source.trim() || !target.trim() || state === "finished"}
+          disabled={busy || !source.trim() || !target.trim() || state === "finished" || state === "inconsistent"}
           onClick={({ currentTarget }) => {
-            if (state === "copied") void withBusy(currentTarget, runCutover);
+            if (recoveryPending) void withBusy(currentTarget, runRollback);
+            else if (state === "copied") void withBusy(currentTarget, runCutover);
             else if (state === "cutover" || cleanupPending) void withBusy(currentTarget, runFinish);
             else void withBusy(currentTarget, startMigration);
           }}
         >
           {busy
             ? L.migrateWorking
-            : state === "copied"
-              ? L.migrateCutover
-              : cleanupPending
-                ? L.migrateRetryCleanup
-                : state === "cutover" ? L.migrateFinish : L.migrateStart}
+            : recoveryPending
+              ? L.migrateRecover
+              : state === "copied"
+                ? L.migrateCutover
+                : cleanupPending
+                  ? L.migrateRetryCleanup
+                  : state === "cutover" ? L.migrateFinish : L.migrateStart}
         </button>
         {state === "cutover" && (
           <button type="button" style={{ ...css.btnGhost, height: 34 }} disabled={busy} onClick={({ currentTarget }) => void withBusy(currentTarget, runRollback)}>
@@ -379,6 +384,11 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
       {state === "inconsistent" && (
         <div role="alert" style={{ color: "var(--danger-text)", fontSize: 12, marginTop: 6 }}>
           {L.migrateStateInconsistent}
+        </div>
+      )}
+      {recoveryPending && (
+        <div role="alert" style={{ color: "var(--warn-ink)", fontSize: 12, marginTop: 6 }}>
+          {L.migrateRecoveryPending}
         </div>
       )}
       {cleanupPending && (

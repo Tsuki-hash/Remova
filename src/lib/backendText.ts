@@ -94,6 +94,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
   if (raw === "migrate:copy_required") return L.migrateCopyRequired;
   if (raw.startsWith("migrate:copy_conflict: ")) return L.migrateCopyConflict(raw.slice("migrate:copy_conflict: ".length));
   if (raw.startsWith("migrate:rollback_conflict: ")) return L.migrateRollbackConflict(raw.slice("migrate:rollback_conflict: ".length));
+  if (raw === "migrate:recovery_refused") return L.migrateRecoveryRefused;
+  if (raw.startsWith("migrate:transition_receipt_failed: ")) return L.migrateTransitionReceiptFailed(raw.slice("migrate:transition_receipt_failed: ".length));
   if (raw.startsWith("finish refused: ")) return L.migrateFinishConflict(raw.slice("finish refused: ".length));
   if (raw.startsWith("not a regenerable layout: ")) {
     return L.backendNotRegenerable(raw.slice("not a regenerable layout: ".length));

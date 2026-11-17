@@ -184,6 +184,8 @@ export const api = {
     invoke<MigrationFinishReport>("migrate_finish", { source, target, confirmed }),
   migrateRollback: (source: string, target: string) =>
     invoke<MigrationRollbackReport>("migrate_rollback", { source, target }),
+  migrateRecover: (source: string, target: string) =>
+    invoke<MigrationRollbackReport>("migrate_rollback", { source, target, recoverInterrupted: true }),
   migrateStatus: (source: string, target: string) =>
     invoke<MigrationState>("migrate_status", { source, target }),
   /** orphaned ConsentStore entries (read-only, evaluation-gated). */

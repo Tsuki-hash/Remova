@@ -245,7 +245,8 @@ export type MigrationState =
   | "cutover"
   | "finished"
   | "inconsistent"
-  | "cleanup_pending";
+  | "cleanup_pending"
+  | "recovery_pending";
 
 /** M4E.2: one install vector of a product family (read-only). */
 export type InstallationVector = {

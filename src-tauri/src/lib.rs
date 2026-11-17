@@ -1294,15 +1294,22 @@ async fn migrate_finish(
         .map_err(|e| e.to_string())?
 }
 
-/// Undo a cutover: remove the junction, rename the backup back.
+/// Restore the original directory from either a cutover or an interrupted switch.
 #[tauri::command]
 async fn migrate_rollback(
     source: String,
     target: String,
+    recover_interrupted: Option<bool>,
 ) -> Result<migrate::MigrationRollbackReport, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(migrate::rollback(&source, &target)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(if recover_interrupted.unwrap_or(false) {
+            migrate::recover(&source, &target)
+        } else {
+            migrate::rollback(&source, &target)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Where the migration stands, derived from the filesystem.

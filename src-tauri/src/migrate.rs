@@ -117,6 +117,8 @@ pub enum MigrationState {
     Inconsistent,
     /// The verified rollback copy was committed for removal. Cleanup can be retried.
     CleanupPending,
+    /// The original name is free and both verified directory identities remain.
+    RecoveryPending,
 }
 
 use copy_operation::{cancelled as copy_cancelled, CANCELLED};
@@ -1053,6 +1055,11 @@ fn write_through_probe(junction: &Path, target: &Path) -> Result<(), String> {
 /// renames `.bak` back.
 #[cfg(windows)]
 pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
+    cutover_with(source, target, || {})
+}
+
+#[cfg(windows)]
+fn cutover_with(source: &str, target: &str, after_rename: impl FnOnce()) -> MigrationCutoverReport {
     let _guard = crate::executor::CLEANUP_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1134,6 +1141,22 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
         rolled_back: false,
         error: None,
     };
+    let transition = snapshot.root_pin().file_identity().and_then(|source_id| {
+        receipt::Receipt::prepare_transition(
+            &source_path,
+            held_target.path(),
+            source_id,
+            held_target.receipt_id()?,
+            receipt::Transition::Cutover,
+        )
+    });
+    let transition = match transition {
+        Ok(transition) => transition,
+        Err(e) => {
+            report.error = Some(format!("migrate:transition_receipt_failed: {e}"));
+            return report;
+        }
+    };
     let source_root = snapshot.release_children_for_rename();
     if let Err(e) = finishing::rename_to_sibling(source_root, &source_path, &backup) {
         report.error = Some(format!(
@@ -1142,10 +1165,14 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
         ledger(source, target, "cutover", "rename_failed");
         return report;
     }
+    after_rename();
     if let Err(e) = make_junction(&source_path, &target_path) {
         report.error = Some(format!("junction creation failed: {e}"));
         match finishing::rename_to_sibling(source_root, &backup, &source_path) {
-            Ok(()) => report.rolled_back = true,
+            Ok(()) => {
+                report.rolled_back = true;
+                let _ = transition.complete_transition(held_target.path());
+            }
             Err(e2) => {
                 report.error = Some(format!(
                     "{}; ROLLBACK FAILED: {e2}",
@@ -1176,7 +1203,10 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
             .and_then(rollback::unlink_junction)
             .and_then(|()| finishing::rename_to_sibling(source_root, &backup, &source_path));
         match restored {
-            Ok(()) => report.rolled_back = true,
+            Ok(()) => {
+                report.rolled_back = true;
+                let _ = transition.complete_transition(held_target.path());
+            }
             Err(e2) => {
                 report.error = Some(format!(
                     "{}; ROLLBACK FAILED: {e2}",
@@ -1192,8 +1222,16 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
         ledger(source, target, "cutover", outcome);
         return report;
     }
-    report.ok = true;
-    ledger(source, target, "cutover", "ok");
+    match transition.complete_transition(held_target.path()) {
+        Ok(()) => {
+            report.ok = true;
+            ledger(source, target, "cutover", "ok");
+        }
+        Err(e) => {
+            report.error = Some(format!("migrate:transition_receipt_failed: {e}"));
+            ledger(source, target, "cutover", "receipt_failed");
+        }
+    }
     report
 }
 
@@ -1293,6 +1331,7 @@ fn rollback_backup(
     _: &Path,
     _: &Path,
     _: impl FnOnce(),
+    _: impl FnOnce(),
 ) -> Result<(), (&'static str, String)> {
     Err(("unsupported", "directory migration requires Windows".into()))
 }
@@ -1307,6 +1346,20 @@ fn rollback_with(
     source: &str,
     target: &str,
     after_verification: impl FnOnce(),
+) -> MigrationRollbackReport {
+    rollback_transaction(source, target, false, after_verification, || {})
+}
+
+pub fn recover(source: &str, target: &str) -> MigrationRollbackReport {
+    rollback_transaction(source, target, true, || {}, || {})
+}
+
+fn rollback_transaction(
+    source: &str,
+    target: &str,
+    recovery: bool,
+    after_verification: impl FnOnce(),
+    after_unlink: impl FnOnce(),
 ) -> MigrationRollbackReport {
     // Exclusive like cutover/finish: removing the junction and renaming the
     // backup back must not interleave with another destructive entry.
@@ -1325,6 +1378,19 @@ fn rollback_with(
     let source_path = PathBuf::from(source.trim());
     let target_path = PathBuf::from(target.trim());
     let backup = backup_path(&source_path);
+    if recovery {
+        #[cfg(windows)]
+        if state_of(&source_path, &target_path) == MigrationState::RecoveryPending
+            && check_destructive(&source_path, &target_path, &backup).is_empty()
+        {
+            let result = rollback::recover_interrupted(&source_path, &backup, &target_path);
+            return rollback_result(source, target, "recover", result);
+        }
+        return MigrationRollbackReport {
+            ok: false,
+            message: Some("migrate:recovery_refused".into()),
+        };
+    }
     if !is_reparse(&source_path) {
         return MigrationRollbackReport {
             ok: false,
@@ -1358,16 +1424,32 @@ fn rollback_with(
             message: Some(format!("refusing to roll back: {}", refused.join(","))),
         };
     }
-    match rollback_backup(&source_path, &backup, &target_path, after_verification) {
+    let result = rollback_backup(
+        &source_path,
+        &backup,
+        &target_path,
+        after_verification,
+        after_unlink,
+    );
+    rollback_result(source, target, "rollback", result)
+}
+
+fn rollback_result(
+    source: &str,
+    target: &str,
+    action: &str,
+    result: Result<(), (&'static str, String)>,
+) -> MigrationRollbackReport {
+    match result {
         Ok(()) => {
-            ledger(source, target, "rollback", "ok");
+            ledger(source, target, action, "ok");
             MigrationRollbackReport {
                 ok: true,
                 message: None,
             }
         }
         Err((outcome, message)) => {
-            ledger(source, target, "rollback", outcome);
+            ledger(source, target, action, outcome);
             MigrationRollbackReport {
                 ok: false,
                 message: Some(message),
@@ -1432,6 +1514,18 @@ pub fn state_of(source: &Path, target: &Path) -> MigrationState {
             return MigrationState::CleanupPending;
         }
         return MigrationState::Inconsistent;
+    }
+    #[cfg(windows)]
+    if src.is_none() && bak.is_some() && tgt.is_some() {
+        let matches = crate::fsutil::local_directory_id(&backup)
+            .and_then(|backup_id| {
+                let target_id = crate::fsutil::local_directory_id(target)?;
+                Ok(receipt::Receipt::interrupted(source, target, backup_id, target_id).is_some())
+            })
+            .unwrap_or(false);
+        if matches && check_destructive(source, target, &backup).is_empty() {
+            return MigrationState::RecoveryPending;
+        }
     }
     if let (None, Some((linked, target_id))) = (&bak, &linked_target) {
         let misplaced = source.with_file_name(".bak");
@@ -1640,6 +1734,7 @@ mod tests {
             MigrationState::Finished,
             MigrationState::Inconsistent,
             MigrationState::CleanupPending,
+            MigrationState::RecoveryPending,
         ];
         assert_eq!(serde_json::to_value(states).unwrap(), fixture["states"]);
         for state in states {
@@ -2147,6 +2242,123 @@ mod tests {
         assert!(rb2.ok, "rollback: {:?}", rb2);
         assert!(!is_reparse(&src2), "the junction is gone");
         assert!(src2.join("a.txt").exists(), "the original tree is back");
+    }
+
+    const CRASH_FIXTURE_ENV: &str = "REMOVA_TEST_MIGRATION_CRASH_FIXTURE";
+    const CRASH_STAGE_ENV: &str = "REMOVA_TEST_MIGRATION_CRASH_STAGE";
+    const CRASH_EXIT_CODE: i32 = 73;
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_migration_child() {
+        let Some(root) = std::env::var_os(CRASH_FIXTURE_ENV).map(PathBuf::from) else {
+            return;
+        };
+        let source = root.join("source");
+        let target = root.join("target");
+        assert_eq!(std::fs::read(root.join("crash-fixture")).unwrap(), b"test");
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        let crash = || std::process::exit(CRASH_EXIT_CODE);
+        match std::env::var(CRASH_STAGE_ENV).as_deref() {
+            Ok("cutover") => panic!("{:?}", cutover_with(src, dst, crash)),
+            Ok("rollback") => {
+                panic!("{:?}", rollback_transaction(src, dst, false, || {}, crash))
+            }
+            _ => panic!("unknown crash stage"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn exercise_interrupted_migration(stage: &str) {
+        let tmp = crate::test_support::TempDir::new("migr-interrupted");
+        let source = tmp.path().join("source");
+        let target = tmp.path().join("target");
+        let backup = backup_path(&source);
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("data"), b"original").unwrap();
+        std::fs::write(tmp.path().join("crash-fixture"), b"test").unwrap();
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        copy_phase(src, dst).unwrap();
+        if stage == "rollback" {
+            let report = cutover(src, dst);
+            assert!(report.ok, "{report:?}");
+            assert!(
+                !recover(src, dst).ok,
+                "recovery action must not remove a live junction"
+            );
+        }
+
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "migrate::tests::interrupted_migration_child",
+                "--nocapture",
+            ])
+            .env(CRASH_FIXTURE_ENV, tmp.path())
+            .env(CRASH_STAGE_ENV, stage)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(CRASH_EXIT_CODE),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr),
+        );
+        assert_eq!(state_of(&source, &target), MigrationState::RecoveryPending);
+        assert!(!rollback(src, dst).ok);
+        assert_eq!(std::fs::read(backup.join("data")).unwrap(), b"original");
+        assert_eq!(std::fs::read(target.join("data")).unwrap(), b"original");
+
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("data"), b"occupant").unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(!recover(src, dst).ok);
+        assert_eq!(std::fs::read(source.join("data")).unwrap(), b"occupant");
+        std::fs::remove_dir_all(&source).unwrap();
+
+        let held_target = tmp.path().join("held-target");
+        std::fs::rename(&target, &held_target).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("data"), b"original").unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(!recover(src, dst).ok);
+        std::fs::remove_dir_all(&target).unwrap();
+        std::fs::rename(&held_target, &target).unwrap();
+
+        std::fs::write(target.join("data"), b"new data").unwrap();
+        assert!(!recover(src, dst).ok);
+        assert!(!source.exists());
+        assert_eq!(std::fs::read(backup.join("data")).unwrap(), b"original");
+        std::fs::write(target.join("data"), b"original").unwrap();
+
+        let report = recover(src, dst);
+        assert!(report.ok, "{report:?}");
+        assert_eq!(state_of(&source, &target), MigrationState::Copied);
+        assert!(!backup.exists());
+        assert_eq!(std::fs::read(source.join("data")).unwrap(), b"original");
+        assert_eq!(std::fs::read(target.join("data")).unwrap(), b"original");
+        assert!(!recover(src, dst).ok);
+        std::fs::rename(&source, &backup).unwrap();
+        assert_eq!(state_of(&source, &target), MigrationState::Inconsistent);
+        assert!(
+            !recover(src, dst).ok,
+            "completed receipts cannot authorize recovery"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_cutover_recovers_the_original_name_without_overwriting() {
+        exercise_interrupted_migration("cutover");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_rollback_recovers_the_original_name_without_overwriting() {
+        exercise_interrupted_migration("rollback");
     }
 
     #[cfg(windows)]

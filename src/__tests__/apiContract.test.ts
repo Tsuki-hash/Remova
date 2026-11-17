@@ -44,6 +44,7 @@ const COMMAND_KEYS = [
   "migrateCopy",
   "migrateCutover",
   "migrateFinish",
+  "migrateRecover",
   "migrateRollback",
   "migrateStatus",
   "cancelMigrateCopy",
@@ -190,6 +191,18 @@ describe("api IPC contract", () => {
       ["begin_migrate_copy", { source: "C:\\source", target: "D:\\target" }],
       ["migrate_copy", { operationId: 31 }],
       ["cancel_migrate_copy", { operationId: 31 }],
+    ]);
+  });
+
+  it("requires an explicit recovery flag to restore an interrupted migration", async () => {
+    vi.mocked(invoke).mockResolvedValue({ ok: true, message: null });
+    const source = "C:\\source";
+    const target = "D:\\target";
+    await api.migrateRecover(source, target);
+    await api.migrateRollback(source, target);
+    expect(vi.mocked(invoke).mock.calls.slice(-2)).toEqual([
+      ["migrate_rollback", { source, target, recoverInterrupted: true }],
+      ["migrate_rollback", { source, target }],
     ]);
   });
 });

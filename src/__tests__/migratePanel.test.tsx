@@ -15,7 +15,7 @@ import migrationWire from "./fixtures/migration-state-wire.json";
 const cutoverWire = migrationWire.states[3] as MigrationState;
 
 it("shares the canonical Rust state wire contract", () => {
-  const states: MigrationState[] = ["absent", "idle", "copied", "cutover", "finished", "inconsistent", "cleanup_pending"];
+  const states: MigrationState[] = ["absent", "idle", "copied", "cutover", "finished", "inconsistent", "cleanup_pending", "recovery_pending"];
   expect(migrationWire.states).toEqual(states);
   expect(cutoverWire).toBe("cutover");
 });
@@ -28,6 +28,7 @@ vi.mock("../lib/api", () => ({
     migrateCutover: vi.fn(),
     migrateFinish: vi.fn(),
     migrateRollback: vi.fn(),
+    migrateRecover: vi.fn(),
     migrateStatus: vi.fn(async () => "idle"),
     cancelMigrateCopy: vi.fn(),
   },
@@ -57,6 +58,7 @@ afterEach(() => {
     api.migrateCutover,
     api.migrateFinish,
     api.migrateRollback,
+    api.migrateRecover,
     api.migrateStatus,
     api.cancelMigrateCopy,
   ]) {
@@ -306,6 +308,34 @@ it("rollback reports a restored source", async () => {
   fireEvent.click(screen.getByRole("button", { name: L.migrateRollback }));
   await waitFor(() => expect(api.migrateRollback).toHaveBeenCalledWith("C:\\src", "D:\\dst"));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith(L.migrateRollbackDone));
+});
+
+it("restores an interrupted migration only through the recovery action", async () => {
+  vi.mocked(api.migrateStatus).mockResolvedValueOnce("recovery_pending").mockResolvedValue("copied");
+  vi.mocked(api.migrateRecover).mockResolvedValue({ ok: true, message: null });
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  const restore = await screen.findByRole("button", { name: L.migrateRecover });
+  expect(screen.getByRole("alert").textContent).toContain(L.migrateRecoveryPending);
+  expect(screen.queryByRole("button", { name: L.migrateRollback })).toBeNull();
+  fireEvent.click(restore);
+  await waitFor(() => expect(requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
+    message: expect.stringContaining(L.migrateRecoverConfirm),
+  })));
+  await waitFor(() => expect(api.migrateRecover).toHaveBeenCalledWith("C:\\src", "D:\\dst"));
+  expect(api.migrateRollback).not.toHaveBeenCalled();
+  await screen.findByRole("button", { name: L.migrateCutover });
+});
+
+it("offers manual guidance when migration paths conflict", async () => {
+  vi.mocked(api.migrateStatus).mockResolvedValue("inconsistent");
+  render(<MigratePanel onClose={vi.fn()} />);
+  const L = t();
+  type();
+  await screen.findByText(L.migrateStateInconsistent);
+  expect(screen.queryByRole("button", { name: L.migrateRecover })).toBeNull();
+  expect(screen.getByRole("button", { name: L.migrateStart })).toHaveProperty("disabled", true);
 });
 
 it("reopens the same copy with its own cancel action until it settles", async () => {

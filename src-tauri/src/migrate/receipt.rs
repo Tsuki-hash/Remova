@@ -16,6 +16,16 @@ pub(super) struct Receipt {
     pub(super) complete: bool,
     #[serde(default)]
     cleanup_pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transition: Option<Transition>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Transition {
+    Cutover,
+    Rollback,
 }
 
 fn receipt_root(_target: &Path) -> io::Result<PathBuf> {
@@ -89,6 +99,7 @@ impl Receipt {
             target_id: fsutil::local_directory_id(target)?,
             complete: false,
             cleanup_pending: false,
+            transition: None,
         })
     }
 
@@ -125,8 +136,56 @@ impl Receipt {
             target_id,
             complete: true,
             cleanup_pending: true,
+            transition: None,
         }
         .save(target)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn prepare_transition(
+        source: &Path,
+        target: &Path,
+        source_id: (u32, u64),
+        target_id: (u32, u64),
+        transition: Transition,
+    ) -> io::Result<Self> {
+        let receipt = Self {
+            source: comparison_key(&source.to_string_lossy()),
+            target: comparison_key(&target.to_string_lossy()),
+            source_id,
+            target_id,
+            complete: true,
+            cleanup_pending: false,
+            transition: Some(transition),
+        };
+        receipt.save(target)?;
+        Ok(receipt)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn interrupted(
+        source: &Path,
+        target: &Path,
+        source_id: (u32, u64),
+        target_id: (u32, u64),
+    ) -> Option<Self> {
+        let source = comparison_key(&source.to_string_lossy());
+        let target_key = comparison_key(&target.to_string_lossy());
+        Self::find(target, |receipt| {
+            receipt.complete
+                && receipt.transition.is_some()
+                && !receipt.cleanup_pending
+                && receipt.source == source
+                && receipt.target == target_key
+                && receipt.source_id == source_id
+                && receipt.target_id == target_id
+        })
+    }
+
+    #[cfg(windows)]
+    pub(super) fn complete_transition(mut self, target: &Path) -> io::Result<()> {
+        self.transition = None;
+        self.save(target)
     }
 
     pub(super) fn matches_cleanup(
