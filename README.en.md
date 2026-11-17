@@ -55,11 +55,12 @@ Deep uninstall runs the app's uninstaller first and scans for leftovers after ve
 ### Deep uninstall flow
 1. **Identify** install type and associations  
 2. **Official uninstaller** first when available. Remova keeps the related files if Windows still lists the app or the registration cannot be verified.
-3. **Scan leftovers** with a summary of what is safe to clean, needs review or is skipped by default
+3. **Scan leftovers** with a summary of what is safe to clean, needs review or is skipped by default. Post-uninstall rescans check the current registration and keep files if the app is registered again.
 4. **Report** deleted/kept/pending-reboot sizes + progress + Safety Vault note + verify checklist; rescan the app or run a read-only deep registry check  
 
 ### Clean & backup
 - Use Check cleanup plan to preview the operation. To make a backup, select Create backup before confirming cleanup. The option starts off.
+- Select folders and PATH entries separately, even when they show the same path. Check the cleanup plan again after changing the selection. If a specialty cleanup target changes, scan again and confirm the selection.
 - Toolbox → Restore backup recovers files and settings successfully backed up by Remova during cleanup. The app's own uninstaller runs before Remova's cleanup backup. Regenerable cache tools explain their cleanup process before confirmation.
 - Remova attempts to create a system restore point before cleaning. Turn this off under Settings & help.
 - Shared runtimes (VC++ / .NET, …) unchecked by default  

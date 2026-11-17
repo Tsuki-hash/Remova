@@ -4,6 +4,16 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1]
+
+本版提供未签名安装包。请下载同页的 `SHA256SUMS.txt`，用 `Get-FileHash -Algorithm SHA256` 核对下载文件后再运行。
+
+### 修复
+
+- 从卸载报告继续复查时，重新核对 Windows 安装登记。软件仍在登记中或无法核实状态时保留相关文件。
+- 同一路径的目录和 PATH 条目可分别勾选。清理预览和执行使用各自选中的动作，改选后旧预览会自动失效。
+- 专项清理核对最新扫描中的动作和目标。目标发生变化时保留现有内容，并提示重新扫描。
+
 ## [1.5.0]
 
 本版提供未签名安装包。请下载同页的 `SHA256SUMS.txt`，用 `Get-FileHash -Algorithm SHA256` 核对下载文件后再运行。

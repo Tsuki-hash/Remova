@@ -1,12 +1,16 @@
 # Remova Release Status
 
-## 1.5.0 (in development)
+## 1.5.1 (in development)
 
-- **Status**: 1.5.0 is in development. Configure the release mode before creating the candidate draft. Final acceptance and approval are required before publishing.
+- **Status**: 1.5.1 is in development. Configure the release mode before creating a candidate draft. Final acceptance and approval are required before publishing.
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
-- **Signing and publication**: the current candidate uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
-- **Updater**: 1.5.0 uses manual downloads verified via `SHA256SUMS.txt`. The Windows updater dependency supports installer files and is built without the legacy ZIP updater feature.
+- **Signing and publication**: the planned distribution uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
+- **Updater**: verify manual downloads via `SHA256SUMS.txt`. The Windows updater dependency supports installer files and is built without the legacy ZIP updater feature.
 - **SBOM**: every release attaches a CycloneDX SBOM (Cargo + production npm dependencies) alongside the installers, continuing the practice introduced in 1.4.0.
+
+## 1.5.0 (published 2026-11-16)
+
+- **Status**: published as [`v1.5.0`](https://github.com/Tsuki-hash/Remova/releases/tag/v1.5.0) with unsigned NSIS, MSI and portable packages, the SHA-256 checksums and the CycloneDX SBOM.
 
 ## 1.4.0 (published 2026-10-25)
 
