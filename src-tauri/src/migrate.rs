@@ -1009,45 +1009,68 @@ fn make_junction(link: &Path, target: &Path) -> Result<(), String> {
 /// at the junction target, then be cleaned up again.
 #[cfg(windows)]
 fn write_through_probe(junction: &Path, target: &Path) -> Result<(), String> {
-    // The probe file lands inside the user's directory: the name must be
-    // unique so an existing file can never be overwritten (and then deleted)
-    // by the probe. Timestamp + pid + attempt gives that, with a pre-check.
+    write_through_probe_with(junction, target, |_| {})
+}
+
+#[cfg(windows)]
+fn write_through_probe_with(
+    junction: &Path,
+    target: &Path,
+    after_write: impl FnOnce(&Path),
+) -> Result<(), String> {
+    use std::io::{Read, Write};
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{
+        DELETE, FILE_FLAG_DELETE_ON_CLOSE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
     let payload = b"remova junction probe";
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let mut name = String::new();
+    let sharing = FILE_SHARE_DELETE.0 | FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0;
+    let mut created = None;
     for attempt in 0..8u32 {
         let candidate = format!(
             "remova_probe_{nanos}_{}_{}.tmp",
             std::process::id(),
             attempt
         );
-        if !junction.join(&candidate).exists() {
-            name = candidate;
-            break;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .access_mode(FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | DELETE.0)
+            .share_mode(sharing)
+            .create_new(true)
+            .custom_flags(FILE_FLAG_DELETE_ON_CLOSE.0)
+            .open(junction.join(&candidate))
+        {
+            Ok(file) => {
+                created = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(format!("probe create: {error}")),
         }
     }
-    if name.is_empty() {
-        return Err("probe could not find a free file name".into());
+    let (name, mut file) = created.ok_or("probe could not find a free file name")?;
+    file.write_all(payload)
+        .map_err(|error| format!("probe write: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("probe flush: {error}"))?;
+    after_write(&junction.join(&name));
+    let mut got = Vec::new();
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(sharing)
+        .open(target.join(&name))
+        .and_then(|mut source| source.read_to_end(&mut got))
+        .map_err(|error| format!("probe read at target: {error}"))?;
+    if got != payload {
+        return Err("probe content mismatch".into());
     }
-    let result = std::fs::write(junction.join(&name), payload)
-        .map_err(|e| format!("probe write: {e}"))
-        .and_then(|()| {
-            std::fs::read(target.join(&name))
-                .map_err(|e| format!("probe read at target: {e}"))
-                .and_then(|got| {
-                    if got == payload {
-                        Ok(())
-                    } else {
-                        Err("probe content mismatch".into())
-                    }
-                })
-        });
-    let _ = std::fs::remove_file(target.join(&name));
-    let _ = std::fs::remove_file(junction.join(&name));
-    result
+    Ok(())
 }
 
 /// Phase 3: inside the destructive transaction lock — top-up copy, rename the
@@ -1060,6 +1083,16 @@ pub fn cutover(source: &str, target: &str) -> MigrationCutoverReport {
 
 #[cfg(windows)]
 fn cutover_with(source: &str, target: &str, after_rename: impl FnOnce()) -> MigrationCutoverReport {
+    cutover_with_junction(source, target, after_rename, make_junction)
+}
+
+#[cfg(windows)]
+fn cutover_with_junction(
+    source: &str,
+    target: &str,
+    after_rename: impl FnOnce(),
+    create_junction: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> MigrationCutoverReport {
     let _guard = crate::executor::CLEANUP_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1166,7 +1199,7 @@ fn cutover_with(source: &str, target: &str, after_rename: impl FnOnce()) -> Migr
         return report;
     }
     after_rename();
-    if let Err(e) = make_junction(&source_path, &target_path) {
+    if let Err(e) = create_junction(&source_path, &target_path) {
         report.error = Some(format!("junction creation failed: {e}"));
         match finishing::rename_to_sibling(source_root, &backup, &source_path) {
             Ok(()) => {
@@ -1180,7 +1213,16 @@ fn cutover_with(source: &str, target: &str, after_rename: impl FnOnce()) -> Migr
                 ))
             }
         }
-        ledger(source, target, "cutover", "rolled_back");
+        ledger(
+            source,
+            target,
+            "cutover",
+            if report.rolled_back {
+                "rolled_back"
+            } else {
+                "rollback_failed"
+            },
+        );
         return report;
     }
     let junction = junction::Junction::open(&source_path, true);
@@ -1566,12 +1608,18 @@ pub fn state_of(source: &Path, target: &Path) -> MigrationState {
     }
 }
 
-/// Best-effort ledger: one JSON line per phase under ProgramData. A ledger
-/// failure never fails the phase itself. Tests must not write the machine
-/// ledger, so it is a no-op under cfg(test).
+#[cfg(test)]
+thread_local! {
+    static TEST_LEDGER: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Best-effort ledger, with an in-memory recorder during tests.
 fn ledger(source: &str, target: &str, phase: &str, outcome: &str) {
     #[cfg(test)]
-    let _ = (source, target, phase, outcome);
+    {
+        let _ = (source, target);
+        TEST_LEDGER.with_borrow_mut(|rows| rows.push((phase.into(), outcome.into())));
+    }
     #[cfg(not(test))]
     {
         let root = program_data_root();
@@ -2261,6 +2309,10 @@ mod tests {
         let dst = target.to_str().unwrap();
         let crash = || std::process::exit(CRASH_EXIT_CODE);
         match std::env::var(CRASH_STAGE_ENV).as_deref() {
+            Ok("probe") => {
+                let _ = write_through_probe_with(&source, &target, |_| crash());
+                panic!("probe did not reach the crash checkpoint");
+            }
             Ok("cutover") => panic!("{:?}", cutover_with(src, dst, crash)),
             Ok("rollback") => {
                 panic!("{:?}", rollback_transaction(src, dst, false, || {}, crash))
@@ -2608,6 +2660,82 @@ mod tests {
             b"user data",
             "the probe must not overwrite or delete an existing file"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn probe_handles_remove_temporary_files_on_read_failure_and_process_exit() {
+        let tmp = crate::test_support::TempDir::new("migr-probe-interrupted");
+        let source = tmp.subdir("source");
+        let target = tmp.join("target");
+        std::fs::write(source.join("data"), b"original").unwrap();
+        std::fs::write(tmp.join("crash-fixture"), b"test").unwrap();
+        let src = source.to_str().unwrap();
+        let dst = target.to_str().unwrap();
+        copy_phase(src, dst).unwrap();
+        assert!(cutover(src, dst).ok);
+        let absent = tmp.join("absent");
+        assert!(
+            write_through_probe_with(&source, &absent, |probe| assert!(probe.exists())).is_err()
+        );
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "migrate::tests::interrupted_migration_child",
+                "--nocapture",
+            ])
+            .env(CRASH_FIXTURE_ENV, tmp.path())
+            .env(CRASH_STAGE_ENV, "probe")
+            .output()
+            .unwrap();
+        assert_eq!(child.status.code(), Some(CRASH_EXIT_CODE), "{child:?}");
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        assert!(rollback(src, dst).ok);
+        assert_eq!(std::fs::read(source.join("data")).unwrap(), b"original");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_junction_creation_records_the_actual_compensation_outcome() {
+        for obstruct_restore in [false, true] {
+            let tmp = crate::test_support::TempDir::new("migr-compensation");
+            let source = seed_source(tmp.path());
+            let target = tmp.join("target");
+            let src = source.to_str().unwrap();
+            let dst = target.to_str().unwrap();
+            copy_phase(src, dst).unwrap();
+            let result = cutover_with_junction(
+                src,
+                dst,
+                || {},
+                |link, _| {
+                    if obstruct_restore {
+                        std::fs::create_dir(link).unwrap();
+                        std::fs::write(link.join("foreign"), b"keep").unwrap();
+                    }
+                    Err("injected junction failure".into())
+                },
+            );
+            assert!(!result.ok);
+            assert_eq!(result.rolled_back, !obstruct_restore);
+            let expected = if obstruct_restore {
+                "rollback_failed"
+            } else {
+                "rolled_back"
+            };
+            TEST_LEDGER.with_borrow(|rows| {
+                assert_eq!(rows.last().unwrap(), &("cutover".into(), expected.into()))
+            });
+            if obstruct_restore {
+                assert!(result.error.unwrap().contains("ROLLBACK FAILED"));
+                assert!(backup_path(&source).join("a.txt").is_file());
+                assert_eq!(std::fs::read(source.join("foreign")).unwrap(), b"keep");
+            } else {
+                assert!(source.join("a.txt").is_file());
+                assert!(!backup_path(&source).exists());
+            }
+        }
     }
 
     #[cfg(windows)]

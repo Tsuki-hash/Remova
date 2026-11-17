@@ -153,6 +153,45 @@ fn is_noise_path(p: &str) -> bool {
         || low.contains("\\telemetry\\")
 }
 
+// Leave room for JSON structure and DPAPI overhead below the 64 MiB envelope.
+const SNAPSHOT_NAME_BYTES: usize = 60 * 1024 * 1024;
+
+struct SnapshotBudget {
+    paths: usize,
+    bytes: usize,
+}
+
+impl SnapshotBudget {
+    fn new(paths: usize) -> Self {
+        Self {
+            paths,
+            bytes: SNAPSHOT_NAME_BYTES,
+        }
+    }
+
+    fn insert(&mut self, set: &mut BTreeSet<String>, name: String) -> bool {
+        if set.contains(&name) {
+            return true;
+        }
+        let cost = 3 + name
+            .chars()
+            .map(|ch| match ch {
+                '"' | '\\' => 2,
+                '\u{0008}' | '\t' | '\n' | '\u{000c}' | '\r' => 2,
+                '\u{0000}'..='\u{001f}' => 6,
+                _ => ch.len_utf8(),
+            })
+            .sum::<usize>();
+        if cost > self.bytes {
+            return false;
+        }
+        self.bytes -= cost;
+        set.insert(name);
+        true
+    }
+}
+
+#[cfg(test)]
 fn walk_names(
     root: &Path,
     out: &mut BTreeSet<String>,
@@ -161,11 +200,24 @@ fn walk_names(
     truncated: &mut bool,
     exclude: &[PathBuf],
 ) {
+    let mut bounded = SnapshotBudget::new(*budget);
+    walk_names_bounded(root, out, &mut bounded, depth, truncated, exclude);
+    *budget = bounded.paths;
+}
+
+fn walk_names_bounded(
+    root: &Path,
+    out: &mut BTreeSet<String>,
+    budget: &mut SnapshotBudget,
+    depth: usize,
+    truncated: &mut bool,
+    exclude: &[PathBuf],
+) {
     if crate::scan_task::cancelled() {
         *truncated = true;
         return;
     }
-    if *budget == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
+    if budget.paths == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
         *truncated = true;
         return;
     }
@@ -190,7 +242,7 @@ fn walk_names(
                 continue;
             }
         };
-        if *budget == 0 {
+        if budget.paths == 0 || budget.bytes == 0 {
             *truncated = true;
             return;
         }
@@ -215,12 +267,15 @@ fn walk_names(
             *truncated = true;
             continue;
         };
-        *budget = budget.saturating_sub(1);
-        out.insert(rel);
+        budget.paths = budget.paths.saturating_sub(1);
+        if !budget.insert(out, rel) {
+            *truncated = true;
+            return;
+        }
         // `is_symlink()` classifies junctions version-dependently and misses
         // non-symlink reparse dirs (cloud placeholders) — check the attribute.
         if p.is_dir() && !crate::fsutil::is_reparse_point(&p) {
-            walk_names(&p, out, budget, depth + 1, truncated, exclude);
+            walk_names_bounded(&p, out, budget, depth + 1, truncated, exclude);
         }
     }
 }
@@ -243,16 +298,22 @@ fn is_under_any(path: &Path, roots: &[PathBuf]) -> bool {
 }
 
 fn take_fs_snapshot() -> FsSnapshot {
+    take_fs_snapshot_bounded(&mut SnapshotBudget::new(walk_budget()))
+}
+
+fn take_fs_snapshot_bounded(budget: &mut SnapshotBudget) -> FsSnapshot {
     let mut files = BTreeSet::new();
     let mut truncated = false;
-    let mut budget = walk_budget();
     let exclude = remova_state_roots();
     for r in roots() {
         if crate::scan_task::cancelled() {
             truncated = true;
             break;
         }
-        walk_names(&r, &mut files, &mut budget, 0, &mut truncated, &exclude);
+        walk_names_bounded(&r, &mut files, budget, 0, &mut truncated, &exclude);
+        if budget.paths == 0 || budget.bytes == 0 {
+            break;
+        }
     }
     FsSnapshot { files, truncated }
 }
@@ -275,6 +336,10 @@ fn walk_budget() -> usize {
 static TEST_BUDGET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(200);
 
 fn reg_value_names() -> Result<BTreeSet<String>, String> {
+    reg_value_names_bounded(&mut SnapshotBudget::new(walk_budget()))
+}
+
+fn reg_value_names_bounded(budget: &mut SnapshotBudget) -> Result<BTreeSet<String>, String> {
     let mut set = BTreeSet::new();
     // align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
     // RunOnce views, Policies Explorer Run) so 32-bit / one-shot / policy
@@ -294,7 +359,9 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
             if crate::scan_task::cancelled() {
                 return Err("scan:cancelled".into());
             }
-            set.insert(format!("{k}\\{sub}").to_lowercase());
+            if !budget.insert(&mut set, format!("{k}\\{sub}").to_lowercase()) {
+                return Err("monitor:snapshot_limit".into());
+            }
         }
         for v in values {
             if crate::scan_task::cancelled() {
@@ -303,8 +370,8 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
             // Value paths must use the pipeline-wide `key|value` shape — the
             // cleanup pipeline, backup and restore all split on `|`, so a
             // monitored Run value written as `key::value` can never be deleted.
-            if !v.is_empty() {
-                set.insert(format!("{k}|{v}").to_lowercase());
+            if !v.is_empty() && !budget.insert(&mut set, format!("{k}|{v}").to_lowercase()) {
+                return Err("monitor:snapshot_limit".into());
             }
         }
     }
@@ -359,9 +426,10 @@ pub fn discard_recovery() -> Result<(), String> {
 }
 
 fn capture_snapshot() -> FullSnapshot {
-    let reg = reg_value_names();
+    let mut budget = SnapshotBudget::new(walk_budget());
+    let reg = reg_value_names_bounded(&mut budget);
     FullSnapshot {
-        fs: take_fs_snapshot(),
+        fs: take_fs_snapshot_bounded(&mut budget),
         reg_degraded: reg.is_err(),
         reg: reg.unwrap_or_default().into_iter().collect(),
     }
@@ -716,6 +784,79 @@ pub fn diff_to_cleanup_items(diff: &MonitorDiff) -> Vec<crate::scanner::CleanupI
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn snapshot_byte_budget_counts_json_escaping_and_shared_collections() {
+        let mut budget = SnapshotBudget {
+            paths: 100,
+            bytes: 4096,
+        };
+        let mut files = BTreeSet::new();
+        let mut registry = BTreeSet::new();
+        let samples = ["file/\\\"\n\u{0000}", "配置/fixture", "HKCU\\Run|é"];
+        for (index, value) in samples.iter().enumerate() {
+            let expected = serde_json::to_vec(value).unwrap().len() + 1;
+            let before = budget.bytes;
+            let target = if index < 2 { &mut files } else { &mut registry };
+            assert!(budget.insert(target, value.to_string()));
+            assert_eq!(before - budget.bytes, expected);
+            assert!(budget.insert(target, value.to_string()));
+            assert_eq!(before - budget.bytes, expected);
+        }
+        budget.bytes = 3;
+        assert!(!budget.insert(&mut files, "too long".into()));
+        assert_eq!(budget.bytes, 3);
+        assert!(!files.contains("too long"));
+    }
+
+    #[test]
+    fn slow_monitor_persistence_does_not_hold_scan_or_authorization_locks() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let _allow = crate::scan_allow::test_lock();
+        let session = Arc::new(Mutex::new(None));
+        let (started, waiting) = mpsc::channel();
+        let (release, finish) = mpsc::channel();
+        let worker_session = session.clone();
+        let id = crate::scan_task::begin().unwrap();
+        let worker = std::thread::spawn(move || {
+            crate::scan_task::run_scoped(id, "monitor", || {
+                begin_session(
+                    &worker_session,
+                    || FullSnapshot {
+                        fs: Default::default(),
+                        reg: vec![],
+                        reg_degraded: false,
+                    },
+                    || Ok(false),
+                    |_| {
+                        started.send(()).unwrap();
+                        finish.recv_timeout(Duration::from_secs(5)).unwrap();
+                        Ok(())
+                    },
+                )
+            })
+        });
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (done, completed) = mpsc::channel();
+        let other = std::thread::spawn(move || {
+            let id = crate::scan_task::begin().unwrap();
+            crate::scan_task::run(id, || {
+                crate::scan_allow::remember(crate::scan_allow::AllowScope::ToolCache, &mut vec![]);
+            })
+            .unwrap();
+            let cancel = crate::scan_task::begin().unwrap();
+            let progress = crate::scan_task::progress(cancel);
+            crate::scan_task::cancel(cancel).unwrap();
+            done.send(progress.is_some()).unwrap();
+        });
+        let completed = completed.recv_timeout(Duration::from_millis(500));
+        release.send(()).unwrap();
+        worker.join().unwrap().unwrap().unwrap();
+        other.join().unwrap();
+        assert_eq!(completed, Ok(true));
+        assert!(session.lock().unwrap().is_some());
+    }
+
     #[test]
     fn cancelled_session_capture_preserves_the_existing_baseline() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());

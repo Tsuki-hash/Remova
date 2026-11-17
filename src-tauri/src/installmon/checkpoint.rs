@@ -58,7 +58,23 @@ impl Checkpoint {
         use windows::core::PCWSTR;
         use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
 
-        let raw = serde_json::to_vec(snapshot).map_err(|_| WRITE_FAILED)?;
+        struct BoundedJson(Vec<u8>);
+        impl Write for BoundedJson {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.0.len().saturating_add(bytes.len()) > super::SNAPSHOT_NAME_BYTES + 64 * 1024
+                {
+                    return Err(std::io::Error::other("monitor:snapshot_limit"));
+                }
+                self.0.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut json = BoundedJson(Vec::new());
+        serde_json::to_writer(&mut json, snapshot).map_err(|_| WRITE_FAILED)?;
+        let raw = json.0;
         let sealed = protect(&raw, &self.context, true).map_err(|_| WRITE_FAILED)?;
         let parent = self.path.parent().ok_or(WRITE_FAILED)?;
         let _pins = crate::fsutil::create_dirs_pinned(parent).map_err(|_| WRITE_FAILED)?;
@@ -166,6 +182,45 @@ fn protect(input: &[u8], context: &str, encrypt: bool) -> Result<Vec<u8>, ()> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_escaped_names_stop_before_the_encrypted_checkpoint_limit() {
+        use crate::installmon::{FsSnapshot, SnapshotBudget};
+        use std::collections::BTreeSet;
+        let lab = crate::test_support::TempDir::new("monitor_byte_limit");
+        let file = Checkpoint {
+            path: lab.join("checkpoint"),
+            context: "byte budget fixture".into(),
+        };
+        let mut budget = SnapshotBudget::new(80_000);
+        let mut files = BTreeSet::new();
+        let mut registry = BTreeSet::new();
+        let long = "目录\\\"\n".repeat(1000);
+        let mut truncated = false;
+        for index in 0..80_000 {
+            let collection = if index % 2 == 0 {
+                &mut files
+            } else {
+                &mut registry
+            };
+            if !budget.insert(collection, format!("{index}/{long}")) {
+                truncated = true;
+                break;
+            }
+        }
+        assert!(truncated && files.len() + registry.len() < 80_000);
+        let snapshot = FullSnapshot {
+            fs: FsSnapshot { files, truncated },
+            reg: registry.into_iter().collect(),
+            reg_degraded: false,
+        };
+        file.save(&snapshot).unwrap();
+        assert!(std::fs::metadata(&file.path).unwrap().len() < MAX_BYTES as u64);
+        let recovered = file.load().unwrap().unwrap();
+        assert!(recovered.fs.truncated);
+        assert_eq!(recovered.fs.files, snapshot.fs.files);
+        assert_eq!(recovered.reg, snapshot.reg);
+    }
 
     #[test]
     fn checkpoint_round_trip_blocks_other_token_context_and_corrupt_bytes() {
