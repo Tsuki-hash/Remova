@@ -105,6 +105,7 @@ export function useCleanupHandlers({
   const [dryRunning, setDryRunning] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanupId, setCleanupId] = useState<number>();
+  const [cancelRequestedId, setCancelRequestedId] = useState<number>();
   const [previewSelection, setPreviewSelection] = useState<{ scan: ScanResult; keys: Set<string> } | null>(null);
   /** Beginner batch path runs official uninstaller by default. */
   const batchUseOfficial = true;
@@ -116,7 +117,7 @@ export function useCleanupHandlers({
   const [showBatchSummary, setShowBatchSummary] = useState(false);
   const [batchId, setBatchId] = useState<symbol | null>(null);
   const activeBatch = useRef<BatchControl | null>(null);
-  const activeWrite = useRef<{ id: number; batch?: BatchControl } | null>(null);
+  const activeWrite = useRef<{ id: number; batch?: BatchControl; cancelRequested?: boolean } | null>(null);
   const batchQueueRef = useRef<InstalledApp[]>([]);
 
   const backupEnabledRef = useRef(false);
@@ -141,7 +142,10 @@ export function useCleanupHandlers({
   ) => {
     const id = await api.beginCleanupOperation();
     activeWrite.current = { id, batch };
-    if (!batch) setCleanupId(id);
+    if (!batch) {
+      setCleanupId(id);
+      setCancelRequestedId(undefined);
+    }
     try {
       if (batch?.current) throw new Error("cleanup cancelled");
       return await api.fullCleanup(app, items, options, id);
@@ -582,11 +586,19 @@ export function useCleanupHandlers({
   }, [L, batchId]);
 
   const cancelCleanup = useCallback(() => {
-    if (cleanupId !== undefined && activeWrite.current?.id === cleanupId) {
-      void api.cancelCleanup(cleanupId).then(accepted => {
-        if (!accepted && activeWrite.current?.id === cleanupId) toast.info(t().cleanupCancelTooLate);
-      }).catch(error => toast.error(formatError(error, "cleanup")));
-    }
+    const write = activeWrite.current;
+    if (cleanupId === undefined || write?.id !== cleanupId || write.cancelRequested) return;
+    write.cancelRequested = true;
+    setCancelRequestedId(cleanupId);
+    void api.cancelCleanup(cleanupId).then(accepted => {
+      if (activeWrite.current !== write) return;
+      toast.info(accepted ? t().cleanupCancelWaiting : t().cleanupCancelTooLate);
+    }).catch(error => {
+      if (activeWrite.current !== write) return;
+      write.cancelRequested = false;
+      setCancelRequestedId(undefined);
+      toast.error(formatError(error, "cleanup"));
+    });
   }, [cleanupId]);
 
   const retryFailedBatch = useCallback(() => {
@@ -606,7 +618,7 @@ export function useCleanupHandlers({
     forceBusy,
     dryRunning,
     cleaning,
-    canCancelCleanup: cleanupId !== undefined,
+    canCancelCleanup: cleanupId !== undefined && cancelRequestedId !== cleanupId,
     previewStale: previewSelection !== null && (previewSelection.scan !== scan || previewSelection.keys !== selectedPaths),
     batching,
     batchIndex,

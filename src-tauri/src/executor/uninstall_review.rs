@@ -24,6 +24,16 @@ fn reviews() -> &'static Mutex<Reviews> {
     REVIEWS.get_or_init(Mutex::default)
 }
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_VERIFY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) fn fail_next_verification() {
+    FAIL_NEXT_VERIFY.set(true);
+}
+
 pub(super) fn retire(app: &InstalledApp) {
     if let Ok(mut reviews) = reviews().lock() {
         reviews.by_app.remove(&app_key(app));
@@ -103,6 +113,10 @@ fn found_installed(app: &InstalledApp, id: u64) -> String {
 
 pub(crate) fn verify(app: &InstalledApp, id: u64) -> Result<InstalledApp, String> {
     let review = find(app, id)?;
+    #[cfg(test)]
+    if FAIL_NEXT_VERIFY.replace(false) {
+        return Err("uninstall review could not verify installation".into());
+    }
     match check_registration(&review.scanned, &review.argv) {
         RegistrationState::Present => return Err(found_installed(app, id)),
         RegistrationState::Unverified => {

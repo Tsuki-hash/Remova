@@ -971,7 +971,8 @@ fn run_full_cleanup_with_preflight(
     before_delete();
     if let Some(id) = uninstall_review {
         if let Err(error) = super::uninstall_review::verify(app, id) {
-            return aborted_report(
+            let retryable = error == "uninstall review could not verify installation";
+            let mut report = aborted_report(
                 app,
                 backup_dir,
                 backup_verified,
@@ -982,6 +983,10 @@ fn run_full_cleanup_with_preflight(
                 restore_point_msg,
                 vec![],
             );
+            if retryable {
+                report.uninstall_review = Some(id);
+            }
+            return report;
         }
     }
     if let Some(scope) = source.specialty_scope() {
@@ -1795,8 +1800,28 @@ mod tests {
 
         drop(registration);
         assert_eq!(crate::regops::key_present(&app.registry_key), Some(false));
-        let allowed = run_full_cleanup(&app, items, &options);
-        assert!(!allowed.aborted && allowed.uninstall_ok, "{allowed:?}");
+        let interrupted = run_full_cleanup_before_delete(&app, items, &options, || {
+            super::super::uninstall_review::fail_next_verification();
+        });
+        assert!(
+            interrupted.aborted && interrupted.uninstall_ok,
+            "{interrupted:?}"
+        );
+        assert_eq!(interrupted.deleted, 0);
+        let issued = interrupted
+            .uninstall_review
+            .expect("temporary verification failure keeps the issued receipt");
+        assert!(file.exists());
+        let allowed = run_full_cleanup(
+            &app,
+            items,
+            &FullCleanupOptions {
+                skip_official_uninstall: true,
+                uninstall_review: Some(issued),
+                ..options.clone()
+            },
+        );
+        assert!(!allowed.aborted, "{allowed:?}");
         assert_eq!(allowed.deleted, 1, "{allowed:?}");
         assert!(!file.exists());
 

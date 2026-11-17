@@ -10,6 +10,7 @@ export const dict = {
     dryRunRunning: "正在检查清理计划…",
     cancelCleanup: "取消清理",
     cleanupCancelTooLate: "删除已经开始，当前步骤无法取消。",
+    cleanupCancelWaiting: "已受理取消，正在等待当前步骤结束。",
     manageQueryTimeout: "系统清单查询超时，请稍后刷新重试。",
     manageQueryTruncated: "系统清单超出读取上限，本次结果未完成。请稍后重试。",
     manageQueryFailed: "系统清单查询失败，请刷新重试。",

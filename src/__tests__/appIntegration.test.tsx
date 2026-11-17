@@ -545,6 +545,28 @@ describe("App orchestration", () => {
     await act(async () => finishNext(report));
   });
 
+  it("keeps a temporary final verification failure retryable without repeating the vendor uninstall", async () => {
+    native.showRealSoftwarePage = true;
+    saveRescanAfterUninstall(false);
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    native.fullCleanup.mockResolvedValueOnce({ ...report, aborted: true, deleted: 0,
+      uninstall_message: "uninstall review could not verify installation" })
+      .mockResolvedValueOnce({ ...report, uninstall_ok: false, uninstall_message: "skipped" });
+    await mount();
+    await analyzeDemo();
+    act(() => software().onCleanup());
+    await waitFor(() => expect(software().uninstallReviews[0]).toMatchObject({ receipt: 42, rescan: { phase: "unverified" } }));
+    expect(software().scan).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().reportRescanApp }));
+    await waitFor(() => expect(software().scanning).toBe(false));
+    await waitFor(() => expect(software().scan).not.toBeNull());
+    act(() => software().setSelectedPaths(new Set(scan.items.map(cleanupItemKey))));
+    act(() => software().onCleanup());
+    await waitFor(() => expect(native.fullCleanup).toHaveBeenCalledTimes(2));
+    expect(native.fullCleanup.mock.calls.map(call => call[2].skip_official_uninstall)).toEqual([false, true]);
+    expect(native.fullCleanup.mock.calls[1]?.[2].uninstall_review).toBe(42);
+  });
+
   it("only skips official uninstall explicitly and resets the choice on a new scan", async () => {
     saveRescanAfterUninstall(false);
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });

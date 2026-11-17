@@ -465,6 +465,40 @@ describe("useCleanupHandlers deep pipeline", () => {
     expect(busyRef.current).toBe(false);
   });
 
+  it.each([true, false])("submits cancellation once and reports accepted=%s for the active request", async accepted => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    let finish!: (report: FullCleanupReport) => void;
+    fullCleanup.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    vi.mocked(api.cancelCleanup).mockReset().mockResolvedValue(accepted);
+    const { result } = setupDeep();
+    let pending!: Promise<void>;
+    await act(async () => { pending = result.current.handleCleanupConfirm(); });
+    await waitFor(() => expect(result.current.canCancelCleanup).toBe(true));
+    const cancel = result.current.cancelCleanup;
+    await act(async () => { cancel(); cancel(); });
+    expect(api.cancelCleanup).toHaveBeenCalledExactlyOnceWith(51);
+    expect(result.current.canCancelCleanup).toBe(false);
+    expect(toast.info).toHaveBeenCalledWith(accepted ? t().cleanupCancelWaiting : t().cleanupCancelTooLate);
+    await act(async () => { finish(report({ aborted: true, uninstall_ok: false, deleted: 0 })); await pending; });
+  });
+
+  it("allows retry when the cancellation IPC fails", async () => {
+    requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    let finish!: (report: FullCleanupReport) => void;
+    fullCleanup.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    vi.mocked(api.cancelCleanup).mockReset().mockRejectedValueOnce(new Error("fixture connection failure")).mockResolvedValue(true);
+    const { result } = setupDeep();
+    let pending!: Promise<void>;
+    await act(async () => { pending = result.current.handleCleanupConfirm(); });
+    await waitFor(() => expect(result.current.canCancelCleanup).toBe(true));
+    await act(async () => { result.current.cancelCleanup(); });
+    expect(result.current.canCancelCleanup).toBe(true);
+    await act(async () => { result.current.cancelCleanup(); });
+    expect(result.current.canCancelCleanup).toBe(false);
+    expect(api.cancelCleanup).toHaveBeenCalledTimes(2);
+    await act(async () => { finish(report({ aborted: true, uninstall_ok: false, deleted: 0 })); await pending; });
+  });
+
   it("handleCleanupConfirm confirm executes with the checkbox backup flag", async () => {
     requestConfirmEx.mockResolvedValue({ ok: true, checked: true });
     fullCleanup.mockResolvedValue(report());

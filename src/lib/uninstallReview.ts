@@ -28,7 +28,8 @@ export function uninstallReviewFromResult(
     app,
     ...(receipt !== undefined && ok && !reboot && { receipt }),
     ...(needsRestart && { restart: ok ? "required" : "before_verification" }),
-    rescan: { phase: reboot ? "reboot" : "not_started" },
+    rescan: reboot ? { phase: "reboot" } : message === "uninstall review could not verify installation"
+      ? { phase: "unverified" } : { phase: "not_started" },
   };
 }
 
