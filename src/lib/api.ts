@@ -100,7 +100,9 @@ export type MonitorDiff = {
   /** the monitor walk hit its budget/depth cap — the diff may miss entries
    * that never changed; present it as incomplete, not authoritative. */
   walk_degraded?: boolean;
+  recovered_read_only?: boolean;
 };
+export type InstallMonitorStatus = "idle" | "active" | "recovered" | "unavailable";
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[]; scope_revision?: number };
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
 export type AssociationScanProgress = {
@@ -160,6 +162,7 @@ export const api = {
   junctionLedger: () => invoke<JunctionScanResult>("scan_junction_ledger"),
   /** Disk-space overview: WinSxS analysis via DISM (read-only, elevated). */
   analyzeComponentStore: () => invoke<ComponentStoreAnalysis>("analyze_component_store"),
+  auditProfileRoot: () => invoke<string | null>("audit_profile_root"),
   /** Disk-space overview: judgement-table triage of anchored roots (read-only). */
   spaceTriage: () => invoke<TriageScanResult>("scan_space_triage"),
   /** Disk-space overview: regenerable layouts (read-only, fixed set). */
@@ -275,6 +278,8 @@ export const api = {
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
   beginInstallMonitor: (scanId?: number) => invoke<void>("begin_install_monitor", { scanId }),
   endInstallMonitor: (scanId?: number) => invoke<MonitorEndResult>("end_install_monitor", { scanId }),
+  installMonitorStatus: () => invoke<InstallMonitorStatus>("install_monitor_status"),
+  discardInstallMonitorRecovery: () => invoke<void>("discard_install_monitor_recovery"),
   setStartupEnabled: (location: string, enabled: boolean) =>
     invoke("set_startup_enabled", { location, enabled }),
   setServiceStartDisabled: (name: string, disable: boolean) =>

@@ -9,20 +9,33 @@ import { hasHistorySaveWarning } from "./cleanupFeedback";
  * the profile name (`\\host\Users\Aaron`), and a relocated profile root
  * (`D:\Profiles\Aaron`) is recognised by its profile-shaped segment.
  */
-export function redactUserProfiles(input: string): string {
+function profilePattern(profile: string) {
+  const normalized = profile.replaceAll("\\", "/").replace(/^\/\/\?\/UNC\//i, "//")
+    .replace(/^\/\/\?\//, "").replace(/\/+$/, "");
+  const unc = normalized.startsWith("//");
+  if (!/^(?:[a-z]:\/[^/]+|\/\/[^/]+\/[^/]+)/i.test(normalized)) return null;
+  const separator = String.raw`[\\/]+`;
+  const segments = normalized.slice(unc ? 2 : 0).split(/\/+/)
+    .map(segment => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const prefix = unc ? String.raw`(?<![\w./\\-])(?:[\\/]{2}\?[\\/]UNC[\\/]|[\\/]{2})` : String.raw`(?<![\w./\\-])(?:[\\/]{2}\?[\\/])?`;
+  return new RegExp(prefix + segments.join(separator) + String.raw`(?=$|[\\/\s"'<>|,;:)}\]])`, "gi");
+}
+
+export function redactUserProfiles(input: string, profile?: RegExp | null): string {
+  if (profile) input = input.replace(profile, "<user>");
   return input.replace(
     /((?:\\\\\?\\)?(?:[A-Za-z]:[\\/]+|\\\\[^\\/]+[\\/]+)(?:Users|Profiles|Home)[\\/]+)[^\\/]+/gi,
     "$1<user>",
   );
 }
 
-function redactDeep(value: unknown): unknown {
-  if (typeof value === "string") return redactUserProfiles(value);
-  if (Array.isArray(value)) return value.map(redactDeep);
+function redactDeep(value: unknown, profile: RegExp | null): unknown {
+  if (typeof value === "string") return redactUserProfiles(value, profile);
+  if (Array.isArray(value)) return value.map(item => redactDeep(item, profile));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value)) {
-      out[key] = redactDeep(v);
+      out[key] = redactDeep(v, profile);
     }
     return out;
   }
@@ -34,7 +47,14 @@ export type AuditExportOptions = {
   summaryOnly?: boolean;
   /** Opt-in: export full user paths. Default (false) redacts to <user>. */
   includeUserPaths?: boolean;
+  profileRoot?: string;
 };
+
+function redactReport<T>(report: T, profileRoot?: string): T {
+  const profile = profileRoot ? profilePattern(profileRoot) : null;
+  if (profileRoot && !profile) throw new Error("Invalid Windows profile path for audit export");
+  return redactDeep(report, profile) as T;
+}
 
 function uninstallStatus(report: FullCleanupReport) {
   if (report.dry_run) return "not_run";
@@ -80,7 +100,7 @@ export function buildAuditJson(
   const summaryOnly = options.summaryOnly === true;
   const { uninstall_review: _receipt, ...details } = report;
   const body = summaryOnly ? summarizeReport(report) : {
-    ...(options.includeUserPaths ? details : redactDeep(details) as typeof details),
+    ...(options.includeUserPaths ? details : redactReport(details, options.profileRoot)),
     uninstall_status: uninstallStatus(report),
   };
   return {
@@ -139,7 +159,7 @@ export function buildAuditMarkdown(
   reviewReason?: "insufficient" | "incomplete",
 ): string {
   const summaryOnly = options.summaryOnly === true;
-  const r = summaryOnly || options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport;
+  const r = summaryOnly || options.includeUserPaths ? report : redactReport(report, options.profileRoot);
   const backupStatus = !r.backup_dir ? "none" : r.backup_verified === true ? "verified" : "unverified";
   const backupLocation = !summaryOnly && r.backup_dir ? ` · ${markdownInline(r.backup_dir)}` : "";
   const head = [

@@ -1185,9 +1185,17 @@ async fn analyze_component_store() -> Result<winsxs::ComponentStoreAnalysis, Str
     if !is_elevated()? {
         return Err("administrator privileges are required to analyze the component store".into());
     }
-    tauri::async_runtime::spawn_blocking(winsxs::analyze_component_store)
-        .await
-        .map_err(|e| e.to_string())?
+    winsxs::analyze_shared().await
+}
+
+/// Resolve the current Windows account's profile for local audit exports.
+#[tauri::command]
+fn audit_profile_root() -> Option<String> {
+    #[cfg(windows)]
+    return sysops::lookup_known_folder(&windows::Win32::UI::Shell::FOLDERID_Profile)
+        .map(|path| path.to_string_lossy().into_owned());
+    #[cfg(not(windows))]
+    None
 }
 
 /// Space triage for the disk overview (read-only, judgement table).
@@ -1528,6 +1536,20 @@ async fn verify_cleanup_leftovers(
 }
 
 #[tauri::command]
+async fn install_monitor_status() -> Result<installmon::MonitorStatus, String> {
+    tauri::async_runtime::spawn_blocking(installmon::status)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn discard_install_monitor_recovery() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(installmon::discard_recovery)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn begin_install_monitor(scan_id: Option<u32>) -> Result<(), String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1755,6 +1777,7 @@ pub fn run() {
         // `delete_firewall_rules`
         // `scan_junction_ledger`
         // `analyze_component_store`
+        // `audit_profile_root`
         // `scan_space_triage`
         // `scan_regenerable_layouts`
         // `delete_regenerable_layouts`
@@ -1787,6 +1810,8 @@ pub fn run() {
         // `verify_cleanup_leftovers`
         // `begin_install_monitor`
         // `end_install_monitor`
+        // `install_monitor_status`
+        // `discard_install_monitor_recovery`
         // `take_pending_analyze`
         // `begin_cleanup_operation`
         // `cancel_cleanup`
@@ -1852,6 +1877,7 @@ pub fn run() {
             delete_firewall_rules,
             scan_junction_ledger,
             analyze_component_store,
+            audit_profile_root,
             scan_space_triage,
             scan_regenerable_layouts,
             delete_regenerable_layouts,
@@ -1884,6 +1910,8 @@ pub fn run() {
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,
+            install_monitor_status,
+            discard_install_monitor_recovery,
             take_pending_analyze,
             begin_cleanup_operation,
             cancel_cleanup,

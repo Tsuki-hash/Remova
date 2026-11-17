@@ -1,5 +1,5 @@
 import { cleanupItemKey } from "../lib/cleanupPlan";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CloseGlyph, Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { currentLang, t } from "../i18n";
@@ -30,7 +30,9 @@ type LeftoverRowProps = {
   disabled: boolean;
   note: string | undefined;
   onTogglePath: (path: string) => void;
-  onEvidence: (text: string | null) => void;
+  evidenceExpanded: boolean;
+  evidenceId: string;
+  onEvidence: (key: string, trigger: HTMLButtonElement) => void;
 };
 
 /** Memoized row so virtual-list parent re-renders skip unchanged items. */
@@ -40,6 +42,8 @@ const LeftoverRow = memo(function LeftoverRow({
   disabled,
   note,
   onTogglePath,
+  evidenceExpanded,
+  evidenceId,
   onEvidence,
 }: LeftoverRowProps) {
   const L = t();
@@ -184,14 +188,10 @@ const LeftoverRow = memo(function LeftoverRow({
         <button
           style={{ ...css.btnGhost, display: "inline-flex", alignItems: "center", justifyContent: "center", height: 20, width: 32, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
           aria-label={`${L.orphanEvidenceTitle}: ${it.path}`}
-          onClick={() =>
-            onEvidence(
-              it.evidence
-                .map(raw => ({ ...raw, ...evidenceText(raw) }))
-                .map((e) => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
-                .join("\n") || it.reason,
-            )
-          }
+          aria-description={L.kindLabel(it.kind)}
+          aria-expanded={evidenceExpanded}
+          aria-controls={evidenceId}
+          onClick={(event) => onEvidence(cleanupItemKey(it), event.currentTarget)}
         >
           <Deco ch="ⓘ" />
         </button>
@@ -209,7 +209,7 @@ type Props = {
   orphanLabel: string;
   onTogglePath: (path: string) => void;
   onSelectVisible?: (paths: string[], selected: boolean) => void;
-  onEvidence: (text: string | null) => void;
+  onEvidence: (key: string | null) => void;
   /** Filter leftovers by linked bucket (detail-panel drill-down). */
   kindFilter?: LinkedBucketId | null;
   filterApp?: InstalledApp | null;
@@ -303,19 +303,30 @@ export function ScanLeftoversView({
   const listRef = useRef<HTMLDivElement | null>(null);
   const [listMargin, setListMargin] = useState(0);
   const evidenceRef = useRef<HTMLDivElement | null>(null);
+  const evidenceTrigger = useRef<HTMLButtonElement | null>(null);
+  const evidenceId = useId();
+  const evidenceItem = displayItems.find(item => cleanupItemKey(item) === evidence);
+  const displayedEvidenceKey = evidenceItem ? evidence : null;
   // The evidence block sits below the (capped) list at the bottom of a
   // page-scrolled view — without scrolling it into view a click looks dead.
   useEffect(() => {
-    if (evidence) evidenceRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
-  }, [evidence]);
+    if (!displayedEvidenceKey) return;
+    const detail = evidenceRef.current;
+    detail?.focus({ preventScroll: true });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    detail?.scrollIntoView?.({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest" });
+  }, [displayedEvidenceKey]);
+  const closeEvidence = () => {
+    onEvidence(null);
+    const trigger = evidenceTrigger.current;
+    if (trigger?.isConnected) trigger.focus();
+    else scrollRef.current?.focus();
+  };
   // Same row's ⓘ toggles: open, then close on a second click.
   const showEvidence = useCallback(
-    (text: string | null) => {
-      if (text === null) {
-        onEvidence(null);
-        return;
-      }
-      onEvidence(evidence === text ? null : text);
+    (key: string, trigger: HTMLButtonElement) => {
+      evidenceTrigger.current = trigger;
+      onEvidence(evidence === key ? null : key);
     },
     [evidence, onEvidence],
   );
@@ -377,6 +388,7 @@ export function ScanLeftoversView({
       )}
       <div
         ref={scrollRef}
+        tabIndex={-1}
         style={{
           ...css.scroll,
           position: "relative",
@@ -448,6 +460,8 @@ export function ScanLeftoversView({
                     disabled={scanning}
                     note={aiNotes[it.path]}
                     onTogglePath={onTogglePath}
+                    evidenceExpanded={evidence === cleanupItemKey(it)}
+                    evidenceId={evidenceId}
                     onEvidence={showEvidence}
                   />
                 </div>
@@ -456,9 +470,18 @@ export function ScanLeftoversView({
           </div>
         )}
       </div>
-      {evidence && (
         <div
+          id={evidenceId}
           ref={evidenceRef}
+          role="region"
+          aria-label={evidenceItem ? `${L.orphanEvidenceTitle}: ${L.kindLabel(evidenceItem.kind)} — ${evidenceItem.path}` : L.orphanEvidenceTitle}
+          hidden={!evidenceItem}
+          tabIndex={-1}
+          onKeyDown={event => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            closeEvidence();
+          }}
           style={{
             padding: 12,
             borderTop: "1px solid var(--border)",
@@ -468,12 +491,14 @@ export function ScanLeftoversView({
             flexShrink: 0,
           }}
         >
-          {evidence}{" "}
-          <button style={{ ...css.btnGhost, height: 28 }} onClick={() => onEvidence(null)} aria-label={L.panelClose}>
+          {evidenceItem?.evidence
+            .map(raw => ({ ...raw, ...evidenceText(raw) }))
+            .map(e => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
+            .join("\n") || evidenceItem?.reason}{" "}
+          <button style={{ ...css.btnGhost, height: 28 }} onClick={closeEvidence} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>
         </div>
-      )}
     </div>
   );
 }

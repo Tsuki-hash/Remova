@@ -80,6 +80,7 @@ export function ReportPanel({
         report.failed,
         rounds,
         verdictText,
+        summaryOnly,
       ),
       confirmLabel: L.auditExportGo,
       checkbox: summaryOnly ? undefined : { label: L.auditExportIncludePaths, defaultChecked: false },
@@ -87,12 +88,17 @@ export function ReportPanel({
     if (!ok) return;
     setAuditBusy(true);
     try {
+      let profileRoot: string | undefined;
+      if (!summaryOnly && !checked) {
+        profileRoot = (await api.auditProfileRoot()) ?? undefined;
+        if (!profileRoot) throw new Error(L.auditExportProfileUnavailable);
+      }
       await downloadAudit(
         report,
         rounds,
         verdict.state === "converged" ? true : verdict.state === "diverged" ? false : null,
         format,
-        { summaryOnly, includeUserPaths: checked },
+        { summaryOnly, includeUserPaths: checked, profileRoot },
         verdict.state === "incomplete_round"
           ? "incomplete"
           : verdict.state === "insufficient_rounds"

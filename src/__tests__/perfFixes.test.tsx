@@ -25,6 +25,7 @@ vi.mock("../lib/api", () => ({
     beginAssociationScan: vi.fn(async () => 601),
     cancelAssociationScan: vi.fn(async () => true),
     associationScanProgress: vi.fn(async () => null),
+    installMonitorStatus: vi.fn(async () => "idle"),
   },
 }));
 vi.mock("../lib/confirm", () => ({ requestConfirm: vi.fn(async () => true) }));

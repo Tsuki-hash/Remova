@@ -88,8 +88,35 @@ it("renders evidence in the active language after switching a memoized row", () 
   expect(screen.getByText("Classes 注册项名称匹配软件 (35) — xiaomi-mimo")).toBeTruthy();
   setLang("en");
   view.rerender(<Harness />);
-  fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: ${sample.path}` }));
   expect(screen.getByText("Classes key name matches product (35) — xiaomi-mimo")).toBeTruthy();
+});
+
+it.each(["zh", "en"] as const)("switches identical evidence by action and restores focus in %s", lang => {
+  setLang(lang);
+  const dir = { ...items[0]!, reason: "same evidence", kind: "dir" as const };
+  const path = { ...dir, kind: "path" as const };
+  function Harness() {
+    const [evidence, setEvidence] = useState<string | null>(null);
+    return <ScanLeftoversView scan={{ app_name: "sample", items: [dir, path] }} scanning={false}
+      selectedPaths={new Set()} evidence={evidence} aiNotes={{}} orphanLabel="orphans"
+      onTogglePath={() => {}} onEvidence={setEvidence} />;
+  }
+  render(<Harness />);
+  const [first, second] = screen.getAllByRole("button", { name: `${t().orphanEvidenceTitle}: ${dir.path}` });
+  fireEvent.click(first!);
+  expect(first!.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("region").id).toBe(first!.getAttribute("aria-controls"));
+  expect(document.activeElement).toBe(screen.getByRole("region"));
+  fireEvent.click(second!);
+  expect(first!.getAttribute("aria-expanded")).toBe("false");
+  expect(second!.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByText("same evidence", { selector: "[role=region]" })).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("region"), { key: "Escape" });
+  expect(document.activeElement).toBe(second);
+  expect(screen.queryByRole("region")).toBeNull();
+  fireEvent.click(second!);
+  fireEvent.click(second!);
+  expect(second!.getAttribute("aria-expanded")).toBe("false");
 });
 
 it.each(["zh", "en"] as const)("keeps hidden selection and combines Selected only with the type filter in %s", lang => {

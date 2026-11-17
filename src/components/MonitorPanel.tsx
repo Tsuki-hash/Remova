@@ -6,6 +6,8 @@ import type { MonitorDiff } from "../lib/api";
 export function MonitorPanel({
   diff,
   monitoring,
+  recovery,
+  onDiscardRecovery,
   stopping,
   onToggle,
   onToCleanup,
@@ -14,6 +16,8 @@ export function MonitorPanel({
 }: {
   diff: MonitorDiff | null;
   monitoring?: boolean;
+  recovery?: "recovered" | "unavailable" | null;
+  onDiscardRecovery?: () => void;
   stopping?: boolean;
   onToggle?: () => void;
   onToCleanup: () => void;
@@ -31,12 +35,15 @@ export function MonitorPanel({
       <header className="remova-tool-heading">
         <h2>{L.monitorInstall}</h2>
         <div className="remova-tool-actions">
-          {!result && onToggle && (
+          {!result && recovery !== "unavailable" && onToggle && (
             <button type="button" style={css.btn} disabled={stopping} onClick={onToggle}>
-              {monitoring ? L.monitorStop : L.monitorStartAction}
+              {monitoring ? L.monitorStop : recovery === "recovered" ? L.monitorReviewRecovery : L.monitorStartAction}
             </button>
           )}
-          {total > 0 && (
+          {recovery && onDiscardRecovery && (
+            <button type="button" style={css.btnGhost} disabled={stopping} onClick={onDiscardRecovery}>{L.monitorDiscardRecovery}</button>
+          )}
+          {total > 0 && !result?.recovered_read_only && (
             <button type="button" style={css.btn} disabled={result?.walk_degraded} onClick={onToCleanup}>
               {L.monitorToCleanup}
             </button>
@@ -53,9 +60,12 @@ export function MonitorPanel({
       </header>
       {!stopping && <p className="remova-tool-note" role="status">
         {monitoring ? L.monitorActive
+          : recovery === "recovered" ? L.monitorRecoveryHint
+          : recovery === "unavailable" ? L.monitorRecoveryUnavailable
           : !result ? L.monitorStartHint
             : total === 0 ? L.monitorEmpty : L.monitorDiffCounts(files, registryValues)}
       </p>}
+      {result?.recovered_read_only && <p className="remova-tool-note">{L.monitorRecoveryReadOnly}</p>}
       {result && truncated > 0 && (
         <div style={{ ...css.muted, marginTop: 4, fontSize: 12 }}>
           {L.monitorTruncated(result.files_truncated ?? 0, result.reg_truncated ?? 0)}

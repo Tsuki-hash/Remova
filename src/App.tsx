@@ -471,6 +471,8 @@ export default function App() {
     cancelCheckupScan,
     monitorScanProgress,
     cancelMonitorScan,
+    monitorRecovery,
+    discardMonitorRecovery,
     elevate,
     openPathSafe,
     doIgnorePublisher,
@@ -904,6 +906,8 @@ export default function App() {
               restore={restore}
               selected={selected}
               monitoring={monitoring}
+              monitorRecovery={monitorRecovery}
+              onDiscardMonitorRecovery={() => void discardMonitorRecovery()}
               monitorSnapshotBusy={monitorSnapshotBusy}
               monitorDiff={monitorDiff}
               lastReport={lastReport}

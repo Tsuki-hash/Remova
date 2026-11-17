@@ -2,6 +2,45 @@
 
 use crate::apps::InstalledApp;
 use crate::scanner::{CleanupItem, Confidence, Evidence, ItemKind, RiskLevel, SCORE_SUSPECTED_MIN};
+use std::collections::BinaryHeap;
+use std::path::PathBuf;
+
+#[derive(Default)]
+struct OrphanCandidates {
+    // The sequence number preserves the stable sort order of equal folded keys.
+    best: BinaryHeap<(String, usize, PathBuf)>,
+    total: usize,
+}
+
+impl OrphanCandidates {
+    fn push(&mut self, path: PathBuf) {
+        let entry = (path.to_string_lossy().to_lowercase(), self.total, path);
+        self.total += 1;
+        if self.best.len() < crate::constants::ORPHAN_RESULT_CAP {
+            self.best.push(entry);
+        } else if let Some(mut last) = self.best.peek_mut() {
+            if entry < *last {
+                *last = entry;
+            }
+        }
+    }
+
+    fn finish(self) -> (Vec<PathBuf>, u32) {
+        let omitted = self
+            .total
+            .saturating_sub(crate::constants::ORPHAN_RESULT_CAP);
+        let mut ordered: Vec<_> = self
+            .best
+            .into_sorted_vec()
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if omitted == 0 {
+            ordered.dedup();
+        }
+        (ordered, u32::try_from(omitted).unwrap_or(u32::MAX))
+    }
+}
 
 fn slug_tokens(name: &str) -> Vec<String> {
     crate::scanner::slugify(name)
@@ -405,11 +444,7 @@ fn scan_orphans_in_roots_with(
 
     let cleanup_allowed = inventory.status == ScanStatus::Complete;
     let mut out = Vec::new();
-    // Collect candidates across every root first, then order and truncate. The
-    // old `if out.len() >= ORPHAN_RESULT_CAP { return }` inside the enumeration
-    // made the reported subset depend on `read_dir` order, and stopped the scan
-    // early on a machine whose first root happened to be full of leftovers.
-    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    let mut candidates = OrphanCandidates::default();
     let mut failed_roots: Vec<_> = inventory
         .failed_roots
         .iter()
@@ -420,7 +455,7 @@ fn scan_orphans_in_roots_with(
     }
     let mut roots_scanned = 0u32;
     for root in roots {
-        if !crate::scan_task::checkpoint("files", candidates.len()) {
+        if !crate::scan_task::checkpoint("files", candidates.total) {
             return OrphanScanResult {
                 items: out,
                 omitted: 0,
@@ -439,7 +474,7 @@ fn scan_orphans_in_roots_with(
             }
         };
         for e in rd {
-            if !crate::scan_task::checkpoint("files", candidates.len()) {
+            if !crate::scan_task::checkpoint("files", candidates.total) {
                 return OrphanScanResult {
                     items: out,
                     omitted: 0,
@@ -500,23 +535,7 @@ fn scan_orphans_in_roots_with(
             candidates.push(p);
         }
     }
-    // Bounded top-K: keep at most the cap plus a deterministic ordering key,
-    // instead of sorting every candidate on a machine with a huge leftover
-    // tree. The retained subset is the same one a full sort would report.
-    let cap = crate::constants::ORPHAN_RESULT_CAP;
-    let total = candidates.len();
-    let ordered = if total > cap {
-        let mut keyed: Vec<(String, std::path::PathBuf)> = candidates
-            .into_iter()
-            .map(|p| (p.to_string_lossy().to_lowercase(), p))
-            .collect();
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
-        keyed.truncate(cap);
-        keyed.into_iter().map(|(_, p)| p).collect::<Vec<_>>()
-    } else {
-        crate::fsutil::order_candidates(candidates)
-    };
-    let omitted = total.saturating_sub(cap) as u32;
+    let (ordered, omitted) = candidates.finish();
     for p in ordered {
         if !crate::scan_task::checkpoint("files", out.len()) {
             return OrphanScanResult {
@@ -1025,6 +1044,30 @@ mod tests {
     /// keeps a subset disjoint from the sorted one. The old `Leftover###`
     /// names enumerated in the same order they sorted, so the test stayed
     /// green even with the ordering reverted.
+    #[test]
+    fn orphan_heap_matches_stable_sort_on_large_reversed_input() {
+        let cap = crate::constants::ORPHAN_RESULT_CAP;
+        let paths: Vec<_> = (0..150_000)
+            .rev()
+            .flat_map(|i| {
+                [
+                    PathBuf::from(format!("a{i:06}")),
+                    PathBuf::from(format!("A{i:06}")),
+                ]
+            })
+            .collect();
+        let mut candidates = OrphanCandidates::default();
+        for path in &paths {
+            candidates.push(path.clone());
+            assert!(candidates.best.len() <= cap);
+        }
+        let mut expected = paths;
+        expected.sort_by_cached_key(|path| path.to_string_lossy().to_lowercase());
+        let omitted = expected.len() - cap;
+        expected.truncate(cap);
+        assert_eq!(candidates.finish(), (expected, omitted as u32));
+    }
+
     #[test]
     fn orphan_cap_selects_a_deterministic_subset() {
         let _guard = crate::scan_allow::test_lock();

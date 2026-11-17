@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, type InstallMonitorStatus, type MonitorDiff } from "../lib/api";
 import type { InstalledApp } from "../types";
 import type { Strings } from "../i18n";
 import { t } from "../i18n";
@@ -23,19 +23,15 @@ export type AppChromeResidual = {
   clearSelection: () => void;
   setMonitoring: (v: boolean) => void;
   setMonitorDiff: (
-    v: {
-      added_files: string[];
-      added_reg_values: string[];
+    v: (MonitorDiff & {
       items?: import("../types").CleanupItem[];
       scope_revision?: number;
-    } | null,
+    }) | null,
   ) => void;
-  monitorDiff: {
-    added_files: string[];
-    added_reg_values: string[];
+  monitorDiff: (MonitorDiff & {
     items?: import("../types").CleanupItem[];
     scope_revision?: number;
-  } | null;
+  }) | null;
   selectDefaultItems: (items: import("../types").CleanupItem[]) => void;
 };
 
@@ -83,6 +79,35 @@ export function useAppChrome({
   const monitorRunReadOnly = monitorScan.runReadOnly;
   const checkupBusyRef = useRef(false);
   const monitorBusyRef = useRef(false);
+  const [monitorRecovery, setMonitorRecovery] = useState<"recovered" | "unavailable" | null>(null);
+  const setMonitoring = residual.setMonitoring;
+  const applyMonitorStatus = useCallback((status: InstallMonitorStatus) => {
+    setMonitoring(status === "active");
+    setMonitorRecovery(status === "recovered" || status === "unavailable" ? status : null);
+  }, [setMonitoring]);
+  useEffect(() => {
+    let mounted = true;
+    void api.installMonitorStatus().then(status => {
+      if (mounted && !monitorBusyRef.current) applyMonitorStatus(status);
+    }).catch(() => {
+      if (mounted && !monitorBusyRef.current) setMonitorRecovery("unavailable");
+    });
+    return () => { mounted = false; };
+  }, [applyMonitorStatus]);
+
+  const discardMonitorRecovery = useCallback(async () => {
+    if (monitorBusyRef.current || !monitorRecovery) return;
+    monitorBusyRef.current = true;
+    try {
+      if (!await requestConfirm({ title: L.monitorDiscardRecovery, message: L.monitorDiscardPrompt, confirmLabel: L.monitorDiscardRecovery })) return;
+      await api.discardInstallMonitorRecovery();
+      applyMonitorStatus("idle");
+    } catch (error) {
+      toast.error(formatError(error));
+    } finally {
+      monitorBusyRef.current = false;
+    }
+  }, [L, applyMonitorStatus, monitorRecovery]);
 
   const elevate = useCallback(async () => {
     // The badge fires UAC straight from a header chip — require the same
@@ -161,13 +186,13 @@ export function useAppChrome({
   const toggleMonitor = useCallback(async () => {
  // Repeated clicks during the filesystem snapshot used to queue work and
  // then dump a pile of toasts — one run at a time, one toast channel.
-    if (monitorBusyRef.current) return;
+    if (monitorBusyRef.current || monitorRecovery === "unavailable") return;
     monitorBusyRef.current = true;
     residual.setMonitorDiff(null);
     if (selected?.source === "Monitor") { flow.setScan(null); residual.clearSelection(); }
     const MON_CH = "install-monitor";
     try {
-      if (!monitoring) {
+      if (!monitoring && monitorRecovery !== "recovered") {
         toast.info(L.monitorStarting, { channel: MON_CH });
         await monitorRunReadOnly(api.beginInstallMonitor, () => 0);
         residual.setMonitoring(true);
@@ -177,6 +202,7 @@ export function useAppChrome({
         toast.info(L.monitorFinishing, { channel: MON_CH });
         const result = await monitorRunReadOnly(api.endInstallMonitor, result => result.diff.added_files.length + result.diff.added_reg_values.length);
         residual.setMonitoring(false);
+        setMonitorRecovery(null);
         residual.setMonitorDiff({ ...result.diff, items: result.items, scope_revision: result.scope_revision });
         toast.success(
           L.toastMonitorDiff(result.diff.added_files.length, result.diff.added_reg_values.length),
@@ -192,14 +218,18 @@ export function useAppChrome({
         toast.info(L.monitorScanCancelled(monitoring), { channel: MON_CH });
         return;
       }
-      flow.setError(formatError(e));
-      toast.error(formatError(e), { channel: MON_CH });
       const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-      residual.setMonitoring(monitoring && raw !== "no monitor snapshot; start first");
+      const message = raw === "monitor:checkpoint_pending" || raw === "monitor:checkpoint_unavailable"
+        ? L.monitorRecoveryUnavailable : raw === "monitor:checkpoint_write_failed" ? L.monitorRecoverySaveFailed : formatError(e);
+      flow.setError(message);
+      toast.error(message, { channel: MON_CH });
+      if (raw === "no monitor snapshot; start first" || raw.startsWith("monitor:checkpoint_")) {
+        await api.installMonitorStatus().then(applyMonitorStatus).catch(() => setMonitorRecovery("unavailable"));
+      }
     } finally {
       monitorBusyRef.current = false;
     }
-  }, [monitoring, L, residual, flow, selected, monitorRunReadOnly]);
+  }, [monitoring, monitorRecovery, L, residual, flow, selected, monitorRunReadOnly, applyMonitorStatus]);
 
   const monitorDiffToCleanup = useCallback(
     (_diff: { added_files: string[]; added_reg_values: string[] }) => {
@@ -272,6 +302,8 @@ export function useAppChrome({
     cancelCheckupScan: checkupScan.cancel,
     monitorScanProgress: monitorScan.progress,
     cancelMonitorScan: monitorScan.cancel,
+    monitorRecovery,
+    discardMonitorRecovery,
     elevate,
     openPathSafe,
     doIgnorePublisher,

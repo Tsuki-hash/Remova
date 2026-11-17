@@ -44,6 +44,29 @@ describe("redactUserProfiles", () => {
 });
 
 describe("buildAuditJson", () => {
+  it.each([
+    ["D:\\Workspaces\\Profiles\\fixture-name", "d:/workspaces/profiles/Fixture-Name"],
+    ["D:\\External Data\\profile[1]", "\\\\?\\D:\\External Data\\PROFILE[1]"],
+    ["\\\\server\\Residents\\fixture-name", "\\\\?\\UNC\\SERVER\\Residents\\Fixture-Name"],
+  ])("masks the exact Windows profile root %s in both formats", (profileRoot, alias) => {
+    const path = alias + "\\.tool\\data.bin";
+    const unrelated = alias + "-backup\\other.bin";
+    const input = report({
+      backup_dir: path,
+      errors: ["Could not access \"" + profileRoot + "\""],
+      item_details: [{ path, kind: "file", status: "failed", message: "path: " + path },
+        { path: unrelated, kind: "file", status: "skipped", message: "" }],
+    });
+    const json = buildAuditJson(input, 0, null, { profileRoot }).report;
+    expect(json).toMatchObject({ backup_dir: "<user>\\.tool\\data.bin", errors: ['Could not access "<user>"'] });
+    expect(JSON.stringify(json)).toContain(JSON.stringify(unrelated).slice(1, -1));
+    const markdown = buildAuditMarkdown(input, 0, null, { profileRoot });
+    expect(markdown).toContain("&lt;user&gt;\\\\.tool\\\\data.bin");
+    expect(markdown).not.toContain(alias.replaceAll("\\", "\\\\") + "\\\\.tool");
+    expect(buildAuditJson(input, 0, null, { profileRoot, includeUserPaths: true }).report).toHaveProperty("backup_dir", path);
+    expect(buildAuditMarkdown(input, 0, null, { profileRoot, summaryOnly: true })).not.toContain("data.bin");
+  });
+
   it("omits the active uninstall receipt from both detailed export modes", () => {
     for (const includeUserPaths of [false, true]) {
       expect(buildAuditJson(report({ uninstall_review: 42 }), 0, null, { includeUserPaths }).report)

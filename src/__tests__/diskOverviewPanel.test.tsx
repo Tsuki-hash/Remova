@@ -202,6 +202,32 @@ it("runs the DISM analysis on demand and reports the verdict", async () => {
   expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes);
 });
 
+it("rejoins a pending DISM analysis across four panel openings and can retry", async () => {
+  mockLoads();
+  let finish!: (value: { cleanup_recommended: boolean; explorer_size_bytes: null; actual_size_bytes: null }) => void;
+  vi.mocked(api.analyzeComponentStore).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }))
+    .mockResolvedValue({ cleanup_recommended: true, explorer_size_bytes: null, actual_size_bytes: null });
+  const L = t();
+  const open = () => {
+    const panel = render(<DiskOverviewPanel onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: L.diskOverviewTabComponents }));
+    return panel;
+  };
+  let panel = open();
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
+  for (let i = 0; i < 3; i++) {
+    panel.unmount();
+    panel = open();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: L.diskOverviewAnalyzing }).disabled).toBe(true);
+  }
+  await act(async () => finish({ cleanup_recommended: false, explorer_size_bytes: null, actual_size_bytes: null }));
+  expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedNo);
+  expect(api.analyzeComponentStore).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewAnalyze }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toContain(L.diskOverviewRecommendedYes));
+  expect(api.analyzeComponentStore).toHaveBeenCalledTimes(2);
+});
+
 it("renders the triage rows with class labels and sizes", async () => {
   mockLoads();
   render(<DiskOverviewPanel onClose={vi.fn()} />);

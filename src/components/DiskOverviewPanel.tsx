@@ -85,16 +85,18 @@ type OverviewTab = "overview" | "cleanup" | "components";
 // subscribes to the same reads, and later refreshes start fresh ones.
 function sharePendingScan<T>(scan: () => Promise<T>) {
   let pending: Promise<T> | undefined;
-  return () => {
+  const run = () => {
     pending ??= Promise.resolve(scan()).finally(() => { pending = undefined; });
     return pending;
   };
+  return Object.assign(run, { pending: () => pending });
 }
 
 const scanVolumes = sharePendingScan(api.listLocalDrives);
 const scanJunctions = sharePendingScan(api.junctionLedger);
 const scanDirectories = sharePendingScan(api.spaceTriage);
 const scanCaches = sharePendingScan(api.regenerableLayouts);
+const scanComponentStore = sharePendingScan(api.analyzeComponentStore);
 
 function useDiskScan<T>(scan: () => Promise<T>) {
   const [state, setState] = useState<{ data: T | null; pending: boolean; error: string | null }>({
@@ -165,8 +167,9 @@ export function DiskOverviewPanel({
   const regen = regenScan.data;
   const [regenSel, setRegenSel] = useState<Set<string>>(new Set());
   const [regenBusy, setRegenBusy] = useState(false);
-  const [dismBusy, setDismBusy] = useState(false);
+  const [dismBusy, setDismBusy] = useState(() => Boolean(scanComponentStore.pending()));
   const [dism, setDism] = useState<ComponentStoreAnalysis | null>(null);
+  const { next: nextDism, isCurrent: isCurrentDism, invalidate: invalidateDism } = useRequestSeq();
 
   const scans = [
     { ...volumeScan, label: L.diskOverviewStepVolume },
@@ -178,21 +181,36 @@ export function DiskOverviewPanel({
   const pending = scans.filter(scan => scan.pending);
   const cleanupPending = triageScan.pending || regenScan.pending;
 
-  const runDism = async () => {
-    if (dismBusy) return;
-    setDismBusy(true);
+  const receiveDism = useCallback(async (request: Promise<ComponentStoreAnalysis>) => {
+    const id = nextDism();
     try {
-      setDism(await api.analyzeComponentStore());
+      const result = await request;
+      if (isCurrentDism(id)) setDism(result);
     } catch (e) {
+      if (!isCurrentDism(id)) return;
       const msg = formatError(e);
+      const strings = t();
       if (needsAdminRights(msg)) {
-        await offerElevatedRestart(L.diskOverviewElevateHint);
+        await offerElevatedRestart(strings.diskOverviewElevateHint);
       } else {
-        toast.error(msg);
+        toast.error(msg === "dism:timeout" ? strings.diskOverviewDismTimeout
+          : msg === "dism:output_limit" ? strings.diskOverviewDismOutputLimit : msg);
       }
     } finally {
-      setDismBusy(false);
+      if (isCurrentDism(id)) setDismBusy(false);
     }
+  }, [isCurrentDism, nextDism]);
+
+  useEffect(() => {
+    const pendingRequest = scanComponentStore.pending();
+    if (pendingRequest) void receiveDism(pendingRequest);
+    return invalidateDism;
+  }, [invalidateDism, receiveDism]);
+
+  const runDism = () => {
+    if (dismBusy) return;
+    setDismBusy(true);
+    void receiveDism(scanComponentStore());
   };
 
   const toggleRegen = (path: string) => {

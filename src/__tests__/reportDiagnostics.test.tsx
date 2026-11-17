@@ -5,6 +5,7 @@ import { setLang, t } from "../i18n";
 import { ReportPanel } from "../components/ReportPanel";
 import { SoftwareToolbar } from "../components/SoftwareToolbar";
 import { ScanLeftoversView } from "../components/ScanLeftoversView";
+import { cleanupItemKey } from "../lib/cleanupPlan";
 import { OrphanOriginGroups } from "../components/OrphanOriginGroups";
 import { groupByOrigin } from "../lib/decision";
 import type { CleanupItem, CleanupReport, FullCleanupReport } from "../types";
@@ -254,7 +255,7 @@ it.each(["zh", "en"] as const)("names evidence buttons by action and path in %s"
     scanning={false} selectedPaths={new Set()} evidence={null} aiNotes={{}} orphanLabel="Orphans"
     onTogglePath={() => {}} onEvidence={onEvidence} />);
   fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: fixture-path` }));
-  expect(onEvidence).toHaveBeenCalledWith("fixture");
+  expect(onEvidence).toHaveBeenCalledWith(cleanupItemKey({ kind: "file", path: "fixture-path" }));
 });
 
 it.each(["zh", "en"] as const)("uses translated evidence in both leftover surfaces in %s", lang => {
@@ -264,11 +265,13 @@ it.each(["zh", "en"] as const)("uses translated evidence in both leftover surfac
   const item: CleanupItem = { path: "fixture-path", kind: "dir", score: 30,
     confidence: "suspected", risk: "medium", reason: "orphan", evidence };
   const onEvidence = vi.fn();
-  const view = render(<ScanLeftoversView scan={{ app_name: "Vendor", items: [item] }}
-    scanning={false} selectedPaths={new Set()} evidence={null} aiNotes={{}} orphanLabel="Orphans"
-    onTogglePath={() => {}} onEvidence={onEvidence} />);
+  const props = { scan: { app_name: "Vendor", items: [item] }, scanning: false,
+    selectedPaths: new Set<string>(), aiNotes: {}, orphanLabel: "Orphans", onTogglePath: () => {}, onEvidence };
+  const view = render(<ScanLeftoversView {...props}
+    evidence={null} />);
   fireEvent.click(screen.getByRole("button", { name: `${t().orphanEvidenceTitle}: fixture-path` }));
-  expect(onEvidence).toHaveBeenCalledWith(`${t().orphanEvNoOwner} (30)`);
+  view.rerender(<ScanLeftoversView {...props} evidence={cleanupItemKey(item)} />);
+  expect(screen.getByRole("region").textContent).toContain(`${t().orphanEvNoOwner} (30)`);
   view.unmount();
   render(<OrphanOriginGroups groups={groupByOrigin([item])} selectedPaths={new Set()}
     onToggle={() => {}} onToggleMany={() => {}} />);

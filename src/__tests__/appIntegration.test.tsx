@@ -11,6 +11,7 @@ import { requestBackupSession, useBackupSessionRequest, clearBackupSessionReques
 import type { ComponentProps } from "react";
 import type { SoftwarePage } from "../components/SoftwarePage";
 import type { MorePage } from "../components/MorePage";
+import { MonitorPanel } from "../components/MonitorPanel";
 import type { OrphanPage } from "../components/OrphanPage";
 import type { ManageListPage } from "../components/ManageListPage";
 import type { AppDetailPanel } from "../components/AppDetailPanel";
@@ -22,6 +23,7 @@ const native = vi.hoisted(() => ({
   openPath: vi.fn(), elevateRestart: vi.fn(), takePendingAnalyze: vi.fn(),
   ignorePublisher: vi.fn(), ignoreAppName: vi.fn(),
   beginInstallMonitor: vi.fn(), endInstallMonitor: vi.fn(),
+  installMonitorStatus: vi.fn(), discardInstallMonitorRecovery: vi.fn(),
   verifyLeftovers: vi.fn(), aiSummarizeReport: vi.fn(),
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
   showRealSoftwarePage: false,
@@ -37,6 +39,7 @@ const pages = vi.hoisted(() => ({
 
 vi.mock("../lib/api", () => ({ api: {
   ...native,
+  auditProfileRoot: vi.fn(async () => "C:\\Users\\Fixture"),
   setTrayLanguage: vi.fn(async () => {}),
   beginAssociationScan: vi.fn(async () => 1),
   cancelAssociationScan: vi.fn(async () => {}),
@@ -170,6 +173,8 @@ beforeEach(() => {
   native.fullCleanup.mockResolvedValue(report);
   native.beginCleanupOperation.mockResolvedValue(51);
   native.cancelCleanup.mockResolvedValue(true);
+  native.installMonitorStatus.mockResolvedValue("idle");
+  native.discardInstallMonitorRecovery.mockResolvedValue(undefined);
   native.officialUninstall.mockResolvedValue({ ok: true, had_command: true, message: "finished", uninstall_review: 42 });
   native.openPath.mockResolvedValue(undefined);
   native.elevateRestart.mockResolvedValue(undefined);
@@ -893,6 +898,41 @@ describe("App orchestration", () => {
     await act(async () => { await more().onIgnorePublisher(); });
  // Synthetic monitor app has no publisher, so ignore is a no-op.
     expect(native.ignorePublisher).not.toHaveBeenCalled();
+  });
+
+  it("recovers the previous tracking result without offering cleanup", async () => {
+    native.installMonitorStatus.mockResolvedValue("recovered");
+    native.endInstallMonitor.mockResolvedValue({ diff: {
+      added_files: ["C:\\Apps\\fixture.exe"], added_reg_values: [], recovered_read_only: true,
+    }, items: [] });
+    await mount();
+    await nav("more");
+    expect(more().monitorRecovery).toBe("recovered");
+    const panel = render(<MonitorPanel diff={null} recovery={more().monitorRecovery} onToggle={more().onToggleMonitor}
+      onToCleanup={more().onMonitorToCleanup} onDismiss={() => {}} />);
+    fireEvent.click(panel.getByRole("button", { name: i18n.t().monitorReviewRecovery }));
+    await waitFor(() => expect(more().monitorDiff?.recovered_read_only).toBe(true));
+    expect(native.beginInstallMonitor).not.toHaveBeenCalled();
+    panel.rerender(<MonitorPanel diff={more().monitorDiff} onToCleanup={more().onMonitorToCleanup} onDismiss={() => {}} />);
+    expect(panel.getByText(i18n.t().monitorRecoveryReadOnly)).toBeTruthy();
+    expect(panel.queryByRole("button", { name: i18n.t().monitorToCleanup })).toBeNull();
+  });
+
+  it("requires explicit discard before starting when the previous snapshot cannot open", async () => {
+    native.installMonitorStatus.mockResolvedValue("unavailable");
+    await mount();
+    await nav("more");
+    expect(more().monitorRecovery).toBe("unavailable");
+    await act(async () => more().onToggleMonitor());
+    expect(native.beginInstallMonitor).not.toHaveBeenCalled();
+    await act(async () => more().onDiscardMonitorRecovery?.());
+    expect(native.discardInstallMonitorRecovery).not.toHaveBeenCalled();
+    native.requestConfirm.mockResolvedValue(true);
+    await act(async () => more().onDiscardMonitorRecovery?.());
+    await waitFor(() => expect(more().monitorRecovery).toBeNull());
+    expect(native.discardInstallMonitorRecovery).toHaveBeenCalledTimes(1);
+    act(() => more().onToggleMonitor());
+    await waitFor(() => expect(more().monitoring).toBe(true));
   });
 
   it.each([false, true])("keeps monitor session state truthful after cancelled capture, active=%s", async active => {

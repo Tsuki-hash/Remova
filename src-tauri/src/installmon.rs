@@ -5,6 +5,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+#[cfg(windows)]
+mod checkpoint;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FsSnapshot {
     pub files: BTreeSet<String>,
@@ -28,6 +31,8 @@ pub struct MonitorDiff {
     /// surface this instead of presenting the diff as complete.
     #[serde(default)]
     pub walk_degraded: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovered_read_only: bool,
 }
 
 /// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
@@ -306,31 +311,90 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
     Ok(set)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullSnapshot {
     fs: FsSnapshot,
     reg: Vec<String>,
     reg_degraded: bool,
 }
 
-// Only a baseline captured by this process can authorize deletions. Relaunch,
-// elevation and running under a different account all start a fresh session.
+// Only a baseline captured and held by this process can authorize deletions.
 static SESSION: Mutex<Option<FullSnapshot>> = Mutex::new(None);
 
-pub fn begin() -> Result<(), String> {
-    begin_with(&SESSION, || {
-        let reg = reg_value_names();
-        FullSnapshot {
-            fs: take_fs_snapshot(),
-            reg_degraded: reg.is_err(),
-            reg: reg.unwrap_or_default().into_iter().collect(),
-        }
-    })
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorStatus {
+    Idle,
+    Active,
+    Recovered,
+    Unavailable,
 }
 
+pub fn status() -> Result<MonitorStatus, String> {
+    let active = SESSION.lock().map_err(|_| "scan:state")?;
+    if active.is_some() {
+        return Ok(MonitorStatus::Active);
+    }
+    #[cfg(windows)]
+    return Ok(
+        match checkpoint::Checkpoint::current().and_then(|file| file.load()) {
+            Ok(Some(_)) => MonitorStatus::Recovered,
+            Ok(None) => MonitorStatus::Idle,
+            Err(_) => MonitorStatus::Unavailable,
+        },
+    );
+    #[cfg(not(windows))]
+    Ok(MonitorStatus::Idle)
+}
+
+pub fn discard_recovery() -> Result<(), String> {
+    let active = SESSION.lock().map_err(|_| "scan:state")?;
+    if active.is_some() {
+        return Err("monitor:active".into());
+    }
+    #[cfg(windows)]
+    return checkpoint::Checkpoint::current()?.remove();
+    #[cfg(not(windows))]
+    Ok(())
+}
+
+fn capture_snapshot() -> FullSnapshot {
+    let reg = reg_value_names();
+    FullSnapshot {
+        fs: take_fs_snapshot(),
+        reg_degraded: reg.is_err(),
+        reg: reg.unwrap_or_default().into_iter().collect(),
+    }
+}
+
+pub fn begin() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let file = checkpoint::Checkpoint::current()?;
+        begin_session(
+            &SESSION,
+            capture_snapshot,
+            || file.exists(),
+            |snapshot| file.save(snapshot),
+        )
+    }
+    #[cfg(not(windows))]
+    begin_session(&SESSION, capture_snapshot, || Ok(false), |_| Ok(()))
+}
+
+#[cfg(test)]
 fn begin_with(
     session: &Mutex<Option<FullSnapshot>>,
     capture: impl FnOnce() -> FullSnapshot,
+) -> Result<(), String> {
+    begin_session(session, capture, || Ok(false), |_| Ok(()))
+}
+
+fn begin_session(
+    session: &Mutex<Option<FullSnapshot>>,
+    capture: impl FnOnce() -> FullSnapshot,
+    recovery_pending: impl FnOnce() -> Result<bool, String>,
+    persist: impl FnOnce(&FullSnapshot) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
@@ -339,10 +403,14 @@ fn begin_with(
     if active.is_some() {
         return Ok(());
     }
+    if recovery_pending()? {
+        return Err("monitor:checkpoint_pending".into());
+    }
     let snap = capture();
     crate::scan_task::checkpoint("finalizing", snap.fs.files.len() + snap.reg.len());
     crate::scan_task::commit(|permit| {
         crate::scan_allow::commit_monitor_items(permit, &[], || {
+            persist(&snap)?;
             *active = Some(snap);
             Ok(())
         })
@@ -351,20 +419,57 @@ fn begin_with(
 }
 
 pub fn end() -> Result<MonitorEndResult, String> {
-    end_with(&SESSION, take_fs_snapshot, reg_value_names)
+    #[cfg(windows)]
+    {
+        let file = checkpoint::Checkpoint::current()?;
+        end_session(
+            &SESSION,
+            take_fs_snapshot,
+            reg_value_names,
+            || file.load(),
+            || file.remove(),
+        )
+    }
+    #[cfg(not(windows))]
+    end_session(
+        &SESSION,
+        take_fs_snapshot,
+        reg_value_names,
+        || Ok(None),
+        || Ok(()),
+    )
 }
 
+#[cfg(test)]
 fn end_with(
     session: &Mutex<Option<FullSnapshot>>,
     files: impl FnOnce() -> FsSnapshot,
     registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
 ) -> Result<MonitorEndResult, String> {
+    end_session(session, files, registry, || Ok(None), || Ok(()))
+}
+
+fn end_session(
+    session: &Mutex<Option<FullSnapshot>>,
+    files: impl FnOnce() -> FsSnapshot,
+    registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
+    load_recovery: impl FnOnce() -> Result<Option<FullSnapshot>, String>,
+    remove_recovery: impl FnOnce() -> Result<(), String>,
+) -> Result<MonitorEndResult, String> {
     let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
         return Err("scan:cancelled".into());
     }
-    let before = active.as_ref().ok_or("no monitor snapshot; start first")?;
-    let mut result = build_diff(before, files(), registry());
+    let recovered = if active.is_none() {
+        load_recovery()?
+    } else {
+        None
+    };
+    let before = active
+        .as_ref()
+        .or(recovered.as_ref())
+        .ok_or("no monitor snapshot; start first")?;
+    let mut result = build_diff(before, files(), registry(), recovered.is_some());
     crate::scan_task::checkpoint(
         "finalizing",
         result.diff.added_files.len() + result.diff.added_reg_values.len(),
@@ -374,11 +479,12 @@ fn end_with(
             permit,
             trusted_monitor_items(&result),
             || {
+                remove_recovery()?;
                 *active = None;
                 Ok(())
             },
         )?;
-        if !result.diff.walk_degraded {
+        if !result.diff.walk_degraded && !result.diff.recovered_read_only {
             result.scope_revision = Some(revision);
             result.items.retain(|item| {
                 crate::scan_allow::scoped_item_was_reported(
@@ -395,6 +501,7 @@ fn build_diff(
     before: &FullSnapshot,
     after: FsSnapshot,
     after_reg: Result<BTreeSet<String>, String>,
+    recovered_read_only: bool,
 ) -> MonitorEndResult {
     let registry_degraded = before.reg_degraded || after_reg.is_err();
     let after_reg = after_reg.unwrap_or_default();
@@ -411,12 +518,17 @@ fn build_diff(
         files_truncated,
         reg_truncated,
         walk_degraded: before.fs.truncated || after.truncated || registry_degraded,
+        recovered_read_only,
     };
     // Allow-list is armed only from this server-computed diff (never from
     // client IPC) — and never from a truncated snapshot: entries missed by
     // the walk would resurface as ghost "added" paths and arm deletions the
     // user never actually saw in the diff.
-    let items = diff_to_cleanup_items(&diff);
+    let items = if recovered_read_only {
+        Vec::new()
+    } else {
+        diff_to_cleanup_items(&diff)
+    };
     MonitorEndResult {
         diff,
         items,
@@ -425,7 +537,7 @@ fn build_diff(
 }
 
 fn trusted_monitor_items(result: &MonitorEndResult) -> &[crate::scanner::CleanupItem] {
-    if result.diff.walk_degraded {
+    if result.diff.walk_degraded || result.diff.recovered_read_only {
         return &[];
     }
     &result.items
@@ -437,7 +549,7 @@ fn diff_and_arm(
     after: FsSnapshot,
     after_reg: Result<BTreeSet<String>, String>,
 ) -> MonitorEndResult {
-    let result = build_diff(&before, after, after_reg);
+    let result = build_diff(&before, after, after_reg, false);
     let mut eligible = trusted_monitor_items(&result).to_vec();
     crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &mut eligible);
     result
@@ -885,8 +997,9 @@ mod tests {
     fn snapshot_roundtrip_shape() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         let _allow = crate::scan_allow::test_lock();
-        *SESSION.lock().unwrap() = None;
-        let e2 = super::end();
+        let session = Mutex::new(None);
+        let end = || end_with(&session, take_fs_snapshot, reg_value_names);
+        let e2 = end();
         assert!(e2.is_err());
         // Exercise the same scoped commit path as the Tauri commands.
         let previous = r"C:\InstallMonitorFixture\previous.exe".to_string();
@@ -895,20 +1008,22 @@ mod tests {
             &[crate::scan_allow::test_item(&previous)],
         );
         let start_id = crate::scan_task::begin().unwrap();
-        crate::scan_task::run_scoped(start_id, "monitor", super::begin)
-            .unwrap()
-            .unwrap();
-        assert!(SESSION.lock().unwrap().is_some());
+        crate::scan_task::run_scoped(start_id, "monitor", || {
+            begin_with(&session, capture_snapshot)
+        })
+        .unwrap()
+        .unwrap();
+        assert!(session.lock().unwrap().is_some());
         assert!(!crate::scan_allow::was_recent(
             crate::scan_allow::AllowScope::Monitor,
             &previous
         ));
         let end_id = crate::scan_task::begin().unwrap();
-        crate::scan_task::run_scoped(end_id, "monitor", super::end)
+        crate::scan_task::run_scoped(end_id, "monitor", end)
             .unwrap()
             .unwrap();
         assert!(
-            SESSION.lock().unwrap().is_none(),
+            session.lock().unwrap().is_none(),
             "end consumes the session"
         );
     }
@@ -926,6 +1041,7 @@ mod tests {
             files_truncated: 0,
             reg_truncated: 0,
             walk_degraded: false,
+            recovered_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 2);
@@ -951,6 +1067,7 @@ mod tests {
             files_truncated: 0,
             reg_truncated: 0,
             walk_degraded: false,
+            recovered_read_only: false,
         };
         let items = diff_to_cleanup_items(&forged);
         assert_eq!(items.len(), 1);
@@ -976,6 +1093,7 @@ mod tests {
             files_truncated: 0,
             reg_truncated: 0,
             walk_degraded: false,
+            recovered_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         let under_docs = items.iter().find(|i| i.path.ends_with("saves.db")).unwrap();
@@ -1051,6 +1169,7 @@ mod tests {
             files_truncated: 0,
             reg_truncated: 0,
             walk_degraded: false,
+            recovered_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         for path in ["cache.db", "config.ini"] {
@@ -1094,6 +1213,7 @@ mod tests {
             files_truncated: 0,
             reg_truncated: 0,
             walk_degraded: false,
+            recovered_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);
@@ -1244,14 +1364,14 @@ mod tests {
     fn budget_exhausted_end_returns_diff_without_arming() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         let _allow = crate::scan_allow::test_lock();
-        *SESSION.lock().unwrap() = None;
+        let session = Mutex::new(None);
         let stale = "stale_monitor_authorization".to_string();
         crate::scan_allow::remember_for_test(
             crate::scan_allow::AllowScope::Monitor,
             &[crate::scan_allow::test_item(&stale)],
         );
         TEST_BUDGET.store(3, std::sync::atomic::Ordering::SeqCst);
-        super::begin().unwrap();
+        begin_with(&session, capture_snapshot).unwrap();
         assert!(!crate::scan_allow::was_recent(
             crate::scan_allow::AllowScope::Monitor,
             &stale
@@ -1260,7 +1380,7 @@ mod tests {
             crate::scan_allow::AllowScope::Monitor,
             &[crate::scan_allow::test_item(&stale)],
         );
-        let res = super::end();
+        let res = end_with(&session, take_fs_snapshot, reg_value_names);
         TEST_BUDGET.store(200, std::sync::atomic::Ordering::SeqCst);
         let res = res.expect("end must succeed even on a truncated walk");
         // The diff itself reports the degradation so the UI can say the scan

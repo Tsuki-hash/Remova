@@ -35,6 +35,8 @@ export function MorePage({
   restore: rest,
   selected,
   monitoring,
+  monitorRecovery,
+  onDiscardMonitorRecovery,
   monitorSnapshotBusy,
   monitorDiff,
   lastReport,
@@ -57,6 +59,8 @@ export function MorePage({
   restore: ReturnType<typeof useMoreRestore>;
   selected: InstalledApp | null;
   monitoring: boolean;
+  monitorRecovery?: "recovered" | "unavailable" | null;
+  onDiscardMonitorRecovery?: () => void;
   monitorSnapshotBusy?: boolean;
   monitorDiff: MonitorDiff | null;
   lastReport: FullCleanupReport | null;
@@ -210,7 +214,7 @@ export function MorePage({
         void onToggleMonitor();
         openFromTrigger("monitor");
       },
-      badge: monitoring ? L.badgeRunning : undefined,
+      badge: monitoring ? L.badgeRunning : monitorRecovery ? L.monitorRecoveryBadge : undefined,
     },
   ];
 
@@ -491,6 +495,8 @@ export function MorePage({
         <MonitorPanel
           diff={monitorDiff}
           monitoring={monitoring}
+          recovery={monitorRecovery}
+          onDiscardRecovery={onDiscardMonitorRecovery}
           stopping={monitorSnapshotBusy}
           onToggle={onToggleMonitor}
           onToCleanup={onMonitorToCleanup}
