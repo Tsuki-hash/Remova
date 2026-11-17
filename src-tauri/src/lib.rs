@@ -496,7 +496,272 @@ mod cleanup_trust_tests {
 
     #[test]
     #[cfg(windows)]
+    fn orphan_commands_recheck_owners_with_the_original_tree_held() {
+        use crate::scan_contract::{ScanCompleteness, ScanStatus};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Default)]
+        struct State {
+            changed: bool,
+            armed: bool,
+            reads: usize,
+            held_check: bool,
+        }
+
+        let _backup = crate::backup::lock_backup_env();
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("orphan-live-owners");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
+        let _seals = crate::path_seal::TestStore::new(fixture.join("seals"));
+        let _history = crate::history::use_history_dir(fixture.path());
+        let target = app("Orphan fixture", "Orphan", "");
+
+        for backup in [false, true] {
+            for case in [
+                "HKLM64",
+                "HKLM32",
+                "HKCU",
+                "parent",
+                "child",
+                "unnamed",
+                "name-only",
+                "partial",
+                "failed",
+                "cancelled",
+            ] {
+                for moment in ["before-preview", "after-preview", "held-tree"] {
+                    let root = fixture.subdir(&format!("scan-{backup}-{case}-{moment}"));
+                    let directory = root.join("CandidateOwnerFixture");
+                    std::fs::create_dir(&directory).unwrap();
+                    let old_file = directory.join("app.exe");
+                    std::fs::write(&old_file, b"old residue").unwrap();
+                    let original_id = crate::fsutil::local_directory_id(&directory).unwrap();
+                    let _roots = orphans::use_test_roots(vec![root.clone()]);
+                    let state = Arc::new(Mutex::new(State::default()));
+                    let read_state = Arc::clone(&state);
+                    let read_directory = directory.clone();
+                    let _inventory = apps::inventory_test_support::use_source(move || {
+                        let mut state = read_state.lock().unwrap();
+                        if state.armed {
+                            state.reads += 1;
+                            if state.reads == 2 {
+                                // First read is the plan. The second must run
+                                // after the final source tree is already held.
+                                assert!(std::fs::rename(
+                                    &read_directory,
+                                    read_directory.with_extension("moved")
+                                )
+                                .is_err());
+                                state.held_check = true;
+                                state.changed = true;
+                            }
+                        }
+                        if !state.changed {
+                            return (vec![], ScanCompleteness::complete());
+                        }
+                        let completeness = match case {
+                            "partial" => ScanCompleteness::partial(3, vec!["HKLM32".into()]),
+                            "failed" => ScanCompleteness::failed("HKCU".into()),
+                            "cancelled" => ScanCompleteness::cancelled(1),
+                            _ => ScanCompleteness::complete(),
+                        };
+                        if completeness.status != ScanStatus::Complete {
+                            return (vec![], completeness);
+                        }
+                        let install = match case {
+                            "parent" => read_directory.parent().unwrap().to_path_buf(),
+                            "child" => read_directory.join("NewProduct"),
+                            "name-only" => std::path::PathBuf::new(),
+                            _ => read_directory.clone(),
+                        };
+                        let name = match case {
+                            "unnamed" => "",
+                            "name-only" => "CandidateOwnerFixture",
+                            _ => "Replacement product",
+                        };
+                        let source = if matches!(case, "HKLM32" | "HKCU") {
+                            case
+                        } else {
+                            "HKLM64"
+                        };
+                        (
+                            vec![app(name, source, &install.to_string_lossy())],
+                            completeness,
+                        )
+                    });
+                    let scan =
+                        tauri::async_runtime::block_on(scan_orphan_leftovers(None, Some(false)))
+                            .unwrap();
+                    assert!(scan.cleanup_allowed, "{backup}/{case}/{moment}");
+                    assert_eq!(scan.items.len(), 1);
+                    let options = FullCleanupOptions {
+                        dry_run: false,
+                        skip_official_uninstall: true,
+                        backup_enabled: backup,
+                        restore_point: false,
+                        cleanup_source: Some("orphan".into()),
+                        scope_revision: scan.scope_revision,
+                        uninstall_review: None,
+                    };
+                    if moment == "before-preview" {
+                        state.lock().unwrap().changed = true;
+                    }
+                    let preview = tauri::async_runtime::block_on(run_cleanup_dry_run(
+                        target.clone(),
+                        scan.items.clone(),
+                        Some("orphan".into()),
+                        scan.scope_revision,
+                        None,
+                    ))
+                    .unwrap();
+                    let refused = moment == "before-preview";
+                    assert_eq!(preview.deleted_planned, u32::from(!refused));
+                    assert_eq!(preview.skipped, u32::from(refused));
+                    // The installer reuses the existing root, without renaming
+                    // it, and adds data before confirmation/execution.
+                    let new_file = directory.join("new-installation.bin");
+                    std::fs::write(&new_file, b"new installed data").unwrap();
+                    assert_eq!(
+                        crate::fsutil::local_directory_id(&directory).unwrap(),
+                        original_id
+                    );
+                    {
+                        let mut state = state.lock().unwrap();
+                        if moment == "held-tree" {
+                            state.armed = true;
+                            state.reads = 0;
+                        } else {
+                            state.changed = true;
+                        }
+                    }
+                    let report = tauri::async_runtime::block_on(run_full_cleanup(
+                        target.clone(),
+                        scan.items,
+                        options,
+                        None,
+                    ))
+                    .unwrap();
+                    assert_eq!(
+                        (
+                            report.deleted,
+                            report.failed,
+                            report.skipped,
+                            report.delayed
+                        ),
+                        (0, 0, 1, 0),
+                        "{backup}/{case}/{moment}: {report:?}"
+                    );
+                    let reason = if matches!(case, "partial" | "failed" | "cancelled") {
+                        orphans::OWNER_UNVERIFIED
+                    } else {
+                        orphans::OWNER_CHANGED
+                    };
+                    assert_eq!(report.item_details[0].message, reason);
+                    assert_eq!(std::fs::read(&old_file).unwrap(), b"old residue");
+                    assert_eq!(std::fs::read(&new_file).unwrap(), b"new installed data");
+                    assert_eq!(
+                        crate::fsutil::local_directory_id(&directory).unwrap(),
+                        original_id
+                    );
+                    if moment == "held-tree" {
+                        assert!(state.lock().unwrap().held_check);
+                        assert_eq!(report.backup_verified, backup);
+                    }
+                    let fresh =
+                        tauri::async_runtime::block_on(scan_orphan_leftovers(None, Some(false)))
+                            .unwrap();
+                    if reason == orphans::OWNER_CHANGED {
+                        assert!(
+                            fresh.items.is_empty(),
+                            "new owners are excluded on a fresh scan"
+                        );
+                    } else {
+                        assert!(!fresh.cleanup_allowed);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn orphan_commands_keep_unowned_cleanup_and_accepted_cancellation() {
+        use crate::scan_contract::ScanCompleteness;
+        use std::sync::{Arc, Mutex};
+
+        let _backup = crate::backup::lock_backup_env();
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("orphan-live-positive");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
+        let _seals = crate::path_seal::TestStore::new(fixture.join("seals"));
+        let _history = crate::history::use_history_dir(fixture.path());
+        let target = app("Orphan fixture", "Orphan", "");
+        for backup in [false, true] {
+            for cancel in [false, true] {
+                let root = fixture.subdir(&format!("scan-{backup}-{cancel}"));
+                let directory = root.join("UnownedCandidateFixture");
+                std::fs::create_dir(&directory).unwrap();
+                let sentinel = directory.join("app.exe");
+                std::fs::write(&sentinel, b"unowned fixture").unwrap();
+                let _roots = orphans::use_test_roots(vec![root]);
+                let cancel_id = Arc::new(Mutex::new(None));
+                let read_cancel_id = Arc::clone(&cancel_id);
+                let _inventory = apps::inventory_test_support::use_source(move || {
+                    if let Some(id) = read_cancel_id.lock().unwrap().take() {
+                        assert!(executor::cleanup_request::cancel(id));
+                    }
+                    (vec![], ScanCompleteness::complete())
+                });
+                let scan = tauri::async_runtime::block_on(scan_orphan_leftovers(None, Some(false)))
+                    .unwrap();
+                assert_eq!(scan.items.len(), 1);
+                let preview = tauri::async_runtime::block_on(run_cleanup_dry_run(
+                    target.clone(),
+                    scan.items.clone(),
+                    Some("orphan".into()),
+                    scan.scope_revision,
+                    None,
+                ))
+                .unwrap();
+                assert_eq!(preview.deleted_planned, 1);
+                let operation = executor::cleanup_request::begin().unwrap();
+                if cancel {
+                    *cancel_id.lock().unwrap() = Some(operation);
+                }
+                let report = tauri::async_runtime::block_on(run_full_cleanup(
+                    target.clone(),
+                    scan.items,
+                    FullCleanupOptions {
+                        dry_run: false,
+                        skip_official_uninstall: true,
+                        backup_enabled: backup,
+                        restore_point: false,
+                        cleanup_source: Some("orphan".into()),
+                        scope_revision: scan.scope_revision,
+                        uninstall_review: None,
+                    },
+                    Some(operation),
+                ))
+                .unwrap();
+                assert_eq!(report.failed, 0, "{report:?}");
+                if cancel {
+                    assert!(report.aborted, "{report:?}");
+                    assert_eq!((report.deleted, report.delayed), (0, 0));
+                    assert_eq!(std::fs::read(sentinel).unwrap(), b"unowned fixture");
+                } else {
+                    assert_eq!((report.deleted, report.skipped), (1, 0), "{report:?}");
+                    assert!(!directory.exists());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn orphan_commands_preserve_replacements_and_require_the_latest_scan() {
+        let _inventory = crate::apps::inventory_test_support::use_source(|| {
+            (vec![], crate::scan_contract::ScanCompleteness::complete())
+        });
         let _backup = crate::backup::lock_backup_env();
         let _allow = crate::scan_allow::test_lock();
         let fixture = crate::test_support::TempDir::new("orphan-ipc-identity");
@@ -639,6 +904,9 @@ mod cleanup_trust_tests {
 
     #[test]
     fn orphan_forgery_reaches_preview_and_full_gates_without_deleting_sentinel() {
+        let _inventory = crate::apps::inventory_test_support::use_source(|| {
+            (vec![], crate::scan_contract::ScanCompleteness::complete())
+        });
         let _lock = crate::scan_allow::test_lock();
         let root = crate::test_support::TempDir::new("orphan_guard");
         let directory = root.subdir("Candidate");
@@ -689,7 +957,7 @@ mod cleanup_trust_tests {
         }
         trusted.shared = false;
         trusted.service_bound = false;
-        orphans::remember_orphan_items(&[trusted.clone()]);
+        let revision = orphans::remember_orphan_items(&[trusted.clone()]);
         let preview = executor::run_cleanup_dry_for_app_source(
             &app,
             &[trusted.clone()],
@@ -699,7 +967,21 @@ mod cleanup_trust_tests {
             preview.deleted_planned, 1,
             "the ordinary fixture must be eligible"
         );
-        let report = executor::run_full_cleanup(&app, &[trusted], &options);
+        let scan = crate::scan_allow::resolve_app_files(
+            crate::scan_allow::ORPHAN_SCAN_KEY,
+            revision,
+            &[trusted.clone()],
+        )
+        .unwrap();
+        let report = executor::run_full_cleanup_for_scan(
+            &app,
+            &[trusted],
+            &FullCleanupOptions {
+                scope_revision: revision,
+                ..options
+            },
+            Some(&scan),
+        );
         assert_eq!(report.deleted, 1, "ordinary authorized cleanup still works");
         assert!(!directory.exists());
     }
@@ -940,7 +1222,11 @@ async fn run_cleanup_dry_run(
     uninstall_review: Option<u64>,
 ) -> Result<CleanupReport, String> {
     let source = cleanup_source_from_arg(cleanup_source.as_deref());
+    #[cfg(test)]
+    let inventory = apps::inventory_test_support::current();
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(test)]
+        let _inventory = inventory.map(apps::inventory_test_support::Fixture::enter);
         let app = resolve_review_cleanup_app(app, source, uninstall_review)?;
         if let Some(id) = uninstall_review {
             executor::uninstall_review::verify(&app, id)?;
@@ -1038,9 +1324,13 @@ async fn run_full_cleanup(
     )?;
     #[cfg(test)]
     let history_dir = history::test_history_dir();
+    #[cfg(test)]
+    let inventory = apps::inventory_test_support::current();
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(test)]
         let _history = history_dir.as_deref().map(history::use_history_dir);
+        #[cfg(test)]
+        let _inventory = inventory.map(apps::inventory_test_support::Fixture::enter);
         let work = || executor::run_full_cleanup_for_scan(&app, &items, &options, scan.as_ref());
         let mut report = match request {
             Some(request) => request.run(work),
@@ -1166,7 +1456,15 @@ async fn scan_orphan_leftovers(
 ) -> Result<orphans::OrphanScanResult, String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     let extended = extended.unwrap_or(false);
+    #[cfg(test)]
+    let inventory = apps::inventory_test_support::current();
+    #[cfg(test)]
+    let roots = orphans::test_roots();
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(test)]
+        let _inventory = inventory.map(apps::inventory_test_support::Fixture::enter);
+        #[cfg(test)]
+        let _roots = roots.map(orphans::use_test_roots);
         scan_task::run_scoped(id, "orphan", || {
             scan_task::checkpoint("registry", 0);
             let inventory = apps::scan_install_owners();

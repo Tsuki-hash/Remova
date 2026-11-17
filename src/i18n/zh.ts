@@ -1144,6 +1144,8 @@ export const dict = {
     backendAnalysisRequired: "请先完成深度分析再执行清理",
     cleanupSelectionChanged: "选择或清理选项已变化，请核对后重新确认。",
     backendCleanupObjectChanged: "此文件或目录在扫描后发生变化，已保留，请重新扫描。",
+    backendOrphanOwnerChanged: "此目录现已归属已安装的软件，已保留。请重新扫描孤立残留。",
+    backendOrphanOwnerUnverified: "无法完整核验此目录的安装归属，已保留。请稍后重新扫描。",
     backendCleanupItemStale: (path: string) => `清理项不在最近一次分析结果中：${path}`,
     uninstallRelativeRefused: "卸载命令使用相对路径的可执行文件，出于安全考虑已拒绝执行",
     backendLaunchFailed: "无法启动官方卸载程序",

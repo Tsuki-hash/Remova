@@ -210,6 +210,41 @@ fn match_installed_index(index: &InstalledMatch, dir: &std::path::Path) -> bool 
     })
 }
 
+pub(crate) const OWNER_CHANGED: &str = "orphan directory now has an installed owner; scan again";
+pub(crate) const OWNER_UNVERIFIED: &str = "orphan ownership could not be verified; scan again";
+
+/// A fresh read may only narrow the original orphan authorization.
+pub(crate) struct CleanupOwnership(Result<InstalledMatch, &'static str>);
+
+impl CleanupOwnership {
+    pub(crate) fn read() -> Self {
+        let inventory = crate::apps::scan_install_owners();
+        if inventory.completeness.status != crate::scan_contract::ScanStatus::Complete
+            || !inventory.completeness.failed_roots.is_empty()
+            || crate::scan_task::cancelled()
+            || crate::executor::cleanup_cancelled()
+        {
+            return Self(Err(OWNER_UNVERIFIED));
+        }
+        Self(Ok(build_match_index(
+            &inventory.apps,
+            inventory.install_roots.iter().map(String::as_str),
+        )))
+    }
+
+    pub(crate) fn verify(&self, path: &std::path::Path) -> Result<(), &'static str> {
+        let index = self.0.as_ref().map_err(|error| *error)?;
+        if crate::scan_task::cancelled() || crate::executor::cleanup_cancelled() {
+            return Err(OWNER_UNVERIFIED);
+        }
+        if match_installed_index(index, path) {
+            Err(OWNER_CHANGED)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// the cap used to be invisible. The UI now says how many candidates
 /// the result limit left out.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -227,6 +262,10 @@ pub struct OrphanScanResult {
 }
 
 fn orphan_roots() -> Vec<std::path::PathBuf> {
+    #[cfg(test)]
+    if let Some(roots) = test_roots() {
+        return roots;
+    }
     #[cfg(windows)]
     {
         use windows::Win32::UI::Shell::{
@@ -247,6 +286,31 @@ fn orphan_roots() -> Vec<std::path::PathBuf> {
     {
         Vec::new()
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ROOTS: std::cell::RefCell<Option<Vec<PathBuf>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn test_roots() -> Option<Vec<PathBuf>> {
+    TEST_ROOTS.with_borrow(Clone::clone)
+}
+
+#[cfg(test)]
+pub(crate) struct TestRootsGuard(Option<Vec<PathBuf>>);
+
+#[cfg(test)]
+impl Drop for TestRootsGuard {
+    fn drop(&mut self) {
+        TEST_ROOTS.with(|roots| roots.replace(self.0.take()));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn use_test_roots(roots: Vec<PathBuf>) -> TestRootsGuard {
+    TestRootsGuard(TEST_ROOTS.with(|current| current.replace(Some(roots))))
 }
 
 /// User library roots (Documents / Downloads / Desktop) — candidates under

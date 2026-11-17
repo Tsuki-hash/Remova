@@ -10,6 +10,8 @@ it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics i
   expect(backendText("manage:query_timeout")).toBe(L.manageQueryTimeout);
   expect(backendText("manage:query_truncated")).toBe(L.manageQueryTruncated);
   expect(backendText("cleanup object no longer matches the scan; scan again")).toBe(L.backendCleanupObjectChanged);
+  expect(backendText("orphan directory now has an installed owner; scan again")).toBe(L.backendOrphanOwnerChanged);
+  expect(backendText("orphan ownership could not be verified; scan again")).toBe(L.backendOrphanOwnerUnverified);
   expect(backendText("uninstaller finished: vendor.exe")).toBe(L.uninstallOk);
   expect(backendText("uninstaller exited with Some(1603)")).toBe(L.backendUninstallExit("1603"));
   expect(backendText("uninstaller exited with Some(1603) [fatal_or_source_missing]")).toBe(

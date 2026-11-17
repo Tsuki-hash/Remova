@@ -1163,6 +1163,8 @@ export const dict: EnDict = {
     backendAnalysisRequired: "Run the deep analysis before cleaning",
     cleanupSelectionChanged: "The selection or cleanup options changed. Review them and confirm again.",
     backendCleanupObjectChanged: "This file or folder changed after the scan and was kept. Scan again.",
+    backendOrphanOwnerChanged: "This folder now belongs to installed software and was kept. Scan for orphan leftovers again.",
+    backendOrphanOwnerUnverified: "The folder's installation ownership could not be fully verified. It was kept. Scan again later.",
     backendCleanupItemStale: (path: string) => `This cleanup item is not from the latest analysis: ${path}`,
     uninstallRelativeRefused: "The uninstall command uses a relative executable; refused for safety",
     backendLaunchFailed: "Could not start the official uninstaller",

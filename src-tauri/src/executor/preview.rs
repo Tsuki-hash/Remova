@@ -38,6 +38,8 @@ pub(crate) fn run_cleanup_dry_for_app_snapshot(
         Err(e) => return ignore_read_abort_dry(app.name.clone(), e),
     };
 
+    let ownership = (source == crate::policy::CleanupSource::Orphan)
+        .then(crate::orphans::CleanupOwnership::read);
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
         let refused = if !decision.is_allow() {
@@ -45,7 +47,9 @@ pub(crate) fn run_cleanup_dry_for_app_snapshot(
         } else if scan.is_some_and(|scan| !scan.matches(it)) {
             Some(crate::scan_allow::APP_OBJECT_CHANGED)
         } else {
-            None
+            ownership
+                .as_ref()
+                .and_then(|owners| owners.verify(Path::new(&it.path)).err())
         };
         if let Some(message) = refused {
             skipped += 1;

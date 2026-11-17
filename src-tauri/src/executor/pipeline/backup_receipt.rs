@@ -9,8 +9,15 @@ use crate::scanner::ItemKind;
 pub(super) enum FilesystemDeleteError {
     Unverified(String),
     ScanChanged,
+    Refused(&'static str),
     BackupUnavailable(io::Error),
     Io(io::Error),
+}
+
+impl From<io::Error> for FilesystemDeleteError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 #[derive(Default)]
@@ -177,6 +184,7 @@ impl BackupReceipt {
         path: &Path,
         scanned_id: Option<(u32, u64)>,
         directory: bool,
+        before_remove: impl FnOnce() -> Result<(), FilesystemDeleteError>,
     ) -> Result<(), FilesystemDeleteError> {
         let unverified = FilesystemDeleteError::Unverified;
         let source = path
@@ -211,7 +219,7 @@ impl BackupReceipt {
         let _backup = files
             .hold(root_key)
             .map_err(FilesystemDeleteError::BackupUnavailable)?;
-        tree.remove_backed_up().map_err(FilesystemDeleteError::Io)
+        tree.remove_backed_up_checked(before_remove)
     }
 
     #[cfg(not(windows))]
@@ -220,6 +228,7 @@ impl BackupReceipt {
         _: &Path,
         _: Option<(u32, u64)>,
         _: bool,
+        _: impl FnOnce() -> Result<(), FilesystemDeleteError>,
     ) -> Result<(), FilesystemDeleteError> {
         Err(FilesystemDeleteError::Unverified(
             "backup verification requires Windows".into(),

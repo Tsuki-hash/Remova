@@ -396,6 +396,10 @@ pub(crate) struct InstallInventory {
 }
 
 pub(crate) fn scan_install_owners() -> InstallInventory {
+    #[cfg(test)]
+    if let Some(inventory) = inventory_test_support::read() {
+        return inventory;
+    }
     #[cfg(windows)]
     {
         let sources: [(&str, HKEY, &str, REG_SAM_FLAGS); 3] = [
@@ -438,6 +442,54 @@ pub(crate) fn scan_install_owners() -> InstallInventory {
         install_roots: Vec::new(),
         completeness: ScanCompleteness::complete(),
         registration_aliases: HashMap::new(),
+    }
+}
+
+/// Per-request inventory fixtures also follow blocking IPC workers. They never
+/// replace the process-wide inventory or touch the host registration stores.
+#[cfg(test)]
+pub(crate) mod inventory_test_support {
+    use super::*;
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    type Source = Box<dyn FnMut() -> (Vec<InstalledApp>, ScanCompleteness) + Send>;
+
+    #[derive(Clone)]
+    pub(crate) struct Fixture(Arc<Mutex<Source>>);
+
+    thread_local! {
+        static CURRENT: RefCell<Option<Fixture>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) struct Guard(Option<Fixture>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            CURRENT.with(|current| current.replace(self.0.take()));
+        }
+    }
+
+    pub(crate) fn current() -> Option<Fixture> {
+        CURRENT.with_borrow(Clone::clone)
+    }
+
+    impl Fixture {
+        pub(crate) fn enter(self) -> Guard {
+            Guard(CURRENT.with(|current| current.replace(Some(self))))
+        }
+    }
+
+    pub(crate) fn use_source(
+        source: impl FnMut() -> (Vec<InstalledApp>, ScanCompleteness) + Send + 'static,
+    ) -> Guard {
+        Fixture(Arc::new(Mutex::new(Box::new(source)))).enter()
+    }
+
+    pub(super) fn read() -> Option<InstallInventory> {
+        let fixture = current()?;
+        let (apps, completeness) = fixture.0.lock().unwrap().as_mut()();
+        Some(finish_inventory(apps, completeness))
     }
 }
 

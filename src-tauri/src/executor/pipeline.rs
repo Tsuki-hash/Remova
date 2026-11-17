@@ -87,6 +87,8 @@ fn plan_cleanup_items(
 ) -> CleanupPlan {
     let mut allowed = Vec::new();
     let mut refused = Vec::new();
+    let ownership = (source == crate::policy::CleanupSource::Orphan)
+        .then(crate::orphans::CleanupOwnership::read);
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, ignore);
         let refused_reason = if !decision.is_allow() {
@@ -94,7 +96,9 @@ fn plan_cleanup_items(
         } else if scan.is_some_and(|scan| !scan.matches(it)) {
             Some(crate::scan_allow::APP_OBJECT_CHANGED)
         } else {
-            None
+            ownership
+                .as_ref()
+                .and_then(|owners| owners.verify(Path::new(&it.path)).err())
         };
         if let Some(message) = refused_reason {
             refused.push(ItemDetail {
@@ -330,12 +334,21 @@ fn delete_planned_items_with_native(
     receipt: Option<&BackupReceipt>,
     specialty: Option<(crate::scan_allow::AllowScope, Option<u64>)>,
     scan: Option<&crate::scan_allow::AppFileSnapshot>,
+    orphan: bool,
 ) -> DeleteOutcome {
     let mut path_results = None;
     delete_planned_items_with_io(
         items,
         &mut |item| {
             let path = Path::new(&item.path);
+            let verify_ownership = || {
+                if orphan {
+                    crate::orphans::CleanupOwnership::read()
+                        .verify(path)
+                        .map_err(FilesystemDeleteError::Refused)?;
+                }
+                Ok(())
+            };
             let scoped_id = specialty
                 .map(|(scope, revision)| crate::scan_allow::scoped_file_id(scope, revision, path))
                 .transpose()
@@ -347,22 +360,33 @@ fn delete_planned_items_with_native(
                 })
                 .transpose()?;
             if let Some(receipt) = receipt {
-                return receipt.delete(path, scanned_id.or(scoped_id), item.kind == ItemKind::Dir);
+                return receipt.delete(
+                    path,
+                    scanned_id.or(scoped_id),
+                    item.kind == ItemKind::Dir,
+                    verify_ownership,
+                );
             }
             #[cfg(windows)]
             if let Some(id) = scanned_id {
-                return crate::fsutil::remove_scanned_object(
-                    path,
-                    id,
-                    Some(item.kind == ItemKind::Dir),
-                )
-                .map_err(|error| {
-                    if error.kind() == std::io::ErrorKind::InvalidData {
-                        FilesystemDeleteError::ScanChanged
-                    } else {
-                        FilesystemDeleteError::Io(error)
-                    }
-                });
+                let tree =
+                    crate::fsutil::pin_scanned_object(path, id, Some(item.kind == ItemKind::Dir))
+                        .map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::InvalidData {
+                            FilesystemDeleteError::ScanChanged
+                        } else {
+                            FilesystemDeleteError::Io(error)
+                        }
+                    })?;
+                // Re-read ownership with the exact tree held, before any
+                // child is disposed. A matching root ID alone is insufficient.
+                verify_ownership()?;
+                return tree.remove_scanned().map_err(FilesystemDeleteError::Io);
+            }
+            if orphan {
+                return Err(FilesystemDeleteError::Refused(
+                    crate::orphans::OWNER_UNVERIFIED,
+                ));
             }
             #[cfg(windows)]
             if let Some(id) = scoped_id {
@@ -608,6 +632,15 @@ fn delete_planned_items_with_io(
                             kind: format!("{:?}", it.kind).to_lowercase(),
                             status: "skipped".into(),
                             message: crate::scan_allow::APP_OBJECT_CHANGED.into(),
+                        });
+                    }
+                    Err(FilesystemDeleteError::Refused(reason)) => {
+                        skipped += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "skipped".into(),
+                            message: reason.into(),
                         });
                     }
                     Err(FilesystemDeleteError::BackupUnavailable(error)) => {
@@ -1029,6 +1062,7 @@ fn run_full_cleanup_with_preflight(
             .specialty_scope()
             .map(|scope| (scope, opts.scope_revision)),
         scan,
+        source == crate::policy::CleanupSource::Orphan,
     );
     // Keep unselected parent directories when cleanup requires a backup.
     let tokens: Vec<String> = [app.name.clone(), app.publisher.clone()]
@@ -1535,6 +1569,7 @@ mod tests {
             None,
             None,
             None,
+            false,
         );
         assert_eq!(calls, 1);
         assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
@@ -2115,6 +2150,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cleanup_keeps_identity_until_disposition_and_preserves_recreated_names() {
+        let _inventory = crate::apps::inventory_test_support::use_source(|| {
+            (vec![], crate::scan_contract::ScanCompleteness::complete())
+        });
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -2677,7 +2715,8 @@ mod tests {
         // the "the uninstaller already took it" shape.
         let registry = crate::test_support::registry_mutations::Spy::new();
         crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
-        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None, None, None);
+        let outcome =
+            delete_planned_items_with_native(&items, &mut |_, _| None, None, None, None, false);
         assert_eq!(
             (outcome.deleted, outcome.failed, outcome.skipped),
             (0, 0, 1)
@@ -2717,8 +2756,14 @@ mod tests {
             r"HKCU\SOFTWARE\RemovaNoSuchVendor",
             true,
         );
-        let value_outcome =
-            delete_planned_items_with_native(&value_items, &mut |_, _| None, None, None, None);
+        let value_outcome = delete_planned_items_with_native(
+            &value_items,
+            &mut |_, _| None,
+            None,
+            None,
+            None,
+            false,
+        );
         assert_eq!(
             (
                 value_outcome.deleted,

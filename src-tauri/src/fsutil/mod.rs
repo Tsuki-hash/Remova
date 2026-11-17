@@ -1429,6 +1429,15 @@ pub(crate) fn remove_scanned_object(
     expected: (u32, u64),
     directory: Option<bool>,
 ) -> std::io::Result<()> {
+    pin_scanned_object(path, expected, directory)?.remove_scanned()
+}
+
+#[cfg(windows)]
+pub(crate) fn pin_scanned_object(
+    path: &Path,
+    expected: (u32, u64),
+    directory: Option<bool>,
+) -> std::io::Result<PinnedLocalDeleteTree> {
     let tree = PinnedLocalDeleteTree::collect_with_root_access(
         path,
         crate::path_seal::MAX_PAYLOAD_NODES,
@@ -1445,7 +1454,7 @@ pub(crate) fn remove_scanned_object(
             "scanned cleanup object changed",
         ));
     }
-    tree.remove_objects(false, true)
+    Ok(tree)
 }
 
 pub(crate) fn is_plain_pinned_directory(pin: &DirPin) -> bool {
@@ -1943,12 +1952,25 @@ impl PinnedLocalDeleteTree {
         self.remove_objects(false, false)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn remove_scanned(self) -> std::io::Result<()> {
+        self.remove_objects(false, true)
+    }
+
     pub(crate) fn remove_backed_up(self) -> std::io::Result<()> {
+        self.remove_backed_up_checked(|| Ok(()))
+    }
+
+    pub(crate) fn remove_backed_up_checked<E: From<std::io::Error>>(
+        self,
+        before_remove: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
         #[cfg(windows)]
         for (_, _, pin) in &self.objects {
-            verify_backed_object(pin)?;
+            verify_backed_object(pin).map_err(E::from)?;
         }
-        self.remove_objects(true, true)
+        before_remove()?;
+        self.remove_objects(true, true).map_err(E::from)
     }
 
     fn remove_objects(

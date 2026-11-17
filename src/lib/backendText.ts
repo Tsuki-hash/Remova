@@ -62,6 +62,8 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     "app is not from the latest scan": L.backendAppStale,
     "analysis must run before cleanup": L.backendAnalysisRequired,
     "cleanup object no longer matches the scan; scan again": L.backendCleanupObjectChanged,
+    "orphan directory now has an installed owner; scan again": L.backendOrphanOwnerChanged,
+    "orphan ownership could not be verified; scan again": L.backendOrphanOwnerUnverified,
     "uninstall command uses a relative executable; refused": L.uninstallRelativeRefused,
     "uninstall command not from latest app scan": L.backendScanExpired,
     "uninstall launch failed": L.backendLaunchFailed, "uninstall wait failed": L.backendWaitFailed,
