@@ -103,6 +103,7 @@ mod pipeline;
 mod preview;
 pub(crate) mod reboot;
 mod uninstall;
+pub(crate) mod uninstall_review;
 
 pub use pipeline::*;
 pub use preview::*;
@@ -147,6 +148,8 @@ pub struct FullCleanupOptions {
     pub cleanup_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uninstall_review: Option<u64>,
 }
 
 pub fn cleanup_source_from_opts(opts: &FullCleanupOptions) -> crate::policy::CleanupSource {
@@ -169,6 +172,8 @@ pub struct OfficialUninstallResult {
     pub ok: bool,
     pub message: String,
     pub had_command: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uninstall_review: Option<u64>,
     /// The uninstaller reported that it already initiated a reboot (MSI 1641).
     #[serde(default)]
     pub reboot_initiated: bool,
@@ -190,6 +195,8 @@ pub struct FullCleanupReport {
     #[serde(default)]
     pub backup_verified: bool,
     pub uninstall_ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uninstall_review: Option<u64>,
     pub uninstall_message: String,
     pub deleted: u32,
     pub failed: u32,
@@ -251,6 +258,7 @@ mod tests {
             aborted: true,
             reboot_pending: true,
             reboot_gate_persisted: true,
+            uninstall_review: None,
             restore_point_ok: false,
             restore_point_msg: "msg".into(),
             history_save_failed: true,
@@ -293,6 +301,7 @@ mod tests {
             had_command: true,
             reboot_initiated: true,
             reboot_gate_persisted: true,
+            uninstall_review: None,
         };
         let ujson = serde_json::to_value(&uninstall).unwrap();
         assert_eq!(ujson["reboot_initiated"], serde_json::json!(true));

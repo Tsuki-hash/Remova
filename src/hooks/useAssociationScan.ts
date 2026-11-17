@@ -96,8 +96,8 @@ export function useAssociationScan() {
       if (job.id !== undefined) void api.cancelAssociationScan(job.id).catch(() => {});
     }
   }, [stop]);
-  const run = useCallback((app: InstalledApp) =>
-    runReadOnly(id => api.analyze(app, id), result => result.items.length), [runReadOnly]);
+  const run = useCallback((app: InstalledApp, receipt?: number) =>
+    runReadOnly(id => receipt === undefined ? api.analyze(app, id) : api.analyze(app, id, receipt), result => result.items.length), [runReadOnly]);
   const runItems = useCallback(<T,>(work: (id: number) => Promise<T[]>) =>
     runReadOnly(work, result => result.length), [runReadOnly]);
   return { run, runItems, runReadOnly, cancel, progress };

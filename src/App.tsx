@@ -194,7 +194,8 @@ export default function App() {
     uninstallReview,
     actions: residualActions,
   } = residual;
-  const residualFromUninstall = reviewForApp(uninstallReview, core.scanTarget) !== null;
+  const uninstallReviewReceipt = reviewForApp(uninstallReview, core.scanTarget)?.receipt;
+  const residualFromUninstall = uninstallReviewReceipt !== undefined;
 
   const ai = useAiPanelState();
   const {
@@ -296,9 +297,10 @@ export default function App() {
   const onAfterCleanup = useCallback(
     (app: InstalledApp, report: FullCleanupReport) => {
  // re-analyze after cleanup when user preference is on.
-      if (!loadRescanAfterUninstall()) return;
+      if (!loadRescanAfterUninstall() || report.uninstall_review === undefined) return;
       void analyzeRef.current(app, {
         fromUninstall: true,
+        uninstallReview: report.uninstall_review,
         afterCleanup: true,
         reviewSession: reviewSessionFor(report),
       });
@@ -400,6 +402,7 @@ export default function App() {
   const {
     forceBusy,
     dryRunning,
+    previewStale,
     batching,
     batchIndex,
     batchTotal,
@@ -422,6 +425,7 @@ export default function App() {
     scan,
     selectedPaths,
     residualFromUninstall,
+    uninstallReviewReceipt,
     useOfficial,
     aiEnabled,
     aiRisk,
@@ -715,7 +719,7 @@ export default function App() {
     forceBusy,
     batching,
     error,
-    report,
+    report: report?.dry_run && previewStale ? null : report,
     aiReportBusy,
     aiReportNote,
     setAiReportBusy,

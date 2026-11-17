@@ -42,6 +42,7 @@ export function useCleanupHandlers({
   scan,
   selectedPaths,
   residualFromUninstall,
+  uninstallReviewReceipt,
   useOfficial,
   aiEnabled,
   aiRisk,
@@ -59,6 +60,7 @@ export function useCleanupHandlers({
   scan: ScanResult | null;
   selectedPaths: Set<string>;
   residualFromUninstall: boolean;
+  uninstallReviewReceipt?: number;
   useOfficial: boolean;
   aiEnabled: boolean;
   aiRisk?: string | null;
@@ -86,6 +88,7 @@ export function useCleanupHandlers({
   } = flow;
   const [forceBusy, setForceBusy] = useState(false);
   const [dryRunning, setDryRunning] = useState(false);
+  const [previewSelection, setPreviewSelection] = useState<{ scan: ScanResult; keys: Set<string> } | null>(null);
   /** Beginner batch path runs official uninstaller by default. */
   const batchUseOfficial = true;
   const [batching, setBatching] = useState(false);
@@ -144,7 +147,7 @@ export function useCleanupHandlers({
           cleanup_source:
             target.source === "Orphan" || target.source === "Monitor"
               ? (target.source.toLowerCase() as "orphan" | "monitor")
-              : "uninstall",
+              : "force",
         });
         if (report.aborted) {
           const message = cleanupAbortText(report, L);
@@ -185,6 +188,7 @@ export function useCleanupHandlers({
     try {
       const r = await api.dryRun(selected, items, {
         ...(scan.scope_revision !== undefined && { scope_revision: scan.scope_revision }),
+        ...(uninstallReviewReceipt !== undefined && { uninstall_review: uninstallReviewReceipt }),
         cleanup_source:
           selected.source === "Monitor"
             ? "monitor"
@@ -193,6 +197,7 @@ export function useCleanupHandlers({
               : "uninstall",
       });
       if (seq !== dryRunSeqRef.current) return;
+      setPreviewSelection({ scan, keys: selectedPaths });
       setReport(r);
       setVerifyRows(null);
       setAiReportNote(null);
@@ -207,6 +212,7 @@ export function useCleanupHandlers({
     scan,
     selected,
     selectedPaths,
+    uninstallReviewReceipt,
     setReport,
     setVerifyRows,
     setAiReportNote,
@@ -234,6 +240,7 @@ export function useCleanupHandlers({
       const r = await api.fullCleanup(selected, items, {
         dry_run: false,
         ...(scan.scope_revision !== undefined && { scope_revision: scan.scope_revision }),
+        ...(uninstallReviewReceipt !== undefined && { uninstall_review: uninstallReviewReceipt }),
  // Residual cleanup after official uninstall never re-runs official uninstaller.
  // Normal analysis runs official uninstall unless advanced direct cleanup is selected.
         skip_official_uninstall: !runOfficial,
@@ -246,7 +253,7 @@ export function useCleanupHandlers({
             ? "monitor"
             : selected.source === "Orphan"
               ? "orphan"
-              : "uninstall",
+              : !useOfficial && !residualFromUninstall ? "force" : "uninstall",
       });
       setReport(r);
       if (r.aborted) {
@@ -260,7 +267,9 @@ export function useCleanupHandlers({
         setAiReportNote(null);
         // A 1641 abort still means the official uninstaller succeeded. Keep the
         // post-uninstall state so a retry never re-runs the uninstaller.
-        if (r.uninstall_ok) setUninstallReview({ app: selected, rescan: { phase: r.reboot_pending ? "reboot" : "not_started" } });
+        if (r.uninstall_ok) setUninstallReview({ app: selected,
+          ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
+          rescan: { phase: r.reboot_pending ? "reboot" : "not_started" } });
         void refreshApps();
         return;
       }
@@ -286,7 +295,9 @@ export function useCleanupHandlers({
           if (vseq === verifySeqRef.current && (!currentReport || currentReport.current === r)) setVerifyRows(rows);
         })
         .catch(() => {});
-      if (r.uninstall_ok || residualFromUninstall) setUninstallReview({ app: selected, rescan: { phase: "not_started" } });
+      if (r.uninstall_ok || residualFromUninstall) setUninstallReview({ app: selected,
+        ...((r.uninstall_review ?? uninstallReviewReceipt) !== undefined && { receipt: r.uninstall_review ?? uninstallReviewReceipt }),
+        rescan: { phase: "not_started" } });
       if (r.uninstall_ok && selected) {
         afterCleanup = { app: selected, report: r };
       }
@@ -309,6 +320,8 @@ export function useCleanupHandlers({
     selectedPaths,
     refreshApps,
     runOfficial,
+    useOfficial,
+    uninstallReviewReceipt,
     setSelectedPaths,
     setScan,
     residualFromUninstall,
@@ -419,7 +432,7 @@ export function useCleanupHandlers({
   ]);
 
   const batchCleanup = useCallback(
-    async (queueOverride?: InstalledApp[], skipOfficialKeys: ReadonlySet<string> = new Set()) => {
+    async (queueOverride?: InstalledApp[], reviewReceipts: ReadonlyMap<string, number> = new Map()) => {
  // one Set for the whole filter, not per row.
       const multiSet = new Set(multi);
       const queue = queueOverride ?? apps.filter((a) => multiSet.has(appKey(a)));
@@ -430,7 +443,7 @@ export function useCleanupHandlers({
       if (busyRef.current || batching) return;
       const { ok, checked } = await requestConfirmEx({
         title: L.batchUninstall,
-        message: L.batchConfirm(queue.length, queue.some(a => !skipOfficialKeys.has(appKey(a)))),
+        message: L.batchConfirm(queue.length, queue.some(a => !reviewReceipts.has(appKey(a)))),
         confirmLabel: L.batchUninstall,
         danger: true,
         checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
@@ -465,7 +478,7 @@ export function useCleanupHandlers({
             busyRef,
           },
           checked,
-          skipOfficialKeys,
+          reviewReceipts,
         );
  // List must reflect uninstalled apps immediately.
         await refreshApps();
@@ -489,15 +502,20 @@ export function useCleanupHandlers({
   const retryFailedBatch = useCallback(() => {
     const failed = batchResults.filter((r) => r.status === "failed");
     if (!failed.length) return;
-    const keys = new Set(failed.map(r => r.key));
+    const keys = new Set(failed.filter(r => !r.officialDone || r.uninstallReview !== undefined).map(r => r.key));
+    if (!keys.size) {
+      toast.info(L.uninstallReviewExpired);
+      return;
+    }
     const queue = batchQueueRef.current.filter(a => keys.has(appKey(a)));
-    const officialDone = new Set(failed.filter(r => r.officialDone).map(r => r.key));
-    void batchCleanup(queue, officialDone).catch(e => setError(formatError(e, "cleanup")));
-  }, [batchResults, batchCleanup, setError]);
+    const receipts = new Map(failed.flatMap(r => r.uninstallReview === undefined ? [] : [[r.key, r.uninstallReview] as const]));
+    void batchCleanup(queue, receipts).catch(e => setError(formatError(e, "cleanup")));
+  }, [batchResults, batchCleanup, setError, L]);
 
   return {
     forceBusy,
     dryRunning,
+    previewStale: previewSelection !== null && (previewSelection.scan !== scan || previewSelection.keys !== selectedPaths),
     batching,
     batchIndex,
     batchTotal,

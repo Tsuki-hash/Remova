@@ -150,8 +150,8 @@ describe("useAnalyzeFlow request sequencing", () => {
     flow.setUninstallReview = residual;
     analyzeMock.mockRejectedValue(new Error(error));
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never, refreshApps: async () => {}, busyRef: { current: false } }));
-    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
-    expect(residual).toHaveBeenLastCalledWith({ app: app("AppA"), rescan: { phase } });
+    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true, uninstallReview: 42 }); });
+    expect(residual).toHaveBeenLastCalledWith({ app: app("AppA"), receipt: 42, rescan: { phase } });
     expect(captured.scan).toBeNull();
     expect(captured.scanning).toBe(false);
   });
@@ -285,7 +285,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     const busyRef = { current: true };
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef }));
-    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true }); });
+    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true, uninstallReview: 42 }); });
     expect(busyRef.current, "startUninstall is still holding the ref").toBe(true);
   });
 
@@ -338,7 +338,7 @@ describe("useAnalyzeFlow request sequencing", () => {
 
   it("rescans after a normal official uninstall when the preference is on", async () => {
     officialMock.mockResolvedValue({
-      ok: true, had_command: true, reboot_initiated: false,
+      ok: true, had_command: true, reboot_initiated: false, uninstall_review: 42,
       message: "uninstaller finished: setup.exe",
     });
     analyzeMock.mockResolvedValue(scan("NormalApp"));
@@ -349,6 +349,7 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(analyzeMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "NormalApp" }),
       expect.anything(),
+      42,
     );
   });
 });

@@ -283,15 +283,18 @@ describe("AI request payload contract", () => {
         .find((line) => line.includes(`pub ${field}:`));
       expect(fieldLine, `${field} must be declared in FullCleanupReport`).toBeTruthy();
     }
-    // No field in the report may be skipped on serialize: the UI reads the
-    // whole struct over IPC.
-    expect(reportBody).not.toContain("skip_serializing");
+    // Required fields must always be present. A missing optional review
+    // receipt is omitted on the wire and cannot authorize a review.
+    const withoutOptionalReceipt = (body: string) => body.replace(
+      /#\[serde\(default, skip_serializing_if = "Option::is_none"\)\]\s*pub uninstall_review: Option<u64>,/g, "",
+    );
+    expect(withoutOptionalReceipt(reportBody)).not.toContain("skip_serializing");
     expect(reportBody).not.toContain("skip_deserializing");
 
     const uninstallStart = rust.indexOf("pub struct OfficialUninstallResult");
     const uninstallBody = rust.slice(uninstallStart, rust.indexOf("}", uninstallStart));
     expect(uninstallBody).toContain("pub reboot_initiated:");
     expect(uninstallBody).toContain("pub reboot_gate_persisted:");
-    expect(uninstallBody).not.toContain("skip_serializing");
+    expect(withoutOptionalReceipt(uninstallBody)).not.toContain("skip_serializing");
   });
 });

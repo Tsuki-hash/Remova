@@ -673,6 +673,7 @@ mod tests {
                 restore_point: false,
                 cleanup_source: Some("uninstall".into()),
                 scope_revision: None,
+                uninstall_review: None,
             },
         );
         assert_eq!(

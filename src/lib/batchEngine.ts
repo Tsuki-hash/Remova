@@ -35,7 +35,7 @@ export async function runBatchCleanup(
   cb: BatchCallbacks,
   /** Opt-in backup from the batch confirm checkbox; default off. */
   backupEnabled = false,
-  skipOfficialKeys: ReadonlySet<string> = new Set(),
+  reviewReceipts: ReadonlyMap<string, number> = new Map(),
 ) {
   const L = t();
   if (!queue.length) {
@@ -59,8 +59,9 @@ export async function runBatchCleanup(
       const app = queue[i];
       if (!app) continue;
       const key = appKey(app);
-      const runOfficial = useOfficial && !skipOfficialKeys.has(key);
-      let officialDone = skipOfficialKeys.has(key);
+      let receipt = reviewReceipts.get(key);
+      const runOfficial = useOfficial && receipt === undefined;
+      let officialDone = receipt !== undefined;
       cb.onIndex(i + 1);
       cb.onCurrent(app.name);
       toast.info(L.toastBatchProgress(i + 1, queue.length, prettyAppName(app.name, app.source)));
@@ -79,6 +80,7 @@ export async function runBatchCleanup(
             status: "failed",
             detail: formatError(e, "cleanup"),
             officialDone,
+            ...(receipt !== undefined && { uninstallReview: receipt }),
           });
           // Results are published once after the queue stops: spreading the
           // growing array on every app made the UI update quadratic.
@@ -89,7 +91,7 @@ export async function runBatchCleanup(
         }, 250);
         let r: ScanResult;
         try {
-          r = await api.analyze(app, scanId);
+          r = receipt === undefined ? await api.analyze(app, scanId) : await api.analyze(app, scanId, receipt);
         } finally {
           clearInterval(cancelPoll);
           // A refusal can happen before the backend worker claims the id
@@ -109,16 +111,19 @@ export async function runBatchCleanup(
         const report = await api.fullCleanup(app, items, {
           dry_run: false,
           skip_official_uninstall: !runOfficial,
+          ...(receipt !== undefined && { uninstall_review: receipt }),
           backup_enabled: backupEnabled,
         // the user can decline a restore point; the backend still
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
-          cleanup_source: "uninstall",
+          cleanup_source: !useOfficial && receipt === undefined ? "force" : "uninstall",
         });
+        receipt = report.uninstall_review ?? receipt;
         const historyWarning = hasHistorySaveWarning(report) ? L.cleanupHistorySaveFailed : undefined;
-        const record = (result: BatchItemResult) => results.push(
-          historyWarning ? { ...result, historyWarning } : result,
-        );
+        const record = (result: BatchItemResult) => results.push({ ...result,
+          ...(historyWarning && { historyWarning }),
+          ...(receipt !== undefined && { uninstallReview: receipt }),
+        });
         officialDone ||= runOfficial && report.uninstall_ok;
         // A 1641 (or the global pending gate) means the machine is about to
         // restart. Do not start another app's uninstall/delete in this batch.
@@ -237,6 +242,7 @@ export async function runBatchCleanup(
           status: "failed",
           detail: formatError(e, "cleanup"),
           officialDone,
+          ...(receipt !== undefined && { uninstallReview: receipt }),
         });
       }
     }
@@ -248,7 +254,7 @@ export async function runBatchCleanup(
         name: app.name,
         status: "not_run",
         detail: rebootPending ? L.batchReboot : L.batchCancelled,
-        officialDone: skipOfficialKeys.has(key),
+        officialDone: reviewReceipts.has(key),
       });
     }
     cb.onResults([...results]);

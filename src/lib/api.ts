@@ -57,6 +57,7 @@ import type {
 
 export type CleanupSourceId =
   | "uninstall"
+  | "force"
   | "orphan"
   | "monitor"
   | "copilot"
@@ -70,6 +71,7 @@ export type FullCleanupOptions = {
   /** Gate source: uninstall | orphan | monitor | copilot | installer | toolcache */
   cleanup_source?: CleanupSourceId;
   scope_revision?: number;
+  uninstall_review?: number;
   /**
    * Ask Windows for a restore point before deleting. The backend owns the
    * decision when the field is absent (`#[serde(default = "default_true")]`),
@@ -125,16 +127,18 @@ export const api = {
   rebootGateStatus: () => invoke<string>("reboot_gate_status"),
   clearCorruptRebootGate: () => invoke<boolean>("clear_corrupt_reboot_gate"),
   listApps: () => invoke<InstalledAppsSnapshot>("list_installed_apps"),
-  analyze: (app: InstalledApp, scanId?: number) => invoke<ScanResult>("analyze_associations", { app, scanId }),
+  analyze: (app: InstalledApp, scanId?: number, uninstallReview?: number) => invoke<ScanResult>("analyze_associations", { app, scanId,
+    ...(uninstallReview !== undefined && { uninstallReview }) }),
   beginAssociationScan: () => invoke<number>("begin_association_scan"),
   cancelAssociationScan: (scanId: number) => invoke<boolean>("cancel_association_scan", { scanId }),
   associationScanProgress: (scanId: number) => invoke<AssociationScanProgress | null>("association_scan_progress", { scanId }),
   dryRun: (
     app: InstalledApp,
     items: CleanupItem[],
-    options?: { cleanup_source?: CleanupSourceId; scope_revision?: number },
+    options?: { cleanup_source?: CleanupSourceId; scope_revision?: number; uninstall_review?: number },
   ) => invoke<CleanupReport>("run_cleanup_dry_run", { app, items, cleanupSource: options?.cleanup_source,
-    ...(options?.scope_revision !== undefined && { scopeRevision: options.scope_revision }) }),
+    ...(options?.scope_revision !== undefined && { scopeRevision: options.scope_revision }),
+    ...(options?.uninstall_review !== undefined && { uninstallReview: options.uninstall_review }) }),
   fullCleanup: (app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions) =>
     invoke<FullCleanupReport>("run_full_cleanup", { app, items, options }),
   officialUninstall: (app: InstalledApp) =>

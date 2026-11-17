@@ -78,8 +78,9 @@ export function buildAuditJson(
   reviewReason?: "insufficient" | "incomplete",
 ) {
   const summaryOnly = options.summaryOnly === true;
+  const { uninstall_review: _receipt, ...details } = report;
   const body = summaryOnly ? summarizeReport(report) : {
-    ...(options.includeUserPaths ? report : redactDeep(report) as FullCleanupReport),
+    ...(options.includeUserPaths ? details : redactDeep(details) as typeof details),
     uninstall_status: uninstallStatus(report),
   };
   return {

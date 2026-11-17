@@ -394,6 +394,7 @@ export type FullCleanupReport = {
   /** The backup was published and verified before cleanup continued. */
   backup_verified?: boolean;
   uninstall_ok: boolean;
+  uninstall_review?: number;
   uninstall_message: string;
   deleted: number;
   failed: number;
@@ -419,6 +420,7 @@ export type OfficialUninstallResult = {
   ok: boolean;
   message: string;
   had_command: boolean;
+  uninstall_review?: number;
   /** MSI 1641: the uninstaller already initiated a restart. */
   reboot_initiated?: boolean;
   /** False when the 1641 gate could not be persisted across a relaunch. */

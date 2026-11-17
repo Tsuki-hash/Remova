@@ -513,7 +513,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     runBatchCleanupMock.mockImplementation(async (_q, _u, _k, cb) => {
       cb.onSetBatching(true);
       cb.onResults([
-        { key: appKey(a1), name: a1.name, status: "failed", detail: "x", officialDone: true },
+        { key: appKey(a1), name: a1.name, status: "failed", detail: "x", officialDone: true, uninstallReview: 42 },
         { key: appKey(a2), name: a2.name, status: "ok", detail: "" },
       ]);
       cb.onShowSummary(true);
@@ -537,7 +537,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     });
     await waitFor(() => expect(runBatchCleanupMock).toHaveBeenCalledTimes(2));
     expect(runBatchCleanupMock.mock.calls[1]?.[0]).toEqual([a1]);
-    expect(runBatchCleanupMock.mock.calls[1]?.[5]).toEqual(new Set([appKey(a1)]));
+    expect(runBatchCleanupMock.mock.calls[1]?.[5]).toEqual(new Map([[appKey(a1), 42]]));
   });
 
   it("cancelBatch signals the cancel ref and toasts", () => {

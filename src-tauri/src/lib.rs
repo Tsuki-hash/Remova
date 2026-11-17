@@ -534,6 +534,7 @@ mod cleanup_trust_tests {
             restore_point: false,
             cleanup_source: Some("orphan".into()),
             scope_revision: None,
+            uninstall_review: None,
         };
         for service in [false, true] {
             trusted.shared = !service;
@@ -734,10 +735,20 @@ fn hkcu_refused_when_elevated(source: &str, elevated: bool) -> bool {
 /// Every app-scoped cleanup item must come from the latest server analysis of
 /// that exact identity. This is the IPC boundary check; `policy` still applies
 /// the path-level safety gates afterwards.
+#[cfg(test)]
 fn authorize_cleanup_items(
     app: &InstalledApp,
     items: &[CleanupItem],
     source: policy::CleanupSource,
+) -> Result<(), String> {
+    authorize_cleanup_items_for_review(app, items, source, None)
+}
+
+fn authorize_cleanup_items_for_review(
+    app: &InstalledApp,
+    items: &[CleanupItem],
+    source: policy::CleanupSource,
+    uninstall_review: Option<u64>,
 ) -> Result<(), String> {
     if source == policy::CleanupSource::Orphan {
         for item in items {
@@ -753,7 +764,7 @@ fn authorize_cleanup_items(
     if source.is_scoped_scan() {
         return Ok(());
     }
-    let key = apps::app_key(app);
+    let key = executor::uninstall_review::analysis_key(app, uninstall_review);
     if !scan_allow::uninstall_scan_recorded(&key) {
         return Err("analysis must run before cleanup".into());
     }
@@ -775,12 +786,22 @@ fn authorize_cleanup_items(
 async fn analyze_associations(
     app: InstalledApp,
     scan_id: Option<u32>,
+    uninstall_review: Option<u64>,
 ) -> Result<ScanResult, String> {
     // The client may rewrite any field; analyze only the server-scanned copy.
     // A refused request must release its reserved scan task.
-    let app = resolve_analysis_app(app, scan_id, crate::sysops::is_elevated_for_gate())?;
-    let server_app_key = apps::app_key(&app);
-    let mut result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
+        let app = if let Some(receipt) = uninstall_review {
+            match executor::uninstall_review::verify(&app, receipt) {
+                Ok(app) => app,
+                Err(error) => {
+                    release_scan_reservation(scan_id);
+                    return Err(error);
+                }
+            }
+        } else {
+            resolve_analysis_app(app, scan_id, crate::sysops::is_elevated_for_gate())?
+        };
         let work = || {
             scanner::analyze_associations(
                 &app.name,
@@ -790,19 +811,19 @@ async fn analyze_associations(
                 &app.source,
             )
         };
-        match scan_id {
+        let mut result = match scan_id {
             Some(id) => scan_task::run(id, work),
             None => Ok(work()),
+        }?;
+        if result.app_key.is_empty() {
+            result.app_key = apps::app_key(&app);
         }
+        let key = executor::uninstall_review::analysis_key(&app, uninstall_review);
+        scan_allow::remember_uninstall_items(&key, &result.items);
+        Ok(result)
     })
     .await
-    .map_err(|e| e.to_string())??;
-
-    if result.app_key.is_empty() {
-        result.app_key = server_app_key;
-    }
-    scan_allow::remember_uninstall_items(&result.app_key, &result.items);
-    Ok(result)
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -811,11 +832,15 @@ async fn run_cleanup_dry_run(
     items: Vec<CleanupItem>,
     cleanup_source: Option<String>,
     scope_revision: Option<u64>,
+    uninstall_review: Option<u64>,
 ) -> Result<CleanupReport, String> {
     let source = cleanup_source_from_arg(cleanup_source.as_deref());
-    let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
-    authorize_cleanup_items(&app, &items, source)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let app = resolve_review_cleanup_app(app, source, uninstall_review)?;
+        if let Some(id) = uninstall_review {
+            executor::uninstall_review::verify(&app, id)?;
+        }
+        authorize_cleanup_items_for_review(&app, &items, source, uninstall_review)?;
         let items = match source.specialty_scope() {
             Some(scope) => scan_allow::resolve_scoped_items(scope, scope_revision, &items)?,
             None => items,
@@ -826,6 +851,41 @@ async fn run_cleanup_dry_run(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn resolve_review_cleanup_app(
+    app: InstalledApp,
+    source: policy::CleanupSource,
+    receipt: Option<u64>,
+) -> Result<InstalledApp, String> {
+    match receipt {
+        Some(id) if source == policy::CleanupSource::Uninstall => {
+            executor::uninstall_review::resolve(&app, id)
+        }
+        Some(_) => Err("uninstall review expired".into()),
+        None => resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate()),
+    }
+}
+
+fn validate_cleanup_intent(
+    source: policy::CleanupSource,
+    options: &FullCleanupOptions,
+) -> Result<(), String> {
+    let force = options.cleanup_source.as_deref() == Some("force");
+    if options.uninstall_review.is_some()
+        && (source.is_scoped_scan() || force || !options.skip_official_uninstall)
+    {
+        return Err("uninstall review expired".into());
+    }
+    if options.skip_official_uninstall
+        && !source.is_scoped_scan()
+        && !options.dry_run
+        && !force
+        && options.uninstall_review.is_none()
+    {
+        return Err("uninstall review expired".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -846,8 +906,9 @@ async fn run_full_cleanup(
     options: FullCleanupOptions,
 ) -> Result<FullCleanupReport, String> {
     let source = cleanup_source_from_arg(options.cleanup_source.as_deref());
-    let app = resolve_cleanup_app(app, source, crate::sysops::is_elevated_for_gate())?;
-    authorize_cleanup_items(&app, &items, source)?;
+    validate_cleanup_intent(source, &options)?;
+    let app = resolve_review_cleanup_app(app, source, options.uninstall_review)?;
+    authorize_cleanup_items_for_review(&app, &items, source, options.uninstall_review)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut report = executor::run_full_cleanup(&app, &items, &options);
         if let Err(error) = history::append(

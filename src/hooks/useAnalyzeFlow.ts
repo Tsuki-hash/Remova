@@ -19,6 +19,7 @@ import type { UninstallReview } from "../lib/uninstallReview";
 
 export type AnalyzeOptions = {
   fromUninstall?: boolean;
+  uninstallReview?: number;
   afterCleanup?: boolean;
   keepReport?: boolean;
   reviewSession?: ReviewSession;
@@ -141,8 +142,9 @@ export function useAnalyzeFlow({
       analyzeHoldRef.current += 1;
       busyRef.current = true;
       goNav("software");
-      const afterUninstall = Boolean(opts?.fromUninstall || opts?.afterCleanup);
-      setUninstallReview(afterUninstall ? { app, rescan: { phase: "scanning" } } : null);
+      const receipt = opts?.uninstallReview;
+      const afterUninstall = receipt !== undefined;
+      setUninstallReview(afterUninstall ? { app, receipt, rescan: { phase: "scanning" } } : null);
       const keepReport = Boolean(opts?.afterCleanup || opts?.keepReport);
       setSelected(app);
       setScanning(true);
@@ -158,7 +160,7 @@ export function useAnalyzeFlow({
       const t0 = performance.now();
       let reviewRound: ConvergenceRound = { items: [], complete: false };
       try {
-        const r = await runScan(app);
+        const r = await runScan(app, receipt);
         if (seq !== analyzeSeqRef.current) return false;
         setScan(r, app);
         reviewRound = {
@@ -166,7 +168,7 @@ export function useAnalyzeFlow({
           complete: scanMatchesApp(r, app) && (r.degraded ?? []).length === 0,
         };
         if (afterUninstall) {
-          setUninstallReview({ app, rescan: reviewRound.complete
+          setUninstallReview({ app, receipt, rescan: reviewRound.complete
             ? { phase: "complete", count: r.items.length } : { phase: "incomplete" } });
         }
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
@@ -188,7 +190,7 @@ export function useAnalyzeFlow({
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return false;
         const cancelled = scanCancelled(e);
-        if (afterUninstall) setUninstallReview({ app, rescan: { phase: cancelled ? "cancelled" : "failed" } });
+        if (afterUninstall) setUninstallReview({ app, receipt, rescan: { phase: cancelled ? "cancelled" : "failed" } });
         if (cancelled) {
           setSelectedPaths(new Set());
           setError(null);
@@ -277,14 +279,15 @@ export function useAnalyzeFlow({
           setReport(null);
           setScan(null);
           setSelectedPaths(new Set());
-          setUninstallReview({ app, rescan: { phase: rebootPending ? "reboot" : "not_started" } });
+          setUninstallReview({ app, ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
+            rescan: { phase: rebootPending ? "reboot" : "not_started" } });
         }
         // MSI 1641 already started a restart: scanning is harmless, but offering
         // residual cleanup now would delete while the shutdown is pending.
-        if (r.had_command && r.ok && checked && !rebootPending) {
+        if (r.had_command && r.ok && checked && !rebootPending && r.uninstall_review !== undefined) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
-          const analyzed = await analyze(app, { fromUninstall: true });
+          const analyzed = await analyze(app, { fromUninstall: true, uninstallReview: r.uninstall_review });
           if (analyzed) {
             setUninstallStage("analyze");
             await new Promise((resolve) => setTimeout(resolve, 320));
@@ -359,12 +362,13 @@ const openOfficialOnly = useCallback(
           setReport(null);
           setScan(null);
           setSelectedPaths(new Set());
-          setUninstallReview({ app, rescan: { phase: rebootPending ? "reboot" : "not_started" } });
+          setUninstallReview({ app, ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
+            rescan: { phase: rebootPending ? "reboot" : "not_started" } });
         }
  // default-on rescan after successful official uninstall only.
-        if (r.had_command && r.ok && !rebootPending && loadRescanAfterUninstall()) {
+        if (r.had_command && r.ok && !rebootPending && r.uninstall_review !== undefined && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
-          const analyzed = await analyze(app, { fromUninstall: true });
+          const analyzed = await analyze(app, { fromUninstall: true, uninstallReview: r.uninstall_review });
           if (analyzed) {
             setUninstallStage("analyze");
             await new Promise((resolve) => setTimeout(resolve, 280));

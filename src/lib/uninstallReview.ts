@@ -6,7 +6,7 @@ export type UninstallRescan =
   | { phase: "not_started" | "reboot" | "scanning" | "cancelled" | "failed" | "incomplete" }
   | { phase: "complete"; count: number };
 
-export type UninstallReview = { app: InstalledApp; rescan: UninstallRescan };
+export type UninstallReview = { app: InstalledApp; receipt?: number; rescan: UninstallRescan };
 
 export function reviewForApp(review: UninstallReview | null, app: InstalledApp | null | undefined) {
   return review && app && appKey(review.app) === appKey(app) && review.app.version === app.version &&

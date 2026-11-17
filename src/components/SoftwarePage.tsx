@@ -203,20 +203,18 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const review = p.uninstallReview;
   const currentReview = review && (!p.selected || reviewForApp(review, p.selected)) &&
     (!p.scan || scanMatchesApp(p.scan, review.app)) ? review : null;
-  const reportReview = review && report?.app_key === p.appKey(review.app) &&
+  const reportReceipt = report && "uninstall_review" in report ? report.uninstall_review : undefined;
+  const reportReview = review && review.receipt !== undefined && reportReceipt === review.receipt &&
+    report?.app_key === p.appKey(review.app) &&
     (!reportApp || reviewForApp(review, reportApp)) ? review : null;
-  const rescanTarget = reportReview?.app ?? reportApp;
+  const rescanTarget = report && (reportReceipt !== undefined || shouldRescanAfterUninstall(report))
+    ? reportReview?.app : reportApp;
   useEffect(() => {
     if (liveReportApp && reportIdentity) {
       cacheReportApp(reportIdentity, liveReportApp);
     }
   }, [liveReportApp, reportIdentity]);
-  // A completed official uninstall may set the "uninstall finished" state when
-  // the user rescans. `uninstall_ok` also covers a 1641 abort (official
-  // uninstaller succeeded, residual deletion was postponed), while a failed
-  // uninstall/backup abort has `uninstall_ok === false`.
-  const rescanAfterUninstall = report && (reportReview !== null || shouldRescanAfterUninstall(report));
-  const canRetryRescan = currentReview && !["complete", "scanning", "reboot"].includes(currentReview.rescan.phase);
+  const canRetryRescan = currentReview?.receipt !== undefined && !["complete", "scanning", "reboot"].includes(currentReview.rescan.phase);
   return (
     <>
       <SoftwareToolbar
@@ -240,7 +238,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         </div>
         {canRetryRescan && <button type="button" style={{ ...css.btnGhost, marginTop: 8 }}
           disabled={p.busy || !!p.uninstallingKey}
-          onClick={() => p.listAnalyze(currentReview.app, { fromUninstall: true })}>
+          onClick={() => p.listAnalyze(currentReview.app, { fromUninstall: true, uninstallReview: currentReview.receipt })}>
           {L.reportRescanApp}
         </button>}
       </div>}
@@ -312,7 +310,8 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onRescan={
             rescanTarget
               ? () => p.listAnalyze(rescanTarget, {
-                  afterCleanup: Boolean(rescanAfterUninstall),
+                  afterCleanup: reportReview !== null,
+                  ...(reportReview && { uninstallReview: reportReview.receipt }),
                   keepReport: true,
                   reviewSession: reviewSessionFor(report),
                 })

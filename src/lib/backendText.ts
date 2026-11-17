@@ -108,6 +108,11 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
     return L.backendNpmNotAdmitted(raw.slice("not an admitted npm global package: ".length));
   }
   if (raw.startsWith("uninstaller finished: ")) return L.uninstallOk;
+  if (raw === "uninstall review expired") return L.uninstallReviewExpired;
+  if (raw === "uninstall review found an installed application") return L.uninstallReviewInstalled;
+  if (raw === "uninstall review could not verify installation") return L.uninstallReviewUnverified;
+  if (raw.startsWith("specialty cleanup scan expired") || raw.startsWith("specialty cleanup item not authorized") ||
+      raw.startsWith("specialty cleanup object changed")) return L.specialtyCleanupRescan;
   if (raw.startsWith("uninstaller timed out (5m): ")) return L.backendTimeout;
   if (raw.startsWith("uninstaller exited with ")) {
     const code = raw.match(/Some\((-?\d+)\)/)?.[1] ?? "?";

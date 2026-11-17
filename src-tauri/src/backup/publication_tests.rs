@@ -160,6 +160,7 @@ fn cleanup_with_backup_preserves_files_and_directories_with_named_streams() {
                 restore_point: false,
                 cleanup_source: None,
                 scope_revision: None,
+                uninstall_review: None,
             },
         );
         assert!(report.aborted && report.deleted == 0, "{report:?}");
@@ -379,6 +380,7 @@ fn publication_faults_fail_backup_and_abort_real_pipeline_without_deleting_sourc
                 restore_point: false,
                 cleanup_source: None,
                 scope_revision: None,
+                uninstall_review: None,
             },
         );
         assert_eq!(
@@ -499,6 +501,7 @@ fn publication_readback_failure_aborts_real_pipeline_before_delete() {
             restore_point: false,
             cleanup_source: None,
             scope_revision: None,
+            uninstall_review: None,
         },
     );
     assert!(crate::path_seal::boundary_tests::readback_reached());

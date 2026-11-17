@@ -153,7 +153,7 @@ describe("runBatchCleanup", () => {
       uninstall_message: readFailed ? "ignore read failed" : "no items",
       errors: readFailed ? ["read failed"] : [] }));
     const cb = makeCb();
-    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    await runBatchCleanup([target], true, keyOf, cb, false, new Map([[keyOf(target), 42]]));
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe(readFailed ? "failed" : "skipped");
     expect(cb.onDoneKeys).toHaveBeenCalledWith(readFailed ? [] : [keyOf(target)]);
   });
@@ -168,7 +168,7 @@ describe("runBatchCleanup", () => {
     analyze.mockResolvedValue(scan("Boundary", [item("fixture")]));
     fullCleanup.mockResolvedValue(report({ ...expected, uninstall_ok: false }));
     const cb = makeCb();
-    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    await runBatchCleanup([target], true, keyOf, cb, false, new Map([[keyOf(target), 42]]));
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.status).toBe(expected.status);
     expect(cb.onDoneKeys).toHaveBeenCalledWith(expected.status === "ok" ? [keyOf(target)] : []);
     expect(fullCleanup.mock.calls[0]?.[2]).toMatchObject({ skip_official_uninstall: true });
@@ -177,20 +177,31 @@ describe("runBatchCleanup", () => {
   it("retains partial failures and retries residue without repeating a successful uninstall", async () => {
     const target = app("Partial");
     analyze.mockResolvedValue(scan("Partial", [item("fixture")]));
-    fullCleanup.mockResolvedValueOnce(report({ deleted: 1, failed: 1 }));
+    fullCleanup.mockResolvedValueOnce(report({ deleted: 1, failed: 1, uninstall_review: 42 }));
     const cb = makeCb();
     await runBatchCleanup([target], true, keyOf, cb);
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);
-    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true });
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true, uninstallReview: 42 });
     fullCleanup.mockResolvedValueOnce(report({ deleted: 1, failed: 0, uninstall_ok: false }));
     const retry = makeCb();
-    await runBatchCleanup([target], true, keyOf, retry, false, new Set([keyOf(target)]));
-    expect(fullCleanup.mock.calls.at(-1)?.[2]).toMatchObject({ skip_official_uninstall: true });
+    await runBatchCleanup([target], true, keyOf, retry, false, new Map([[keyOf(target), 42]]));
+    expect(analyze.mock.calls.at(-1)).toEqual([target, expect.any(Number), 42]);
+    expect(fullCleanup.mock.calls.at(-1)?.[2]).toMatchObject({ skip_official_uninstall: true, uninstall_review: 42 });
     expect(retry.onDoneKeys).toHaveBeenCalledWith([keyOf(target)]);
     analyze.mockRejectedValueOnce(new Error("retry analyze failed"));
     const later = makeCb();
-    await runBatchCleanup([target], true, keyOf, later, false, new Set([keyOf(target)]));
-    expect(later.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true });
+    await runBatchCleanup([target], true, keyOf, later, false, new Map([[keyOf(target), 42]]));
+    expect(later.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true, uninstallReview: 42 });
+  });
+
+  it("keeps a reinstalled app when the backend refuses an old batch review", async () => {
+    const target = app("Reinstalled");
+    analyze.mockRejectedValueOnce(new Error("uninstall review found an installed application"));
+    const cb = makeCb();
+    await runBatchCleanup([target], true, keyOf, cb, false, new Map([[keyOf(target), 42]]));
+    expect(analyze).toHaveBeenCalledWith(target, expect.any(Number), 42);
+    expect(fullCleanup).not.toHaveBeenCalled();
+    expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "failed", officialDone: true, uninstallReview: 42 });
   });
 
   it.each([true, false])("does not clear selection after an empty official failure (aborted=%s)", async (aborted) => {
@@ -209,7 +220,7 @@ describe("runBatchCleanup", () => {
     analyze.mockResolvedValue(scan("Refused", [item("C:\\Program Files\\Refused")]));
     fullCleanup.mockResolvedValue(report({ deleted: 0, failed: 0, skipped: 4, uninstall_ok: false }));
     const cb = makeCb();
-    await runBatchCleanup([target], true, keyOf, cb, false, new Set([keyOf(target)]));
+    await runBatchCleanup([target], true, keyOf, cb, false, new Map([[keyOf(target), 42]]));
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]).toMatchObject({ status: "skipped", skipReason: "protected" });
     expect(cb.onResults.mock.calls.at(-1)?.[0]?.[0]?.detail).toContain("refused 4");
     expect(cb.onDoneKeys).toHaveBeenCalledWith([]);

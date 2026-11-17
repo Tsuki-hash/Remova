@@ -124,7 +124,7 @@ const scan: ScanResult = {
     confidence: "confirmed", risk: "low", reason: "install", evidence: [] }],
 };
 const report: FullCleanupReport = {
-  app_name: demo.name, app_key: appKey(demo), dry_run: false, backup_dir: "", uninstall_ok: true,
+  app_name: demo.name, app_key: appKey(demo), dry_run: false, backup_dir: "", uninstall_ok: true, uninstall_review: 42,
   uninstall_message: "", deleted: 1, failed: 0, skipped: 0, delayed: 0,
   aborted: false, restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [],
 };
@@ -168,7 +168,7 @@ beforeEach(() => {
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
   native.fullCleanup.mockResolvedValue(report);
-  native.officialUninstall.mockResolvedValue({ ok: true, had_command: true, message: "finished" });
+  native.officialUninstall.mockResolvedValue({ ok: true, had_command: true, message: "finished", uninstall_review: 42 });
   native.openPath.mockResolvedValue(undefined);
   native.elevateRestart.mockResolvedValue(undefined);
   native.takePendingAnalyze.mockResolvedValue(null);
@@ -271,14 +271,14 @@ describe("App orchestration", () => {
     await waitFor(() => expect(software().report).not.toBeNull());
     // Cleanup clears the prior selection; the rescan must not repopulate it.
     expect(software().selectedPaths.size).toBe(0);
-    act(() => software().listAnalyze(demo, { afterCleanup: true }));
+    act(() => software().listAnalyze(demo, { afterCleanup: true, uninstallReview: 42 }));
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(software().residualFromUninstall).toBe(true));
     expect(software().selectedPaths.size).toBe(0);
     expect(software().report).not.toBeNull();
   });
 
-  it("does not mark a dry-run report rescan as an uninstall", async () => {
+  it("discards the dry-run preview on rescan without marking the app uninstalled", async () => {
     saveRescanAfterUninstall(false);
     await mount();
     await analyzeDemo();
@@ -288,7 +288,30 @@ describe("App orchestration", () => {
     await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
     expect(software().residualFromUninstall).toBe(false);
     expect(software().selectedPaths.size).toBe(0);
-    expect(software().report).not.toBeNull();
+    expect(software().report).toBeNull();
+  });
+
+  it("hides an old or late cleanup preview after the selected action changes", async () => {
+    const directory = scan.items[0]!;
+    const path = { ...directory, kind: "path" as const };
+    native.analyze.mockResolvedValue({ ...scan, items: [directory, path] });
+    let finish!: (preview: CleanupReport) => void;
+    native.dryRun.mockReturnValueOnce(new Promise<CleanupReport>(resolve => { finish = resolve; }));
+    await mount();
+    act(() => software().listAnalyze(demo));
+    await waitFor(() => expect(software().scan?.items).toHaveLength(2));
+    act(() => software().setSelectedPaths(new Set([cleanupItemKey(directory)])));
+    act(() => software().onDryRun());
+    expect(native.dryRun).toHaveBeenLastCalledWith(demo, [directory], expect.anything());
+
+    act(() => software().setSelectedPaths(new Set([cleanupItemKey(path)])));
+    await act(async () => { finish(dryReport); });
+    expect(software().report).toBeNull();
+    act(() => software().onDryRun());
+    await waitFor(() => expect(software().report).toEqual(dryReport));
+    expect(native.dryRun).toHaveBeenLastCalledWith(demo, [path], expect.anything());
+    act(() => software().setSelectedPaths(new Set([cleanupItemKey(directory)])));
+    expect(software().report).toBeNull();
   });
 
   it("matches full path boundaries in pending and drag entry points", async () => {
@@ -499,7 +522,7 @@ describe("App orchestration", () => {
       expect.objectContaining({ skip_official_uninstall: false }));
     await waitFor(() => expect(software().dryRunning).toBe(false));
     expect(native.analyze).toHaveBeenCalledTimes(enabled ? 2 : 1);
-    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo,
+    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo, receipt: 42,
       rescan: enabled ? { phase: "complete", count: scan.items.length } : { phase: "not_started" } }));
     expect(software().residualFromUninstall).toBe(enabled);
     expect(software().report).toEqual(report);
@@ -592,7 +615,7 @@ describe("App orchestration", () => {
     expect(software().selectedPaths.size).toBe(0);
     if (state === "failed" || state === "cancelled") {
       expect(software().scan).toBeNull();
-      expect(software().uninstallReview).toEqual({ app: demo, rescan: { phase: state } });
+      expect(software().uninstallReview).toEqual({ app: demo, receipt: 42, rescan: { phase: state } });
       expect(reviewVerdictFor(reviewSessionFor(report)).state).toBe("incomplete_round");
     }
     else expect(software().scan?.items.length).toBe(state === "empty" ? 0 : scan.items.length);
@@ -625,9 +648,9 @@ describe("App orchestration", () => {
     native.analyze.mockRejectedValueOnce(new Error("scan:cancelled"));
     await mount();
     act(() => software().listStartUninstall(demo));
-    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo, rescan: { phase: "cancelled" } }));
+    await waitFor(() => expect(software().uninstallReview).toEqual({ app: demo, receipt: 42, rescan: { phase: "cancelled" } }));
     await waitFor(() => expect(software().selected).toBeNull());
-    act(() => software().listAnalyze(demo, { fromUninstall: true }));
+    act(() => software().listAnalyze(demo, { fromUninstall: true, uninstallReview: 42 }));
     await waitFor(() => expect(software().scan).toEqual(scan));
     expect(software().residualFromUninstall).toBe(true);
     expect(native.officialUninstall).toHaveBeenCalledTimes(1);

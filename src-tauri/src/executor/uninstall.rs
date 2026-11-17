@@ -231,7 +231,7 @@ fn record_reboot_exit(code: Option<i32>, app: &crate::apps::InstalledApp) -> (bo
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum RegistrationState {
+pub(super) enum RegistrationState {
     Removed,
     Present,
     Unverified,
@@ -250,7 +250,10 @@ fn registration_state(reads: impl IntoIterator<Item = Option<bool>>) -> Registra
 }
 
 #[cfg(windows)]
-fn check_registration(scanned: &crate::apps::ScannedApp, argv: &[String]) -> RegistrationState {
+pub(super) fn check_registration(
+    scanned: &crate::apps::ScannedApp,
+    argv: &[String],
+) -> RegistrationState {
     let app = &scanned.app;
     let keys = std::iter::once(&app.registry_key).chain(&scanned.registration_aliases);
     if app.source == "Store" {
@@ -302,7 +305,10 @@ fn msi_product_present(code: &str) -> Option<bool> {
 }
 
 #[cfg(not(windows))]
-fn check_registration(_scanned: &crate::apps::ScannedApp, _argv: &[String]) -> RegistrationState {
+pub(super) fn check_registration(
+    _scanned: &crate::apps::ScannedApp,
+    _argv: &[String],
+) -> RegistrationState {
     RegistrationState::Unverified
 }
 
@@ -353,6 +359,7 @@ fn uninstall_result_after_exit(
         had_command: true,
         reboot_initiated,
         reboot_gate_persisted,
+        uninstall_review: None,
     }
 }
 
@@ -363,6 +370,7 @@ fn pending_result() -> OfficialUninstallResult {
         had_command: true,
         reboot_initiated: false,
         reboot_gate_persisted: true,
+        uninstall_review: None,
     }
 }
 
@@ -413,6 +421,7 @@ fn run_official_uninstall_unchecked(
             had_command: false,
             reboot_initiated: false,
             reboot_gate_persisted: true,
+            uninstall_review: None,
         };
     }
     // Never execute a command the client invented. Resolve the identity
@@ -431,6 +440,7 @@ fn run_official_uninstall_unchecked(
             had_command: true,
             reboot_initiated: false,
             reboot_gate_persisted: true,
+            uninstall_review: None,
         };
     };
     // Per-user uninstall strings are user-writable. Running one from an
@@ -444,6 +454,7 @@ fn run_official_uninstall_unchecked(
             had_command: true,
             reboot_initiated: false,
             reboot_gate_persisted: true,
+            uninstall_review: None,
         };
     }
     let cmd = build_uninstall_command(
@@ -451,6 +462,7 @@ fn run_official_uninstall_unchecked(
         &scanned.app.quiet_uninstall_string,
         true,
     );
+    super::uninstall_review::retire(&scanned.app);
     match cmd {
         Some(argv) if !argv.is_empty() => {
             let mut parts = argv.iter();
@@ -465,6 +477,7 @@ fn run_official_uninstall_unchecked(
                     had_command: true,
                     reboot_initiated: false,
                     reboot_gate_persisted: true,
+                    uninstall_review: None,
                 };
             }
             let rest: Vec<String> = parts.cloned().collect();
@@ -477,12 +490,17 @@ fn run_official_uninstall_unchecked(
                     loop {
                         match child.try_wait() {
                             Ok(Some(status)) => {
-                                return uninstall_result_after_exit(
+                                let mut result = uninstall_result_after_exit(
                                     status.code(),
                                     &exe,
                                     &scanned.app,
                                     || check_registration(&scanned, &argv),
                                 );
+                                if result.ok && !result.reboot_initiated {
+                                    result.uninstall_review =
+                                        super::uninstall_review::issue(scanned, argv);
+                                }
+                                return result;
                             }
                             Ok(None) => {
                                 // Cancellation never kills a running vendor
@@ -504,6 +522,7 @@ fn run_official_uninstall_unchecked(
                                         had_command: true,
                                         reboot_initiated: false,
                                         reboot_gate_persisted: true,
+                                        uninstall_review: None,
                                     };
                                 }
                                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -515,6 +534,7 @@ fn run_official_uninstall_unchecked(
                                     had_command: true,
                                     reboot_initiated: false,
                                     reboot_gate_persisted: true,
+                                    uninstall_review: None,
                                 };
                             }
                         }
@@ -526,6 +546,7 @@ fn run_official_uninstall_unchecked(
                     had_command: true,
                     reboot_initiated: false,
                     reboot_gate_persisted: true,
+                    uninstall_review: None,
                 },
             }
         }
@@ -544,6 +565,7 @@ fn run_official_uninstall_unchecked(
                 had_command: true,
                 reboot_initiated: false,
                 reboot_gate_persisted: true,
+                uninstall_review: None,
             }
         }
     }

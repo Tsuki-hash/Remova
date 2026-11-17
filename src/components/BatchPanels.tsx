@@ -10,6 +10,7 @@ export type BatchItemResult = {
   historyWarning?: string;
   /** Preserved across residual retries, including later analyze failures. */
   officialDone?: boolean;
+  uninstallReview?: number;
 } & ({ status: "skipped"; skipReason: SkipReason } | { status: Exclude<BatchStatus, "skipped"> });
 
 export function BatchProgress({

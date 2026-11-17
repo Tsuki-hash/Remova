@@ -44,6 +44,13 @@ describe("redactUserProfiles", () => {
 });
 
 describe("buildAuditJson", () => {
+  it("omits the active uninstall receipt from both detailed export modes", () => {
+    for (const includeUserPaths of [false, true]) {
+      expect(buildAuditJson(report({ uninstall_review: 42 }), 0, null, { includeUserPaths }).report)
+        .not.toHaveProperty("uninstall_review");
+    }
+  });
+
   it("redacts every string in the report and records review evidence", () => {
     const out = buildAuditJson(report(), 2, true) as Record<string, unknown>;
     const text = JSON.stringify(out);
