@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FsSnapshot {
@@ -36,35 +37,6 @@ pub struct MonitorEndResult {
     pub items: Vec<crate::scanner::CleanupItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_revision: Option<u64>,
-}
-
-// tests must never touch the real PROGRAMDATA snapshot — the override
-// is compile-time test-only and every test clears it when done.
-#[cfg(test)]
-static TEST_STATE_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
-
-#[cfg(test)]
-fn set_test_state_path(p: Option<PathBuf>) {
-    *TEST_STATE_PATH.lock().unwrap_or_else(|e| e.into_inner()) = p;
-}
-
-fn monitor_state_path() -> PathBuf {
-    #[cfg(test)]
-    if let Some(p) = TEST_STATE_PATH
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-    {
-        return p;
-    }
-    #[cfg(windows)]
-    let base = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_ProgramData)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-    #[cfg(not(windows))]
-    let base = std::env::var("PROGRAMDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData"));
-    base.join("Remova").join("monitor_snapshot.json")
 }
 
 /// Roots the install monitor snapshots.
@@ -334,63 +306,65 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
     Ok(set)
 }
 
-fn unknown_registry_snapshot() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct FullSnapshot {
     fs: FsSnapshot,
     reg: Vec<String>,
-    #[serde(default = "unknown_registry_snapshot")]
     reg_degraded: bool,
 }
 
-/// one monitor session per process — begin/end are serialized so
-/// concurrent calls (UI double-fire, tests) cannot interleave snapshot writes.
-fn monitor_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-}
+// Only a baseline captured by this process can authorize deletions. Relaunch,
+// elevation and running under a different account all start a fresh session.
+static SESSION: Mutex<Option<FullSnapshot>> = Mutex::new(None);
 
 pub fn begin() -> Result<(), String> {
-    let _guard = monitor_lock();
+    begin_with(&SESSION, || {
+        let reg = reg_value_names();
+        FullSnapshot {
+            fs: take_fs_snapshot(),
+            reg_degraded: reg.is_err(),
+            reg: reg.unwrap_or_default().into_iter().collect(),
+        }
+    })
+}
+
+fn begin_with(
+    session: &Mutex<Option<FullSnapshot>>,
+    capture: impl FnOnce() -> FullSnapshot,
+) -> Result<(), String> {
+    let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
         return Err("scan:cancelled".into());
     }
-    let reg = reg_value_names();
-    let reg_degraded = reg.is_err();
-    let snap = FullSnapshot {
-        fs: take_fs_snapshot(),
-        reg: reg.unwrap_or_default().into_iter().collect(),
-        reg_degraded,
-    };
-    let p = monitor_state_path();
-    let s = serde_json::to_string(&snap).map_err(|e| e.to_string())?;
+    if active.is_some() {
+        return Ok(());
+    }
+    let snap = capture();
     crate::scan_task::checkpoint("finalizing", snap.fs.files.len() + snap.reg.len());
     crate::scan_task::commit(|permit| {
         crate::scan_allow::commit_monitor_items(permit, &[], || {
-            if let Some(dir) = p.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            crate::fsutil::write_bytes_atomic(&p, s.as_bytes()).map_err(|e| e.to_string())
+            *active = Some(snap);
+            Ok(())
         })
         .map(|_| ())
     })
 }
 
 pub fn end() -> Result<MonitorEndResult, String> {
-    let _guard = monitor_lock();
+    end_with(&SESSION, take_fs_snapshot, reg_value_names)
+}
+
+fn end_with(
+    session: &Mutex<Option<FullSnapshot>>,
+    files: impl FnOnce() -> FsSnapshot,
+    registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
+) -> Result<MonitorEndResult, String> {
+    let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
         return Err("scan:cancelled".into());
     }
-    let p = monitor_state_path();
-    let raw =
-        std::fs::read_to_string(&p).map_err(|_| "no monitor snapshot; start first".to_string())?;
-    let before: FullSnapshot = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let mut result = build_diff(before, take_fs_snapshot(), reg_value_names());
+    let before = active.as_ref().ok_or("no monitor snapshot; start first")?;
+    let mut result = build_diff(before, files(), registry());
     crate::scan_task::checkpoint(
         "finalizing",
         result.diff.added_files.len() + result.diff.added_reg_values.len(),
@@ -399,7 +373,10 @@ pub fn end() -> Result<MonitorEndResult, String> {
         let revision = crate::scan_allow::commit_monitor_items(
             permit,
             trusted_monitor_items(&result),
-            || std::fs::remove_file(&p).map_err(|e| e.to_string()),
+            || {
+                *active = None;
+                Ok(())
+            },
         )?;
         if !result.diff.walk_degraded {
             result.scope_revision = Some(revision);
@@ -415,7 +392,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
 }
 
 fn build_diff(
-    before: FullSnapshot,
+    before: &FullSnapshot,
     after: FsSnapshot,
     after_reg: Result<BTreeSet<String>, String>,
 ) -> MonitorEndResult {
@@ -424,7 +401,7 @@ fn build_diff(
     let added_files_all: Vec<String> = after.files.difference(&before.fs.files).cloned().collect();
     let files_truncated = added_files_all.len().saturating_sub(200);
     let added_files: Vec<String> = added_files_all.into_iter().take(200).collect();
-    let before_reg: BTreeSet<String> = before.reg.into_iter().collect();
+    let before_reg: BTreeSet<String> = before.reg.iter().cloned().collect();
     let added_reg_all: Vec<String> = after_reg.difference(&before_reg).cloned().collect();
     let reg_truncated = added_reg_all.len().saturating_sub(100);
     let added_reg_values: Vec<String> = added_reg_all.into_iter().take(100).collect();
@@ -460,7 +437,7 @@ fn diff_and_arm(
     after: FsSnapshot,
     after_reg: Result<BTreeSet<String>, String>,
 ) -> MonitorEndResult {
-    let result = build_diff(before, after, after_reg);
+    let result = build_diff(&before, after, after_reg);
     let mut eligible = trusted_monitor_items(&result).to_vec();
     crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &mut eligible);
     result
@@ -631,29 +608,87 @@ mod tests {
     fn cancelled_session_capture_preserves_the_existing_baseline() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         let _allow = crate::scan_allow::test_lock();
-        let state =
-            std::env::temp_dir().join(format!("remova-monitor-cancel-{}.json", std::process::id()));
-        let raw = serde_json::to_string(&super::FullSnapshot {
+        let session = Mutex::new(Some(FullSnapshot {
             fs: Default::default(),
+            reg: vec!["baseline".into()],
+            reg_degraded: false,
+        }));
+        for ending in [false, true] {
+            let id = crate::scan_task::begin().unwrap();
+            let result = crate::scan_task::run(id, || {
+                crate::scan_task::cancel(id).unwrap();
+                let result = if ending {
+                    end_with(
+                        &session,
+                        || panic!("cancelled snapshot read"),
+                        || panic!("cancelled registry read"),
+                    )
+                    .map(|_| ())
+                } else {
+                    begin_with(&session, || panic!("cancelled snapshot capture"))
+                };
+                assert_eq!(result, Err("scan:cancelled".into()));
+            });
+            assert_eq!(result, Err("scan:cancelled".into()));
+            assert_eq!(session.lock().unwrap().as_ref().unwrap().reg, ["baseline"]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_a_live_session_can_authorize_its_new_files() {
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("monitor-live-session");
+        let legacy = fixture.join("monitor_snapshot.json");
+        std::fs::write(
+            &legacy,
+            br#"{"fs":{"files":[]},"reg":[],"reg_degraded":false}"#,
+        )
+        .unwrap();
+        let existing = fixture.join("existing.exe");
+        let added = fixture.join("new.exe");
+        std::fs::write(&existing, b"existing").unwrap();
+        std::fs::write(&added, b"new").unwrap();
+        let files = || FsSnapshot {
+            files: [
+                existing.to_string_lossy().into_owned(),
+                added.to_string_lossy().into_owned(),
+            ]
+            .into(),
+            truncated: false,
+        };
+        let new_process = Mutex::new(None);
+        assert_eq!(
+            end_with(
+                &new_process,
+                || panic!("no live baseline"),
+                || Ok(BTreeSet::new())
+            )
+            .unwrap_err(),
+            "no monitor snapshot; start first"
+        );
+        let active = Mutex::new(None);
+        begin_with(&active, || FullSnapshot {
+            fs: FsSnapshot {
+                files: [existing.to_string_lossy().into_owned()].into(),
+                truncated: false,
+            },
             reg: vec![],
             reg_degraded: false,
         })
         .unwrap();
-        std::fs::write(&state, &raw).unwrap();
-        set_test_state_path(Some(state.clone()));
-        for capture in [super::begin as fn() -> Result<(), String>, || {
-            super::end().map(|_| ())
-        }] {
-            let id = crate::scan_task::begin().unwrap();
-            let result = crate::scan_task::run(id, || {
-                crate::scan_task::cancel(id).unwrap();
-                assert_eq!(capture(), Err("scan:cancelled".into()));
-            });
-            assert_eq!(result, Err("scan:cancelled".into()));
-            assert_eq!(std::fs::read_to_string(&state).unwrap(), raw);
-        }
-        set_test_state_path(None);
-        std::fs::remove_file(state).unwrap();
+        begin_with(&active, || panic!("duplicate begin replaced the baseline")).unwrap();
+        let complete = end_with(&active, files, || Ok(BTreeSet::new())).unwrap();
+        assert_eq!(complete.diff.added_files, [added.to_string_lossy()]);
+        assert_eq!(complete.items.len(), 1);
+        assert!(complete.scope_revision.is_some());
+        assert!(end_with(
+            &active,
+            || panic!("consumed baseline reused"),
+            || Ok(BTreeSet::new())
+        )
+        .is_err());
+        assert!(legacy.is_file());
     }
     #[test]
     fn cancelled_snapshot_walk_never_reads_or_consumes_budget() {
@@ -709,15 +744,10 @@ mod tests {
                 ));
             }
         }
-        let legacy: super::FullSnapshot =
-            serde_json::from_str(r#"{"fs":{"files":[]},"reg":[]}"#).unwrap();
-        assert!(legacy.reg_degraded, "unknown completeness must fail closed");
     }
     use super::*;
 
-    /// Serializes tests that swap the process-global state path / walk budget —
-    /// begin()/end() take monitor_lock() themselves, so those must never be
-    /// held while acquiring this one.
+    /// Serializes tests that use the real process session and override the walk budget.
     static TEST_SEQ: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -855,12 +885,7 @@ mod tests {
     fn snapshot_roundtrip_shape() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         let _allow = crate::scan_allow::test_lock();
-        // isolated state path — tests never touch real PROGRAMDATA.
-        let tmp = std::env::temp_dir().join(format!("remova_mon_test_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let state = tmp.join("monitor_snapshot.json");
-        set_test_state_path(Some(state.clone()));
-        // end() without begin() must error (no snapshot at the injected path).
+        *SESSION.lock().unwrap() = None;
         let e2 = super::end();
         assert!(e2.is_err());
         // Exercise the same scoped commit path as the Tauri commands.
@@ -873,7 +898,7 @@ mod tests {
         crate::scan_task::run_scoped(start_id, "monitor", super::begin)
             .unwrap()
             .unwrap();
-        assert!(state.exists());
+        assert!(SESSION.lock().unwrap().is_some());
         assert!(!crate::scan_allow::was_recent(
             crate::scan_allow::AllowScope::Monitor,
             &previous
@@ -882,9 +907,10 @@ mod tests {
         crate::scan_task::run_scoped(end_id, "monitor", super::end)
             .unwrap()
             .unwrap();
-        assert!(!state.exists(), "end() consumes the snapshot");
-        set_test_state_path(None);
-        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(
+            SESSION.lock().unwrap().is_none(),
+            "end consumes the session"
+        );
     }
 
     /// Monitored registry values must flow through the pipeline's value-path
@@ -1218,10 +1244,7 @@ mod tests {
     fn budget_exhausted_end_returns_diff_without_arming() {
         let _seq = TEST_SEQ.lock().unwrap_or_else(|e| e.into_inner());
         let _allow = crate::scan_allow::test_lock();
-        let tmp = std::env::temp_dir().join(format!("remova_mon_budget_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let state = tmp.join("monitor_snapshot.json");
-        set_test_state_path(Some(state.clone()));
+        *SESSION.lock().unwrap() = None;
         let stale = "stale_monitor_authorization".to_string();
         crate::scan_allow::remember_for_test(
             crate::scan_allow::AllowScope::Monitor,
@@ -1239,8 +1262,6 @@ mod tests {
         );
         let res = super::end();
         TEST_BUDGET.store(200, std::sync::atomic::Ordering::SeqCst);
-        set_test_state_path(None);
-        let _ = std::fs::remove_dir_all(&tmp);
         let res = res.expect("end must succeed even on a truncated walk");
         // The diff itself reports the degradation so the UI can say the scan
         // is incomplete instead of presenting a possibly-empty diff as truth.

@@ -723,7 +723,7 @@ export const dict = {
     monitorViewResult: "查看安装追踪结果",
     monitorActive: "安装完成后，点击「结束追踪」查看新增文件和注册表项。",
     monitorStartAction: "开始追踪",
-    monitorStartHint: "开始追踪后，再运行要记录的安装程序。",
+    monitorStartHint: "开始追踪后再运行安装程序。请在退出或提权重启 Remova 前结束追踪。",
     panelClose: "关闭",
     navRegion: "导航",
     navSystemGroup: "系统管理",

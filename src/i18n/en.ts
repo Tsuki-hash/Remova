@@ -737,7 +737,7 @@ export const dict: EnDict = {
     monitorViewResult: "View install tracking results",
     monitorActive: "When the installation finishes, select Stop tracking to see what was added.",
     monitorStartAction: "Start tracking",
-    monitorStartHint: "Start tracking, then run the installer you want to monitor.",
+    monitorStartHint: "Start tracking before running the installer. Stop tracking before quitting or restarting Remova as administrator.",
     panelClose: "Close",
     navRegion: "Navigation",
     navSystemGroup: "System management",

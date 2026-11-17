@@ -149,7 +149,8 @@ pub fn run_scoped<T>(id: u32, scope: &'static str, work: impl FnOnce() -> T) -> 
         Arc::get_mut(task).ok_or("scan:busy")?.scope = Some(scope);
         tasks.retain(|other, task| {
             if *other < id && task.scope == Some(scope) {
-                if !task.committed.load(Ordering::SeqCst) {
+                if !task.committed.load(Ordering::SeqCst) && !task.committing.load(Ordering::SeqCst)
+                {
                     task.cancelled.store(true, Ordering::SeqCst);
                 }
                 task.started
@@ -415,6 +416,27 @@ mod tests {
             }),
             Err("scan:cancelled".into())
         );
+    }
+
+    #[test]
+    fn newer_scope_task_does_not_cancel_an_inflight_commit() {
+        let old = begin().unwrap();
+        let (entered, waiting) = std::sync::mpsc::channel();
+        let (proceed, released) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            run_scoped(old, "session-commit", || {
+                commit(|_| {
+                    entered.send(()).unwrap();
+                    released.recv().unwrap();
+                    Ok(42)
+                })
+            })
+        });
+        waiting.recv().unwrap();
+        let new = begin().unwrap();
+        assert_eq!(run_scoped(new, "session-commit", || "new"), Ok("new"));
+        proceed.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), Ok(Ok(42)));
     }
 
     #[test]
