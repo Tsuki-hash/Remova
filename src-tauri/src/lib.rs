@@ -904,6 +904,9 @@ mod cleanup_trust_tests {
 
     #[test]
     fn orphan_forgery_reaches_preview_and_full_gates_without_deleting_sentinel() {
+        // TempDir and the safety/ignore readers share the process environment
+        // with redirected-TEMP fixtures in other test threads.
+        let _env = crate::test_support::EnvLock::new();
         let _inventory = crate::apps::inventory_test_support::use_source(|| {
             (vec![], crate::scan_contract::ScanCompleteness::complete())
         });
@@ -982,7 +985,10 @@ mod cleanup_trust_tests {
             },
             Some(&scan),
         );
-        assert_eq!(report.deleted, 1, "ordinary authorized cleanup still works");
+        assert_eq!(
+            report.deleted, 1,
+            "ordinary authorized cleanup still works: {report:?}"
+        );
         assert!(!directory.exists());
     }
 
