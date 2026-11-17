@@ -208,7 +208,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         onCleanup: () => void input.handleCleanupConfirm(),
         onCancelCleanup: input.canCancelCleanup ? input.cancelCleanup : undefined,
         onAiExplain: () => void input.runAiExplain(),
-        onRegenerateAiReport: () => void input.runAiReport({ force: true }),
+        onRegenerateAiReport: () => void input.runAiReport(),
         error: input.error,
         setError: core.setError,
         report: input.report,

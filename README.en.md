@@ -40,7 +40,7 @@ Deep uninstall runs the app's uninstaller first and scans for leftovers after ve
 | **Verified clean** | Post-clean checklist (paths / registry / PATH) |
 | **Orphans** | First-class page: leftovers with no install entry, grouped by origin; the last cleanup result and reasons for kept items remain available after rescanning or returning to the page |
 | **System-item details** | Startup items and services show readable names, sources and available icons. Services show run state and start type separately. Select a scheduled task to see its program, full task path and run times. |
-| AI assist (optional) | Explain leftovers & risk, NL plans — advisory only |
+| AI assist (optional) | Explain leftovers & risk, NL plans — advisory only; changing the UI language regenerates the current cleanup report's AI summary |
 
 ---
 

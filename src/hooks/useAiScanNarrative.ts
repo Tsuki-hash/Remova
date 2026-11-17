@@ -106,13 +106,10 @@ export function useAiScanNarrative({
     }
   }, [scan, selected, aiEnabled, aiBusy, L, setAiBusy, setAiNotes, setAiSummaryNote]);
 
-  const aiReportSeqRef = useRef(0);
   useEffect(() => {
  // Always invalidate in-flight explain when scan identity or the UI language
  // changes, even if this run is skipped because aiBusy: a response generated
  // for the previous language must never land in the current one.
-    aiReportSeqRef.current += 1;
-    setAiReportNote(null);
     setAiSummaryNote(null);
  // Always invalidate in-flight explain when scan identity changes,
  // even if this run is skipped because aiBusy.
@@ -131,6 +128,8 @@ export function useAiScanNarrative({
  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanId, aiEnabled, langVer]);
 
+  const aiReportSeqRef = useRef(0);
+  const aiReportPendingRef = useRef<number | null>(null);
   const runAiReport = useCallback(
     async (opts?: { force?: boolean }) => {
       if (!report || !("deleted" in report) || !aiEnabled) return;
@@ -138,8 +137,9 @@ export function useAiScanNarrative({
  // still sees the pre-clear aiReportBusy, so the effect path passes
  // force (seq already supersedes any in-flight run; this effect owns
  // the busy lifecycle).
-      if (!opts?.force && aiReportBusy) return;
+      if (!opts?.force && (aiReportBusy || aiReportPendingRef.current !== null)) return;
       const seq = ++aiReportSeqRef.current;
+      aiReportPendingRef.current = seq;
       setAiReportBusy(true);
       try {
         const note = await runAiReportSummary(report);
@@ -149,21 +149,29 @@ export function useAiScanNarrative({
       } catch {
  // rule narrative still shown
       } finally {
-        if (seq === aiReportSeqRef.current) setAiReportBusy(false);
+        if (seq === aiReportSeqRef.current) {
+          aiReportPendingRef.current = null;
+          setAiReportBusy(false);
+        }
       }
     },
     [report, aiEnabled, aiReportBusy, setAiReportBusy, setAiReportNote],
   );
 
   useEffect(() => {
- // Same ownership rule as explain: invalidate then free busy so a stale finally cannot stick.
+ // Report identity, language and enablement own this lifecycle independently of scans.
     aiReportSeqRef.current += 1;
+    aiReportPendingRef.current = null;
     setAiReportBusy(false);
     setAiReportNote(null);
     if (report && aiEnabled) void runAiReport({ force: true });
+    return () => {
+      aiReportSeqRef.current += 1;
+      aiReportPendingRef.current = null;
+    };
  // key on report identity fields, not object identity only.
  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, aiEnabled, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
+  }, [report, aiEnabled, langVer, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
 
   return { runAiExplain, runAiReport };
 }

@@ -199,6 +199,45 @@ beforeEach(() => {
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("App orchestration", () => {
+  it.each([
+    ["zh", "en", "resolve"], ["zh", "en", "reject"],
+    ["en", "zh", "resolve"], ["en", "zh", "reject"],
+  ] as const)("regenerates the real report after %s to %s and old %s without duplicate manual requests", async (from, to, outcome) => {
+    native.showRealSoftwarePage = true;
+    const requests: { resolve: (value: string) => void; reject: (error: Error) => void }[] = [];
+    native.aiSummarizeReport.mockReset().mockImplementation(() => new Promise<string>((resolve, reject) => {
+      requests.push({ resolve, reject });
+    }));
+    await mount();
+    if (i18n.currentLang() !== from) fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
+    act(() => software().setReport(report));
+    await nav("more");
+    act(() => more().onAiEnabledChange?.(true));
+    await nav("software");
+    expect(requests).toHaveLength(1);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: i18n.t().aiReportBusy }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
+    expect(i18n.currentLang()).toBe(to);
+    expect(requests).toHaveLength(2);
+    await act(async () => {
+      if (outcome === "resolve") requests[0]!.resolve("old-language result");
+      else requests[0]!.reject(new Error("old-language failure"));
+    });
+    expect(software().aiReportBusy).toBe(true);
+    expect(software().aiReportNote).toBeNull();
+    await act(async () => { requests[1]!.resolve("current-language result"); });
+    expect(screen.getByText("current-language result")).toBeTruthy();
+    const button = screen.getByRole<HTMLButtonElement>("button", { name: i18n.t().aiReportSummary });
+    expect(button.disabled).toBe(false);
+    const regenerate = software().onRegenerateAiReport;
+    act(() => { fireEvent.click(button); regenerate(); });
+    expect(requests).toHaveLength(3);
+    await act(async () => { requests[2]!.resolve("manual result"); });
+    expect(software().aiReportBusy).toBe(false);
+    expect(screen.getByText("manual result")).toBeTruthy();
+    expect(screen.queryByText("old-language result")).toBeNull();
+  });
+
   it.each(["zh", "en"] as const)("keeps orphan results across navigation without showing another cleanup's details (%s)", async lang => {
     native.showRealOrphanPage = true;
     native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
