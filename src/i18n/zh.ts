@@ -176,7 +176,7 @@ export const dict = {
       `将清空 ${n} 个可再生目录里的内容（约 ${size}），目录本身保留、不删除文件夹。不创建备份——这类内容会自动重建；系统级布局建议以管理员身份运行，失败项会如实列出。继续？`,
     regenDone: (n: number, size: string) => `已清理 ${n} 项，释放约 ${size}`,
     regenSkipped: (n: number) => `${n} 项被跳过（被占用或权限不足）`,
-    regenBlockServicing: "servicing 进行中，暂不可清理",
+    regenBlockServicing: "Windows 维护正在运行或状态无法确认，暂缓清理",
     cliTitle: "全局 CLI 包",
     cliHint: "列出 npm / pnpm / yarn 安装的全局命令行工具；npm 可勾选删除，pnpm / yarn 只读",
     cliEmpty: "未发现任何全局 CLI 包",

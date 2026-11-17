@@ -74,25 +74,105 @@ pub fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'stat
     ]
 }
 
-/// Servicing must be idle before CbsTemp is touched. TiWorker/DISM running
-/// means a session is in flight; the CBS tail check stays out of v1 — the
-/// process gate plus honest reporting is the bounded v1 contract.
-fn servicing_busy() -> bool {
-    for image in ["TiWorker.exe", "dism.exe"] {
-        let mut cmd = std::process::Command::new(crate::regops::sys_tool("tasklist.exe"));
-        cmd.args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"]);
-        // The disk-overview scan runs on panel open; without this the console
-        // window flashes every time the user clicks the card.
-        crate::regops::hide_console(&mut cmd);
-        let out = cmd.output();
-        let Ok(out) = out else { return true };
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        // tasklist prints "INFO: no tasks are running..." when the filter misses.
-        if !text.contains("no tasks are running") && text.contains(&image.to_lowercase()) {
-            return true;
+fn system_layouts() -> Result<Vec<(PathBuf, &'static str)>, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+        use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, FOLDERID_ProgramData};
+        let mut buffer = vec![0u16; 32768];
+        let len = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
+        let unavailable = || "could not resolve Windows cache roots".to_string();
+        if len == 0 || len >= buffer.len() {
+            return Err(unavailable());
+        }
+        let windows = String::from_utf16(&buffer[..len]).map_err(|_| unavailable())?;
+        if !crate::fsutil::is_local_drive_path(&windows) {
+            return Err(unavailable());
+        }
+        Ok(fixed_layouts(&crate::triage::TriageRoots {
+            windows: windows.into(),
+            program_data: crate::sysops::known_folder(&FOLDERID_ProgramData)
+                .ok_or_else(unavailable)?,
+            local_app_data: crate::sysops::known_folder(&FOLDERID_LocalAppData)
+                .ok_or_else(unavailable)?,
+            ..Default::default()
+        }))
+    }
+    #[cfg(not(windows))]
+    Err("could not resolve Windows cache roots".into())
+}
+
+/// Only a complete process enumeration with no servicing process proves idle.
+#[cfg(any(windows, test))]
+fn servicing_busy_from(mut next: impl FnMut() -> Result<Option<String>, ()>) -> bool {
+    for _ in 0..65_536 {
+        match next() {
+            Ok(Some(name)) if !name.is_empty() => {
+                if ["TiWorker.exe", "dism.exe"]
+                    .iter()
+                    .any(|exe| name.eq_ignore_ascii_case(exe))
+                {
+                    return true;
+                }
+            }
+            Ok(None) => return false,
+            _ => return true,
         }
     }
-    false
+    true
+}
+
+fn servicing_busy() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::core::HRESULT;
+        use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES};
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+        let Ok(handle) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
+            return true;
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut first = true;
+        let busy = servicing_busy_from(|| {
+            let reading_first = std::mem::replace(&mut first, false);
+            let result = unsafe {
+                if reading_first {
+                    Process32FirstW(handle, &mut entry)
+                } else {
+                    Process32NextW(handle, &mut entry)
+                }
+            };
+            match result {
+                Ok(()) => {
+                    let len = entry
+                        .szExeFile
+                        .iter()
+                        .position(|unit| *unit == 0)
+                        .ok_or(())?;
+                    String::from_utf16(&entry.szExeFile[..len])
+                        .map(Some)
+                        .map_err(|_| ())
+                }
+                Err(error)
+                    if !reading_first
+                        && error.code() == HRESULT::from_win32(ERROR_NO_MORE_FILES.0) =>
+                {
+                    Ok(None)
+                }
+                Err(_) => Err(()),
+            }
+        });
+        let _ = unsafe { CloseHandle(handle) };
+        busy
+    }
+    #[cfg(not(windows))]
+    true
 }
 
 /// Short-lived cache for the *busy* verdict only, used by the read-only
@@ -144,6 +224,13 @@ pub fn is_deletable_layout(
     path: &str,
     layouts: &[(PathBuf, &'static str)],
 ) -> Option<&'static str> {
+    matching_layout(path, layouts).map(|(_, reason)| *reason)
+}
+
+fn matching_layout<'a>(
+    path: &str,
+    layouts: &'a [(PathBuf, &'static str)],
+) -> Option<&'a (PathBuf, &'static str)> {
     let p = path
         .trim()
         .to_lowercase()
@@ -152,7 +239,6 @@ pub fn is_deletable_layout(
     layouts
         .iter()
         .find(|(root, _)| root.to_string_lossy().to_lowercase().trim_end_matches('\\') == p)
-        .map(|(_, reason)| *reason)
 }
 
 fn measure(path: &Path) -> (i64, bool) {
@@ -165,7 +251,13 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
     let mut items = Vec::new();
     let mut omitted = 0u32;
     for (path, reason) in layouts {
-        if !path.try_exists().unwrap_or(false) {
+        let Ok(pins) = crate::fsutil::pin_local_scan_path(path) else {
+            continue;
+        };
+        let Some(root) = pins.last() else {
+            continue;
+        };
+        if !crate::fsutil::is_plain_pinned_directory(root) {
             continue;
         }
         if items.len() >= RESULT_CAP {
@@ -190,112 +282,73 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
     RegenerableScanResult { items, omitted }
 }
 
-/// Fixed layouts are deletable only when every level from the root down to the
-/// layout is a real local directory. A redirected root (or a junction planted
-/// above one) would make the "cache" name point at unrelated user data, and
-/// this module deletes without a Safety Vault backup.
-///
-/// Only layouts that exist are judged here: a missing layout is a separate,
-/// already-reported outcome, and admission still runs before any deletion.
-fn layouts_are_trusted(layouts: &[(PathBuf, &'static str)]) -> bool {
-    layouts.iter().all(|(path, _)| {
-        if !path.try_exists().unwrap_or(false) {
-            return true;
-        }
-        crate::fsutil::is_safe_local_scan_root(path) && !crate::fsutil::is_reparse_point(path)
-    })
-}
-
-/// Delete core over injected layouts. Re-admits every wanted path through a
-/// fresh scan, keeps the layout directory, and reports locked children.
+/// Check the entire request before deleting any contents, then keep the normal
+/// local directory handles open through measurement and deletion.
 fn delete_with(
     layouts: &[(PathBuf, &'static str)],
-    busy: bool,
+    servicing_blocked: impl Fn() -> bool,
     paths: &[String],
 ) -> Result<RegenerableCleanupReport, String> {
-    if !layouts_are_trusted(layouts) {
-        return Err("regenerable layout root is redirected or not local".into());
-    }
-    let fresh = scan_with(layouts, busy);
-    let fresh_paths: std::collections::HashSet<String> = fresh
-        .items
-        .iter()
-        .filter(|i| i.deletable)
-        .map(|i| i.path.to_lowercase())
-        .collect();
-
-    let mut report = RegenerableCleanupReport::default();
+    let mut roots = std::collections::HashSet::new();
+    let mut selected = Vec::new();
     for wanted in paths {
-        let Some(reason) = is_deletable_layout(wanted, layouts) else {
-            return Err(format!("not a regenerable layout: {wanted}"));
+        let (path, reason) = matching_layout(wanted, layouts)
+            .ok_or_else(|| format!("not a regenerable layout: {wanted}"))?;
+        if !roots.insert(path) {
+            continue;
+        }
+        let pins = match crate::fsutil::pin_local_scan_path(path) {
+            Ok(pins)
+                if pins
+                    .last()
+                    .is_some_and(crate::fsutil::is_plain_pinned_directory) =>
+            {
+                Some(pins)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            _ => {
+                return Err(format!(
+                    "regenerable layout root is redirected or not local: {}",
+                    path.display()
+                ))
+            }
         };
-        if !fresh_paths.contains(&wanted.to_lowercase()) {
-            // Fresh scan no longer admits it (missing, or a gate flipped).
-            let blocked = fresh
-                .items
-                .iter()
-                .find(|i| i.path.to_lowercase() == wanted.to_lowercase())
-                .filter(|i| !i.deletable);
-            let why = blocked
-                .and_then(|i| i.block_reason.clone())
-                .unwrap_or_else(|| "layout is no longer present".into());
+        selected.push((path, *reason, pins));
+    }
+    let mut report = RegenerableCleanupReport::default();
+    for (path, reason, pins) in selected {
+        let display = path.to_string_lossy().into_owned();
+        let Some(root) = pins.as_ref().and_then(|pins| pins.last()) else {
             report.skipped.push(RegenerableSkipped {
-                path: wanted.clone(),
-                message: why,
+                path: display,
+                message: "layout is no longer present".into(),
+            });
+            continue;
+        };
+        let (before, _) = measure(path);
+        if reason == "cbs_temp" && servicing_blocked() {
+            report.skipped.push(RegenerableSkipped {
+                path: display,
+                message: "servicing_busy".into(),
             });
             continue;
         }
-        let path = Path::new(wanted);
-        let (before, _) = measure(path);
-        let mut failure: Option<String> = None;
-        if let Ok(read) = std::fs::read_dir(path) {
-            for entry in read.flatten() {
-                let child = entry.path();
-                // A link inside a regenerable layout points elsewhere; without
-                // a backup the removal would lose the link (never its target).
-                // Skip it and say so instead of silently dropping it.
-                if crate::fsutil::is_reparse_point(&child) {
-                    failure.get_or_insert_with(|| {
-                        format!(
-                            "{}: link not followed, kept",
-                            entry.file_name().to_string_lossy()
-                        )
-                    });
-                    continue;
-                }
-                let res = if child.is_dir() {
-                    std::fs::remove_dir_all(&child)
-                } else {
-                    std::fs::remove_file(&child)
-                };
-                if let Err(e) = res {
-                    // Locked/denied children stay and are reported, not hidden.
-                    failure.get_or_insert_with(|| e.to_string());
-                }
-            }
-        } else {
-            failure = Some("layout directory unreadable".into());
-        }
+        let result = crate::fsutil::remove_regenerable_contents(root, path);
         let (after, _) = measure(path);
         report.reclaimed_kb += (before - after).max(0);
-        match failure {
-            Some(msg) => report.skipped.push(RegenerableSkipped {
-                path: wanted.clone(),
-                message: format!("{reason}: partially cleaned, {msg}"),
+        match result {
+            Ok(()) => report.cleaned.push(display),
+            Err(error) => report.skipped.push(RegenerableSkipped {
+                path: display,
+                message: format!("{reason}: partially cleaned, {error}"),
             }),
-            None => report.cleaned.push(wanted.clone()),
         }
     }
     Ok(report)
 }
 
-/// Read-only scan of the fixed regenerable layouts on this machine.
-pub fn scan_regenerable() -> RegenerableScanResult {
-    scan_with(
-        &fixed_layouts(&crate::triage::roots_from_env()),
-        // Display tier: cached busy verdict is fine (fail-closed direction).
-        servicing_busy_cached(),
-    )
+pub fn scan_regenerable() -> Result<RegenerableScanResult, String> {
+    Ok(scan_with(&system_layouts()?, servicing_busy_cached()))
 }
 
 /// Delete the contents of the requested layouts after a fresh scan re-admits
@@ -310,13 +363,9 @@ pub fn delete_regenerable(paths: &[String]) -> Result<RegenerableCleanupReport, 
     }
     #[cfg(test)]
     if let Some((layouts, busy)) = test_layouts::current() {
-        return delete_with(&layouts, busy, paths);
+        return delete_with(&layouts, || busy, paths);
     }
-    delete_with(
-        &fixed_layouts(&crate::triage::roots_from_env()),
-        servicing_busy(),
-        paths,
-    )
+    delete_with(&system_layouts()?, servicing_busy, paths)
 }
 
 /// Inject only directories created under an owned temporary root. The real
@@ -396,10 +445,63 @@ mod tests {
             Some("servicing_busy")
         );
         // A busy gate skips deletion instead of forcing it.
-        let report = delete_with(&layouts, true, &[cbs.to_string_lossy().into_owned()]).unwrap();
+        let report = delete_with(&layouts, || true, &[cbs.to_string_lossy().into_owned()]).unwrap();
         assert!(report.cleaned.is_empty());
         assert_eq!(report.skipped[0].message, "servicing_busy");
         assert!(cbs.join("pending.xml").exists(), "nothing was deleted");
+    }
+
+    #[test]
+    fn servicing_requires_a_complete_process_scan() {
+        let mut idle = [Ok(Some("notepad.exe".to_string())), Ok(None)].into_iter();
+        assert!(!servicing_busy_from(|| idle.next().unwrap()));
+        assert!(servicing_busy_from(|| Err(())));
+        let mut incomplete = [Ok(Some("notepad.exe".to_string())), Err(())].into_iter();
+        assert!(servicing_busy_from(|| incomplete.next().unwrap()));
+        for running in ["TiWorker.exe", "DISM.EXE"] {
+            assert!(servicing_busy_from(|| Ok(Some(running.to_string()))));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn environment_roots_do_not_authorize_cleaning_an_unrelated_directory() {
+        let fixture = crate::test_support::TempDir::new("regenclean-env-roots");
+        let temp = fixture.subdir("Temp");
+        let marker = temp.join("keep.txt");
+        std::fs::write(&marker, b"keep").unwrap();
+        let expected = system_layouts().unwrap();
+        let _lock = crate::test_support::EnvLock::new();
+        let _env = crate::test_support::EnvVar::set("LOCALAPPDATA", fixture.path());
+        assert_eq!(system_layouts().unwrap(), expected);
+        let result = delete_regenerable(&[temp.to_string_lossy().into_owned()]);
+        assert!(result.unwrap_err().starts_with("not a regenerable layout"));
+        assert_eq!(std::fs::read(marker).unwrap(), b"keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_admitted_cache_root_cannot_be_replaced_while_servicing_is_checked() {
+        let fixture = crate::test_support::TempDir::new("regenclean-pinned-root");
+        let cbs = fixture.subdir("CbsTemp");
+        let unrelated = fixture.subdir("unrelated");
+        let marker = unrelated.join("keep.txt");
+        let cached = cbs.join("generated.txt");
+        std::fs::write(&marker, b"preserve").unwrap();
+        std::fs::write(&cached, b"cache").unwrap();
+        let layouts = vec![(cbs.clone(), "cbs_temp")];
+        let report = delete_with(
+            &layouts,
+            || {
+                assert!(std::fs::rename(&cbs, fixture.join("moved")).is_err());
+                false
+            },
+            &[cbs.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+        assert_eq!(report.cleaned.len(), 1);
+        assert!(!cached.exists());
+        assert_eq!(std::fs::read(marker).unwrap(), b"preserve");
     }
 
     #[cfg(windows)]
@@ -412,7 +514,7 @@ mod tests {
         std::fs::write(layout.join("sub").join("b.bin"), b"xxxxxxxx").unwrap();
         let layouts = vec![(layout.clone(), "win_temp")];
         let report =
-            delete_with(&layouts, false, &[layout.to_string_lossy().into_owned()]).unwrap();
+            delete_with(&layouts, || false, &[layout.to_string_lossy().into_owned()]).unwrap();
         assert_eq!(report.cleaned, vec![layout.to_string_lossy().into_owned()]);
         assert!(report.skipped.is_empty());
         assert!(report.reclaimed_kb > 0, "reclaimed must be counted");
@@ -441,7 +543,7 @@ mod tests {
 
         let layouts = vec![(layout.clone(), "win_temp")];
         let report =
-            delete_with(&layouts, false, &[layout.to_string_lossy().into_owned()]).unwrap();
+            delete_with(&layouts, || false, &[layout.to_string_lossy().into_owned()]).unwrap();
         assert!(report
             .skipped
             .iter()
@@ -509,7 +611,7 @@ mod tests {
         }
         let layouts = vec![(layout.clone(), "win_temp")];
         let err =
-            delete_with(&layouts, false, &[layout.to_string_lossy().into_owned()]).unwrap_err();
+            delete_with(&layouts, || false, &[layout.to_string_lossy().into_owned()]).unwrap_err();
         assert!(
             err.contains("redirected or not local"),
             "a redirected layout root must be refused: {err}"
@@ -524,7 +626,8 @@ mod tests {
     #[test]
     fn non_layout_paths_are_refused_before_any_delete() {
         let layouts = vec![(PathBuf::from(r"C:\W\Temp"), "win_temp")];
-        let err = delete_with(&layouts, false, &[r"C:\Windows\System32".to_string()]).unwrap_err();
+        let err =
+            delete_with(&layouts, || false, &[r"C:\Windows\System32".to_string()]).unwrap_err();
         assert!(err.starts_with("not a regenerable layout"));
     }
 

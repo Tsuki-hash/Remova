@@ -1430,6 +1430,58 @@ pub(crate) fn remove_scanned_tree(path: &Path, expected: (u32, u64)) -> std::io:
     remove_tree_with_pin(path, pin)
 }
 
+pub(crate) fn is_plain_pinned_directory(pin: &DirPin) -> bool {
+    #[cfg(windows)]
+    {
+        pin_metadata(pin).is_ok_and(|md| md.is_dir() && !is_reparse_metadata(&md))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pin;
+        false
+    }
+}
+
+/// Remove ordinary contents relative to the admitted layout handle. A link,
+/// changed directory, or unreadable subtree stays in place and is reported.
+pub(crate) fn remove_regenerable_contents(root: &DirPin, layout: &Path) -> std::io::Result<()> {
+    if !is_plain_pinned_directory(root) {
+        return Err(std::io::Error::other(
+            "layout is no longer an ordinary directory",
+        ));
+    }
+    let limit = crate::path_seal::MAX_PAYLOAD_NODES;
+    let mut first_error = None;
+    for name in relative_names_with_limit(root, limit)? {
+        if crate::executor::cleanup_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cleanup cancelled",
+            ));
+        }
+        let removed = (|| {
+            let child = open_relative(root, &name, 0x10081, true)?;
+            #[cfg(windows)]
+            if is_reparse_metadata(&pin_metadata(&child)?) {
+                return Err(std::io::Error::other("link not followed, kept"));
+            }
+            let tree = PinnedLocalDeleteTree::collect_pinned_root(
+                &layout.join(&name),
+                child,
+                limit,
+                0x10081,
+                Vec::new(),
+                &mut |_| Ok(()),
+            )?;
+            tree.remove()
+        })();
+        if let Err(error) = removed {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
 /// Hold every ancestor from the volume root before resolving a deletion path.
 /// Do not create missing ancestors or follow junctions in the chain.
 pub fn pin_existing_parents(p: &Path) -> std::io::Result<Vec<DirPin>> {

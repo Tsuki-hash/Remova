@@ -188,7 +188,7 @@ export const dict: EnDict = {
       `This clears the contents of ${n} regenerable directories (about ${size}); the folders themselves are kept. No backup is created — this content rebuilds itself. Run elevated for system-level layouts; failures are listed honestly. Continue?`,
     regenDone: (n: number, size: string) => `Cleaned ${n} layouts, freed about ${size}`,
     regenSkipped: (n: number) => `${n} skipped (locked or access denied)`,
-    regenBlockServicing: "servicing in progress, not cleanable right now",
+    regenBlockServicing: "Cleanup paused while Windows servicing is active or unverified",
     cliTitle: "Global CLI packages",
     cliHint: "Inventory of npm / pnpm / yarn global CLI tools; npm packages can be removed, pnpm / yarn stay read-only",
     cliEmpty: "No global CLI packages found",

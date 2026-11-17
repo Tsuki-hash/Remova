@@ -1192,7 +1192,7 @@ async fn scan_space_triage() -> Result<triage::TriageScanResult, String> {
 async fn scan_regenerable_layouts() -> Result<regenclean::RegenerableScanResult, String> {
     tauri::async_runtime::spawn_blocking(regenclean::scan_regenerable)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg(all(test, windows))]
@@ -1231,7 +1231,7 @@ fn inspect_disk_overview_scans() {
         });
         scope.spawn(|| {
             let start = std::time::Instant::now();
-            let result = regenclean::scan_regenerable();
+            let result = regenclean::scan_regenerable().expect("Windows cache roots");
             println!(
                 "Regenerable layouts: {:?}, rows={}",
                 start.elapsed(),
