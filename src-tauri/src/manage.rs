@@ -57,24 +57,48 @@ fn start_type_label(start: u32) -> &'static str {
     }
 }
 
+#[cfg(any(windows, test))]
+fn query_text(
+    mut command: std::process::Command,
+    timeout: std::time::Duration,
+    cap: usize,
+) -> Result<String, String> {
+    use crate::bounded_cmd::{run_bounded_bytes, BoundedOutput};
+    crate::regops::hide_console(&mut command);
+    match run_bounded_bytes(command, timeout, cap) {
+        BoundedOutput::Finished {
+            success: true,
+            stdout,
+            truncated: false,
+            ..
+        } => Ok(decode_console_bytes(&stdout)),
+        BoundedOutput::Finished {
+            truncated: true, ..
+        } => Err("manage:query_truncated".into()),
+        BoundedOutput::TimedOut => Err("manage:query_timeout".into()),
+        _ => Err("manage:query_failed".into()),
+    }
+}
+
 /// One `sc query` pass for active service names (lowercase).
 #[cfg(windows)]
-fn query_running_service_names() -> std::collections::HashSet<String> {
+fn query_running_service_names() -> Result<std::collections::HashSet<String>, String> {
     use std::process::Command;
     let mut set = std::collections::HashSet::new();
     if crate::scan_task::cancelled() {
-        return set;
+        return Ok(set);
     }
     let mut cmd = Command::new(crate::regops::sys_tool("sc.exe"));
-    cmd.args(["query", "type=", "service", "state=", "active"]);
+    cmd.args(["query", "type=", "service"]);
     crate::regops::hide_console(&mut cmd);
-    let Ok(out) = cmd.output() else {
-        return set;
-    };
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = query_text(
+        cmd,
+        crate::bounded_cmd::PROBE_TIMEOUT,
+        crate::bounded_cmd::PROBE_OUTPUT_CAP,
+    )?;
     for line in text.lines() {
         if crate::scan_task::cancelled() {
-            return set;
+            return Ok(set);
         }
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("SERVICE_NAME:") {
@@ -84,12 +108,12 @@ fn query_running_service_names() -> std::collections::HashSet<String> {
             }
         }
     }
-    set
+    Ok(set)
 }
 
 #[cfg(not(windows))]
-fn query_running_service_names() -> std::collections::HashSet<String> {
-    std::collections::HashSet::new()
+fn query_running_service_names() -> Result<std::collections::HashSet<String>, String> {
+    Ok(std::collections::HashSet::new())
 }
 
 const RUN_KEYS: &[(&str, &str, &str)] = &[
@@ -144,19 +168,19 @@ pub fn run_key_paths() -> Vec<String> {
         .collect()
 }
 
-pub fn list_startup_items() -> Vec<ManageItem> {
+pub fn list_startup_items() -> Result<Vec<ManageItem>, String> {
     let mut out = Vec::new();
     if !crate::scan_task::checkpoint("registry", 0) {
-        return out;
+        return Ok(out);
     }
     for (alias, sub, _view) in RUN_KEYS {
         if crate::scan_task::cancelled() {
-            return out;
+            return Ok(out);
         }
         let key = format!(r"{}\{}", alias, sub);
         for (vname, vdata) in crate::regscan::list_values(&key) {
             if !crate::scan_task::checkpoint("registry", out.len()) {
-                return out;
+                return Ok(out);
             }
             let display = vname.trim_end_matches(".remova-disabled").to_string();
             // Prefer StartupApproved flag; fall back to legacy rename suffix.
@@ -179,14 +203,14 @@ pub fn list_startup_items() -> Vec<ManageItem> {
     // Startup folders (user + common) — .lnk / .exe / .bat etc.
     for folder in startup_folder_paths() {
         if !crate::scan_task::checkpoint("files", out.len()) {
-            return out;
+            return Ok(out);
         }
         let Ok(rd) = std::fs::read_dir(&folder) else {
             continue;
         };
         for ent in rd.flatten() {
             if !crate::scan_task::checkpoint("files", out.len()) {
-                return out;
+                return Ok(out);
             }
             let path = ent.path();
             if !path.is_file() {
@@ -225,37 +249,37 @@ pub fn list_startup_items() -> Vec<ManageItem> {
     }
     // UWP / Store packaged startup tasks (Task Manager “Startup apps”).
     if !crate::scan_task::checkpoint("tasks", out.len()) {
-        return out;
+        return Ok(out);
     }
     for it in list_packaged_startup() {
         if crate::scan_task::cancelled() {
-            return out;
+            return Ok(out);
         }
         out.push(it);
     }
     // Auto-start (Start=2) user-mode services — consumer tools list these as 开机自启.
     if !crate::scan_task::checkpoint("services", out.len()) {
-        return out;
+        return Ok(out);
     }
-    for svc in list_auto_services() {
+    for svc in list_auto_services()? {
         if crate::scan_task::cancelled() {
-            return out;
+            return Ok(out);
         }
         out.push(svc);
     }
     out.sort_by_key(|a| a.name.to_lowercase());
     out.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name) && a.location == b.location);
-    out
+    Ok(out)
 }
 
 /// User-mode services with Start=2 (auto), including Microsoft ones (consumers expect them).
-fn list_auto_services() -> Vec<ManageItem> {
+fn list_auto_services() -> Result<Vec<ManageItem>, String> {
     if crate::scan_task::cancelled() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Real running state — a hardcoded `true` showed stopped auto-start
     // services as running with a Stop button.
-    let running_services = query_running_service_names();
+    let running_services = query_running_service_names()?;
     let mut out = Vec::new();
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
@@ -264,12 +288,12 @@ fn list_auto_services() -> Vec<ManageItem> {
     let mut seen = std::collections::HashSet::new();
     for (alias, sub) in keys {
         if crate::scan_task::cancelled() {
-            return out;
+            return Ok(out);
         }
         let root = format!(r"{alias}\{sub}");
         for svc in crate::regscan::list_subkeys(&root) {
             if !crate::scan_task::checkpoint("services", out.len()) {
-                return out;
+                return Ok(out);
             }
             if svc.contains('\\') {
                 continue;
@@ -299,7 +323,7 @@ fn list_auto_services() -> Vec<ManageItem> {
             });
         }
     }
-    out
+    Ok(out)
 }
 
 /// Enumerate StartupApproved PackagedStartup values (UWP/Store apps).
@@ -435,12 +459,12 @@ fn startup_approved_enabled(run_key: &str, value_name: &str) -> Option<bool> {
     })
 }
 
-pub fn list_services() -> Vec<ManageItem> {
+pub fn list_services() -> Result<Vec<ManageItem>, String> {
     let mut out = Vec::new();
     if !crate::scan_task::checkpoint("services", 0) {
-        return out;
+        return Ok(out);
     }
-    let running_names = query_running_service_names();
+    let running_names = query_running_service_names()?;
     let keys = [
         ("HKLM64", r"SYSTEM\CurrentControlSet\Services"),
         ("HKLM32", r"SYSTEM\CurrentControlSet\Services"),
@@ -448,12 +472,12 @@ pub fn list_services() -> Vec<ManageItem> {
     let mut seen = std::collections::HashSet::new();
     for (alias, sub) in keys {
         if crate::scan_task::cancelled() {
-            return out;
+            return Ok(out);
         }
         let root = format!(r"{alias}\{sub}");
         for svc in crate::regscan::list_subkeys(&root) {
             if !crate::scan_task::checkpoint("services", out.len()) {
-                return out;
+                return Ok(out);
             }
             if svc.contains('\\') {
                 continue;
@@ -486,7 +510,7 @@ pub fn list_services() -> Vec<ManageItem> {
         }
     }
     out.sort_by_key(|a| a.name.to_lowercase());
-    out
+    Ok(out)
 }
 
 /// schtasks /v status text is locale-dependent; a short deny-list
@@ -521,13 +545,13 @@ fn task_status_enabled(status: &str) -> bool {
 /// Parse `schtasks /query /fo CSV /v` rows.
 /// Verbose CSV column order is stable across locales:
 /// 0=HostName, 1=TaskName, 2=NextRunTime, 3=Status, 8=TaskToRun, 10=Comment.
-pub fn list_scheduled_tasks() -> Vec<ManageItem> {
+pub fn list_scheduled_tasks() -> Result<Vec<ManageItem>, String> {
     if !crate::scan_task::checkpoint("tasks", 0) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     #[cfg(not(windows))]
     {
-        Vec::new()
+        Ok(Vec::new())
     }
     #[cfg(windows)]
     {
@@ -535,14 +559,15 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         let mut cmd = Command::new(crate::regops::sys_tool("schtasks.exe"));
         cmd.args(["/query", "/fo", "CSV", "/v"]);
         crate::regops::hide_console(&mut cmd);
-        let Ok(out) = cmd.output() else {
-            return Vec::new();
-        };
+        let text = query_text(
+            cmd,
+            crate::bounded_cmd::PROBE_TIMEOUT,
+            crate::bounded_cmd::PROBE_OUTPUT_CAP,
+        )?;
         if crate::scan_task::cancelled() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         // schtasks on zh-CN often emits OEM code page, not UTF-8.
-        let text = decode_console_bytes(&out.stdout);
         let mut items = Vec::new();
         let mut lines = text.lines();
         // Skip header; positional columns are locale-stable in /fo CSV /v:
@@ -555,7 +580,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         const IDX_COMMENT: usize = 10;
         for line in records {
             if !crate::scan_task::checkpoint("tasks", items.len()) {
-                return items;
+                return Ok(items);
             }
             let cols = split_csv_line(&line);
             let Some(name) = cols.get(IDX_TASK).cloned() else {
@@ -600,7 +625,7 @@ pub fn list_scheduled_tasks() -> Vec<ManageItem> {
         items.truncate(crate::constants::MANAGE_TASK_LIST_CAP);
         // arm write-side allow-list from this listing.
         remember_scheduled_task_names(items.iter().map(|it| it.name.clone()));
-        items
+        Ok(items)
     }
 }
 
@@ -931,6 +956,66 @@ pub fn set_task_enabled(task_name: &str, enabled: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn queries_preserve_oem_output_and_release_cancelled_scan_slots() {
+        use std::time::{Duration, Instant};
+        let command = |script: &str| {
+            let mut command = std::process::Command::new(format!(
+                r"{}\WindowsPowerShell\v1.0\powershell.exe",
+                crate::regops::system32_dir()
+            ));
+            command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+            command
+        };
+        let bytes = [0xd6, 0xd0, 0xce, 0xc4];
+        let text = super::query_text(
+            command("[Console]::OpenStandardOutput().Write([byte[]](214,208,206,196),0,4)"),
+            Duration::from_secs(10),
+            100,
+        )
+        .unwrap();
+        assert_eq!(text, super::decode_console_bytes(&bytes));
+        assert_eq!(
+            super::query_text(command("exit 7"), Duration::from_secs(10), 100),
+            Err("manage:query_failed".into())
+        );
+        assert_eq!(
+            super::query_text(
+                command("[Console]::Write('x' * 2000)"),
+                Duration::from_secs(10),
+                16
+            ),
+            Err("manage:query_truncated".into())
+        );
+        assert_eq!(
+            super::query_text(
+                command("Start-Sleep -Seconds 30"),
+                Duration::from_millis(100),
+                100
+            ),
+            Err("manage:query_timeout".into())
+        );
+        for _ in 0..8 {
+            let id = crate::scan_task::begin().unwrap();
+            let (started, waiting) = std::sync::mpsc::channel();
+            let query = command("Start-Sleep -Seconds 30");
+            let worker = std::thread::spawn(move || {
+                crate::scan_task::run_scoped(id, "manage-tasks", || {
+                    started.send(()).unwrap();
+                    super::query_text(query, Duration::from_secs(20), 100)
+                })
+            });
+            waiting.recv().unwrap();
+            let before = Instant::now();
+            crate::scan_task::cancel(id).unwrap();
+            assert_eq!(worker.join().unwrap(), Err("scan:cancelled".into()));
+            assert!(before.elapsed() < Duration::from_millis(500));
+        }
+        let next = crate::scan_task::begin().unwrap();
+        assert!(crate::scan_task::run(next, || ()).is_ok());
+    }
+
     thread_local! {
         pub(super) static TASK_NAMES: std::cell::RefCell<Option<std::collections::HashSet<String>>> = const { std::cell::RefCell::new(None) };
     }
@@ -939,9 +1024,9 @@ mod tests {
         let id = crate::scan_task::begin().unwrap();
         let result = crate::scan_task::run(id, || {
             crate::scan_task::cancel(id).unwrap();
-            assert!(super::list_startup_items().is_empty());
-            assert!(super::list_services().is_empty());
-            assert!(super::list_scheduled_tasks().is_empty());
+            assert!(super::list_startup_items().unwrap().is_empty());
+            assert!(super::list_services().unwrap().is_empty());
+            assert!(super::list_scheduled_tasks().unwrap().is_empty());
             assert!(super::list_packaged_startup_with(
                 |_| panic!("read names after cancellation"),
                 |_, _| panic!("read value after cancellation"),
@@ -1004,7 +1089,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn list_services_skips_critical() {
-        let svcs = super::list_services();
+        let svcs = super::list_services().unwrap();
         for s in &svcs {
             assert!(!crate::safety::is_critical_service(&s.name));
         }
@@ -1184,7 +1269,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn list_startup_runs() {
-        let items = super::list_startup_items();
+        let items = super::list_startup_items().unwrap();
         for i in &items {
             assert!(i.location.contains("::"));
         }

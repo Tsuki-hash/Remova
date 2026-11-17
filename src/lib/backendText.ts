@@ -14,6 +14,9 @@ export function uninstallNeedsRestart(raw: string) {
 /** Localize backend diagnostics without treating unknown text as success. */
 export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = "cleanup"): string {
   const L = t();
+  if (raw === "manage:query_timeout") return L.manageQueryTimeout;
+  if (raw === "manage:query_truncated") return L.manageQueryTruncated;
+  if (raw === "manage:query_failed") return L.manageQueryFailed;
   if (!raw) return "";
   if (context === "idle") {
     const labels: Record<string, string> = { idle_install_age: L.idleEvInstallAge,

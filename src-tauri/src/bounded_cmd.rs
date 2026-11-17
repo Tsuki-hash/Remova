@@ -25,13 +25,13 @@ pub const PROBE_OUTPUT_CAP: usize = 256 * 1024;
 pub const REG_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BoundedOutput {
+pub enum BoundedOutput<T = String> {
     /// The process exited within the deadline. `truncated` means the cap hit.
     Finished {
         status_code: Option<i32>,
         success: bool,
-        stdout: String,
-        stderr: String,
+        stdout: T,
+        stderr: T,
         truncated: bool,
     },
     /// The deadline expired; the child was killed and reaped.
@@ -40,7 +40,7 @@ pub enum BoundedOutput {
     Failed(String),
 }
 
-impl BoundedOutput {
+impl<T> BoundedOutput<T> {
     /// True only when the process exited successfully inside the deadline.
     pub fn succeeded(&self) -> bool {
         matches!(self, Self::Finished { success: true, .. })
@@ -72,7 +72,10 @@ fn read_capped<R: Read + Send + 'static>(
                         truncated = true;
                     }
                 }
-                Err(_) => break,
+                Err(_) => {
+                    truncated = true;
+                    break;
+                }
             }
         }
         let _ = tx.send((kept, truncated));
@@ -80,7 +83,31 @@ fn read_capped<R: Read + Send + 'static>(
 }
 
 /// Run `cmd` with a deadline, a per-stream byte cap and a cancellation poll.
-pub fn run_bounded(mut cmd: Command, timeout: Duration, cap: usize) -> BoundedOutput {
+pub fn run_bounded(cmd: Command, timeout: Duration, cap: usize) -> BoundedOutput {
+    match run_bounded_bytes(cmd, timeout, cap) {
+        BoundedOutput::Finished {
+            status_code,
+            success,
+            stdout,
+            stderr,
+            truncated,
+        } => BoundedOutput::Finished {
+            status_code,
+            success,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            truncated,
+        },
+        BoundedOutput::TimedOut => BoundedOutput::TimedOut,
+        BoundedOutput::Failed(error) => BoundedOutput::Failed(error),
+    }
+}
+
+pub(crate) fn run_bounded_bytes(
+    mut cmd: Command,
+    timeout: Duration,
+    cap: usize,
+) -> BoundedOutput<Vec<u8>> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -130,15 +157,15 @@ pub fn run_bounded(mut cmd: Command, timeout: Duration, cap: usize) -> BoundedOu
     // probe on a detached grandchild that inherited the handle.
     let (stdout, out_truncated) = out_rx
         .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
+        .unwrap_or_else(|_| (Vec::new(), true));
     let (stderr, err_truncated) = err_rx
         .recv_timeout(Duration::from_secs(2))
-        .unwrap_or_default();
+        .unwrap_or_else(|_| (Vec::new(), true));
     BoundedOutput::Finished {
         status_code: status.code(),
         success: status.success(),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        stdout,
+        stderr,
         truncated: out_truncated || err_truncated,
     }
 }

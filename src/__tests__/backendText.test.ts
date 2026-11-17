@@ -6,6 +6,9 @@ afterEach(() => setLang("zh"));
 it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics in %s", lang => {
   setLang(lang);
   const L = t();
+  expect(backendText("manage:query_failed")).toBe(L.manageQueryFailed);
+  expect(backendText("manage:query_timeout")).toBe(L.manageQueryTimeout);
+  expect(backendText("manage:query_truncated")).toBe(L.manageQueryTruncated);
   expect(backendText("cleanup object no longer matches the scan; scan again")).toBe(L.backendCleanupObjectChanged);
   expect(backendText("uninstaller finished: vendor.exe")).toBe(L.uninstallOk);
   expect(backendText("uninstaller exited with Some(1603)")).toBe(L.backendUninstallExit("1603"));

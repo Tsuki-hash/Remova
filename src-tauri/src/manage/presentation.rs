@@ -388,8 +388,8 @@ mod tests {
 
     #[test]
     fn windows_audio_resource_resolves_in_services_and_startup() {
-        let services = super::super::list_services();
-        let startup = super::super::list_auto_services();
+        let services = super::super::list_services().unwrap();
+        let startup = super::super::list_auto_services().unwrap();
         for key in ["AudioEndpointBuilder", "Audiosrv"] {
             let Some(service) = services.iter().find(|item| item.name == key) else {
                 continue; // Trimmed Windows images may omit these services.

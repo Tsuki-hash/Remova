@@ -661,9 +661,9 @@ mod tests {
             println!("Packaged startup: exact application logo and package fallback passed");
         }
         for (page, items) in [
-            ("Startup", crate::manage::list_startup_items()),
-            ("Services", crate::manage::list_services()),
-            ("Tasks", crate::manage::list_scheduled_tasks()),
+            ("Startup", crate::manage::list_startup_items().unwrap()),
+            ("Services", crate::manage::list_services().unwrap()),
+            ("Tasks", crate::manage::list_scheduled_tasks().unwrap()),
         ] {
             let mut previous = 0;
             let mut current = 0;
