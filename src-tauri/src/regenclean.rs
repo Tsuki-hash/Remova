@@ -55,8 +55,19 @@ pub struct RegenerableCleanupReport {
 /// The exact regenerable layouts. Nothing outside this table is ever
 /// deletable through this module.
 pub fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'static str)> {
-    let win = &roots.windows;
-    vec![
+    cache_layouts(
+        &roots.windows,
+        Some(&roots.program_data),
+        Some(&roots.local_app_data),
+    )
+}
+
+fn cache_layouts(
+    win: &Path,
+    program_data: Option<&Path>,
+    local_app_data: Option<&Path>,
+) -> Vec<(PathBuf, &'static str)> {
+    let mut layouts = vec![
         (
             win.join(r"SoftwareDistribution\Download"),
             "win_update_download",
@@ -64,14 +75,43 @@ pub fn fixed_layouts(roots: &crate::triage::TriageRoots) -> Vec<(PathBuf, &'stat
         (win.join("CbsTemp"), "cbs_temp"),
         (win.join("Temp"), "win_temp"),
         (win.join("Minidump"), "crash_dumps"),
-        (
-            roots.program_data.join(r"Microsoft\Windows\WER"),
-            "wer_reports",
-        ),
-        (roots.local_app_data.join("Temp"), "user_temp"),
-        (roots.local_app_data.join("CrashDumps"), "crash_dumps"),
-        (roots.local_app_data.join("D3DSCache"), "shader_cache"),
-    ]
+    ];
+    if let Some(path) = program_data {
+        layouts.push((path.join(r"Microsoft\Windows\WER"), "wer_reports"));
+    }
+    if let Some(path) = local_app_data {
+        layouts.extend([
+            (path.join("Temp"), "user_temp"),
+            (path.join("CrashDumps"), "crash_dumps"),
+            (path.join("D3DSCache"), "shader_cache"),
+        ]);
+    }
+    layouts
+}
+
+#[cfg(windows)]
+fn registered_profile_root(key: &str, value: &str, system_drive: &str) -> Option<PathBuf> {
+    let raw = crate::regscan::read_string(key, value)?;
+    // Expand only the drive derived from the actual Windows directory.
+    let path = match raw.split_once('\\') {
+        Some((prefix, rest)) if prefix.eq_ignore_ascii_case("%SystemDrive%") => {
+            format!(r"{system_drive}\{rest}")
+        }
+        _ => raw,
+    };
+    if path.contains('%') {
+        return None;
+    }
+    crate::fsutil::is_local_drive_path(&path).then(|| PathBuf::from(path))
+}
+
+#[cfg(windows)]
+fn confirmed_known_folder(id: &windows::core::GUID, registered: PathBuf) -> Option<PathBuf> {
+    let resolved = crate::sysops::lookup_known_folder(id)?;
+    let key = |path: &Path| path.to_string_lossy().trim_end_matches('\\').to_lowercase();
+    // Shell expansion can consult the process environment (e.g. USERPROFILE).
+    // A redirected or ambiguous result supplies no cache layout.
+    (key(&registered) == key(&resolved)).then_some(registered)
 }
 
 fn system_layouts() -> Result<Vec<(PathBuf, &'static str)>, String> {
@@ -79,6 +119,8 @@ fn system_layouts() -> Result<Vec<(PathBuf, &'static str)>, String> {
     {
         use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
         use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, FOLDERID_ProgramData};
+        const PROFILE_LIST: &str =
+            r"HKLM64\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList";
         let mut buffer = vec![0u16; 32768];
         let len = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
         let unavailable = || "could not resolve Windows cache roots".to_string();
@@ -89,14 +131,25 @@ fn system_layouts() -> Result<Vec<(PathBuf, &'static str)>, String> {
         if !crate::fsutil::is_local_drive_path(&windows) {
             return Err(unavailable());
         }
-        Ok(fixed_layouts(&crate::triage::TriageRoots {
-            windows: windows.into(),
-            program_data: crate::sysops::known_folder(&FOLDERID_ProgramData)
-                .ok_or_else(unavailable)?,
-            local_app_data: crate::sysops::known_folder(&FOLDERID_LocalAppData)
-                .ok_or_else(unavailable)?,
-            ..Default::default()
-        }))
+        let system_drive = windows.get(..2).ok_or_else(unavailable)?;
+        let program_data = registered_profile_root(PROFILE_LIST, "ProgramData", system_drive)
+            .and_then(|root| confirmed_known_folder(&FOLDERID_ProgramData, root));
+        let local_app_data = crate::sysops::current_user_sid()
+            .and_then(|sid| {
+                registered_profile_root(
+                    &format!(r"{PROFILE_LIST}\{sid}"),
+                    "ProfileImagePath",
+                    system_drive,
+                )
+            })
+            .and_then(|root| {
+                confirmed_known_folder(&FOLDERID_LocalAppData, root.join(r"AppData\Local"))
+            });
+        Ok(cache_layouts(
+            Path::new(&windows),
+            program_data.as_deref(),
+            local_app_data.as_deref(),
+        ))
     }
     #[cfg(not(windows))]
     Err("could not resolve Windows cache roots".into())
@@ -104,13 +157,25 @@ fn system_layouts() -> Result<Vec<(PathBuf, &'static str)>, String> {
 
 /// Only a complete process enumeration with no servicing process proves idle.
 #[cfg(any(windows, test))]
-fn servicing_busy_from(mut next: impl FnMut() -> Result<Option<String>, ()>) -> bool {
+fn servicing_busy_from(
+    deadline: std::time::Instant,
+    mut next: impl FnMut() -> Result<Option<String>, ()>,
+) -> bool {
     for _ in 0..65_536 {
-        match next() {
+        let verdict = next();
+        if std::time::Instant::now() >= deadline {
+            return true;
+        }
+        match verdict {
             Ok(Some(name)) if !name.is_empty() => {
-                if ["TiWorker.exe", "dism.exe"]
-                    .iter()
-                    .any(|exe| name.eq_ignore_ascii_case(exe))
+                if [
+                    "TiWorker.exe",
+                    "TrustedInstaller.exe",
+                    "dism.exe",
+                    "DismHost.exe",
+                ]
+                .iter()
+                .any(|exe| name.eq_ignore_ascii_case(exe))
                 {
                     return true;
                 }
@@ -131,6 +196,7 @@ fn servicing_busy() -> bool {
             CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
             TH32CS_SNAPPROCESS,
         };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let Ok(handle) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
             return true;
         };
@@ -139,7 +205,7 @@ fn servicing_busy() -> bool {
             ..Default::default()
         };
         let mut first = true;
-        let busy = servicing_busy_from(|| {
+        let busy = servicing_busy_from(deadline, || {
             let reading_first = std::mem::replace(&mut first, false);
             let result = unsafe {
                 if reading_first {
@@ -176,7 +242,7 @@ fn servicing_busy() -> bool {
 }
 
 /// Short-lived cache for the *busy* verdict only, used by the read-only
-/// panel scan: a batch of display refreshes should not spawn tasklist each
+/// panel scan: a batch of display refreshes should not query processes each
 /// time. Fail-closed by construction — caching a "busy" verdict can only
 /// keep CbsTemp blocked longer (safe), never release it early; an "idle"
 /// verdict is never cached, so the delete path always re-checks live.
@@ -241,12 +307,7 @@ fn matching_layout<'a>(
         .find(|(root, _)| root.to_string_lossy().to_lowercase().trim_end_matches('\\') == p)
 }
 
-fn measure(path: &Path) -> (i64, bool) {
-    crate::dirsize::walk_size_kb_capped(path)
-}
-
-/// Scan core over injected layouts — read-only, also the admission source for
-/// deletion.
+/// Read-only scan over the same fixed layouts used for deletion admission.
 fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScanResult {
     let mut items = Vec::new();
     let mut omitted = 0u32;
@@ -264,7 +325,7 @@ fn scan_with(layouts: &[(PathBuf, &'static str)], busy: bool) -> RegenerableScan
             omitted += 1;
             continue;
         }
-        let (size_kb, size_capped) = measure(path);
+        let (size_kb, size_capped) = crate::fsutil::pinned_scan_size(root);
         let cbs = *reason == "cbs_temp";
         items.push(RegenerableItem {
             path: path.to_string_lossy().into_owned(),
@@ -325,7 +386,7 @@ fn delete_with(
             });
             continue;
         };
-        let (before, _) = measure(path);
+        let (before, _) = crate::fsutil::pinned_scan_size(root);
         if reason == "cbs_temp" && servicing_blocked() {
             report.skipped.push(RegenerableSkipped {
                 path: display,
@@ -334,7 +395,7 @@ fn delete_with(
             continue;
         }
         let result = crate::fsutil::remove_regenerable_contents(root, path);
-        let (after, _) = measure(path);
+        let (after, _) = crate::fsutil::pinned_scan_size(root);
         report.reclaimed_kb += (before - after).max(0);
         match result {
             Ok(()) => report.cleaned.push(display),
@@ -351,8 +412,7 @@ pub fn scan_regenerable() -> Result<RegenerableScanResult, String> {
     Ok(scan_with(&system_layouts()?, servicing_busy_cached()))
 }
 
-/// Delete the contents of the requested layouts after a fresh scan re-admits
-/// every path. No backup (invariant 7): these layouts regenerate.
+/// Admit only fixed layouts from Windows and delete through the held roots.
 pub fn delete_regenerable(paths: &[String]) -> Result<RegenerableCleanupReport, String> {
     let _guard = crate::executor::CLEANUP_LOCK
         .lock()
@@ -453,30 +513,84 @@ mod tests {
 
     #[test]
     fn servicing_requires_a_complete_process_scan() {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(60);
         let mut idle = [Ok(Some("notepad.exe".to_string())), Ok(None)].into_iter();
-        assert!(!servicing_busy_from(|| idle.next().unwrap()));
-        assert!(servicing_busy_from(|| Err(())));
+        assert!(!servicing_busy_from(deadline, || idle.next().unwrap()));
+        assert!(servicing_busy_from(Instant::now(), || Ok(None)));
+        assert!(servicing_busy_from(deadline, || Err(())));
         let mut incomplete = [Ok(Some("notepad.exe".to_string())), Err(())].into_iter();
-        assert!(servicing_busy_from(|| incomplete.next().unwrap()));
-        for running in ["TiWorker.exe", "DISM.EXE"] {
-            assert!(servicing_busy_from(|| Ok(Some(running.to_string()))));
+        assert!(servicing_busy_from(deadline, || incomplete.next().unwrap()));
+        for running in [
+            "TiWorker.exe",
+            "DISM.EXE",
+            "TrustedInstaller.exe",
+            "DismHost.exe",
+        ] {
+            assert!(servicing_busy_from(deadline, || Ok(Some(
+                running.to_string()
+            ))));
         }
     }
 
     #[cfg(windows)]
     #[test]
     fn environment_roots_do_not_authorize_cleaning_an_unrelated_directory() {
+        const FIXTURE: &str = "REMOVA_TEST_CACHE_ROOT_FIXTURE";
+        const LAYOUTS: [&str; 4] = [
+            "Temp",
+            r"AppData\Local\Temp",
+            r"Microsoft\Windows\WER",
+            r"ProgramData\Microsoft\Windows\WER",
+        ];
+        if let Some(path) = std::env::var_os(FIXTURE).map(PathBuf::from) {
+            if let Ok(layouts) = system_layouts() {
+                assert!(
+                    layouts.iter().all(|(root, _)| !root.starts_with(&path)),
+                    "{layouts:?}"
+                );
+            }
+            for layout in LAYOUTS {
+                let temp = path.join(layout);
+                let marker = temp.join("keep.txt");
+                assert_eq!(std::fs::read(&marker).unwrap(), b"keep");
+                let result = delete_regenerable(&[temp.to_string_lossy().into_owned()]);
+                let error = result.unwrap_err();
+                assert!(
+                    error.starts_with("not a regenerable layout")
+                        || error == "could not resolve Windows cache roots",
+                    "{error}"
+                );
+                assert_eq!(std::fs::read(marker).unwrap(), b"keep");
+            }
+            return;
+        }
         let fixture = crate::test_support::TempDir::new("regenclean-env-roots");
-        let temp = fixture.subdir("Temp");
-        let marker = temp.join("keep.txt");
-        std::fs::write(&marker, b"keep").unwrap();
-        let expected = system_layouts().unwrap();
-        let _lock = crate::test_support::EnvLock::new();
-        let _env = crate::test_support::EnvVar::set("LOCALAPPDATA", fixture.path());
-        assert_eq!(system_layouts().unwrap(), expected);
-        let result = delete_regenerable(&[temp.to_string_lossy().into_owned()]);
-        assert!(result.unwrap_err().starts_with("not a regenerable layout"));
-        assert_eq!(std::fs::read(marker).unwrap(), b"keep");
+        for layout in LAYOUTS {
+            std::fs::write(fixture.subdir(layout).join("keep.txt"), b"keep").unwrap();
+        }
+        let exe = std::env::current_exe().unwrap();
+        for key in [
+            "LOCALAPPDATA",
+            "SystemRoot",
+            "windir",
+            "ProgramData",
+            "USERPROFILE",
+            "SystemDrive",
+        ] {
+            let result = std::process::Command::new(&exe)
+                .args(["--exact", "regenclean::tests::environment_roots_do_not_authorize_cleaning_an_unrelated_directory"])
+                .env(FIXTURE, fixture.path())
+                .env(key, fixture.path())
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{key}\n{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
     }
 
     #[cfg(windows)]

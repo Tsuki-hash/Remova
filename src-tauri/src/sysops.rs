@@ -102,9 +102,24 @@ pub fn create_restore_point(description: &str) -> (bool, String) {
 /// taken from those values.
 #[cfg(windows)]
 pub fn known_folder(id: &windows::core::GUID) -> Option<std::path::PathBuf> {
-    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    known_folder_with_flags(id, windows::Win32::UI::Shell::KF_FLAG_DEFAULT)
+}
+
+/// Resolve a spelling without probing it. The caller admits and opens the
+/// local path itself after cross-checking the result.
+#[cfg(windows)]
+pub(crate) fn lookup_known_folder(id: &windows::core::GUID) -> Option<std::path::PathBuf> {
+    known_folder_with_flags(id, windows::Win32::UI::Shell::KF_FLAG_DONT_VERIFY)
+}
+
+#[cfg(windows)]
+fn known_folder_with_flags(
+    id: &windows::core::GUID,
+    flags: windows::Win32::UI::Shell::KNOWN_FOLDER_FLAG,
+) -> Option<std::path::PathBuf> {
+    use windows::Win32::UI::Shell::SHGetKnownFolderPath;
     unsafe {
-        let raw = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
+        let raw = SHGetKnownFolderPath(id, flags, None).ok()?;
         let text = raw.to_string().ok();
         windows::Win32::System::Com::CoTaskMemFree(Some(raw.0.cast()));
         let text = text?;
@@ -124,6 +139,49 @@ pub fn known_folder(id: &windows::core::GUID) -> Option<std::path::PathBuf> {
 #[cfg(not(windows))]
 pub fn known_folder(_id: &std::ffi::c_void) -> Option<std::path::PathBuf> {
     None
+}
+
+/// SID of the Windows account in the current process token.
+#[cfg(windows)]
+pub(crate) fn current_user_sid() -> Option<String> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let mut len = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+        if (len as usize) < std::mem::size_of::<TOKEN_USER>() {
+            let _ = CloseHandle(token);
+            return None;
+        }
+        let mut buffer = vec![0usize; (len as usize).div_ceil(std::mem::size_of::<usize>())];
+        let result = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            len,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        result.ok()?;
+        let user = &*buffer.as_ptr().cast::<TOKEN_USER>();
+        sid_to_string(user.User.Sid)
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn sid_to_string(sid: windows::Win32::Security::PSID) -> Option<String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    let mut raw = windows::core::PWSTR::null();
+    unsafe {
+        ConvertSidToStringSidW(sid, &mut raw).ok()?;
+        let text = raw.to_string().ok();
+        let _ = LocalFree(HLOCAL(raw.0.cast()));
+        text
+    }
 }
 
 /// Gate decision for destructive per-user work: only a confirmed

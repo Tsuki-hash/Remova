@@ -1,6 +1,8 @@
 //! File / registry backup before cleanup.
 
 use crate::scanner::{CleanupItem, ItemKind};
+#[cfg(windows)]
+use crate::sysops::current_user_sid;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -127,52 +129,6 @@ pub fn backup_root() -> PathBuf {
 #[cfg(test)]
 pub(crate) fn lock_backup_env() -> crate::test_support::EnvLock {
     crate::test_support::EnvLock::new()
-}
-
-/// Apply a private DACL to the backup tree: SYSTEM, Administrators and the
-/// directory owner (the invoking user) only. `%ProgramData%` inheritance grants
-/// `BUILTIN\Users` read access, which exposed copied files and registry exports
-/// to other local accounts.
-#[cfg(windows)]
-fn current_user_sid() -> Option<String> {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-    unsafe {
-        let mut token = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
-        let mut len = 0u32;
-        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
-        if len == 0 {
-            let _ = CloseHandle(token);
-            return None;
-        }
-        let mut buf = vec![0u8; len as usize];
-        let ok = GetTokenInformation(
-            token,
-            TokenUser,
-            Some(buf.as_mut_ptr() as *mut _),
-            len,
-            &mut len,
-        );
-        let _ = CloseHandle(token);
-        ok.ok()?;
-        let user = &*(buf.as_ptr() as *const TOKEN_USER);
-        sid_to_string(user.User.Sid)
-    }
-}
-
-#[cfg(windows)]
-fn sid_to_string(sid: windows::Win32::Security::PSID) -> Option<String> {
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
-    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
-    let mut raw = windows::core::PWSTR::null();
-    unsafe {
-        ConvertSidToStringSidW(sid, &mut raw).ok()?;
-        let text = raw.to_string().ok();
-        let _ = LocalFree(HLOCAL(raw.0.cast()));
-        text
-    }
 }
 
 #[cfg(test)]
@@ -1472,7 +1428,7 @@ mod acl_tests {
                 }
                 let allow = &*(ace as *const windows::Win32::Security::ACCESS_ALLOWED_ACE);
                 let sid = PSID(std::ptr::addr_of!(allow.SidStart).cast_mut().cast());
-                if let Some(text) = sid_to_string(sid) {
+                if let Some(text) = crate::sysops::sid_to_string(sid) {
                     sids.push(text);
                 }
             }

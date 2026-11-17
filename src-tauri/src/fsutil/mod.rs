@@ -702,6 +702,16 @@ pub fn local_scan_exists(path: &Path) -> std::io::Result<bool> {
 /// Bounded CLI size estimate. Each descendant is pinned before any IO; unlike
 /// a generic size walker this cannot enter a junction swapped in mid-scan.
 pub fn local_scan_size(root: &Path) -> (i64, bool) {
+    if crate::scan_task::cancelled() {
+        return (0, true);
+    }
+    let Ok(pins) = pin_local_scan_path(root) else {
+        return (0, true);
+    };
+    pins.last().map_or((0, true), pinned_scan_size)
+}
+
+pub(crate) fn pinned_scan_size(root: &DirPin) -> (i64, bool) {
     fn walk_pin(
         pin: &DirPin,
         depth: usize,
@@ -726,20 +736,8 @@ pub fn local_scan_size(root: &Path) -> (i64, bool) {
         }
         Ok(())
     }
-    fn walk(path: &Path, depth: usize, left: &mut usize, bytes: &mut u64) -> std::io::Result<()> {
-        if *left == 0 || depth > 8 || crate::scan_task::cancelled() {
-            return Err(std::io::Error::other("size scan capped"));
-        }
-        *left -= 1;
-        let pins = pin_local_scan_path(path)?;
-        let pin = pins
-            .last()
-            .ok_or_else(|| std::io::Error::other("empty handle chain"))?;
-        walk_pin(pin, depth, left, bytes)?;
-        Ok(())
-    }
     let mut bytes = 0;
-    let capped = walk(root, 0, &mut 5000, &mut bytes).is_err();
+    let capped = crate::scan_task::cancelled() || walk_pin(root, 0, &mut 4999, &mut bytes).is_err();
     (bytes.div_ceil(1024).min(i64::MAX as u64) as i64, capped)
 }
 
