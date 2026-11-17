@@ -16,6 +16,15 @@ vi.mock("@tanstack/react-virtual", () => ({ useVirtualizer: () => ({
   getVirtualItems: () => [{ index: 0, start: 0 }], getTotalSize: () => 72, measureElement: vi.fn(),
 }) }));
 afterEach(() => { cleanup(); setLang("zh"); });
+it.each(["required", "before_verification"] as const)("keeps %s restart guidance after residual cleanup", restart => {
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "", uninstall_ok: false,
+    uninstall_message: "", deleted: 1, failed: 0, skipped: 0, aborted: false,
+    restore_point_ok: false, restore_point_msg: "", errors: [], item_details: [] };
+  render(<ReportPanel report={report} residualRestart={restart} aiEnabled={false} aiReportBusy={false}
+    aiReportNote={null} verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  const expected = restart === "required" ? t().backendRebootRequired : t().backendUninstallRebootBeforeVerify;
+  expect(screen.getByText(expected).getAttribute("role")).toBe("status");
+});
 it.each(["zh", "en"] as const)("brings planned and skipped counts into view without claiming cleanup in %s", lang => {
   setLang(lang);
   const L = t();

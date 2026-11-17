@@ -6,6 +6,7 @@ afterEach(() => setLang("zh"));
 it.each(["zh", "en"] as const)("localizes execution, scan and idle diagnostics in %s", lang => {
   setLang(lang);
   const L = t();
+  expect(backendText("cleanup object no longer matches the scan; scan again")).toBe(L.backendCleanupObjectChanged);
   expect(backendText("uninstaller finished: vendor.exe")).toBe(L.uninstallOk);
   expect(backendText("uninstaller exited with Some(1603)")).toBe(L.backendUninstallExit("1603"));
   expect(backendText("uninstaller exited with Some(1603) [fatal_or_source_missing]")).toBe(

@@ -1,8 +1,9 @@
 import { cleanupItemKey } from "../lib/cleanupPlan";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type FullCleanupOptions } from "../lib/api";
 import type { CleanupItem, CleanupReport, FullCleanupReport, InstalledApp, ScanResult } from "../types";
 import type { Strings } from "../i18n";
+import { t } from "../i18n";
 import { formatError, prettyAppName } from "../lib/format";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
@@ -18,7 +19,7 @@ import { runBatchCleanup } from "../lib/batchEngine";
 import { cleanupAbortText, cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
-import { uninstallReviewFromResult, type UninstallReview } from "../lib/uninstallReview";
+import { rescanFailure, uninstallReviewFromResult, type UninstallReview } from "../lib/uninstallReview";
 
 type BatchControl = { id: symbol; current: boolean };
 
@@ -78,6 +79,16 @@ export function useCleanupHandlers({
   const selected = scan && scanTarget && scanMatchesApp(scan, scanTarget) ? scanTarget : null;
   const runOfficial = !!selected && useOfficial && !residualFromUninstall &&
     selected.source !== "Monitor" && selected.source !== "Orphan";
+  const selectedIdentity = selected ? JSON.stringify([appKey(selected), selected.version, selected.install_location]) : "";
+  const selectionIdentity = JSON.stringify([...selectedPaths].sort());
+  const intent = useMemo(() => ({ scan, selectedIdentity, selectionIdentity, useOfficial,
+    residualFromUninstall, uninstallReviewReceipt }),
+  [scan, selectedIdentity, selectionIdentity, useOfficial, residualFromUninstall, uninstallReviewReceipt]);
+  const currentIntent = useRef<typeof intent | null>(null);
+  useLayoutEffect(() => {
+    currentIntent.current = intent;
+    return () => { currentIntent.current = null; };
+  }, [intent]);
   const {
     setMulti,
     setSelectedPaths,
@@ -115,6 +126,15 @@ export function useCleanupHandlers({
   const dryRunSeqRef = useRef(0);
   /** Invalidates force-clean's internal analyze when a newer one starts. */
   const forceAnalyzeSeqRef = useRef(0);
+
+  const invalidateReview = useCallback((error: unknown) => {
+    if (!selected || uninstallReviewReceipt === undefined) return;
+    const rescan = rescanFailure(error);
+    if (!["expired", "installed", "unverified"].includes(rescan.phase)) return;
+    updateUninstallRescan({ app: selected, receipt: uninstallReviewReceipt, rescan });
+    setScan?.(null);
+    setSelectedPaths?.(new Set());
+  }, [selected, uninstallReviewReceipt, updateUninstallRescan, setScan, setSelectedPaths]);
 
   const runControlledCleanup = useCallback(async (
     app: InstalledApp, items: CleanupItem[], options: FullCleanupOptions, batch?: BatchControl,
@@ -170,6 +190,7 @@ export function useCleanupHandlers({
           dry_run: false,
           skip_official_uninstall: true,
           backup_enabled: checked,
+          ...(r.scope_revision !== undefined && { scope_revision: r.scope_revision }),
         // the user can decline a restore point; the backend still
         // owns the decision when this is absent.
         restore_point: loadRestorePointPref(),
@@ -232,6 +253,7 @@ export function useCleanupHandlers({
       setAiReportNote(null);
     } catch (e) {
       if (seq !== dryRunSeqRef.current) return;
+      invalidateReview(e);
       setError(formatError(e, "cleanup"));
     } finally {
       if (seq === dryRunSeqRef.current) setDryRunning(false);
@@ -247,6 +269,7 @@ export function useCleanupHandlers({
     setAiReportNote,
     setError,
     busyRef,
+    invalidateReview,
   ]);
 
   const execReal = useCallback(async (opts?: { slotHeld?: boolean }) => {
@@ -289,7 +312,12 @@ export function useCleanupHandlers({
         ok: r.uninstall_ok, message: r.uninstall_message, reboot: r.reboot_pending, receipt: r.uninstall_review,
       });
       if (review) setUninstallReview(review);
+      if (runOfficial && r.uninstall_ok) {
+        setSelectedPaths?.(new Set());
+        setScan?.(null);
+      }
       if (r.aborted) {
+        invalidateReview(r.uninstall_message);
         const msg = cleanupAbortText(r, L);
         // A 1641/pending report is not a failure: the uninstaller succeeded and
         // deletion was postponed until the restart. Do not style it as one.
@@ -331,6 +359,7 @@ export function useCleanupHandlers({
       }
       void refreshApps();
     } catch (e) {
+      invalidateReview(e);
       setError(formatError(e, "cleanup"));
       toast.error(formatError(e, "cleanup"));
     } finally {
@@ -364,6 +393,7 @@ export function useCleanupHandlers({
     busyRef,
     currentReport,
     runControlledCleanup,
+    invalidateReview,
   ]);
 
   /** Confirm vault + compressed key risks (full narrative lives in scan conclusion). */
@@ -375,6 +405,8 @@ export function useCleanupHandlers({
     }
  // Hold busyRef across AI brief + confirm so execReal cannot silently no-op.
     busyRef.current = true;
+    const stillCurrent = () => currentIntent.current === intent;
+    let transferred = false;
     try {
     const picked = scan.items.filter((it) => selectedPaths.has(cleanupItemKey(it)));
     const n = picked.length;
@@ -414,6 +446,10 @@ export function useCleanupHandlers({
           ),
           hasSharedHint: picked.some((it) => it.shared),
         });
+        if (!stillCurrent()) {
+          toast.info(L.cleanupSelectionChanged);
+          return;
+        }
         if (brief) {
           setAiRisk(brief);
           message = `${message}\n\n${L.aiRiskTitle}: ${brief.slice(0, 160)}`;
@@ -424,6 +460,7 @@ export function useCleanupHandlers({
           message = `${message}\n\n${L.aiRiskBriefFailed}`;
         }
       } catch (e) {
+        if (!stillCurrent()) return;
  // the AI brief used to fail silently, so a missing model line read as
  // "AI already assessed this". Drop any stale brief and say the brief is absent.
         setAiRisk(null);
@@ -431,6 +468,7 @@ export function useCleanupHandlers({
         toast.error(formatError(e, "analyze"));
       }
     }
+    if (!stillCurrent()) return;
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
       message,
@@ -438,14 +476,21 @@ export function useCleanupHandlers({
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });
+    if (!stillCurrent()) {
+      toast.info(L.cleanupSelectionChanged);
+      return;
+    }
     if (!ok) {
       busyRef.current = false;
       return;
     }
     backupEnabledRef.current = checked;
+    transferred = true;
     await execReal({ slotHeld: true });
     } catch {
       busyRef.current = false;
+    } finally {
+      if (!transferred) busyRef.current = false;
     }
   }, [
     scan,
@@ -459,6 +504,7 @@ export function useCleanupHandlers({
     setAiRisk,
     execReal,
     busyRef,
+    intent,
   ]);
 
   const batchCleanup = useCallback(
@@ -537,7 +583,9 @@ export function useCleanupHandlers({
 
   const cancelCleanup = useCallback(() => {
     if (cleanupId !== undefined && activeWrite.current?.id === cleanupId) {
-      void api.cancelCleanup(cleanupId).catch(() => {});
+      void api.cancelCleanup(cleanupId).then(accepted => {
+        if (!accepted && activeWrite.current?.id === cleanupId) toast.info(t().cleanupCancelTooLate);
+      }).catch(error => toast.error(formatError(error, "cleanup")));
     }
   }, [cleanupId]);
 

@@ -137,6 +137,70 @@ function setup(selectedPaths = new Set([cleanupItemKey(scan().items[0]!)]), resi
 }
 
 describe("useCleanupHandlers confirm / force pipeline", () => {
+  it.each([
+    ["uninstall review expired", "expired"],
+    ["uninstall review found an installed application", "installed"],
+    ["uninstall review could not verify installation", "unverified"],
+  ])("invalidates a stale review for dry-run and real cleanup after %s", async (message, phase) => {
+    for (const dry of [true, false]) {
+      const setScan = vi.fn();
+      const setSelectedPaths = vi.fn();
+      const updateUninstallRescan = vi.fn();
+      const selected = app();
+      const currentScan = scan();
+      const paths = new Set([cleanupItemKey(currentScan.items[0]!)]);
+      const busyRef = { current: false };
+      vi.mocked(api.dryRun).mockRejectedValueOnce(new Error(message));
+      fullCleanup.mockResolvedValueOnce(report({ aborted: true, uninstall_ok: false, uninstall_message: message }));
+      const hook = renderHook(() => useCleanupHandlers({
+        L: t(), selected, scan: currentScan, selectedPaths: paths,
+        residualFromUninstall: true, uninstallReviewReceipt: 42, useOfficial: false, aiEnabled: false, aiRisk: null,
+        apps: [], multi: new Set(), flow: { ...flow, setScan, setSelectedPaths, updateUninstallRescan },
+        refreshApps: async () => {}, busyRef,
+      }));
+      requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+      await act(async () => { if (dry) await hook.result.current.dryRun(); else await hook.result.current.handleCleanupConfirm(); });
+      expect(updateUninstallRescan).toHaveBeenCalledWith({ app: selected, receipt: 42, rescan: { phase } });
+      expect(setScan).toHaveBeenCalledWith(null);
+      expect(setSelectedPaths).toHaveBeenCalledWith(new Set());
+      hook.unmount();
+      vi.mocked(api.dryRun).mockReset();
+      fullCleanup.mockReset();
+    }
+  });
+  it.each(["ai", "confirm"] as const)("discards obsolete cleanup intent while waiting for %s", async stage => {
+    const currentScan = scan();
+    const first = currentScan.items[0]!;
+    const other = { ...first, path: first.path + "-other" };
+    currentScan.items.push(other);
+    const selected = app();
+    const busyRef = { current: false };
+    let resolveAi!: (value: string) => void;
+    let resolveConfirm!: (value: { ok: boolean; checked: boolean }) => void;
+    vi.mocked(api.aiRiskBrief).mockReturnValue(new Promise(resolve => { resolveAi = resolve; }));
+    requestConfirmEx.mockReset();
+    requestConfirmEx.mockReturnValue(new Promise(resolve => { resolveConfirm = resolve; }));
+    fullCleanup.mockClear();
+    const hook = renderHook(({ paths }) => useCleanupHandlers({
+      L: t(), selected, scan: currentScan, selectedPaths: paths,
+      residualFromUninstall: false, useOfficial: true, aiEnabled: stage === "ai", aiRisk: null,
+      apps: [], multi: new Set(), flow, refreshApps: async () => {}, busyRef,
+    }), { initialProps: { paths: new Set([cleanupItemKey(first)]) } });
+    let pending!: Promise<void>;
+    act(() => { pending = hook.result.current.handleCleanupConfirm(); });
+    if (stage === "ai") expect(api.aiRiskBrief).toHaveBeenCalled();
+    else expect(requestConfirmEx).toHaveBeenCalledTimes(1);
+    hook.rerender({ paths: new Set([cleanupItemKey(other)]) });
+    await act(async () => {
+      if (stage === "ai") resolveAi("risk");
+      else resolveConfirm({ ok: true, checked: false });
+      await pending;
+    });
+    expect(fullCleanup).not.toHaveBeenCalled();
+    if (stage === "ai") expect(requestConfirmEx).not.toHaveBeenCalled();
+    expect(busyRef.current).toBe(false);
+    expect(toast.info).toHaveBeenCalledWith(t().cleanupSelectionChanged);
+  });
   it.each(["dir", "path"] as const)("previews and executes only the selected %s action at a shared path", async kind => {
     const directory = scan().items[0]!;
     const pathEntry = { ...directory, kind: "path" as const };

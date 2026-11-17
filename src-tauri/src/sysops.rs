@@ -2,37 +2,12 @@
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
-#[cfg(windows)]
-use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
 
 /// Schedule path deletion on next reboot (locked files).
+#[cfg(test)]
 pub fn schedule_delete_on_reboot(path: &str) -> bool {
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        false
-    }
-    #[cfg(windows)]
-    {
-        // An unsafe immediate delete must never fall through to an unchecked
-        // reboot-delete request. Keep the validated chain pinned while queuing.
-        let p = std::path::Path::new(path);
-        let Ok(_parents) = crate::fsutil::pin_existing_parents(p) else {
-            return false;
-        };
-        let Ok(_target) = crate::fsutil::pin_target_readonly(p) else {
-            return false;
-        };
-        let w: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            MoveFileExW(
-                PCWSTR(w.as_ptr()),
-                PCWSTR::null(),
-                MOVEFILE_DELAY_UNTIL_REBOOT,
-            )
-            .is_ok()
-        }
-    }
+    let _ = path;
+    false
 }
 
 /// Best-effort system restore point. Returns (ok, message).

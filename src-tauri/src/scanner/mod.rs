@@ -289,6 +289,8 @@ pub struct ScanResult {
     /// frontend `appKey()`) — two same-named apps can no longer cross-pair.
     #[serde(default)]
     pub app_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_revision: Option<u64>,
     pub items: Vec<CleanupItem>,
     /// Stable codes for bounded scans that dropped matches (M4).
     #[serde(default)]
@@ -626,6 +628,7 @@ pub fn analyze_associations(
         ($stage:literal) => {
             if !crate::scan_task::checkpoint($stage, items.len()) {
                 return ScanResult {
+                    scope_revision: None,
                     app_name: name.to_string(),
                     app_key: format!("{source}\0{registry_key}\0{name}"),
                     items,
@@ -961,6 +964,7 @@ pub fn analyze_associations(
     items.retain(|it| !crate::ignore::should_skip_leftover_path(&ignore, &it.path));
 
     ScanResult {
+        scope_revision: None,
         app_name: name.to_string(),
         app_key: format!("{source}\0{registry_key}\0{name}"),
         items,

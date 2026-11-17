@@ -6,7 +6,7 @@ use std::path::Path;
 mod backup_receipt;
 use backup_receipt::{BackupReceipt, FilesystemDeleteError};
 
-use super::preview::run_cleanup_dry_for_app_source;
+use super::preview::run_cleanup_dry_for_app_snapshot;
 use super::uninstall::run_official_uninstall_locked;
 use super::{cleanup_source_from_opts, FullCleanupOptions, FullCleanupReport, ItemDetail};
 
@@ -83,20 +83,28 @@ fn plan_cleanup_items(
     items: &[CleanupItem],
     source: crate::policy::CleanupSource,
     ignore: &crate::ignore::IgnoreList,
+    scan: Option<&crate::scan_allow::AppFileSnapshot>,
 ) -> CleanupPlan {
     let mut allowed = Vec::new();
     let mut refused = Vec::new();
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, ignore);
-        if decision.is_allow() {
-            allowed.push(it.clone());
+        let refused_reason = if !decision.is_allow() {
+            Some(decision.message())
+        } else if scan.is_some_and(|scan| !scan.matches(it)) {
+            Some(crate::scan_allow::APP_OBJECT_CHANGED)
         } else {
+            None
+        };
+        if let Some(message) = refused_reason {
             refused.push(ItemDetail {
                 path: it.path.clone(),
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
-                message: decision.message().to_string(),
+                message: message.to_string(),
             });
+        } else {
+            allowed.push(it.clone());
         }
     }
     CleanupPlan { allowed, refused }
@@ -321,18 +329,40 @@ fn delete_planned_items_with_native(
     native_delete: &mut impl FnMut(&str, &dyn Fn() -> bool) -> Option<(bool, String)>,
     receipt: Option<&BackupReceipt>,
     specialty: Option<(crate::scan_allow::AllowScope, Option<u64>)>,
-    allow_reboot_delete: bool,
+    scan: Option<&crate::scan_allow::AppFileSnapshot>,
 ) -> DeleteOutcome {
     let mut path_results = None;
     delete_planned_items_with_io(
         items,
-        &mut |path| {
+        &mut |item| {
+            let path = Path::new(&item.path);
             let scoped_id = specialty
                 .map(|(scope, revision)| crate::scan_allow::scoped_file_id(scope, revision, path))
                 .transpose()
                 .map_err(FilesystemDeleteError::Unverified)?;
+            let scanned_id = scan
+                .map(|scan| {
+                    scan.expected(item)
+                        .ok_or(FilesystemDeleteError::ScanChanged)
+                })
+                .transpose()?;
             if let Some(receipt) = receipt {
-                return receipt.delete(path, scoped_id);
+                return receipt.delete(path, scanned_id.or(scoped_id), item.kind == ItemKind::Dir);
+            }
+            #[cfg(windows)]
+            if let Some(id) = scanned_id {
+                return crate::fsutil::remove_scanned_object(
+                    path,
+                    id,
+                    Some(item.kind == ItemKind::Dir),
+                )
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        FilesystemDeleteError::ScanChanged
+                    } else {
+                        FilesystemDeleteError::Io(error)
+                    }
+                });
             }
             #[cfg(windows)]
             if let Some(id) = scoped_id {
@@ -341,14 +371,8 @@ fn delete_planned_items_with_native(
             }
             crate::fsutil::remove_tree_no_reparse(path).map_err(FilesystemDeleteError::Io)
         },
-        // Windows records a path and cannot check the backup, scan identity,
-        // or current app registration at reboot.
-        &mut |path| {
-            allow_reboot_delete
-                && receipt.is_none()
-                && specialty.is_none()
-                && crate::sysops::schedule_delete_on_reboot(path)
-        },
+        // The Windows reboot queue stores paths and cannot revalidate identity.
+        &mut |_| false,
         &mut |path| {
             delete_registry_target(
                 path,
@@ -443,7 +467,7 @@ fn delete_registry_target(
 
 fn delete_planned_items_with_io(
     items: &[CleanupItem],
-    delete_fs: &mut impl FnMut(&Path) -> Result<(), FilesystemDeleteError>,
+    delete_fs: &mut impl FnMut(&CleanupItem) -> Result<(), FilesystemDeleteError>,
     schedule: &mut impl FnMut(&str) -> bool,
     delete_registry: &mut impl FnMut(&str) -> RegistryDelete,
     scrub_path: &mut impl FnMut(&str) -> crate::regops::BackedPathResult,
@@ -557,7 +581,7 @@ fn delete_planned_items_with_io(
                 }
                 // recursive delete that refuses to walk child reparse points
                 // (std remove_dir_all can follow a junction swapped after the root check).
-                let res = delete_fs(p);
+                let res = delete_fs(it);
                 match res {
                     Ok(()) => {
                         deleted += 1;
@@ -575,6 +599,15 @@ fn delete_planned_items_with_io(
                             kind: format!("{:?}", it.kind).to_lowercase(),
                             status: "skipped".into(),
                             message: format!("backup source could not be verified: {reason}"),
+                        });
+                    }
+                    Err(FilesystemDeleteError::ScanChanged) => {
+                        skipped += 1;
+                        details.push(ItemDetail {
+                            path: it.path.clone(),
+                            kind: format!("{:?}", it.kind).to_lowercase(),
+                            status: "skipped".into(),
+                            message: crate::scan_allow::APP_OBJECT_CHANGED.into(),
                         });
                     }
                     Err(FilesystemDeleteError::BackupUnavailable(error)) => {
@@ -681,6 +714,7 @@ fn ignore_read_abort(
     }
 }
 
+#[cfg(test)]
 pub fn run_full_cleanup(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
@@ -689,10 +723,33 @@ pub fn run_full_cleanup(
     run_full_cleanup_before_delete(app, items, opts, || {})
 }
 
+#[cfg(test)]
 fn run_full_cleanup_before_delete(
     app: &crate::apps::InstalledApp,
     items: &[CleanupItem],
     opts: &FullCleanupOptions,
+    before_delete: impl FnOnce(),
+) -> FullCleanupReport {
+    run_full_cleanup_with_preflight(app, items, opts, None, before_delete)
+}
+
+pub(crate) fn run_full_cleanup_for_scan(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    opts: &FullCleanupOptions,
+    scan: Option<&crate::scan_allow::AppFileSnapshot>,
+) -> FullCleanupReport {
+    if !cleanup_source_from_opts(opts).is_scoped_scan() && scan.is_none() {
+        return ignore_read_abort(app, opts.dry_run, "analysis must run before cleanup".into());
+    }
+    run_full_cleanup_with_preflight(app, items, opts, scan, || {})
+}
+
+fn run_full_cleanup_with_preflight(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    opts: &FullCleanupOptions,
+    scan: Option<&crate::scan_allow::AppFileSnapshot>,
     before_delete: impl FnOnce(),
 ) -> FullCleanupReport {
     let cancelled = || super::scoped_cleanup_cancelled() == Some(true);
@@ -731,7 +788,7 @@ fn run_full_cleanup_before_delete(
                 return ignore_read_abort(app, true, error);
             }
         }
-        let dry = run_cleanup_dry_for_app_source(app, items, cleanup_source_from_opts(opts));
+        let dry = run_cleanup_dry_for_app_snapshot(app, items, source, scan);
         return FullCleanupReport {
             app_name: dry.app_name,
             app_key: dry.app_key,
@@ -813,6 +870,7 @@ fn run_full_cleanup_before_delete(
         &owned_selected,
         cleanup_source_from_opts(opts),
         &ignore,
+        scan,
     );
 
     let (backup_dir, receipt, restore_point_ok, restore_point_msg) =
@@ -940,6 +998,21 @@ fn run_full_cleanup_before_delete(
             );
         }
     }
+    if !super::enter_cleanup_deletion() {
+        let mut report = aborted_report(
+            app,
+            backup_dir,
+            backup_verified,
+            uninstall_ok,
+            "cleanup cancelled".into(),
+            false,
+            restore_point_ok,
+            restore_point_msg,
+            vec!["cleanup cancelled before deleting leftovers".into()],
+        );
+        report.uninstall_review = uninstall_review;
+        return report;
+    }
     let mut del = delete_planned_items_with_native(
         &plan.allowed,
         &mut native_delete_checked,
@@ -947,14 +1020,18 @@ fn run_full_cleanup_before_delete(
         source
             .specialty_scope()
             .map(|scope| (scope, opts.scope_revision)),
-        uninstall_review.is_none(),
+        scan,
     );
     // Keep unselected parent directories when cleanup requires a backup.
     let tokens: Vec<String> = [app.name.clone(), app.publisher.clone()]
         .into_iter()
         .filter(|t| !t.trim().is_empty())
         .collect();
-    for detail in del.details.iter_mut().filter(|_| receipt.is_none()) {
+    for detail in del
+        .details
+        .iter_mut()
+        .filter(|_| receipt.is_none() && !source.is_scoped_scan())
+    {
         if detail.status == "deleted" && detail.kind == "dir" {
             let removed =
                 crate::fsutil::prune_empty_ancestors(std::path::Path::new(&detail.path), &tokens);
@@ -1449,7 +1526,7 @@ mod tests {
             },
             None,
             None,
-            true,
+            None,
         );
         assert_eq!(calls, 1);
         assert_eq!((native.deleted, native.failed, native.skipped), (1, 0, 0));
@@ -1571,6 +1648,7 @@ mod tests {
             &[refused.clone(), allowed.clone()],
             source,
             &ignore,
+            None,
         );
         assert_eq!(
             plan.allowed.len(),
@@ -1732,6 +1810,19 @@ mod tests {
         replacement.install_location = root.join("NewApp").to_string_lossy().into();
         assert!(crate::executor::uninstall_review::resolve(&replacement, receipt).is_err());
         assert!(crate::executor::uninstall_review::verify(&app, receipt).is_ok());
+
+        std::fs::write(&file, b"remaining after uninstall").unwrap();
+        let cancel_id = super::super::cleanup_request::begin().unwrap();
+        let request = super::super::cleanup_request::CleanupRequest::claim(cancel_id).unwrap();
+        let cancelled = request.run(|| {
+            run_full_cleanup_before_delete(&app, items, &retry, || {
+                assert!(super::super::cleanup_request::cancel(cancel_id));
+            })
+        });
+        assert!(cancelled.aborted);
+        assert_eq!((cancelled.deleted, cancelled.delayed), (0, 0));
+        assert_eq!(cancelled.uninstall_review, Some(receipt));
+        assert_eq!(std::fs::read(&file).unwrap(), b"remaining after uninstall");
 
         let mut reinstalled = None;
         let blocked = run_full_cleanup_before_delete(&app, items, &retry, || {
@@ -1991,6 +2082,166 @@ mod tests {
         );
         assert_eq!(path_mock::read_raw("User").unwrap(), (original_user, true));
         assert_eq!(path_mock::get("Machine"), current_machine);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scanned_objects_are_kept_when_replaced_before_preview_or_deletion() {
+        let _backup_lock = crate::backup::lock_backup_env();
+        let _allow = crate::scan_allow::test_lock();
+        let fixture = crate::test_support::TempDir::new("scan-delete-identity");
+        let _env = crate::test_support::EnvVar::set("REMOVA_BACKUP_DIR", fixture.join("Backup"));
+        let _store = crate::path_seal::TestStore::new(fixture.join("seals"));
+        let install = fixture.subdir("FixtureApp");
+        let app = crate::apps::InstalledApp {
+            name: "FixtureApp".into(),
+            install_location: install.to_string_lossy().into_owned(),
+            source: "HKLM64".into(),
+            registry_key: "fixture-scan-id".into(),
+            version: "1".into(),
+            publisher: String::new(),
+            uninstall_string: String::new(),
+            quiet_uninstall_string: String::new(),
+            estimated_size_kb: 0,
+            install_date: String::new(),
+            display_icon: String::new(),
+        };
+        let key = crate::apps::app_key(&app);
+        for backup in [false, true] {
+            for (index, directory_after) in [false, true].into_iter().enumerate() {
+                let path = install.join(format!("item-{backup}-{index}"));
+                let old = install.join(format!("original-{backup}-{index}"));
+                std::fs::write(&path, b"scanned").unwrap();
+                let original = crate::scan_allow::test_item(&path.to_string_lossy());
+                let item = CleanupItem {
+                    kind: ItemKind::File,
+                    ..original
+                };
+                let revision =
+                    crate::scan_allow::remember_uninstall_items(&key, std::slice::from_ref(&item));
+                let scan = crate::scan_allow::resolve_app_files(
+                    &key,
+                    revision,
+                    std::slice::from_ref(&item),
+                )
+                .unwrap();
+                let options = FullCleanupOptions {
+                    dry_run: false,
+                    skip_official_uninstall: true,
+                    backup_enabled: backup,
+                    restore_point: false,
+                    cleanup_source: Some("force".into()),
+                    scope_revision: revision,
+                    uninstall_review: None,
+                };
+                let preview = run_cleanup_dry_for_app_snapshot(
+                    &app,
+                    std::slice::from_ref(&item),
+                    crate::policy::CleanupSource::Uninstall,
+                    Some(&scan),
+                );
+                assert_eq!(preview.deleted_planned, 1);
+                let report = run_full_cleanup_with_preflight(
+                    &app,
+                    std::slice::from_ref(&item),
+                    &options,
+                    Some(&scan),
+                    || {
+                        std::fs::rename(&path, &old).unwrap();
+                        if directory_after {
+                            std::fs::create_dir(&path).unwrap();
+                            std::fs::write(path.join("sentinel"), b"replacement").unwrap();
+                        } else {
+                            std::fs::write(&path, b"replacement").unwrap();
+                        }
+                    },
+                );
+                assert_eq!(
+                    (report.deleted, report.skipped, report.delayed),
+                    (0, 1, 0),
+                    "{report:?}"
+                );
+                let content = if directory_after {
+                    path.join("sentinel")
+                } else {
+                    path.clone()
+                };
+                assert_eq!(std::fs::read(content).unwrap(), b"replacement");
+                let preview = run_cleanup_dry_for_app_snapshot(
+                    &app,
+                    std::slice::from_ref(&item),
+                    crate::policy::CleanupSource::Uninstall,
+                    Some(&scan),
+                );
+                assert_eq!((preview.deleted_planned, preview.skipped), (0, 1));
+                assert_eq!(
+                    preview.item_details[0].message,
+                    crate::scan_allow::APP_OBJECT_CHANGED
+                );
+                let report = run_full_cleanup_for_scan(
+                    &app,
+                    std::slice::from_ref(&item),
+                    &options,
+                    Some(&scan),
+                );
+                assert_eq!((report.deleted, report.skipped), (0, 1));
+            }
+        }
+        let path = install.join("stable");
+        std::fs::write(&path, b"scanned").unwrap();
+        let item = CleanupItem {
+            kind: ItemKind::File,
+            ..crate::scan_allow::test_item(&path.to_string_lossy())
+        };
+        let old_revision =
+            crate::scan_allow::remember_uninstall_items(&key, std::slice::from_ref(&item));
+        let revision =
+            crate::scan_allow::remember_uninstall_items(&key, std::slice::from_ref(&item));
+        assert!(crate::scan_allow::resolve_app_files(
+            &key,
+            old_revision,
+            std::slice::from_ref(&item)
+        )
+        .is_err());
+        assert!(
+            crate::scan_allow::resolve_app_files(&key, None, std::slice::from_ref(&item)).is_err()
+        );
+        let scan =
+            crate::scan_allow::resolve_app_files(&key, revision, std::slice::from_ref(&item))
+                .unwrap();
+        let options = FullCleanupOptions {
+            dry_run: false,
+            skip_official_uninstall: true,
+            backup_enabled: false,
+            restore_point: false,
+            cleanup_source: Some("force".into()),
+            scope_revision: revision,
+            uninstall_review: None,
+        };
+        let report = run_full_cleanup_for_scan(&app, &[item], &options, Some(&scan));
+        assert_eq!((report.deleted, report.failed), (1, 0), "{report:?}");
+        assert!(!path.exists());
+
+        let parent = install.join("FixtureApp-cache");
+        let selected_dir = parent.join("selected");
+        std::fs::create_dir_all(&selected_dir).unwrap();
+        let mut scoped = vec![crate::scan_allow::test_item(
+            &selected_dir.to_string_lossy(),
+        )];
+        let revision =
+            crate::scan_allow::remember(crate::scan_allow::AllowScope::Monitor, &mut scoped);
+        let options = FullCleanupOptions {
+            cleanup_source: Some("monitor".into()),
+            scope_revision: revision,
+            ..options
+        };
+        let report = run_full_cleanup_for_scan(&app, &scoped, &options, None);
+        assert_eq!((report.deleted, report.failed), (1, 0), "{report:?}");
+        assert!(!selected_dir.exists());
+        assert!(
+            parent.is_dir(),
+            "unselected ancestor must remain after scoped cleanup"
+        );
     }
 
     #[cfg(windows)]
@@ -2261,7 +2512,7 @@ mod tests {
         // the "the uninstaller already took it" shape.
         let registry = crate::test_support::registry_mutations::Spy::new();
         crate::test_support::registry_mutations::set_missing_key(uninstall_key, true);
-        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None, None, true);
+        let outcome = delete_planned_items_with_native(&items, &mut |_, _| None, None, None, None);
         assert_eq!(
             (outcome.deleted, outcome.failed, outcome.skipped),
             (0, 0, 1)
@@ -2302,7 +2553,7 @@ mod tests {
             true,
         );
         let value_outcome =
-            delete_planned_items_with_native(&value_items, &mut |_, _| None, None, None, true);
+            delete_planned_items_with_native(&value_items, &mut |_, _| None, None, None, None);
         assert_eq!(
             (
                 value_outcome.deleted,

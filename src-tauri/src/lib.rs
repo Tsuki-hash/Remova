@@ -741,7 +741,8 @@ fn authorize_cleanup_items(
     items: &[CleanupItem],
     source: policy::CleanupSource,
 ) -> Result<(), String> {
-    authorize_cleanup_items_for_review(app, items, source, None)
+    let revision = scan_allow::app_revision(&executor::uninstall_review::analysis_key(app, None));
+    authorize_cleanup_items_for_review(app, items, source, None, revision).map(|_| ())
 }
 
 fn authorize_cleanup_items_for_review(
@@ -749,7 +750,8 @@ fn authorize_cleanup_items_for_review(
     items: &[CleanupItem],
     source: policy::CleanupSource,
     uninstall_review: Option<u64>,
-) -> Result<(), String> {
+    scope_revision: Option<u64>,
+) -> Result<Option<scan_allow::AppFileSnapshot>, String> {
     if source == policy::CleanupSource::Orphan {
         for item in items {
             if !orphans::was_recent_orphan_item(item) {
@@ -759,27 +761,13 @@ fn authorize_cleanup_items_for_review(
                 ));
             }
         }
-        return Ok(());
+        return Ok(None);
     }
     if source.is_scoped_scan() {
-        return Ok(());
+        return Ok(None);
     }
     let key = executor::uninstall_review::analysis_key(app, uninstall_review);
-    if !scan_allow::uninstall_scan_recorded(&key) {
-        return Err("analysis must run before cleanup".into());
-    }
-    for item in items {
-        if item.path.trim().is_empty() {
-            continue;
-        }
-        if !scan_allow::was_recent_uninstall_item(&key, item) {
-            return Err(format!(
-                "cleanup item not from the latest analysis: {}",
-                item.path
-            ));
-        }
-    }
-    Ok(())
+    scan_allow::resolve_app_files(&key, scope_revision, items).map(Some)
 }
 
 #[tauri::command]
@@ -803,24 +791,24 @@ async fn analyze_associations(
             resolve_analysis_app(app, scan_id, crate::sysops::is_elevated_for_gate())?
         };
         let work = || {
-            scanner::analyze_associations(
+            let mut result = scanner::analyze_associations(
                 &app.name,
                 &app.install_location,
                 &app.publisher,
                 &app.registry_key,
                 &app.source,
-            )
+            );
+            if result.app_key.is_empty() {
+                result.app_key = apps::app_key(&app);
+            }
+            let key = executor::uninstall_review::analysis_key(&app, uninstall_review);
+            result.scope_revision = scan_allow::remember_uninstall_items(&key, &result.items);
+            result
         };
-        let mut result = match scan_id {
+        match scan_id {
             Some(id) => scan_task::run(id, work),
             None => Ok(work()),
-        }?;
-        if result.app_key.is_empty() {
-            result.app_key = apps::app_key(&app);
         }
-        let key = executor::uninstall_review::analysis_key(&app, uninstall_review);
-        scan_allow::remember_uninstall_items(&key, &result.items);
-        Ok(result)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -840,13 +828,22 @@ async fn run_cleanup_dry_run(
         if let Some(id) = uninstall_review {
             executor::uninstall_review::verify(&app, id)?;
         }
-        authorize_cleanup_items_for_review(&app, &items, source, uninstall_review)?;
+        let scan = authorize_cleanup_items_for_review(
+            &app,
+            &items,
+            source,
+            uninstall_review,
+            scope_revision,
+        )?;
         let items = match source.specialty_scope() {
             Some(scope) => scan_allow::resolve_scoped_items(scope, scope_revision, &items)?,
             None => items,
         };
-        Ok(executor::run_cleanup_dry_for_app_source(
-            &app, &items, source,
+        Ok(executor::run_cleanup_dry_for_app_snapshot(
+            &app,
+            &items,
+            source,
+            scan.as_ref(),
         ))
     })
     .await
@@ -915,9 +912,15 @@ async fn run_full_cleanup(
     let source = cleanup_source_from_arg(options.cleanup_source.as_deref());
     validate_cleanup_intent(source, &options)?;
     let app = resolve_review_cleanup_app(app, source, options.uninstall_review)?;
-    authorize_cleanup_items_for_review(&app, &items, source, options.uninstall_review)?;
+    let scan = authorize_cleanup_items_for_review(
+        &app,
+        &items,
+        source,
+        options.uninstall_review,
+        options.scope_revision,
+    )?;
     tauri::async_runtime::spawn_blocking(move || {
-        let work = || executor::run_full_cleanup(&app, &items, &options);
+        let work = || executor::run_full_cleanup_for_scan(&app, &items, &options, scan.as_ref());
         let mut report = match request {
             Some(request) => request.run(work),
             None => work(),

@@ -110,6 +110,7 @@ export async function runBatchCleanup(
           dry_run: false,
           skip_official_uninstall: !runOfficial,
           ...(receipt !== undefined && { uninstall_review: receipt }),
+          ...(r.scope_revision !== undefined && { scope_revision: r.scope_revision }),
           backup_enabled: backupEnabled,
         // the user can decline a restore point; the backend still
         // owns the decision when this is absent.

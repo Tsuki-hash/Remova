@@ -28,6 +28,7 @@ export type SoftwareControllerInput = {
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;
+  scanTarget?: InstalledApp | null;
   multi: Set<string>;
   uninstallingKey: string | null;
   formatAppSize: (a: InstalledApp) => string;
@@ -149,6 +150,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
         sortCol: input.sortCol,
         sortDesc: input.sortDesc,
         selected: input.selected,
+        scanTarget: input.scanTarget,
         multi: input.multi,
         uninstallingKey: input.uninstallingKey,
         formatAppSize: input.formatAppSize,
@@ -265,6 +267,7 @@ export function useSoftwareController(input: SoftwareControllerInput): SoftwareP
       input.sortCol,
       input.sortDesc,
       input.selected,
+      input.scanTarget,
       input.multi,
       input.uninstallingKey,
       input.formatAppSize,

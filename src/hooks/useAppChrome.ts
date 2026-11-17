@@ -54,6 +54,7 @@ export function useAppChrome({
   L,
   selected,
   monitoring,
+  busyRef,
   goNav,
   flow,
   residual,
@@ -63,6 +64,7 @@ export function useAppChrome({
   L: Strings;
   selected: InstalledApp | null;
   monitoring: boolean;
+  busyRef: { current: boolean };
   goNav: (n: "software") => void;
   flow: AppChromeFlow;
   residual: AppChromeResidual;
@@ -233,6 +235,11 @@ export function useAppChrome({
 
   const monitorDiffToCleanup = useCallback(
     (_diff: { added_files: string[]; added_reg_values: string[] }) => {
+      if (busyRef.current) {
+        toast.info(L.taskBusy);
+        return;
+      }
+      busyRef.current = true;
       try {
  // Trusted items only: captured when the server finished the monitor snapshot.
         const items = residual.monitorDiff?.items ?? [];
@@ -261,9 +268,11 @@ export function useAppChrome({
         toast.success(`${L.monitorToCleanup}: ${items.length}`);
       } catch (e) {
         flow.setError(formatError(e));
+      } finally {
+        busyRef.current = false;
       }
     },
-    [L, goNav, residual, flow],
+    [L, goNav, residual, flow, busyRef],
   );
 
   // Second of the two cases: guarded by `useAssociationScan`'s job token

@@ -1,17 +1,20 @@
 //! A cancelled or abandoned cleanup request cannot affect another operation.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const MAX_REQUESTS: usize = 8;
 const RESERVATION_TTL: Duration = Duration::from_secs(60);
 const BUSY: &str = "too many cleanup requests";
+pub(super) const PREPARING: u8 = 0;
+pub(super) const CANCELLED: u8 = 1;
+pub(super) const DELETING: u8 = 2;
 
 struct Request {
     reserved_at: Option<Instant>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<AtomicU8>,
 }
 
 #[derive(Default)]
@@ -48,7 +51,7 @@ pub(crate) fn begin() -> Result<u32, String> {
         id,
         Request {
             reserved_at: Some(now),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancelled: Arc::new(AtomicU8::new(PREPARING)),
         },
     );
     Ok(id)
@@ -64,14 +67,17 @@ pub(crate) fn cancel(id: u32) -> bool {
     if request.reserved_at.is_some() {
         requests.entries.remove(&id);
     } else {
-        request.cancelled.store(true, Ordering::Release);
+        return request
+            .cancelled
+            .compare_exchange(PREPARING, CANCELLED, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
     }
     true
 }
 
 pub(crate) struct CleanupRequest {
     id: u32,
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<AtomicU8>,
 }
 
 impl CleanupRequest {
@@ -92,7 +98,7 @@ impl CleanupRequest {
     }
 
     pub(crate) fn run<T>(self, work: impl FnOnce() -> T) -> T {
-        super::with_operation_cancellation(Arc::clone(&self.cancelled), work)
+        super::with_cleanup_request(Arc::clone(&self.cancelled), work)
     }
 }
 
@@ -107,6 +113,23 @@ impl Drop for CleanupRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_cancel_and_deletion_are_mutually_exclusive() {
+        let cancelled = begin().unwrap();
+        CleanupRequest::claim(cancelled).unwrap().run(|| {
+            assert!(cancel(cancelled));
+            assert!(!super::super::enter_cleanup_deletion());
+            assert!(super::super::cleanup_cancelled());
+        });
+        let writing = begin().unwrap();
+        CleanupRequest::claim(writing).unwrap().run(|| {
+            assert!(super::super::enter_cleanup_deletion());
+            assert!(!std::thread::spawn(move || cancel(writing)).join().unwrap());
+            assert!(!super::super::cleanup_cancelled());
+        });
+        assert!(!cancel(writing));
+    }
 
     #[test]
     fn cancellation_only_reaches_the_claimed_cleanup_id() {

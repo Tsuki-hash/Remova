@@ -900,6 +900,42 @@ describe("App orchestration", () => {
     expect(native.ignorePublisher).not.toHaveBeenCalled();
   });
 
+  it("preserves monitor changes when an in-flight app scan owns the foreground", async () => {
+    await mount();
+    await nav("more");
+    act(() => more().onToggleMonitor());
+    await waitFor(() => expect(more().monitoring).toBe(true));
+    act(() => more().onToggleMonitor());
+    await waitFor(() => expect(more().monitorDiff).toBeTruthy());
+    const diff = more().monitorDiff;
+    let finish!: (value: ScanResult) => void;
+    native.analyze.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await nav("software");
+    act(() => software().listAnalyze(demo));
+    await waitFor(() => expect(software().scanning).toBe(true));
+    await nav("more");
+    act(() => more().onMonitorToCleanup());
+    expect(more().monitorDiff).toBe(diff);
+    await act(async () => finish(scan));
+    await nav("software");
+    expect(software().selected?.source).toBe(demo.source);
+    expect(software().scan).toEqual(scan);
+  });
+
+  it("retires the old scan when the uninstaller succeeded but leftover cleanup was cancelled", async () => {
+    await mount();
+    await analyzeDemo();
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    native.fullCleanup.mockResolvedValueOnce({ ...report, aborted: true, deleted: 0,
+      uninstall_ok: true, uninstall_review: 42, uninstall_message: "cleanup cancelled" });
+    await act(async () => software().onCleanup());
+    await waitFor(() => expect(software().scan).toBeNull());
+    expect(software().selectedPaths.size).toBe(0);
+    expect(software().uninstallReviews.some(review => review.receipt === 42)).toBe(true);
+    await act(async () => software().onCleanup());
+    expect(native.fullCleanup).toHaveBeenCalledTimes(1);
+  });
+
   it("recovers the previous tracking result without offering cleanup", async () => {
     native.installMonitorStatus.mockResolvedValue("recovered");
     native.endInstallMonitor.mockResolvedValue({ diff: {

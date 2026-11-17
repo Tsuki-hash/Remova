@@ -83,6 +83,7 @@ export type SoftwarePageProps = {
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;
+  scanTarget?: InstalledApp | null;
   multi: Set<string>;
   uninstallingKey: string | null;
   formatAppSize: (a: InstalledApp) => string;
@@ -303,7 +304,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           scanning={p.scanning}
           dryRunning={p.dryRunning}
           residualFromUninstall={p.residualFromUninstall}
-          canRunOfficial={p.selected?.source !== "Monitor" && p.selected?.source !== "Orphan"}
+          canRunOfficial={(p.scanTarget ?? p.selected)?.source !== "Monitor" && (p.scanTarget ?? p.selected)?.source !== "Orphan"}
           useOfficial={p.useOfficial}
           aiEnabled={p.aiEnabled}
           aiBusy={p.aiBusy}
@@ -332,6 +333,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           aiReportNote={p.aiReportNote}
           verifyRows={p.verifyRows}
           residualScan={reportReview?.rescan}
+          residualRestart={reportReview?.restart}
           onRescan={
             rescanTarget
               ? () => p.listAnalyze(rescanTarget, {

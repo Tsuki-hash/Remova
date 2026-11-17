@@ -1,7 +1,7 @@
 //! Server-side cleanup authorization from the latest scans.
 
 use crate::scanner::{CleanupItem, ItemKind};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -30,11 +30,30 @@ fn maps() -> &'static ScopedMaps {
 
 /// Per-app cleanup authorization from the latest analysis, bounded so a long
 /// session cannot retain every app's paths forever.
-type AppPaths = HashMap<String, (u64, HashSet<String>)>;
+type FileId = (u32, u64);
+type AppPaths = HashMap<String, (u64, HashMap<String, Option<FileId>>)>;
 type AppMaps = Mutex<AppPaths>;
 static APP_MAPS: OnceLock<AppMaps> = OnceLock::new();
 static APP_GENERATION: AtomicU64 = AtomicU64::new(0);
 const MAX_ANALYZED_APPS: usize = 64;
+pub(crate) const APP_OBJECT_CHANGED: &str = "cleanup object no longer matches the scan; scan again";
+
+/// Selected objects from a single server-side analysis. Hold it through the
+/// operation so another scan cannot replace the identities mid-cleanup.
+pub(crate) struct AppFileSnapshot(HashMap<String, FileId>);
+
+impl AppFileSnapshot {
+    pub(crate) fn expected(&self, item: &CleanupItem) -> Option<FileId> {
+        authorized_item_key(item).and_then(|key| self.0.get(&key).copied())
+    }
+
+    pub(crate) fn matches(&self, item: &CleanupItem) -> bool {
+        !matches!(item.kind, ItemKind::File | ItemKind::Dir)
+            || self
+                .expected(item)
+                .is_some_and(|id| file_identity(item).ok() == Some(id))
+    }
+}
 
 fn app_maps() -> &'static AppMaps {
     APP_MAPS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -71,12 +90,25 @@ fn item_key(path: &str, item: &CleanupItem) -> String {
 /// later uninstall cleanup may perform for that app. The scan identity, the
 /// item kind and the service-bound flag all come from the backend, not from the
 /// cleanup request.
-pub fn remember_uninstall_items(app_key: &str, items: &[crate::scanner::CleanupItem]) {
+pub fn remember_uninstall_items(app_key: &str, items: &[CleanupItem]) -> Option<u64> {
+    let normalized = items
+        .iter()
+        .take_while(|_| !crate::scan_task::cancelled())
+        .filter_map(|item| {
+            let key = authorized_item_key(item)?;
+            let identity = match item.kind {
+                ItemKind::File | ItemKind::Dir => file_identity(item).ok(),
+                ItemKind::Registry | ItemKind::Path => None,
+            };
+            Some((key, identity))
+        })
+        .collect();
+    let mut revision = None;
     crate::scan_task::publish(|| {
-        let normalized: HashSet<String> = items.iter().filter_map(authorized_item_key).collect();
         let generation = APP_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut g) = app_maps().lock() {
             g.insert(app_key.to_string(), (generation, normalized));
+            revision = Some(generation);
             if g.len() > MAX_ANALYZED_APPS {
                 let mut keys: Vec<(u64, String)> =
                     g.iter().map(|(k, (seen, _))| (*seen, k.clone())).collect();
@@ -87,9 +119,10 @@ pub fn remember_uninstall_items(app_key: &str, items: &[crate::scanner::CleanupI
             }
         }
     });
+    revision
 }
 
-/// True when an analysis for this exact app identity is still available.
+#[cfg(test)]
 pub fn uninstall_scan_recorded(app_key: &str) -> bool {
     app_maps()
         .lock()
@@ -97,17 +130,45 @@ pub fn uninstall_scan_recorded(app_key: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// True only for the exact action (path, kind, service-bound flag) the latest
-/// analysis of this app returned.
+#[cfg(test)]
 pub fn was_recent_uninstall_item(app_key: &str, item: &crate::scanner::CleanupItem) -> bool {
-    let Some(key) = authorized_item_key(item) else {
-        return false;
-    };
+    resolve_app_files(app_key, app_revision(app_key), std::slice::from_ref(item)).is_ok()
+}
+
+#[cfg(test)]
+pub(crate) fn app_revision(app_key: &str) -> Option<u64> {
     app_maps()
         .lock()
-        .ok()
-        .and_then(|g| g.get(app_key).map(|(_, items)| items.contains(&key)))
-        .unwrap_or(false)
+        .ok()?
+        .get(app_key)
+        .map(|(revision, _)| *revision)
+}
+
+pub(crate) fn resolve_app_files(
+    app_key: &str,
+    revision: Option<u64>,
+    items: &[CleanupItem],
+) -> Result<AppFileSnapshot, String> {
+    let maps = app_maps().lock().map_err(|_| "scan:state")?;
+    let (_, originals) = maps
+        .get(app_key)
+        .filter(|(current, _)| Some(*current) == revision)
+        .ok_or("analysis must run before cleanup")?;
+    let mut selected = HashMap::new();
+    for item in items.iter().filter(|item| !item.path.trim().is_empty()) {
+        let Some((key, identity)) = authorized_item_key(item)
+            .and_then(|key| originals.get(&key).map(|identity| (key, *identity)))
+        else {
+            return Err(format!(
+                "cleanup item not from the latest analysis: {}",
+                item.path
+            ));
+        };
+        if let Some(id) = identity {
+            selected.insert(key, id);
+        }
+    }
+    Ok(AppFileSnapshot(selected))
 }
 
 /// Comparison key for an allow-list entry.
@@ -193,8 +254,10 @@ pub(crate) fn commit_monitor_items(
     update_snapshot: impl FnOnce() -> Result<(), String>,
 ) -> Result<u64, String> {
     let items = scope_items(items);
-    let mut g = maps().lock().map_err(|_| "scan:state")?;
     update_snapshot()?;
+    // The caller owns its session and commit permit through persistence. No
+    // global authorization lock is held during serialization or disk I/O.
+    let mut g = maps().lock().unwrap_or_else(|error| error.into_inner());
     let revision = SCOPED_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     g.insert(AllowScope::Monitor, (revision, items));
     Ok(revision)

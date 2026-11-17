@@ -137,6 +137,7 @@ describe("grouped setter bags keep stable identities", () => {
     const { result, rerender } = renderHook(
       ({ sel }: { sel: InstalledApp }) => useAppChrome({
         L: undefined as never, selected: sel, monitoring: false, goNav: vi.fn(),
+        busyRef: { current: false },
         flow, residual, setCheckupOrphanCount: vi.fn(), setCheckupOrphanCompleteness: vi.fn(),
       }),
       { initialProps: { sel: selected } },

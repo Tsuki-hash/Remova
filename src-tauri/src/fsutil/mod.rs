@@ -1420,10 +1420,26 @@ pub fn remove_tree_no_reparse(p: &Path) -> std::io::Result<()> {
 
 #[cfg(windows)]
 pub(crate) fn remove_scanned_tree(path: &Path, expected: (u32, u64)) -> std::io::Result<()> {
+    remove_scanned_object(path, expected, None)
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_scanned_object(
+    path: &Path,
+    expected: (u32, u64),
+    directory: Option<bool>,
+) -> std::io::Result<()> {
     let _parents = pin_existing_parents(path)?;
     let pin = pin_dir_no_reparse(path)?;
-    if pin.file_identity()? != expected {
-        return Err(std::io::Error::other("specialty cleanup object changed"));
+    if pin.file_identity()? != expected
+        || directory.is_some_and(|directory| {
+            pin_metadata(&pin).map_or(true, |metadata| metadata.is_dir() != directory)
+        })
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "scanned cleanup object changed",
+        ));
     }
     remove_tree_with_pin(path, pin)
 }

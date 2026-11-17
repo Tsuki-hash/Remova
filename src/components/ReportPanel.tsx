@@ -25,6 +25,7 @@ type Props = {
   aiReportNote: string | null;
   verifyRows: VerifyRow[] | null;
   residualScan?: UninstallRescan;
+  residualRestart?: "required" | "before_verification";
   /** re-analyze the same app without preselecting anything. */
   onRescan?: () => void;
   rescanBusy?: boolean;
@@ -43,6 +44,7 @@ export function ReportPanel({
   aiReportNote,
   verifyRows,
   residualScan,
+  residualRestart,
   onRescan,
   rescanBusy,
   deepCheckApp,
@@ -150,6 +152,11 @@ export function ReportPanel({
       {hasHistorySaveWarning(report) && (
         <div role="status" style={{ marginTop: 8, color: "var(--warn-ink)" }}>
           {L.cleanupHistorySaveFailed}
+        </div>
+      )}
+      {residualRestart && (
+        <div role="status" style={{ marginTop: 8, color: "var(--warn-ink)" }}>
+          {residualRestart === "required" ? L.backendRebootRequired : L.backendUninstallRebootBeforeVerify}
         </div>
       )}
       {!report.dry_run && "deleted" in report &&

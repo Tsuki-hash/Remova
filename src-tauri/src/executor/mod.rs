@@ -6,12 +6,16 @@
 
 use serde::{Deserialize, Serialize};
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) static CLEANUP_LOCK: Mutex<()> = Mutex::new(());
+enum OperationCancellation {
+    Restore(Arc<AtomicBool>),
+    Cleanup(Arc<AtomicU8>),
+}
 thread_local! {
-    static OPERATION_CANCELLED: std::cell::RefCell<Option<Arc<AtomicBool>>> = const {
+    static OPERATION_CANCELLED: std::cell::RefCell<Option<OperationCancellation>> = const {
         std::cell::RefCell::new(None)
     };
 }
@@ -37,9 +41,12 @@ pub fn cancel_cleanup_operation() {
 
 pub(crate) fn scoped_cleanup_cancelled() -> Option<bool> {
     OPERATION_CANCELLED.with(|flag| {
-        flag.borrow()
-            .as_ref()
-            .map(|flag| flag.load(Ordering::Acquire))
+        flag.borrow().as_ref().map(|flag| match flag {
+            OperationCancellation::Restore(flag) => flag.load(Ordering::Acquire),
+            OperationCancellation::Cleanup(flag) => {
+                flag.load(Ordering::Acquire) == cleanup_request::CANCELLED
+            }
+        })
     })
 }
 
@@ -75,7 +82,15 @@ pub(crate) fn wait_for_cleanup_lock(
 
 /// Use this request's cancellation while a blocking worker owns the operation.
 pub(crate) fn with_operation_cancellation<T>(flag: Arc<AtomicBool>, run: impl FnOnce() -> T) -> T {
-    struct Reset(Option<Arc<AtomicBool>>);
+    with_cancellation(OperationCancellation::Restore(flag), run)
+}
+
+pub(crate) fn with_cleanup_request<T>(state: Arc<AtomicU8>, run: impl FnOnce() -> T) -> T {
+    with_cancellation(OperationCancellation::Cleanup(state), run)
+}
+
+fn with_cancellation<T>(flag: OperationCancellation, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<OperationCancellation>);
     impl Drop for Reset {
         fn drop(&mut self) {
             OPERATION_CANCELLED.with(|flag| flag.replace(self.0.take()));
@@ -83,6 +98,27 @@ pub(crate) fn with_operation_cancellation<T>(flag: Arc<AtomicBool>, run: impl Fn
     }
     let _reset = Reset(OPERATION_CANCELLED.with(|current| current.replace(Some(flag))));
     run()
+}
+
+/// Atomically choose deletion or cancellation after all final preflights.
+pub(crate) fn enter_cleanup_deletion() -> bool {
+    OPERATION_CANCELLED.with(|flag| {
+        let current = flag.borrow();
+        current.as_ref().map_or_else(
+            || !cleanup_cancelled(),
+            |state| match state {
+                OperationCancellation::Restore(flag) => !flag.load(Ordering::Acquire),
+                OperationCancellation::Cleanup(state) => state
+                    .compare_exchange(
+                        cleanup_request::PREPARING,
+                        cleanup_request::DELETING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok(),
+            },
+        )
+    })
 }
 
 pub(crate) mod cleanup_request;

@@ -18,6 +18,15 @@ pub fn run_cleanup_dry_for_app_source(
     items: &[CleanupItem],
     source: crate::policy::CleanupSource,
 ) -> CleanupReport {
+    run_cleanup_dry_for_app_snapshot(app, items, source, None)
+}
+
+pub(crate) fn run_cleanup_dry_for_app_snapshot(
+    app: &crate::apps::InstalledApp,
+    items: &[CleanupItem],
+    source: crate::policy::CleanupSource,
+    scan: Option<&crate::scan_allow::AppFileSnapshot>,
+) -> CleanupReport {
     let mut deleted_planned = 0u32;
     let mut skipped = 0u32;
     let errors = vec![];
@@ -31,13 +40,20 @@ pub fn run_cleanup_dry_for_app_source(
 
     for it in items {
         let decision = crate::policy::gate_cleanup_item(Some(app), it, source, &ignore);
-        if !decision.is_allow() {
+        let refused = if !decision.is_allow() {
+            Some(decision.message())
+        } else if scan.is_some_and(|scan| !scan.matches(it)) {
+            Some(crate::scan_allow::APP_OBJECT_CHANGED)
+        } else {
+            None
+        };
+        if let Some(message) = refused {
             skipped += 1;
             details.push(ItemDetail {
                 path: it.path.clone(),
                 kind: format!("{:?}", it.kind).to_lowercase(),
                 status: "skipped".into(),
-                message: decision.message().to_string(),
+                message: message.to_string(),
             });
             continue;
         }
