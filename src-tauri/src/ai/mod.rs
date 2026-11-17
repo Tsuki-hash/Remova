@@ -27,7 +27,7 @@ pub struct AiConfig {
     pub api_key: String,
     #[serde(default)]
     pub model: String,
-    /// Allow sending desensitized install paths (default false → path only as vendor/product tokens).
+    /// Allow sanitized paths from recognized local folders. Default omits path fields.
     #[serde(default)]
     pub allow_cloud_paths: bool,
 }
@@ -421,144 +421,61 @@ fn decrypt_stored_key(stored: &str) -> Result<String, String> {
     Ok(stored.to_string())
 }
 
-/// replace the Windows profile-name segment after `Users\` with `*`.
-/// ASCII case-insensitive so index alignment with the original string is preserved.
-pub fn mask_profile_usernames(s: &str) -> String {
-    let sc: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0usize;
-    while i < sc.len() {
-        // Path-segment `users` (leading or after a separator).
-        let at_users = i + 5 <= sc.len()
-            && sc[i..i + 5]
-                .iter()
-                .zip("users".chars())
-                .all(|(a, b)| a.to_ascii_lowercase() == b)
-            && (i == 0 || sc[i - 1] == '\\' || sc[i - 1] == '/')
-            && (i + 5 >= sc.len() || sc[i + 5] == '\\' || sc[i + 5] == '/');
-        if !at_users {
-            out.push(sc[i]);
-            i += 1;
-            continue;
-        }
-        // Keep the `Users` segment and its separator; mask the next segment.
-        out.extend(sc[i..i + 5].iter());
-        if i + 5 < sc.len() {
-            out.push(sc[i + 5]);
-            let mut j = i + 6;
-            while j < sc.len() && sc[j] != '\\' && sc[j] != '/' {
-                j += 1;
-            }
-            if j > i + 6 {
-                out.push('*');
-            }
-            i = j;
-        } else {
-            i += 5;
-        }
-    }
-    out
-}
-
-/// Drive-letter or UNC shape — the tokens that must go through the path gate.
-fn looks_like_path_token(s: &str) -> bool {
-    let t = s.trim();
-    let b = t.as_bytes();
-    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
-        || t.starts_with(r"\\")
-        || t.starts_with("//")
-}
-
-/// Free text (reason / evidence) scrubbed before any cloud upload : /// profile names masked, absolute path tokens reduced via [`sanitize_path`].
-pub fn scrub_cloud_text(s: &str) -> String {
-    let masked = mask_profile_usernames(s);
-    let sc: Vec<char> = masked.chars().collect();
-    let mut out = String::with_capacity(masked.len());
-    let mut i = 0usize;
-    while i < sc.len() {
-        let is_path_start = (sc[i].is_ascii_alphabetic()
-            && i + 2 < sc.len()
-            && sc[i + 1] == ':'
-            && (sc[i + 2] == '\\' || sc[i + 2] == '/'))
-            || (sc[i] == '\\' && i + 1 < sc.len() && sc[i + 1] == '\\');
-        if !is_path_start {
-            out.push(sc[i]);
-            i += 1;
-            continue;
-        }
-        let start = i;
-        let mut j = i;
-        while j < sc.len()
-            && !matches!(sc[j], '\r' | '\n' | '\t')
-            && !matches!(
-                sc[j],
-                ',' | ';' | '"' | '\'' | ')' | ']' | '}' | '（' | '）'
-            )
-        {
-            j += 1;
-        }
-        // Trim trailing sentence punctuation from the token.
-        while j > start && matches!(sc[j - 1], '.' | ',' | ';' | ':' | ')' | ']' | '}') {
-            j -= 1;
-        }
-        // Free text has no reliable boundary between a spaced directory and
-        // following prose. Redact conservatively through the next delimiter;
-        // structured path fields retain the separate product-token policy.
-        out.push_str("[path]");
-        i = j;
-    }
-    out
-}
-
-/// Reduce a path to vendor/product-ish tokens; drop usernames and deep trees.
-pub fn sanitize_path(path: &str, allow_full: bool) -> String {
-    let p = path.replace('/', "\\");
-    let low = p.to_ascii_lowercase();
-    if allow_full {
-        if let Some(idx) = low.find("\\users\\") {
-            let rest = &p[idx + 7..];
-            if let Some(slash) = rest.find('\\') {
-                return format!("C:\\Users\\*\\{}", &rest[slash + 1..]);
-            }
-            return "C:\\Users\\*".into();
-        }
-        return p;
-    }
-    for marker in [
-        "\\appdata\\local\\",
-        "\\appdata\\locallow\\",
-        "\\appdata\\roaming\\",
-    ] {
-        if let Some(i) = low.find(marker) {
-            let after = &p[i + marker.len()..];
-            let take: Vec<&str> = after
-                .split('\\')
-                .filter(|s| !s.is_empty())
-                .take(2)
-                .collect();
-            if !take.is_empty() {
-                return format!("AppData\\{}", take.join("\\"));
-            }
-        }
-    }
-    for marker in ["\\program files\\", "\\program files (x86)\\"] {
-        if let Some(i) = low.find(marker) {
-            let after = &p[i + marker.len()..];
-            if let Some(first) = after.split('\\').find(|s| !s.is_empty()) {
-                return first.to_string();
-            }
-        }
-    }
-    // Fallback last-segment reduction must never surface a profile name.
-    let masked = mask_profile_usernames(&p);
-    let parts: Vec<&str> = masked.split('\\').filter(|s| !s.is_empty()).collect();
-    if parts.len() >= 2 {
-        format!("{}\\{}", parts[parts.len() - 2], parts[parts.len() - 1])
-    } else if let Some(last) = parts.last() {
-        (*last).to_string()
+/// Free text can include a path with spaces or punctuation. Withhold the
+/// whole field if it contains path syntax, regardless of the path setting.
+fn scrub_cloud_text(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    if text.contains(['\\', '/'])
+        || bytes.windows(3).enumerate().any(|(i, part)| {
+            (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
+                && part[0].is_ascii_alphabetic()
+                && part[1] == b':'
+                && !part[2].is_ascii_whitespace()
+        })
+    {
+        "[path]"
     } else {
-        "…".into()
+        text
     }
+}
+
+/// Opt-in only: recognize standard local roots, mask the user profile
+/// component, and withhold network, device, and unfamiliar local paths.
+fn cloud_path(path: &str, allowed: bool) -> Option<String> {
+    if !allowed {
+        return None;
+    }
+    let normalized = path.replace('/', "\\");
+    let path = normalized.as_str();
+    let [drive, b':', b'\\', ..] = path.as_bytes() else {
+        return None;
+    };
+    if !drive.is_ascii_alphabetic() {
+        return None;
+    }
+    let mut parts: Vec<&str> = path[3..].trim_end_matches('\\').split('\\').collect();
+    if parts.iter().any(|part| {
+        matches!(*part, "" | "." | "..")
+            || part.contains([':', '%', '*', '?', '"', '<', '>', '|'])
+            || part.chars().any(char::is_control)
+    }) {
+        return None;
+    }
+    let root = parts.first()?;
+    if root.eq_ignore_ascii_case("Users") {
+        *parts.get_mut(1)? = "*";
+    } else if ![
+        "Program Files",
+        "Program Files (x86)",
+        "ProgramData",
+        "Windows",
+    ]
+    .iter()
+    .any(|standard| root.eq_ignore_ascii_case(standard))
+    {
+        return None;
+    }
+    Some(format!("{}{}", &path[..3], parts.join("\\")))
 }
 
 fn fnv1a64(s: &str) -> u64 {
@@ -809,18 +726,25 @@ pub struct ExplainOutput {
     pub suggest_check: bool,
 }
 
+#[derive(Deserialize)]
+struct ModelExplanation {
+    id: usize,
+    summary: String,
+    suggest_check: bool,
+}
+
 const EXPLAIN_SYSTEM: &str =
     "你是 Windows 深度卸载助手。根据给定的残留候选证据，用中文写 1-2 句说明：\
-这是什么、为何像残留、删除的常见影响。不要编造路径外的事实。\
+这是什么、为何像残留、删除的常见影响。不要编造给定证据以外的事实。\
 suggest_check 仅当 confidence=confirmed 且 risk!=high 时可为 true。\
-严格输出 JSON 数组，元素字段：path, summary, suggest_check。";
+严格输出 JSON 数组，元素字段：id, summary, suggest_check。";
 
 const EXPLAIN_SYSTEM_EN: &str =
     "You are a Windows deep-uninstall assistant. Using the supplied leftover \
 evidence, write 1-2 sentences in English per item: what it is, why it looks \
 like a leftover, and the usual impact of deleting it. Never invent facts \
-beyond the given paths. Set suggest_check true only when confidence=confirmed \
-and risk!=high. Output a strict JSON array with fields: path, summary, \
+beyond the given evidence. Set suggest_check true only when confidence=confirmed \
+and risk!=high. Output a strict JSON array with fields: id, summary, \
 suggest_check.";
 
 /// Normalize an IPC-supplied locale to the two supported UI languages. Anything
@@ -873,60 +797,49 @@ fn explain_items_with_completion(
     // results are placed back at the caller's index, so cache hits and
     // chunked completions cannot reorder the output relative to the input.
     let mut slots: Vec<Option<ExplainOutput>> = (0..items.len()).map(|_| None).collect();
-    let mut pending: Vec<(usize, ExplainInput)> = Vec::new();
+    let mut pending = Vec::new();
 
     for (idx, it) in items.iter().enumerate() {
-        // Cache key includes risk + publisher: a verdict cached for a low-risk
-        // classification (or another publisher's identical path) must never be
-        // replayed for a high-risk one. The locale is part of the key as well —
-        // otherwise switching language replays the previous language's text.
-        let key = fnv1a64(&format!(
-            "{app_name}|{publisher}|{}|{}|{}|{}|{}|{}",
-            it.path,
-            it.kind,
-            it.confidence,
-            it.risk,
-            it.reason,
-            normalize_locale(locale)
-        ));
+        // Include the permission and evidence so a previous prompt's verdict
+        // cannot be reused when the evidence or sharing setting changes.
+        let key = fnv1a64(
+            &serde_json::json!((
+                "explain",
+                app_name,
+                publisher,
+                cfg.allow_cloud_paths,
+                normalize_locale(locale),
+                it
+            ))
+            .to_string(),
+        );
         if let Some(cached) = cache_get(key) {
-            if let Ok(mut parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
-                // Re-run the freshness gate on hits too — a cached
-                // `suggest_check` from a lower-risk classification must not
-                // surface on a high-risk item.
-                if parsed.suggest_check && it.risk.as_str() == "high" {
-                    parsed.suggest_check = false;
-                }
+            if let Ok(parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
                 slots[idx] = Some(parsed);
                 continue;
             }
         }
-        pending.push((idx, it.clone()));
-    }
-
-    if pending.is_empty() {
-        return Ok(slots.into_iter().flatten().collect());
+        pending.push((idx, it, key));
     }
 
     // Bound each request, while processing every uncached item in this call.
     for chunk in pending.chunks(crate::constants::AI_EXPLAIN_MAX_ITEMS) {
-        let batch: Vec<&(usize, ExplainInput)> = chunk.iter().collect();
-        let payload: Vec<serde_json::Value> = batch
+        let payload: Vec<serde_json::Value> = chunk
             .iter()
-            .map(|(_, it)| {
-                serde_json::json!({
-                                   "path": sanitize_path(&it.path, cfg.allow_cloud_paths),
-                                   "kind": it.kind,
-                                   "confidence": it.confidence,
-                                   "risk": it.risk,
-                // free text never goes to the cloud raw (usernames / deep paths).
-                                   "reason": scrub_cloud_text(&it.reason),
-                                   "evidence": it
-                                       .evidence_labels
-                                       .iter()
-                                       .map(|e| scrub_cloud_text(e))
-                                       .collect::<Vec<_>>(),
-                               })
+            .enumerate()
+            .map(|(id, (_, it, _))| {
+                let mut candidate = serde_json::json!({
+                    "id": id + 1,
+                    "kind": scrub_cloud_text(&it.kind),
+                    "confidence": scrub_cloud_text(&it.confidence),
+                    "risk": scrub_cloud_text(&it.risk),
+                    "reason": scrub_cloud_text(&it.reason),
+                    "evidence": it.evidence_labels.iter().map(|e| scrub_cloud_text(e)).collect::<Vec<_>>(),
+                });
+                if let Some(path) = cloud_path(&it.path, cfg.allow_cloud_paths) {
+                    candidate["path"] = path.into();
+                }
+                candidate
             })
             .collect();
         let payload_json = serde_json::to_string_pretty(&payload).unwrap_or_default();
@@ -936,73 +849,39 @@ fn explain_items_with_completion(
         let vendor = scrub_cloud_text(publisher);
         let user = if normalize_locale(locale) == "en" {
             format!(
-                "App: {app}\nPublisher: {vendor}\nCandidates (sanitized paths):\n{payload_json}\nReturn a JSON array; every object must echo the same path field exactly as sent."
+                "App: {app}\nPublisher: {vendor}\nCandidates:\n{payload_json}\nReturn a JSON array with the same numeric candidate IDs."
             )
         } else {
             format!(
-                "软件: {app}\n发布者: {vendor}\n候选(脱敏路径):\n{payload_json}\n请输出 JSON 数组；每个对象必须包含与输入相同的 path 字段（原样回显）。"
+                "软件: {app}\n发布者: {vendor}\n候选:\n{payload_json}\n请输出 JSON 数组，每个对象须使用候选项原有的数字 ID。"
             )
         };
 
         let text = complete(&user)?;
         let cleaned = strip_code_fence(&text);
-        let parsed: Vec<ExplainOutput> =
+        let parsed: Vec<ModelExplanation> =
             serde_json::from_str(&cleaned).map_err(|e| format!("ai json parse failed::{e}"))?;
 
-        // Match back by the exact strings sent to the model:
-        // the prompt asks the model to echo the sanitized path, and `sanitize_path`
-        // is NOT idempotent — re-sanitizing the echo lost every multi-segment
-        // AppData path. Never rely on array index alone; identical sanitized paths
-        // are indistinguishable to the model, so duplicates attribute in payload
-        // order among unconsumed indices.
-        let mut sent_map: std::collections::HashMap<String, Vec<usize>> =
-            std::collections::HashMap::new();
-        for (idx, b) in batch.iter().enumerate() {
-            sent_map
-                .entry(sanitize_path(&b.1.path, cfg.allow_cloud_paths))
-                .or_default()
-                .push(idx);
-        }
-        let mut consumed: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        for p in parsed.iter() {
-            let candidates = match sent_map.get(p.path.trim()) {
-                Some(v) if v.len() == 1 => v.clone(),
-                Some(v) => v
-                    .iter()
-                    .copied()
-                    .filter(|i| !consumed.contains(i))
-                    .collect(),
-                // Model echoed an original (unsanitized) path verbatim — last resort.
-                None => batch
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (_, b))| b.path == p.path)
-                    .map(|(i, _)| i)
-                    .collect(),
-            };
-            let Some(idx) = candidates.iter().copied().find(|i| !consumed.contains(i)) else {
+        for explanation in parsed {
+            let Some(&(index, original, key)) =
+                explanation.id.checked_sub(1).and_then(|id| chunk.get(id))
+            else {
                 continue;
             };
-            consumed.insert(idx);
-            let (orig_idx, orig) = &batch[idx];
+            if slots[index].is_some() {
+                continue;
+            }
             let item = ExplainOutput {
-                path: orig.path.clone(),
-                summary: p.summary.clone(),
-                suggest_check: p.suggest_check && orig.risk.as_str() != "high",
+                path: original.path.clone(),
+                summary: explanation.summary,
+                suggest_check: explanation.suggest_check
+                    && original.confidence == "confirmed"
+                    && original.risk != "high",
             };
-            let key = fnv1a64(&format!(
-                "{app_name}|{publisher}|{}|{}|{}|{}|{}|{}",
-                item.path,
-                orig.kind,
-                orig.confidence,
-                orig.risk,
-                orig.reason,
-                normalize_locale(locale)
-            ));
             if let Ok(s) = serde_json::to_string(&item) {
                 cache_put(key, s);
             }
-            slots[*orig_idx] = Some(item);
+            slots[index] = Some(item);
         }
     }
     Ok(slots.into_iter().flatten().collect())
@@ -1045,14 +924,20 @@ emit Markdown headings.";
 fn risk_user_prompt(input: &RiskBriefInput, locale: &str) -> String {
     let app = scrub_cloud_text(&input.app_name);
     let vendor = scrub_cloud_text(&input.publisher);
+    let action = scrub_cloud_text(&input.action);
+    let kinds: Vec<_> = input
+        .kind_counts
+        .iter()
+        .map(|(kind, count)| (scrub_cloud_text(kind), count))
+        .collect();
     if normalize_locale(locale) == "en" {
         format!(
             "App: {} ({})\nAction: {}\nCandidates: {}\nKind counts: {:?}\nHas service: {}\nHas startup item: {}\nSuspected shared component: {}",
             app,
             vendor,
-            input.action,
+            action,
             input.item_count,
-            input.kind_counts,
+            kinds,
             input.has_service,
             input.has_run_key,
             input.has_shared_hint
@@ -1062,9 +947,9 @@ fn risk_user_prompt(input: &RiskBriefInput, locale: &str) -> String {
             "软件: {} ({})\n动作: {}\n候选项: {}\n类型分布: {:?}\n含服务: {}\n含启动项: {}\n疑似共享组件: {}",
             app,
             vendor,
-            input.action,
+            action,
             input.item_count,
-            input.kind_counts,
+            kinds,
             input.has_service,
             input.has_run_key,
             input.has_shared_hint
@@ -1124,36 +1009,49 @@ pub struct ReportBriefInput {
 }
 
 fn report_user_prompt(cfg: &AiConfig, input: &ReportBriefInput, locale: &str) -> String {
-    let failed = input
-        .top_failed
-        .iter()
-        .map(|path| sanitize_path(path, cfg.allow_cloud_paths))
-        .collect::<Vec<_>>()
-        .join(" | ");
-    if normalize_locale(locale) == "en" {
-        return format!(
-            "App: {}\nDeleted: {}\nFailed: {}\nSkipped: {}\nAborted: {}\nBackup dir: {}\nRestore point: {}\nFailed samples: {}",
+    use std::fmt::Write;
+
+    let english = normalize_locale(locale) == "en";
+    let mut prompt = if english {
+        format!(
+            "App: {}\nDeleted: {}\nFailed: {}\nSkipped: {}\nAborted: {}\nBackup recorded: {}\nRestore point: {}",
+            scrub_cloud_text(&input.app_name), input.deleted, input.failed, input.skipped,
+            input.aborted, !input.backup_dir.is_empty(), input.restore_point_ok
+        )
+    } else {
+        format!(
+            "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n有备份记录: {}\n还原点: {}",
             scrub_cloud_text(&input.app_name),
             input.deleted,
             input.failed,
             input.skipped,
             input.aborted,
-            sanitize_path(&input.backup_dir, cfg.allow_cloud_paths),
-            input.restore_point_ok,
-            failed
-        );
+            !input.backup_dir.is_empty(),
+            input.restore_point_ok
+        )
+    };
+    if let Some(backup) = cloud_path(&input.backup_dir, cfg.allow_cloud_paths) {
+        let label = if english {
+            "Backup dir"
+        } else {
+            "备份目录"
+        };
+        let _ = write!(prompt, "\n{label}: {backup}");
     }
-    format!(
-        "软件: {}\n删除: {}\n失败: {}\n跳过: {}\n中止: {}\n备份目录: {}\n还原点: {}\n失败样例: {}",
-        scrub_cloud_text(&input.app_name),
-        input.deleted,
-        input.failed,
-        input.skipped,
-        input.aborted,
-        sanitize_path(&input.backup_dir, cfg.allow_cloud_paths),
-        input.restore_point_ok,
-        failed
-    )
+    let failed = input
+        .top_failed
+        .iter()
+        .filter_map(|path| cloud_path(path, cfg.allow_cloud_paths))
+        .collect::<Vec<_>>();
+    if !failed.is_empty() {
+        let label = if english {
+            "Failed samples"
+        } else {
+            "失败样例"
+        };
+        let _ = write!(prompt, "\n{label}: {}", failed.join(" | "));
+    }
+    prompt
 }
 
 pub fn summarize_report(
@@ -1245,21 +1143,13 @@ pub fn parse_nl_intent(
     app_names: &[String],
     locale: &str,
 ) -> Result<NlIntent, String> {
-    // this was the only AI call that sent free text and app names raw,
-    // bypassing both `scrub_cloud_text` and the `allow_cloud_paths` gate.
     let scrubbed_text = scrub_cloud_text(user_text.trim());
-    let names: Vec<String> = app_names
+    let names: Vec<_> = app_names
         .iter()
         .take(40)
-        .map(|s| {
-            if looks_like_path_token(s) {
-                sanitize_path(s, cfg.allow_cloud_paths)
-            } else {
-                scrub_cloud_text(s)
-            }
-        })
+        .map(|name| scrub_cloud_text(name))
         .collect();
-    let user = intent_user_prompt(&scrubbed_text, &names.join(" | "), locale);
+    let user = intent_user_prompt(scrubbed_text, &names.join(" | "), locale);
     let text = chat_completion(
         cfg,
         localized_system(locale, INTENT_SYSTEM, INTENT_SYSTEM_EN),
