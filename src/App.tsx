@@ -96,6 +96,7 @@ export default function App() {
     closePreviewCore: coreClosePreview,
   } = core;
   const currentReport = useRef<CleanupReport | FullCleanupReport | null>(null);
+  const [orphanReport, setOrphanReport] = useState<FullCleanupReport | null>(null);
   const coreSetReport = useCallback((value: CleanupReport | FullCleanupReport | null) => {
     if (value && "deleted" in value && !value.dry_run) startReportReview(value);
     currentReport.current = value;
@@ -894,7 +895,9 @@ export default function App() {
           )}
           {nav === "orphans" && (
             <OrphanPage
+              lastReport={orphanReport}
               onLastReport={(r: FullCleanupReport) => {
+                setOrphanReport(r);
  // lastReport is derived from report by the reducer.
                 coreSetReport(r);
               }}

@@ -1095,6 +1095,7 @@ export const dict: EnDict = {
     navOrphans: "Orphans",
     orphanPageHint: "Find folders that old software may have left behind.",
     orphanResults: "Leftover scan results",
+    orphanCleanupResult: "Last orphan cleanup result",
     safetyVaultTitle: "Cleanup backups",
     safetyVaultHint: "Recover files and settings backed up during cleanup. Restorable backups usually stay for 7 days.",
     checkupFlowHint: "Count software and scan suspected orphans. Only computed data is shown.",

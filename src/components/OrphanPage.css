@@ -21,6 +21,16 @@
 .remova-orphan-scope { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .remova-orphan-scan-button { display: inline-flex; align-items: center; gap: 6px; }
 
+.remova-orphan-cleanup-result {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.remova-orphan-cleanup-result h2 { margin: 0; font-size: 14px; }
+.remova-orphan-cleanup-result p { margin: 8px 0; font-size: 12px; }
+
 .remova-orphan-results {
   background: var(--surface);
   border: 1px solid var(--border);

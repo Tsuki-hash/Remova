@@ -3,10 +3,11 @@ import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
-import { cleanupAbortText, cleanupFeedback } from "../lib/cleanupFeedback";
+import { cleanupAbortText, cleanupFeedback, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import { OrphanOriginGroups } from "./OrphanOriginGroups";
+import { CleanupResultDetails } from "./CleanupResultDetails";
 import { ToolGlyph } from "./ToolIcons";
 import { ORPHAN_SCAN_STAGES, ScanProgressBar } from "./ScanProgressBar";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
@@ -33,9 +34,11 @@ const ORPHAN_CHANNEL = "orphan-scan";
 
 /** Scan and review leftovers without an installed owner. */
 export function OrphanPage({
+  lastReport,
   onLastReport,
   onError,
 }: {
+  lastReport?: FullCleanupReport | null;
   onLastReport: (r: FullCleanupReport) => void;
   onError?: (e: string | null) => void;
 }) {
@@ -267,6 +270,15 @@ export function OrphanPage({
           </div>
         )}
       </header>
+      {lastReport && (
+        <section className="remova-orphan-cleanup-result" aria-label={L.orphanCleanupResult}>
+          <h2>{L.orphanCleanupResult}</h2>
+          <p role="status">{cleanupOutcomeText(lastReport, L)}</p>
+          {lastReport.aborted && <p role="alert">{cleanupAbortText(lastReport, L)}</p>}
+          {lastReport.skipped > 0 && <p style={css.muted}>{L.reportNextSkipped}</p>}
+          <CleanupResultDetails items={lastReport.item_details || []} title={L.cleanupReportDetails} />
+        </section>
+      )}
       {items && (
         <section className="remova-orphan-results" aria-label={L.orphanResults}>
           {items.length > 0 && (

@@ -1078,6 +1078,7 @@ export const dict = {
     navOrphans: "孤儿残留",
     orphanPageHint: "查找可能由旧软件留下的目录。",
     orphanResults: "残留扫描结果",
+    orphanCleanupResult: "上次孤立清理结果",
     safetyVaultTitle: "清理备份",
     safetyVaultHint: "恢复清理时备份的文件和设置。可还原的备份通常保留 7 天。",
     checkupFlowHint: "统计软件环境并扫描疑似孤儿残留；结果只展示可计算数据。",

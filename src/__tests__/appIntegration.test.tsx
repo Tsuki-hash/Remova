@@ -27,6 +27,7 @@ const native = vi.hoisted(() => ({
   verifyLeftovers: vi.fn(), aiSummarizeReport: vi.fn(),
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
   showRealSoftwarePage: false,
+  showRealOrphanPage: false,
   drag: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
 }));
 const pages = vi.hoisted(() => ({
@@ -90,12 +91,15 @@ vi.mock("../components/ManageListPage", () => ({
     return <section data-testid={props.tab} />;
   },
 }));
-vi.mock("../components/OrphanPage", () => ({
-  OrphanPage: (props: ComponentProps<typeof OrphanPage>) => {
-    pages.orphan = props;
-    return <section data-testid="orphans" />;
-  },
-}));
+vi.mock("../components/OrphanPage", async (importOriginal) => {
+  const { OrphanPage: RealOrphanPage } = await importOriginal<typeof import("../components/OrphanPage")>();
+  return {
+    OrphanPage: (props: ComponentProps<typeof OrphanPage>) => {
+      pages.orphan = props;
+      return <section data-testid="orphans">{native.showRealOrphanPage && <RealOrphanPage {...props} />}</section>;
+    },
+  };
+});
 vi.mock("../components/AppDetailPanel", () => ({
   AppDetailPanel: (props: ComponentProps<typeof AppDetailPanel>) => {
     pages.detail = props;
@@ -167,6 +171,7 @@ beforeEach(() => {
   for (const key of Object.keys(pages) as (keyof typeof pages)[]) pages[key] = undefined;
   native.drag = undefined;
   native.showRealSoftwarePage = false;
+  native.showRealOrphanPage = false;
   native.listApps.mockResolvedValue(inventory(demo, other));
   native.analyze.mockResolvedValue(scan);
   native.dryRun.mockResolvedValue(dryReport);
@@ -194,6 +199,43 @@ beforeEach(() => {
 afterEach(() => { cleanup(); toast.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("App orchestration", () => {
+  it.each(["zh", "en"] as const)("keeps orphan results across navigation without showing another cleanup's details (%s)", async lang => {
+    native.showRealOrphanPage = true;
+    native.requestConfirmEx.mockResolvedValue({ ok: true, checked: false });
+    const path = "C:\\Apps\\Reused";
+    const orphanReport: FullCleanupReport = { ...report, app_name: "Orphans", app_key: undefined,
+      uninstall_ok: false, uninstall_review: undefined, deleted: 0, skipped: 1, item_details: [
+        { path, kind: "dir", status: "skipped", message: "orphan directory now has an installed owner; scan again" },
+      ] };
+    native.orphanScan.mockReset().mockResolvedValueOnce({
+      items: [{ ...scan.items[0]!, path }], omitted: 0, cleanup_allowed: true, scope_revision: 73,
+      completeness: { status: "complete", roots_scanned: 4, failed_roots: [] },
+    }).mockResolvedValue({ items: [], omitted: 0, cleanup_allowed: true, scope_revision: 74,
+      completeness: { status: "complete", roots_scanned: 4, failed_roots: [] } });
+    native.fullCleanup.mockResolvedValueOnce(orphanReport);
+    await mount();
+    if (i18n.currentLang() !== lang) fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
+    await nav("orphans");
+    fireEvent.click(await screen.findByRole("button", { name: `${i18n.t().cleanup} (1)` }));
+    await screen.findByText(i18n.t().orphanScanEmpty);
+    expect(screen.getByRole("region", { name: i18n.t().orphanCleanupResult })).toBeTruthy();
+    await nav("software");
+    expect(software().report).toEqual(orphanReport);
+    act(() => software().setReport({ ...report, app_name: "Other", item_details: [
+      { path: "C:\\Apps\\Other", kind: "dir", status: "deleted", message: "" },
+    ] }));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
+    await nav("orphans");
+    const result = screen.getByRole("region", { name: i18n.t().orphanCleanupResult });
+    fireEvent.click(within(result).getByText(`${i18n.t().reportSkipped} · 1`, { selector: "summary" }));
+    expect(within(result).getByText(path)).toBeTruthy();
+    expect(within(result).getByText(i18n.t().backendOrphanOwnerChanged)).toBeTruthy();
+    expect(within(result).queryByText("C:\\Apps\\Other")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: path })).toBeNull();
+    expect(native.fullCleanup).toHaveBeenCalledOnce();
+    expect(native.orphanScan).toHaveBeenCalledTimes(3);
+  });
+
   it("shows readable apps during a partial inventory and clears the notice on retry", async () => {
     native.showRealSoftwarePage = true;
     native.listApps.mockResolvedValueOnce({
