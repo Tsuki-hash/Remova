@@ -440,7 +440,7 @@ mod backed_path;
 pub(crate) use backed_path::{BackedPathPlan, BackedPathRestore, BackedPathResult};
 #[cfg(windows)]
 mod backed_registry;
-#[cfg(all(windows, not(test)))]
+#[cfg(windows)]
 pub(crate) use backed_registry::RegistrySource;
 
 fn path_segment_matches(segment: &str, expand: bool, needle: &str) -> bool {
@@ -1304,7 +1304,7 @@ fn decode_reg_utf16(data: &[u8]) -> Result<String, String> {
 /// OEM-codepage encoded and mangles non-ASCII string data — the seal-digested
 /// .reg exporter must carry the exact registry bytes instead.
 #[cfg(not(windows))]
-fn read_reg_value_bytes(
+pub(crate) fn read_reg_value_bytes(
     _key_path: &str,
     _value_name: &str,
 ) -> Result<Option<(Vec<u8>, u32)>, String> {
@@ -1312,7 +1312,7 @@ fn read_reg_value_bytes(
 }
 
 #[cfg(windows)]
-fn read_reg_value_bytes(
+pub(crate) fn read_reg_value_bytes(
     key_path: &str,
     value_name: &str,
 ) -> Result<Option<(Vec<u8>, u32)>, String> {

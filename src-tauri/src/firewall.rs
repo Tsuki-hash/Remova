@@ -3,8 +3,7 @@
 //! Rules are REG_SZ values under the FirewallRules key, pipe-separated
 //! `key=value` fields. A rule whose `App=` path no longer exists cannot be
 //! doing anything useful for an installed product; scanning is read-only, and
-//! deletion is a separate command that re-verifies every value name and backs
-//! the key up first.
+//! deletion is a separate command that verifies and backs up each selected value.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,8 +12,8 @@ const RESULT_CAP: usize = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirewallRule {
-    /// Registry value name — the identity used for deletion.
     pub value_name: String,
+    pub revision: String,
     pub rule_name: String,
     /// Executable path from the `App=` field (empty rules are skipped).
     pub app_path: String,
@@ -23,6 +22,12 @@ pub struct FirewallRule {
     pub protocol: String,
     /// Stable code the UI localises.
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Deserialize)]
+pub struct FirewallSelection {
+    pub value_name: String,
+    pub revision: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +81,7 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
     let rule_name = name.unwrap_or(value_name).to_string();
     Some(FirewallRule {
         value_name: value_name.to_string(),
+        revision: String::new(),
         rule_name,
         app_path,
         direction: field(&fields, "Dir").unwrap_or("").to_string(),
@@ -85,14 +91,39 @@ fn parse_rule(value_name: &str, raw: &str) -> Option<FirewallRule> {
     })
 }
 
+fn rule_from_value(name: &str, bytes: &[u8], kind: u32) -> Option<FirewallRule> {
+    // REG_SZ is UTF-16LE. Reject embedded NULs and expansion rules.
+    let (words, trailing) = bytes.as_chunks::<2>();
+    if kind != 1 || !trailing.is_empty() {
+        return None;
+    }
+    let mut words: Vec<u16> = words.iter().copied().map(u16::from_le_bytes).collect();
+    if words.last() == Some(&0) {
+        words.pop();
+    }
+    if words.contains(&0) {
+        return None;
+    }
+    let mut rule = parse_rule(name, &String::from_utf16(&words).ok()?)?;
+    rule.revision = crate::path_seal::map_digest(bytes);
+    (!rule.revision.is_empty()).then_some(rule)
+}
+
+fn app_missing(rule: &FirewallRule) -> bool {
+    // Resolve locally without following a junction that could lead to SMB.
+    let path = std::path::Path::new(&rule.app_path);
+    crate::fsutil::is_local_drive_path(&rule.app_path)
+        && crate::fsutil::pin_local_scan_path(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
 /// Public parse wrapper for the portable-candidate cross-reference; the
 /// fields beyond `App=` are display-only there.
 pub fn parse_rule_public(value_name: &str, raw: &str) -> Option<FirewallRule> {
     parse_rule(value_name, raw)
 }
 
-/// Rules whose `App=` executable no longer exists. `try_exists` errors (ACL,
-/// offline path) are treated as "still unknown" and never offered.
+/// Only rules with paths confirmed missing are offered.
 pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
     let mut rules = Vec::new();
     let mut completeness = crate::scan_contract::ScanCompleteness::complete();
@@ -122,26 +153,19 @@ pub fn scan_orphan_firewall_rules() -> FirewallScanResult {
             completeness.status = crate::scan_contract::ScanStatus::Cancelled;
             break;
         }
-        let Some(raw) = crate::regscan::read_string(FIREWALL_RULES_KEY, &value_name) else {
+        let Ok(Some((raw, kind))) =
+            crate::regops::read_reg_value_bytes(FIREWALL_RULES_KEY, &value_name)
+        else {
             // A value disappearing or becoming unreadable mid-snapshot means
             // the rule list is partial; do not treat it as a clean absence.
             completeness.status = crate::scan_contract::ScanStatus::Partial;
             completeness.failed_roots.push(FIREWALL_RULES_KEY.into());
             continue;
         };
-        let Some(rule) = parse_rule(&value_name, &raw) else {
+        let Some(rule) = rule_from_value(&value_name, &raw, kind) else {
             continue;
         };
-        // A rule may point at a UNC/device path. Probing it would make an
-        // elevated process authenticate to an attacker's SMB server; only
-        // local fixed-drive paths are eligible for orphan detection.
-        if !crate::fsutil::is_local_drive_path(&rule.app_path) {
-            continue;
-        }
-        if std::path::Path::new(&rule.app_path)
-            .try_exists()
-            .is_ok_and(|exists| !exists)
-        {
+        if app_missing(&rule) {
             rules.push(rule);
         }
     }
@@ -170,18 +194,30 @@ fn finalize_rules(
     }
 }
 
-fn ensure_still_orphans(wanted: &[String], fresh: &[FirewallRule]) -> Result<(), String> {
-    let allowed: std::collections::HashSet<&str> =
-        fresh.iter().map(|r| r.value_name.as_str()).collect();
-    if let Some(unknown) = wanted.iter().find(|n| !allowed.contains(n.as_str())) {
-        return Err(format!("firewall rule is no longer an orphan: {unknown}"));
+fn validate_selection(
+    selection: &FirewallSelection,
+    value: Option<(Vec<u8>, u32)>,
+) -> Result<(), String> {
+    if value
+        .and_then(|(raw, kind)| rule_from_value(&selection.value_name, &raw, kind))
+        .is_some_and(|rule| rule.revision == selection.revision && app_missing(&rule))
+    {
+        return Ok(());
     }
-    Ok(())
+    Err(stale_rule(selection))
 }
 
-/// Delete the given rule values after a fresh scan proves each one is still an
-/// orphan. All keys are exported to a Safety Vault session before any delete.
-pub fn delete_firewall_rules(value_names: &[String]) -> Result<FirewallCleanupReport, String> {
+fn stale_rule(selection: &FirewallSelection) -> String {
+    format!(
+        "firewall rule is no longer an orphan or has changed: {}",
+        selection.value_name
+    )
+}
+
+/// Revalidate selected values and retain their registry keys through backup and deletion.
+pub fn delete_firewall_rules(
+    selections: &[FirewallSelection],
+) -> Result<FirewallCleanupReport, String> {
     let _guard = crate::executor::CLEANUP_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -189,40 +225,83 @@ pub fn delete_firewall_rules(value_names: &[String]) -> Result<FirewallCleanupRe
     if crate::executor::reboot::any_pending() {
         return Err(crate::executor::reboot::PENDING_MESSAGE.to_string());
     }
-    let mut wanted: Vec<String> = value_names
-        .iter()
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
-        .collect();
-    wanted.sort();
+    delete_verified_rules(selections)
+}
+
+#[cfg(not(windows))]
+fn delete_verified_rules(_: &[FirewallSelection]) -> Result<FirewallCleanupReport, String> {
+    Err("firewall cleanup requires Windows".into())
+}
+
+#[cfg(windows)]
+fn delete_verified_rules(
+    selections: &[FirewallSelection],
+) -> Result<FirewallCleanupReport, String> {
+    let mut wanted = selections.to_vec();
+    wanted.sort_unstable();
     wanted.dedup();
     if wanted.is_empty() {
         return Err("no rules selected".into());
     }
-    let fresh = scan_orphan_firewall_rules();
-    ensure_still_orphans(&wanted, &fresh.rules)?;
+    if wanted.len() > RESULT_CAP
+        || wanted
+            .windows(2)
+            .any(|pair| pair[0].value_name == pair[1].value_name)
+        || wanted
+            .iter()
+            .any(|entry| entry.value_name.trim().is_empty())
+    {
+        return Err("invalid firewall selection".into());
+    }
 
+    let mut sources = Vec::with_capacity(wanted.len());
+    for selection in &wanted {
+        let path = format!("{FIREWALL_RULES_KEY}|{}", selection.value_name);
+        let source =
+            crate::regops::RegistrySource::capture(&path)?.ok_or_else(|| stale_rule(selection))?;
+        validate_selection(selection, source.verified_value()?)?;
+        sources.push((registry_item(&path), source));
+    }
     let session = crate::backup::create_session("firewall-rules")
         .map_err(|e| format!("backup session failed: {e}"))?;
-    let items: Vec<crate::scanner::CleanupItem> = wanted
-        .iter()
-        .map(|name| registry_item(&format!("{FIREWALL_RULES_KEY}|{name}")))
-        .collect();
-    let (_ok, fail, errors) = crate::backup::backup_items(&items, &session);
-    if fail > 0 {
+    let items: Vec<_> = sources.iter().map(|(item, _)| item.clone()).collect();
+    let (ok, fail, errors) = crate::backup::backup_items(&items, &session);
+    if fail > 0 || ok as usize != items.len() {
         return Err(format!(
             "backup failed; firewall rules kept: {}",
             errors.join("; ")
         ));
     }
 
+    let (seal, _seal_pin) = crate::path_seal::hold_verified_seal(&session)?;
+    let mut export_pins = Vec::with_capacity(sources.len());
+    for (item, source) in &sources {
+        let relative = crate::backup::registry_restore_snapshot(&item.path, true);
+        let (bytes, pin) = crate::backup::read_backup_metadata(
+            &session.join(&relative),
+            "seal:registry_snapshot_too_large",
+            crate::executor::cleanup_cancelled,
+        )?;
+        let digest = crate::path_seal::map_digest(&bytes);
+        if seal.reg_digests.get(&relative) != Some(&digest) || !source.matches_backup(&digest) {
+            return Err("registry source could not be bound to its backup".into());
+        }
+        export_pins.push(pin);
+    }
+
     let mut removed = Vec::new();
     let mut failed = Vec::new();
-    for name in &wanted {
-        match crate::regops::delete_value(FIREWALL_RULES_KEY, name) {
-            Ok(true) => removed.push(name.clone()),
-            Ok(false) => failed.push(format!("{name}: already absent")),
-            Err(e) => failed.push(format!("{name}: {e}")),
+    for ((item, source), selection) in sources.iter().zip(&wanted) {
+        let result = (|| {
+            validate_selection(selection, source.verified_value()?)?;
+            source
+                .delete_value(&item.path)
+                .ok_or("expected a firewall registry value")?
+        })();
+        match result {
+            Ok(true) => removed.push(selection.value_name.clone()),
+            Ok(false) => failed.push(format!("{}: already absent", selection.value_name)),
+            Err(e) => failed.push(format!("{}: {e}", selection.value_name)),
         }
     }
     Ok(FirewallCleanupReport {
@@ -232,6 +311,7 @@ pub fn delete_firewall_rules(value_names: &[String]) -> Result<FirewallCleanupRe
     })
 }
 
+#[cfg(windows)]
 fn registry_item(path: &str) -> crate::scanner::CleanupItem {
     use crate::scanner::{CleanupItem, Confidence, ItemKind, RiskLevel};
     CleanupItem {
@@ -295,25 +375,34 @@ mod tests {
 
     #[test]
     fn delete_selection_must_still_be_orphaned_in_a_fresh_scan() {
-        let rule = |name: &str| FirewallRule {
-            value_name: name.into(),
-            rule_name: name.into(),
-            app_path: r"C:\Tools\gone.exe".into(),
-            direction: "In".into(),
-            action: "Allow".into(),
-            protocol: "6".into(),
-            reason: FIREWALL_APP_MISSING.into(),
+        let dir = crate::test_support::TempDir::new("firewall-revision");
+        let exe = dir.path().join("gone.exe");
+        let encode = |action| {
+            format!("v2.10|App={}|Action={action}|", exe.display())
+                .encode_utf16()
+                .chain([0])
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>()
         };
-        let fresh = vec![rule("a")];
-        assert!(ensure_still_orphans(&["a".to_string()], &fresh).is_ok());
-        assert!(ensure_still_orphans(&["a".to_string(), "b".to_string()], &fresh).is_err());
+        let raw = encode("Allow");
+        let rule = rule_from_value("rule", &raw, 1).unwrap();
+        let selected = FirewallSelection {
+            value_name: rule.value_name,
+            revision: rule.revision,
+        };
+        assert!(validate_selection(&selected, Some((raw.clone(), 1))).is_ok());
+        assert!(validate_selection(&selected, None).is_err());
+        assert!(validate_selection(&selected, Some((encode("Block"), 1))).is_err());
+        assert!(validate_selection(&selected, Some((raw.clone(), 2))).is_err());
+        std::fs::write(&exe, b"reinstalled").unwrap();
+        assert!(validate_selection(&selected, Some((raw, 1))).is_err());
     }
 
     #[test]
     fn a_pending_reboot_blocks_firewall_deletion_before_any_scan() {
         crate::executor::reboot::reset_for_test();
         crate::executor::reboot::mark_pending("source\u{0}key\u{0}App");
-        let err = delete_firewall_rules(&["Vendor-Rule".to_string()]).unwrap_err();
+        let err = delete_firewall_rules(&[]).unwrap_err();
         assert_eq!(err, crate::executor::reboot::PENDING_MESSAGE);
         crate::executor::reboot::reset_for_test();
     }
@@ -322,6 +411,7 @@ mod tests {
     fn result_cap_is_applied_after_deterministic_sorting() {
         let rule = |n: u32| FirewallRule {
             value_name: format!("value-{n:03}"),
+            revision: String::new(),
             rule_name: format!("Rule {n:03}"),
             app_path: format!(r"C:\Tools\gone-{n}.exe"),
             direction: "In".into(),

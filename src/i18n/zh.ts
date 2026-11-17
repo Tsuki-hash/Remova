@@ -547,7 +547,7 @@ export const dict = {
     lockExitTimeout: "进程未在等待时间内退出",
     lockOutsideRoot: "进程映像不在该应用的安装目录内，已拒绝结束",
     lockTargetStale: "该路径不属于最近一次清理，请重新清理后再结束进程",
-    firewallRuleStale: "该规则已不再是孤儿，请重新扫描",
+    firewallRuleStale: "规则已变更或程序已恢复，请重新扫描",
     brokenInstallsGone: "该损坏记录已不存在，请重新扫描",
     lockRetryFailed: (msg: string) => `进程已结束，但重试失败：${msg}`,
     brokenInstallsRunning: "正在运行卸载器…",

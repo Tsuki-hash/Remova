@@ -123,7 +123,6 @@ pub(crate) struct RegistrySource {
 }
 
 impl RegistrySource {
-    #[cfg(not(test))]
     pub(crate) fn capture(target: &str) -> Result<Option<Self>, String> {
         let (path, name) = if target.contains('|') {
             let (path, name) = split_value_path(target).ok_or("invalid registry value path")?;
@@ -178,8 +177,40 @@ impl RegistrySource {
         }
     }
 
+    /// Read the exact value from the retained key and reject changes since capture.
+    pub(crate) fn verified_value(&self) -> Result<Option<(Vec<u8>, u32)>, String> {
+        let Baseline::Value {
+            name,
+            raw_digest,
+            typ,
+            ..
+        } = &self.baseline
+        else {
+            return Err("expected a registry value".into());
+        };
+        if !self.key.exists()? {
+            return if self.location.open(KEY_QUERY_VALUE)?.is_none() {
+                Ok(None)
+            } else {
+                Err("registry key was replaced".into())
+            };
+        }
+        let Some((current, kind)) = read_open_reg_value(self.key.0, name)? else {
+            return Ok(None);
+        };
+        if kind != *typ
+            || crate::path_seal::publication_reader_digest(current.as_slice())? != *raw_digest
+        {
+            return Err("registry value changed".into());
+        }
+        Ok(Some((current, kind)))
+    }
+
     /// true means the live source can still be removed, false means it is gone.
     pub(crate) fn verify(&self) -> Result<bool, String> {
+        let Baseline::Tree(event) = &self.baseline else {
+            return Ok(self.verified_value()?.is_some());
+        };
         if !self.key.exists()? {
             return if self.location.open(KEY_QUERY_VALUE)?.is_none() {
                 Ok(false)
@@ -187,27 +218,10 @@ impl RegistrySource {
                 Err("registry key was replaced".into())
             };
         }
-        match &self.baseline {
-            Baseline::Tree(event) if event.unchanged() => Ok(true),
-            Baseline::Tree(_) => Err("registry key or subtree changed".into()),
-            Baseline::Value {
-                name,
-                raw_digest,
-                typ,
-                ..
-            } => match read_open_reg_value(self.key.0, name)? {
-                None => Ok(false),
-                Some((current, kind)) => {
-                    if kind == *typ
-                        && crate::path_seal::publication_reader_digest(current.as_slice())?
-                            == *raw_digest
-                    {
-                        Ok(true)
-                    } else {
-                        Err("registry value changed".into())
-                    }
-                }
-            },
+        if event.unchanged() {
+            Ok(true)
+        } else {
+            Err("registry key or subtree changed".into())
         }
     }
 
@@ -219,6 +233,9 @@ impl RegistrySource {
             crate::safety::is_safe_to_delete_registry(target)
                 .map_err(|error| format!("registry delete blocked: {error}"))?;
             let wide = to_wide_name(name)?;
+            if !self.verify()? {
+                return Ok(false);
+            }
             let status = unsafe { RegDeleteValueW(self.key.0, PCWSTR(wide.as_ptr())) };
             match status {
                 ERROR_SUCCESS => Ok(true),
@@ -328,6 +345,7 @@ mod tests {
         let root = create(hive.0, "Software\\Vendor");
         let name = "Setting";
         let path = r"HKCU\Software\Vendor";
+        let safe_target = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run|Setting";
         let data = [0, 1, 2, 3];
         write(root.0, name, REG_BINARY, &data);
         let receipt = RegistrySource::capture_at(
@@ -352,6 +370,11 @@ mod tests {
         assert!(receipt.verify().unwrap_err().contains("value changed"));
         write(root.0, name, REG_BINARY, b"changed");
         assert!(receipt.verify().unwrap_err().contains("value changed"));
+        assert!(receipt.delete_value(safe_target).unwrap().is_err());
+        assert_eq!(
+            read_open_reg_value(root.0, name).unwrap().unwrap().0,
+            b"changed"
+        );
         let wide = to_wide_name(name).unwrap();
         assert_eq!(
             unsafe { RegDeleteValueW(root.0, PCWSTR(wide.as_ptr())) },
@@ -360,11 +383,24 @@ mod tests {
         assert_eq!(receipt.verify(), Ok(false));
         write(root.0, name, REG_BINARY, &data);
         assert_eq!(receipt.verify(), Ok(true));
-        assert_eq!(
-            receipt.delete_value(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run|Setting"),
-            Some(Ok(true))
-        );
+        assert_eq!(receipt.delete_value(safe_target), Some(Ok(true)));
         assert_eq!(receipt.verify(), Ok(false));
         assert!(read_open_reg_value(root.0, "Other").unwrap().is_some());
+        let key_name = to_wide_name("Software\\Vendor").unwrap();
+        assert_eq!(
+            unsafe { RegDeleteTreeW(hive.0, PCWSTR(key_name.as_ptr())) },
+            ERROR_SUCCESS
+        );
+        let replacement = create(hive.0, "Software\\Vendor");
+        write(replacement.0, name, REG_BINARY, &data);
+        assert!(receipt
+            .delete_value(safe_target)
+            .unwrap()
+            .unwrap_err()
+            .contains("replaced"));
+        assert_eq!(
+            read_open_reg_value(replacement.0, name).unwrap().unwrap().0,
+            data
+        );
     }
 }

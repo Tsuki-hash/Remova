@@ -545,7 +545,7 @@ export const dict: EnDict = {
     lockExitTimeout: "The process did not exit within the wait timeout",
     lockOutsideRoot: "The process image is outside the app install directory; refused",
     lockTargetStale: "This path is not from the latest cleanup; clean again before ending a process",
-    firewallRuleStale: "The rule is no longer an orphan; rescan",
+    firewallRuleStale: "The rule changed or its program returned. Scan again.",
     brokenInstallsGone: "The broken record no longer exists; rescan",
     lockRetryFailed: (msg: string) => `Process ended, but the retry failed: ${msg}`,
     brokenInstallsRunning: "Running the uninstaller…",

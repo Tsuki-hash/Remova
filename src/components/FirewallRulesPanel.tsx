@@ -80,16 +80,20 @@ export function FirewallRulesPanel({
 
   const removeSelected = async () => {
     if (busy || selected.size === 0) return;
+    const selections = (rows ?? [])
+      .filter(row => selected.has(row.value_name))
+      .map(({ value_name, revision }) => ({ value_name, revision }));
+    if (!selections.length) return;
     const { ok } = await requestConfirmEx({
       title: L.firewallDeleteSelected,
-      message: L.firewallDeleteConfirm(selected.size),
+      message: L.firewallDeleteConfirm(selections.length),
       confirmLabel: L.firewallDeleteSelected,
       danger: true,
     });
     if (!ok) return;
     setBusy(true);
     try {
-      const report = await api.deleteFirewallRules([...selected]);
+      const report = await api.deleteFirewallRules(selections);
       setLastResult({
         failed: report.failed.map(name => ({
           path: name,

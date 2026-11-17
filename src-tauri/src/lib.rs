@@ -1361,15 +1361,15 @@ async fn delete_regenerable_layouts(
         .map_err(|e| e.to_string())?
 }
 
-/// Delete rule values after a fresh orphan scan and a registry backup.
+/// Delete unchanged orphan rule values after verifying their registry backups.
 #[tauri::command]
 async fn delete_firewall_rules(
-    value_names: Vec<String>,
+    selections: Vec<firewall::FirewallSelection>,
 ) -> Result<firewall::FirewallCleanupReport, String> {
     if !is_elevated()? {
         return Err("administrator privileges are required to delete firewall rules".into());
     }
-    tauri::async_runtime::spawn_blocking(move || firewall::delete_firewall_rules(&value_names))
+    tauri::async_runtime::spawn_blocking(move || firewall::delete_firewall_rules(&selections))
         .await
         .map_err(|e| e.to_string())?
 }

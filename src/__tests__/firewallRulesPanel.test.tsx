@@ -9,6 +9,7 @@ import type { FirewallRule } from "../types";
 
 const rule: FirewallRule = {
   value_name: "Vendor-Share-In",
+  revision: "first-observed-revision",
   rule_name: "Vendor File Share",
   app_path: "C:\\Program Files\\Vendor\\app.exe",
   direction: "In",
@@ -16,6 +17,7 @@ const rule: FirewallRule = {
   protocol: "6",
   reason: "firewall_app_missing",
 };
+const selection = ({ value_name, revision }: FirewallRule) => ({ value_name, revision });
 
 const firewallOrphans = vi.fn();
 const deleteFirewallRules = vi.fn();
@@ -69,13 +71,13 @@ it("deletes only selected rules after confirmation and rescans", async () => {
   await screen.findByText(rule.rule_name);
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) }));
-  await waitFor(() => expect(deleteFirewallRules).toHaveBeenCalledWith([rule.value_name]));
+  await waitFor(() => expect(deleteFirewallRules).toHaveBeenCalledWith([selection(rule)]));
   await waitFor(() => expect(firewallOrphans).toHaveBeenCalledTimes(2));
   await screen.findByText(t().firewallEmpty);
 });
 
 it("selects all rules at once, clears on a second click, and deletes the batch", async () => {
-  const second = { ...rule, value_name: "Vendor-Share-In-2", rule_name: "Vendor File Share 2" };
+  const second = { ...rule, value_name: "Vendor-Share-In-2", rule_name: "Vendor File Share 2", revision: "second-observed-revision" };
   firewallOrphans.mockResolvedValueOnce({ rules: [rule, second], omitted: 0, completeness: { status: "complete", roots_scanned: 1, failed_roots: [] } });
   deleteFirewallRules.mockResolvedValue({ removed: [], failed: [], backup_dir: "sess" });
   panel();
@@ -88,7 +90,7 @@ it("selects all rules at once, clears on a second click, and deletes the batch",
   fireEvent.click(screen.getByRole("button", { name: new RegExp(t().firewallDeleteSelected) }));
   await waitFor(() =>
     expect(deleteFirewallRules).toHaveBeenCalledWith(
-      expect.arrayContaining([rule.value_name, second.value_name]),
+      expect.arrayContaining([selection(rule), selection(second)]),
     ),
   );
 });

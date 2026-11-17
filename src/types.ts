@@ -113,6 +113,7 @@ export type BrokenCleanupReport = {
 /** a firewall rule whose App= executable no longer exists. */
 export type FirewallRule = {
   value_name: string;
+  revision: string;
   rule_name: string;
   app_path: string;
   direction: string;

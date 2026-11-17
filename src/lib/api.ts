@@ -12,6 +12,7 @@ import type {
   CliResidueReport,
   ConsumerSearchResult,
   FirewallCleanupReport,
+  FirewallRule,
   FirewallScanResult,
   JunctionScanResult,
   ComponentStoreAnalysis,
@@ -198,8 +199,8 @@ export const api = {
   portableCandidates: () => invoke<PortableScanResult>("scan_portable_candidates"),
   cancelMigrateCopy: (operationId: number) => invoke<void>("cancel_migrate_copy", { operationId }),
   /** export then delete rule values (server re-verifies each orphan). */
-  deleteFirewallRules: (valueNames: string[]) =>
-    invoke<FirewallCleanupReport>("delete_firewall_rules", { valueNames }),
+  deleteFirewallRules: (selections: Pick<FirewallRule, "value_name" | "revision">[]) =>
+    invoke<FirewallCleanupReport>("delete_firewall_rules", { selections }),
   /** name the processes holding a path (read-only). */
   diagnoseLockedPath: (path: string) =>
     invoke<LockingProcess[]>("diagnose_locked_path", { path }),
