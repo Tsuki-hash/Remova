@@ -1,7 +1,8 @@
 import { cleanupItemKey } from "../../lib/cleanupPlan";
 import type { CleanupItem, IgnoreSuggestion } from "../../types";
 import { defaultSelectable } from "../../lib/decision";
-import type { UninstallReview } from "../../lib/uninstallReview";
+import { sameReviewApp, type UninstallReview } from "../../lib/uninstallReview";
+import { appKey } from "../../lib/appKey";
 
 export type MonitorDiffState = {
   added_files: string[];
@@ -17,7 +18,7 @@ export type ResidualState = {
   ignoreSuggestions: IgnoreSuggestion[];
   monitoring: boolean;
   monitorDiff: MonitorDiffState;
-  uninstallReview: UninstallReview | null;
+  uninstallReviews: UninstallReview[];
 };
 
 export type ResidualAction =
@@ -31,7 +32,8 @@ export type ResidualAction =
   | { type: "ignore/clear" }
   | { type: "monitoring/set"; value: boolean }
   | { type: "monitorDiff/set"; value: MonitorDiffState }
-  | { type: "uninstallReview/set"; value: UninstallReview | null }
+  | { type: "uninstallReview/set"; value: UninstallReview }
+  | { type: "uninstallReview/rescan"; value: UninstallReview }
   | { type: "scanChrome/clear" };
 
 export function initialResidualState(): ResidualState {
@@ -41,7 +43,7 @@ export function initialResidualState(): ResidualState {
     ignoreSuggestions: [],
     monitoring: false,
     monitorDiff: null,
-    uninstallReview: null,
+    uninstallReviews: [],
   };
 }
 
@@ -76,8 +78,17 @@ export function residualReducer(state: ResidualState, action: ResidualAction): R
       return { ...state, monitoring: action.value };
     case "monitorDiff/set":
       return { ...state, monitorDiff: action.value };
-    case "uninstallReview/set":
-      return { ...state, uninstallReview: action.value };
+    case "uninstallReview/set": {
+      const key = appKey(action.value.app);
+      return { ...state, uninstallReviews: [
+        action.value, ...state.uninstallReviews.filter(review => appKey(review.app) !== key),
+      ] };
+    }
+    case "uninstallReview/rescan":
+      return { ...state, uninstallReviews: state.uninstallReviews.map(review =>
+        sameReviewApp(review.app, action.value.app) && review.receipt === action.value.receipt
+          ? { ...review, rescan: action.value.rescan } : review
+      ) };
     case "scanChrome/clear":
       return {
         ...state,

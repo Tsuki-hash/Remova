@@ -14,6 +14,8 @@ export const dict = {
     cleanupSelectedHint: "仅清理勾选的关联项，不运行官方卸载器。",
     closePreview: "返回列表",
     uninstallReviewExpired: "卸载复查已失效。请从软件列表重新检查当前安装。",
+    uninstallReviewList: "本次会话的卸载复查",
+    uninstallAwaitRestart: "等待重启后确认卸载",
     uninstallReviewInstalled: "软件仍在安装清单中，可能已重新安装。相关文件已保留。",
     uninstallReviewUnverified: "无法确认软件是否已卸载。相关文件已保留，请重试核验。",
     specialtyCleanupRescan: "清理目标已变化或扫描已失效。请重新扫描并确认选中项。",

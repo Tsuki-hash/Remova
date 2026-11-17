@@ -13,7 +13,7 @@ import type { LinkedBucketId } from "../lib/linkedItems";
 import { findReportApp, scanMatchesApp } from "../lib/appKey";
 import { shouldRescanAfterUninstall } from "../lib/cleanupFeedback";
 import { reviewSessionFor } from "../lib/rescanRounds";
-import { reviewForApp, uninstallRescanText, type UninstallReview } from "../lib/uninstallReview";
+import { canRescanReview, sameReviewApp, uninstallRescanText, type UninstallReview } from "../lib/uninstallReview";
 import { prettyAppName } from "../lib/format";
 import type { AnalyzeOptions } from "../hooks/useAnalyzeFlow";
 import type { UninstallStage } from "./UninstallStageBar";
@@ -124,7 +124,8 @@ export type SoftwarePageProps = {
   onIgnoreApplied: (pubs: string[], names: string[]) => void;
   onDismissIgnore: () => void;
   residualFromUninstall: boolean;
-  uninstallReview: UninstallReview | null;
+  uninstallReviews: readonly UninstallReview[];
+  scanReviewReceipt?: number;
   useOfficial: boolean;
   setUseOfficial: (v: boolean) => void;
   aiBusy: boolean;
@@ -200,21 +201,22 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const reportApp =
     liveReportApp ??
     (report ? cachedReportApp(reportIdentity) : undefined);
-  const review = p.uninstallReview;
-  const currentReview = review && (!p.selected || reviewForApp(review, p.selected)) &&
-    (!p.scan || scanMatchesApp(p.scan, review.app)) ? review : null;
   const reportReceipt = report && "uninstall_review" in report ? report.uninstall_review : undefined;
-  const reportReview = review && review.receipt !== undefined && reportReceipt === review.receipt &&
-    report?.app_key === p.appKey(review.app) &&
-    (!reportApp || reviewForApp(review, reportApp)) ? review : null;
+  const reportReview = reportReceipt === undefined ? undefined : p.uninstallReviews.find(review =>
+    review.receipt === reportReceipt && report?.app_key === p.appKey(review.app) &&
+    (!reportApp || sameReviewApp(review.app, reportApp)));
   const rescanTarget = report && (reportReceipt !== undefined || shouldRescanAfterUninstall(report))
-    ? reportReview?.app : reportApp;
+    ? reportReview && (canRescanReview(reportReview) || reportReview.rescan.phase === "scanning") ? reportReview.app : undefined
+    : reportApp;
   useEffect(() => {
     if (liveReportApp && reportIdentity) {
       cacheReportApp(reportIdentity, liveReportApp);
     }
   }, [liveReportApp, reportIdentity]);
-  const canRetryRescan = currentReview?.receipt !== undefined && !["complete", "scanning", "reboot"].includes(currentReview.rescan.phase);
+  const visibleReviews = p.uninstallReviews.filter(review =>
+    review !== reportReview &&
+    (review.restart || review.rescan.phase !== "complete" || review.rescan.count > 0 ||
+      (p.selected ? sameReviewApp(review.app, p.selected) : review.receipt !== undefined && p.scanReviewReceipt === review.receipt)));
   return (
     <>
       <SoftwareToolbar
@@ -231,17 +233,40 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         onToggleSmartFilter={() => setSmartFilterOpen((v) => !v)}
       />
       {p.uninstallStage !== "idle" && <UninstallStageBar stage={p.uninstallStage} />}
-      {currentReview && !report && <div style={{ ...css.card, padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
-        <div role="status">
-          <strong>{L.uninstallOk} · {prettyAppName(currentReview.app.name, currentReview.app.source)}</strong>
-          <div style={{ color: "var(--muted)" }}>{uninstallRescanText(L, currentReview.rescan, false)}</div>
-        </div>
-        {canRetryRescan && <button type="button" style={{ ...css.btnGhost, marginTop: 8 }}
-          disabled={p.busy || !!p.uninstallingKey}
-          onClick={() => p.listAnalyze(currentReview.app, { fromUninstall: true, uninstallReview: currentReview.receipt })}>
-          {L.reportRescanApp}
-        </button>}
-      </div>}
+      {visibleReviews.length > 0 && (
+        <section aria-label={L.uninstallReviewList} style={{ ...css.card, maxHeight: 224, overflowY: "auto", padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
+          {visibleReviews.map(review => {
+            const waiting = review.restart === "before_verification";
+            const live = p.apps.find(app => p.appKey(app) === p.appKey(review.app));
+            const replaced = !!live && !sameReviewApp(live, review.app);
+            const name = prettyAppName(review.app.name, review.app.source);
+            const label = visibleReviews.some(other => other !== review && other.app.name === review.app.name)
+              ? [name, review.app.version, review.app.install_location || review.app.source].filter(Boolean).join(" · ") : name;
+            const alreadyVisible = review.receipt === p.scanReviewReceipt && review.rescan.phase === "complete";
+            const retry = !replaced && canRescanReview(review) && !alreadyVisible &&
+              (review.rescan.phase !== "complete" || review.rescan.count > 0);
+            return (
+              <div key={p.appKey(review.app)} style={{ marginBottom: 8 }}>
+                <div role="status">
+                  <strong>{waiting ? L.uninstallAwaitRestart : L.uninstallOk} · {label}</strong>
+                  {review.restart && <div style={{ color: "var(--warn-ink)" }}>
+                    {waiting ? L.backendUninstallRebootBeforeVerify : L.backendRebootRequired}
+                  </div>}
+                  {!waiting && <div style={{ color: "var(--muted)" }}>
+                    {replaced ? L.uninstallReviewInstalled : uninstallRescanText(L, review.rescan, false)}
+                  </div>}
+                </div>
+                {retry && <button type="button" style={{ ...css.btnGhost, marginTop: 4 }}
+                  disabled={p.busy || !!p.uninstallingKey}
+                  aria-label={`${L.reportRescanApp} · ${label}`}
+                  onClick={() => p.listAnalyze(review.app, { fromUninstall: true, uninstallReview: review.receipt })}>
+                  {L.reportRescanApp}
+                </button>}
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       {p.selected && !p.scan && (
         <SelectedAppCard
@@ -310,7 +335,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onRescan={
             rescanTarget
               ? () => p.listAnalyze(rescanTarget, {
-                  afterCleanup: reportReview !== null,
+                  afterCleanup: !!reportReview,
                   ...(reportReview && { uninstallReview: reportReview.receipt }),
                   keepReport: true,
                   reviewSession: reviewSessionFor(report),

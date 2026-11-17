@@ -105,7 +105,7 @@ function props(over: Partial<ComponentProps<typeof SoftwarePage>> = {}) {
     onIgnoreApplied: vi.fn(),
     onDismissIgnore: vi.fn(),
     residualFromUninstall: false,
-    uninstallReview: null,
+    uninstallReviews: [],
     uninstallStage: "idle" as const,
     report,
     setReport: vi.fn(),
@@ -291,36 +291,37 @@ describe("SoftwarePage report identity", () => {
     const listAnalyze = vi.fn();
     const base = props({ report: null, listAnalyze });
     const { rerender } = render(
-      <SoftwarePage {...base} uninstallReview={{ app: demo, receipt: 42, rescan: { phase: "scanning" } }} scanning />,
+      <SoftwarePage {...base} uninstallReviews={[{ app: demo, receipt: 42, rescan: { phase: "scanning" } }]} scanning />,
     );
     expect(screen.getAllByText(/^分析中/).length).toBeGreaterThan(0);
     rerender(
       <SoftwarePage
         {...base}
-        uninstallReview={{ app: demo, receipt: 42, rescan: { phase: "complete", count: 0 } }}
+        uninstallReviews={[{ app: demo, receipt: 42, rescan: { phase: "complete", count: 0 } }]}
         scan={{ app_name: "Demo", app_key: appKey(demo), items: [], degraded: [] }}
       />,
     );
     expect(screen.getByText(/本次复扫未发现关联残留/)).toBeTruthy();
-    rerender(<SoftwarePage {...base} selected={null} uninstallReview={{ app: demo, receipt: 42, rescan: { phase: "not_started" } }} />);
+    rerender(<SoftwarePage {...base} selected={null} uninstallReviews={[{ app: demo, receipt: 42, rescan: { phase: "not_started" } }]} />);
     expect(screen.getByText(/剩余关联项尚未核对/)).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain(demo.name);
-    fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp }));
+    fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp + " · Demo" }));
     expect(listAnalyze).toHaveBeenCalledWith(demo, { fromUninstall: true, uninstallReview: 42 });
     rerender(<SoftwarePage {...base} selected={{ ...demo, source: "HKLM32" }}
-      uninstallReview={{ app: demo, receipt: 42, rescan: { phase: "cancelled" } }} />);
-    expect(screen.queryByText(t().uninstallRescanCancelled)).toBeNull();
-    expect(screen.queryByRole("button", { name: t().reportRescanApp })).toBeNull();
+      uninstallReviews={[{ app: demo, receipt: 42, rescan: { phase: "cancelled" } }]} />);
+    expect(screen.getByText(t().uninstallRescanCancelled)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp + " · Demo" }));
+    expect(listAnalyze).toHaveBeenLastCalledWith(demo, { fromUninstall: true, uninstallReview: 42 });
   });
 
   it("keeps the report rescan state and target tied to the report identity", () => {
     const other = { ...demo, source: "HKLM32" as const };
     const listAnalyze = vi.fn();
     const base = props({ apps: [other], selected: other, listAnalyze, report: { ...report, failed: 0, uninstall_ok: true, uninstall_review: 42 } });
-    const { rerender } = render(<SoftwarePage {...base} uninstallReview={{ app: other, receipt: 72, rescan: { phase: "scanning" } }} />);
+    const { rerender } = render(<SoftwarePage {...base} uninstallReviews={[{ app: other, receipt: 72, rescan: { phase: "scanning" } }]} />);
     expect(screen.getByText(t().cleanupRescanUnknown)).toBeTruthy();
     expect(screen.queryByText(t().cleanupRescanRunning)).toBeNull();
-    rerender(<SoftwarePage {...base} uninstallReview={{ app: demo, receipt: 42, rescan: { phase: "cancelled" } }} />);
+    rerender(<SoftwarePage {...base} uninstallReviews={[{ app: demo, receipt: 42, rescan: { phase: "cancelled" } }]} />);
     expect(screen.getByText(t().uninstallRescanCancelled)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: t().reportRescanApp }));
     expect(listAnalyze).toHaveBeenCalledWith(demo, expect.objectContaining({ afterCleanup: true, keepReport: true, uninstallReview: 42 }));
@@ -331,7 +332,7 @@ describe("SoftwarePage report identity", () => {
     const listAnalyze = vi.fn();
     render(<SoftwarePage {...props({ apps: [replacement], selected: replacement, listAnalyze,
       report: { ...report, uninstall_ok: true, uninstall_review: 42 },
-      uninstallReview: { app: demo, receipt: 42, rescan: { phase: "not_started" } },
+      uninstallReviews: [{ app: demo, receipt: 42, rescan: { phase: "not_started" } }],
     })} />);
     expect(screen.queryByRole("button", { name: t().reportRescanApp })).toBeNull();
     expect(listAnalyze).not.toHaveBeenCalled();

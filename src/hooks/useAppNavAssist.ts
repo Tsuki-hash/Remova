@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { InstalledApp } from "../types";
 import { toast } from "../lib/toast";
-import { prettyAppName } from "../lib/format";
 import { t } from "../i18n";
 
 /** Require a complete directory boundary and a unique most-specific owner. */
@@ -26,15 +25,11 @@ export function appForPath(apps: InstalledApp[], path: string): InstalledApp | n
 export function usePendingAnalyze({
   loading,
   apps,
-  goNav,
-  setSelected,
   analyze,
   setQ,
 }: {
   loading: boolean;
   apps: InstalledApp[];
-  goNav: (id: "software") => void;
-  setSelected: (a: InstalledApp) => void;
   analyze: (a: InstalledApp) => void;
   setQ: (q: string) => void;
 }) {
@@ -47,8 +42,6 @@ export function usePendingAnalyze({
         if (cancelled || !p) return;
         const hit = appForPath(apps, p);
         if (hit) {
-          goNav("software");
-          setSelected(hit);
           analyze(hit);
         } else {
           setQ(p);
@@ -66,19 +59,17 @@ export function usePendingAnalyze({
 /** Drag-drop: match dropped path to install_location and analyze. */
 export function useDragDropAnalyze({
   apps,
-  setSelected,
   analyze,
 }: {
   apps: InstalledApp[];
-  setSelected: (a: InstalledApp) => void;
   analyze: (a: InstalledApp) => void;
 }) {
  // read the latest inputs through a ref so the webview channel is subscribed once
  // instead of being torn down and rebuilt every time the app list changes.
-  const latest = useRef({ apps, setSelected, analyze });
+  const latest = useRef({ apps, analyze });
   useEffect(() => {
-    latest.current = { apps, setSelected, analyze };
-  }, [apps, setSelected, analyze]);
+    latest.current = { apps, analyze };
+  }, [apps, analyze]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -91,12 +82,10 @@ export function useDragDropAnalyze({
           if (event.payload.type !== "drop") return;
           const path = (event.payload.paths || [])[0];
           if (!path) return;
-          const { apps, setSelected, analyze } = latest.current;
+          const { apps, analyze } = latest.current;
           const hit = appForPath(apps, path);
           if (hit) {
-            setSelected(hit);
             analyze(hit);
-            toast.info(prettyAppName(hit.name, hit.source));
           } else {
             toast.info(`${t().dropHint}: ${path}`);
           }

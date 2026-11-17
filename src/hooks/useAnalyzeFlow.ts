@@ -15,7 +15,7 @@ import type { ConvergenceRound } from "../lib/residueConvergence";
 import type { IgnoreSuggestion } from "../types";
 import type { UninstallStage } from "../components/UninstallStageBar";
 import { useAssociationScan, scanCancelled } from "./useAssociationScan";
-import type { UninstallReview } from "../lib/uninstallReview";
+import { rescanFailure, uninstallReviewFromResult, type UninstallReview } from "../lib/uninstallReview";
 
 export type AnalyzeOptions = {
   fromUninstall?: boolean;
@@ -29,14 +29,15 @@ export type AnalyzeOptions = {
 export type AnalyzeFlowSetters = {
   setSelected: (a: InstalledApp | null) => void;
   setScanning: (v: boolean) => void;
-  setScan: (r: ScanResult | null, target?: InstalledApp) => void;
+  setScan: (r: ScanResult | null, target?: InstalledApp, reviewReceipt?: number) => void;
   setReport: (r: CleanupReport | FullCleanupReport | null) => void;
   setAiNotes: (m: Record<string, string>) => void;
   setAiRisk: (v: string | null) => void;
   setIgnoreSuggestions: (s: IgnoreSuggestion[]) => void;
   setSelectedPaths: (s: Set<string>) => void;
   setError: (e: string | null) => void;
-  setUninstallReview: (v: UninstallReview | null) => void;
+  setUninstallReview: (v: UninstallReview) => void;
+  updateUninstallRescan: (v: UninstallReview) => void;
   setUninstallingKey: (k: string | null) => void;
   setUninstallStage: (s: UninstallStage) => void;
   setEvidence: (v: string | null) => void;
@@ -84,21 +85,13 @@ export function useAnalyzeFlow({
     setSelectedPaths,
     setError,
     setUninstallReview,
+    updateUninstallRescan,
     setUninstallingKey,
     setUninstallStage,
     setEvidence,
   } = flow;
   const analyzeSeqRef = useRef(0);
-  /**
-   * how many `analyze` calls currently hold `busyRef`. A plain
-   * save/restore leaks when a newer analyze supersedes an older one (the older
-   * one's `finally` is gated on its own `seq`, so it never runs), and a plain
-   * clear steals the ref from `startUninstall`, which holds it across its own
-   * nested `analyze` call. Depth plus "was it already held" covers both.
-   */
-  const analyzeHoldRef = useRef(0);
   const { run: runScan, cancel: cancelScan, progress: scanProgress } = useAssociationScan();
-  const analyzingRef = useRef(false);
   /** Stage idle timers must be cleared on unmount / replacement. */
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearStageTimer = useCallback(() => {
@@ -109,42 +102,18 @@ export function useAnalyzeFlow({
   }, []);
   useEffect(() => clearStageTimer, [clearStageTimer]);
   useEffect(() => () => { analyzeSeqRef.current++; }, []);
-  const analyze = useCallback(
+  // Only the holder of the foreground slot calls this. Official uninstall
+  // keeps its slot through the nested scan and the installed-app refresh.
+  const scanApp = useCallback(
     async (
       app: InstalledApp,
       opts?: AnalyzeOptions,
     ) => {
- // single in-flight ref (was dual scanningRef/analyzingRef).
- // Newer analyze supersedes via seq — do not early-return here (race tests require it).
-      // A cleanup/dry-run owns busyRef without analyzingRef. Starting an
-      // unrelated scan then would let its report land on the wrong app; nested
-      // uninstall/after-cleanup scans are explicitly allowed below.
-      if (
-        busyRef.current &&
-        !analyzingRef.current &&
-        !opts?.fromUninstall &&
-        !opts?.afterCleanup
-      ) {
-        toast.info(t().taskBusy, { channel: "analyze-flow" });
-        return false;
-      }
-      // Detect whether busyRef is held by a destructive action before this
-      // analyze claims it. If another analyze already holds it, this call
-      // inherits that claim and must release it when it becomes the survivor.
-      const busyRefHeldExternally = busyRef.current && !analyzingRef.current;
-      analyzingRef.current = true;
       const seq = ++analyzeSeqRef.current;
-      // `forceClean` and `startUninstall` guard on `busyRef.current` only,
-      // and it was never set here. A destructive action could therefore start
-      // while a deep scan was in flight, and the scan then landed on top of the
-      // other action's report (it never increments `analyzeSeqRef`). App.tsx's
-      // "one guard" comment already claimed this ref is the single gate.
-      analyzeHoldRef.current += 1;
-      busyRef.current = true;
       goNav("software");
       const receipt = opts?.uninstallReview;
       const afterUninstall = receipt !== undefined;
-      setUninstallReview(afterUninstall ? { app, receipt, rescan: { phase: "scanning" } } : null);
+      if (afterUninstall) updateUninstallRescan({ app, receipt, rescan: { phase: "scanning" } });
       const keepReport = Boolean(opts?.afterCleanup || opts?.keepReport);
       setSelected(app);
       setScanning(true);
@@ -162,13 +131,13 @@ export function useAnalyzeFlow({
       try {
         const r = await runScan(app, receipt);
         if (seq !== analyzeSeqRef.current) return false;
-        setScan(r, app);
+        setScan(r, app, receipt);
         reviewRound = {
           items: r.items,
           complete: scanMatchesApp(r, app) && (r.degraded ?? []).length === 0,
         };
         if (afterUninstall) {
-          setUninstallReview({ app, receipt, rescan: reviewRound.complete
+          updateUninstallRescan({ app, receipt, rescan: reviewRound.complete
             ? { phase: "complete", count: r.items.length } : { phase: "incomplete" } });
         }
         const sharedPaths = r.items.filter((it) => it.shared).map((it) => it.path);
@@ -190,7 +159,7 @@ export function useAnalyzeFlow({
       } catch (e) {
         if (seq !== analyzeSeqRef.current) return false;
         const cancelled = scanCancelled(e);
-        if (afterUninstall) setUninstallReview({ app, receipt, rescan: { phase: cancelled ? "cancelled" : "failed" } });
+        if (afterUninstall) updateUninstallRescan({ app, receipt, rescan: rescanFailure(e) });
         if (cancelled) {
           setSelectedPaths(new Set());
           setError(null);
@@ -202,20 +171,11 @@ export function useAnalyzeFlow({
         return false;
       } finally {
         if (opts?.reviewSession) recordReviewRound(opts.reviewSession, reviewRound);
-        analyzeHoldRef.current -= 1;
-        // Release only when no analyze remains and this flow actually acquired
-        // busyRef. A superseded scan must not clear a newer scan's claim, and a
-        // scan nested inside startUninstall/cleanup must not steal that ref.
-        if (analyzeHoldRef.current === 0 && !busyRefHeldExternally) busyRef.current = false;
-        if (seq === analyzeSeqRef.current) {
-          analyzingRef.current = false;
-          setScanning(false);
-        }
+        if (seq === analyzeSeqRef.current) setScanning(false);
       }
     },
     [
       goNav,
-      busyRef,
       setSelected,
       setScanning,
       setScan,
@@ -226,10 +186,35 @@ export function useAnalyzeFlow({
       setSelectedPaths,
       setEvidence,
       setError,
-      setUninstallReview,
+      updateUninstallRescan,
       runScan,
     ],
   );
+
+  const analyze = useCallback(async (app: InstalledApp, opts?: AnalyzeOptions) => {
+    if (busyRef.current) {
+      toast.info(t().taskBusy, { channel: "analyze-flow" });
+      return false;
+    }
+    busyRef.current = true;
+    try {
+      return await scanApp(app, opts);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [busyRef, scanApp]);
+
+  const rememberUninstall = useCallback((app: InstalledApp, result: OfficialUninstallResult) => {
+    if (!result.had_command) return;
+    const review = uninstallReviewFromResult(app, {
+      ok: result.ok, message: result.message, reboot: result.reboot_initiated, receipt: result.uninstall_review,
+    });
+    if (!review) return;
+    setReport(null);
+    setScan(null);
+    setSelectedPaths(new Set());
+    setUninstallReview(review);
+  }, [setReport, setScan, setSelectedPaths, setUninstallReview]);
 
   const startUninstall = useCallback(
     async (app: InstalledApp) => {
@@ -266,7 +251,6 @@ export function useAnalyzeFlow({
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
-      setUninstallReview(null);
       busyRef.current = true;
       try {
         setUninstallStage("identify");
@@ -275,19 +259,13 @@ export function useAnalyzeFlow({
         const r = await api.officialUninstall(app);
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         notifyUninstall(r, strings);
-        if (r.had_command && r.ok) {
-          setReport(null);
-          setScan(null);
-          setSelectedPaths(new Set());
-          setUninstallReview({ app, ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
-            rescan: { phase: rebootPending ? "reboot" : "not_started" } });
-        }
+        rememberUninstall(app, r);
         // MSI 1641 already started a restart: scanning is harmless, but offering
         // residual cleanup now would delete while the shutdown is pending.
         if (r.had_command && r.ok && checked && !rebootPending && r.uninstall_review !== undefined) {
           setUninstallStage("scan");
           toast.info(strings.stageScanLeftover, { channel: "analyze-flow", sticky: true });
-          const analyzed = await analyze(app, { fromUninstall: true, uninstallReview: r.uninstall_review });
+          const analyzed = await scanApp(app, { uninstallReview: r.uninstall_review });
           if (analyzed) {
             setUninstallStage("analyze");
             await new Promise((resolve) => setTimeout(resolve, 320));
@@ -312,15 +290,12 @@ export function useAnalyzeFlow({
       }
     },
     [
-      analyze,
+      scanApp,
       refreshApps,
       setSelected,
-      setUninstallReview,
+      rememberUninstall,
       setUninstallingKey,
       setUninstallStage,
-      setReport,
-      setScan,
-      setSelectedPaths,
       setError,
       busyRef,
       clearStageTimer,
@@ -352,23 +327,16 @@ const openOfficialOnly = useCallback(
       const key = appKey(app);
       setUninstallingKey(key);
       setSelected(app);
-      setUninstallReview(null);
       busyRef.current = true;
       try {
         const r = await api.officialUninstall(app);
         const rebootPending = Boolean(r.had_command && r.ok && r.reboot_initiated);
         notifyUninstall(r, strings);
-        if (r.had_command && r.ok) {
-          setReport(null);
-          setScan(null);
-          setSelectedPaths(new Set());
-          setUninstallReview({ app, ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
-            rescan: { phase: rebootPending ? "reboot" : "not_started" } });
-        }
+        rememberUninstall(app, r);
  // default-on rescan after successful official uninstall only.
         if (r.had_command && r.ok && !rebootPending && r.uninstall_review !== undefined && loadRescanAfterUninstall()) {
           setUninstallStage("scan");
-          const analyzed = await analyze(app, { fromUninstall: true, uninstallReview: r.uninstall_review });
+          const analyzed = await scanApp(app, { uninstallReview: r.uninstall_review });
           if (analyzed) {
             setUninstallStage("analyze");
             await new Promise((resolve) => setTimeout(resolve, 280));
@@ -388,12 +356,11 @@ const openOfficialOnly = useCallback(
         setUninstallingKey(null);
       }
     },
-    [refreshApps, setSelected, setUninstallReview, setUninstallingKey, setError, busyRef, analyze, setUninstallStage, clearStageTimer, setReport, setScan, setSelectedPaths],
+    [refreshApps, setSelected, rememberUninstall, setUninstallingKey, setError, busyRef, scanApp, setUninstallStage, clearStageTimer],
   );
 
   const openAnalyzeFromDrawer = useCallback(
     (app: InstalledApp) => {
-      if (analyzingRef.current) return;
       void analyze(app);
     },
     [analyze],

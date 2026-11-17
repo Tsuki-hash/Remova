@@ -105,6 +105,7 @@ const noop = () => {};
 const flow: CleanupFlowSetters = {
   setMulti: noop,
   setUninstallReview: noop,
+  updateUninstallRescan: noop,
   setAiRisk: noop,
   setReport: noop,
   setVerifyRows: noop,
@@ -181,7 +182,7 @@ describe("useCleanupHandlers confirm / force pipeline", () => {
         scan: scan(),
         selectedPaths: new Set([cleanupItemKey(scan().items[0]!)]),
         residualFromUninstall: false,
-        useOfficial: false,
+        useOfficial: true,
         aiEnabled: false,
         aiRisk: null,
         apps: [],
@@ -351,6 +352,7 @@ describe("useCleanupHandlers deep pipeline", () => {
     const flowDeep: CleanupFlowSetters = {
       setMulti: vi.fn(),
       setUninstallReview: noop,
+      updateUninstallRescan: noop,
       setAiRisk: noop,
       setReport: vi.fn(),
       setVerifyRows: noop,

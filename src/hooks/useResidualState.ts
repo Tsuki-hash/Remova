@@ -52,8 +52,11 @@ export function useResidualState() {
     },
     [],
   );
-  const setUninstallReview = useCallback((value: UninstallReview | null) => {
+  const setUninstallReview = useCallback((value: UninstallReview) => {
     dispatch({ type: "uninstallReview/set", value });
+  }, []);
+  const updateUninstallRescan = useCallback((value: UninstallReview) => {
+    dispatch({ type: "uninstallReview/rescan", value });
   }, []);
 
   const actions = useMemo(
@@ -68,6 +71,7 @@ export function useResidualState() {
       setMonitoring,
       setMonitorDiff,
       setUninstallReview,
+      updateUninstallRescan,
     }),
     [
       togglePath,
@@ -80,6 +84,7 @@ export function useResidualState() {
       setMonitoring,
       setMonitorDiff,
       setUninstallReview,
+      updateUninstallRescan,
     ],
   );
 
@@ -95,7 +100,7 @@ export function useResidualState() {
       setMonitoring,
       monitorDiff: state.monitorDiff,
       setMonitorDiff,
-      uninstallReview: state.uninstallReview,
+      uninstallReviews: state.uninstallReviews,
       actions,
     }),
     [

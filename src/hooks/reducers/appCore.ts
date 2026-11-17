@@ -14,6 +14,7 @@ export type AppCoreState = {
   multi: Set<string>;
   scan: ScanResult | null;
   scanTarget: InstalledApp | null;
+  scanReviewReceipt?: number;
   scanning: boolean;
   report: CleanupReport | FullCleanupReport | null;
   /**
@@ -38,7 +39,7 @@ export type AppCoreAction =
   | { type: "multi/toggle"; key: string }
   | { type: "multi/set"; value: Set<string> }
   | { type: "multi/update"; updater: (m: Set<string>) => Set<string> }
-  | { type: "scan/set"; value: ScanResult | null; target?: InstalledApp }
+  | { type: "scan/set"; value: ScanResult | null; target?: InstalledApp; reviewReceipt?: number }
   | { type: "scanning/set"; value: boolean }
   | { type: "report/set"; value: CleanupReport | FullCleanupReport | null }
   | { type: "useOfficial/set"; value: boolean }
@@ -114,6 +115,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
         scan: action.value,
         useOfficial: true,
         scanTarget: action.value && target ? { ...target } : null,
+        scanReviewReceipt: action.value ? action.reviewReceipt : undefined,
       };
     }
     case "scanning/set":
@@ -146,6 +148,7 @@ export function appCoreReducer(state: AppCoreState, action: AppCoreAction): AppC
         useOfficial: true,
         scan: null,
         scanTarget: null,
+        scanReviewReceipt: undefined,
         report: null,
         error: null,
       };

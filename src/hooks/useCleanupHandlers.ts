@@ -18,7 +18,7 @@ import { runBatchCleanup } from "../lib/batchEngine";
 import { cleanupAbortText, cleanupAccomplishedSomething, cleanupFeedback, cleanupNothingText, cleanupOutcomeText } from "../lib/cleanupFeedback";
 import type { BatchItemResult } from "../components/BatchPanels";
 import { loadRestorePointPref } from "../lib/restorePointPref";
-import type { UninstallReview } from "../lib/uninstallReview";
+import { uninstallReviewFromResult, type UninstallReview } from "../lib/uninstallReview";
 
 /** Grouped cleanup setters. */
 export type CleanupFlowSetters = {
@@ -26,6 +26,7 @@ export type CleanupFlowSetters = {
   setScan?: (scan: ScanResult | null) => void;
   setMulti: (updater: Set<string> | ((m: Set<string>) => Set<string>)) => void;
   setUninstallReview: (v: UninstallReview) => void;
+  updateUninstallRescan: (v: UninstallReview) => void;
   setAiRisk: (v: string | null) => void;
   setReport: (r: CleanupReport | FullCleanupReport | null) => void;
   setVerifyRows: (rows: { path: string; kind: string; still_there: boolean }[] | null) => void;
@@ -80,6 +81,7 @@ export function useCleanupHandlers({
     setSelectedPaths,
     setScan,
     setUninstallReview,
+    updateUninstallRescan,
     setAiRisk,
     setReport,
     setVerifyRows,
@@ -256,6 +258,10 @@ export function useCleanupHandlers({
               : !useOfficial && !residualFromUninstall ? "force" : "uninstall",
       });
       setReport(r);
+      const review = runOfficial && uninstallReviewFromResult(selected, {
+        ok: r.uninstall_ok, message: r.uninstall_message, reboot: r.reboot_pending, receipt: r.uninstall_review,
+      });
+      if (review) setUninstallReview(review);
       if (r.aborted) {
         const msg = cleanupAbortText(r, L);
         // A 1641/pending report is not a failure: the uninstaller succeeded and
@@ -265,11 +271,6 @@ export function useCleanupHandlers({
         setError(msg);
         setVerifyRows(null);
         setAiReportNote(null);
-        // A 1641 abort still means the official uninstaller succeeded. Keep the
-        // post-uninstall state so a retry never re-runs the uninstaller.
-        if (r.uninstall_ok) setUninstallReview({ app: selected,
-          ...(r.uninstall_review !== undefined && { receipt: r.uninstall_review }),
-          rescan: { phase: r.reboot_pending ? "reboot" : "not_started" } });
         void refreshApps();
         return;
       }
@@ -295,9 +296,9 @@ export function useCleanupHandlers({
           if (vseq === verifySeqRef.current && (!currentReport || currentReport.current === r)) setVerifyRows(rows);
         })
         .catch(() => {});
-      if (r.uninstall_ok || residualFromUninstall) setUninstallReview({ app: selected,
-        ...((r.uninstall_review ?? uninstallReviewReceipt) !== undefined && { receipt: r.uninstall_review ?? uninstallReviewReceipt }),
-        rescan: { phase: "not_started" } });
+      if (!review && uninstallReviewReceipt !== undefined) {
+        updateUninstallRescan({ app: selected, receipt: uninstallReviewReceipt, rescan: { phase: "not_started" } });
+      }
       if (r.uninstall_ok && selected) {
         afterCleanup = { app: selected, report: r };
       }
@@ -331,6 +332,7 @@ export function useCleanupHandlers({
     setAiReportNote,
     setVerifyRows,
     setUninstallReview,
+    updateUninstallRescan,
     setError,
     busyRef,
     currentReport,

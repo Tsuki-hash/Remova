@@ -56,6 +56,7 @@ function noop() {}
 const flow: CleanupFlowSetters = {
   setMulti: noop,
   setUninstallReview: noop,
+  updateUninstallRescan: noop,
   setAiRisk: noop,
   setReport: noop,
   setVerifyRows: noop,

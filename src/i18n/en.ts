@@ -26,6 +26,8 @@ export const dict: EnDict = {
     cleanupSelectedHint: "Clean only selected associated items without running the official uninstaller.",
     closePreview: "Back to list",
     uninstallReviewExpired: "This uninstall review expired. Check the current installation from the software list.",
+    uninstallReviewList: "Uninstall reviews in this session",
+    uninstallAwaitRestart: "Restart required to verify uninstall",
     uninstallReviewInstalled: "The app is registered as installed and may have been reinstalled. Its files were kept.",
     uninstallReviewUnverified: "Remova could not verify that the app was uninstalled. Its files were kept. Try checking again.",
     specialtyCleanupRescan: "The cleanup target changed or the scan expired. Scan again and confirm your selection.",

@@ -95,59 +95,40 @@ describe("useAnalyzeFlow request sequencing", () => {
       },
       setError: () => {},
       setUninstallReview: () => {},
+      updateUninstallRescan: () => {},
       setUninstallingKey: () => {},
       setUninstallStage: () => {},
       setEvidence: () => {},
     };
   });
 
-  it("drops a stale scan that resolves after a newer one", async () => {
-    let resolveA: (r: ScanResult) => void = () => {};
-    let resolveB: (r: ScanResult) => void = () => {};
-    analyzeMock
-      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveA = res)))
-      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveB = res)));
-
-    const { result } = renderHook(() =>
-      useAnalyzeFlow({
-        goNav: () => {},
-        flow: flow as never,
-        refreshApps: async () => {},
-        busyRef: { current: false },
-      }),
-    );
-
-    const scanA = scan("AppA");
-    const scanB = scan("AppB");
-
-    await act(async () => {
-      void result.current.analyze(app("AppA"));
-    });
-    await act(async () => {
-      void result.current.analyze(app("AppB"));
-    });
+  it("rejects a new analysis while another scan owns the foreground", async () => {
+    let resolveA!: (scan: ScanResult) => void;
+    analyzeMock.mockImplementationOnce(() => new Promise<ScanResult>(resolve => { resolveA = resolve; }));
+    const busyRef = { current: false };
+    const { result } = renderHook(() => useAnalyzeFlow({
+      goNav: () => {}, flow: flow as never, refreshApps: async () => {}, busyRef,
+    }));
+    let work!: Promise<boolean>;
+    await act(async () => { work = result.current.analyze(app("AppA")); });
+    await act(async () => { expect(await result.current.analyze(app("AppB"))).toBe(false); });
+    expect(analyzeMock).toHaveBeenCalledTimes(1);
+    expect(captured.selected?.name).toBe("AppA");
     expect(captured.scanning).toBe(true);
-
- // Newest finishes first.
-    await act(async () => {
-      resolveB(scanB);
-    });
-    expect(captured.scan).toBe(scanB);
- // The older request must not resurrect the spinner.
+    expect(busyRef.current).toBe(true);
+    await act(async () => { resolveA(scan("AppA")); await work; });
+    expect(captured.scan?.app_name).toBe("AppA");
     expect(captured.scanning).toBe(false);
-
- // Stale response lands afterwards — it must be ignored entirely.
-    await act(async () => {
-      resolveA(scanA);
-    });
-    expect(captured.scan).toBe(scanB);
-    expect(captured.selectedPaths).toEqual(new Set([cleanupItemKey(scanB.items[0]!)]));
-    expect(captured.scanning).toBe(false);
+    expect(busyRef.current).toBe(false);
   });
 
-  it.each([["scan failed", "failed"], ["scan:cancelled", "cancelled"]] as const)("keeps the uninstall review when the rescan returns %s", async (error, phase) => {
+  it.each([
+    ["scan failed", "failed"], ["scan:cancelled", "cancelled"],
+    ["uninstall review expired", "expired"], ["uninstall review found an installed application", "installed"],
+    ["uninstall review could not verify installation", "unverified"],
+  ] as const)("keeps the uninstall review when the rescan returns %s", async (error, phase) => {
     const residual = vi.fn();
-    flow.setUninstallReview = residual;
+    flow.updateUninstallRescan = residual;
     analyzeMock.mockRejectedValue(new Error(error));
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never, refreshApps: async () => {}, busyRef: { current: false } }));
     await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true, uninstallReview: 42 }); });
@@ -219,74 +200,16 @@ describe("useAnalyzeFlow request sequencing", () => {
     expect(busyRef.current, "the guard must not leak once the scan settles").toBe(false);
   });
 
-  it("releases busyRef after a superseded scan settles before its replacement", async () => {
-    let resolveA: (r: ScanResult) => void = () => {};
-    let resolveB: (r: ScanResult) => void = () => {};
-    analyzeMock
-      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveA = res)))
-      .mockImplementationOnce(() => new Promise<ScanResult>((res) => (resolveB = res)));
-
-    const busyRef = { current: false };
-    const { result } = renderHook(() =>
-      useAnalyzeFlow({
-        goNav: () => {},
-        flow: flow as never,
-        refreshApps: async () => {},
-        busyRef,
-      }),
-    );
-
-    let workA!: Promise<boolean>;
-    let workB!: Promise<boolean>;
-    await act(async () => {
-      workA = result.current.analyze(app("AppA"));
-    });
-    await act(async () => {
-      workB = result.current.analyze(app("AppB"));
-    });
-
-    // A was superseded and settles first; B still owns the busy claim.
-    await act(async () => {
-      result.current.cancelScan();
-      resolveA(scan("AppA"));
-      await workA;
-    });
-    expect(busyRef.current, "AppB is still in flight").toBe(true);
-
-    await act(async () => {
-      resolveB(scan("AppB"));
-      await workB;
-    });
-    expect(busyRef.current, "the surviving analyze must release busyRef").toBe(false);
-  });
-
-  it("does not release another holder's claim when analyze is superseded", async () => {
-    // A newer analyze supersedes an older one; the older one's `finally` is
-    // gated on its own seq, so it must not be what clears the ref.
-    let resolveA: (r: ScanResult) => void = () => {};
-    analyzeMock
-      .mockImplementationOnce(() => new Promise<ScanResult>(r => { resolveA = r; }))
-      .mockResolvedValueOnce(scan("AppB"));
-    const busyRef = { current: false };
-    const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
-      refreshApps: async () => {}, busyRef }));
-    let workA!: Promise<boolean>;
-    await act(async () => { workA = result.current.analyze(app("AppA")); });
-    await act(async () => { await result.current.analyze(app("AppB")); });
-    expect(busyRef.current, "AppB still in flight").toBe(true);
-    await act(async () => { resolveA(scan("AppA")); await workA; });
-    expect(busyRef.current, "the superseded scan must not clear AppB's hold").toBe(false);
-  });
-
-  it("keeps the outer holder's claim when analyze is nested inside it", async () => {
-    // `startUninstall` sets busyRef itself and then calls analyze({fromUninstall}).
-    // analyze must restore the ref rather than clear it out from under it.
-    analyzeMock.mockResolvedValue(scan("AppA"));
+  it("rejects externally requested review scans while another task owns the foreground", async () => {
     const busyRef = { current: true };
     const { result } = renderHook(() => useAnalyzeFlow({ goNav: () => {}, flow: flow as never,
       refreshApps: async () => {}, busyRef }));
-    await act(async () => { await result.current.analyze(app("AppA"), { fromUninstall: true, uninstallReview: 42 }); });
-    expect(busyRef.current, "startUninstall is still holding the ref").toBe(true);
+    await act(async () => {
+      expect(await result.current.analyze(app("AppA"), { fromUninstall: true, uninstallReview: 42, afterCleanup: true })).toBe(false);
+    });
+    expect(analyzeMock).not.toHaveBeenCalled();
+    expect(captured.selected).toBeNull();
+    expect(busyRef.current).toBe(true);
   });
 
   it("skips the post-uninstall rescan when the uninstaller initiated a reboot", async () => {
