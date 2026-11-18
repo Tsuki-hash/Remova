@@ -1,10 +1,12 @@
 # Remova Release Status
 
-## 1.5.1 (in development)
+## 1.5.1 (published 2026-11-17)
 
-- **Status**: 1.5.1 is in development. Configure the release mode before creating a candidate draft. Final acceptance and approval are required before publishing.
+- **Status**: published as [`v1.5.1`](https://github.com/Tsuki-hash/Remova/releases/tag/v1.5.1) with unsigned NSIS, MSI and portable packages, `SHA256SUMS.txt`, and `SBOM.cdx.json`. GitHub's latest release points to 1.5.1.
+- **Validation**: the tag resolves to `fc9c44d01732a5d21c0f774a208ff61cbee96026`. The exact candidate's [CI](https://github.com/Tsuki-hash/Remova/actions/runs/44058796950) and [release build](https://github.com/Tsuki-hash/Remova/actions/runs/44062070949) passed. The same executable from the draft portable ZIP reached WebView2 navigation readiness on Windows 11 x64 under both regular and administrator tokens. All five published asset digests match the reviewed attachments; the locked-dependency SBOM and bundled license notices were verified.
+- **Publication**: the [approval workflow](https://github.com/Tsuki-hash/Remova/actions/runs/44070947452) passed and verified the title, notes, attachments and latest release at publication. Its tooling passed a separate [CI run](https://github.com/Tsuki-hash/Remova/actions/runs/44065380049).
 - **CI gate** (carried from 1.4.0): the release workflow requires a successful `CI` run (`test` and `package` both green) for the exact tagged commit, a matching `CHANGELOG.md` section for the tag, and will not replace an already-published release.
-- **Signing and publication**: the planned distribution uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
+- **Signing and publication**: distribution uses unsigned Windows packages and manual downloads with `ALLOW_UNSIGNED_RELEASE=true`. A tag run produces a draft. Before publishing, review the exact draft attachments and SBOM. On the same Windows PC, verify WebView2 readiness with the executable from the draft portable ZIP under both a regular and an elevated token. Bind both records to the candidate commit and executable digest. See the [signing and publication guide](.github/RELEASE_SIGNING.md).
 - **Local build fallback**: when the tag workflow cannot build the draft, use the locked local build and record its toolchain, then upload and review the same five attachments. [Local Windows release procedure](.github/LOCAL_RELEASE.md)
 - **Updater**: verify manual downloads via `SHA256SUMS.txt`. The Windows updater dependency supports installer files and is built without the legacy ZIP updater feature.
 - **SBOM**: every release attaches a CycloneDX SBOM (Cargo + production npm dependencies) alongside the installers, continuing the practice introduced in 1.4.0.
