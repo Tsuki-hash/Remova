@@ -1,6 +1,6 @@
 import { cleanupItemKey } from "../lib/cleanupPlan";
 import type { ReactNode } from "react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   CleanupReport,
   FullCleanupReport,
@@ -135,6 +135,7 @@ export type SoftwarePageProps = {
   aiNotes: Record<string, string>;
   aiSummaryNote: string | null;
   dryRunning: boolean;
+  previewStale?: boolean;
   busy: boolean;
   onBack: () => void;
   onDryRun: () => void;
@@ -189,6 +190,17 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const L = t();
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
   const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
+  const inventoryRef = useRef<HTMLDivElement>(null);
+  const lastListFocus = useRef<HTMLElement | null>(null);
+  const hasInventoryDetail = !p.scan && Boolean(p.selected && p.detailPanel);
+  useLayoutEffect(() => {
+    if (hasInventoryDetail && window.matchMedia?.("(max-width: 1020px)").matches) {
+      inventoryRef.current?.querySelector<HTMLButtonElement>(".software-detail-back")?.focus();
+    } else if (!hasInventoryDetail && lastListFocus.current) {
+      if (lastListFocus.current.isConnected) lastListFocus.current.focus({ preventScroll: true });
+      lastListFocus.current = null;
+    }
+  }, [hasInventoryDetail]);
   const report = p.report;
   const liveReportApp = report ? findReportApp(report, p.apps, p.selected) : undefined;
   // A successful uninstall removes the app from the refreshed list and the
@@ -269,7 +281,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         </section>
       )}
 
-      {p.selected && !p.scan && (
+      {p.selected && !p.scan && !p.detailPanel && (
         <SelectedAppCard
           selected={p.selected}
           showDetail={p.showDetail}
@@ -319,6 +331,10 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           onOpenSettings={p.onOpenSettings}
           aiNote={p.aiSummaryNote}
         />
+      )}
+
+      {p.scan && p.previewStale && (
+        <p role="status" className="scan-plan-stale">{L.cleanupPreviewStale}</p>
       )}
 
       {p.aiRisk && p.scan && (
@@ -423,8 +439,9 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
           {p.selected && p.scan && scanMatchesApp(p.scan, p.selected) && p.detailPanel}
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0, alignItems: "stretch" }}>
+        <div className="software-inventory" ref={inventoryRef} data-detail-open={hasInventoryDetail || undefined}>
           <div
+            className="software-inventory-list"
             style={{
               ...css.card,
               flex: 1,
@@ -479,7 +496,13 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               sizeText={p.formatAppSize}
               sizeOf={p.sizeOf}
               sortBy={p.sortBy}
-              selectApp={p.selectApp}
+              selectApp={app => {
+                if (window.matchMedia?.("(max-width: 1020px)").matches && document.activeElement instanceof HTMLElement &&
+                  inventoryRef.current?.contains(document.activeElement)) {
+                  lastListFocus.current = document.activeElement;
+                }
+                p.selectApp(app);
+              }}
               startUninstall={p.listStartUninstall}
               analyze={p.listAnalyze}
               forceClean={p.listForceClean}

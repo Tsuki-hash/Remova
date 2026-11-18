@@ -16,7 +16,7 @@ import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
 import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
-import type { FullCleanupReport, InstalledApp } from "../types";
+import type { DirSizeRow, FullCleanupReport, InstalledApp } from "../types";
 import { ToolCard, type ToolItem } from "./MoreToolCard";
 import { ToolGlyph } from "./ToolIcons";
 import { DiskOverviewPanel } from "./DiskOverviewPanel";
@@ -51,6 +51,7 @@ export function MorePage({
   onCheckUpdate,
   onReopenOnboarding,
   onGoSoftware,
+  onInspectFolder,
   onLastReport,
   onAiEnabledChange,
   onIgnoreListsChange,
@@ -75,6 +76,7 @@ export function MorePage({
   onCheckUpdate: () => void;
   onReopenOnboarding?: () => void;
   onGoSoftware: () => void;
+  onInspectFolder?: (row?: DirSizeRow) => void;
   onLastReport?: (r: FullCleanupReport) => void;
   onAiEnabledChange?: (enabled: boolean) => void;
   onIgnoreListsChange?: (lists: IgnoreLists) => void;
@@ -491,7 +493,7 @@ export function MorePage({
       {openTool === "msi" && <MsiPanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "toolaudit" && <ToolchainPanel onClose={() => tools.setOpenTool(null)} />}
       {openTool === "diskradar" && (
-        <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
+        <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} onInspect={onInspectFolder} />
       )}
       {showMonitorPanel && (
         <MonitorPanel

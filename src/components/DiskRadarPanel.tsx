@@ -31,9 +31,11 @@ type PartialInfo = { omitted: number; capped: boolean };
 export function DiskRadarPanel({
   onClose,
   onError,
+  onInspect,
 }: {
-  onClose: () => void;
+  onClose?: () => void;
   onError: (msg: string) => void;
+  onInspect?: (row?: DirSizeRow) => void;
 }) {
   const L = t();
   const [rows, setRows] = useState<DirSizeRow[] | null>(null);
@@ -128,6 +130,11 @@ export function DiskRadarPanel({
       <div className="remova-tool-heading">
         <h2>{L.diskRadarTitle}</h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {onInspect && (
+            <button type="button" style={css.btnGhost} onClick={() => onInspect()}>
+              {L.folderInspectTitle}
+            </button>
+          )}
           {drives.map((d) => (
             <button
               key={d.letter}
@@ -179,9 +186,9 @@ export function DiskRadarPanel({
           >
             {L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
+          {onClose && <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
             <CloseGlyph />
-          </button>
+          </button>}
         </div>
       </div>
       <ScanProgressBar
@@ -283,6 +290,11 @@ export function DiskRadarPanel({
             >
               {L.detailShow}
             </button>
+            {onInspect && (
+              <button type="button" style={css.btnGhost} onClick={() => onInspect(r)}>
+                {L.folderInspectAction}
+              </button>
+            )}
             <button
               style={{ ...css.btnGhost, height: 26, padding: "0 8px", flexShrink: 0 }}
               onClick={() => void api.openPath(r.path).catch((e) => onError(formatError(e)))}

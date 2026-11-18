@@ -51,6 +51,7 @@ Deep uninstall runs the app's uninstaller first and scans for leftovers after ve
 - Icons come from Windows app packages, uninstall records, MSI products, or matching local shortcuts and executables.
 - Decision chips: large / recent / recommended / no uninstaller / store vs desktop
 - Search, sort, virtualized list; drop exe or install folder to analyze
+- Open Disk Radar from the app list, or drop an unfamiliar folder to check local installation records, Desktop and Start menu shortcuts, and service program paths. The result calls out sources that could not be fully checked.
 
 ### Deep uninstall flow
 1. **Identify** install type and associations  

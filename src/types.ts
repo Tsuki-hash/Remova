@@ -12,6 +12,20 @@ export type InstalledApp = {
   display_icon: string;
 };
 
+export type FolderReferenceSource = "installation" | "shortcut" | "service";
+
+export type FolderReferences = {
+  references: {
+    source: FolderReferenceSource;
+    name: string;
+    location: string;
+    target: string;
+    app_source?: string;
+  }[];
+  incomplete: FolderReferenceSource[];
+  omitted: number;
+};
+
 export type Evidence = {
   code: string;
   label: string;

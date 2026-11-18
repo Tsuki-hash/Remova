@@ -45,6 +45,7 @@ vi.mock("../lib/api", () => ({ api: {
   beginAssociationScan: vi.fn(async () => 1),
   cancelAssociationScan: vi.fn(async () => {}),
   associationScanProgress: vi.fn(async () => null),
+  inspectFolderReferences: vi.fn(async () => ({ references: [], incomplete: [], omitted: 0 })),
   isElevated: vi.fn().mockResolvedValue(false),
   getAiConfig: vi.fn().mockResolvedValue({ enabled: false }),
   loadIgnore: vi.fn().mockResolvedValue({ publishers: [], names: [] }),
@@ -56,6 +57,7 @@ vi.mock("../lib/updateCheck", () => ({
 }));
 vi.mock("../lib/confirm", () => ({
   requestConfirmEx: native.requestConfirmEx, requestConfirm: native.requestConfirm,
+  getConfirm: () => null,
 }));
 vi.mock("../lib/exportHtmlReport", () => ({ exportHtmlReport: vi.fn() }));
 const pendingAnalysisEvent = vi.hoisted(() => ({
@@ -427,8 +429,12 @@ describe("App orchestration", () => {
     await waitFor(() => expect(native.drag).toBeTruthy());
     act(() => native.drag!({ payload: { type: "drop", paths: ["C:\\Apps"] } }));
     expect(native.analyze).not.toHaveBeenCalled();
+    const L = i18n.t();
+    const inspector = await screen.findByRole("dialog", { name: L.folderInspectTitle });
+    expect(within(inspector).getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe("C:\\Apps");
+    fireEvent.click(within(inspector).getByRole("button", { name: L.panelClose }));
     act(() => native.drag!({ payload: { type: "drop", paths: [`${adjacent.install_location}/app.exe`] } }));
-    await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, 1));
+    await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, expect.any(Number)));
   });
 
   it("applies saved AI state and removed ignore rules immediately across pages", async () => {
@@ -902,7 +908,7 @@ describe("App orchestration", () => {
     else {
       act(() => software().selectApp(demo));
       await screen.findByTestId("detail");
-      act(() => detail().onOfficialOnly(demo));
+      act(() => detail().onOfficialOnly?.(demo));
     }
     await waitFor(() => expect(software().uninstallingKey).toBeNull());
     const notice = verified ? L.backendRebootRequired : L.backendUninstallRebootBeforeVerify;
@@ -976,7 +982,7 @@ describe("App orchestration", () => {
     await waitFor(() => expect(native.requestConfirmEx).toHaveBeenCalledTimes(1));
     act(() => detail().onDeepUninstall(demo));
     await waitFor(() => expect(native.requestConfirmEx).toHaveBeenCalledTimes(2));
-    act(() => detail().onOfficialOnly(demo));
+    act(() => detail().onOfficialOnly?.(demo));
     await waitFor(() => expect(native.requestConfirm).toHaveBeenCalled());
     act(() => detail().onAnalyze(demo));
     await waitFor(() => expect(software().scan).toEqual(scan));

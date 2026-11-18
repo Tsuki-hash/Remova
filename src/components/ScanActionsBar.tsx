@@ -74,9 +74,20 @@ export function ScanActionsBar({
               </div>
             )}
             <button
-              style={{ ...css.btn, height: 38, background: "var(--danger-text)", color: "var(--surface)" }}
+              type="button"
+              style={css.btnGhost}
+              className="scan-actions-preview"
+              disabled={busy || dryRunning || scanning || plan.count === 0}
+              onClick={onDryRun}
+              aria-describedby="cleanup-plan-check-hint"
+            >
+              {L.dryRun}
+            </button>
+            <span id="cleanup-plan-check-hint" className="scan-actions-sr-only">{L.dryRunHint}</span>
+            <button
+              style={{ ...css.btnGhost, height: 38 }}
               className="scan-actions-cleanup"
-              disabled={dryRunning || plan.count === 0 || busy}
+              disabled={scanning || dryRunning || plan.count === 0 || busy}
               onClick={onCleanup}
               title={runsOfficial ? L.officialFirstHint : L.cleanupSelectedHint}
             >
@@ -146,15 +157,6 @@ export function ScanActionsBar({
                   <div>{L.skipOfficialHint}</div>
                 </details>
               )}
-              <span id="cleanup-plan-check-hint">{L.dryRunHint}</span>
-              <button
-                style={{ ...css.btnGhost, justifySelf: "start" }}
-                disabled={busy || dryRunning || plan.count === 0}
-                onClick={onDryRun}
-                aria-describedby="cleanup-plan-check-hint"
-              >
-                {L.dryRun}
-              </button>
             </div>
           </details>
           {aiEnabled ? (

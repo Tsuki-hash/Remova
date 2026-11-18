@@ -65,6 +65,7 @@ const COMMAND_KEYS = [
   "scanToolCaches",
   "listTopDirSizes",
   "listDirChildren",
+  "inspectFolderReferences",
   "listLocalDrives",
   "isElevated",
   "elevateRestart",

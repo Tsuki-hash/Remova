@@ -17,6 +17,9 @@ import {
 } from "../lib/decision";
 import { filterItemsByBucket, linkedBucketLabelKey } from "../lib/linkedItems";
 import { backendText } from "../lib/backendText";
+import { api } from "../lib/api";
+import { formatError } from "../lib/format";
+import { toast } from "../lib/toast";
 import { evidenceText } from "../lib/evidenceText";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import type { CleanupItem, InstalledApp, ScanResult } from "../types";
@@ -249,7 +252,15 @@ export function ScanLeftoversView({
     [isOrphan, scan.items],
   );
   const baseItems = useMemo(
-    () => (isOrphan ? flattenOriginGroups(originGroups) : scan.items),
+    () => {
+      if (isOrphan) return flattenOriginGroups(originGroups);
+      const review: CleanupItem[] = [];
+      const rest: CleanupItem[] = [];
+      for (const item of scan.items) {
+        (item.user_data || item.user_library || item.shared ? review : rest).push(item);
+      }
+      return review.concat(rest);
+    },
     [isOrphan, originGroups, scan.items],
   );
   const bucketItems = useMemo(
@@ -495,6 +506,12 @@ export function ScanLeftoversView({
             .map(raw => ({ ...raw, ...evidenceText(raw) }))
             .map(e => `${e.label} (${e.weight})${e.detail ? " — " + e.detail : ""}`)
             .join("\n") || evidenceItem?.reason}{" "}
+          {evidenceItem?.kind === "dir" && (
+            <button type="button" style={{ ...css.btnGhost, height: 28 }}
+              onClick={() => void api.openPath(evidenceItem.path).catch(error => toast.error(formatError(error)))}>
+              {L.openLocation}
+            </button>
+          )}
           <button style={{ ...css.btnGhost, height: 28 }} onClick={closeEvidence} aria-label={L.panelClose}>
             <CloseGlyph />
           </button>

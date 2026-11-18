@@ -97,16 +97,20 @@ export function usePendingAnalyze({
 export function useDragDropAnalyze({
   apps,
   analyze,
+  onUnmatched,
+  preferFolder = false,
 }: {
   apps: InstalledApp[];
   analyze: (a: InstalledApp) => void;
+  onUnmatched?: (path: string) => void;
+  preferFolder?: boolean;
 }) {
  // read the latest inputs through a ref so the webview channel is subscribed once
  // instead of being torn down and rebuilt every time the app list changes.
-  const latest = useRef({ apps, analyze });
+  const latest = useRef({ apps, analyze, onUnmatched, preferFolder });
   useEffect(() => {
-    latest.current = { apps, analyze };
-  }, [apps, analyze]);
+    latest.current = { apps, analyze, onUnmatched, preferFolder };
+  }, [apps, analyze, onUnmatched, preferFolder]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -119,10 +123,12 @@ export function useDragDropAnalyze({
           if (event.payload.type !== "drop") return;
           const path = (event.payload.paths || [])[0];
           if (!path) return;
-          const { apps, analyze } = latest.current;
-          const hit = appForPath(apps, path);
+          const { apps, analyze, onUnmatched, preferFolder } = latest.current;
+          const hit = preferFolder ? null : appForPath(apps, path);
           if (hit) {
             analyze(hit);
+          } else if (onUnmatched) {
+            onUnmatched(path);
           } else {
             toast.info(`${t().dropHint}: ${path}`);
           }

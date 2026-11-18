@@ -1,0 +1,50 @@
+.directory-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 20, 27, .32);
+  padding: 20px;
+}
+.directory-dialog {
+  box-sizing: border-box;
+  width: min(850px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  padding: 16px;
+}
+.directory-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.directory-heading h2 { flex: 1; margin: 0; font-size: 18px; }
+.folder-reference-form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.folder-reference-form label { display: grid; gap: 5px; flex: 1 1 200px; }
+.folder-reference-form input { width: 100%; box-sizing: border-box; }
+.folder-reference-form input, .folder-references code {
+  font-family: var(--mono);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.folder-reference-note { color: var(--muted); font-size: 12px; }
+.folder-reference-incomplete { color: var(--warn-ink); }
+.folder-reference-path, .folder-reference-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.folder-reference-path { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; }
+.folder-reference-path code { flex: 1 1 180px; }
+.folder-reference-list { padding: 0; margin: 12px 0; }
+.folder-reference-list li { border-bottom: 1px solid var(--border); }
+.folder-reference-list li > div { display: grid; gap: 4px; flex: 1 1 210px; min-width: 0; }
+.folder-reference-list summary { cursor: pointer; color: var(--muted); font-size: 12px; }

@@ -25,6 +25,7 @@ const READ_ONLY_COMMANDS = new Set([
   "list_local_drives",
   "list_top_dir_sizes",
   "list_dir_children",
+  "inspect_folder_references",
   "rank_idle_apps",
   "app_icon_data",
   "estimate_dir_size_kb",

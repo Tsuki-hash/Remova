@@ -476,7 +476,7 @@ export function useCleanupHandlers({
     const { ok, checked } = await requestConfirmEx({
       title: L.cleanup,
       message,
-      confirmLabel: L.cleanup,
+      confirmLabel: runOfficial ? L.uninstallAndCleanup : L.confirmCleanupCount(n),
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });

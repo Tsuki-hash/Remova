@@ -197,7 +197,7 @@ describe("ScanActionsBar", () => {
       setLang("zh");
     }
   });
-  it.each(["zh", "en"] as const)("keeps plan checks in the disclosure and preserves busy guards (%s)", (lang) => {
+  it.each(["zh", "en"] as const)("shows plan checks beside cleanup and preserves busy guards (%s)", (lang) => {
     setLang(lang);
     try {
       const item: CleanupItem = { path: "fixture", kind: "file", size_kb: 10, risk: "low", confidence: "confirmed", score: 90, reason: "", evidence: [] };
@@ -206,14 +206,13 @@ describe("ScanActionsBar", () => {
       const view = render(<ScanActionsBar {...props} />);
       const disclosure = screen.getByText(t().cleanupPlanDetails).closest("details")!;
       expect(disclosure.open).toBe(false);
-      fireEvent.click(screen.getByText(t().cleanupPlanDetails));
       const check = screen.getByRole("button", { name: t().dryRun });
-      expect(disclosure.contains(check)).toBe(true);
-      expect(view.container.querySelector(".scan-actions-primary")!.contains(check)).toBe(false);
+      expect(disclosure.contains(check)).toBe(false);
+      expect(view.container.querySelector(".scan-actions-primary")!.contains(check)).toBe(true);
       expect(screen.getByText(t().dryRunHint).id).toBe(check.getAttribute("aria-describedby"));
       fireEvent.click(check);
       expect(onDryRun).toHaveBeenCalledOnce();
-      for (const state of [{ busy: true }, { dryRunning: true }, { selectedPaths: new Set<string>() }]) {
+      for (const state of [{ busy: true }, { scanning: true }, { dryRunning: true }, { selectedPaths: new Set<string>() }]) {
         view.rerender(<ScanActionsBar {...props} {...state} />);
         expect((check as HTMLButtonElement).disabled).toBe(true);
         fireEvent.click(check);

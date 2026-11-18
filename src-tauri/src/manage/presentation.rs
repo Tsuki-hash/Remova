@@ -115,13 +115,56 @@ pub(super) fn startup_file(path: &Path) -> (Option<String>, Option<String>) {
 
 #[cfg(windows)]
 pub(crate) fn shortcut(path: &Path) -> Option<(Option<String>, Option<String>)> {
+    with_shell_link(path, |link| {
+        let target = stored_shortcut_path(link).and_then(|value| binary_path(Path::new(&value)));
+        let mut buffer = [0; 260];
+        let mut index = 0;
+        let icon = unsafe { link.GetIconLocation(&mut buffer, &mut index) }
+            .ok()
+            .and_then(|_| expanded_shortcut_buffer(&buffer))
+            .and_then(|value| binary_path(Path::new(&value)))
+            .map(|path| format!("{path},{index}"))
+            .or_else(|| target.clone());
+        (target, icon)
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn shortcut_target(path: &Path) -> Option<String> {
+    with_shell_link(path, stored_shortcut_path).flatten()
+}
+
+#[cfg(windows)]
+fn stored_shortcut_path(link: &windows::Win32::UI::Shell::IShellLinkW) -> Option<String> {
+    use windows::Win32::UI::Shell::SLGP_RAWPATH;
+    let mut buffer = [0; 260];
+    // Reading the stored path avoids resolving or activating the target.
+    unsafe { link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32) }.ok()?;
+    expanded_shortcut_buffer(&buffer)
+}
+
+#[cfg(windows)]
+fn expanded_shortcut_buffer(buffer: &[u16]) -> Option<String> {
+    let end = buffer.iter().position(|code| *code == 0)?;
+    if end == 0 || end >= buffer.len() - 1 {
+        return None;
+    }
+    let value = String::from_utf16(&buffer[..end]).ok()?;
+    Some(expanded_path(&value))
+}
+
+#[cfg(windows)]
+fn with_shell_link<T>(
+    path: &Path,
+    read: impl FnOnce(&windows::Win32::UI::Shell::IShellLinkW) -> T,
+) -> Option<T> {
     use windows::core::{Interface, PCWSTR};
     use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
-    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
     let _pins = crate::fsutil::pin_local_scan_path(path).ok()?;
     let wide: Vec<u16> = path.to_str()?.encode_utf16().chain([0]).collect();
@@ -143,24 +186,7 @@ pub(crate) fn shortcut(path: &Path) -> Option<(Option<String>, Option<String>)> 
     let persisted: IPersistFile = link.cast().ok()?;
     unsafe { persisted.Load(PCWSTR(wide.as_ptr()), STGM_READ) }.ok()?;
 
-    let local_binary = |buffer: &[u16]| {
-        let end = buffer.iter().position(|code| *code == 0)?;
-        let value = String::from_utf16(&buffer[..end]).ok()?;
-        binary_path(Path::new(&expanded_path(&value)))
-    };
-    let mut buffer = [0; 260];
-    // Read the stored path without resolving or activating the target.
-    let target = unsafe { link.GetPath(&mut buffer, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32) }
-        .ok()
-        .and_then(|_| local_binary(&buffer));
-    buffer.fill(0);
-    let mut index = 0;
-    let icon = unsafe { link.GetIconLocation(&mut buffer, &mut index) }
-        .ok()
-        .and_then(|_| local_binary(&buffer))
-        .map(|path| format!("{path},{index}"))
-        .or_else(|| target.clone());
-    Some((target, icon))
+    Some(read(&link))
 }
 
 pub(super) fn command_path(command: &str) -> Option<String> {
@@ -440,6 +466,9 @@ mod tests {
         }
         let (actual_target, actual_icon) = startup_file(&shortcut);
         assert!(actual_target.unwrap().eq_ignore_ascii_case(&target));
+        assert!(shortcut_target(&shortcut)
+            .unwrap()
+            .eq_ignore_ascii_case(&target));
         let icon_ref = actual_icon.unwrap();
         assert!(icon_ref.eq_ignore_ascii_case(&format!("{icon},0")));
         assert!(crate::icon::extract_icon_png(&icon_ref, true).is_some());

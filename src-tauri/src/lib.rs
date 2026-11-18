@@ -15,6 +15,7 @@ pub mod diskradar;
 pub mod error;
 pub mod executor;
 pub mod firewall;
+mod folder_references;
 pub mod fsutil;
 pub mod history;
 pub mod icon;
@@ -1949,6 +1950,20 @@ async fn list_dir_children(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn inspect_folder_references(
+    path: String,
+    scan_id: u32,
+) -> Result<folder_references::FolderReferences, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_task::run_scoped(scan_id, "folder-references", || {
+            folder_references::inspect(&path)
+        })?
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// re-check selected paths after cleanup (checklist evidence).
 #[tauri::command]
 async fn verify_cleanup_leftovers(
@@ -2248,6 +2263,7 @@ pub fn run() {
         // `list_local_drives`
         // `list_top_dir_sizes`
         // `list_dir_children`
+        // `inspect_folder_references`
         // `verify_cleanup_leftovers`
         // `begin_install_monitor`
         // `end_install_monitor`
@@ -2349,6 +2365,7 @@ pub fn run() {
             list_local_drives,
             list_top_dir_sizes,
             list_dir_children,
+            inspect_folder_references,
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,

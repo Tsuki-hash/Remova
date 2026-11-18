@@ -13,8 +13,10 @@ import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
+import type { FolderInspection } from "./components/DirectoryWorkspace";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey, scanMatchesApp } from "./lib/appKey";
+import { getConfirm } from "./lib/confirm";
 import { useSizeEstimate } from "./hooks/useSizeEstimate";
 import { useAppFilter } from "./hooks/useAppFilter";
 import { usePendingAnalyze, useDragDropAnalyze } from "./hooks/useAppNavAssist";
@@ -58,6 +60,9 @@ const ManageListPage = lazy(() =>
   import("./components/ManageListPage").then((m) => ({ default: m.ManageListPage })),
 );
 const MorePage = lazy(() => import("./components/MorePage").then((m) => ({ default: m.MorePage })));
+const DirectoryWorkspace = lazy(() =>
+  import("./components/DirectoryWorkspace").then((module) => ({ default: module.DirectoryWorkspace })),
+);
 const OrphanPage = lazy(() =>
   import("./components/OrphanPage").then((m) => ({ default: m.OrphanPage })),
 );
@@ -240,6 +245,9 @@ export default function App() {
     [setCategoryState, setCopilotList],
   );
   const busyRef = useRef(false);
+  const [radarOpen, setRadarOpen] = useState(false);
+  const [inspection, setInspection] = useState<FolderInspection | null>(null);
+  const directoryOpen = radarOpen || inspection !== null;
   const analyzeRef = useRef<
     (
       app: InstalledApp,
@@ -571,15 +579,19 @@ export default function App() {
   }, [batching, dryRunning, cleaning]);
 
   usePendingAnalyze({
-    blocked: loading || scanning || batching || cleaning || dryRunning || uninstallingKey !== null,
+    blocked: directoryOpen || loading || scanning || batching || cleaning || dryRunning || uninstallingKey !== null,
     apps,
     analyze,
     setQ,
   });
   useDragDropAnalyze({
     apps,
+    preferFolder: directoryOpen,
     analyze: (a) => {
-      void analyze(a);
+      if (!getConfirm()) void analyze(a);
+    },
+    onUnmatched: path => {
+      if (!busyRef.current && !scanning && !getConfirm()) setInspection({ path });
     },
   });
 
@@ -825,6 +837,13 @@ export default function App() {
         }
         actions={
           <>
+            {nav === "software" && (
+              <button type="button" style={css.btnGhost}
+                disabled={scanning || batching || cleaning || dryRunning || uninstallingKey !== null}
+                onClick={() => { if (!busyRef.current) setRadarOpen(true); }}>
+                {L.diskRadarShortcut}
+              </button>
+            )}
             <div
               role="group"
               aria-label={L.themeGroup}
@@ -937,6 +956,9 @@ export default function App() {
               onCheckUpdate={() => void checkUpdateNow(setUpdateInfo, L)}
               onReopenOnboarding={reopenSafety}
               onGoSoftware={() => goNav("software")}
+              onInspectFolder={row => {
+                if (!busyRef.current && !scanning) setInspection({ path: row?.path ?? "", measurement: row });
+              }}
               onLastReport={(r) => coreSetReport(r)}
               onAiEnabledChange={(enabled) => {
                 setAiEnabled(enabled);
@@ -955,11 +977,34 @@ export default function App() {
                 {...softwareProps}
                 inventoryIncomplete={inventoryIncomplete}
                 refreshInventory={refreshApps}
+                previewStale={Boolean(report?.dry_run && previewStale)}
               />
             </>
           )}
         </Suspense>
       </Shell>
+      {directoryOpen && (
+        <Suspense fallback={null}>
+          <DirectoryWorkspace
+            radar={radarOpen}
+            inspection={inspection}
+            apps={apps}
+            onInspect={setInspection}
+            onBack={() => setInspection(null)}
+            onClose={() => { setRadarOpen(false); setInspection(null); }}
+            onOpenSoftware={(app, action) => {
+              if (busyRef.current || scanning) return;
+              setRadarOpen(false);
+              setInspection(null);
+              if (action === "analyze") void analyze(app);
+              else {
+                goNav("software");
+                void startUninstall(app);
+              }
+            }}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

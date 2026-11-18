@@ -6,7 +6,6 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { InstalledAppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
-import { summarizeLeftovers } from "../lib/decision";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
 import { scanMatchesApp } from "../lib/appKey";
 import { ToolGlyph } from "./ToolIcons";
@@ -23,7 +22,7 @@ type Props = {
   onClose: () => void;
   onDeepUninstall: (app: InstalledApp) => void;
   onAnalyze: (app: InstalledApp) => void;
-  onOfficialOnly: (app: InstalledApp) => void;
+  onOfficialOnly?: (app: InstalledApp) => void;
   onForceClean?: (app: InstalledApp) => void;
   onOpenPath?: (path: string) => void;
   onDrillDown?: (bucket: LinkedBucketId) => void;
@@ -49,8 +48,14 @@ export function AppDetailPanel({
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const name = prettyAppName(app.name, app.source);
   const hasCmd = Boolean((app.quiet_uninstall_string || app.uninstall_string || "").trim());
-  const linked = scan && scanMatchesApp(scan, app) ? summarizeLeftovers(scan.items) : null;
-  const buckets = scan && scanMatchesApp(scan, app) ? buildLinkedBuckets(scan.items, app) : [];
+  const matchingScan = scan && scanMatchesApp(scan, app) ? scan : null;
+  const buckets = matchingScan ? buildLinkedBuckets(matchingScan.items, app) : [];
+  const measured = matchingScan?.items.find(item => item.kind === "dir" &&
+    item.evidence?.some(evidence => evidence.code === "install_location") && item.size_kb != null);
+  const measuredSize = measured?.size_kb != null
+    ? measured.size_capped ? L.detailSizeFloor(formatSize(measured.size_kb)) : formatSize(measured.size_kb)
+    : app.estimated_size_kb <= 0 && sizeText !== "—" ? sizeText : null;
+  const registeredSize = app.estimated_size_kb > 0 ? formatSize(app.estimated_size_kb) : "—";
 
   const closeMenu = (restoreFocus: boolean) => {
     setMenuOpen(false);
@@ -74,10 +79,8 @@ export function AppDetailPanel({
   ];
 
   const menuItems: { label: string; onClick: () => void; danger?: boolean }[] = [
-    { label: L.drawerOfficial, onClick: () => onOfficialOnly(app) },
-    { label: L.drawerDeepUninstall, onClick: runDeep },
-    { label: L.rowForceClean, onClick: () => onForceClean?.(app), danger: true },
-    { label: L.drawerAnalyze, onClick: () => onAnalyze(app) },
+    ...(onOfficialOnly ? [{ label: L.drawerOfficial, onClick: () => onOfficialOnly(app) }] : []),
+    ...(onForceClean ? [{ label: L.rowForceClean, onClick: () => onForceClean(app), danger: true }] : []),
   ];
 
   return (
@@ -91,19 +94,24 @@ export function AppDetailPanel({
           </div>
         </div>
         <button
-          style={{ ...css.btnGhost, height: 28, width: 28, padding: 0, borderColor: "transparent", color: "var(--muted)" }}
+          style={{ ...css.btnGhost, minHeight: 28, borderColor: "transparent", color: "var(--muted)" }}
+          className="software-detail-back"
           onClick={onClose}
-          aria-label={L.panelClose}
+          aria-label={L.navBack}
         >
           <CloseGlyph />
+          <span>{L.navBack}</span>
         </button>
       </div>
 
       <div style={{ ...css.panelBody, padding: "18px" }}>
         <div className="software-detail-capacity">
           <div>
-            <span className="software-detail-caption">{L.colSize}</span>
-            <strong className="software-detail-size">{sizeText}</strong>
+            <span className="software-detail-caption">{measuredSize ? L.detailMeasuredSize : L.detailRegisteredSize}</span>
+            <strong className="software-detail-size">{measuredSize ?? registeredSize}</strong>
+            <span className="software-detail-caption">
+              {measuredSize ? L.detailRegisteredSize : L.detailMeasuredSize} {measuredSize ? registeredSize : L.detailUnmeasured}
+            </span>
           </div>
           <span className="software-detail-source" title={`${L.detailSource}: ${sourceLabel(app.source, L)}`}>{sourceLabel(app.source, L)}</span>
         </div>
@@ -111,26 +119,25 @@ export function AppDetailPanel({
           <button
             style={{
               ...css.btn,
-              flex: 1,
+              flex: "0 1 auto",
               height: 38,
               background: "var(--accent)",
               color: "var(--accent-ink)",
-              opacity: !hasCmd || uninstalling ? 0.5 : 1,
+              opacity: uninstalling ? 0.5 : 1,
             }}
-            disabled={!hasCmd || uninstalling}
-            onClick={runDeep}
+            disabled={uninstalling}
+            onClick={() => onAnalyze(app)}
           >
-            {uninstalling ? L.uninstalling : L.drawerDeepUninstall}
+            {L.detailInspect}
           </button>
           <button
             style={{ ...css.btnGhost, height: 38 }}
-            disabled={!app.install_location}
-            title={app.install_location}
-            onClick={() => app.install_location && onOpenPath?.(app.install_location)}
+            disabled={!hasCmd || uninstalling}
+            onClick={runDeep}
           >
-            {L.openLocation}
+            {uninstalling ? L.uninstalling : L.detailUninstall}
           </button>
-          <div style={{ position: "relative" }}>
+          {menuItems.length > 0 && <div style={{ position: "relative" }}>
             <button
               ref={menuBtnRef}
               style={{ ...css.btnGhost, height: 38, width: 32, padding: 0 }}
@@ -185,7 +192,7 @@ export function AppDetailPanel({
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </div>
         <div
           style={{
@@ -205,7 +212,7 @@ export function AppDetailPanel({
             <div key={r.label} style={css.detailRow}>
               <span style={{ ...css.muted, width: 64, flexShrink: 0 }}>{r.label}</span>
               <span
-                className={r.mono ? "ell" : undefined}
+                  className={r.mono ? "software-detail-path" : undefined}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -233,7 +240,7 @@ export function AppDetailPanel({
         <div className="software-detail-section">{L.linkedItems}</div>
         {buckets.length === 0 ? (
           <div style={{ ...css.muted, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
-            {L.linkedNotScanned || L.drawerAnalyzeHint}
+            {matchingScan ? L.leftoversNone : L.linkedNotScanned}
           </div>
         ) : (
           <div className="software-detail-linked">
@@ -276,7 +283,7 @@ export function AppDetailPanel({
                   </span>
                   <span style={{ flex: 1 }}>{label}</span>
                   <span style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>
-                    {b.sizeKb != null ? formatSize(b.sizeKb) : L.itemCount(b.count)}
+                    {L.itemCount(b.count)}
                   </span>
                   <span style={{ color: "var(--muted)" }}>›</span>
                 </button>
@@ -285,29 +292,6 @@ export function AppDetailPanel({
           </div>
         )}
 
-        {linked && linked.total > 0 ? (
-          <div className="software-detail-recommend">
-            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>
-              <Deco ch="✓" /> {L.deepUninstallRecommend}
-            </div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6, lineHeight: 1.6 }}>
-              {L.foundNLeftovers(linked.total)}
-            </div>
-            {/* The matching scan view is always open beside this drawer —
-                an action here could never navigate anywhere. Point at it. */}
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              {L.leftoversListAside}
-            </div>
-          </div>
-        ) : (
-          <button
-            style={{ ...css.btnGhost, height: 32, width: "100%", marginBottom: 8 }}
-            disabled={uninstalling}
-            onClick={() => onAnalyze(app)}
-          >
-            {L.scanLinkedLeftovers}
-          </button>
-        )}
       </div>
     </aside>
   );
