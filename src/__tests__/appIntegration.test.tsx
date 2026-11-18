@@ -42,6 +42,7 @@ const pages = vi.hoisted(() => ({
 
 vi.mock("../lib/api", () => ({ api: {
   ...native,
+  pendingUninstallReviews: vi.fn(async () => []),
   auditProfileRoot: vi.fn(async () => "C:\\Users\\Fixture"),
   setTrayLanguage: vi.fn(async () => {}),
   beginAssociationScan: vi.fn(async () => 1),

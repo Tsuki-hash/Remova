@@ -25,6 +25,7 @@ import { defaultSelectable } from "../lib/decision";
 import { degradedText } from "../lib/degradedText";
 import { SoftwareToolbar } from "./SoftwareToolbar";
 import { UninstallStageBar } from "./UninstallStageBar";
+import { PendingUninstallReviews } from "./PendingUninstallReviews";
 import { SelectedAppCard } from "./SelectedAppCard";
 import { IgnoreSuggestBar } from "./IgnoreSuggestBar";
 import { ScanActionsBar } from "./ScanActionsBar";
@@ -246,6 +247,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
         onToggleSmartFilter={() => setSmartFilterOpen((v) => !v)}
       />
       {p.uninstallStage !== "idle" && <UninstallStageBar stage={p.uninstallStage} />}
+      <PendingUninstallReviews busy={p.busy || Boolean(p.uninstallingKey)} onGoOrphans={p.onGoOrphans} />
       {visibleReviews.length > 0 && (
         <section aria-label={L.uninstallReviewList} style={{ ...css.card, maxHeight: 224, overflowY: "auto", padding: 12, marginBottom: 10, lineHeight: 1.6 }}>
           {visibleReviews.map(review => {

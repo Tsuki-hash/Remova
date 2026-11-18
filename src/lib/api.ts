@@ -125,12 +125,18 @@ function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> 
   return trackNativeCall(() => tauriInvoke<T>(command, args), command);
 }
 
+export type PendingUninstallReview = { id: number; name: string; version: string };
+export type PendingUninstallReviewStatus = "awaiting_restart" | "installed" | "removed" | "unverified";
+
 export const api = {
   onlineUpdateSupported: () => invoke<boolean>("online_update_supported"),
   setTrayLanguage: (lang: string) => invoke<void>("set_tray_language", { lang }),
   beginCleanupOperation: () => invoke<number>("begin_cleanup_operation"),
   cancelCleanup: (operationId: number) => invoke<boolean>("cancel_cleanup", { operationId }),
   rebootGateStatus: () => invoke<string>("reboot_gate_status"),
+  pendingUninstallReviews: () => invoke<PendingUninstallReview[]>("list_pending_uninstall_reviews"),
+  checkPendingUninstallReview: (id: number) => invoke<PendingUninstallReviewStatus>("check_pending_uninstall_review", { id }),
+  dismissPendingUninstallReview: (id: number) => invoke<void>("dismiss_pending_uninstall_review", { id }),
   clearCorruptRebootGate: () => invoke<boolean>("clear_corrupt_reboot_gate"),
   listApps: () => invoke<InstalledAppsSnapshot>("list_installed_apps"),
   analyze: (app: InstalledApp, scanId?: number, uninstallReview?: number) => invoke<ScanResult>("analyze_associations", { app, scanId,
@@ -223,6 +229,7 @@ export const api = {
   scanInstallerCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_installer_caches", { scanId }),
   scanToolCaches: (scanId?: number) => invoke<ScopedScanResult>("scan_tool_caches", { scanId }),
   listLocalDrives: () => invoke<DriveInfo[]>("list_local_drives"),
+  diskRadarVolumeId: (drive: string) => invoke<string | null>("disk_radar_volume_id", { drive }),
   listTopDirSizes: (drive?: string, scanId?: number) =>
     invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null, scanId }),
   listDirChildren: (path: string, scanId?: number) => invoke<DirChildrenResult>("list_dir_children", { path, scanId }),

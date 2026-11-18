@@ -11,6 +11,7 @@ import { t } from "../i18n";
 // was never executed. This suite renders the real component.
 vi.mock("../lib/api", () => ({
   api: {
+    pendingUninstallReviews: vi.fn(async () => []),
     verifyCleanup: vi.fn(async () => []),
     listCleanupHistory: vi.fn(async () => []),
     aiExplain: vi.fn(),

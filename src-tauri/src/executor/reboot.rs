@@ -99,7 +99,7 @@ fn uptime_ms() -> u64 {
 /// independent of the tail layout, and any failure returns `None` (the gate
 /// then fails closed instead of guessing).
 #[cfg(windows)]
-fn system_boot_id() -> Option<String> {
+pub(crate) fn system_boot_id() -> Option<String> {
     use windows::core::PCSTR;
     use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
@@ -135,7 +135,7 @@ fn system_boot_id() -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn system_boot_id() -> Option<String> {
+pub(crate) fn system_boot_id() -> Option<String> {
     None
 }
 

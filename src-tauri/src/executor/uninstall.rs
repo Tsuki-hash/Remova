@@ -496,6 +496,12 @@ fn run_official_uninstall_unchecked(
                                     &scanned.app,
                                     || check_registration(&scanned, &argv),
                                 );
+                                #[cfg(not(test))]
+                                if matches!(status.code(), Some(1641 | 3010))
+                                    && super::pending_review::remember(&scanned).is_err()
+                                {
+                                    eprintln!("could not save the pending uninstall review");
+                                }
                                 if result.ok && !result.reboot_initiated {
                                     result.uninstall_review =
                                         super::uninstall_review::issue(scanned, argv);

@@ -1917,6 +1917,13 @@ async fn list_local_drives() -> Result<Vec<diskradar::DriveInfo>, String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn disk_radar_volume_id(drive: char) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || diskradar::volume_id(drive))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Disk radar: top directories for one drive (system drive → well-known roots).
 #[tauri::command]
 async fn list_top_dir_sizes(
@@ -2042,6 +2049,30 @@ fn cancel_cleanup(operation_id: u32) -> bool {
 #[tauri::command]
 fn reboot_gate_status() -> String {
     executor::reboot::gate_status().as_str().into()
+}
+
+#[tauri::command]
+async fn list_pending_uninstall_reviews(
+) -> Result<Vec<executor::pending_review::PendingReview>, String> {
+    tauri::async_runtime::spawn_blocking(executor::pending_review::list)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn check_pending_uninstall_review(
+    id: u32,
+) -> Result<executor::pending_review::ReviewStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || executor::pending_review::check(id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn dismiss_pending_uninstall_review(id: u32) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || executor::pending_review::dismiss(id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -2261,6 +2292,7 @@ pub fn run() {
         // `scan_installer_caches`
         // `scan_tool_caches`
         // `list_local_drives`
+        // `disk_radar_volume_id`
         // `list_top_dir_sizes`
         // `list_dir_children`
         // `inspect_folder_references`
@@ -2273,6 +2305,9 @@ pub fn run() {
         // `begin_cleanup_operation`
         // `cancel_cleanup`
         // `reboot_gate_status`
+        // `list_pending_uninstall_reviews`
+        // `check_pending_uninstall_review`
+        // `dismiss_pending_uninstall_review`
         // `clear_corrupt_reboot_gate`
         // `set_tray_language`
         // `get_ai_config`
@@ -2363,6 +2398,7 @@ pub fn run() {
             scan_installer_caches,
             scan_tool_caches,
             list_local_drives,
+            disk_radar_volume_id,
             list_top_dir_sizes,
             list_dir_children,
             inspect_folder_references,
@@ -2375,6 +2411,9 @@ pub fn run() {
             begin_cleanup_operation,
             cancel_cleanup,
             reboot_gate_status,
+            list_pending_uninstall_reviews,
+            check_pending_uninstall_review,
+            dismiss_pending_uninstall_review,
             clear_corrupt_reboot_gate,
             set_tray_language,
             commands::ai_cmd::get_ai_config,

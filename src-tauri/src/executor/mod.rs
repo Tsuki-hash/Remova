@@ -122,6 +122,7 @@ pub(crate) fn enter_cleanup_deletion() -> bool {
 }
 
 pub(crate) mod cleanup_request;
+pub(crate) mod pending_review;
 mod pipeline;
 mod preview;
 pub(crate) mod reboot;

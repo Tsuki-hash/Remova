@@ -67,7 +67,7 @@ pub(crate) fn analysis_key(app: &InstalledApp, receipt: Option<u64>) -> String {
     }
 }
 
-fn protects_installation(app: &InstalledApp, location: &str) -> bool {
+pub(super) fn protects_installation(app: &InstalledApp, location: &str) -> bool {
     let Some(old) = crate::fsutil::path_key(Path::new(&app.install_location)) else {
         return false;
     };

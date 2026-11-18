@@ -111,6 +111,24 @@ pub fn is_local_fixed_drive(letter: char) -> bool {
     }
 }
 
+pub(crate) fn volume_id(letter: char) -> Option<String> {
+    if !letter.is_ascii_alphabetic() || !is_local_fixed_drive(letter) {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
+        let root = crate::fsutil::to_wide(&format!("{}:\\", letter.to_ascii_uppercase()));
+        let mut name = [0u16; 64];
+        unsafe { GetVolumeNameForVolumeMountPointW(PCWSTR(root.as_ptr()), &mut name) }.ok()?;
+        let end = name.iter().position(|&word| word == 0)?;
+        (end > 0).then(|| String::from_utf16_lossy(&name[..end]).to_ascii_lowercase())
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 /// Local fixed drives (skip CD / network / removable shapes via GetDriveType).
 pub fn list_local_drives() -> Vec<DriveInfo> {
     let sys = system_drive_letter();

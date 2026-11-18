@@ -10,6 +10,7 @@ import type { DirSizeRow } from "../types";
 import { useAssociationScan, scanCancelled } from "../hooks/useAssociationScan";
 import { useRequestSeq } from "../hooks/useRequestSeq";
 import { ScanProgressBar } from "./ScanProgressBar";
+import { DiskRadarComparison, type RadarScope } from "./DiskRadarComparison";
 
 /** Off-screen text for the aggregate badge's description; never painted. */
 const visuallyHidden = {
@@ -44,39 +45,57 @@ export function DiskRadarPanel({
   const [drive, setDrive] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [crumbs, setCrumbs] = useState<DirSizeRow[]>([]);
+  const [scope, setScope] = useState<RadarScope | null>(null);
   const { next: nextRequest, isCurrent: isCurrentRequest, invalidate: invalidateRequest } = useRequestSeq();
   const busyRef = useRef(false);
   const { runReadOnly, cancel, progress } = useAssociationScan();
 
-  const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = []) => {
+  const load = async (parent?: string, letter?: string, nextCrumbs: DirSizeRow[] = [], system = false) => {
     if (busyRef.current) return;
     busyRef.current = true;
     const seq = nextRequest();
     setBusy(true);
     try {
+      const mountedVolume = async () => {
+        const driveLetter = (parent ?? letter ?? "").match(/^[a-z](?=:|$)/i)?.[0];
+        if (!driveLetter) return null;
+        try { return await api.diskRadarVolumeId?.(driveLetter) ?? null; }
+        catch { return null; }
+      };
+      const withVolume = async <T,>(work: () => Promise<T>) => {
+        const before = await mountedVolume();
+        const result = await work();
+        const after = before ? await mountedVolume() : null;
+        return { result, volume: before === after ? before : null };
+      };
+      const range = parent
+        ? `directory:v1:${parent.slice(2).replaceAll("/", "\\").replace(/\\+$/, "")}`
+        : system ? "system:v1" : "volume:v1";
       if (parent) {
         // The drill-down result carries what the list leaves out (rows dropped
         // by the row cap, plus whether the parent scan was cut short). The top
         // view is a top-N ranking: rows dropped by its cutoff are not reported,
         // and incompleteness shows through the per-row floor markers.
-        const result = await runReadOnly(
-          id => api.listDirChildren(parent, id),
-          r => (r?.rows.length ?? 0),
+        const { result, volume } = await runReadOnly(
+          id => withVolume(() => api.listDirChildren(parent, id)),
+          r => r.result?.rows.length ?? 0,
         );
         if (isCurrentRequest(seq)) {
           setRows(result?.rows ?? []);
           setPartial({ omitted: result?.omitted ?? 0, capped: result?.capped ?? false });
           setCrumbs(nextCrumbs);
+          setScope(volume ? { volume, range } : null);
         }
       } else {
-        const list = await runReadOnly(
-          id => api.listTopDirSizes(letter, id),
-          r => r.length,
+        const { result: list, volume } = await runReadOnly(
+          id => withVolume(() => api.listTopDirSizes(letter, id)),
+          r => r.result.length,
         );
         if (isCurrentRequest(seq)) {
           setRows(list);
           setPartial(null);
           setCrumbs(nextCrumbs);
+          setScope(volume ? { volume, range } : null);
           // An empty letter means "system drive": resolve it so the selected
           // state and the capacity summary are correct after any load.
           setDrive(letter || drives.find((d) => d.is_system)?.letter || drives[0]?.letter || "");
@@ -105,7 +124,7 @@ export function DiskRadarPanel({
         setDrives(list);
         const sys = list.find((d) => d.is_system) ?? list[0];
         const letter = sys?.letter ?? "";
-        await load(undefined, letter);
+        await load(undefined, letter, [], Boolean(sys?.is_system));
       } catch (e) {
         if (alive) onError(formatError(e));
       }
@@ -116,7 +135,7 @@ export function DiskRadarPanel({
   }, []);
 
   const switchDrive = async (letter: string) => {
-    await load(undefined, letter);
+    await load(undefined, letter, [], Boolean(drives.find(d => d.letter === letter)?.is_system));
   };
 
   const current = drives.find((d) => d.letter === drive);
@@ -166,7 +185,7 @@ export function DiskRadarPanel({
               disabled={busy}
               onClick={() => {
                 const next = crumbs.slice(0, -1);
-                void load(next[next.length - 1]?.path, drive, next);
+                void load(next[next.length - 1]?.path, drive, next, Boolean(current?.is_system));
               }}
             />
           )}
@@ -177,7 +196,7 @@ export function DiskRadarPanel({
               // Refresh re-scans what the user is looking at: the current
               // parent in a drill-down, the drive root on the top view.
               const parent = crumbs[crumbs.length - 1];
-              void load(parent?.path, drive, crumbs);
+              void load(parent?.path, drive, crumbs, Boolean(current?.is_system));
             }}
             title={busy ? L.radarScanning : undefined}
           >
@@ -193,6 +212,7 @@ export function DiskRadarPanel({
         failedLabel={L.diskRadarFailed}
         foundLabel={L.scanFoundRadar}
       />
+      <DiskRadarComparison scope={scope} rows={rows} busy={busy} onInspect={onInspect} />
       {!crumbs.length && current?.is_system && (
         <div style={{ ...css.muted, fontSize: 12, marginBottom: 6 }}>
           {L.diskRadarRootsHint}
