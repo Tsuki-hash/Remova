@@ -11,6 +11,7 @@ export const UPDATE_BUSY = "update:busy";
 const READ_ONLY_COMMANDS = new Set([
   "list_installed_apps",
   "list_pending_uninstall_reviews",
+  "list_install_trial_records",
   "check_pending_uninstall_review",
   "cancel_association_scan",
   "association_scan_progress",

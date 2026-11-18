@@ -73,7 +73,7 @@ export function MorePage({
   closeMode: CloseMode | null;
   onCloseModeChange: (m: CloseMode) => void;
   onIgnorePublisher: () => Promise<IgnoreLists | undefined>;
-  onToggleMonitor: () => void;
+  onToggleMonitor: (trialName?: string) => void;
   onMonitorToCleanup: () => void;
   onDismissMonitor: () => void;
   onExportReport: () => void;
@@ -227,13 +227,10 @@ export function MorePage({
     {
       id: "monitor",
       disabled: monitorSnapshotBusy,
-      title: monitoring ? L.monitorStop : L.monitorInstall,
+      title: L.monitorInstall,
       desc: monitoring ? L.monitorStopHint : L.monitorInstallHint,
       icon: "target",
-      action: () => {
-        void onToggleMonitor();
-        openFromTrigger("monitor");
-      },
+      action: () => tools.toggleTool("monitor"),
       badge: monitoring ? L.badgeRunning : monitorRecovery ? L.monitorRecoveryBadge : undefined,
     },
   ];

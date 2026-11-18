@@ -103,9 +103,15 @@ export type MonitorDiff = {
    * that never changed; present it as incomplete, not authoritative. */
   walk_degraded?: boolean;
   recovered_read_only?: boolean;
+  trial_read_only?: boolean;
 };
 export type InstallMonitorStatus = "idle" | "active" | "recovered" | "unavailable";
 export type MonitorEndResult = { diff: MonitorDiff; items: CleanupItem[]; scope_revision?: number };
+export type InstallTrialRecord = {
+  trial: { id: string; name: string; started_at: number; file_roots: string[]; registry_roots: string[] };
+  finished_at: number;
+  diff: MonitorDiff;
+};
 export type VerifyRow = { path: string; kind: string; still_there: boolean; error?: string | null };
 export type AssociationScanProgress = {
   stage: string;
@@ -288,8 +294,9 @@ export const api = {
   estimateDirSizeKb: (path: string) =>
     invoke<{ kb: number; capped: boolean }>("estimate_dir_size_kb", { path }),
   takePendingAnalyze: () => invoke<string | null>("take_pending_analyze"),
-  beginInstallMonitor: (scanId?: number) => invoke<void>("begin_install_monitor", { scanId }),
+  beginInstallMonitor: (scanId?: number, trialName?: string) => invoke<void>("begin_install_monitor", { scanId, trialName }),
   endInstallMonitor: (scanId?: number) => invoke<MonitorEndResult>("end_install_monitor", { scanId }),
+  installTrialRecords: () => invoke<InstallTrialRecord[]>("list_install_trial_records"),
   installMonitorStatus: () => invoke<InstallMonitorStatus>("install_monitor_status"),
   discardInstallMonitorRecovery: () => invoke<void>("discard_install_monitor_recovery"),
   setStartupEnabled: (location: string, enabled: boolean) =>

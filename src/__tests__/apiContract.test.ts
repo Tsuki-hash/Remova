@@ -107,6 +107,7 @@ const COMMAND_KEYS = [
   "takePendingAnalyze",
   "beginInstallMonitor",
   "endInstallMonitor",
+  "installTrialRecords",
   "installMonitorStatus",
   "discardInstallMonitorRecovery",
   "setStartupEnabled",

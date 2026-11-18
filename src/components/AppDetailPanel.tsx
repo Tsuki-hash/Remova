@@ -2,13 +2,14 @@ import { useRef, useState } from "react";
 import { usePopupMenu } from "../hooks/usePopupMenu";
 import { Deco } from "./ui/Glyph";
 import { BackButton } from "./ui/BackButton";
+import { InstallTrialHistory } from "./InstallTrialHistory";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { InstalledAppIcon } from "./AppIcon";
 import { prettyAppName, sourceLabel } from "../lib/format";
 import { buildLinkedBuckets, linkedBucketIcon } from "../lib/linkedItems";
-import { scanMatchesApp } from "../lib/appKey";
+import { appKey, scanMatchesApp } from "../lib/appKey";
 import { ToolGlyph } from "./ToolIcons";
 import type { LinkedBucketId } from "../lib/linkedItems";
 import "./SoftwareDetails.css";
@@ -285,6 +286,7 @@ export function AppDetailPanel({
           </div>
         )}
 
+        {(app.registry_key || app.install_location) && <InstallTrialHistory key={appKey(app)} app={app} />}
       </div>
     </aside>
   );

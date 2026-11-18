@@ -131,7 +131,7 @@ impl Checkpoint {
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[cfg(windows)]
-fn protect(input: &[u8], context: &str, encrypt: bool) -> Result<Vec<u8>, ()> {
+pub(super) fn protect(input: &[u8], context: &str, encrypt: bool) -> Result<Vec<u8>, ()> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
@@ -213,6 +213,7 @@ mod tests {
             fs: FsSnapshot { files, truncated },
             reg: registry.into_iter().collect(),
             reg_degraded: false,
+            trial: None,
         };
         file.save(&snapshot).unwrap();
         assert!(std::fs::metadata(&file.path).unwrap().len() < MAX_BYTES as u64);
@@ -234,6 +235,7 @@ mod tests {
             fs: Default::default(),
             reg: vec!["fixture".into()],
             reg_degraded: false,
+            trial: None,
         };
         checkpoint.save(&snapshot).unwrap();
         assert_eq!(checkpoint.load().unwrap().unwrap().reg, ["fixture"]);
@@ -255,7 +257,7 @@ mod tests {
 
     #[test]
     fn simulated_restart_can_review_but_never_authorizes_cleanup() {
-        use crate::installmon::{begin_session, end_session, FsSnapshot};
+        use crate::installmon::{begin_session, end_session, trial_records::Trial, FsSnapshot};
         use std::collections::BTreeSet;
         use std::sync::Mutex;
 
@@ -266,10 +268,12 @@ mod tests {
             context: "fixture profile".into(),
         };
         let original = Mutex::new(None);
+        let trial = Trial::new(Some("Editor test".into())).unwrap().unwrap();
         let capture = || FullSnapshot {
             fs: FsSnapshot::default(),
             reg: vec!["existing".into()],
             reg_degraded: false,
+            trial: Some(trial.clone()),
         };
         begin_session(
             &original,
@@ -295,7 +299,11 @@ mod tests {
                 FsSnapshot::default,
                 || Ok(BTreeSet::from(["existing".into(), "after".into()])),
                 || file.load(),
-                || file.remove(),
+                |record, diff| {
+                    assert_eq!(record.map(|metadata| &metadata.id), Some(&trial.id));
+                    assert!(diff.trial_read_only);
+                    file.remove()
+                },
             )
         };
         let id = crate::scan_task::begin().unwrap();

@@ -4,12 +4,14 @@ import { cleanupItemKey } from "../lib/cleanupPlan";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MonitorPanel } from "../components/MonitorPanel";
+import { InstallTrialHistory } from "../components/InstallTrialHistory";
+import { api } from "../lib/api";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { CheckupPanel } from "../components/CheckupPanel";
 import { ScanProgressBar } from "../components/ScanProgressBar";
 import { ScanActionsBar } from "../components/ScanActionsBar";
 import { t, formatSize, setLang } from "../i18n";
-import type { CleanupItem } from "../types";
+import type { CleanupItem, InstalledApp } from "../types";
 
 afterEach(cleanup);
 
@@ -38,6 +40,55 @@ describe("MonitorPanel", () => {
     expect(screen.getByRole("status").textContent).toBe(L.monitorStartHint);
     fireEvent.click(screen.getByRole("button", { name: L.monitorStartAction }));
     expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("passes the optional name and presents the finished trial without a cleanup action", () => {
+    const L = t();
+    const onToggle = vi.fn();
+    const props = { onToggle, onToCleanup: vi.fn(), onDismiss: vi.fn() };
+    const { rerender } = render(<MonitorPanel diff={null} {...props} />);
+    fireEvent.change(screen.getByRole("textbox", { name: L.trialName }), { target: { value: "  Editor trial  " } });
+    fireEvent.click(screen.getByRole("button", { name: L.monitorStartAction }));
+    expect(onToggle).toHaveBeenCalledWith("Editor trial");
+    rerender(<MonitorPanel diff={{ added_files: ["editor.exe"], added_reg_values: [], trial_read_only: true }} {...props} />);
+    expect(screen.getByText(L.trialReadOnly)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: L.monitorToCleanup })).toBeNull();
+  });
+
+  it("shows matching trial records alongside concurrent changes with unconfirmed ownership", async () => {
+    const L = t();
+    const registry = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Editor";
+    const app: InstalledApp = {
+      name: "Editor", registry_key: registry, install_location: "D:/Apps/Editor", source: "HKCU",
+      version: "", publisher: "", uninstall_string: "", quiet_uninstall_string: "",
+      estimated_size_kb: 0, install_date: "", display_icon: "",
+    };
+    const trial = { id: "1", name: "Editor trial", started_at: 1, file_roots: ["D:\\Apps"], registry_roots: ["HKCU"] };
+    const list = vi.spyOn(api, "installTrialRecords").mockResolvedValue([
+      { trial, finished_at: 2, diff: {
+        added_files: ["D:\\Apps\\Editor\\cache", "D:\\Apps\\EditorUpdate\\cache"],
+        added_reg_values: [registry.toLowerCase()], files_truncated: 3, recovered_read_only: true,
+      } },
+      { trial: { ...trial, id: "2", name: "Unrelated trial" }, finished_at: 2, diff: {
+        added_files: ["D:\\Apps\\EditorUpdate\\cache"], added_reg_values: [`${registry}-other`],
+      } },
+    ]);
+    try {
+      render(<InstallTrialHistory app={app} />);
+      expect(list).not.toHaveBeenCalled();
+      const history = screen.getByText(L.trialHistory).closest("details")!;
+      history.open = true;
+      fireEvent(history, new Event("toggle"));
+      expect(await screen.findByText(trial.name)).toBeTruthy();
+      expect(screen.queryByText("Unrelated trial")).toBeNull();
+      expect(screen.getByText(L.trialRegistry)).toBeTruthy();
+      expect(screen.getByText(L.trialDirectory)).toBeTruthy();
+      expect(screen.getByText(L.trialUnconfirmed)).toBeTruthy();
+      expect(screen.getByText(L.monitorTruncated(3, 0))).toBeTruthy();
+      expect(screen.getByText(L.monitorRecoveryReadOnly)).toBeTruthy();
+    } finally {
+      list.mockRestore();
+    }
   });
 
   it("shows degradation and blocks cleanup even when rows exist", () => {

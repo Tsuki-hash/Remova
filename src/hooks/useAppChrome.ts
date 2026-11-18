@@ -185,7 +185,7 @@ export function useAppChrome({
    * (`active.current !== job` → `scan:cancelled`). Adding a second counter here
    * would be the duplication this hook exists to remove, not a fix for it.
    */
-  const toggleMonitor = useCallback(async () => {
+  const toggleMonitor = useCallback(async (trialName?: string) => {
  // Repeated clicks during the filesystem snapshot used to queue work and
  // then dump a pile of toasts — one run at a time, one toast channel.
     if (monitorBusyRef.current || monitorRecovery === "unavailable") return;
@@ -196,7 +196,7 @@ export function useAppChrome({
     try {
       if (!monitoring && monitorRecovery !== "recovered") {
         toast.info(L.monitorStarting, { channel: MON_CH });
-        await monitorRunReadOnly(api.beginInstallMonitor, () => 0);
+        await monitorRunReadOnly(id => api.beginInstallMonitor(id, trialName), () => 0);
         residual.setMonitoring(true);
         residual.setMonitorDiff(null);
         toast.success(L.monitorRunning, { channel: MON_CH, ttl: 3000 });
@@ -221,8 +221,14 @@ export function useAppChrome({
         return;
       }
       const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
-      const message = raw === "monitor:checkpoint_pending" || raw === "monitor:checkpoint_unavailable"
-        ? L.monitorRecoveryUnavailable : raw === "monitor:checkpoint_write_failed" ? L.monitorRecoverySaveFailed : formatError(e);
+      const monitorErrors: Partial<Record<string, string>> = {
+        "monitor:checkpoint_pending": L.monitorRecoveryUnavailable,
+        "monitor:checkpoint_unavailable": L.monitorRecoveryUnavailable,
+        "monitor:checkpoint_write_failed": L.monitorRecoverySaveFailed,
+        "trial:invalid_name": L.trialInvalidName,
+        "trial:unavailable": L.trialSaveFailed,
+      };
+      const message = monitorErrors[raw] ?? formatError(e);
       flow.setError(message);
       toast.error(message, { channel: MON_CH });
       if (raw === "no monitor snapshot; start first" || raw.startsWith("monitor:checkpoint_")) {
@@ -242,7 +248,8 @@ export function useAppChrome({
       busyRef.current = true;
       try {
  // Trusted items only: captured when the server finished the monitor snapshot.
-        const items = residual.monitorDiff?.items ?? [];
+        const result = residual.monitorDiff;
+        const items = result?.trial_read_only || result?.recovered_read_only ? [] : result?.items ?? [];
         if (!items.length) {
           toast.info(L.monitorNoSnap);
           return;

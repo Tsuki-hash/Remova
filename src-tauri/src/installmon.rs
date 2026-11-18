@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 #[cfg(windows)]
 mod checkpoint;
+pub(crate) mod trial_records;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FsSnapshot {
@@ -33,6 +34,8 @@ pub struct MonitorDiff {
     pub walk_degraded: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recovered_read_only: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub trial_read_only: bool,
 }
 
 /// Server-side end payload: the diff the user sees plus cleanup items armed only from that diff.
@@ -339,8 +342,7 @@ fn reg_value_names() -> Result<BTreeSet<String>, String> {
     reg_value_names_bounded(&mut SnapshotBudget::new(walk_budget()))
 }
 
-fn reg_value_names_bounded(budget: &mut SnapshotBudget) -> Result<BTreeSet<String>, String> {
-    let mut set = BTreeSet::new();
+fn registry_roots() -> Vec<String> {
     // align Run-family keys with manage::RUN_KEYS (HKLM32 Run, all
     // RunOnce views, Policies Explorer Run) so 32-bit / one-shot / policy
     // persistence shows up in the install-monitor diff.
@@ -350,7 +352,12 @@ fn reg_value_names_bounded(budget: &mut SnapshotBudget) -> Result<BTreeSet<Strin
         r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall".into(),
     ];
     keys.extend(crate::manage::run_key_paths());
-    for k in keys {
+    keys
+}
+
+fn reg_value_names_bounded(budget: &mut SnapshotBudget) -> Result<BTreeSet<String>, String> {
+    let mut set = BTreeSet::new();
+    for k in registry_roots() {
         if !crate::scan_task::checkpoint("registry", set.len()) {
             return Err("scan:cancelled".into());
         }
@@ -383,6 +390,8 @@ struct FullSnapshot {
     fs: FsSnapshot,
     reg: Vec<String>,
     reg_degraded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trial: Option<trial_records::Trial>,
 }
 
 // Only a baseline captured and held by this process can authorize deletions.
@@ -432,22 +441,28 @@ fn capture_snapshot() -> FullSnapshot {
         fs: take_fs_snapshot_bounded(&mut budget),
         reg_degraded: reg.is_err(),
         reg: reg.unwrap_or_default().into_iter().collect(),
+        trial: None,
     }
 }
 
-pub fn begin() -> Result<(), String> {
+pub(crate) fn begin_named(name: Option<String>) -> Result<(), String> {
+    let trial = trial_records::Trial::new(name)?;
+    let capture = || FullSnapshot {
+        trial,
+        ..capture_snapshot()
+    };
     #[cfg(windows)]
     {
         let file = checkpoint::Checkpoint::current()?;
         begin_session(
             &SESSION,
-            capture_snapshot,
+            capture,
             || file.exists(),
             |snapshot| file.save(snapshot),
         )
     }
     #[cfg(not(windows))]
-    begin_session(&SESSION, capture_snapshot, || Ok(false), |_| Ok(()))
+    begin_session(&SESSION, capture, || Ok(false), |_| Ok(()))
 }
 
 #[cfg(test)]
@@ -495,7 +510,12 @@ pub fn end() -> Result<MonitorEndResult, String> {
             take_fs_snapshot,
             reg_value_names,
             || file.load(),
-            || file.remove(),
+            |trial, diff| {
+                if let Some(trial) = trial {
+                    trial_records::save(trial, diff)?;
+                }
+                file.remove()
+            },
         )
     }
     #[cfg(not(windows))]
@@ -504,7 +524,7 @@ pub fn end() -> Result<MonitorEndResult, String> {
         take_fs_snapshot,
         reg_value_names,
         || Ok(None),
-        || Ok(()),
+        |_, _| Ok(()),
     )
 }
 
@@ -514,7 +534,7 @@ fn end_with(
     files: impl FnOnce() -> FsSnapshot,
     registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
 ) -> Result<MonitorEndResult, String> {
-    end_session(session, files, registry, || Ok(None), || Ok(()))
+    end_session(session, files, registry, || Ok(None), |_, _| Ok(()))
 }
 
 fn end_session(
@@ -522,7 +542,7 @@ fn end_session(
     files: impl FnOnce() -> FsSnapshot,
     registry: impl FnOnce() -> Result<BTreeSet<String>, String>,
     load_recovery: impl FnOnce() -> Result<Option<FullSnapshot>, String>,
-    remove_recovery: impl FnOnce() -> Result<(), String>,
+    finish: impl FnOnce(Option<&trial_records::Trial>, &MonitorDiff) -> Result<(), String>,
 ) -> Result<MonitorEndResult, String> {
     let mut active = session.lock().map_err(|_| "scan:state")?;
     if !crate::scan_task::checkpoint("preparing", 0) {
@@ -537,7 +557,12 @@ fn end_session(
         .as_ref()
         .or(recovered.as_ref())
         .ok_or("no monitor snapshot; start first")?;
+    let trial = before.trial.clone();
     let mut result = build_diff(before, files(), registry(), recovered.is_some());
+    if trial.is_some() {
+        result.diff.trial_read_only = true;
+        result.items.clear();
+    }
     crate::scan_task::checkpoint(
         "finalizing",
         result.diff.added_files.len() + result.diff.added_reg_values.len(),
@@ -547,12 +572,15 @@ fn end_session(
             permit,
             trusted_monitor_items(&result),
             || {
-                remove_recovery()?;
+                finish(trial.as_ref(), &result.diff)?;
                 *active = None;
                 Ok(())
             },
         )?;
-        if !result.diff.walk_degraded && !result.diff.recovered_read_only {
+        if !result.diff.walk_degraded
+            && !result.diff.recovered_read_only
+            && !result.diff.trial_read_only
+        {
             result.scope_revision = Some(revision);
             result.items.retain(|item| {
                 crate::scan_allow::scoped_item_was_reported(
@@ -587,6 +615,7 @@ fn build_diff(
         reg_truncated,
         walk_degraded: before.fs.truncated || after.truncated || registry_degraded,
         recovered_read_only,
+        trial_read_only: false,
     };
     // Allow-list is armed only from this server-computed diff (never from
     // client IPC) — and never from a truncated snapshot: entries missed by
@@ -605,7 +634,7 @@ fn build_diff(
 }
 
 fn trusted_monitor_items(result: &MonitorEndResult) -> &[crate::scanner::CleanupItem] {
-    if result.diff.walk_degraded || result.diff.recovered_read_only {
+    if result.diff.walk_degraded || result.diff.recovered_read_only || result.diff.trial_read_only {
         return &[];
     }
     &result.items
@@ -826,6 +855,7 @@ mod tests {
                         fs: Default::default(),
                         reg: vec![],
                         reg_degraded: false,
+                        trial: None,
                     },
                     || Ok(false),
                     |_| {
@@ -865,6 +895,7 @@ mod tests {
             fs: Default::default(),
             reg: vec!["baseline".into()],
             reg_degraded: false,
+            trial: None,
         }));
         for ending in [false, true] {
             let id = crate::scan_task::begin().unwrap();
@@ -928,6 +959,7 @@ mod tests {
             },
             reg: vec![],
             reg_degraded: false,
+            trial: None,
         })
         .unwrap();
         begin_with(&active, || panic!("duplicate begin replaced the baseline")).unwrap();
@@ -978,6 +1010,7 @@ mod tests {
                 fs: super::FsSnapshot::default(),
                 reg: vec![],
                 reg_degraded: failed_before,
+                trial: None,
             };
             let after_reg = if failed_before {
                 Ok([path.clone()].into())
@@ -1183,6 +1216,7 @@ mod tests {
             reg_truncated: 0,
             walk_degraded: false,
             recovered_read_only: false,
+            trial_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 2);
@@ -1209,6 +1243,7 @@ mod tests {
             reg_truncated: 0,
             walk_degraded: false,
             recovered_read_only: false,
+            trial_read_only: false,
         };
         let items = diff_to_cleanup_items(&forged);
         assert_eq!(items.len(), 1);
@@ -1235,6 +1270,7 @@ mod tests {
             reg_truncated: 0,
             walk_degraded: false,
             recovered_read_only: false,
+            trial_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         let under_docs = items.iter().find(|i| i.path.ends_with("saves.db")).unwrap();
@@ -1311,6 +1347,7 @@ mod tests {
             reg_truncated: 0,
             walk_degraded: false,
             recovered_read_only: false,
+            trial_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         for path in ["cache.db", "config.ini"] {
@@ -1355,6 +1392,7 @@ mod tests {
             reg_truncated: 0,
             walk_degraded: false,
             recovered_read_only: false,
+            trial_read_only: false,
         };
         let items = diff_to_cleanup_items(&diff);
         assert_eq!(items.len(), 3);

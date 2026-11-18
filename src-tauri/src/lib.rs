@@ -1996,10 +1996,14 @@ async fn discard_install_monitor_recovery() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn begin_install_monitor(scan_id: Option<u32>) -> Result<(), String> {
+async fn begin_install_monitor(
+    scan_id: Option<u32>,
+    trial_name: Option<String>,
+) -> Result<(), String> {
     let id = scan_id.map_or_else(scan_task::begin, Ok)?;
     tauri::async_runtime::spawn_blocking(move || {
-        scan_task::run_scoped(id, "monitor", installmon::begin).and_then(|result| result)
+        scan_task::run_scoped(id, "monitor", || installmon::begin_named(trial_name))
+            .and_then(|result| result)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2013,6 +2017,14 @@ async fn end_install_monitor(scan_id: Option<u32>) -> Result<installmon::Monitor
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_install_trial_records() -> Result<Vec<installmon::trial_records::TrialRecord>, String>
+{
+    tauri::async_runtime::spawn_blocking(installmon::trial_records::list)
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 fn tray_labels(lang: &str) -> (&'static str, &'static str) {
@@ -2299,6 +2311,7 @@ pub fn run() {
         // `verify_cleanup_leftovers`
         // `begin_install_monitor`
         // `end_install_monitor`
+        // `list_install_trial_records`
         // `install_monitor_status`
         // `discard_install_monitor_recovery`
         // `take_pending_analyze`
@@ -2405,6 +2418,7 @@ pub fn run() {
             verify_cleanup_leftovers,
             begin_install_monitor,
             end_install_monitor,
+            list_install_trial_records,
             install_monitor_status,
             discard_install_monitor_recovery,
             take_pending_analyze,

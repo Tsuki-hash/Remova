@@ -964,7 +964,7 @@ export default function App() {
               closeMode={closeMode}
               onCloseModeChange={setCloseMode}
               onIgnorePublisher={() => doIgnorePublisher()}
-              onToggleMonitor={() => void toggleMonitor()}
+              onToggleMonitor={name => void toggleMonitor(name)}
               onMonitorToCleanup={() => monitorDiff && void monitorDiffToCleanup(monitorDiff)}
               onDismissMonitor={() => residualActions.setMonitorDiff(null)}
               onExportReport={() => {
