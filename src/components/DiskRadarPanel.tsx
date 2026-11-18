@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useRef, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { LocalItemIcon } from "./AppIcon";
 import { VirtualList } from "./ui/VirtualList";
 import { api, type DriveInfo } from "../lib/api";
@@ -161,17 +161,14 @@ export function DiskRadarPanel({
             </span>
           )}
           {crumbs.length > 0 && (
-            <button
-              style={{ ...css.btnGhost, height: 30 }}
-              aria-label={L.navBack}
+            <BackButton
+              label={L.folderParent}
               disabled={busy}
               onClick={() => {
                 const next = crumbs.slice(0, -1);
                 void load(next[next.length - 1]?.path, drive, next);
               }}
-            >
-              ←
-            </button>
+            />
           )}
           <button
             style={{ ...css.btnGhost, height: 30 }}
@@ -186,9 +183,7 @@ export function DiskRadarPanel({
           >
             {L.manageReload}
           </button>
-          {onClose && <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>}
+          {onClose && <BackButton onClick={onClose} />}
         </div>
       </div>
       <ScanProgressBar

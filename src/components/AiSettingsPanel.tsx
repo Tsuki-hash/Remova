@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -153,9 +153,7 @@ export function AiSettingsPanel({ onClose, onEnabledChange }: {
     >
       <div className="remova-tool-heading" style={{ padding: "12px 18px", marginBottom: 0 }}>
         <h2>{L.aiSettings}</h2>
-        <button style={{ ...css.btnSm, width: 30 }} onClick={onClose} aria-label={t().panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} />
       </div>
 
       {!loaded && <div style={{ padding: "14px 16px" }} role={loadError ? "alert" : "status"}>

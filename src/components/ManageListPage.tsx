@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { BackButton } from "./ui/BackButton";
 import { flushSync } from "react-dom";
 import { api } from "../lib/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -419,7 +420,7 @@ export function ManageListPage({
         <header>
           {detailsItem && <ManageItemIcon item={detailsItem} glyph={entryGlyph(detailsItem, tab)} />}
           <h2 id={detailsTitleId}>{detailsItem && displayName(detailsItem)}</h2>
-          <form method="dialog"><button type="submit" style={css.btnGhost}>{L.panelClose}</button></form>
+          <form method="dialog"><BackButton type="submit" label={L.closePreview} /></form>
         </header>
         {detailsItem && <>
           {entryDescription(detailsItem) && <p>{entryDescription(detailsItem)}</p>}

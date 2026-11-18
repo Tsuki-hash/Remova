@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { requestBackupSession, useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import type { ComponentProps } from "react";
+import { useImperativeHandle } from "react";
 import type { SoftwarePage } from "../components/SoftwarePage";
 import type { MorePage } from "../components/MorePage";
 import { MonitorPanel } from "../components/MonitorPanel";
@@ -28,6 +29,7 @@ const native = vi.hoisted(() => ({
   checkLatestRelease: vi.fn(), requestConfirmEx: vi.fn(), requestConfirm: vi.fn(),
   showRealSoftwarePage: false,
   showRealOrphanPage: false,
+  returnToToolRoot: vi.fn(),
   drag: undefined as undefined | ((event: { payload: { type: string; paths: string[] } }) => void),
 }));
 const pages = vi.hoisted(() => ({
@@ -93,6 +95,7 @@ vi.mock("../components/SoftwarePage", async (importOriginal) => {
 });
 vi.mock("../components/MorePage", () => ({
   MorePage: (props: ComponentProps<typeof MorePage>) => {
+    useImperativeHandle(props.ref, () => ({ returnToRoot: native.returnToToolRoot }));
     pages.more = props;
     return <section data-testid="more" />;
   },
@@ -432,9 +435,25 @@ describe("App orchestration", () => {
     const L = i18n.t();
     const inspector = await screen.findByRole("dialog", { name: L.folderInspectTitle });
     expect(within(inspector).getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe("C:\\Apps");
-    fireEvent.click(within(inspector).getByRole("button", { name: L.panelClose }));
+    fireEvent.click(within(inspector).getByRole("button", { name: L.navBack }));
     act(() => native.drag!({ payload: { type: "drop", paths: [`${adjacent.install_location}/app.exe`] } }));
     await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, expect.any(Number)));
+  });
+
+  it("uses the active sidebar entry to return to its own root", async () => {
+    await mount();
+    await act(async () => { software().selectApp(demo); });
+    expect(software().selected).toBe(demo);
+    await nav("software");
+    expect(software().selected).toBeNull();
+    await nav("more");
+    expect(native.returnToToolRoot).not.toHaveBeenCalled();
+    await nav("more");
+    expect(native.returnToToolRoot).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().moreSectionHelp }));
+    await waitFor(() => expect(more().settingsOnly).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t().moreSectionHelp }));
+    expect(native.returnToToolRoot).toHaveBeenCalledTimes(2);
   });
 
   it("applies saved AI state and removed ignore rules immediately across pages", async () => {

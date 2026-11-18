@@ -1,3 +1,4 @@
+import { BackButton } from "./ui/BackButton";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 // single source for the monitor DTO — no component-local duplicate.
@@ -48,14 +49,12 @@ export function MonitorPanel({
               {L.monitorToCleanup}
             </button>
           )}
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onDismiss}>
-            {L.batchDismiss}
-          </button>
-          {onClose && (
-            <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose}>
-              {L.panelClose}
+          {(result || !onClose) && (
+            <button type="button" style={css.btnGhost} onClick={onDismiss}>
+              {onClose ? L.monitorClearResult : L.batchDismiss}
             </button>
           )}
+          {onClose && <BackButton onClick={onClose} />}
         </div>
       </header>
       {!stopping && <p className="remova-tool-note" role="status">

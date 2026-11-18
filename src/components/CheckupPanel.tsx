@@ -1,10 +1,11 @@
+import { BackButton } from "./ui/BackButton";
 import { useRef, type ReactNode } from "react";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { dialogLayer, useDialogFocus } from "../lib/useDialogFocus";
 import { LEGACY_SCAN } from "../lib/scopedScan";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
-import { CloseGlyph, Deco } from "./ui/Glyph";
+import { Deco } from "./ui/Glyph";
 
 export type CheckupStats = {
   total: number;
@@ -78,9 +79,7 @@ export function CheckupPanel({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <strong style={{ fontSize: 15 }}>{L.checkupTitle}</strong>
-          <button style={{ ...css.btnGhost, marginLeft: "auto", height: 28 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} style={{ marginLeft: "auto" }} />
         </div>
         <div style={{ ...css.muted, marginTop: 6, lineHeight: 1.5 }}>{L.checkupFlowHint}</div>
         <div style={{ display: "grid", gap: 8, marginTop: 12 }}>

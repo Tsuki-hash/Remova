@@ -2,6 +2,7 @@ import type { ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { summarizeCleanupPlan } from "../lib/cleanupPlan";
+import { BackButton } from "./ui/BackButton";
 import "./ScanActionsBar.css";
 
 /** Scan action bar: back / title+totals / cleanup CTA / scope details / AI. */
@@ -53,9 +54,7 @@ export function ScanActionsBar({
     <>
       <section className="scan-actions" aria-label={L.leftoversTitle}>
         <div className="scan-actions-main">
-          <button style={{ ...css.btnGhost, borderColor: "transparent", color: "var(--muted)" }} className="scan-actions-back" onClick={onBack}>
-            ← {L.closePreview}
-          </button>
+          <BackButton label={L.closePreview} className="scan-actions-back" onClick={onBack} disabled={busy || scanning || dryRunning} />
           <div className="scan-actions-identity">
             <strong className="scan-actions-title" title={scan.app_name}>{scan.app_name}</strong>
             {scanning ? (

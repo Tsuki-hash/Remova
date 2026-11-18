@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useCallback, useEffect, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { api } from "../lib/api";
 import { LocalItemIcon } from "./AppIcon";
 import { t } from "../i18n";
@@ -159,9 +159,7 @@ export function FirewallRulesPanel({
           >
             {L.firewallDeleteSelected} ({selected.size})
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       <p className="remova-tool-note">{L.firewallHint}</p>

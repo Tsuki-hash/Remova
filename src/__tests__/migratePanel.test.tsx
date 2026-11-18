@@ -358,7 +358,7 @@ it("reopens the same copy with its own cancel action until it settles", async ()
   fireEvent.click(await screen.findByRole("button", { name: t().migrateStart }));
   await screen.findByRole("button", { name: t().migrateCancelCopy });
   expect(screen.getByRole("listitem", { current: "step" }).textContent).toContain(t().stepCopy);
-  fireEvent.click(screen.getByRole("button", { name: t().panelClose }));
+  fireEvent.click(screen.getByRole("button", { name: t().navBack }));
   expect(onClose).toHaveBeenCalledOnce();
   original.unmount();
 

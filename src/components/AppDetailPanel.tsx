@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { usePopupMenu } from "../hooks/usePopupMenu";
-import { CloseGlyph, Deco } from "./ui/Glyph";
+import { Deco } from "./ui/Glyph";
+import { BackButton } from "./ui/BackButton";
 import type { InstalledApp, ScanResult } from "../types";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -93,15 +94,7 @@ export function AppDetailPanel({
             {app.publisher || "—"} · {app.version || "—"}
           </div>
         </div>
-        <button
-          style={{ ...css.btnGhost, minHeight: 28, borderColor: "transparent", color: "var(--muted)" }}
-          className="software-detail-back"
-          onClick={onClose}
-          aria-label={L.navBack}
-        >
-          <CloseGlyph />
-          <span>{L.navBack}</span>
-        </button>
+        <BackButton className="software-detail-back" onClick={onClose} />
       </div>
 
       <div style={{ ...css.panelBody, padding: "18px" }}>

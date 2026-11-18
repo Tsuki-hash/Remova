@@ -106,7 +106,7 @@ describe("TracesPanel", () => {
     await waitFor(() => expect(native.consentOrphans).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(native.portableCandidates).toHaveBeenCalledTimes(2));
 
-    fireEvent.click(screen.getByRole("button", { name: L.panelClose }));
+    fireEvent.click(screen.getByRole("button", { name: L.navBack }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { t } from "../i18n";
-import { CloseGlyph } from "./ui/Glyph";
 import { VirtualList } from "./ui/VirtualList";
 import { cssStyles as css } from "../styles";
 
@@ -110,9 +110,7 @@ export function HistoryPanel({
         >
           {L.clearHistory}
         </button>
-        <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} />
       </div>
       {!loading && !loadError && corruptRows > 0 && <p role="alert">{L.historyPartial(corruptRows)}</p>}
       {loading ? <p role="status" style={css.muted}>{L.loadingGeneric}</p>

@@ -1,3 +1,4 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { LocalItemIcon } from "./AppIcon";
@@ -5,7 +6,6 @@ import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
-import { CloseGlyph } from "./ui/Glyph";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import type { ScanCompleteness } from "../types";
 
@@ -73,9 +73,7 @@ export function ToolchainPanel({ onClose }: { onClose: () => void }) {
           <button style={{ ...css.btnGhost, height: 28 }} disabled={busy} onClick={() => void scan()}>
             {busy ? L.loadingGeneric : L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       <ScanCompletenessNotice completeness={completeness} />

@@ -1,10 +1,10 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
-import { CloseGlyph } from "./ui/Glyph";
 import { ScanCompletenessNotice } from "./ScanCompletenessNotice";
 import { LocalItemIcon } from "./AppIcon";
 import type { MsiConsistencyReport, ProductFamily, ScanCompleteness } from "../types";
@@ -47,9 +47,7 @@ export function VectorsPanel({ onClose }: { onClose: () => void }) {
       <div className="remova-tool-heading">
         <h2>{L.vectorsTitle}</h2>
         <span style={css.muted}>{L.toolReadOnly}</span>
-        <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onClose} aria-label={L.panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} style={{ marginLeft: "auto" }} />
       </div>
 
       {loadError && (
@@ -167,9 +165,7 @@ export function MsiPanel({ onClose }: { onClose: () => void }) {
           <button style={{ ...css.btnGhost, height: 28 }} disabled={busy} onClick={() => void scan()}>
             {busy ? L.loadingGeneric : L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       {loadError && <div role="alert" style={{ color: "var(--danger-text)", marginBottom: 8 }}>{loadError}</div>}

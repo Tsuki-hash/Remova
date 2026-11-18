@@ -1,3 +1,4 @@
+import { BackButton } from "./ui/BackButton";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -7,7 +8,6 @@ import { backendErrorText } from "../lib/backendText";
 import { needsAdminRights, offerElevatedRestart } from "../lib/elevate";
 import { toast } from "../lib/toast";
 import { requestConfirmEx } from "../lib/confirm";
-import { CloseGlyph } from "./ui/Glyph";
 import { ToolGlyph } from "./ToolIcons";
 import { LocalItemIcon } from "./AppIcon";
 import { useRequestSeq } from "../hooks/useRequestSeq";
@@ -318,13 +318,7 @@ export function DiskOverviewPanel({
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.diskOverviewTitle}>
       <div className="remova-tool-heading">
         <h2>{L.diskOverviewTitle}</h2>
-        <button
-          style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }}
-          onClick={onClose}
-          aria-label={L.panelClose}
-        >
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} style={{ marginLeft: "auto" }} />
       </div>
 
       {pending.length > 0 && (

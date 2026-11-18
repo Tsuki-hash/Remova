@@ -1,13 +1,10 @@
 .software-detail { font-variant-numeric: tabular-nums; }
 .software-inventory { display: flex; gap: 12px; flex: 1; min-height: 0; align-items: stretch; }
-.software-detail-back span { display: none; }
 .software-detail-path { overflow-wrap: anywhere; user-select: text; }
 @media (max-width: 1020px) {
   .software-inventory { position: relative; }
   .software-inventory[data-detail-open] .software-inventory-list { visibility: hidden; position: absolute; inset: 0; }
   .software-inventory > .software-detail { flex: 1; }
-  .software-inventory .software-detail-back { display: inline-flex; align-items: center; gap: 6px; }
-  .software-inventory .software-detail-back span { display: inline; }
 }
 .software-detail-capacity { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .software-detail-caption { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; }

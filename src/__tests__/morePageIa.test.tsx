@@ -2,7 +2,9 @@
 // More-page information architecture: five groups and a labelled search.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MorePage } from "../components/MorePage";
+import { useRef } from "react";
+import { MorePage, type MorePageHandle } from "../components/MorePage";
+import { Sidebar } from "../components/Shell";
 import { ConfirmHost } from "../components/ui/ConfirmHost";
 import { useMoreRestore } from "../hooks/useMoreRestore";
 import { t } from "../i18n";
@@ -21,6 +23,10 @@ vi.mock("../lib/api", () => ({
     deleteBackupSession: vi.fn(),
     restoreSessionByName: vi.fn(),
     cancelRestore: vi.fn(),
+    listLocalDrives: vi.fn(async () => []),
+    junctionLedger: vi.fn(async () => ({ entries: [], omitted: 0, degraded_roots: [] })),
+    regenerableLayouts: vi.fn(async () => ({ items: [], omitted: 0, degraded_roots: [] })),
+    spaceTriage: vi.fn(),
   },
 }));
 
@@ -51,9 +57,14 @@ beforeEach(() => {
 });
 afterEach(() => { settleConfirm(false); cleanup(); vi.clearAllMocks(); });
 
-function Toolbox({ visible = true }: { visible?: boolean }) {
+function Toolbox({ visible = true, sidebar = false }: { visible?: boolean; sidebar?: boolean }) {
   const restore = useMoreRestore(props.onError);
-  return <><ConfirmHost />{visible && <MorePage {...props} restore={restore} />}</>;
+  const more = useRef<MorePageHandle>(null);
+  return <>
+    <ConfirmHost />
+    {sidebar && <Sidebar nav="more" onNav={() => more.current?.returnToRoot()} collapsed={false} />}
+    {visible && <MorePage {...props} ref={more} restore={restore} />}
+  </>;
 }
 
 function mountMore() {
@@ -75,6 +86,46 @@ it("groups the toolbox into the new sections and offers a search", async () => {
     L.toolboxFileTools,
     L.moreSectionTraces,
   ]);
+});
+
+it("returns to the tool catalog when the selected toolbox entry is clicked", async () => {
+  const L = t();
+  render(<Toolbox sidebar />);
+  const toolbox = screen.getByRole("button", { name: L.navMore });
+  const search = screen.getByLabelText(L.moreSearchTools);
+  fireEvent.change(search, { target: { value: L.history } });
+  const history = screen.getByRole("button", { name: L.history });
+  history.focus();
+  fireEvent.click(history);
+  const panel = screen.getByRole("region", { name: L.toolboxTitle });
+  expect(await within(panel).findByRole("heading", { name: L.historyTitle })).toBeTruthy();
+  fireEvent.click(toolbox);
+  expect(within(panel).queryByRole("heading", { name: L.historyTitle })).toBeNull();
+  expect(screen.getByLabelText(L.moreSearchTools)).toHaveProperty("value", L.history);
+  expect(document.activeElement).toBe(history);
+});
+
+it("returns from a migration candidate to the open disk check before the toolbox", async () => {
+  const L = t();
+  const path = "C:\\Apps\\Editor";
+  vi.mocked(api.spaceTriage).mockResolvedValue({
+    entries: [{ path, class: "migrate_candidate", reason: "large_app_under_program_files", size_kb: 800000, size_capped: false }],
+    omitted: 0,
+  });
+  render(<Toolbox sidebar />);
+  fireEvent.click(screen.getByRole("button", { name: L.diskOverviewTitle }));
+  fireEvent.click(await screen.findByRole("tab", { name: L.diskOverviewTabCleanup }));
+  const candidateName = `${L.triageActionMigrate}: ${path}`;
+  fireEvent.click(await screen.findByRole("button", { name: candidateName }));
+  const panel = screen.getByRole("region", { name: L.toolboxTitle });
+  expect(within(panel).getByRole("heading", { name: L.toolboxMigrate })).toBeTruthy();
+  fireEvent.click(within(panel).getByRole("button", { name: L.navBack }));
+  expect(screen.getByRole("tab", { name: L.diskOverviewTabCleanup })).toHaveProperty("ariaSelected", "true");
+  expect(screen.getByRole("button", { name: candidateName })).toBeTruthy();
+  expect(api.spaceTriage).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: L.navMore }));
+  expect(screen.queryByRole("tab", { name: L.diskOverviewTabCleanup })).toBeNull();
+  expect(screen.getByRole("button", { name: L.diskOverviewTitle })).toBeTruthy();
 });
 
 it("searching hides non-matching cards, reports the count and can be cleared", async () => {
@@ -122,16 +173,12 @@ it("opens a focused tool and keeps the filtered directory available", async () =
   fireEvent.click(browse);
   expect(catalog.open).toBe(true);
   expect(search).toHaveProperty("value", L.history);
-  fireEvent.click(within(screen.getByRole("region", { name: L.toolboxTitle })).getByRole("button", { name: L.panelClose }));
+  fireEvent.click(within(screen.getByRole("region", { name: L.toolboxTitle })).getByRole("button", { name: L.navBack }));
   expect(catalog.open).toBe(true);
   expect(document.activeElement).toBe(opener);
 });
 
-it.each([
-  ["history", "panelClose"],
-  ["restore", "restoreClose"],
-  ["monitorInstall", "batchDismiss"],
-] as const)("returns keyboard focus after closing the %s tool", async (title, closeLabel) => {
+it.each(["history", "restore", "monitorInstall"] as const)("returns keyboard focus after leaving the %s tool", async title => {
   mountMore();
   const L = t();
   const opener = screen.getByText(L[title]).closest("button")!;
@@ -139,7 +186,7 @@ it.each([
   fireEvent.click(opener);
   const panel = screen.getByRole("region", { name: L.toolboxTitle });
   expect(document.activeElement).toBe(panel);
-  const close = await within(panel).findByRole("button", { name: L[closeLabel] });
+  const close = await within(panel).findByRole("button", { name: L.navBack });
   close.focus();
   fireEvent.click(close);
   expect(document.activeElement).toBe(opener);
@@ -150,7 +197,7 @@ it("focuses tool search after closing restore opened from another page", async (
   const L = t();
   await act(async () => { requestBackupSession("other-page-backup"); });
   const panel = screen.getByRole("region", { name: L.toolboxTitle });
-  const close = within(panel).getByRole("button", { name: L.restoreClose });
+  const close = within(panel).getByRole("button", { name: L.navBack });
   close.focus();
   fireEvent.click(close);
   expect(document.activeElement).toBe(screen.getByLabelText(L.moreSearchTools));

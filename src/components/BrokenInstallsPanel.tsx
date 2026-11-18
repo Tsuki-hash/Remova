@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useCallback, useEffect, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { InstalledAppIcon } from "./AppIcon";
 import { api } from "../lib/api";
 import { t } from "../i18n";
@@ -126,9 +126,7 @@ export function BrokenInstallsPanel({
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void scan()}>
             {L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       {loadError ? (

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { BackButton } from "./ui/BackButton";
 import { currentLang, formatSize, t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import type { RestorePreview } from "../lib/api";
@@ -117,9 +118,7 @@ export function RestorePanel({
           <h2 ref={title} tabIndex={-1}>{L.safetyVaultTitle}</h2>
           <p>{L.safetyVaultHint}</p>
         </div>
-        <button style={{ ...css.btnGhost, height: 32 }} disabled={busy} onClick={onClose}>
-          {L.restoreClose}
-        </button>
+        <BackButton disabled={busy} onClick={onClose} />
       </div>
       {runningRestore && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>

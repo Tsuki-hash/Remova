@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { api, type CleanupSourceId } from "../lib/api";
 import { t, formatSize } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -351,9 +351,7 @@ export function ScopedScanPanel({
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} onClick={() => void runScan()}>
             {L.scanStart}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       {hint && <p className="remova-tool-note">{hint}</p>}

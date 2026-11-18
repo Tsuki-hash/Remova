@@ -1,3 +1,4 @@
+import { BackButton } from "./ui/BackButton";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
 import { t, formatSize } from "../i18n";
@@ -6,7 +7,6 @@ import { formatError } from "../lib/format";
 import { backendErrorText } from "../lib/backendText";
 import { requestConfirmEx } from "../lib/confirm";
 import { toast } from "../lib/toast";
-import { CloseGlyph } from "./ui/Glyph";
 import type { MigrationPlan, MigrationState } from "../types";
 
 const REJECTION_TEXT: Record<string, string> = {
@@ -290,9 +290,7 @@ export function MigratePanel({ onClose, initialSource = "" }: { onClose: () => v
     <section style={{ ...css.card, marginBottom: 16, padding: 16, fontSize: 13 }} aria-label={L.migrateTitle}>
       <div className="remova-tool-heading">
         <h2 ref={title} tabIndex={-1}>{L.toolboxMigrate}</h2>
-        <button style={{ ...css.btnGhost, height: 28, marginLeft: "auto" }} onClick={onClose} aria-label={L.panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} style={{ marginLeft: "auto" }} />
       </div>
 
       <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>

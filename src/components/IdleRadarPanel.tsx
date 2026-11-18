@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { InstalledAppIcon } from "./AppIcon";
 import { VirtualList } from "./ui/VirtualList";
 import { api } from "../lib/api";
@@ -70,9 +70,7 @@ export function IdleRadarPanel({
           <button style={{ ...css.btnGhost, height: 30 }} disabled={busy} title={busy ? L.idleScanning : undefined} onClick={() => void load()}>
             {L.manageReload}
           </button>
-          <button style={{ ...css.btnGhost, height: 30 }} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton onClick={onClose} />
         </div>
       </div>
       <ScanProgressBar progress={progress} onCancel={cancel} stages={["preparing", "registry", "files"]} />

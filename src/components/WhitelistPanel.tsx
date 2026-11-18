@@ -1,5 +1,5 @@
+import { BackButton } from "./ui/BackButton";
 import { useEffect, useRef, useState } from "react";
-import { CloseGlyph } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
 import { api, type IgnoreLists } from "../lib/api";
@@ -84,9 +84,7 @@ export function WhitelistPanel({
             {L.ignorePub}
           </button>
         )}
-        <button style={{ ...css.btnGhost, height: 28 }} onClick={onClose} aria-label={L.panelClose}>
-          <CloseGlyph />
-        </button>
+        <BackButton onClick={onClose} />
       </div>
       {rows.length > 0 && <p className="remova-tool-note">{L.whitelistRestoreHint}</p>}
       {lists === null ? (

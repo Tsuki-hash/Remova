@@ -4,7 +4,7 @@ import type { CleanupReport, FullCleanupReport, InstalledApp, InstalledAppsSnaps
 import { loadLang, currentLang, t } from "./i18n";
 import { cssStyles as css } from "./styles";
 import { formatError } from "./lib/format";
-import { applyTheme } from "./lib/theme";
+import { applyTheme, type NavId } from "./lib/theme";
 import { OnboardingCard } from "./components/OnboardingCard";
 import { useOnboarding } from "./hooks/useOnboarding";
 import { navSubtitle, navTitle } from "./lib/appNav";
@@ -14,6 +14,7 @@ import { CloseChoiceHost } from "./components/ui/CloseChoiceHost";
 import { ToastHost } from "./components/ui/ToastHost";
 import { AppDetailPanel } from "./components/AppDetailPanel";
 import type { FolderInspection } from "./components/DirectoryWorkspace";
+import type { MorePageHandle } from "./components/MorePage";
 import type { LinkedBucketId } from "./lib/linkedItems";
 import { appKey, scanMatchesApp } from "./lib/appKey";
 import { getConfirm } from "./lib/confirm";
@@ -245,6 +246,7 @@ export default function App() {
     [setCategoryState, setCopilotList],
   );
   const busyRef = useRef(false);
+  const morePage = useRef<MorePageHandle>(null);
   const [radarOpen, setRadarOpen] = useState(false);
   const [inspection, setInspection] = useState<FolderInspection | null>(null);
   const directoryOpen = radarOpen || inspection !== null;
@@ -591,7 +593,9 @@ export default function App() {
       if (!getConfirm()) void analyze(a);
     },
     onUnmatched: path => {
-      if (!busyRef.current && !scanning && !getConfirm()) setInspection({ path });
+      if (!busyRef.current && !scanning && !getConfirm()) {
+        setInspection(current => ({ path, returnToRadar: current?.returnToRadar }));
+      }
     },
   });
 
@@ -662,6 +666,19 @@ export default function App() {
     scanUi.clearKindFilter();
     coreSetSelected(null);
   }, [scanUi, coreSetSelected]);
+
+  const selectNavigation = (next: NavId) => {
+    if (next !== nav) {
+      goNav(next);
+      return;
+    }
+    if (next === "more" || next === "settings") {
+      morePage.current?.returnToRoot();
+    } else if (next === "software" && !busyRef.current && !scanning && !getConfirm()) {
+      if (scan || report) closePreview();
+      if (selected) detailOnClose();
+    }
+  };
 
   const detailPanel = useMemo(
     () =>
@@ -798,7 +815,7 @@ export default function App() {
       <ToastHost />
       <Shell
         nav={nav}
-        onNav={goNav}
+        onNav={selectNavigation}
         title={navTitle(nav, L)}
         subtitle={navSubtitle(nav, L, apps.length)}
         status={
@@ -933,6 +950,7 @@ export default function App() {
           )}
           {(nav === "more" || nav === "settings") && (
             <MorePage
+              ref={morePage}
               key={nav}
               settingsOnly={nav === "settings"}
               restore={restore}
@@ -957,7 +975,7 @@ export default function App() {
               onReopenOnboarding={reopenSafety}
               onGoSoftware={() => goNav("software")}
               onInspectFolder={row => {
-                if (!busyRef.current && !scanning) setInspection({ path: row?.path ?? "", measurement: row });
+                if (!busyRef.current && !scanning) setInspection({ path: row?.path ?? "", measurement: row, returnToRadar: true });
               }}
               onLastReport={(r) => coreSetReport(r)}
               onAiEnabledChange={(enabled) => {

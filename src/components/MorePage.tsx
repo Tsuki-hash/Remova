@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useBackupSessionRequest, clearBackupSessionRequest } from "../lib/backupSessionNavigation";
 import { HistoryPanel } from "./HistoryPanel";
 import { RestorePanel } from "./RestorePanel";
@@ -14,6 +14,7 @@ import { DiskRadarPanel } from "./DiskRadarPanel";
 import { api, type IgnoreLists, type MonitorDiff } from "../lib/api";
 import { formatError } from "../lib/format";
 import { toast } from "../lib/toast";
+import { getConfirm } from "../lib/confirm";
 import { cssStyles as css } from "../styles";
 import type { CloseMode } from "../lib/closeMode";
 import type { DirSizeRow, FullCleanupReport, InstalledApp } from "../types";
@@ -30,7 +31,10 @@ import { useMoreHistory } from "../hooks/useMoreHistory";
 import type { useMoreRestore } from "../hooks/useMoreRestore";
 import { useMoreTools } from "../hooks/useMoreTools";
 
+export type MorePageHandle = { returnToRoot: () => void };
+
 export function MorePage({
+  ref,
   settingsOnly = false,
   restore: rest,
   selected,
@@ -56,6 +60,7 @@ export function MorePage({
   onAiEnabledChange,
   onIgnoreListsChange,
 }: {
+  ref?: Ref<MorePageHandle>;
   settingsOnly?: boolean;
   restore: ReturnType<typeof useMoreRestore>;
   selected: InstalledApp | null;
@@ -89,6 +94,7 @@ export function MorePage({
   // A triage row can hand its path straight to the migration tool; opening
   // the card directly starts from a clean form instead.
   const [migrateSeed, setMigrateSeed] = useState("");
+  const [migrateFromOverview, setMigrateFromOverview] = useState(false);
   useEffect(() => {
     if (settingsOnly) return;
     let alive = true;
@@ -135,7 +141,19 @@ export function MorePage({
   const panelRef = useRef<HTMLDivElement>(null);
   const catalogRef = useRef<HTMLDetailsElement>(null);
   const hasMonitorDiff = !settingsOnly && Boolean(monitorDiff);
-  const showMonitorPanel = openTool === "monitor" || (hasMonitorDiff && !openTool);
+  const showMonitorPanel = openTool === "monitor";
+  const returnToRoot = () => {
+    if (!openTool) return;
+    if (getConfirm() || (openTool === "restore" && restoreBusy) || (openTool === "history" && hist.historyMutating)) {
+      toast.info(L.taskBusy);
+      return;
+    }
+    if (openTool === "restore") rest.closeRestore();
+    if (openTool === "history") hist.closeHistory();
+    setMigrateFromOverview(false);
+    tools.setOpenTool(null);
+  };
+  useImperativeHandle(ref, () => ({ returnToRoot }));
   // `badge: L.badgeNew` used to stay lit for as long as `lastReport` was
   // retained, so "new" stopped meaning anything. Show it once per session, on the
   // first report that arrives.
@@ -145,10 +163,10 @@ export function MorePage({
     if (lastReport) seenReport.current = true;
   }, [lastReport]);
   useEffect(() => {
-    if (!openTool && !showMonitorPanel) return;
+    if (!openTool) return;
     panelRef.current?.scrollIntoView?.({ block: "start" });
     panelRef.current?.focus({ preventScroll: true });
-  }, [openTool, showMonitorPanel]);
+  }, [openTool]);
   useEffect(() => {
     if (catalogRef.current) catalogRef.current.open = !openTool;
   }, [openTool]);
@@ -252,6 +270,7 @@ export function MorePage({
       icon: "migrate",
       action: () => {
         setMigrateSeed("");
+        setMigrateFromOverview(false);
         tools.toggleTool("migrate");
       },
     },
@@ -392,10 +411,7 @@ export function MorePage({
           onDelete={(id) => void hist.deleteHistory(id)}
           onClearAll={() => void hist.clearHistory()}
           onExport={() => void hist.exportCsv()}
-          onClose={() => {
-            hist.closeHistory();
-            tools.setOpenTool(null);
-          }}
+          onClose={returnToRoot}
         />
       )}
       {openTool === "restore" && (
@@ -421,24 +437,21 @@ export function MorePage({
           onOpenFolder={(folder) => {
             void api.openPath(folder).catch((error) => onError(`${L.restoreOpenFolderFailed} ${formatError(error)}`));
           }}
-          onClose={() => {
-            rest.closeRestore();
-            tools.setOpenTool(null);
-          }}
+          onClose={returnToRoot}
         />
       )}
       {openTool === "ignore" && (
         <WhitelistPanel
-          onClose={() => tools.setOpenTool(null)}
+          onClose={returnToRoot}
           onError={onError}
           onIgnorePublisher={onIgnorePublisher}
           onListsChange={onIgnoreListsChange}
         />
       )}
-      {openTool === "ai" && <AiSettingsPanel onClose={() => tools.setOpenTool(null)} onEnabledChange={onAiEnabledChange} />}
+      {openTool === "ai" && <AiSettingsPanel onClose={returnToRoot} onEnabledChange={onAiEnabledChange} />}
       {openTool === "idle" && (
         <IdleRadarPanel
-          onClose={() => tools.setOpenTool(null)}
+          onClose={returnToRoot}
           onGoSoftware={onGoSoftware}
           onError={onError}
         />
@@ -450,7 +463,7 @@ export function MorePage({
           scan={api.scanInstallerCaches}
           cleanupSource="installer"
           appName={L.installerTitle}
-          onClose={() => tools.setOpenTool(null)}
+          onClose={returnToRoot}
           onLastReport={(r) => onLastReport?.(r)}
           onError={onError}
         />
@@ -462,38 +475,45 @@ export function MorePage({
           scan={api.scanToolCaches}
           cleanupSource="toolcache"
           appName={L.toolcacheTitle}
-          onClose={() => tools.setOpenTool(null)}
+          onClose={returnToRoot}
           onLastReport={(r) => onLastReport?.(r)}
           onError={onError}
         />
       )}
       {openTool === "broken" && (
-        <BrokenInstallsPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
+        <BrokenInstallsPanel onClose={returnToRoot} onError={onError} />
       )}
       {openTool === "firewall" && (
-        <FirewallRulesPanel onClose={() => tools.setOpenTool(null)} onError={onError} />
+        <FirewallRulesPanel onClose={returnToRoot} onError={onError} />
       )}
-      {openTool === "diskoverview" && (
-        <DiskOverviewPanel
-          onClose={() => tools.setOpenTool(null)}
-          onMigrate={(path) => {
-            setMigrateSeed(path);
-            tools.setOpenTool("migrate");
-          }}
-        />
+      {(openTool === "diskoverview" || (openTool === "migrate" && migrateFromOverview)) && (
+        <div hidden={openTool !== "diskoverview"}>
+          <DiskOverviewPanel
+            onClose={returnToRoot}
+            onMigrate={(path) => {
+              setMigrateSeed(path);
+              setMigrateFromOverview(true);
+              tools.setOpenTool("migrate");
+            }}
+          />
+        </div>
       )}
       {openTool === "cliglobals" && (
-        <CliGlobalsPanel onClose={() => tools.setOpenTool(null)} />
+        <CliGlobalsPanel onClose={returnToRoot} />
       )}
       {openTool === "migrate" && (
-        <MigratePanel onClose={() => tools.setOpenTool(null)} initialSource={migrateSeed} />
+        <MigratePanel onClose={migrateFromOverview ? () => {
+          if (getConfirm()) return;
+          setMigrateFromOverview(false);
+          tools.setOpenTool("diskoverview");
+        } : returnToRoot} initialSource={migrateSeed} />
       )}
-      {openTool === "traces" && <TracesPanel onClose={() => tools.setOpenTool(null)} />}
-      {openTool === "vectors" && <VectorsPanel onClose={() => tools.setOpenTool(null)} />}
-      {openTool === "msi" && <MsiPanel onClose={() => tools.setOpenTool(null)} />}
-      {openTool === "toolaudit" && <ToolchainPanel onClose={() => tools.setOpenTool(null)} />}
+      {openTool === "traces" && <TracesPanel onClose={returnToRoot} />}
+      {openTool === "vectors" && <VectorsPanel onClose={returnToRoot} />}
+      {openTool === "msi" && <MsiPanel onClose={returnToRoot} />}
+      {openTool === "toolaudit" && <ToolchainPanel onClose={returnToRoot} />}
       {openTool === "diskradar" && (
-        <DiskRadarPanel onClose={() => tools.setOpenTool(null)} onError={onError} onInspect={onInspectFolder} />
+        <DiskRadarPanel onClose={returnToRoot} onError={onError} onInspect={onInspectFolder} />
       )}
       {showMonitorPanel && (
         <MonitorPanel
@@ -504,12 +524,8 @@ export function MorePage({
           stopping={monitorSnapshotBusy}
           onToggle={onToggleMonitor}
           onToCleanup={onMonitorToCleanup}
-          onDismiss={() => {
-            onDismissMonitor();
-            if (openTool === "monitor") tools.setOpenTool(null);
-          }}
- // No separate Close: the panel also renders without openTool (once a
- // diff exists), where clearing openTool alone could not dismiss it.
+          onDismiss={onDismissMonitor}
+          onClose={returnToRoot}
         />
       )}
       </div>

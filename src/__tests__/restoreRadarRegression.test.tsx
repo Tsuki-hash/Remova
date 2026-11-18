@@ -90,7 +90,7 @@ it("refreshes the drilled-down parent instead of jumping back to the top", async
   fireEvent.click(screen.getByRole("button", { name: t().manageReload }));
   await waitFor(() => expect(native.listDirChildren).toHaveBeenCalledTimes(2));
   expect(screen.getByText("A child")).toBeTruthy();
-  expect(screen.getByRole("button", { name: t().navBack })).toBeTruthy();
+  expect(screen.getByRole("button", { name: t().folderParent })).toBeTruthy();
   expect(native.listTopDirSizes).toHaveBeenCalledTimes(1);
 });
 
@@ -258,10 +258,10 @@ it("rejects old sibling rows while loading and commits navigation only with the 
   await waitFor(() => expect(native.listDirChildren).toHaveBeenCalledTimes(1));
   expect(native.listDirChildren).toHaveBeenCalledWith("A", 201);
   expect((drill[1] as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.queryByRole("button", { name: t().navBack })).toBeNull();
+  expect(screen.queryByRole("button", { name: t().folderParent })).toBeNull();
   await act(async () => { resolveChild({ rows: [{ path: "A/child", name: "A child", size_kb: 10, capped: false }], omitted: 0, capped: false }); });
   expect(screen.getByText("A child")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: t().navBack }));
+  fireEvent.click(screen.getByRole("button", { name: t().folderParent }));
   await waitFor(() => expect(native.listTopDirSizes).toHaveBeenCalledTimes(2));
   expect(native.listDirChildren).toHaveBeenCalledTimes(1);
   const floors = await screen.findAllByText((_c, el) =>
@@ -281,7 +281,7 @@ it("keeps the current parent after a failed drill and disables back while pendin
   let reject!: (error: Error) => void;
   native.listDirChildren.mockImplementationOnce(() => new Promise((_, no) => { reject = no; }));
   fireEvent.click(screen.getByRole("button", { name: t().detailShow }));
-  const back = screen.getByRole("button", { name: t().navBack });
+  const back = screen.getByRole("button", { name: t().folderParent });
   expect((back as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(back);
   expect(native.listTopDirSizes).toHaveBeenCalledTimes(1);

@@ -11,10 +11,10 @@ import type { DirSizeRow, FolderReferences, InstalledApp } from "../types";
 import { AppDetailPanel } from "./AppDetailPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { ScanProgressBar } from "./ScanProgressBar";
-import { CloseGlyph } from "./ui/Glyph";
+import { BackButton } from "./ui/BackButton";
 import "./DirectoryWorkspace.css";
 
-export type FolderInspection = { path: string; measurement?: DirSizeRow };
+export type FolderInspection = { path: string; measurement?: DirSizeRow; returnToRadar?: boolean };
 
 export function DirectoryWorkspace({
   radar, inspection, apps, onInspect, onBack, onClose, onOpenSoftware,
@@ -55,14 +55,8 @@ export function DirectoryWorkspace({
       <div className="directory-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby={title} tabIndex={-1}>
         <header className="directory-heading">
           <h2 id={title}>{app ? L.folderInspectShowApp : inspection ? L.folderInspectTitle : L.diskRadarShortcut}</h2>
-          {(app || (inspection && radar)) && (
-            <button type="button" ref={backButton} style={css.btnGhost} onClick={back}>
-              {app ? L.folderInspectBack : L.folderInspectRadar}
-            </button>
-          )}
-          <button type="button" style={css.btnGhost} onClick={onClose} aria-label={L.panelClose}>
-            <CloseGlyph />
-          </button>
+          <BackButton ref={backButton} onClick={back}
+            label={app ? L.folderInspectBack : inspection && (radar || inspection.returnToRadar) ? L.folderInspectRadar : L.navBack} />
         </header>
         {error && <p role="alert" className="folder-reference-incomplete">{error}</p>}
         {radar && (
@@ -76,7 +70,7 @@ export function DirectoryWorkspace({
         {inspection && (
           <div hidden={Boolean(app)}>
             <FolderReferencePanel key={inspection.path} inspection={inspection} apps={apps}
-              onInspect={path => onInspect({ path })}
+              onInspect={path => onInspect({ path, returnToRadar: inspection.returnToRadar })}
               onOpenPath={openPath}
               onApp={item => setOpened({ inspection, key: appKey(item) })}
             />
