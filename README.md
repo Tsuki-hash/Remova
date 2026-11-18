@@ -113,7 +113,7 @@ NSIS 为当前用户安装。安装、升级或卸载时，请直接运行安装
 
 自动还原 RSEAL2 备份前会验证整个会话。请在创建备份的同一 Windows 安装中，以创建备份的账户提升为管理员后运行 Remova。 自动还原文件需要 Windows 10 1709 或更新版本。更早的版本可在预览中找到备份里的文件位置，再打开备份文件夹手工复制。
 
-> **便携试用**：可从本机 `src-tauri/target/release/remova.exe` 复制运行；注册表扫描无需安装。用户备份默认在 `%PROGRAMDATA%\Remova\Backup\`。正式分发以 NSIS / MSI 为准。
+> **便携版**：从同一发布页下载并校验 `Remova_*_x64-portable.zip`，解压完整 ZIP 后启动 `Remova.exe`。请先安装 WebView2。移除便携版和处理已保存数据的步骤见[恢复手册](RECOVERY.md#7-卸载及保留的数据)。
 
 升级、降级与异常恢复（迁移卡住、备份读不出、清理后找回文件）请按 [升级、降级与恢复操作手册](./RECOVERY.md) 执行；AI、扫描范围与备份的配置位置和数据去向见 [配置与隐私说明](./CONFIGURATION.md)。
 

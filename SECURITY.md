@@ -31,3 +31,19 @@ Remova 是会删除文件、修改注册表、并可能以管理员权限运行�
 - 供应链：构建工作流下载、SBOM 准确性、依赖公告。
 
 请附复现步骤（步骤、路径、构建）与影响评估。我们会在 7 天内首次回应，修复期间保持同步；如你愿意，发布说明中会署名致谢。
+
+
+## Development dependency advisories
+
+CI blocks high and critical advisories in production npm dependencies. It also
+records the complete audit as the `npm-audit-full` artifact and prints distinct
+advisory URLs so several affected dependency paths can be reviewed as one finding.
+
+The release maintainers track
+[picomatch GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+In this repository picomatch is used by development tooling. The affected
+matching runs against patterns from the repository's build, lint and test
+configuration, outside the installed application's input paths. No patched npm
+version is listed as of 2026-11-18. Recheck when preparing each Windows candidate
+and update the lockfile when a fix is published. Review any new advisory against
+the dependency path and its inputs before accepting a candidate.

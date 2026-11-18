@@ -24,7 +24,7 @@ jobs:
     runs-on: windows-latest
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Prepare read-only MSI extraction
         shell: pwsh
         run: |

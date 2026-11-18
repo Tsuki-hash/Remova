@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generate a CycloneDX 1.5 SBOM for the shipped application: the Rust side
 // covers the normal dependency graph for the Windows x64 release target
-// (per `cargo metadata`, excluding lockfile-only packages), and
+// (per `cargo tree`, excluding lockfile-only packages), and
 // the npm side covers production dependencies only — dev tooling never
 // reaches the bundle. Deterministic: components are sorted and the serial
 // number is a stable SHA-256 over the component list, so the same tree
@@ -15,70 +15,22 @@ import { collectNoticeInputs, renderNotices } from "./third-party-notices.mjs";
 
 const RELEASE_TARGET = "x86_64-pc-windows-msvc";
 
-/** [package] entries of a Cargo.lock, as {name, version}. */
-export function parseCargoLock(text) {
-  const out = [];
-  let name;
-  for (const line of text.split("\n")) {
-    const pkg = line.match(/^\[package\]/);
-    if (pkg) {
-      name = undefined;
-      continue;
-    }
-    const n = line.match(/^name\s*=\s*"([^"]+)"/);
-    if (n) name = n[1];
-    const v = line.match(/^version\s*=\s*"([^"]+)"/);
-    if (v && name) {
-      out.push({ name, version: v[1] });
-      name = undefined;
-    }
-  }
-  return out;
-}
+const RELEASE_FEATURES = "tauri/custom-protocol";
 
-/**
- * Names reachable from the workspace members' normal dependency graphs, per a
- * `cargo metadata --format-version 1` document. Build-dependencies (proc
- * macros and codegen helpers) do not ship bytes in the binary and are
- * excluded, like dev-dependencies.
- */
-export function reachableCargoNames(metadata) {
-  // Traverse RESOLVED package IDs, not names. Walking by name merged every
-  // version of a crate that appears more than once and invented reachability
-  // edges that exist in no real build. The returned keys are
-  // `name@version`, which is what the lockfile parser produces.
-  // Resolved edges live in `resolve.nodes[].deps[]`, each naming an exact
-  // package id. `packages[].dependencies` only holds version requirements, which
-  // cannot distinguish two versions of the same crate.
-  const depsOfId = new Map();
-  for (const node of metadata.resolve?.nodes ?? []) {
-    const deps = new Set();
-    for (const dep of node.deps ?? []) {
-      // `dep_kinds` lists how the edge is used. A normal dependency is encoded
-      // as `kind: null` (not the string "normal"), so compare against null.
-      const kinds = (dep.dep_kinds ?? []).map((k) => k.kind ?? "normal");
-      if (kinds.length > 0 && !kinds.includes("normal")) continue;
-      deps.add(dep.pkg);
-    }
-    depsOfId.set(node.id, deps);
+/** The normal edges for the same target and feature set used by Tauri. */
+function windowsReleaseCargoPackages(cwd) {
+  const tree = execFileSync("cargo", [
+    "tree", "--locked", "--target", RELEASE_TARGET, "--features", RELEASE_FEATURES,
+    "--edges", "normal", "--prefix", "none", "--format", "{p}",
+  ], { cwd, encoding: "utf8" });
+  const packages = new Map();
+  for (const line of tree.trim().split(/\r?\n/)) {
+    const match = /^(\S+) v(\S+)(?: |$)/.exec(line);
+    if (!match) throw new Error(`Unexpected cargo tree package line: ${line}`);
+    const [, name, version] = match;
+    packages.set(`${name}@${version}`, { name, version, ecosystem: "cargo" });
   }
-  const byId = new Map((metadata.packages ?? []).map((p) => [p.id, p]));
-  const seen = new Set();
-  const queue = [...(metadata.workspace_members ?? [])];
-  while (queue.length) {
-    const id = queue.pop();
-    if (seen.has(id)) continue;
-    seen.add(id);
-    for (const dep of depsOfId.get(id) ?? []) {
-      if (!seen.has(dep)) queue.push(dep);
-    }
-  }
-  return new Set(
-    [...seen]
-      .map((id) => byId.get(id))
-      .filter((p) => p)
-      .map((p) => `${p.name}@${p.version}`),
-  );
+  return packages;
 }
 
 /** Production packages of a package-lock.json (v3 "packages" map), {name, version}. */
@@ -146,35 +98,29 @@ async function main() {
   const root = path.resolve(import.meta.dirname, "..");
   const outIdx = process.argv.indexOf("--out");
   const out = outIdx > -1 ? path.resolve(process.argv[outIdx + 1]) : path.join(root, "src-tauri", "target", "release", "bundle", "SBOM.cdx.json");
-  const [cargoText, lockText, pkg] = await Promise.all([
-    readFile(path.join(root, "src-tauri", "Cargo.lock"), "utf8"),
+  const [lockText, pkg] = await Promise.all([
     readFile(path.join(root, "package-lock.json"), "utf8"),
     readFile(path.join(root, "package.json"), "utf8"),
   ]);
-  // The full lockfile lists every crate ever resolved in this tree; the SBOM
-  // reports the normal graph resolved for the Windows release target.
-  const metadata = JSON.parse(
-    // `--locked` keeps the SBOM tied to the committed lockfile instead of a
-    // silently re-resolved graph.
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--filter-platform", RELEASE_TARGET], {
-      cwd: path.join(root, "src-tauri"),
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    }),
-  );
-  const reachable = reachableCargoNames(metadata);
+  const cargoDir = path.join(root, "src-tauri");
+  const cargo = windowsReleaseCargoPackages(cargoDir);
   const lock = JSON.parse(lockText);
   const sbom = buildSbom({
     productName: "Remova",
     productVersion: JSON.parse(pkg).version,
-    cargo: parseCargoLock(cargoText)
-      .filter((c) => reachable.has(`${c.name}@${c.version}`))
-      .map((c) => ({ ...c, ecosystem: "cargo" })),
+    cargo: [...cargo.values()],
     npm: parsePackageLock(lock).map((c) => ({ ...c, ecosystem: "npm" })),
   });
   const noticesIdx = process.argv.indexOf("--notices");
   const checkNotices = process.argv.includes("--check-notices");
   if (noticesIdx > -1 || checkNotices) {
+    // Metadata supplies license paths. Membership comes from the actual
+    // release dependency graph above, without dev feature unification.
+    const metadata = JSON.parse(execFileSync("cargo", [
+      "metadata", "--format-version", "1", "--locked", "--filter-platform", RELEASE_TARGET,
+      "--features", RELEASE_FEATURES,
+    ], { cwd: cargoDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }));
+    const reachable = new Set(cargo.keys());
     const inputs = await collectNoticeInputs(root, metadata, reachable, productionNpmPackages(lock));
     const content = renderNotices(sbom.components, inputs);
     if (checkNotices) {

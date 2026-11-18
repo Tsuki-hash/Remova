@@ -4,7 +4,7 @@ Use this procedure when the tag workflow cannot create a draft. The local build 
 
 ## Build and stage the candidate
 
-Use Windows x64, PowerShell 7, the Visual Studio C++ desktop build tools, WebView2, and 7-Zip. Use the Node and Rust versions in the CI `package` job. The writable output directory must be outside the checkout. The package build records input hashes, the SHA-256 digests of the EXE and both installers, tool versions, and the commit in `windows-build.json`.
+Use Windows x64, PowerShell 7, the Visual Studio C++ desktop build tools, WebView2, and 7-Zip. Install the Node version in `.node-version` and use rustup to install the toolchain in `rust-toolchain.toml`. Both Windows build jobs use these same files. The writable output directory must be outside the checkout. The package build records input hashes, the SHA-256 digests of the EXE and both installers, tool versions, and the commit in `windows-build.json`.
 
 ```powershell
 $commit = '<40-character candidate commit>'
@@ -15,8 +15,7 @@ $stage = 'D:/release/candidate'
 $sevenZip = 'C:/Program Files/7-Zip/7z.exe'
 git worktree add --detach $src $commit
 Set-Location $src
-$env:RUSTUP_TOOLCHAIN = '1.98.0'
-node --version
+./scripts/check-windows-build-tools.ps1
 npm ci
 ./scripts/build-windows-candidate.ps1 -EvidenceFile $record
 ./scripts/stage-local-release.ps1 -Tag $tag -BuildEvidence $record -OutDir $stage -SevenZip $sevenZip

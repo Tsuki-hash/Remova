@@ -4,15 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildSbom, parseCargoLock, parsePackageLock, reachableCargoNames } from "../make-sbom.mjs";
-
-test("parses cargo lock packages", () => {
-  const cargo = ['[package]', 'name = "remova"', 'version = "1.4.0"', "", "[[package]]", 'name = "serde"', 'version = "1.0.219"'].join("\n");
-  assert.deepEqual(parseCargoLock(cargo), [
-    { name: "remova", version: "1.4.0" },
-    { name: "serde", version: "1.0.219" },
-  ]);
-});
+import { buildSbom, parsePackageLock } from "../make-sbom.mjs";
 
 test("package lock keeps production dependencies only", () => {
   const lock = {
@@ -72,6 +64,22 @@ test("generates an sbom from the repository lockfiles", () => {
     for (const name of ["linux-raw-sys", "wasi", "windows_aarch64_msvc", "windows_i686_gnu"]) {
       assert.ok(!names.has(name), `${name} is outside the Windows x64 release graph`);
     }
+    for (const name of ["chrono", "defmt", "jiff"]) {
+      assert.ok(!names.has(name), `${name} is outside the normal Windows graph`);
+    }
+    const tree = execFileSync("cargo", [
+      "tree", "--locked", "--target", "x86_64-pc-windows-msvc",
+      "--features", "tauri/custom-protocol", "-e", "normal",
+      "--prefix", "depth", "--format", " {p}",
+    ], { cwd: path.resolve(import.meta.dirname, "../../src-tauri"), encoding: "utf8" });
+    const expected = new Set(tree.trim().split(/\r?\n/).map(line => {
+      const [, name, version] = line.split(" ");
+      return `${name}@${version.slice(1)}`;
+    }));
+    expected.delete(`remova@${sbom.metadata.component.version}`);
+    const actual = new Set(sbom.components.filter(c => c.purl.startsWith("pkg:cargo/")).map(c => `${c.name}@${c.version}`));
+    assert.deepEqual(actual, expected);
+    assert.ok([...actual].filter(key => key.startsWith("windows-sys@")).length > 1);
     const notices = readFileSync(generatedNotices, "utf8");
     const purls = [...notices.matchAll(/\((pkg:[^)]+)\)/g)].map((match) => match[1]);
     assert.deepEqual(purls, sbom.components.map((c) => c.purl));
@@ -86,54 +94,4 @@ test("generates an sbom from the repository lockfiles", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("cargo reachability follows the resolved graph, not the whole lockfile", () => {
-  // Real `cargo metadata` shape: resolved edges live in `resolve.nodes`, each
-  // naming an exact package id, and a normal dependency has `kind: null`.
-  const pkg = (id, name, version) => ({ id, name, version });
-  const metadata = {
-    packages: [
-      pkg("remova 1.4.1", "remova", "1.4.1"),
-      pkg("tauri 2.0.0", "tauri", "2.0.0"),
-      pkg("zip 4.6.1", "zip", "4.6.1"),
-      pkg("base64 0.22.1", "base64", "0.22.1"),
-      pkg("base64 0.21.7", "base64", "0.21.7"),
-      pkg("trybuild 1.0.0", "trybuild", "1.0.0"),
-      pkg("lockfile-only 1.0.0", "lockfile-only-crate", "1.0.0"),
-    ],
-    workspace_members: ["remova 1.4.1"],
-    resolve: {
-      nodes: [
-        {
-          id: "remova 1.4.1",
-          deps: [
-            { pkg: "tauri 2.0.0", dep_kinds: [{ kind: null }] },
-            // A dev-only edge must not make the crate ship.
-            { pkg: "trybuild 1.0.0", dep_kinds: [{ kind: "dev" }] },
-          ],
-        },
-        {
-          id: "tauri 2.0.0",
-          deps: [
-            { pkg: "zip 4.6.1", dep_kinds: [{ kind: null }] },
-            { pkg: "base64 0.22.1", dep_kinds: [{ kind: null }] },
-          ],
-        },
-        { id: "zip 4.6.1", deps: [] },
-        { id: "base64 0.22.1", deps: [] },
-        { id: "base64 0.21.7", deps: [] },
-        { id: "trybuild 1.0.0", deps: [] },
-        { id: "lockfile-only 1.0.0", deps: [] },
-      ],
-    },
-  };
-  const seen = reachableCargoNames(metadata);
-  assert.ok(seen.has("remova@1.4.1"));
-  assert.ok(seen.has("tauri@2.0.0"));
-  assert.ok(seen.has("zip@4.6.1"));
-  assert.ok(seen.has("base64@0.22.1"));
-  assert.ok(!seen.has("base64@0.21.7"), "an unreachable version of a reachable crate stays out");
-  assert.ok(!seen.has("trybuild@1.0.0"), "dev dependencies do not ship");
-  assert.ok(!seen.has("lockfile-only-crate@1.0.0"), "unreachable entries do not ship");
 });

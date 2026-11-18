@@ -22,6 +22,7 @@ try {
     foreach ($file in 'package-lock.json', 'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json', 'src-tauri/windows/installer.nsi', 'src-tauri/windows/installer-hooks.nsh') {
         $inputs[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
     }
+    & (Join-Path $PSScriptRoot 'check-windows-build-tools.ps1')
     $tools = [ordered]@{
         windows = [Environment]::OSVersion.VersionString
         runner_os = $env:RUNNER_OS

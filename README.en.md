@@ -110,7 +110,7 @@ Run Remova as administrator to clean machine-wide apps, the machine PATH, servic
 
 Automatic restore verifies the whole RSEAL2 backup session before writing. Run Remova elevated under the account that created the backup, on the same Windows installation. Automatic file restore requires Windows 10 version 1709 or later. On earlier versions, use the paths shown in the preview to locate and copy files from the backup folder.
 
-> **Portable trial**: copy `remova.exe` from `src-tauri/target/release/` on a dev machine. Registry scans work without install; machine-wide backup root is `%PROGRAMDATA%\Remova\Backup\`. Prefer NSIS / MSI for supported installs.
+> **Portable edition**: Download and verify `Remova_*_x64-portable.zip` from the release page. Extract the complete ZIP, install WebView2 if needed, then launch `Remova.exe`. See the [recovery guide](RECOVERY.md) for removing the portable copy and managing saved data.
 
 ---
 

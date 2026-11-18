@@ -4,7 +4,21 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.5.2]
+
+本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。
+
+### 下载与校验
+
+从此发布页下载所选发行包和 `SHA256SUMS.txt`。在下载目录打开 PowerShell，将示例文件名替换为实际下载的 EXE、MSI 或 ZIP 文件名。
+
+```powershell
+Get-FileHash -LiteralPath '.\Remova_1.5.2_x64-setup.exe' -Algorithm SHA256
+```
+
+将输出的 Hash 与 `SHA256SUMS.txt` 中同名文件的摘要比对。一致后再运行安装程序或解压便携版。
+
+### 修复与改进
 
 - 软件清单只接受最新刷新的结果，避免旧响应覆盖当前列表。
 - Remova 已运行时，将新的命令行分析请求交给当前窗口。
@@ -14,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 清理历史支持从界面导出 CSV，并提示损坏记录的数量。
 - 系统盘空间体检适配实际盘符，注册表复查不再显示上一次的命中。
 - npm 命令诊断按 Windows 命名习惯比对，安装包扫描明确限制文件探测次数。
+
+- Windows 发行预演、本地打包和发布使用相同的 Node 和 Rust 版本。
+- 发行 SBOM 按 Windows x64 产物的实际依赖图生成。
+- 更新便携版下载、卸载和数据保留说明。
 
 ## [1.5.1]
 

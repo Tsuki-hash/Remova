@@ -427,13 +427,16 @@ fn startup_folder_paths() -> Vec<String> {
     dirs
 }
 
-/// Task Manager stores folder-shortcut enable flags under StartupApproved\StartupFolder.
+const STARTUP_FOLDER_APPROVED_KEY: &str =
+    r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
+
+/// Task Manager stores flags under the full filename, including its extension.
 fn startup_folder_enabled(file_name: &str) -> Option<bool> {
-    crate::regscan::read_binary(
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
-        file_name,
-    )
-    .map(|b| !(!b.is_empty() && b[0] == 0x03))
+    startup_folder_enabled_at(STARTUP_FOLDER_APPROVED_KEY, file_name)
+}
+
+fn startup_folder_enabled_at(key: &str, file_name: &str) -> Option<bool> {
+    crate::regscan::read_binary(key, file_name).map(|bytes| bytes.first() != Some(&0x03))
 }
 
 /// Read Explorer StartupApproved\Run binary for a value name. None if missing.
@@ -1332,31 +1335,92 @@ mod tests {
         assert_eq!(keys.len(), super::RUN_KEYS.len());
     }
 
-    /// opt-in reality check — Explorer's StartupApproved\
-    /// StartupFolder value names are FULL file names (with extension). Only
-    /// asserts when this machine has folder startup flags recorded.
     #[cfg(windows)]
     #[test]
-    #[ignore = "environment-dependent: needs Explorer StartupApproved values"]
-    fn startup_folder_approved_values_are_full_file_names() {
-        let key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder";
-        // Environment-dependent: a fresh CI runner may have no Explorer startup
-        // flags at all. Say so instead of failing the gate; when values exist the
-        // full-file-name invariant is still enforced.
-        let Ok((_, vals)) = crate::regscan::snapshot_names(key) else {
-            eprintln!("skipped: StartupFolder key is absent on this machine");
-            return;
-        };
-        if vals.is_empty() {
-            eprintln!("skipped: no StartupFolder approved values on this machine");
-            return;
+    fn startup_folder_approved_fixture_matches_complete_filenames() {
+        use std::process::Command;
+
+        struct Fixture(String);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = Command::new(crate::regops::sys_tool("reg.exe"))
+                    .args(["delete", &self.0, "/f"])
+                    .output();
+            }
         }
-        for name in &vals {
-            assert!(crate::regscan::read_binary(key, name).is_some());
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = Fixture(format!(
+            r"HKCU\Software\RemovaTest-{}-{nonce}",
+            std::process::id()
+        ));
+        for (name, data) in [
+            ("Disabled Tool.lnk", "03000000"),
+            ("Enabled Tool.lnk", "02000000"),
+        ] {
+            let status = Command::new(crate::regops::sys_tool("reg.exe"))
+                .args([
+                    "add",
+                    &fixture.0,
+                    "/v",
+                    name,
+                    "/t",
+                    "REG_BINARY",
+                    "/d",
+                    data,
+                    "/f",
+                ])
+                .output()
+                .unwrap();
             assert!(
-                name.contains('.'),
-                "approved value name must be the full file name: {name}"
+                status.status.success(),
+                "{}",
+                String::from_utf8_lossy(&status.stderr)
             );
         }
+        let (_, mut names) = crate::regscan::snapshot_names(&fixture.0).unwrap();
+        names.sort();
+        assert_eq!(names, ["Disabled Tool.lnk", "Enabled Tool.lnk"]);
+        assert_eq!(
+            super::startup_folder_enabled_at(&fixture.0, "Disabled Tool.lnk"),
+            Some(false)
+        );
+        assert_eq!(
+            super::startup_folder_enabled_at(&fixture.0, "Enabled Tool.lnk"),
+            Some(true)
+        );
+        assert_eq!(
+            super::startup_folder_enabled_at(&fixture.0, "Disabled Tool"),
+            None
+        );
+    }
+
+    /// Optional observation of flags written by Explorer on this machine.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "read-only observation: run with --ignored --nocapture"]
+    fn observe_startup_folder_approved_values() {
+        let (_, names) = match crate::regscan::snapshot_names(super::STARTUP_FOLDER_APPROVED_KEY) {
+            Ok(values) => values,
+            Err(error) => {
+                eprintln!("not observed: StartupFolder could not be read ({error:?})");
+                return;
+            }
+        };
+        if names.is_empty() {
+            eprintln!("not observed: no StartupFolder samples");
+            return;
+        }
+        for name in &names {
+            assert!(name.contains('.'), "expected a filename with extension");
+            assert!(
+                super::startup_folder_enabled(name).is_some(),
+                "flag must be binary"
+            );
+        }
+        eprintln!("observed {} StartupFolder flags", names.len());
     }
 }

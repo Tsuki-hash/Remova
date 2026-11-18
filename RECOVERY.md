@@ -122,9 +122,20 @@
 
 ---
 
-## 7. 卸载
+## 7. 卸载及保留的数据
 
-1. 关闭 Remova。
-2. 通过「设置 → 应用」或原安装包卸载。
-3. 卸载不会自动删除 `%PROGRAMDATA%\Remova\`；需要彻底清理时请先确认备份不再需要，再手工删除该目录。
-4. 若存在未收尾的目录迁移，先按第 5 节处理，不要直接卸载。
+先按第 5 节处理未完成的迁移和回滚。需要继续复制时，在实际操作账户下保留
+`%LOCALAPPDATA%\Remova\migration-copies\`、源目录和目标目录。需要保留还原能力时，
+同时保留安全库会话与校验密钥。
+
+| 渠道 | 移除程序 | 默认保留 |
+| --- | --- | --- |
+| NSIS | 关闭 Remova，用 Windows「设置 → 应用」从安装账户卸载。 | 安装器默认保留账号数据。勾选删除应用数据时，清理该账户下的 `%APPDATA%\app.remova.desktop` 和 `%LOCALAPPDATA%\app.remova.desktop`。 |
+| MSI | 关闭 Remova，用 Windows「设置 → 应用」移除 MSI 安装。按 Windows 提示提供管理员权限。 | 用户数据及安全库由各自的数据目录保留。 |
+| 便携 ZIP | 关闭 Remova，再移除解压出来的程序目录。 | 使用中的账户数据与安全库存放在下列 Windows 目录。 |
+
+如需移除个人账户的数据，按用途处理：
+
+- **AI 凭据和设置。** 仍能打开 Remova 时，在 AI 设置中清除密钥并保存。卸载后可以移除实际操作账户的 `%LOCALAPPDATA%\Remova\ai-config.json`。这个文件包含经 DPAPI 保护的密钥。
+- **安装追踪。** 在开始追踪的账户及权限模式下查看或放弃快照。确认无需继续比较后，可在关闭 Remova 时移除同一账户下的 `%LOCALAPPDATA%\Remova\install-monitor.v1`。使用另一管理员账户启动过 Remova 时，检查该账户的对应目录。
+- **清理历史和规则。** `%PROGRAMDATA%\Remova` 下的 `history.jsonl` 和 `ignore.json` 可按需保留。安全库 `%PROGRAMDATA%\Remova\Backup\`、会话验证数据及 `%PROGRAMDATA%\RemovaSealKeys` 应随所需的还原材料保留。先确认备份和迁移都已处理，再决定清理哪些共享数据。
