@@ -181,13 +181,32 @@ pub fn is_name_ignored(list: &IgnoreList, name: &str) -> bool {
     list.names.iter().any(|x| x.eq_ignore_ascii_case(n))
 }
 
+pub fn remove_path(path: &str) -> Result<IgnoreList, String> {
+    remove_path_from_file(&ignore_path(), path)
+}
+
+fn remove_path_from_file(file: &std::path::Path, path: &str) -> Result<IgnoreList, String> {
+    if path.trim().is_empty() {
+        return Err("empty path".into());
+    }
+    let prefix = normalize_rule_path(path);
+    update_file(file, |list| {
+        list.paths
+            .retain(|saved| normalize_rule_path(saved) != prefix)
+    })
+}
+
+fn normalize_rule_path(path: &str) -> String {
+    path.replace('/', "\\").to_lowercase()
+}
+
 pub fn is_path_ignored(list: &IgnoreList, path: &str) -> bool {
-    let p = path.replace('/', "\\").to_lowercase();
+    let p = normalize_rule_path(path);
     if p.is_empty() {
         return false;
     }
     list.paths.iter().any(|x| {
-        let pref = x.replace('/', "\\").to_lowercase();
+        let pref = normalize_rule_path(x);
         if pref.is_empty() {
             return false;
         }
@@ -500,5 +519,22 @@ mod tests {
         assert!(is_path_ignored(&l, r"C:\Program Files\Vendor\bin\tool.exe"));
         assert!(!is_path_ignored(&l, r"C:\Program Files\VendorExtra\bin"));
         assert!(!is_path_ignored(&l, r"C:\Program Files\Vendor2"));
+    }
+
+    #[test]
+    fn removing_a_path_preserves_the_other_persisted_rules() {
+        let root = crate::test_support::TempDir::new("remova-ignore-remove");
+        let file = root.join("ignore.json");
+        let before = IgnoreList {
+            publishers: vec!["Fixture publisher".into()],
+            names: vec![],
+            paths: vec![r"C:\Shared".into(), r"C:\Shared\Keep".into()],
+        };
+        write_ignore_file(&file, &before).unwrap();
+        remove_path_from_file(&file, "c:/shared").unwrap();
+        let reloaded = read_ignore_file(&file).unwrap();
+        assert_eq!(reloaded.publishers, before.publishers);
+        assert!(!is_path_ignored(&reloaded, r"C:\Shared\app.exe"));
+        assert!(is_path_ignored(&reloaded, r"C:\Shared\Keep\app.exe"));
     }
 }

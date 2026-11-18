@@ -18,6 +18,8 @@ const HTTP_TIMEOUT_SECS: u64 = 12;
 pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(skip)]
+    revision: u64,
     /// "openai" | "ollama"
     #[serde(default = "default_provider")]
     pub provider: String,
@@ -60,6 +62,7 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            revision: 0,
             provider: default_provider(),
             base_url: "https://api.openai.com/v1".into(),
             api_key: String::new(),
@@ -161,11 +164,19 @@ fn config_path() -> Result<PathBuf, String> {
     Ok(base.join("Remova").join("ai-config.json"))
 }
 
-static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// The saved configuration and its cache revision are read under the same
+// lock, so in-flight requests keep the identity of the configuration they used.
+static CONFIG_REVISION: Mutex<u64> = Mutex::new(0);
 
 pub fn load_config() -> Result<AiConfig, String> {
-    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    load_config_file(&config_path()?)
+    load_config_snapshot(&config_path()?)
+}
+
+fn load_config_snapshot(path: &Path) -> Result<AiConfig, String> {
+    let revision = CONFIG_REVISION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut config = load_config_file(path)?;
+    config.revision = *revision;
+    Ok(config)
 }
 
 fn open_config_file(p: &Path) -> io::Result<std::fs::File> {
@@ -232,6 +243,7 @@ fn load_config_file(p: &Path) -> Result<AiConfig, String> {
             // the user re-enters the key once DPAPI works again.
             let out = AiConfig {
                 enabled: c.enabled,
+                revision: 0,
                 provider: c.provider.clone(),
                 base_url: c.base_url.clone(),
                 api_key: String::new(),
@@ -250,7 +262,7 @@ fn load_config_file(p: &Path) -> Result<AiConfig, String> {
 }
 
 /// Atomic config write (tmp + rename): a crash mid-write must not destroy the
-/// DPAPI-wrapped key or a half-migrated file. The caller holds CONFIG_LOCK
+/// DPAPI-wrapped key or a half-migrated file. The caller holds CONFIG_REVISION
 /// for the complete read/migrate/update transaction.
 fn write_config_file(p: &Path, s: &str) -> Result<(), String> {
     let write = || -> io::Result<()> {
@@ -276,10 +288,20 @@ pub fn update_config(f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, Stri
 }
 
 fn update_config_file(p: &Path, f: impl FnOnce(&mut AiConfig)) -> Result<AiConfigView, String> {
-    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut c = load_config_file(p)?;
+    let mut revision = CONFIG_REVISION.lock().unwrap_or_else(|e| e.into_inner());
+    let previous = load_config_file(p)?;
+    let mut c = previous.clone();
     f(&mut c);
     save_config_file(p, &c)?;
+    if c.enabled != previous.enabled
+        || c.provider != previous.provider
+        || c.base_url != previous.base_url
+        || c.model != previous.model
+        || c.api_key != previous.api_key
+        || c.allow_cloud_paths != previous.allow_cloud_paths
+    {
+        *revision += 1;
+    }
     Ok(AiConfigView::from(&c))
 }
 
@@ -288,6 +310,7 @@ fn save_config_file(p: &Path, c: &AiConfig) -> Result<(), String> {
     // payload without it and store only the ciphertext.
     let mut out = AiConfig {
         enabled: c.enabled,
+        revision: 0,
         provider: c.provider.clone(),
         base_url: c.base_url.clone(),
         api_key: String::new(),
@@ -487,7 +510,12 @@ struct CacheEntry {
     at: u64,
 }
 
-static CACHE: Mutex<Option<HashMap<u64, CacheEntry>>> = Mutex::new(None);
+type CacheKey = (u64, u64);
+static CACHE: Mutex<Option<HashMap<CacheKey, CacheEntry>>> = Mutex::new(None);
+
+fn scoped_cache_key(config: &AiConfig, input_hash: u64) -> CacheKey {
+    (config.revision, input_hash)
+}
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -496,7 +524,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn cache_get(key: u64) -> Option<String> {
+fn cache_get(key: CacheKey) -> Option<String> {
     let mut g = CACHE.lock().ok()?;
     let map = g.get_or_insert_with(HashMap::new);
     let now = now_secs();
@@ -504,7 +532,7 @@ fn cache_get(key: u64) -> Option<String> {
     map.get(&key).map(|e| e.value.clone())
 }
 
-fn cache_put(key: u64, value: String) {
+fn cache_put(key: CacheKey, value: String) {
     if let Ok(mut g) = CACHE.lock() {
         let map = g.get_or_insert_with(HashMap::new);
         map.insert(
@@ -516,7 +544,7 @@ fn cache_put(key: u64, value: String) {
         );
         // evict oldest ~25% instead of wiping the whole cache.
         if map.len() > 400 {
-            let mut by_age: Vec<(u64, u64)> = map.iter().map(|(k, e)| (e.at, *k)).collect();
+            let mut by_age: Vec<(u64, CacheKey)> = map.iter().map(|(k, e)| (e.at, *k)).collect();
             by_age.sort_unstable();
             let drop = by_age.len() / 4;
             for (_, k) in by_age.into_iter().take(drop) {
@@ -813,6 +841,7 @@ fn explain_items_with_completion(
             ))
             .to_string(),
         );
+        let key = scoped_cache_key(cfg, key);
         if let Some(cached) = cache_get(key) {
             if let Ok(parsed) = serde_json::from_str::<ExplainOutput>(&cached) {
                 slots[idx] = Some(parsed);
@@ -972,6 +1001,7 @@ pub fn risk_brief(cfg: &AiConfig, input: &RiskBriefInput, locale: &str) -> Resul
         serde_json::to_string(&input.kind_counts).unwrap_or_default(),
         normalize_locale(locale)
     ));
+    let key = scoped_cache_key(cfg, key);
     if let Some(c) = cache_get(key) {
         return Ok(c);
     }
@@ -1067,6 +1097,7 @@ pub fn summarize_report(
         cfg.allow_cloud_paths,
         normalize_locale(locale)
     ));
+    let key = scoped_cache_key(cfg, key);
     if let Some(c) = cache_get(key) {
         return Ok(c);
     }

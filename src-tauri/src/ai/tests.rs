@@ -185,6 +185,7 @@ fn fixture_completion(cfg: &AiConfig) -> Result<String, String> {
 
 fn privacy_fixture_config() -> AiConfig {
     AiConfig {
+        revision: 0,
         enabled: true,
         provider: "ollama".into(),
         base_url: String::new(),
@@ -344,7 +345,7 @@ fn migration_and_updates_hold_one_transaction_lock() {
         let path = &p;
         scope.spawn(move || {
             update_config_file(path, |c| {
-                assert!(CONFIG_LOCK.try_lock().is_err());
+                assert!(CONFIG_REVISION.try_lock().is_err());
                 ready_tx.send(()).unwrap();
                 attempt_rx.recv().unwrap();
                 c.model = "older transaction".into();
@@ -838,4 +839,34 @@ fn nl_intent_size_filter_uses_the_serde_field_name() {
     let alias: NlIntent =
         serde_json::from_str(r#"{"action":"list","filter":{"size_gt_KB":500}}"#).unwrap();
     assert_eq!(alias.filter.size_gt_kb, Some(500));
+}
+
+#[test]
+fn saved_configuration_separates_in_flight_cache_entries() {
+    let root = crate::test_support::TempDir::new("remova-ai-cache");
+    let path = root.join("ai-config.json");
+    update_config_file(&path, |config| {
+        config.enabled = true;
+        config.model = "fixture-a".into();
+    })
+    .unwrap();
+    let old = load_config_snapshot(&path).unwrap();
+
+    update_config_file(&path, |config| {
+        config.model = "fixture-b".into();
+        config.base_url = "http://localhost:12345/v1".into();
+    })
+    .unwrap();
+    let current = load_config_snapshot(&path).unwrap();
+    assert_eq!(current.model, "fixture-b");
+    for request in ["explain", "risk", "report"] {
+        let hash = fnv1a64(request);
+        let earlier = scoped_cache_key(&old, hash);
+        let later = scoped_cache_key(&current, hash);
+        assert_ne!(earlier, later);
+        cache_put(later, "current reply".into());
+        cache_put(earlier, "late old reply".into());
+        assert_eq!(cache_get(later).as_deref(), Some("current reply"));
+    }
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("revision"));
 }

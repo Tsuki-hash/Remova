@@ -14,6 +14,7 @@ declare const __APP_VERSION__: string;
 
 /** Launch bootstrap: list apps, admin/AI/ignore/disk, update check, close-guard. */
 export function useAppBoot({
+  startInventoryRequest,
   setInventory,
   setLoading,
   setError,
@@ -25,6 +26,7 @@ export function useAppBoot({
   setUpdateInfo,
   busyRef,
 }: {
+  startInventoryRequest: () => () => boolean;
   setInventory: (inventory: InstalledAppsSnapshot) => void;
   setLoading: (v: boolean) => void;
   setError: (e: string | null) => void;
@@ -38,12 +40,13 @@ export function useAppBoot({
 }) {
   useEffect(() => {
     let cancelled = false;
+    const isCurrentInventory = startInventoryRequest();
     void (async () => {
       try {
         const inventory = await api.listApps();
-        if (!cancelled) setInventory(inventory);
+        if (!cancelled && isCurrentInventory()) setInventory(inventory);
       } catch (e) {
-        if (!cancelled) setError(formatError(e));
+        if (!cancelled && isCurrentInventory()) setError(formatError(e));
       } finally {
         if (!cancelled) setLoading(false);
       }

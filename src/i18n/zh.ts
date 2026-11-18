@@ -617,6 +617,7 @@ export const dict = {
     winClose: "关闭",
     dropHint: "可将 exe / 安装目录拖入窗口以分析",
     ignorePublisher: "忽略发布者",
+    ignorePath: "路径规则",
     ignoreApp: "忽略此软件",
     ignoreLoaded: "已应用忽略规则",
     exportReport: "导出报告",

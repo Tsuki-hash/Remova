@@ -631,6 +631,7 @@ export const dict: EnDict = {
     closeChoiceRemember: "Remember my choice and don't ask again",
     dropHint: "Drop an exe or install folder to analyze",
     ignorePublisher: "Ignore publisher",
+    ignorePath: "Path rule",
     ignoreApp: "Ignore this app",
     ignoreLoaded: "Ignore rules applied",
     exportReport: "Export report",

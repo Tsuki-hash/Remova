@@ -69,6 +69,7 @@ function inventory(...apps: InstalledApp[]): InstalledAppsSnapshot {
 
 function bootSpies() {
   return {
+    startInventoryRequest: () => () => true,
     setInventory: vi.fn(),
     setLoading: vi.fn(),
     setError: vi.fn(),

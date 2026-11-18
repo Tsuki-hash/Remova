@@ -93,6 +93,7 @@ const COMMAND_KEYS = [
   "ignoreAppName",
   "unignorePublisher",
   "unignoreAppName",
+  "unignorePath",
   "loadIgnore",
   "diskUsage",
   "beginSizeEstimate",

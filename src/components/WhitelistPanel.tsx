@@ -58,9 +58,10 @@ export function WhitelistPanel({
     return () => { alive = false; };
   }, [onError, retry]);
 
-  const rows: { kind: "publisher" | "name"; value: string }[] = [
+  const rows: { kind: "publisher" | "name" | "path"; value: string }[] = [
     ...(lists?.publishers ?? []).map((value) => ({ kind: "publisher" as const, value })),
     ...(lists?.names ?? []).map((value) => ({ kind: "name" as const, value })),
+    ...(lists?.paths ?? []).map((value) => ({ kind: "path" as const, value })),
   ];
 
   return (
@@ -110,7 +111,7 @@ export function WhitelistPanel({
               }}
             >
               <span style={{ ...css.muted, fontSize: 11, minWidth: 56 }}>
-                {r.kind === "publisher" ? L.ignorePub : L.ignoreApp}
+                {{ publisher: L.ignorePub, name: L.ignoreApp, path: L.ignorePath }[r.kind]}
               </span>
               <span style={{ flex: 1, minWidth: 0 }} className="ell" title={r.value}>
                 {r.value}
@@ -119,10 +120,12 @@ export function WhitelistPanel({
                 style={{ ...css.btnSm, height: 26 }}
                 disabled={pending}
                 onClick={() => void mutate(async () => {
-                  const next = await (
-                    r.kind === "publisher"
-                      ? api.unignorePublisher(r.value)
-                      : api.unignoreAppName(r.value));
+                  const remove = {
+                    publisher: api.unignorePublisher,
+                    name: api.unignoreAppName,
+                    path: api.unignorePath,
+                  }[r.kind];
+                  const next = await remove(r.value);
                   toast.success(L.ignoreSuggestDone);
                   return next;
                 })}

@@ -4,6 +4,13 @@ All notable changes to Remova will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- 软件清单只接受最新刷新的结果，避免旧响应覆盖当前列表。
+- Remova 已运行时，将新的命令行分析请求交给当前窗口。
+- 白名单支持查看和撤销路径规则。
+- 切换 AI 配置后，隔离旧配置的缓存和迟到响应。
+
 ## [1.5.1]
 
 本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。

@@ -21,39 +21,76 @@ export function appForPath(apps: InstalledApp[], path: string): InstalledApp | n
   return hits[0]!.app;
 }
 
-/** Context menu --analyze: match pending path after list load. */
+/** Consume initial and forwarded --analyze requests from the same queue. */
 export function usePendingAnalyze({
-  loading,
+  blocked,
   apps,
   analyze,
   setQ,
 }: {
-  loading: boolean;
+  blocked: boolean;
   apps: InstalledApp[];
-  analyze: (a: InstalledApp) => void;
+  analyze: (a: InstalledApp) => Promise<boolean>;
   setQ: (q: string) => void;
 }) {
+  const latest = useRef({ blocked, apps, analyze, setQ });
+  const wake = useRef<() => void>(() => {});
   useEffect(() => {
-    if (loading || apps.length === 0) return;
-    let cancelled = false;
-    void api
-      .takePendingAnalyze()
-      .then((p) => {
-        if (cancelled || !p) return;
-        const hit = appForPath(apps, p);
-        if (hit) {
-          analyze(hit);
-        } else {
-          setQ(p);
-          toast.info(p);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let draining = false;
+    let notified = false;
+    let next: string | null = null;
+
+    const drain = async () => {
+      notified = true;
+      if (draining || disposed || latest.current.blocked) return;
+      draining = true;
+      try {
+        do {
+          notified = false;
+          while (!disposed && !latest.current.blocked) {
+            next ??= await api.takePendingAnalyze();
+            if (!next || disposed || latest.current.blocked) break;
+            const { apps, analyze, setQ } = latest.current;
+            const path = next;
+            next = null;
+            const app = appForPath(apps, path);
+            if (app) await analyze(app);
+            else {
+              setQ(path);
+              toast.info(path);
+            }
+          }
+        } while (notified && !disposed && !latest.current.blocked);
+      } catch {
+        // This entry point is inactive outside the native app.
+      } finally {
+        draining = false;
+      }
+    };
+    wake.current = () => { void drain(); };
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("pending-analyze", () => { void drain(); }))
+      .then(stop => {
+        if (disposed) stop();
+        else {
+          unlisten = stop;
+          void drain();
         }
       })
       .catch(() => {});
     return () => {
-      cancelled = true;
+      disposed = true;
+      unlisten?.();
     };
- // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, apps]);
+  }, []);
+  useEffect(() => {
+    latest.current = { blocked, apps, analyze, setQ };
+  }, [blocked, apps, analyze, setQ]);
+  useEffect(() => {
+    if (!blocked) wake.current();
+  }, [blocked]);
 }
 
 /** Drag-drop: match dropped path to install_location and analyze. */

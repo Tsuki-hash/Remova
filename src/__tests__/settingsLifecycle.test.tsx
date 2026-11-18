@@ -8,7 +8,7 @@ import { t } from "../i18n";
 import type { AiConfigView } from "../types";
 
 vi.mock("../lib/api", () => ({ api: { getAiConfig: vi.fn(), saveAiConfig: vi.fn(),
-  loadIgnore: vi.fn(), unignorePublisher: vi.fn(), unignoreAppName: vi.fn() } }));
+  loadIgnore: vi.fn(), unignorePublisher: vi.fn(), unignoreAppName: vi.fn(), unignorePath: vi.fn() } }));
 vi.mock("../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const config: AiConfigView = { enabled: false, provider: "ollama", base_url: "http://localhost/v1",
   model: "saved-model", allow_cloud_paths: false, has_api_key: false };
@@ -72,4 +72,15 @@ it("shows read failures, retries, and publishes enabled state only after success
   vi.mocked(api.saveAiConfig).mockResolvedValue({ ...config, enabled: true });
   fireEvent.click(screen.getByRole("button", { name: t().aiSave }));
   await waitFor(() => expect(onEnabledChange).toHaveBeenCalledWith(true));
+});
+
+it("shows and removes an existing path-only ignore rule", async () => {
+  const path = "C:\\ProgramData\\Shared";
+  vi.mocked(api.loadIgnore).mockResolvedValue({ publishers: [], names: [], paths: [path] });
+  vi.mocked(api.unignorePath).mockResolvedValue({ publishers: [], names: [], paths: [] });
+  render(<WhitelistPanel onClose={() => {}} onError={vi.fn()} />);
+  await screen.findByText(path);
+  fireEvent.click(screen.getByRole("button", { name: t().whitelistRemove }));
+  expect(api.unignorePath).toHaveBeenCalledWith(path);
+  await screen.findByText(t().whitelistEmpty);
 });

@@ -58,6 +58,16 @@ vi.mock("../lib/confirm", () => ({
   requestConfirmEx: native.requestConfirmEx, requestConfirm: native.requestConfirm,
 }));
 vi.mock("../lib/exportHtmlReport", () => ({ exportHtmlReport: vi.fn() }));
+const pendingAnalysisEvent = vi.hoisted(() => ({
+  listener: undefined as undefined | (() => void),
+}));
+vi.mock("@tauri-apps/api/event", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tauri-apps/api/event")>(),
+  listen: async (event: string, handler: () => void) => {
+    if (event === "pending-analyze") pendingAnalysisEvent.listener = handler;
+    return () => { if (event === "pending-analyze") pendingAnalysisEvent.listener = undefined; };
+  },
+}));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => { throw new Error("test has no native window"); },
 }));
@@ -1170,4 +1180,39 @@ describe("App orchestration", () => {
     fireEvent.click(screen.getByRole("button", { name: i18n.t().langToggle }));
     await waitFor(() => expect(software().listIgnoreApp).not.toBe(beforeIds.listIgnoreApp));
   });
+});
+
+it("keeps the newer inventory when an earlier preview refresh completes late", async () => {
+  const partial = { ...inventory(demo, other), completeness: { status: "partial", roots_scanned: 3, failed_roots: ["HKCU"] } };
+  native.listApps.mockResolvedValueOnce(partial);
+  await mount();
+  await analyzeDemo();
+  let settle!: (v: InstalledAppsSnapshot) => void;
+  native.listApps.mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+  act(() => software().onBack());
+  await waitFor(() => expect(software().scan).toBeNull());
+  expect(software().inventoryIncomplete).toBe(true);
+  native.listApps.mockResolvedValueOnce(inventory(other));
+  await act(async () => { await software().refreshInventory!(); });
+  expect(software().apps).toEqual([other]);
+  expect(software().inventoryIncomplete).toBe(false);
+  await act(async () => { settle(partial as InstalledAppsSnapshot); });
+  expect(software().apps).toEqual([other]);
+  expect(software().inventoryIncomplete).toBe(false);
+});
+
+it("drains forwarded analyze requests once without refreshing the inventory", async () => {
+  const installed = { ...other, install_location: "C:\\Apps\\Other" };
+  native.listApps.mockResolvedValue(inventory(demo, installed));
+  await mount();
+  await waitFor(() => expect(pendingAnalysisEvent.listener).toBeDefined());
+  native.takePendingAnalyze
+    .mockResolvedValueOnce(demo.install_location)
+    .mockResolvedValueOnce(installed.install_location);
+  act(() => {
+    pendingAnalysisEvent.listener?.();
+    pendingAnalysisEvent.listener?.();
+  });
+  await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
+  expect(native.analyze.mock.calls.map(([app]) => app.name)).toEqual([demo.name, other.name]);
 });

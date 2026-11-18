@@ -16,18 +16,6 @@ fn main() {
             return;
         }
     }
-    // Context menu: `Remova.exe --analyze "C:\path\to\app.exe"`
-    // Write the path for the webview to pick up after startup.
-    if let Some(i) = args.iter().position(|a| a == "--analyze") {
-        if let Some(target) = args.get(i + 1) {
-            let t = target.trim().to_string();
-            if !t.is_empty() {
-                if let Some(dir) = dirs_data_local() {
-                    let _ = publish_pending(&dir, &t);
-                }
-            }
-        }
-    }
     remova_lib::run()
 }
 
@@ -35,19 +23,6 @@ fn parse_elevated_relaunch_pid(args: &[String]) -> Option<u32> {
     args.iter()
         .find_map(|a| a.strip_prefix("--elevated-relaunch="))
         .and_then(|v| v.parse::<u32>().ok())
-}
-
-fn publish_pending(dir: &std::path::Path, target: &str) -> std::io::Result<()> {
-    let _ancestors = remova_lib::fsutil::pin_existing_parents(dir)?;
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join("pending_analyze.txt");
-    let _parents = remova_lib::fsutil::pin_existing_parents(&path)?;
-    remova_lib::fsutil::write_bytes_atomic(&path, target.as_bytes())
-}
-
-fn dirs_data_local() -> Option<std::path::PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA")?;
-    Some(std::path::PathBuf::from(local).join("Remova"))
 }
 
 #[cfg(test)]
@@ -97,28 +72,5 @@ mod tests {
         let status = child.wait().expect("wait probe");
         assert!(status.success());
         assert!(remova_lib::sysops::wait_for_process_exit(child.id(), 5_000));
-    }
-
-    #[test]
-    fn pending_publish_preserves_a_linked_target() {
-        let root = std::env::temp_dir().join(format!(
-            "remova-pending-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let sentinel = root.join("sentinel");
-        std::fs::write(&sentinel, b"keep").unwrap();
-        std::fs::hard_link(&sentinel, root.join("pending_analyze.txt")).unwrap();
-        super::publish_pending(&root, "selected app").unwrap();
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
-        assert_eq!(
-            std::fs::read_to_string(root.join("pending_analyze.txt")).unwrap(),
-            "selected app"
-        );
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

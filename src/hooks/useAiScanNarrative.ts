@@ -24,6 +24,7 @@ export function useAiScanNarrative({
   selected,
   report,
   aiEnabled,
+  aiConfigVersion = 0,
   aiBusy,
   aiReportBusy,
   langVer,
@@ -40,6 +41,7 @@ export function useAiScanNarrative({
   selected: InstalledApp | null;
   report: CleanupReport | FullCleanupReport | null;
   aiEnabled: boolean;
+  aiConfigVersion?: number;
   aiBusy: boolean;
   aiReportBusy: boolean;
   /** Bumped on every UI language switch; generated prose is language-bound. */
@@ -126,7 +128,7 @@ export function useAiScanNarrative({
  // scanId fully identifies scan content; runAiExplain is stable
  // in the values it closes over.
  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanId, aiEnabled, langVer]);
+  }, [scanId, aiEnabled, langVer, aiConfigVersion]);
 
   const aiReportSeqRef = useRef(0);
   const aiReportPendingRef = useRef<number | null>(null);
@@ -171,7 +173,7 @@ export function useAiScanNarrative({
     };
  // key on report identity fields, not object identity only.
  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, aiEnabled, langVer, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
+  }, [report, aiEnabled, langVer, aiConfigVersion, report && "deleted" in report ? report.deleted : 0, report?.skipped]);
 
   return { runAiExplain, runAiReport };
 }

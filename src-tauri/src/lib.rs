@@ -1437,22 +1437,18 @@ async fn elevate_restart(app: tauri::AppHandle, approved: Option<bool>) -> Resul
     Ok(())
 }
 
+type PendingAnalysis = std::sync::Mutex<std::collections::VecDeque<String>>;
+
+fn analyze_argument(args: impl Iterator<Item = String>) -> Option<String> {
+    args.skip_while(|arg| arg != "--analyze")
+        .nth(1)
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty())
+}
+
 #[tauri::command]
-fn take_pending_analyze() -> Result<Option<String>, String> {
-    #[cfg(windows)]
-    let local = crate::sysops::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
-        .ok_or("no LOCALAPPDATA")?;
-    #[cfg(not(windows))]
-    let local =
-        std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("no LOCALAPPDATA")?);
-    let p = local.join("Remova").join("pending_analyze.txt");
-    if !p.exists() {
-        return Ok(None);
-    }
-    let s = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&p);
-    let s = s.trim().to_string();
-    Ok(if s.is_empty() { None } else { Some(s) })
+fn take_pending_analyze(queue: tauri::State<'_, PendingAnalysis>) -> Option<String> {
+    queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
 }
 
 #[tauri::command]
@@ -2068,15 +2064,31 @@ pub fn run() {
         #[cfg(windows)]
         path_seal::cleanup_abandoned_stages();
     });
+    // The secondary process only forwards its arguments. The primary process
+    // owns both startup and forwarded requests until the WebView consumes them.
+    let initial_analysis = analyze_argument(std::env::args().skip(1));
     let builder = tauri::Builder::default()
+        .manage(PendingAnalysis::new(initial_analysis.into_iter().collect()))
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Focus the existing window when a second launch happens
         // (e.g. Explorer context menu while Remova is already open).
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let queued = if let Some(path) = analyze_argument(args.into_iter().skip(1)) {
+                app.state::<PendingAnalysis>()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push_back(path);
+                true
+            } else {
+                false
+            };
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
+                if queued {
+                    let _ = win.emit("pending-analyze", ());
+                }
             }
         }))
         .setup(|app| {
@@ -2195,6 +2207,7 @@ pub fn run() {
         // `ignore_app_name`
         // `unignore_publisher`
         // `unignore_app_name`
+        // `unignore_path`
         // `suggest_ignore_rules`
         // `apply_ignore_suggestions`
         // `scan_orphan_leftovers`
@@ -2295,6 +2308,7 @@ pub fn run() {
             commands::ignore_cmd::ignore_app_name,
             commands::ignore_cmd::unignore_publisher,
             commands::ignore_cmd::unignore_app_name,
+            commands::ignore_cmd::unignore_path,
             commands::ignore_cmd::suggest_ignore_rules,
             commands::ignore_cmd::apply_ignore_suggestions,
             scan_orphan_leftovers,

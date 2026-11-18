@@ -198,6 +198,7 @@ export default function App() {
   const residualFromUninstall = uninstallReviewReceipt !== undefined;
 
   const ai = useAiPanelState();
+  const [aiConfigVersion, setAiConfigVersion] = useState(0);
   const {
     aiEnabled,
     setAiEnabled,
@@ -286,13 +287,20 @@ export default function App() {
     setInventoryIncomplete(inventory.completeness.status !== "complete");
     coreSetApps(inventory.apps);
   }, [coreSetApps]);
+  const inventoryRequest = useRef(0);
+  const startInventoryRequest = useCallback(() => {
+    const request = ++inventoryRequest.current;
+    return () => request === inventoryRequest.current;
+  }, []);
   const refreshApps = useCallback(async () => {
+    const isCurrent = startInventoryRequest();
     try {
-      setInventory(await api.listApps());
+      const inventory = await api.listApps();
+      if (isCurrent()) setInventory(inventory);
     } catch (e) {
-      coreSetError(formatError(e));
+      if (isCurrent()) coreSetError(formatError(e));
     }
-  }, [setInventory, coreSetError]);
+  }, [startInventoryRequest, setInventory, coreSetError]);
 
   const onAfterCleanup = useCallback(
     (app: InstalledApp, report: FullCleanupReport) => {
@@ -502,6 +510,7 @@ export default function App() {
   );
 
   const { runAiExplain, runAiReport } = useAiScanNarrative({
+    aiConfigVersion,
     scan,
     selected,
     report,
@@ -520,6 +529,7 @@ export default function App() {
   });
 
   useAppBoot({
+    startInventoryRequest,
     setInventory,
     setLoading: core.setLoading,
     setError: core.setError,
@@ -561,11 +571,9 @@ export default function App() {
   }, [batching, dryRunning, cleaning]);
 
   usePendingAnalyze({
-    loading,
+    blocked: loading || scanning || batching || cleaning || dryRunning || uninstallingKey !== null,
     apps,
-    analyze: (a) => {
-      void analyze(a);
-    },
+    analyze,
     setQ,
   });
   useDragDropAnalyze({
@@ -930,7 +938,10 @@ export default function App() {
               onReopenOnboarding={reopenSafety}
               onGoSoftware={() => goNav("software")}
               onLastReport={(r) => coreSetReport(r)}
-              onAiEnabledChange={setAiEnabled}
+              onAiEnabledChange={(enabled) => {
+                setAiEnabled(enabled);
+                setAiConfigVersion(version => version + 1);
+              }}
               onIgnoreListsChange={(lists) => {
                 coreSetIgnorePub(lists.publishers);
                 coreSetIgnoreName(lists.names);

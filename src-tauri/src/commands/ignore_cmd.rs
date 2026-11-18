@@ -27,6 +27,11 @@ pub fn unignore_app_name(name: String) -> Result<ignore::IgnoreList, String> {
     ignore::remove_name(&name)
 }
 
+#[tauri::command]
+pub fn unignore_path(path: String) -> Result<ignore::IgnoreList, String> {
+    ignore::remove_path(&path)
+}
+
 /// Rule-based ignore suggestions from leftover paths (shared runtimes).
 #[tauri::command]
 pub fn suggest_ignore_rules(
