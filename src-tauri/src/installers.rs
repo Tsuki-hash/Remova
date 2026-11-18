@@ -350,17 +350,15 @@ fn scan_downloads_from(
     let definite_total = definite.len();
     definite.truncate(INSTALLER_PHASE_CAP);
     report.omit(definite_total.saturating_sub(INSTALLER_PHASE_CAP));
-    // The expensive PE check runs only for what the definite group left room
-    // for, and in sorted order, so the number of file opens is bounded by the
-    // result cap rather than by the size of the Downloads folder.
+    // Each open consumes the budget, including a candidate that is not a PE.
+    let pe_budget = INSTALLER_PHASE_CAP - definite.len();
     let mut examined = 0;
-    if definite.len() < INSTALLER_PHASE_CAP {
+    if pe_budget > 0 {
         ambiguous.sort_by_cached_key(|p| p.to_string_lossy().to_lowercase());
-        while definite.len() < INSTALLER_PHASE_CAP && examined < ambiguous.len() {
+        for p in ambiguous.iter().take(pe_budget) {
             if crate::scan_task::cancelled() {
                 return;
             }
-            let p = &ambiguous[examined];
             examined += 1;
             if is_pe_executable(p) {
                 definite.push((p.clone(), DownloadEvidence::MaybePackage));
@@ -739,6 +737,31 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_failed_pe_check_still_consumes_the_remaining_budget() {
+        let root = crate::test_support::TempDir::new("remova-pe-miss");
+        for i in 0..INSTALLER_PHASE_CAP - 1 {
+            std::fs::write(root.join(format!("setup-{i:04}.msi")), b"msi").unwrap();
+        }
+        for name in ["first-app-1.0.0.exe", "second-app-1.0.0.exe"] {
+            std::fs::File::create(root.join(name))
+                .unwrap()
+                .set_len(2 << 20)
+                .unwrap();
+        }
+        let mut out = Vec::new();
+        let mut scanned = HashSet::new();
+        let mut gaps = ScanGaps::default();
+        scan_downloads_from(root.path(), &mut out, &mut scanned, &mut gaps);
+
+        assert_eq!(out.len(), INSTALLER_PHASE_CAP - 1);
+        assert_eq!(gaps.omitted, 0);
+        assert!(gaps.degraded.contains(&format!(
+            "{}:1",
+            crate::scanner::DEGRADED_PE_BUDGET_EXHAUSTED
+        )));
     }
 
     /// The PE check costs a file open per candidate. It must run only for what

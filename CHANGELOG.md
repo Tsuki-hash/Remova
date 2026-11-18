@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - 白名单支持查看和撤销路径规则。
 - 切换 AI 配置后，隔离旧配置的缓存和迟到响应。
 
+- 清理历史支持从界面导出 CSV，并提示损坏记录的数量。
+- 系统盘空间体检适配实际盘符，注册表复查不再显示上一次的命中。
+- npm 命令诊断按 Windows 命名习惯比对，安装包扫描明确限制文件探测次数。
+
 ## [1.5.1]
 
 本版提供未签名安装包，更新请手动下载。Windows 可能显示发布者或 SmartScreen 提示。

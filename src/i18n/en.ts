@@ -16,6 +16,7 @@ export const dict: EnDict = {
     history: "Cleanup history",
     historyPartial: (count: number) => `${count} history record(s) could not be read. Other valid records are retained. CSV includes the unreadable count.`,
     historyUnreadable: "There are no readable records to display.",
+    exportHistoryAllCsv: "Export all as CSV",
     exportCsv: "Export CSV",
     restore: "Restore backup",
     analyze: "Deep analyze",
@@ -130,7 +131,7 @@ export const dict: EnDict = {
     onboardingDismiss: "Got it",
     onboardingReopen: "Safety notes",
     onboardingReopenHint: "Show the three safety principles again",
-    diskOverviewTitle: "C: drive space overview",
+    diskOverviewTitle: "System drive space overview",
     diskOverviewHint: "Review drive usage, folder links and caches",
     diskOverviewSystemVolume: (letter: string, used: string, total: string, free: string) =>
       `System drive ${letter}: ${used} used of ${total} (${free} free)`,

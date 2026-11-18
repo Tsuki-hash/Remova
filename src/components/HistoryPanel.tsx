@@ -36,6 +36,7 @@ export function HistoryPanel({
   setHistQ,
   onDelete,
   onClearAll,
+  onExport,
   onClose,
   loading,
   loadError,
@@ -48,6 +49,7 @@ export function HistoryPanel({
   setHistQ: (v: string) => void;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  onExport?: () => void;
   onClose: () => void;
   loading?: boolean;
   loadError?: string | null;
@@ -89,6 +91,13 @@ export function HistoryPanel({
           value={histQ}
           onChange={(e) => setHistQ(e.target.value)}
         />
+        {onExport && (
+          <button type="button" style={{ ...css.btnGhost, height: 30 }}
+            disabled={loading || !!loadError || empty || mutating}
+            onClick={onExport}>
+            {L.exportHistoryAllCsv}
+          </button>
+        )}
         <button
           style={{
             ...css.btnGhost,

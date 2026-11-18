@@ -15,6 +15,7 @@ export function DeepRegistryCheck({ appName }: { appName: string }) {
   const run = async () => {
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
       setResult(await api.deepRegistryCheck(appName));
     } catch (e) {

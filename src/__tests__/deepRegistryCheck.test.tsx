@@ -65,3 +65,15 @@ it("surfaces bounded-scan warnings and errors", async () => {
     expect(screen.getByRole("alert").textContent).toContain(t().deepRegistryTooGeneric),
   );
 });
+
+it("clears previous hits when a retry fails", async () => {
+  deepRegistryCheck.mockResolvedValueOnce({ hits: [{ key: "HKCU fixture", name: "Acme", detail: "nested" }], scanned: 4, truncated: false, timed_out: false });
+  render(<DeepRegistryCheck appName="Acme Tool" />);
+  fireEvent.click(screen.getByRole("button", { name: t().deepRegistryCheck }));
+  await screen.findByText("HKCU fixture");
+  deepRegistryCheck.mockRejectedValueOnce(new Error("retry unavailable"));
+  fireEvent.click(screen.getByRole("button", { name: t().deepRegistryCheck }));
+  await screen.findByRole("alert");
+  expect(screen.queryByText("HKCU fixture")).toBeNull();
+  expect(screen.queryByText(t().deepRegistryHits(1))).toBeNull();
+});

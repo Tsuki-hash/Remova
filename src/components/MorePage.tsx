@@ -389,6 +389,7 @@ export function MorePage({
           setHistQ={hist.setHistQ}
           onDelete={(id) => void hist.deleteHistory(id)}
           onClearAll={() => void hist.clearHistory()}
+          onExport={() => void hist.exportCsv()}
           onClose={() => {
             hist.closeHistory();
             tools.setOpenTool(null);

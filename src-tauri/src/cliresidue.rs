@@ -143,15 +143,28 @@ fn package_bin_names(prefix: &Path) -> Option<HashSet<String>> {
                 let scoped = scoped.ok()?;
                 let _pins = crate::fsutil::pin_local_scan_path(&scoped.path()).ok()?;
                 if scoped.file_type().ok()?.is_dir() {
-                    out.extend(bin_of(&scoped.path())?);
+                    out.extend(
+                        bin_of(&scoped.path())?
+                            .into_iter()
+                            .map(|bin| bin.to_lowercase()),
+                    );
                 }
             }
         } else {
-            out.extend(bin_of(&entry.path())?);
-            out.insert(name);
+            out.extend(
+                bin_of(&entry.path())?
+                    .into_iter()
+                    .map(|bin| bin.to_lowercase()),
+            );
+            out.insert(name.to_lowercase());
         }
     }
     Some(out)
+}
+
+fn npm_shim_stem(name: &str) -> Option<&str> {
+    let (stem, ext) = name.rsplit_once('.')?;
+    (ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("ps1")).then_some(stem)
 }
 
 /// True when a shim stem matches no bin evidence in the global tree. An
@@ -159,7 +172,7 @@ fn package_bin_names(prefix: &Path) -> Option<HashSet<String>> {
 #[cfg(test)]
 fn shim_target_missing(prefix: &Path, stem: &str) -> bool {
     package_bin_names(prefix)
-        .map(|bins| !bins.contains(stem))
+        .map(|bins| !bins.contains(&stem.to_lowercase()))
         .unwrap_or(false)
 }
 
@@ -269,21 +282,11 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                             continue;
                         }
                         let name = entry.file_name().to_string_lossy().into_owned();
-                        let lower = name.to_lowercase();
-                        if lower.ends_with(".cmd") || lower.ends_with(".ps1") {
-                            // Match and truncate on the same case-insensitive
-                            // extension: `TOOL.CMD` used to pass the lowercase
-                            // test but keep its extension as the stem.
-                            let stem = name
-                                .strip_suffix(".cmd")
-                                .or_else(|| name.strip_suffix(".CMD"))
-                                .or_else(|| name.strip_suffix(".Cmd"))
-                                .or_else(|| name.strip_suffix(".ps1"))
-                                .or_else(|| name.strip_suffix(".PS1"))
-                                .or_else(|| name.strip_suffix(".Ps1"))
-                                .unwrap_or(&name)
-                                .to_string();
-                            let kind = if bins.as_ref().is_some_and(|bins| !bins.contains(&stem)) {
+                        if let Some(stem) = npm_shim_stem(&name) {
+                            let kind = if bins
+                                .as_ref()
+                                .is_some_and(|bins| !bins.contains(&stem.to_lowercase()))
+                            {
                                 "shim_orphan"
                             } else {
                                 "shim"
@@ -293,7 +296,7 @@ pub fn scan_residue_with(roots: &crate::cliglobals::CliRoots) -> CliResidueRepor
                                 CliResidueEntry {
                                     manager: "npm".into(),
                                     kind: kind.into(),
-                                    name: stem,
+                                    name: stem.to_owned(),
                                     detail: entry.path().to_string_lossy().into_owned(),
                                     redacted: false,
                                 },
@@ -699,7 +702,14 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(prefix.join("node_modules").join("@scope")).unwrap();
-        assert!(!shim_target_missing(&prefix, "present"));
+        for (name, expected) in [
+            ("PRESENT.cMd", "PRESENT"),
+            ("present.pS1", "present"),
+            ("present.CMD", "present"),
+        ] {
+            assert_eq!(npm_shim_stem(name), Some(expected));
+            assert!(!shim_target_missing(&prefix, expected));
+        }
         assert!(
             !shim_target_missing(&prefix, "tool-cli"),
             "scoped bin evidence counts"

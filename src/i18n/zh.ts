@@ -4,6 +4,7 @@ export const dict = {
     history: "清理历史",
     historyPartial: (count: number) => `有 ${count} 条历史记录无法读取，已保留其余有效记录。CSV 会附上缺读数量。`,
     historyUnreadable: "当前没有可显示的有效记录。",
+    exportHistoryAllCsv: "导出全部 CSV",
     exportCsv: "导出 CSV",
     restore: "还原备份",
     analyze: "深度分析",
@@ -118,7 +119,7 @@ export const dict = {
     onboardingDismiss: "知道了",
     onboardingReopen: "安全说明",
     onboardingReopenHint: "重新查看三条安全原则",
-    diskOverviewTitle: "C 盘空间体检",
+    diskOverviewTitle: "系统盘空间体检",
     diskOverviewHint: "查看容量、目录链接与可清理缓存",
     diskOverviewSystemVolume: (letter: string, used: string, total: string, free: string) =>
       `系统盘 ${letter}：已用 ${used} / 共 ${total}（剩余 ${free}）`,
