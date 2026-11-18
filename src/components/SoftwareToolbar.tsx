@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { Deco } from "./ui/Glyph";
 import { t } from "../i18n";
 import { cssStyles as css } from "../styles";
@@ -8,6 +8,7 @@ export type { CategoryId };
 
 /** Beginner toolbar: search + 3 plain filters (store/desktop live in meta only). */
 export function SoftwareToolbar({
+  searchRef,
   q,
   category,
   estimating,
@@ -20,6 +21,7 @@ export function SoftwareToolbar({
   onOpenAi,
   onToggleSmartFilter,
 }: {
+  searchRef?: Ref<HTMLInputElement>;
   q: string;
   category: CategoryId;
   estimating: boolean;
@@ -69,6 +71,7 @@ export function SoftwareToolbar({
       }}
     >
       <input
+        ref={searchRef}
         style={{ ...css.input, flex: "1 1 auto", minWidth: 160, height: 34 }}
         placeholder={L.search}
         value={q}

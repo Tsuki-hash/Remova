@@ -192,6 +192,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   const [smartFilterOpen, setSmartFilterOpen] = useState(false);
   const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
   const inventoryRef = useRef<HTMLDivElement>(null);
+  const softwareSearch = useRef<HTMLInputElement>(null);
   const lastListFocus = useRef<HTMLElement | null>(null);
   const hasInventoryDetail = !p.scan && Boolean(p.selected && p.detailPanel);
   useLayoutEffect(() => {
@@ -234,6 +235,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
   return (
     <>
       <SoftwareToolbar
+        searchRef={softwareSearch}
         q={p.q}
         category={p.category}
         estimating={p.estimating}
@@ -489,6 +491,11 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               loading={p.loading}
               q={p.q}
               category={p.category}
+              onResetSearch={() => {
+                p.onQuery("");
+                p.onCategory("all");
+                softwareSearch.current?.focus();
+              }}
               sortCol={p.sortCol}
               sortDesc={p.sortDesc}
               selected={p.selected}

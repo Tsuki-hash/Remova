@@ -29,6 +29,7 @@ function props(over: Partial<Record<string, unknown>> = {}) {
     loading: false,
     q: "",
     category: "all" as const,
+    onResetSearch: noop,
     sortCol: "name" as const,
     sortDesc: false,
     selected: null,
@@ -141,6 +142,29 @@ describe("SoftwareListTable", () => {
   it("shows the empty state without throwing when nothing matches", () => {
     render(<SoftwareListTable {...props({ filtered: [] })} />);
     expect(screen.queryAllByText(/Demo App/)).toHaveLength(0);
+  });
+
+  it("offers one action to clear an empty filtered view", () => {
+    const onResetSearch = vi.fn();
+    render(<SoftwareListTable {...props({ filtered: [], q: "missing", onResetSearch })} />);
+    fireEvent.click(screen.getByRole("button", { name: t().clearSoftwareSearch }));
+    expect(onResetSearch).toHaveBeenCalledOnce();
+  });
+
+  it("uses arrow keys on focused rows without intercepting controls in the row", () => {
+    const selectApp = vi.fn();
+    const { container } = render(<SoftwareListTable {...props({ selectApp })} />);
+    const [first, second] = container.querySelectorAll<HTMLTableRowElement>("tbody tr[data-index]");
+    if (!first || !second) throw new Error("two virtual rows must be visible");
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(second);
+    expect(selectApp).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Demo App 2" }));
+    const checkbox = screen.getByRole("checkbox", { name: "Demo App 2" });
+    checkbox.focus();
+    fireEvent.keyDown(checkbox, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(checkbox);
+    expect(selectApp).toHaveBeenCalledOnce();
   });
 
   it("renders skeletons while loading with no data yet", () => {

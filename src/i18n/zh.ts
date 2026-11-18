@@ -903,6 +903,7 @@ export const dict = {
     uninstalling: "卸载中…",
     emptyList: "没有匹配的软件",
     emptySearch: "没有匹配结果，试试其它关键词或清空筛选",
+    clearSoftwareSearch: "清除搜索和筛选",
     whitelistEmpty: "白名单为空",
     whitelistRestoreHint: "移除条目后，对应的软件会重新显示。",
     aiSettings: "模型设置",

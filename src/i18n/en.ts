@@ -917,6 +917,7 @@ export const dict: EnDict = {
     uninstalling: "Uninstalling…",
     emptyList: "No matching apps",
     emptySearch: "No matches — try another keyword or clear filters",
+    clearSoftwareSearch: "Clear search and filters",
     whitelistEmpty: "Whitelist is empty",
     whitelistRestoreHint: "Remove an entry to show the matching apps again.",
     aiSettings: "Model settings",

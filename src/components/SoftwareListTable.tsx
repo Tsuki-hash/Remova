@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { Deco } from "./ui/Glyph";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { InstalledApp } from "../types";
@@ -14,6 +14,7 @@ export function SoftwareListTable({
   loading,
   q,
   category,
+  onResetSearch,
   sortCol,
   sortDesc,
   selected,
@@ -38,6 +39,7 @@ export function SoftwareListTable({
   loading: boolean;
   q: string;
   category: CategoryId;
+  onResetSearch: () => void;
   sortCol: SortCol;
   sortDesc: boolean;
   selected: InstalledApp | null;
@@ -78,6 +80,38 @@ export function SoftwareListTable({
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
+  const pendingFocus = useRef<{ index: number; key: string } | null>(null);
+  const focusRow = (index: number, app: InstalledApp) => {
+    const row = listScrollRef.current?.querySelector<HTMLTableRowElement>(`tbody tr[data-index="${index}"]`);
+    if (!row) return false;
+    pendingFocus.current = null;
+    row.focus();
+    if (!window.matchMedia?.("(max-width: 1020px)").matches && (!selected || appKey(selected) !== appKey(app))) {
+      selectApp(app);
+    }
+    return true;
+  };
+  useLayoutEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    const app = filtered[pending.index];
+    if (!app || appKey(app) !== pending.key) {
+      pendingFocus.current = null;
+      return;
+    }
+    focusRow(pending.index, app);
+  });
+  const moveRow = (event: KeyboardEvent<HTMLTableSectionElement>) => {
+    if (!(event.target instanceof HTMLTableRowElement) || event.target.dataset.index === undefined) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const index = Number(event.target.dataset.index) + (event.key === "ArrowUp" ? -1 : 1);
+    const app = filtered[index];
+    if (!app || focusRow(index, app)) return;
+    pendingFocus.current = { index, key: appKey(app) };
+    rowVirtualizer.scrollToIndex(index, { align: "auto" });
+  };
+  const hasFilter = Boolean(q.trim() || category !== "all" || (allApps?.length && !filtered.length));
   // M5-3: same display name with a different registry record = multiple
   // install vectors. Rows stay separate (delete semantics unchanged); the
   // badge only tells the user why the same name appears twice.
@@ -171,14 +205,19 @@ export function SoftwareListTable({
             <th style={{ ...css.th, textAlign: "right" as const }}>{L.actionCol}</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody onKeyDown={moveRow}>
           {filtered.length === 0 && !loading && (
             <tr>
               <td
                 colSpan={4}
                 style={{ ...css.td, color: "var(--muted)", textAlign: "center" as const, padding: 28 }}
               >
-                {q.trim() || category !== "all" ? L.emptySearch : L.emptyList}
+                {hasFilter ? L.emptySearch : L.emptyList}
+                {hasFilter && (
+                  <div style={{ marginTop: 8 }}><button type="button" style={css.btnGhost} onClick={onResetSearch}>
+                    {L.clearSoftwareSearch}
+                  </button></div>
+                )}
               </td>
             </tr>
           )}
