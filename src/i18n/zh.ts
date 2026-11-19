@@ -253,6 +253,7 @@ export const dict = {
     migrateCopyBusy: "有太多迁移复制请求正在处理。请等一项复制结束后再试。",
     migrateStateInconsistent:
       "迁移状态不一致：源目录、备份与目标的组合不属于任何已知阶段，请人工检查后再操作。",
+    backendCleanupCancelled: "清理已取消。",
     backendCleanupCancelledBackup: "备份期间操作被取消，未做任何修改",
     backendNotRegenerable: (p: string) => `不是可再生的固定布局，已拒绝：${p}`,
     backendMigrateState: "迁移不在可收尾的状态（请重新打开面板查看当前阶段）",

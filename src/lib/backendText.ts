@@ -93,7 +93,7 @@ export function backendText(raw: string, context: "cleanup" | "scan" | "idle" = 
       raw.slice("cleanup item not from the latest analysis: ".length),
     );
   }
-  if (raw === "cleanup cancelled") return L.batchCancelled;
+  if (raw === "cleanup cancelled") return L.backendCleanupCancelled;
   if (raw === "cleanup cancelled during backup") return L.backendCleanupCancelledBackup;
   if (raw === "migrate:cancelled") return L.migrateCancelled;
   if (raw === "migrate:copy_busy") return L.migrateCopyBusy;

@@ -72,8 +72,9 @@ it.each(["zh", "en"] as const)("separates official success from remaining scan s
     expect(screen.getByRole("status").textContent).toContain(count === undefined ? t().cleanupRescanUnknown : t().cleanupRescanResult(count));
     expect(screen.queryByText(t().reportFlowDone)).toBeNull();
   }
-  view.rerender(<ReportPanel {...props} report={{ ...report, aborted: true }} />);
-  expect(screen.queryByRole("status")).toBeNull();
+  view.rerender(<ReportPanel {...props} report={{ ...report, aborted: true }} residualScan={{ phase: "scanning" }} />);
+  expect(screen.getByRole("status").textContent).toBe(t().uninstallOk);
+  expect(screen.queryByText(t().reportFlowDone)).toBeNull();
 });
 it.each(["zh", "en"] as const)("shows a history write warning alongside a successful cleanup in %s", lang => {
   setLang(lang);
@@ -112,6 +113,24 @@ it.each(["zh", "en"] as const)("separates pending reboot counts and never claims
     v.unmount();
   }
 });
+
+it.each(["zh", "en"] as const)("shows the single cleanup cancellation next to its actual counts in %s", lang => {
+  setLang(lang);
+  const L = t();
+  const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",
+    uninstall_ok: false, uninstall_message: "cleanup cancelled", deleted: 0, failed: 0, skipped: 0,
+    aborted: true, restore_point_ok: false, restore_point_msg: "",
+    errors: ["cleanup cancelled before deleting leftovers"], item_details: [] };
+  render(<ReportPanel report={report} aiEnabled={false} aiReportBusy={false} aiReportNote={null}
+    verifyRows={null} onDismiss={() => {}} onRegenerate={() => {}} />);
+  const notice = screen.getByRole("status");
+  expect(notice.textContent).toBe(lang === "zh" ? "清理已取消。" : "Cleanup was cancelled.");
+  expect(screen.getByText(`${L.cleanupResultCounts}: ${report.app_name}`)).toBeTruthy();
+  expect(notice.closest("details")).toBeNull();
+  expect(screen.getByRole("group", { name: L.cleanupResultCounts }).textContent).toContain(`0${L.reportDeleted}`);
+  expect(screen.queryByText(L.reportProgressLabel(0, 0, 0))).toBeNull();
+});
+
 it("shows deleted, kept, and pending-reboot sizes in the report", () => {
   setLang("zh");
   const report: FullCleanupReport = { app_name: "sample", dry_run: false, backup_dir: "",

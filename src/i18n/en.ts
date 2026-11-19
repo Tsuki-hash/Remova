@@ -265,6 +265,7 @@ export const dict: EnDict = {
     migrateCopyBusy: "Too many migration copy requests are active. Try again when a copy ends.",
     migrateStateInconsistent:
       "Inconsistent migration state: the source, backup and target do not match any known phase. Inspect them manually before acting.",
+    backendCleanupCancelled: "Cleanup was cancelled.",
     backendCleanupCancelledBackup: "The operation was cancelled during backup; nothing was changed",
     backendNotRegenerable: (p: string) => `Not a regenerable fixed layout; refused: ${p}`,
     backendMigrateState: "The migration is not in a state that can be finished (reopen the panel to see the current phase)",

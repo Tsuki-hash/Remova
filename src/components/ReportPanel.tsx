@@ -133,7 +133,7 @@ export function ReportPanel({
     >
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <strong>
-          {"dry_run" in report && report.dry_run ? L.dryRunSummary : L.batchSummary}: {report.app_name}
+          {report.dry_run ? L.dryRunSummary : L.cleanupResultCounts}: {report.app_name}
         </strong>
         <BackButton style={{ marginLeft: "auto" }} onClick={onDismiss} />
       </div>
@@ -161,10 +161,15 @@ export function ReportPanel({
           ))}
         </div>
       )}
-      {"uninstall_ok" in report && !report.dry_run && !report.aborted && (report.uninstall_ok || residualScan) && (
+      {result?.aborted && (result.uninstall_message || result.errors.length > 0) && (
+        <div role="status" style={{ marginTop: 8, color: "var(--warn-ink)" }}>
+          {cleanupAbortText(result, L)}
+        </div>
+      )}
+      {result && (result.uninstall_ok || (!result.aborted && residualScan)) && (
         <div role="status" style={{ marginTop: 8, lineHeight: 1.6 }}>
           <strong>{L.uninstallOk}</strong>
-          <div style={{ color: "var(--muted)" }}>{uninstallRescanText(L, residualScan, true)}</div>
+          {!result.aborted && <div style={{ color: "var(--muted)" }}>{uninstallRescanText(L, residualScan, true)}</div>}
         </div>
       )}
       {hasHistorySaveWarning(report) && (
@@ -259,13 +264,13 @@ export function ReportPanel({
           </div>
         </div>
       )}
-      {!report.dry_run && "deleted" in report &&
+      {result && !result.aborted &&
         (() => {
-          const p = cleanupProgress(report.deleted, report.failed + report.skipped + (report.delayed ?? 0), 0);
+          const p = cleanupProgress(result.deleted, result.failed + result.skipped + (result.delayed ?? 0), 0);
           return (
             <div style={{ marginTop: 8, fontSize: 13 }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                {p.complete && !report.aborted
+                {p.complete
                   ? L.reportProgressComplete
                   : L.reportProgressLabel(p.handled, p.total, p.pct)}
               </div>
@@ -283,7 +288,7 @@ export function ReportPanel({
                   style={{
                     width: `${p.pct}%`,
                     height: "100%",
-                    background: p.complete && !report.aborted ? "var(--ok)" : "var(--accent)",
+                    background: p.complete ? "var(--ok)" : "var(--accent)",
                   }}
                 />
               </div>
@@ -367,7 +372,7 @@ export function ReportPanel({
           expandSkipped={Boolean(result?.skipped)}
         />
       )}
-      {"uninstall_message" in report && report.uninstall_message && (
+      {!result?.aborted && report.uninstall_message && (
         <div style={{ marginTop: 6, color: "var(--muted)" }}>
           {"aborted" in report && report.aborted ? cleanupAbortText(report, L) : backendText(report.uninstall_message)}
         </div>
