@@ -63,11 +63,13 @@ it("keeps the inspected references and disk radar when returning from app detail
   expect(await within(inspected).findByText(L.folderInspectPartial(L.folderInspectShortcut))).toBeTruthy();
   expect(within(inspected).getByText("D:\\Apps\\Editor\\updater.exe")).toBeTruthy();
   expect(api.inspectFolderReferences).toHaveBeenCalledWith(app.install_location, 4);
-  fireEvent.click(within(inspected).getByRole("button", { name: L.folderInspectShowApp }));
+  const openDetail = within(inspected).getByRole("button", { name: L.folderInspectShowApp });
+  fireEvent.click(openDetail);
   const detail = screen.getByRole("dialog", { name: L.folderInspectShowApp });
   expect(within(detail).getByRole("button", { name: L.detailInspect })).toBeTruthy();
   expect(within(detail).getByRole("button", { name: L.detailUninstall })).toBeTruthy();
   fireEvent.click(within(detail).getByRole("button", { name: L.folderInspectBack }));
+  expect(document.activeElement).toBe(openDetail);
   expect(screen.getByText("D:\\Apps\\Editor\\updater.exe")).toBeTruthy();
   expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole("button", { name: L.folderInspectRadar }));
@@ -93,4 +95,22 @@ it("does not display a late result from the previous path", async () => {
   }));
   expect(screen.queryByText("Old updater")).toBeNull();
   expect(screen.getByText(L.folderInspectEmpty)).toBeTruthy();
+});
+
+it("shows only the completed sources after a cancelled check and clears them on retry", async () => {
+  const L = t();
+  let finish!: (value: { checked: ["installation"] }) => void;
+  vi.mocked(api.inspectFolderReferences)
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+    .mockResolvedValueOnce({ references: [], incomplete: [], omitted: 0 });
+  render(<Fixture radar={false} path={app.install_location} />);
+  await waitFor(() => expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: L.cancelScan }));
+  await act(async () => finish({ checked: ["installation"] }));
+  expect(await screen.findByText((_text, element) => element?.getAttribute("role") === "status"
+    && element.textContent?.includes(L.folderInspectChecked(L.folderInspectInstallation)) === true)).toBeTruthy();
+  expect(screen.queryByText(L.folderInspectEmpty)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: L.folderInspectRun }));
+  expect(await screen.findByText(L.folderInspectEmpty)).toBeTruthy();
+  expect(screen.queryByText(/已查完|Completed sources/)).toBeNull();
 });

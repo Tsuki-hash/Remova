@@ -1961,14 +1961,10 @@ async fn list_dir_children(
 async fn inspect_folder_references(
     path: String,
     scan_id: u32,
-) -> Result<folder_references::FolderReferences, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        scan_task::run_scoped(scan_id, "folder-references", || {
-            folder_references::inspect(&path)
-        })?
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<folder_references::InspectionOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || folder_references::inspect_scoped(&path, scan_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// re-check selected paths after cleanup (checklist evidence).

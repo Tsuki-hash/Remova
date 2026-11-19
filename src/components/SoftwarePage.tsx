@@ -506,8 +506,7 @@ export const SoftwarePage = memo(function SoftwarePage(p: SoftwarePageProps) {
               sizeOf={p.sizeOf}
               sortBy={p.sortBy}
               selectApp={app => {
-                if (window.matchMedia?.("(max-width: 1020px)").matches && document.activeElement instanceof HTMLElement &&
-                  inventoryRef.current?.contains(document.activeElement)) {
+                if (document.activeElement instanceof HTMLElement && inventoryRef.current?.contains(document.activeElement)) {
                   lastListFocus.current = document.activeElement;
                 }
                 p.selectApp(app);

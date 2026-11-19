@@ -21,7 +21,7 @@ type Props = {
   sizeText: string;
   uninstalling: boolean;
   scan?: ScanResult | null;
-  onClose: () => void;
+  onClose?: () => void;
   onDeepUninstall: (app: InstalledApp) => void;
   onAnalyze: (app: InstalledApp) => void;
   onOfficialOnly?: (app: InstalledApp) => void;
@@ -95,7 +95,7 @@ export function AppDetailPanel({
             {app.publisher || "—"} · {app.version || "—"}
           </div>
         </div>
-        <BackButton className="software-detail-back" onClick={onClose} />
+        {onClose && <BackButton className="software-detail-back" onClick={onClose} label={scan ? L.navBack : L.returnSoftwareList} />}
       </div>
 
       <div style={{ ...css.panelBody, padding: "18px" }}>

@@ -39,6 +39,7 @@ import type {
   DirSizeRow,
   FullCleanupReport,
   FolderReferences,
+  FolderReferenceSource,
   HistoryEntry,
   HistoryRead,
   IdleApp,
@@ -240,7 +241,7 @@ export const api = {
     invoke<DirSizeRow[]>("list_top_dir_sizes", { drive: drive ?? null, scanId }),
   listDirChildren: (path: string, scanId?: number) => invoke<DirChildrenResult>("list_dir_children", { path, scanId }),
   inspectFolderReferences: (path: string, scanId: number) =>
-    invoke<FolderReferences>("inspect_folder_references", { path, scanId }),
+    invoke<FolderReferences | { checked: FolderReferenceSource[] }>("inspect_folder_references", { path, scanId }),
   isElevated: () => invoke<boolean>("is_elevated"),
   elevateRestart: (approved = false) => invoke("elevate_restart", { approved }),
   openPath: (path: string) => invoke("open_path_in_explorer", { path }),

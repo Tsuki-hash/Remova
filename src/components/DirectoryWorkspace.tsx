@@ -7,7 +7,7 @@ import { formatError } from "../lib/format";
 import { dialogLayer, useDialogFocus } from "../lib/useDialogFocus";
 import { scanCancelled, useAssociationScan } from "../hooks/useAssociationScan";
 import { cssStyles as css } from "../styles";
-import type { DirSizeRow, FolderReferences, InstalledApp } from "../types";
+import type { DirSizeRow, FolderReferences, FolderReferenceSource, InstalledApp } from "../types";
 import { AppDetailPanel } from "./AppDetailPanel";
 import { DiskRadarPanel } from "./DiskRadarPanel";
 import { ScanProgressBar } from "./ScanProgressBar";
@@ -31,19 +31,26 @@ export function DirectoryWorkspace({
   const title = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
+  const restoreEvidenceFocus = useRef<HTMLButtonElement | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [opened, setOpened] = useState<{ inspection: FolderInspection; key: string } | null>(null);
+  const [opened, setOpened] = useState<{ inspection: FolderInspection; key: string; opener: HTMLButtonElement } | null>(null);
   const app = opened && opened.inspection === inspection
     ? apps.find(item => appKey(item) === opened.key)
     : undefined;
   const back = () => {
-    if (app) setOpened(null);
+    if (app && opened) {
+      restoreEvidenceFocus.current = opened.opener;
+      setOpened(null);
+    }
     else if (inspection && radar) onBack();
     else onClose();
   };
   useDialogFocus(true, dialog, dialogLayer.overview, back);
   useEffect(() => {
-    backButton.current?.focus();
+    const opener = restoreEvidenceFocus.current;
+    restoreEvidenceFocus.current = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+    else backButton.current?.focus();
   }, [inspection, app]);
 
   const openPath = (path: string) => {
@@ -56,7 +63,7 @@ export function DirectoryWorkspace({
         <header className="directory-heading">
           <h2 id={title}>{app ? L.folderInspectShowApp : inspection ? L.folderInspectTitle : L.diskRadarShortcut}</h2>
           <BackButton ref={backButton} onClick={back}
-            label={app ? L.folderInspectBack : inspection && (radar || inspection.returnToRadar) ? L.folderInspectRadar : L.navBack} />
+            label={app ? L.folderInspectBack : inspection && (radar || inspection.returnToRadar) ? L.folderInspectRadar : L.returnSoftwareList} />
         </header>
         {error && <p role="alert" className="folder-reference-incomplete">{error}</p>}
         {radar && (
@@ -72,7 +79,7 @@ export function DirectoryWorkspace({
             <FolderReferencePanel key={inspection.path} inspection={inspection} apps={apps}
               onInspect={path => onInspect({ path, returnToRadar: inspection.returnToRadar })}
               onOpenPath={openPath}
-              onApp={item => setOpened({ inspection, key: appKey(item) })}
+              onApp={(item, opener) => setOpened({ inspection, key: appKey(item), opener })}
             />
           </div>
         )}
@@ -80,7 +87,6 @@ export function DirectoryWorkspace({
           <AppDetailPanel
             app={app}
             sizeText={app.estimated_size_kb > 0 ? formatSize(app.estimated_size_kb) : "—"}
-            onClose={() => setOpened(null)}
             uninstalling={false}
             onAnalyze={item => onOpenSoftware(item, "analyze")}
             onDeepUninstall={item => onOpenSoftware(item, "uninstall")}
@@ -100,21 +106,37 @@ function FolderReferencePanel({
   apps: InstalledApp[];
   onInspect: (path: string) => void;
   onOpenPath: (path: string) => void;
-  onApp: (app: InstalledApp) => void;
+  onApp: (app: InstalledApp, opener: HTMLButtonElement) => void;
 }) {
   const L = t();
   const { path, measurement } = inspection;
   const [input, setInput] = useState(path);
   const [result, setResult] = useState<FolderReferences | null>(null);
+  const [checkedOnCancel, setCheckedOnCancel] = useState<FolderReferenceSource[]>([]);
+  const request = useRef(0);
   const { runReadOnly, cancel, progress } = useAssociationScan();
   const [failed, setFailed] = useState(false);
   const check = useCallback(() => {
     if (!path) return;
+    const requestId = ++request.current;
     setResult(null);
     setFailed(false);
-    void runReadOnly(id => api.inspectFolderReferences(path, id), value => value.references.length)
+    setCheckedOnCancel([]);
+    let checked: FolderReferenceSource[] = [];
+    void runReadOnly(async id => {
+      const outcome = await api.inspectFolderReferences(path, id);
+      if ("checked" in outcome) {
+        checked = outcome.checked;
+        throw new Error("scan:cancelled");
+      }
+      return outcome;
+    }, value => value.references.length)
       .then(setResult)
-      .catch(error => { if (!scanCancelled(error)) setFailed(true); });
+      .catch(error => {
+        if (requestId !== request.current) return;
+        if (scanCancelled(error)) setCheckedOnCancel(checked);
+        else setFailed(true);
+      });
   }, [path, runReadOnly]);
   // Restarting for a different folder unmounts this panel and cancels its job.
   useEffect(() => { check(); }, [check]);
@@ -150,7 +172,11 @@ function FolderReferencePanel({
         </div>
       )}
       {running && <ScanProgressBar progress={progress} onCancel={cancel} />}
-      {progress?.status === "cancelled" && <p role="status">{L.folderInspectCancelled}</p>}
+      {progress?.status === "cancelled" && <p role="status">
+        {L.folderInspectCancelled}{" "}
+        {checkedOnCancel.length ? L.folderInspectChecked(checkedOnCancel.map(source => sources[source]).join(", "))
+          : L.folderInspectNoneChecked}
+      </p>}
       {failed && <p role="alert">{L.folderInspectFailed}</p>}
       {result && (
         <>
@@ -177,7 +203,9 @@ function FolderReferencePanel({
                           <code>{reference.location}</code>
                         </details>
                       </div>
-                      {app && <button type="button" style={css.btnGhost} onClick={() => onApp(app)}>{L.folderInspectShowApp}</button>}
+                      {app && <button type="button" style={css.btnGhost} onClick={event => onApp(app, event.currentTarget)}>
+                        {L.folderInspectShowApp}
+                      </button>}
                     </li>
                   );
                 })}

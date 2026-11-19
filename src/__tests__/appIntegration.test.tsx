@@ -436,7 +436,7 @@ describe("App orchestration", () => {
     const L = i18n.t();
     const inspector = await screen.findByRole("dialog", { name: L.folderInspectTitle });
     expect(within(inspector).getByRole<HTMLInputElement>("textbox", { name: L.folderInspectPath }).value).toBe("C:\\Apps");
-    fireEvent.click(within(inspector).getByRole("button", { name: L.navBack }));
+    fireEvent.click(within(inspector).getByRole("button", { name: L.returnSoftwareList }));
     act(() => native.drag!({ payload: { type: "drop", paths: [`${adjacent.install_location}/app.exe`] } }));
     await waitFor(() => expect(native.analyze).toHaveBeenCalledWith(adjacent, expect.any(Number)));
   });
@@ -562,7 +562,7 @@ describe("App orchestration", () => {
     act(() => software().selectApp(other));
     act(() => detail().onDrillDown?.("programFiles"));
     await waitFor(() => expect(native.analyze).toHaveBeenLastCalledWith(other, 1));
-    act(() => detail().onClose());
+    act(() => detail().onClose?.());
     expect(software().selected).toBeNull();
     expect(screen.queryByTestId("detail")).toBeNull();
   });

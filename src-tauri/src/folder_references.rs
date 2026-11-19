@@ -9,7 +9,7 @@ use crate::{apps, fsutil, regops, regscan, scan_task};
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Source {
+pub(crate) enum Source {
     Installation,
     Shortcut,
     Service,
@@ -30,6 +30,13 @@ pub(crate) struct FolderReferences {
     references: Vec<Reference>,
     incomplete: Vec<Source>,
     omitted: usize,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum InspectionOutcome {
+    Complete(FolderReferences),
+    Cancelled { checked: Vec<Source> },
 }
 
 // Compare recorded paths without resolving aliases or opening the targets.
@@ -57,7 +64,16 @@ fn contains(root: &str, value: &str) -> bool {
             .is_some_and(|tail| tail.starts_with('\\'))
 }
 
-pub(crate) fn inspect(path: &str) -> Result<FolderReferences, String> {
+pub(crate) fn inspect_scoped(path: &str, scan_id: u32) -> Result<InspectionOutcome, String> {
+    let mut checked = Vec::new();
+    match scan_task::run_scoped(scan_id, "folder-references", || inspect(path, &mut checked)) {
+        Ok(result) => result.map(InspectionOutcome::Complete),
+        Err(error) if error == "scan:cancelled" => Ok(InspectionOutcome::Cancelled { checked }),
+        Err(error) => Err(error),
+    }
+}
+
+fn inspect(path: &str, checked: &mut Vec<Source>) -> Result<FolderReferences, String> {
     let path = path.trim();
     let root = key(path).ok_or("folder:unavailable")?;
     if !fsutil::local_scan_is_dir(Path::new(path)) {
@@ -109,7 +125,9 @@ pub(crate) fn inspect(path: &str) -> Result<FolderReferences, String> {
             Source::Shortcut => shortcuts(&mut add),
         };
         omitted += count.saturating_sub(MAX_PER_SOURCE);
-        if !complete {
+        if complete {
+            checked.push(source);
+        } else {
             incomplete.push(source);
         }
     }
@@ -244,6 +262,17 @@ fn shortcuts(_add: &mut impl FnMut(String, String, String, Option<String>)) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancelled_reservation_reports_no_checked_sources() {
+        let scan = scan_task::begin().unwrap();
+        assert!(scan_task::cancel(scan).unwrap());
+        let result = inspect_scoped("", scan).unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({ "checked": [] })
+        );
+    }
 
     #[test]
     fn references_require_an_absolute_local_path_and_a_directory_boundary() {
