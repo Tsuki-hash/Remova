@@ -58,9 +58,9 @@ vi.mock("../lib/updateCheck", () => ({
   RELEASES_URL: "https://example.com/releases",
   checkLatestRelease: native.checkLatestRelease,
 }));
-vi.mock("../lib/confirm", () => ({
+vi.mock("../lib/confirm", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/confirm")>(),
   requestConfirmEx: native.requestConfirmEx, requestConfirm: native.requestConfirm,
-  getConfirm: () => null,
 }));
 vi.mock("../lib/exportHtmlReport", () => ({ exportHtmlReport: vi.fn() }));
 const pendingAnalysisEvent = vi.hoisted(() => ({
@@ -127,6 +127,7 @@ import App from "../App";
 import * as i18n from "../i18n";
 import { exportHtmlReport } from "../lib/exportHtmlReport";
 import { appKey } from "../lib/appKey";
+import { getConfirm, settleConfirm } from "../lib/confirm";
 import { appForPath } from "../hooks/useAppNavAssist";
 import { toast } from "../lib/toast";
 import { saveRescanAfterUninstall } from "../lib/rescanPref";
@@ -1262,4 +1263,60 @@ it("drains forwarded analyze requests once without refreshing the inventory", as
   });
   await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
   expect(native.analyze.mock.calls.map(([app]) => app.name)).toEqual([demo.name, other.name]);
+});
+
+it("leaves forwarded requests queued during uninstall confirmation and resumes them in order after cancel", async () => {
+  const actualConfirm = await vi.importActual<typeof import("../lib/confirm")>("../lib/confirm");
+  const installed = { ...other, install_location: "C:\\Apps\\Other" };
+  native.listApps.mockResolvedValue(inventory(demo, installed));
+  native.requestConfirmEx.mockImplementationOnce(actualConfirm.requestConfirmEx);
+  await mount();
+  await waitFor(() => expect(pendingAnalysisEvent.listener).toBeDefined());
+  const reads = native.takePendingAnalyze.mock.calls.length;
+  act(() => software().listStartUninstall(demo));
+  try {
+    expect(getConfirm()?.message).toContain(demo.name);
+    native.takePendingAnalyze
+      .mockResolvedValueOnce(installed.install_location)
+      .mockResolvedValueOnce(demo.install_location);
+    await act(async () => {
+      pendingAnalysisEvent.listener?.();
+      pendingAnalysisEvent.listener?.();
+    });
+    expect(native.takePendingAnalyze).toHaveBeenCalledTimes(reads);
+    expect(native.analyze).not.toHaveBeenCalled();
+  } finally {
+    act(() => settleConfirm(false));
+  }
+  await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(2));
+  expect(native.analyze.mock.calls.map(([app]) => app.name)).toEqual([installed.name, demo.name]);
+  expect(native.officialUninstall).not.toHaveBeenCalled();
+});
+
+it("holds an already claimed path through confirmation and the accepted uninstall", async () => {
+  const actualConfirm = await vi.importActual<typeof import("../lib/confirm")>("../lib/confirm");
+  const installed = { ...other, install_location: "C:\\Apps\\Other" };
+  native.listApps.mockResolvedValue(inventory(demo, installed));
+  native.requestConfirmEx.mockImplementationOnce(actualConfirm.requestConfirmEx);
+  let deliverPath!: (path: string) => void;
+  let finishUninstall!: (result: OfficialUninstallResult) => void;
+  native.officialUninstall.mockImplementationOnce(() => new Promise(resolve => { finishUninstall = resolve; }));
+  await mount();
+  await waitFor(() => expect(pendingAnalysisEvent.listener).toBeDefined());
+  native.takePendingAnalyze.mockImplementationOnce(() => new Promise(resolve => { deliverPath = resolve; }));
+  act(() => pendingAnalysisEvent.listener?.());
+  await waitFor(() => expect(deliverPath).toBeTypeOf("function"));
+  act(() => software().listStartUninstall(demo));
+  try {
+    expect(getConfirm()?.message).toContain(demo.name);
+    await act(async () => { deliverPath(installed.install_location); });
+    expect(native.analyze).not.toHaveBeenCalled();
+  } finally {
+    act(() => settleConfirm(true));
+  }
+  await waitFor(() => expect(native.officialUninstall).toHaveBeenCalledWith(demo));
+  expect(native.analyze).not.toHaveBeenCalled();
+  await act(async () => { finishUninstall({ ok: true, had_command: true, message: "finished" }); });
+  await waitFor(() => expect(native.analyze).toHaveBeenCalledTimes(1));
+  expect(native.analyze.mock.calls[0]?.[0]).toEqual(installed);
 });

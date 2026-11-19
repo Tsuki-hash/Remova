@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { api } from "../lib/api";
+import { getConfirm, subscribeConfirm } from "../lib/confirm";
 import type { InstalledApp } from "../types";
 import { toast } from "../lib/toast";
 import { t } from "../i18n";
@@ -24,11 +25,13 @@ export function appForPath(apps: InstalledApp[], path: string): InstalledApp | n
 /** Consume initial and forwarded --analyze requests from the same queue. */
 export function usePendingAnalyze({
   blocked,
+  busyRef,
   apps,
   analyze,
   setQ,
 }: {
   blocked: boolean;
+  busyRef: RefObject<boolean>;
   apps: InstalledApp[];
   analyze: (a: InstalledApp) => Promise<boolean>;
   setQ: (q: string) => void;
@@ -41,17 +44,22 @@ export function usePendingAnalyze({
     let draining = false;
     let notified = false;
     let next: string | null = null;
+    let resumeAfterConfirm: ReturnType<typeof setTimeout> | undefined;
+    const canDrain = () =>
+      !disposed && !latest.current.blocked && !busyRef.current &&
+      resumeAfterConfirm === undefined && getConfirm() === null;
 
     const drain = async () => {
       notified = true;
-      if (draining || disposed || latest.current.blocked) return;
+      if (draining || !canDrain()) return;
       draining = true;
       try {
         do {
           notified = false;
-          while (!disposed && !latest.current.blocked) {
+          while (canDrain()) {
             next ??= await api.takePendingAnalyze();
-            if (!next || disposed || latest.current.blocked) break;
+            // A confirmation may open while the native queue is returning a path.
+            if (!next || !canDrain()) break;
             const { apps, analyze, setQ } = latest.current;
             const path = next;
             next = null;
@@ -62,7 +70,7 @@ export function usePendingAnalyze({
               toast.info(path);
             }
           }
-        } while (notified && !disposed && !latest.current.blocked);
+        } while (notified && canDrain());
       } catch {
         // This entry point is inactive outside the native app.
       } finally {
@@ -70,6 +78,16 @@ export function usePendingAnalyze({
       }
     };
     wake.current = () => { void drain(); };
+    const unsubscribeConfirm = subscribeConfirm(() => {
+      clearTimeout(resumeAfterConfirm);
+      resumeAfterConfirm = undefined;
+      if (getConfirm()) return;
+      // Give the confirmation handler a turn to start its operation first.
+      resumeAfterConfirm = setTimeout(() => {
+        resumeAfterConfirm = undefined;
+        void drain();
+      }, 0);
+    });
     void import("@tauri-apps/api/event")
       .then(({ listen }) => listen("pending-analyze", () => { void drain(); }))
       .then(stop => {
@@ -82,9 +100,11 @@ export function usePendingAnalyze({
       .catch(() => {});
     return () => {
       disposed = true;
+      clearTimeout(resumeAfterConfirm);
+      unsubscribeConfirm();
       unlisten?.();
     };
-  }, []);
+  }, [busyRef]);
   useEffect(() => {
     latest.current = { blocked, apps, analyze, setQ };
   }, [blocked, apps, analyze, setQ]);

@@ -582,6 +582,7 @@ export default function App() {
 
   usePendingAnalyze({
     blocked: directoryOpen || loading || scanning || batching || cleaning || dryRunning || uninstallingKey !== null,
+    busyRef,
     apps,
     analyze,
     setQ,
