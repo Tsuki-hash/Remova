@@ -106,14 +106,31 @@ it("shows only the completed sources after a cancelled check and clears them on 
     .mockResolvedValueOnce({ references: [], incomplete: [], omitted: 0 });
   render(<Fixture radar={false} path={app.install_location} />);
   await waitFor(() => expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1));
+  const status = screen.getByRole("status");
+  expect(status.textContent).toBe("");
   fireEvent.click(screen.getByRole("button", { name: L.cancelScan }));
   await act(async () => finish({ checked: ["installation"] }));
-  expect(await screen.findByText((_text, element) => element?.getAttribute("role") === "status"
-    && element.textContent?.includes(L.folderInspectChecked(L.folderInspectInstallation)) === true)).toBeTruthy();
+  await waitFor(() => expect(status.textContent).toContain(L.folderInspectChecked(L.folderInspectInstallation)));
   expect(screen.queryByText(L.folderInspectEmpty)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: L.folderInspectRun }));
   expect(await screen.findByText(L.folderInspectEmpty)).toBeTruthy();
+  expect(screen.getByRole("status")).toBe(status);
   expect(screen.queryByText(/已查完|Completed sources/)).toBeNull();
+});
+
+it("updates the existing live status with incomplete sources and an empty result together", async () => {
+  const L = t();
+  let finish!: (value: FolderReferences) => void;
+  vi.mocked(api.inspectFolderReferences).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<Fixture radar={false} path={app.install_location} />);
+  await waitFor(() => expect(api.inspectFolderReferences).toHaveBeenCalledTimes(1));
+  const status = screen.getByRole("status");
+  expect(status.getAttribute("aria-atomic")).toBe("true");
+  expect(status.textContent).toBe("");
+  await act(async () => finish({ references: [], incomplete: ["shortcut"], omitted: 0 }));
+  expect(screen.getByRole("status")).toBe(status);
+  expect(within(status).getByText(L.folderInspectPartial(L.folderInspectShortcut))).toBeTruthy();
+  expect(within(status).getByText(L.folderInspectEmpty)).toBeTruthy();
 });
 
 it("keeps the current folder when the picker is cancelled and checks the chosen folder", async () => {

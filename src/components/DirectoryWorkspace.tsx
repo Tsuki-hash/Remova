@@ -201,44 +201,48 @@ function FolderReferencePanel({
         </div>
       )}
       {running && <ScanProgressBar progress={progress} onCancel={cancel} />}
-      {progress?.status === "cancelled" && <p role="status">
-        {L.folderInspectCancelled}{" "}
-        {checkedOnCancel.length ? L.folderInspectChecked(checkedOnCancel.map(source => sources[source]).join(", "))
-          : L.folderInspectNoneChecked}
-      </p>}
+      {/* Keep the live region present before the result arrives. */}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {progress?.status === "cancelled" && <p>
+          {L.folderInspectCancelled}{" "}
+          {checkedOnCancel.length ? L.folderInspectChecked(checkedOnCancel.map(source => sources[source]).join(", "))
+            : L.folderInspectNoneChecked}
+        </p>}
+        {result && result.incomplete.length > 0 && (
+          <p className="folder-reference-incomplete">
+            {L.folderInspectPartial(result.incomplete.map(source => sources[source]).join(", "))}
+          </p>
+        )}
+        {result?.references.length === 0 && <p>{L.folderInspectEmpty}</p>}
+      </div>
       {failed && <p role="alert">{L.folderInspectFailed}</p>}
       {result && (
         <>
-          {result.incomplete.length > 0 && (
-            <p className="folder-reference-incomplete" role="status">
-              {L.folderInspectPartial(result.incomplete.map(source => sources[source]).join(", "))}
-            </p>
+          {result.references.length > 0 && (
+            <ul className="folder-reference-list">
+              {result.references.map((reference, index) => {
+                const app = reference.app_source && apps.find(item =>
+                  item.source === reference.app_source && item.registry_key === reference.location &&
+                  item.install_location === reference.target);
+                return (
+                  <li key={index}>
+                    <div>
+                      <strong>{reference.name}</strong>
+                      <span className="folder-reference-note">{sources[reference.source]}</span>
+                      <code>{reference.target}</code>
+                      <details>
+                        <summary>{L.detailShow}</summary>
+                        <code>{reference.location}</code>
+                      </details>
+                    </div>
+                    {app && <button type="button" style={css.btnGhost} onClick={event => onApp(app, event.currentTarget)}>
+                      {L.folderInspectShowApp}
+                    </button>}
+                  </li>
+                );
+              })}
+            </ul>
           )}
-          {result.references.length === 0
-            ? <p role="status">{L.folderInspectEmpty}</p>
-            : <ul className="folder-reference-list">
-                {result.references.map((reference, index) => {
-                  const app = reference.app_source && apps.find(item =>
-                    item.source === reference.app_source && item.registry_key === reference.location &&
-                    item.install_location === reference.target);
-                  return (
-                    <li key={index}>
-                      <div>
-                        <strong>{reference.name}</strong>
-                        <span className="folder-reference-note">{sources[reference.source]}</span>
-                        <code>{reference.target}</code>
-                        <details>
-                          <summary>{L.detailShow}</summary>
-                          <code>{reference.location}</code>
-                        </details>
-                      </div>
-                      {app && <button type="button" style={css.btnGhost} onClick={event => onApp(app, event.currentTarget)}>
-                        {L.folderInspectShowApp}
-                      </button>}
-                    </li>
-                  );
-                })}
-              </ul>}
           {result.omitted > 0 && <p className="folder-reference-note">{L.scanOmitted(result.omitted)}</p>}
         </>
       )}
