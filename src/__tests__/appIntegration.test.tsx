@@ -693,6 +693,9 @@ describe("App orchestration", () => {
     act(() => software().setUseOfficial(false));
     act(() => software().onCleanup());
     await waitFor(() => expect(native.fullCleanup).toHaveBeenCalled());
+    expect(native.requestConfirmEx).toHaveBeenCalledWith(expect.objectContaining({
+      danger: true, holdLabel: i18n.t().holdToConfirmCleanupCount(1),
+    }));
     expect(native.fullCleanup).toHaveBeenCalledWith(expect.anything(), expect.anything(),
       expect.objectContaining({ skip_official_uninstall: true }), 51);
     await waitFor(() => expect(software().busy).toBe(false));

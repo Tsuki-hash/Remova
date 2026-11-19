@@ -45,6 +45,27 @@ it("a keyboard tap is not a silent no-op — it reports the aborted hold", async
   } finally { vi.useRealTimers(); }
 });
 
+it.each([
+  ["zh", "按住以确认清理 1 项"],
+  ["en", "Hold to confirm cleanup of 1 item"],
+] as const)("keeps the cleanup action and count visible during a hold (%s)", async (language, label) => {
+  setLang(language);
+  render(<ConfirmHost />);
+  let answer!: ReturnType<typeof requestConfirmEx>;
+  act(() => {
+    answer = requestConfirmEx({ title: "Cleanup", danger: true, holdLabel: t().holdToConfirmCleanupCount(1) });
+  });
+  const button = screen.getByRole("button", { name: label });
+  fireEvent.click(button);
+  expect(getConfirm()).not.toBeNull();
+  fireEvent.keyDown(button, { key: "Enter" });
+  expect(screen.getByRole("button", { name: label })).toBe(button);
+  fireEvent.keyUp(button, { key: "Enter" });
+  expect(screen.getByRole("status").textContent).toBe(t().confirmHoldKeyboardAborted);
+  act(() => settleConfirm(false));
+  await expect(answer).resolves.toEqual({ ok: false, checked: false });
+});
+
 it("holding the key down long enough confirms the dangerous action", async () => {
   setLang("zh");
   render(<ConfirmHost />);

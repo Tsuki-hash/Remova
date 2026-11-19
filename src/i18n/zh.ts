@@ -13,6 +13,7 @@ export const dict = {
     dryRunRunning: "正在检查清理计划…",
     cleanupPreviewStale: "勾选项已变化。请重新检查清理计划。",
     confirmCleanupCount: (n: number) => `确认清理 ${n} 项`,
+    holdToConfirmCleanupCount: (n: number) => `按住以确认清理 ${n} 项`,
     cancelCleanup: "取消清理",
     cleanupCancelTooLate: "删除已经开始，当前步骤无法取消。",
     cleanupCancelWaiting: "已受理取消，正在等待当前步骤结束。",

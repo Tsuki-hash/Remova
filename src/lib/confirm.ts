@@ -13,6 +13,8 @@ export type ConfirmOptions = {
   title: string;
   message?: string;
   confirmLabel?: string;
+  /** Action-specific label for a hold-to-confirm button. */
+  holdLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
   /** Hold duration for danger confirm (ms). 0 = single click. */

@@ -477,6 +477,7 @@ export function useCleanupHandlers({
       title: L.cleanup,
       message,
       confirmLabel: runOfficial ? L.uninstallAndCleanup : L.confirmCleanupCount(n),
+      holdLabel: runOfficial ? undefined : L.holdToConfirmCleanupCount(n),
       danger: true,
       checkbox: { label: L.confirmBackupBeforeCleanup, defaultChecked: false, status: L.cleanupBackupStatus },
     });

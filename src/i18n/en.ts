@@ -25,6 +25,7 @@ export const dict: EnDict = {
     dryRunRunning: "Checking cleanup plan…",
     cleanupPreviewStale: "The selection changed. Check the cleanup plan again.",
     confirmCleanupCount: (n: number) => n === 1 ? "Confirm cleanup of 1 item" : `Confirm cleanup of ${n} items`,
+    holdToConfirmCleanupCount: (n: number) => n === 1 ? "Hold to confirm cleanup of 1 item" : `Hold to confirm cleanup of ${n} items`,
     cancelCleanup: "Cancel cleanup",
     cleanupCancelTooLate: "Deletion has started and this step can no longer be cancelled.",
     cleanupCancelWaiting: "Cancellation accepted. Waiting for the current step to finish.",

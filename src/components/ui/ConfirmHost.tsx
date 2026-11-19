@@ -13,12 +13,14 @@ type HoldInput = { pointerId: number } | { key: string };
 
 function HoldButton({
   label,
+  holdLabel,
   holdMs,
   danger,
   disabled,
   onDone,
 }: {
   label: string;
+  holdLabel?: string;
   holdMs: number;
   danger?: boolean;
   disabled?: boolean;
@@ -78,6 +80,7 @@ function HoldButton({
     };
   }, [hold, holdMs, onDone, cancelHold]);
 
+  const buttonLabel = holdMs > 0 ? holdLabel ?? (hold ? t().confirmHoldHint : t().confirmHoldStart) : label;
   const base: CSSProperties = {
     height: 36,
     padding: "0 16px",
@@ -159,13 +162,7 @@ function HoldButton({
           }}
         />
       )}
-      <span style={{ position: "relative" }}>
-        {holdMs > 0 && hold
-          ? t().confirmHoldHint
-          : holdMs > 0
-            ? t().confirmHoldStart
-            : label}
-      </span>
+      <span style={{ position: "relative" }}>{buttonLabel}</span>
     </button>
     </>
   );
@@ -271,6 +268,7 @@ function ConfirmBody({ opts }: { opts: NonNullable<ReturnType<typeof getConfirm>
         </button>
         <HoldButton
           label={opts.confirmLabel || L.confirmOk}
+          holdLabel={opts.holdLabel}
           holdMs={holdMs}
           danger={opts.danger}
           onDone={confirm}
