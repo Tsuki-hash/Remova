@@ -39,11 +39,10 @@ CI blocks high and critical advisories in production npm dependencies. It also
 records the complete audit as the `npm-audit-full` artifact and prints distinct
 advisory URLs so several affected dependency paths can be reviewed as one finding.
 
-The release maintainers track
-[picomatch GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
-In this repository picomatch is used by development tooling. The affected
-matching runs against patterns from the repository's build, lint and test
-configuration, outside the installed application's input paths. No patched npm
-version is listed as of 2026-11-18. Recheck when preparing each Windows candidate
-and update the lockfile when a fix is published. Review any new advisory against
+GitHub withdrew the picomatch advisory on November 18, 2026. The November 19
+candidate audit returned zero npm findings with development dependencies included.
+Picomatch is used by development tooling with patterns from the repository's
+build, lint and test configuration. [GitHub advisory record](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+
+Recheck dependencies when preparing each Windows candidate. Review any new advisory against
 the dependency path and its inputs before accepting a candidate.
