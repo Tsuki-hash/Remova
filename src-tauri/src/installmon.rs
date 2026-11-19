@@ -1,7 +1,8 @@
 //! Explicit install-monitor snapshots (-1). User starts/stops; no driver.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
+use std::fs::{DirEntry, ReadDir};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -199,88 +200,34 @@ fn walk_names(
     root: &Path,
     out: &mut BTreeSet<String>,
     budget: &mut usize,
-    depth: usize,
     truncated: &mut bool,
     exclude: &[PathBuf],
 ) {
     let mut bounded = SnapshotBudget::new(*budget);
-    walk_names_bounded(root, out, &mut bounded, depth, truncated, exclude);
+    let snapshot = capture_file_roots(&[root.to_owned()], &mut bounded, exclude);
+    out.extend(snapshot.files);
+    *truncated |= snapshot.truncated;
     *budget = bounded.paths;
 }
 
-fn walk_names_bounded(
-    root: &Path,
-    out: &mut BTreeSet<String>,
-    budget: &mut SnapshotBudget,
-    depth: usize,
-    truncated: &mut bool,
-    exclude: &[PathBuf],
-) {
-    if crate::scan_task::cancelled() {
-        *truncated = true;
-        return;
-    }
-    if budget.paths == 0 || depth >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
-        *truncated = true;
-        return;
-    }
-    let rd = match std::fs::read_dir(root) {
-        Ok(rd) => rd,
-        Err(e) => {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                *truncated = true;
-            }
-            return;
-        }
-    };
-    for e in rd {
-        if !crate::scan_task::checkpoint("files", out.len()) {
-            *truncated = true;
-            return;
-        }
-        let e = match e {
-            Ok(e) => e,
-            Err(_) => {
-                *truncated = true;
-                continue;
-            }
-        };
-        if budget.paths == 0 || budget.bytes == 0 {
-            *truncated = true;
-            return;
-        }
-        let p = e.path();
-        // Remova's own state is not an install artifact: reporting it would put the
-        // monitor's own baseline into the diff it arms deletions from.
-        //
-        // The comparison is case-insensitive per component, because
-        // `Path::starts_with` on Windows is a byte comparison that folds only the
-        // drive letter — so `C:\ProgramData\remova` did not start with
-        // `C:\ProgramData\Remova`, and neither did a path that merely differed in
-        // drive-letter case. `read_dir` reports the casing stored on disk, so the
-        // guard used to depend on the on-disk name of a directory Remova does not
-        // own. Comparing `path_key` (already lowercase + backslash-normalized)
-        // removes that dependency.
-        if is_under_any(&p, exclude) {
-            continue;
-        }
-        // Keep original casing for display/delete; NTFS compare is case-insensitive.
-        // Non-UTF-8 never enters snapshots/allow-lists (fail-closed).
-        let Some(rel) = crate::fsutil::path_utf8(&p) else {
-            *truncated = true;
-            continue;
-        };
-        budget.paths = budget.paths.saturating_sub(1);
-        if !budget.insert(out, rel) {
-            *truncated = true;
-            return;
-        }
-        // `is_symlink()` classifies junctions version-dependently and misses
-        // non-symlink reparse dirs (cloud placeholders) — check the attribute.
-        if p.is_dir() && !crate::fsutil::is_reparse_point(&p) {
-            walk_names_bounded(&p, out, budget, depth + 1, truncated, exclude);
+fn read_snapshot_dir(path: &Path, truncated: &mut bool) -> Option<ReadDir> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => Some(entries),
+        Err(error) => {
+            *truncated |= error.kind() != std::io::ErrorKind::NotFound;
+            None
         }
     }
+}
+
+fn next_snapshot_entry(walk: &mut Vec<ReadDir>) -> Option<std::io::Result<DirEntry>> {
+    while let Some(entries) = walk.last_mut() {
+        if let Some(entry) = entries.next() {
+            return Some(entry);
+        }
+        walk.pop();
+    }
+    None
 }
 
 /// True when `path` is one of `roots` or sits anywhere underneath one.
@@ -305,17 +252,66 @@ fn take_fs_snapshot() -> FsSnapshot {
 }
 
 fn take_fs_snapshot_bounded(budget: &mut SnapshotBudget) -> FsSnapshot {
+    capture_file_roots(&roots(), budget, &remova_state_roots())
+}
+
+fn capture_file_roots(
+    roots: &[PathBuf],
+    budget: &mut SnapshotBudget,
+    exclude: &[PathBuf],
+) -> FsSnapshot {
     let mut files = BTreeSet::new();
     let mut truncated = false;
-    let exclude = remova_state_roots();
-    for r in roots() {
+    let mut walks = VecDeque::new();
+    for root in roots {
         if crate::scan_task::cancelled() {
+            return FsSnapshot {
+                files,
+                truncated: true,
+            };
+        }
+        if let Some(entries) = read_snapshot_dir(root, &mut truncated) {
+            walks.push_back(vec![entries]);
+        }
+    }
+    // Advance each root by one entry before returning to it. Smaller roots can
+    // finish early and leave the remaining shared budget for larger trees.
+    while !walks.is_empty() {
+        if !crate::scan_task::checkpoint("files", files.len()) {
             truncated = true;
             break;
         }
-        walk_names_bounded(&r, &mut files, budget, 0, &mut truncated, &exclude);
-        if budget.paths == 0 || budget.bytes == 0 {
+        walks.rotate_left(1);
+        let walk = walks.back_mut().expect("checked for an active root");
+        let Some(entry) = next_snapshot_entry(walk) else {
+            walks.pop_back();
+            continue;
+        };
+        let Ok(entry) = entry else {
+            truncated = true;
+            continue;
+        };
+        let path = entry.path();
+        // Exclude Remova state case-insensitively, including backup and seal data.
+        if is_under_any(&path, exclude) {
+            continue;
+        }
+        let Some(name) = crate::fsutil::path_utf8(&path) else {
+            truncated = true;
+            continue;
+        };
+        if budget.paths == 0 || !budget.insert(&mut files, name) {
+            truncated = true;
             break;
+        }
+        budget.paths -= 1;
+        // Junctions and other reparse directories must never be followed.
+        if path.is_dir() && !crate::fsutil::is_reparse_point(&path) {
+            if walk.len() >= crate::constants::INSTALLMON_MAX_WALK_DEPTH {
+                truncated = true;
+            } else if let Some(entries) = read_snapshot_dir(&path, &mut truncated) {
+                walk.push(entries);
+            }
         }
     }
     FsSnapshot { files, truncated }
@@ -987,7 +983,6 @@ mod tests {
                 std::path::Path::new("cancelled-monitor-unread"),
                 &mut names,
                 &mut budget,
-                0,
                 &mut truncated,
                 &[],
             );
@@ -997,6 +992,32 @@ mod tests {
         assert_eq!(budget, 20);
         assert!(names.is_empty() && truncated);
     }
+
+    #[test]
+    fn file_snapshot_reaches_later_roots_with_one_shared_budget() {
+        let lab = crate::test_support::TempDir::new("monitor_root_budget");
+        let program_files = lab.join("programs");
+        let app_data = lab.join("app-data");
+        std::fs::create_dir_all(&program_files).unwrap();
+        std::fs::create_dir_all(&app_data).unwrap();
+        for i in 0..5 {
+            std::fs::write(program_files.join(format!("program-{i}.bin")), b"x").unwrap();
+        }
+        let user_file = app_data.join("trial.json");
+        std::fs::write(&user_file, b"{}").unwrap();
+        let roots = [program_files, app_data];
+
+        let limited = capture_file_roots(&roots, &mut SnapshotBudget::new(4), &[]);
+        let user_file = user_file.to_string_lossy();
+        assert!(limited.files.contains(user_file.as_ref()));
+        assert_eq!(limited.files.len(), 4);
+        assert!(limited.truncated);
+
+        let full = capture_file_roots(&roots, &mut SnapshotBudget::new(6), &[]);
+        assert_eq!(full.files.len(), 6);
+        assert!(!full.truncated);
+    }
+
     #[test]
     fn incomplete_registry_snapshots_never_arm_existing_items() {
         let _allow = crate::scan_allow::test_lock();
@@ -1041,7 +1062,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("remova_mon_file_{}", std::process::id()));
         std::fs::write(&tmp, b"not a directory").unwrap();
         let mut degraded = false;
-        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, 0, &mut degraded, &[]);
+        walk_names(&tmp, &mut BTreeSet::new(), &mut 100, &mut degraded, &[]);
         assert!(degraded);
         std::fs::remove_file(tmp).unwrap();
     }
@@ -1118,7 +1139,6 @@ mod tests {
             &root,
             &mut names,
             &mut budget,
-            0,
             &mut truncated,
             &[state, seal_keys, mis_cased],
         );
@@ -1482,7 +1502,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 100usize;
         let mut truncated = false;
-        walk_names(&a, &mut files, &mut budget, 0, &mut truncated, &[]);
+        walk_names(&a, &mut files, &mut budget, &mut truncated, &[]);
         assert!(
             files.contains(&a.join("own.txt").to_string_lossy().to_string()),
             "own file must be walked"
@@ -1519,7 +1539,7 @@ mod tests {
         let mut files = BTreeSet::new();
         let mut budget = 10_000usize;
         let mut truncated = false;
-        walk_names(&base, &mut files, &mut budget, 0, &mut truncated, &[]);
+        walk_names(&base, &mut files, &mut budget, &mut truncated, &[]);
         assert!(truncated, "hitting the depth cap must flag the snapshot");
         let cap = crate::constants::INSTALLMON_MAX_WALK_DEPTH;
         assert!(
